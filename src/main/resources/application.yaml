@@ -15,9 +15,9 @@ spring:
     problemdetails:
       enabled: true
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/mydatabase?serverTimezone=${APP_TIME_ZONE:UTC}&characterEncoding=UTF-8}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/paldogotgan?serverTimezone=${APP_TIME_ZONE:UTC}&characterEncoding=UTF-8}
     username: ${DB_USERNAME:myuser}
-    password: ${DB_PASSWORD:secret}
+    password: ${DB_PASSWORD:password}
   jpa:
     open-in-view: false
     properties:
