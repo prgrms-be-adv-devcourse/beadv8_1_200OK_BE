@@ -2,17 +2,15 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, reopened]   # PR 처음 열 때, 닫았다가 다시 열 때만 리뷰 (사용량 절약)
-    branches: [dev]             # dev로 향하는 PR만
+    types: [opened, synchronize, ready_for_review]
 
 jobs:
-  review:
+  claude-review:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       issues: write
-      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,15 +19,19 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            이 PR의 변경사항을 한국어로 리뷰해줘.
-            - 버그 가능성, 예외 처리 누락
-            - Spring/JPA 사용상 문제 (N+1, 트랜잭션 범위 등)
-            - 보안 이슈
-            - 가독성과 네이밍
-            특정 줄 의견은 인라인 댓글로, 전체 요약은 PR 댓글로 남겨줘.
+            이 PR의 코드를 리뷰해주세요. 한국어로 답변해주세요.
+            - 코드 품질 및 가독성
+            - 잠재적인 버그나 에러
+            - 성능 이슈
+            - 보안 취약점
+            발견된 문제점과 개선 제안을 구체적으로 설명해주세요.
+
+            Use `gh pr comment` for top-level feedback.
+            Only post GitHub comments - don't submit review text as messages.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
