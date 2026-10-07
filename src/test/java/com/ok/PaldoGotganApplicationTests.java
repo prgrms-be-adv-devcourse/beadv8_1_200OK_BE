@@ -1,12 +1,9 @@
 package com.ok;
 
+import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest
-class PaldoGotganApplicationTests {
+class PaldoGotganApplicationTests extends AbstractIntegrationTest {
 
     @Test
     void contextLoads() {

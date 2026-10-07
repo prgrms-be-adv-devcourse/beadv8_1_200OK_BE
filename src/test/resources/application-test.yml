@@ -1,0 +1,14 @@
+spring:
+  docker:
+    compose:
+      enabled: false
+  batch:
+    job:
+      enabled: false
+  jpa:
+    hibernate:
+      # 마이그레이션과 엔티티 일치 여부를 테스트에서 검증 (.env 영향 없음)
+      ddl-auto: validate
+logging:
+  level:
+    com.ok: DEBUG

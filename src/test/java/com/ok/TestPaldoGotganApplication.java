@@ -1,5 +1,6 @@
 package com.ok;
 
+import com.ok.testsupport.TestcontainersConfiguration;
 import org.springframework.boot.SpringApplication;
 
 public class TestPaldoGotganApplication {
