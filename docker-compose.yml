@@ -13,3 +13,21 @@ services:
     networks: [db-net]
     ports:
       - "${MYSQL_PORT:-3306}:3306"
+
+  app:
+    profiles: [app]
+    build: .
+    image: paldo-gotgan:local
+    networks: [db-net]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-paldogotgan}?serverTimezone=${APP_TIME_ZONE:-UTC}&characterEncoding=UTF-8
+      DB_USERNAME: ${MYSQL_USER:-myuser}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-password}
+    ports:
+      - "${APP_PORT:-8080}:8080"
