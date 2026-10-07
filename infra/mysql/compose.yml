@@ -1,0 +1,10 @@
+services:
+  mysql:
+    image: 'mysql:${MYSQL_VERSION:-9.4}'
+    environment:
+      - 'MYSQL_DATABASE=${MYSQL_DATABASE:-paldogotgan}'
+      - 'MYSQL_USER=${MYSQL_USER:-myuser}'
+      - 'MYSQL_PASSWORD=${MYSQL_PASSWORD:-password}'
+      - 'MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-secretpassword}'
+    volumes:
+      - '../../data/mysql:/var/lib/mysql'

@@ -1,0 +1,15 @@
+name: server
+
+networks:
+  db-net:
+    name: db-net
+    driver: bridge
+
+services:
+  mysql:
+    extends:
+      file: ./infra/mysql/compose.yml
+      service: mysql
+    networks: [db-net]
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"

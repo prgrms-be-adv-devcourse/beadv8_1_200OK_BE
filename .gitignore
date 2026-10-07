@@ -65,3 +65,12 @@ $RECYCLE.BIN/
 .env
 .env.*
 !.env.example
+
+### stored data
+./data
+
+### Docker Data ###
+/data/
+
+### jenv ###
+.java-version

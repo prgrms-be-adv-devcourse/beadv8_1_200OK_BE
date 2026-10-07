@@ -1,0 +1,24 @@
+spring:
+  docker:
+    compose:
+      enabled: ${DOCKER_COMPOSE_ENABLED:false}
+  batch:
+    job:
+      # 앱 시작 시 Job 자동 실행 여부 (운영은 true 고정)
+      enabled: ${BATCH_JOB_ENABLED:false}
+  jpa:
+    hibernate:
+      # 기본은 스키마 검증, .env의 JPA_DDL_AUTO 로 변경 가능 (운영은 validate 고정)
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+  modulith:
+    events:
+      # 재시작 시 미완료 이벤트 재발행 여부 (운영은 true 고정)
+      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+logging:
+  level:
+    com.ok: DEBUG
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true

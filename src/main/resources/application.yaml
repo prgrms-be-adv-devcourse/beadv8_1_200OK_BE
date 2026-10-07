@@ -1,5 +1,28 @@
-vaadin:
-  launch-browser: true
+server:
+  port: 8080
 spring:
   application:
     name: paldo-gotgan
+  config:
+    import: optional:file:.env[.properties]
+  profiles:
+    default: dev
+  jackson:
+    time-zone: ${APP_TIME_ZONE:UTC}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/mydatabase?serverTimezone=${APP_TIME_ZONE:UTC}&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:secret}
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          time_zone: ${APP_TIME_ZONE:UTC}

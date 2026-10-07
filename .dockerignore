@@ -1,0 +1,10 @@
+.git
+.gradle
+.idea
+build
+target
+node_modules
+data
+.env
+.env.*
+HELP.md
