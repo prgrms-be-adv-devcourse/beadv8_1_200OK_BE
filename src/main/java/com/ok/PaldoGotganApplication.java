@@ -10,4 +10,10 @@ public class PaldoGotganApplication {
         SpringApplication.run(PaldoGotganApplication.class, args);
     }
 
+    // Claude 리뷰 테스트용
+    public static String greet(String name) {
+        return "hello " + name.trim();   // null이면 NPE
+    }
+
+
 }
