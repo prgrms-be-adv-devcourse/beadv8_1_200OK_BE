@@ -113,12 +113,26 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ## 5. DB 마이그레이션 (Flyway)
 
 - 스키마 변경은 항상 `src/main/resources/db/migration`에 SQL 파일로 추가합니다.
-- 파일명: `V{버전}__{설명}.sql` (예: `V2__create_member.sql`). 밑줄(`_`) 두 개에 주의하세요.
+- 파일명: `V{yyyyMMddHHmm}__{도메인}__{설명}.sql`. 구분자는 밑줄(`_`) 두 개, 설명 안의 단어 구분은 밑줄 한 개입니다.
+  - 버전은 파일을 만드는 시점의 시각(12자리)입니다. 순번(`V2`, `V3`)을 쓰지 않아 브랜치끼리 버전이 겹치지 않습니다.
+  - 도메인은 모듈 이름(`member`, `order`, `common` 등)입니다.
+  - 설명은 `create_*_table`, `add_*_to_*`, `add_index_*`처럼 동작으로 시작합니다.
+
+```
+db/migration/
+├── V202610081030__order__create_orders_table.sql
+├── V202610081031__order__create_order_lines_table.sql
+├── V202610121420__order__add_coupon_id_to_orders.sql
+└── V202610150915__order__add_index_orders_member_id.sql
+```
+
+- 다른 브랜치에서 더 늦은 버전이 먼저 병합되면, 그보다 이른 버전의 파일은 Flyway가 적용하지 않고 오류를 냅니다.
+  병합 전에 `main`을 합치고, 필요하면 내 파일의 버전을 현재 시각으로 바꾸세요(아직 병합 전인 파일만).
 - **이미 적용된 마이그레이션은 수정하지 않습니다.** 체크섬이 달라져 앱이 기동하지 않습니다.
   변경이 필요하면 새 버전 파일을 추가하세요. 로컬에서만 쓴 파일이라면 `data/mysql`을 지우고 다시 적용해도 됩니다.
 - `ddl-auto`는 `validate`입니다. 엔티티를 추가하거나 수정하면 대응하는 마이그레이션이 반드시 필요하고,
   없으면 앱이 기동하지 않습니다 (테스트에서도 같은 검증이 돕니다).
-- `V1__create_event_publication.sql`은 Spring Modulith의 이벤트 발행 기록 테이블입니다. 지우지 마세요.
+- `V202610081120__common__create_event_publication_table.sql`은 Spring Modulith의 이벤트 발행 기록 테이블입니다. 지우지 마세요.
 
 ## 6. 모듈 구조 (Spring Modulith)
 
