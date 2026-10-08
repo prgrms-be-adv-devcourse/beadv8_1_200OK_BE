@@ -26,3 +26,6 @@ spring:
         jdbc:
           batch_size: 100
           time_zone: ${APP_TIME_ZONE:UTC}
+app:
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}

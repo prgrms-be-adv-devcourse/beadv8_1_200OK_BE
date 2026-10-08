@@ -93,6 +93,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `MODULITH_REPUBLISH_ON_RESTART` | 재시작 시 미완료 이벤트 재발행 (dev, 운영은 `true` 고정) | `false` |
 | `JPA_DDL_AUTO` | Hibernate `ddl-auto` (dev, 운영은 `validate` 고정) | `validate` |
 | `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `UTC` |
+| `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 
 ### 새 설정값을 환경변수로 추가하는 방법
@@ -138,7 +139,104 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - 위반하면 `ModulithStructureTest`가 실패합니다. 새 모듈을 추가하면 이 테스트의 모듈 목록도 갱신하세요.
 - 각 모듈 패키지의 `package-info.java`는 모듈 선언입니다. 지우지 마세요.
 
-## 7. 테스트
+## 7. 예외 처리 (ProblemDetail)
+
+모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.
+
+### 응답 필드
+
+| 필드 | 설명 |
+|---|---|
+| `type` | 오류 유형을 식별하는 URI. 클라이언트는 이 값으로 분기합니다 |
+| `title` | 유형별로 고정된 짧은 요약. 값을 끼워 넣지 않습니다 |
+| `status` | HTTP 상태 코드 |
+| `detail` | 이번 요청에 대한 구체적인 설명. 문구는 바뀔 수 있으니 파싱하거나 로직에 쓰지 않습니다 |
+| `instance` | 오류가 발생한 요청 경로 (자동으로 채워짐) |
+| `errors` | 입력값 검증 실패(422)일 때만. 필드별 오류 목록 |
+
+```json
+// 일반 오류 (409)
+{
+  "type": "https://docs.example.com/problems/order-already-paid",
+  "title": "Order already paid",
+  "status": 409,
+  "detail": "주문 123은 이미 결제되었습니다.",
+  "instance": "/api/v1/orders/123/pay"
+}
+
+// 입력값 검증 실패 (422)
+{
+  "type": "https://docs.example.com/problems/validation-failed",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "요청 값이 올바르지 않습니다.",
+  "instance": "/api/v1/members",
+  "errors": [
+    { "detail": "이름은 필수입니다", "pointer": "/name", "path": "name" },
+    { "detail": "항목 이름은 필수입니다", "pointer": "/items/0/name", "path": "items[0].name" }
+  ]
+}
+```
+
+- `errors`의 `pointer`는 요청 본문 안의 위치(JSON Pointer, 기계용), `path`는 사용자에게 보여줄 경로입니다.
+- 쿼리/경로 파라미터 오류는 필드 오류가 아니므로 `errors` 없이 `invalid-query-parameter`(400)로 응답합니다.
+
+### 공통 오류 유형 (`CommonErrorCode`)
+
+| 슬러그 | 상태 | 발생 상황 |
+|---|---|---|
+| `validation-failed` | 422 | `@Valid` 검증 실패 (`errors` 포함) |
+| `invalid-json` | 400 | 요청 본문을 읽을 수 없음 (깨진 JSON 등) |
+| `invalid-query-parameter` | 400 | 파라미터 타입 불일치 |
+| `bad-request` | 400 | 그 밖의 잘못된 요청 (필수 파라미터 누락 등) |
+| `internal-error` | 500 | 처리되지 않은 예외 |
+
+404, 405, 406, 415 같은 그 밖의 Spring MVC 표준 예외는 Spring 기본 `ProblemDetail`로 응답합니다. 이 경우 `type`은 `about:blank`, `title`은 상태 코드 이름이고
+`PROBLEM_BASE_URI`는 적용되지 않습니다. 구분이 필요해지면 `CommonErrorCode`에 유형을 추가하세요.
+
+### type 주소 (`PROBLEM_BASE_URI`)
+
+`type`은 `PROBLEM_BASE_URI`(접두사) + 슬러그입니다. 값은 `.env`에서 바꿉니다.
+
+| `PROBLEM_BASE_URI` | `type` | `title` |
+|---|---|---|
+| `about:blank` (기본값) | `about:blank` | 상태 코드 이름 (`Not Found`) |
+| `https://docs.example.com/problems/` | `https://docs.example.com/problems/validation-failed` | 유형별 제목 (`Validation failed`) |
+
+- 오류 설명 페이지가 생기면 그 주소를 `.env`에 넣으면 됩니다. 접두사 끝의 `/`는 없어도 자동으로 붙습니다.
+- 슬러그는 에러 코드 enum 이름을 소문자와 하이픈으로 바꾼 값입니다 (`VALIDATION_FAILED` → `validation-failed`).
+  **배포한 뒤에는 `type`을 바꾸지 않습니다.** enum 이름을 바꿔야 하면 `slug()`를 재정의해 기존 값을 유지하세요.
+
+### 모듈에서 에러 코드 추가
+
+각 모듈은 `ErrorCode`를 구현한 enum을 만들고, 예외는 `RestApiException`으로 던집니다.
+
+```java
+@Getter
+@RequiredArgsConstructor
+public enum OrderErrorCode implements ErrorCode {
+    ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order not found", "주문을 찾을 수 없습니다."),
+    ORDER_ALREADY_PAID(HttpStatus.CONFLICT, "Order already paid", "이미 결제된 주문입니다.");
+
+    private final HttpStatus httpStatus;
+    private final String title;     // 유형별 고정 제목
+    private final String message;   // 기본 detail
+
+    @Override
+    public HttpStatus status() { return httpStatus; }
+}
+
+throw new RestApiException(OrderErrorCode.ORDER_NOT_FOUND);                        // 기본 detail
+throw new RestApiException(OrderErrorCode.ORDER_NOT_FOUND, "주문 123을 찾을 수 없습니다."); // detail 지정
+```
+
+규칙
+
+- `detail`에는 응답으로 내보내도 되는 값만 넣습니다 (요청에서 받은 값, 식별자 정도).
+- 처리되지 않은 예외(500)는 내부 메시지와 스택 트레이스를 응답에 담지 않고 서버 로그에만 남깁니다.
+- Spring Security 필터에서 발생하는 예외(인증/인가)는 이 핸들러를 거치지 않습니다. 인증을 구현할 때 별도로 처리하세요.
+
+## 8. 테스트
 
 ### 종류와 위치
 
@@ -221,7 +319,7 @@ class MemberRepositoryTest {
 
 목표 커버리지는 80% 이상입니다. Querydsl이 생성하는 `Q*` 클래스는 현재 커버리지에서 제외하지 않았습니다.
 
-## 8. Docker 이미지
+## 9. Docker 이미지
 
 `Dockerfile`은 멀티 스테이지입니다 (빌드: JDK 25, 실행: JRE 25 Alpine, 비루트 사용자). 테스트는 이미지 빌드에서 제외됩니다.
 
@@ -249,7 +347,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 - 이미지 안에는 `.env`가 들어가지 않습니다(`.dockerignore`). 접속 정보는 실행할 때 환경변수로 넘기세요.
 - 컨테이너에서 DB가 같은 compose 네트워크(`db-net`)에 있다면 호스트 이름은 `mysql`입니다.
 
-## 9. Git 규칙
+## 10. Git 규칙
 
 - `main`에 직접 커밋하지 않습니다. 이슈를 만든 뒤 브랜치를 만들어 작업하고 PR로 병합합니다.
 - 브랜치: `feature/<이슈번호>` (예: `feature/42`)
