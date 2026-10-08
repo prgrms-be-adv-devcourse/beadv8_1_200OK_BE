@@ -252,7 +252,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 ## 9. Git 규칙
 
 - `main`에 직접 커밋하지 않습니다. 이슈를 만든 뒤 브랜치를 만들어 작업하고 PR로 병합합니다.
-- 브랜치: `feature/#<이슈번호>` (예: `feature/#42`)
+- 브랜치: `feature/<이슈번호>` (예: `feature/42`)
 - 커밋 메시지 형식
 
 ```
