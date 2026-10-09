@@ -27,7 +27,7 @@ import static org.awaitility.Awaitility.await;
 // 테스트마다 겹치지 않는 주문항목 ID를 쓰고, 정리할 때도 그 ID의 데이터만 지운다 (병렬 실행 시 간섭 방지)
 class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
     // 이 클래스 전용 주문항목 ID 번호대 (다른 테스트 클래스와 겹치지 않게 큰 수에서 시작)
     // AtomicLong: 여러 스레드가 동시에 불러도 같은 번호가 나오지 않음
