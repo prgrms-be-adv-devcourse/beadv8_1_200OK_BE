@@ -68,7 +68,7 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
         // 주문 쪽처럼 트랜잭션 안에서 발행 (커밋되어야 리스너가 실행됨)
         publishInTransaction(event);
 
-        // Assert: 리스너가 저장을 끝낼 때까지 최대 5초 동안 반복 확인
+        // Assert: 리스너가 저장을 끝낼 때까지 최대 10초 동안 반복 확인
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(repository.findAllByOrderItemId(orderItemId))
                         .extracting(PayoutCandidateItem::getEventType, PayoutCandidateItem::getAmount)
