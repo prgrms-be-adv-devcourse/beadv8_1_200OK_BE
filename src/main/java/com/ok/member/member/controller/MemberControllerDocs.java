@@ -42,7 +42,7 @@ public interface MemberControllerDocs {
                                               "title": "Duplicate login id",
                                               "status": 409,
                                               "detail": "이미 사용 중인 아이디입니다.",
-                                              "instance": "/api/members/signup"
+                                              "instance": "/api/v1/members/signup"
                                             }
                                             """),
                                     @ExampleObject(name = "중복 이메일", value = """
@@ -51,7 +51,7 @@ public interface MemberControllerDocs {
                                               "title": "Duplicate email",
                                               "status": 409,
                                               "detail": "이미 사용 중인 이메일입니다.",
-                                              "instance": "/api/members/signup"
+                                              "instance": "/api/v1/members/signup"
                                             }
                                             """)
                             })),
@@ -64,16 +64,16 @@ public interface MemberControllerDocs {
                                       "title": "Validation failed",
                                       "status": 422,
                                       "detail": "요청 값이 올바르지 않습니다.",
-                                      "instance": "/api/members/signup",
+                                      "instance": "/api/v1/members/signup",
                                       "errors": [
                                         {
                                           "detail": "이메일 형식이 올바르지 않습니다.",
-                                          "pointer": "/email",
+                                          "path": "/email",
                                           "field": "email"
                                         },
                                         {
                                           "detail": "이용약관 동의는 필수입니다.",
-                                          "pointer": "/termsAgreed",
+                                          "path": "/termsAgreed",
                                           "field": "termsAgreed"
                                         }
                                       ]
