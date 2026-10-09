@@ -20,6 +20,9 @@ public class CartItem extends BaseIdAndTime {
     @Column(name = "product_id", nullable = false)
     private Long productId;
 
+    @Column(name = "product_option_id", nullable = false)
+    private Long productOptionId;
+
     @Column(nullable = false)
     private int quantity;
 
