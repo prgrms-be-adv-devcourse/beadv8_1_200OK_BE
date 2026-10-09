@@ -48,4 +48,9 @@ public class PayoutCandidateItem extends BaseIdAndTime {
     public static PayoutCandidateItem ofSaleShippingFee(Long orderItemId, Long sellerId, Long amount) {
         return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount);
     }
+
+    // 기본은 판매자 SALE_FEE만 시스템, evntype 추가시 변경
+    public Long payeeId() {
+        return eventType == PayoutEventType.SALE_FEE ? PayoutPolicy.SYSTEM_PAYEE_ID : sellerId;
+    }
 }
