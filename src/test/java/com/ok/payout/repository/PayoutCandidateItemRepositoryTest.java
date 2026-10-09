@@ -40,7 +40,7 @@ class PayoutCandidateItemRepositoryTest {
     void fillsIdAndTimestamps_whenSaved() {
         // Arrange
         Long orderItemId = nextOrderItemId();
-        PayoutCandidateItem item = PayoutCandidateItem.sellerAmount(orderItemId, 10L, 9_700L);
+        PayoutCandidateItem item = PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L);
 
         // Act
         Long id = repository.save(item).getId();
@@ -62,7 +62,7 @@ class PayoutCandidateItemRepositoryTest {
     void doesNotUpdateDb_whenSavedCandidateIsModified() {
         // Arrange
         Long orderItemId = nextOrderItemId();
-        Long id = repository.save(PayoutCandidateItem.sellerAmount(orderItemId, 10L, 9_700L)).getId();
+        Long id = repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L)).getId();
         em.flush();
         em.clear();
         PayoutCandidateItem found = repository.findById(id).orElseThrow();
@@ -83,7 +83,7 @@ class PayoutCandidateItemRepositoryTest {
         // Arrange
         Long orderItemId = nextOrderItemId();
         Long otherOrderItemId = orderItemId + 1;   // 저장하지 않은 주문항목
-        repository.save(PayoutCandidateItem.sellerAmount(orderItemId, 10L, 9_700L));
+        repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L));
         em.flush();
 
         // Act & Assert
@@ -97,14 +97,14 @@ class PayoutCandidateItemRepositoryTest {
     void cannotSaveSameEventTypeTwiceForSameOrderItem() {
         // Arrange
         Long orderItemId = nextOrderItemId();
-        repository.save(PayoutCandidateItem.sellerAmount(orderItemId, 10L, 9_700L));
+        repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L));
         em.flush();
 
         // Act & Assert (DB 유니크 제약 uk_payout_candidate_items_order_item_id_event_type)
         // em.flush()는 리포지토리를 거치지 않아 예외가 Spring 예외로 바뀌지 않을 수 있으므로,
         // 예외 타입 대신 가장 밑의 원인이 MySQL 중복 키 예외인지 확인
         assertThatThrownBy(() -> {
-            repository.save(PayoutCandidateItem.sellerAmount(orderItemId, 10L, 9_700L));
+            repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L));
             em.flush();
         }).hasRootCauseInstanceOf(SQLIntegrityConstraintViolationException.class);
     }
@@ -116,8 +116,8 @@ class PayoutCandidateItemRepositoryTest {
         Long orderItemId = nextOrderItemId();
 
         // Act
-        repository.save(PayoutCandidateItem.sellerAmount(orderItemId, 10L, 9_700L));
-        repository.save(PayoutCandidateItem.saleFeeAmount(orderItemId, 10L, 300L));
+        repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L));
+        repository.save(PayoutCandidateItem.ofSaleFee(orderItemId, 10L, 300L));
         em.flush();
 
         // Assert
