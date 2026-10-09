@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "paldo-gotgan",
+  "type": "collection",
+  "ignore": ["node_modules", ".git", "files"]
+}

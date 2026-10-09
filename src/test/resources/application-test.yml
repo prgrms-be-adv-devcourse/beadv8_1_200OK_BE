@@ -12,3 +12,8 @@ spring:
 logging:
   level:
     com.ok: DEBUG
+
+app:
+  s3:
+    region: ap-northeast-2
+    bucket: test-mock-bucket
