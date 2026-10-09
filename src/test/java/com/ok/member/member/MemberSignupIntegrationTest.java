@@ -48,6 +48,23 @@ public class MemberSignupIntegrationTest {
     }
 
     @Test
+    @DisplayName("대문자 아이디는 소문자로 저장되고, 대소문자만 다른 아이디는 중복으로 처리한다")
+    void signup_caseInsensitiveLoginId() throws Exception {
+        // given
+        performSignup(signupBody("Tester01", "tester@example.com", "길동이"))
+                .andExpect(status().isCreated());
+        String body = signupBody("tester01", "other@example.com", "다른닉네임");
+
+        // when
+        ResultActions result = performSignup(body);
+
+        // then
+        assertThat(memberRepository.findByLoginId("tester01")).isPresent();
+        result.andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/member/duplicate-login-id")));
+    }
+
+    @Test
     @DisplayName("회원가입에 성공하면 201과 memberId를 반환하고, 비밀번호는 해시로 저장된다")
     void signup_success() throws Exception {
         // given
