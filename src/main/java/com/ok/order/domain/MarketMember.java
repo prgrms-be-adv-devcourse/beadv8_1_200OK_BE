@@ -2,6 +2,7 @@ package com.ok.order.domain;
 
 import com.ok.common.jpa.entity.BaseEntity;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
@@ -14,7 +15,7 @@ import java.time.LocalDateTime;
 @Table(name = "market_member")
 @EntityListeners(AuditingEntityListener.class)
 @Getter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class MarketMember extends BaseEntity {
     @Id
     private Long id;
@@ -32,4 +33,11 @@ public class MarketMember extends BaseEntity {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    public static MarketMember create(Long memberId) {
+        MarketMember member = new MarketMember();
+        member.id = memberId;
+        member.purchasable = true;
+        return member;
+    }
 }
