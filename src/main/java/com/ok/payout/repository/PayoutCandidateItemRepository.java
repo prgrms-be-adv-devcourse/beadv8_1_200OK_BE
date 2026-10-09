@@ -4,6 +4,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import org.springframework.data.repository.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -18,4 +19,8 @@ public interface PayoutCandidateItemRepository extends Repository<PayoutCandidat
     Optional<PayoutCandidateItem> findById(Long id);
 
     List<PayoutCandidateItem> findAllByOrderItemId(Long orderItemId);
+
+    boolean existsByOrderItemIdAndEventTypeIn(Long orderItemId, Collection<PayoutEventType> eventTypes);
+
+    List<PayoutCandidateItem> saveAll(Iterable<PayoutCandidateItem> items);
 }

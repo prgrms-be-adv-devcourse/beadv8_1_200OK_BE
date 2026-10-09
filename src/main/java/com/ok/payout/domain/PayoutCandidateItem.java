@@ -5,13 +5,7 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.Immutable;
-import org.springframework.data.annotation.LastModifiedDate;
-
-import java.time.LocalDateTime;
-
-import static jakarta.persistence.GenerationType.IDENTITY;
 
 @Entity
 @Immutable
@@ -33,7 +27,7 @@ public class PayoutCandidateItem extends BaseIdAndTime {
     @Column(nullable = false)
     private Long amount;
 
-    public static PayoutCandidateItem create(PayoutEventType eventType, Long orderItemId,
+    private static PayoutCandidateItem create(PayoutEventType eventType, Long orderItemId,
                                              Long sellerId, Long amount) {
         PayoutCandidateItem item = new PayoutCandidateItem();
         item.eventType = eventType;
@@ -43,15 +37,15 @@ public class PayoutCandidateItem extends BaseIdAndTime {
         return item;
     }
 
-    public static PayoutCandidateItem saleFeeAmount(Long orderItemId, Long sellerId, Long amount) {
+    public static PayoutCandidateItem ofSaleFee(Long orderItemId, Long sellerId, Long amount) {
         return create(PayoutEventType.SALE_FEE, orderItemId, sellerId, amount);
     }
 
-    public static PayoutCandidateItem sellerAmount(Long orderItemId, Long sellerId, Long amount) {
+    public static PayoutCandidateItem ofSaleAmount(Long orderItemId, Long sellerId, Long amount) {
         return create(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount);
     }
 
-    public static PayoutCandidateItem saleShippingFee(Long orderItemId, Long sellerId, Long amount) {
+    public static PayoutCandidateItem ofSaleShippingFee(Long orderItemId, Long sellerId, Long amount) {
         return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount);
     }
 }

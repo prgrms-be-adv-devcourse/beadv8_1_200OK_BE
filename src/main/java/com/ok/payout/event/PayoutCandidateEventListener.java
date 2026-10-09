@@ -1,7 +1,7 @@
 package com.ok.payout.event;
 
 import com.ok.common.event.OrderProductConfirmedEvent;
-import com.ok.payout.Service.PayoutCandidateService;
+import com.ok.payout.service.PayoutCandidateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.modulith.events.ApplicationModuleListener;
@@ -16,6 +16,5 @@ public class PayoutCandidateEventListener {
     @ApplicationModuleListener
     void on(OrderProductConfirmedEvent event) {
         payoutCandidateService.createFromPurchaseConfirmed(event);
-        log.info("구매 확정 이벤트 수신: {}", event);
     }
 }

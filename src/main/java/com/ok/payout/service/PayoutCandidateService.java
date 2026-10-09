@@ -1,4 +1,4 @@
-package com.ok.payout.Service;
+package com.ok.payout.service;
 
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.common.exception.RestApiException;
@@ -12,6 +12,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -22,21 +25,26 @@ public class PayoutCandidateService {
 
     public void createFromPurchaseConfirmed(OrderProductConfirmedEvent event) {
         validate(event);
-        if (repository.existsByOrderItemIdAndEventType(event.orderItemId(), PayoutEventType.SALE_AMOUNT)) {
-            throw new RestApiException(PayoutErrorCode.PAYOUT_CANDIDATE_ALREADY_EXISTS);
+        if (repository.existsByOrderItemIdAndEventTypeIn(event.orderItemId(), PayoutEventType.PURCHASE_CONFIRMED_TYPES)) {
+            log.info("{}: 이미 처리된 구매확정 이벤트, 무시. orderItemId={}",
+                    PayoutErrorCode.PAYOUT_CANDIDATE_ALREADY_EXISTS.name(), event.orderItemId());
+            return;
         }
         long saleFee = PayoutPolicy.calculateSaleFee(event.totalItemPrice());
-        long sellerPrice =event.totalItemPrice() - saleFee;
+        long sellerAmount =event.totalItemPrice() - saleFee;
         long shippingPrice = event.shippingPrice();
 
-        repository.save(PayoutCandidateItem.saleFeeAmount(
+        List<PayoutCandidateItem> items = new ArrayList<>();
+        items.add(PayoutCandidateItem.ofSaleFee(
                 event.orderItemId(), event.sellerId(), saleFee));
-        repository.save(PayoutCandidateItem.sellerAmount(
-                event.orderItemId(), event.sellerId(), sellerPrice));
-        if(shippingPrice > 0) {
-            repository.save(PayoutCandidateItem.saleShippingFee(
+        items.add(PayoutCandidateItem.ofSaleAmount(
+                event.orderItemId(), event.sellerId(), sellerAmount));
+        if (shippingPrice > 0) {
+            items.add(PayoutCandidateItem.ofSaleShippingFee(
                     event.orderItemId(), event.sellerId(), shippingPrice));
         }
+
+        repository.saveAll(items);
     }
 
     private void validate(OrderProductConfirmedEvent event) {

@@ -1,10 +1,9 @@
 package com.ok.payout.domain;
 
-import com.ok.common.exception.RestApiException;
+import com.ok.common.exception.ErrorCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import com.ok.common.exception.ErrorCode;
 
 @Getter
 @RequiredArgsConstructor
