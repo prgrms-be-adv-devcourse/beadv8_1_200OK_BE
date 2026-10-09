@@ -1,6 +1,8 @@
 package com.ok.order.domain;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseEntity;
+import com.ok.order.exception.OrderErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -39,5 +41,11 @@ public class MarketMember extends BaseEntity {
         member.id = memberId;
         member.purchasable = true;
         return member;
+    }
+
+    public void validatePurchasable() {
+        if (!purchasable) {
+            throw new RestApiException(OrderErrorCode.MEMBER_CANNOT_PURCHASE);
+        }
     }
 }
