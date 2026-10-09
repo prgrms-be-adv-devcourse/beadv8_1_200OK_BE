@@ -1,9 +1,13 @@
 package com.ok.payout.domain;
 
+import com.ok.common.jpa.entity.BaseIdAndTime;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.Immutable;
+import org.springframework.data.annotation.LastModifiedDate;
 
 import java.time.LocalDateTime;
 
@@ -13,40 +17,41 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 @Immutable
 @Table(name = "payout_candidate_items")
 @Getter
-public class PayoutCandidateItem {
-
-    @Id
-    @GeneratedValue(strategy = IDENTITY)
-    private long id;
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class PayoutCandidateItem extends BaseIdAndTime {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private PayoutEventType eventType;
 
     @Column(nullable = false)
-    private Long relId;
+    private Long orderItemId;
 
     @Column(nullable = false)
-    private Long payerId;
-
-    @Column(nullable = false)
-    private Long payeeId;
+    private Long sellerId;
 
     @Column(nullable = false)
     private Long amount;
 
-    @CreationTimestamp
-    @Column(nullable = false)
-    private LocalDateTime createDate;
-
-    public static PayoutCandidateItem create(PayoutEventType eventType, Long relId,
-                                             Long payerId, Long payeeId, Long amount) {
+    public static PayoutCandidateItem create(PayoutEventType eventType, Long orderItemId,
+                                             Long sellerId, Long amount) {
         PayoutCandidateItem item = new PayoutCandidateItem();
         item.eventType = eventType;
-        item.relId = relId;
-        item.payerId = payerId;
-        item.payeeId = payeeId;
+        item.orderItemId = orderItemId;
+        item.sellerId = sellerId;
         item.amount = amount;
         return item;
+    }
+
+    public static PayoutCandidateItem saleFeeAmount(Long orderItemId, Long sellerId, Long amount) {
+        return create(PayoutEventType.SALE_FEE, orderItemId, sellerId, amount);
+    }
+
+    public static PayoutCandidateItem sellerAmount(Long orderItemId, Long sellerId, Long amount) {
+        return create(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount);
+    }
+
+    public static PayoutCandidateItem saleShippingFee(Long orderItemId, Long sellerId, Long amount) {
+        return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount);
     }
 }
