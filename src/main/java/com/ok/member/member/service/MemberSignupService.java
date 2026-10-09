@@ -53,7 +53,7 @@ public class MemberSignupService {
      */
     private Member save(Member member) {
         try {
-            return memberRepository.save(member);
+            return memberRepository.saveAndFlush(member);
         } catch (DataIntegrityViolationException e) {
             throw memberDuplicateValidator.toDuplicateException(e);
         }
