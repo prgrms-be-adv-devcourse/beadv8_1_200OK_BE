@@ -5,8 +5,7 @@ CREATE TABLE market_member (
                                created_at  DATETIME(6) NOT NULL,
                                updated_at  DATETIME(6) NOT NULL,
                                deleted_at  DATETIME(6),
-                               PRIMARY KEY (id),
-                               UNIQUE KEY uk_cart_member (member_id)
+                               PRIMARY KEY (id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 -- 장바구니 (회원당 1개)
@@ -16,7 +15,8 @@ CREATE TABLE cart (
                       created_at DATETIME(6) NOT NULL,
                       updated_at DATETIME(6) NOT NULL,
                       deleted_at DATETIME(6),
-                      PRIMARY KEY (id)
+                      PRIMARY KEY (id),
+                      UNIQUE KEY uk_cart_member (member_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 -- 장바구니 상품
