@@ -48,6 +48,19 @@ public record SignupRequest(
         boolean privacyAgreed
 ) {
 
+    /**
+     * 요청을 역직렬화하는 시점에 값을 정규화한다. 검증은 정규화된 값을 기준으로 수행된다.
+     * - loginId, email: 앞뒤 공백 제거 + 소문자 변환 (DB collation이 대소문자를 구분하지 않으므로 저장 값을 통일)
+     * - name, nickname: 앞뒤 공백 제거
+     * - password: 공백도 비밀번호의 일부일 수 있으므로 변환하지 않는다
+     */
+    public SignupRequest {
+        loginId = toLowerCaseTrimmed(loginId);
+        email = toLowerCaseTrimmed(email);
+        name = trim(name);
+        nickname = trim(nickname);
+    }
+
     public SignupCommand toCommand() {
         return new SignupCommand(
                 loginId,
