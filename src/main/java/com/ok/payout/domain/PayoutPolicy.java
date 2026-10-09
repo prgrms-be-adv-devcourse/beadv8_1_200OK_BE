@@ -15,7 +15,6 @@ public class PayoutPolicy {
     // multiplyExact: long 범위를 넘으면 잘못된 값 대신 ArithmeticException으로 즉시 실패시킨다.
     // 판매 금액이 약 3경 원을 넘어야 발생하므로 현실적으로 일어나지 않아 별도 상한 검증은 두지 않는다.
     public static long calculateSaleFee(long saleAmount) {
-
         return Math.multiplyExact(saleAmount, SALE_FEE_RATE_BP) / BASIS_POINT_SCALE;
     }
 }

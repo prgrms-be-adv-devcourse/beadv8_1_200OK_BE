@@ -25,13 +25,14 @@ public class PayoutCandidateService {
 
     public void createFromPurchaseConfirmed(OrderProductConfirmedEvent event) {
         validate(event);
+        // 같은 이벤트가 이미 처리됐으면 무시한다 (재발행·재시작 시 멱등).
+        // 동시에 두 번 처리되는 드문 경우는 DB 유니크 제약이 중복 저장을 막고, 실패한 쪽은 재처리 시 이 확인에서 무시되어 정리된다.
         if (repository.existsByOrderItemIdAndEventTypeIn(event.orderItemId(), PayoutEventType.PURCHASE_CONFIRMED_TYPES)) {
-            log.info("{}: 이미 처리된 구매확정 이벤트, 무시. orderItemId={}",
-                    PayoutErrorCode.PAYOUT_CANDIDATE_ALREADY_EXISTS.name(), event.orderItemId());
+            log.info("이미 처리된 구매확정 이벤트, 무시. orderItemId={}", event.orderItemId());
             return;
         }
         long saleFee = PayoutPolicy.calculateSaleFee(event.totalItemPrice());
-        long sellerAmount =event.totalItemPrice() - saleFee;
+        long sellerAmount = event.totalItemPrice() - saleFee;
         long shippingPrice = event.shippingPrice();
 
         List<PayoutCandidateItem> items = new ArrayList<>();

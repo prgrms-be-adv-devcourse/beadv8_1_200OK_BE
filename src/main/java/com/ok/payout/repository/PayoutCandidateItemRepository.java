@@ -14,8 +14,6 @@ public interface PayoutCandidateItemRepository extends Repository<PayoutCandidat
 
     PayoutCandidateItem save(PayoutCandidateItem item);
 
-    List<PayoutCandidateItem> findAll();
-
     Optional<PayoutCandidateItem> findById(Long id);
 
     List<PayoutCandidateItem> findAllByOrderItemId(Long orderItemId);
