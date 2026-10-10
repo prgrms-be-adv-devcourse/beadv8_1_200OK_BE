@@ -19,26 +19,27 @@ public class PayoutQueryRepository {
 
     private final JPAQueryFactory queryFactory;
 
-    // from, to 기간 미정산 후보가 있는 판매자 ID를 먼저 들어온 순으로 limit명 조회. from이 null이면 처음실행이니 전부다
+    // [from, to) 기간 미정산 후보가 있는 판매자 ID를 가장 먼저 들어온 후보 순으로 limit명 조회 (from이 null이면 하한 없음)
     public List<Long> findUnsettledSellerIds(LocalDateTime from, LocalDateTime to, int limit) {
         return queryFactory
-                .select(payoutCandidateItem.sellerId)//판매자아이디 가져오고...
-                .from(payoutCandidateItem)// 정산후보테이블 기준
-                .where(unsettledInPeriod(from, to))// 공통 조건: 기간 + 미정산
+                .select(payoutCandidateItem.sellerId)
+                .from(payoutCandidateItem)
+                .where(unsettledInPeriod(from, to))
                 .groupBy(payoutCandidateItem.sellerId)
                 .orderBy(payoutCandidateItem.createdAt.min().asc(),
                         payoutCandidateItem.sellerId.asc())
-                .limit(limit)//상한 한번 처리 limit로 처리
+                .limit(limit)
                 .fetch();
     }
 
+    // 지정한 판매자들의 [from, to) 기간 미정산 후보 전체 조회 (대금·배송비·수수료 3종 모두)
     public List<PayoutCandidateItem> findUnsettledCandidates(List<Long> sellerIds, LocalDateTime from, LocalDateTime to) {
         return queryFactory
                 .selectFrom(payoutCandidateItem)
                 .where(
-                        payoutCandidateItem.sellerId.in(sellerIds),// seller_id 이번 회차 판매자 n명의 후보만 findUnsettledSellerIds 에서 리미트
-                        unsettledInPeriod(from, to)) // 공통 조건: 판매자 조회와 반드시 같은 조건
-                .orderBy(payoutCandidateItem.id.asc()) // ORDER BY id : 들어온 순서대로 (결과 순서 고정)
+                        payoutCandidateItem.sellerId.in(sellerIds),
+                        unsettledInPeriod(from, to)) // 판매자 조회와 반드시 같은 조건
+                .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
     }
 
@@ -48,15 +49,16 @@ public class PayoutQueryRepository {
     private BooleanBuilder unsettledInPeriod(LocalDateTime from, LocalDateTime to) {
         BooleanBuilder condition = new BooleanBuilder();
         if (from != null) {
-            condition.and(payoutCandidateItem.createdAt.goe(from));//create_at >= from 기간 범위 지정 (첫 실행이면 하한 없음)
+            condition.and(payoutCandidateItem.createdAt.goe(from));
         }
-        condition.and(payoutCandidateItem.createdAt.lt(to));//생성후 15일 지난 후보
+        condition.and(payoutCandidateItem.createdAt.lt(to));
+        // payout_item에 같은 (order_item_id, event_type)이 없으면 미정산
         condition.and(JPAExpressions.selectOne()
-                .from(payoutItem)//payoutitem에서...
+                .from(payoutItem)
                 .where(
-                        payoutItem.orderItemId.eq(payoutCandidateItem.orderItemId),//주문상품,타입으로
+                        payoutItem.orderItemId.eq(payoutCandidateItem.orderItemId),
                         payoutItem.eventType.eq(payoutCandidateItem.eventType))
-                .notExists());//주문상품번호,타입으로 없는 녀석만 = 미정산 후보
+                .notExists());
         return condition;
     }
 }

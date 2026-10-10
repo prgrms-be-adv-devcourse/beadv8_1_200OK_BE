@@ -49,7 +49,7 @@ class PayoutServiceTest {
 
     @Test
     @DisplayName("판매자 Payout 2건 + 시스템 Payout 1건이 생기고, 금액이 맞음")
-    void  createsSellerAndSystemPayouts_whenCandidatesExist() {//ai 물어봐서 이름은 그걸고하자.
+    void createsSellerAndSystemPayouts_whenCandidatesExist() {
         // Arrange
         LocalDateTime from = LocalDateTime.of(2026, 9, 21, 0, 0);
         LocalDateTime to = LocalDateTime.of(2026, 9, 25, 0, 0);
@@ -63,7 +63,7 @@ class PayoutServiceTest {
                 PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L),
                 PayoutCandidateItem.ofSaleFee(2001L, 20L, 600L)
         );
-        given(payoutQueryRepository.findUnsettledSellerIds(from, to, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(sellerIds);//가짜대본 이렇게 돌려줘라...
+        given(payoutQueryRepository.findUnsettledSellerIds(from, to, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(sellerIds);
         given(payoutQueryRepository.findUnsettledCandidates(sellerIds, from, to)).willReturn(candidates);
         // Act
         int settled = payoutService.settle(from, to, 100);
@@ -71,9 +71,9 @@ class PayoutServiceTest {
         // Assert
         assertThat(settled).isEqualTo(2);   // 정산한 판매자 수 (시스템은 판매자 수에 안 셈)
         verify(payoutRepository).saveAll(payoutsCaptor.capture()); // saveAll이 1번 불렸는지 검증 + 넘어간 리스트 꺼내기
-        assertThat(payoutsCaptor.getValue())   // List<Payout> : 저장하려던 Payout 목록
-                .extracting(Payout::getPayeeId, Payout::getAmount)  // 각 Payout에서 (수취인 ID, 금액)만 꺼냄
-                .containsExactlyInAnyOrder(        // 순서 상관없이 정확히 이 3건이어야 함 (더 많거나 적으면 실패)
+        assertThat(payoutsCaptor.getValue())
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(
                         tuple(10L, 12_700L),      // 판매자 10 : 대금 9,700 + 배송비 3,000
                         tuple(20L, 19_400L),    // 판매자 20 : 대금 19,400 (배송비 없음)
                         tuple(PayoutPolicy.SYSTEM_PAYEE_ID, 900L)  // 시스템 : 수수료 300 + 600

@@ -15,14 +15,13 @@ public class PayoutController {
 
     private final PayoutJobRunner payoutJobRunner;
 
-    // 정산 전체 수동 실행
-    //현재 테스트에서 제외 일단 범위에서 진행 예정.
+    // 정산 전체 수동 실행 (개발 중 수동 실행용. 권한·실패 응답은 이번 범위 밖, #52)
     @PostMapping("/run")
     public ResponseEntity<PayoutRunResponse> run() throws Exception {
         JobExecution execution = payoutJobRunner.run();
         return ResponseEntity.ok(new PayoutRunResponse(execution.getId(), execution.getStatus().name()));
     }
-    //todo 응답룰이 없음 임시로 사용
+    // TODO: API 작업 시 응답 DTO 위치·형식 정리
     public record PayoutRunResponse(Long executionId, String status) {
     }
 }

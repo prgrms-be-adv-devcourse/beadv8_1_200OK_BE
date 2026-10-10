@@ -18,8 +18,7 @@ public class PayoutJobRunner {
     private final Job payoutJob;
 
     // 정산 Job 1회 실행. 요청 시각을 파라미터로 넣어 매번 새 실행으로 기록되게 함
-    // 현재 기록의존성 없음. 해당 부분 문의 필요. 일단은 형만 처리
-    // TODO 의논필요. 배치 기록 관련해서.
+    // TODO(#52): 실행 기록은 현재 메모리 저장 (batch-jdbc 미적용), DB 저장 여부 논의 필요
     public JobExecution run() throws Exception {
         JobParameters params = new JobParametersBuilder()
                 .addLocalDateTime("requestedAt", LocalDateTime.now())
