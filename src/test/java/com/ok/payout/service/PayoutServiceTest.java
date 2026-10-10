@@ -29,7 +29,7 @@ import static org.mockito.Mockito.verify;
 
 
 // 단위 테스트: Spring 없이, 리포지토리는 Mockito 가짜 객체로 대체
-// DB가 필요한 검증(기간 조건, NOT EXISTS, 반복 실행)은 PayoutSettleIntegrationTest에서 확인
+// DB가 필요한 검증(기간 조건, NOT EXISTS, 반복 실행)은 PayoutSettleIntegrationTest에서 확인.
 @ExtendWith(MockitoExtension.class)
 class PayoutServiceTest {
 
