@@ -1,0 +1,29 @@
+meta {
+  name: 업로드 실패 - 잘못된 용도
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/media/:purpose
+  body: multipartForm
+  auth: none
+}
+
+params:path {
+  purpose: NOT_A_PURPOSE
+}
+
+body:multipart-form {
+  file: @file(files/sample.png)
+}
+
+assert {
+  res.status: eq 400
+  res.body.status: eq 400
+  res.body.detail: isString
+}
+
+docs {
+  MediaPurpose enum 에 없는 값을 경로에 넣으면 400 ProblemDetail 이 옵니다.
+}
