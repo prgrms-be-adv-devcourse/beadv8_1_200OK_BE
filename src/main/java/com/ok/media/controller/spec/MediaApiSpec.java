@@ -7,16 +7,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
 
 @Tag(name = "Media", description = "미디어 업로드 API")
-@RequestMapping("/api/v1/media")
 public interface MediaApiSpec {
 
 	@Operation(
@@ -30,20 +24,15 @@ public interface MediaApiSpec {
 					+ "- 응답 url 은 S3 공개 주소이며 img, video 태그에 바로 사용할 수 있습니다."
 	)
 	@ApiResponse(responseCode = "201", description = "업로드 성공")
-	@PostMapping(
-			value = "/{purpose}",
-			consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
-			produces = MediaType.APPLICATION_JSON_VALUE
-	)
 	ResponseEntity<MediaInfo> upload(
 			@Parameter(
 					description = "업로드 용도",
 					example = "PRODUCT",
 					required = true
 			)
-			@PathVariable("purpose") MediaPurpose purpose,
+			MediaPurpose purpose,
 
 			@Parameter(description = "업로드할 파일", required = true)
-			@RequestPart("file") MultipartFile file
+			MultipartFile file
 	);
 }
