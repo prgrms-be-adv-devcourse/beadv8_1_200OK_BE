@@ -14,6 +14,9 @@ spring:
     events:
       # 재시작 시 미완료 이벤트 재발행 여부 (운영은 true 고정)
       republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+  flyway:
+    # 개발 환경에서 순서 무시 허용
+    out-of-order: true
 logging:
   level:
     com.ok: DEBUG
@@ -22,3 +25,8 @@ springdoc:
     enabled: true
   swagger-ui:
     enabled: true
+
+app:
+  s3:
+    access-key: ${AWS_ACCESS_KEY_ID:}
+    secret-key: ${AWS_SECRET_ACCESS_KEY:}

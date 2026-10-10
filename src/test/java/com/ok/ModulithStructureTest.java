@@ -19,7 +19,7 @@ class ModulithStructureTest {
                 .collect(Collectors.toSet());
 
         assertThat(identifiers).containsExactlyInAnyOrder(
-                "member", "wallet", "refund", "order", "payout", "product", "delivery", "common", "config");
+                "member", "wallet", "refund", "order", "payout", "product", "delivery", "common", "config", "media");
     }
 
     @Test
