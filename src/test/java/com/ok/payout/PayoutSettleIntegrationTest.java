@@ -16,11 +16,13 @@ import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParameters;
 import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import org.assertj.core.groups.Tuple;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -60,6 +62,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    // Hibernate가 DB와 시간을 주고받는 기준 시간대 (application.yaml: hibernate.jdbc.time_zone, 기본 UTC)
+    @Value("${spring.jpa.properties.hibernate.jdbc.time_zone}")
+    private String dbTimeZone;
+
     // 이전 테스트가 중간에 실패해 남긴 데이터가 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
     void setUp() {
@@ -74,7 +80,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // ---------- settle() : 기간 조건 / 중복 방지 / limit ----------
 
     @Test
-    @DisplayName("기간 안의 후보만 정산된다: from 이전, to 이후(15일 안 지남) 후보는 제외")
+    @DisplayName("기간 안의 후보만 정산된다: from 이전, to 이후(15일 안 지남 현재 테스트에서는 9.21~9.25로 임위적조정) 후보는 제외")
     void settlesOnlyCandidatesWithinPeriod() {
         // Arrange: 판매자 10의 후보를 기간 경계 앞뒤로 넣음
         insertSaleAmount(10L, 1_000L, FROM.minusSeconds(1));   // from 직전 → 제외 (이미 지난 범위)
@@ -170,7 +176,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @DisplayName("판매자가 한 번 처리 수(100명)보다 많아도 반복해서 전원 정산되고 Job이 COMPLETED")
     void job_settlesAllSellers_overMultipleIterations() throws Exception {
         // Arrange: 판매자 150명, 각 1건씩 (생성 20일 전 → 15일 지남). 첫 실행이라 from = null
-        int sellerCount = LIMIT + 50;
+        int sellerCount = LIMIT + 50;//150명
         LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
         for (long sellerId = 1_001L; sellerId < 1_001L + sellerCount; sellerId++) {   // 판매자 ID 1(SYSTEM_PAYEE_ID)은 피함
             long orderItemId = nextOrderItemId();
@@ -225,10 +231,20 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 정산 후보를 원하는 created_at으로 직접 저장
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                  LocalDateTime createdAt) {
+        LocalDateTime dbCreatedAt = toDbTime(createdAt);
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items (event_type, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, createdAt, createdAt);
+                eventType.name(), orderItemId, sellerId, amount, dbCreatedAt, dbCreatedAt);
+    }
+
+    // Hibernate는 LocalDateTime을 DB에 보낼 때 JVM 시간대 → hibernate.jdbc.time_zone(UTC)으로 변환한다
+    // jdbcTemplate은 이 변환을 거치지 않으므로, 직접 넣을 때도 같은 기준으로 바꿔야 QueryDSL 조회와 비교가 맞는다
+    // (안 바꾸면 한국 PC에서 9시간 차이가 나서 기간 경계 테스트가 실패함)
+    private LocalDateTime toDbTime(LocalDateTime jvmTime) {
+        return jvmTime.atZone(ZoneId.systemDefault())        // 이 PC(JVM) 시간대 기준 시각으로 보고
+                .withZoneSameInstant(ZoneId.of(dbTimeZone))  // 같은 순간을 DB 기준 시간대로 바꾼 뒤
+                .toLocalDateTime();                          // 시간대 정보를 떼서 저장용 값으로
     }
 
     private long nextOrderItemId() {
