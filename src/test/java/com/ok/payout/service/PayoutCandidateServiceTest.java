@@ -44,7 +44,7 @@ class PayoutCandidateServiceTest {
     private ArgumentCaptor<List<PayoutCandidateItem>> itemsCaptor;
 
     @Test
-    @DisplayName("배송비가 있으면 대금, 수수료, 배송비 3건을 저장한다")
+    @DisplayName("배송비가 있으면 대금, 수수료, 배송비 3건을 저장한다.")
     void savesThreeCandidates_whenShippingFeeExists() {
         // Arrange
         OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
