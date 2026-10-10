@@ -45,7 +45,7 @@ public class PayoutQueryRepository {
                 .where(
                         payoutCandidateItem.sellerId.in(sellerIds),// seller_id 이번 회차 판매자 n명의 후보만 findUnsettledSellerIds 에서 리미트
                         from == null ? null : payoutCandidateItem.createdAt.goe(from), // created_at >= from : 하한 (판매자 조회와 같은 범위여야 함)
-                        payoutCandidateItem.createdAt.lt(to),
+                        payoutCandidateItem.createdAt.lt(to),//to가 하향선 마지막 범위
                         JPAExpressions.selectOne()
                                 .from(payoutItem)
                                 .where(

@@ -19,7 +19,7 @@ public class PayoutPolicy {
     public static final int SETTLEMENT_WAITING_DAYS = 15;
 
     // 조회 하한 여유 일수 (누락 대비)
-    public static final int SETTLEMENT_LOOKBACK_MARGIN_DAYS = 1;
+    public static final int SETTLEMENT_LOOKBACK_MARGIN_DAYS = 3;
 
     private PayoutPolicy() {
     }

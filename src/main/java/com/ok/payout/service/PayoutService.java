@@ -41,6 +41,8 @@ public class PayoutService {
                 .atStartOfDay();
     }
 
+    //성공을 전제로 한 것.
+    //만일 실패가 발생되었을 때 방어체계가 필요하다.
     public int settle(LocalDateTime from, LocalDateTime to, int limit) {
         // 이번 회차에 정산할 판매자 ID 조회
         List<Long> sellerIds = payoutQueryRepository.findUnsettledSellerIds(from, to, limit);
