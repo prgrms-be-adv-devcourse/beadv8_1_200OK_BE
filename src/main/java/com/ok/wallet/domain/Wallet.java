@@ -19,7 +19,7 @@ public class Wallet extends BaseIdAndTime {
     private WalletType type;
 
     @Column(name = "balance", nullable = false)
-    private Long balance;
+    private long balance;
 
     private Wallet(Long memberId, WalletType type) {
         if (memberId == null) {
