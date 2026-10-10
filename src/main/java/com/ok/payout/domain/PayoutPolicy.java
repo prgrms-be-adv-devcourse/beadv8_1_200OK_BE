@@ -11,6 +11,16 @@ public class PayoutPolicy {
     // 시스템(플랫폼) 수취인 ID: 판매 수수료를 받는 계정 의논필요
     public static final long SYSTEM_PAYEE_ID = 1L;   // TODO: 실제 시스템 계정 ID로 확정
 
+
+    // 배치 정산 시 한번에 계산하는 사람 수
+    public static final int PAYOUT_BATCH_PAYEE_SIZE = 100;   // TODO: 해당 정산 시 한번에 계산하는 사람 수는 문의 필요.
+
+    // 정산 후보 생성(구매확정) 후 정산 대상이 되기까지 대기 일수
+    public static final int SETTLEMENT_WAITING_DAYS = 15;
+
+    // 조회 하한 여유 일수 (누락 대비)
+    public static final int SETTLEMENT_LOOKBACK_MARGIN_DAYS = 1;
+
     private PayoutPolicy() {
     }
 
