@@ -11,7 +11,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 
-import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -22,12 +22,12 @@ class WalletRepositoryTest {
 
     @Test
     void 지갑_중복_생성_실패_테스트() {
-        // Arrange
+        // Given
         Long memberId = 1L;
         WalletType type = WalletType.BUYER;
         walletRepository.saveAndFlush(Wallet.create(memberId, type));
 
-        // Act & Assert
+        // When & Then
         assertThatThrownBy(() -> walletRepository.saveAndFlush(Wallet.create(memberId, type)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }

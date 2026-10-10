@@ -14,7 +14,7 @@ import org.springframework.modulith.test.Scenario;
 
 import java.time.Duration;
 
-import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 @ApplicationModuleTest
