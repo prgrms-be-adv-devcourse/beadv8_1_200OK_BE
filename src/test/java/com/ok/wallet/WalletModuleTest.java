@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.modulith.events.CompletedEventPublications;
+import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 
@@ -70,7 +71,7 @@ class WalletModuleTest {
     // 해당 회원에 대한 MemberRegisteredEvent 중 리스너 처리가 완료된 건수
     private long countCompletedEvents(Long memberId) {
         return completedEventPublications.findAll().stream()
-                .map(publication -> publication.getEvent())
+                .map(EventPublication::getEvent)
                 .filter(e -> e instanceof MemberRegisteredEvent registered
                         && registered.memberId().equals(memberId))
                 .count();
