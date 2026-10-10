@@ -3,11 +3,14 @@ package com.ok.payout.controller;
 import com.ok.payout.service.PayoutJobRunner;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// 개발 중 수동 실행용 임시 API. 인증 도입 전까지 prod에서는 등록하지 않음 (prod 정산은 스케줄러로만 실행)
+@Profile("!prod")
 @RestController
 @RequestMapping("/api/v1/payout")
 @RequiredArgsConstructor

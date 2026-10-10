@@ -80,7 +80,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // ---------- settle() : 기간 조건 / 중복 방지 / limit ----------
 
     @Test
-    @DisplayName("기간 안의 후보만 정산된다: from 이전, to 이후(15일 안 지남 현재 테스트에서는 9.21~9.25로 임위적조정) 후보는 제외")
+    @DisplayName("기간 안의 후보만 정산된다: from 이전, to 이후(15일 안 지남, 테스트에서는 기간을 9/21~9/25로 임의 지정) 후보는 제외")
     void settlesOnlyCandidatesWithinPeriod() {
         // Arrange: 판매자 10의 후보를 기간 경계 앞뒤로 넣음
         insertSaleAmount(10L, 1_000L, FROM.minusSeconds(1));   // from 직전 → 제외 (이미 지난 범위)

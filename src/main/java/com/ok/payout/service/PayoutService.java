@@ -1,7 +1,9 @@
 package com.ok.payout.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutErrorCode;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutRepository;
@@ -51,6 +53,10 @@ public class PayoutService {
         }
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUnsettledCandidates(sellerIds, from, to);
+        // 판매자는 뽑혔는데 후보가 0건 = 두 조회 조건 불일치(버그). 그대로 두면 같은 판매자가 계속 뽑혀 무한 반복되므로 실패시킴
+        if (candidates.isEmpty()) {
+            throw new RestApiException(PayoutErrorCode.UNSETTLED_CANDIDATES_NOT_FOUND);
+        }
 
         // 수취인별로 묶어서 Payout 생성 (payeeId(): 수수료 → 시스템, 대금·배송비 → 판매자)
         Map<Long, List<PayoutCandidateItem>> candidatesByPayee = new LinkedHashMap<>();

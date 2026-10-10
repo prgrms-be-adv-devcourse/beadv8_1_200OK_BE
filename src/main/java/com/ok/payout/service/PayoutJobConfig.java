@@ -25,15 +25,12 @@ public class PayoutJobConfig {
 
     private final PayoutService payoutService;
 
-
-
     @Bean
     public Job payoutJob(JobRepository jobRepository, Step payoutStep) {
         return new JobBuilder("payoutJob", jobRepository)
                 .start(payoutStep)
                 .build();
     }
-
 
     // tasklet 1회 호출 = 1 트랜잭션. 부하를 고려해 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 단위로 끊어 반복 처리
     // 예외 시 해당 회차만 롤백되고 Job은 FAILED로 멈춤 (이전 회차는 커밋 유지, 실패 처리는 #52)
