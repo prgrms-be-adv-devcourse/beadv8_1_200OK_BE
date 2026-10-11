@@ -29,3 +29,7 @@ spring:
 app:
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
+jwt:
+  issuer: pgg
+  secret: ${JWT_SECRET}
+  access-token-expiration: 30m
