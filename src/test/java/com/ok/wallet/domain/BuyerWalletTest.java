@@ -12,11 +12,11 @@ class BuyerWalletTest {
         Long memberId = 1L;
 
         // When
-        BuyerWallet wallet = BuyerWallet.create(memberId);
+        BuyerWallet buyerWallet = BuyerWallet.create(memberId);
 
         // Then
-        assertThat(wallet.getMemberId()).isEqualTo(memberId);
-        assertThat(wallet.getBalance()).isZero();
+        assertThat(buyerWallet.getMemberId()).isEqualTo(memberId);
+        assertThat(buyerWallet.getBalance()).isZero();
     }
 
     @Test

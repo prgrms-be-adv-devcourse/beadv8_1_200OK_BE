@@ -61,7 +61,7 @@ class BuyerWalletServiceTest {
         Long memberId = 1L;
         given(buyerWalletRepository.existsByMemberId(memberId)).willReturn(false);
         given(buyerWalletRepository.save(any(BuyerWallet.class)))
-                .willThrow(new DataIntegrityViolationException("duplicate wallet"));
+                .willThrow(new DataIntegrityViolationException("duplicate buyer wallet"));
 
         // When & Then
         assertThatThrownBy(() -> buyerWalletService.create(memberId))
