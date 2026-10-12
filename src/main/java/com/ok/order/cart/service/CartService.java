@@ -57,6 +57,11 @@ public class CartService {
         return CartResponse.of(cart, items);
     }
 
+    // 담을 수 있는 상품 옵션인지 검증
+    private void validateAddable(Long memberId, Long productOptionId) {
+        // TODO: 상품 모듈의 API를 사용하여 검증 로직을 구현
+    }
+
     // 장바구니 조회
     private Cart getCart(Long memberId) {
         return cartRepository.findByMemberId(memberId)
