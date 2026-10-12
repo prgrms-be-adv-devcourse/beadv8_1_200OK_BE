@@ -25,7 +25,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
  * }</pre>
  * 각 모듈의 기존 엔티티 마이그레이션 완료 후 제거 예정.
  */
-@Deprecated(forRemoval = true)
+@Deprecated
 @MappedSuperclass
 @EntityListeners(AuditingEntityListener.class)
 @Getter
