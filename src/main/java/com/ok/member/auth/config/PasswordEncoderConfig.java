@@ -1,4 +1,4 @@
-package com.ok.member.auth;
+package com.ok.member.auth.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

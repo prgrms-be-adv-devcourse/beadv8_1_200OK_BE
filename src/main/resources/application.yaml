@@ -36,3 +36,7 @@ app:
   s3:
     region: ${AWS_REGION}
     bucket: ${S3_BUCKET}
+jwt:
+  issuer: paldo-gotgan
+  secret: ${JWT_SECRET}
+  access-token-expiration: 30m

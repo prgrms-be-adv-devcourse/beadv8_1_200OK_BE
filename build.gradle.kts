@@ -42,6 +42,7 @@ dependencies {
 
     // ---------- Security ----------
     implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
 
     // ---------- Database (JPA, Querydsl, MySQL) ----------
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
