@@ -11,6 +11,7 @@ import com.ok.payout.repository.PayoutRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -49,6 +50,8 @@ public class PayoutService {
 
     // [from, to) 기간 미정산 후보를 판매자 limit명 단위로 정산하고, 정산한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
     // 성공 전제로 구현함. 실패 처리는 #52
+    // tasklet에서 호출되면 스텝 트랜잭션에 참여, 직접 호출돼도 정산 저장·이벤트 발행이 한 트랜잭션으로 묶이도록 명시
+    @Transactional
     public int settle(LocalDateTime from, LocalDateTime to, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUnsettledSellerIds(from, to, limit);
         if (sellerIds.isEmpty()) {

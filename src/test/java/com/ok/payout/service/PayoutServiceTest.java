@@ -52,6 +52,10 @@ class PayoutServiceTest {
     @Captor
     private ArgumentCaptor<List<Payout>> payoutsCaptor;
 
+    // publishEvent에 넘어간 이벤트를 붙잡아서 검증할 때 사용
+    @Captor
+    private ArgumentCaptor<SellerPayoutCreatedEvent> eventCaptor;
+
 
     @Test
     @DisplayName("판매자 Payout 2건 + 시스템 Payout 1건이 생기고, 금액이 맞음")
@@ -85,7 +89,12 @@ class PayoutServiceTest {
                         tuple(null, true, 900L)       // 시스템 : 수수료 300 + 600 (회원 수취인 없음)
                 );
         // 이벤트는 판매자 정산 2건만 발행 (시스템 몫은 정산에 기록)
-        verify(eventPublisher, times(2)).publishEvent(any(SellerPayoutCreatedEvent.class));
+        verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues())   // payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 검증 안 함
+                .extracting(SellerPayoutCreatedEvent::payeeId, SellerPayoutCreatedEvent::amount)
+                .containsExactlyInAnyOrder(
+                        tuple(10L, 12_700L),
+                        tuple(20L, 19_400L));
     }
 
     @Test
