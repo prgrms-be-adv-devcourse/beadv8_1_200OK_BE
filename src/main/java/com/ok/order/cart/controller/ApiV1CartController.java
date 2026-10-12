@@ -13,10 +13,11 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/cart")
 @RequiredArgsConstructor
-public class ApiV1CartController {
+public class ApiV1CartController implements CartControllerDocs{
 
     private final CartService cartService;
 
+    @Override
     @PostMapping("/items")
     public ResponseEntity<AddCartItemResponse> addItem(
             @RequestHeader("X-Member-Id") Long memberId, // TODO 인증 적용 후 로그인 회원으로 교체
@@ -27,6 +28,7 @@ public class ApiV1CartController {
         return ResponseEntity.status(HttpStatus.CREATED).body(new AddCartItemResponse(cartItemId));
     }
 
+    @Override
     @GetMapping
     public ResponseEntity<CartResponse> getMyCart(
             @RequestHeader("X-Member-Id") Long memberId // TODO 인증 적용 후 로그인 회원으로 교체
