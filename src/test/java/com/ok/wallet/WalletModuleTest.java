@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ApplicationModuleTest
 @Import({JpaConfig.class, TestcontainersConfiguration.class})
-class BuyerWalletModuleTest {
+class WalletModuleTest {
     @Autowired
     BuyerWalletRepository buyerWalletRepository;
 
