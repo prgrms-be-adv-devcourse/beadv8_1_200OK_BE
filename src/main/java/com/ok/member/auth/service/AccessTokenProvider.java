@@ -1,6 +1,7 @@
 package com.ok.member.auth.service;
 
 import com.ok.member.MemberRole;
+import com.ok.member.auth.config.JwtConfig;
 import com.ok.member.auth.config.JwtProperties;
 import com.ok.member.auth.domain.AccessToken;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Objects;
+import java.util.UUID;
 
 /**
  * 회원 정보로 Access Token을 발급한다.
@@ -37,7 +40,19 @@ public class AccessTokenProvider {
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
 
+    /**
+     * Access Token을 발급한다.
+     *
+     * @param memberId 회원 id (sub claim)
+     * @param role     회원 권한 (role claim)
+     * @return 토큰 문자열과 만료 시각
+     * @throws NullPointerException memberId 또는 role이 null인 경우.
+     *                              null을 그대로 두면 subject가 문자열 "null"인 잘못된 토큰이 발급되므로 즉시 실패시킨다.
+     */
     public AccessToken issue(Long memberId, MemberRole role) {
+        Objects.requireNonNull(memberId, "memberId는 null일 수 없습니다.");
+        Objects.requireNonNull(role, "role은 null일 수 없습니다.");
+
         // JWT의 시각 claim(iat, exp)은 초 단위로 저장된다.
         // 나노초까지 포함된 Instant를 그대로 쓰면, 반환하는 expiresAt과 토큰 안의 exp가 1초 미만으로 달라진다.
         // 처음부터 초 단위로 잘라서 두 값을 정확히 일치시킨다.
@@ -47,13 +62,14 @@ public class AccessTokenProvider {
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(jwtProperties.issuer())
                 .subject(String.valueOf(memberId))
+                .id(UUID.randomUUID().toString())
                 .issuedAt(issuedAt)
                 .expiresAt(expiresAt)
                 .claim(ROLE_CLAIM, role.name())
                 .build();
 
-        // 대칭키 인코더는 알고리즘을 스스로 고르지 못하므로 HS256을 명시한다. (JwtConfig 참고)
-        JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
+        // 대칭키 인코더는 알고리즘을 스스로 고르지 못하므로 명시한다. 검증 쪽과 같은 상수를 사용한다. (JwtConfig 참고)
+        JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM).build();
 
         String tokenValue = jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
         return new AccessToken(tokenValue, expiresAt);

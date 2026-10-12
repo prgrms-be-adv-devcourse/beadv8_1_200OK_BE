@@ -17,4 +17,5 @@ app:
     region: ap-northeast-2
     bucket: test-mock-bucket
 jwt:
+  # 테스트 전용 키. 개발·운영 환경의 JWT_SECRET으로 절대 사용하지 않는다.
   secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl
