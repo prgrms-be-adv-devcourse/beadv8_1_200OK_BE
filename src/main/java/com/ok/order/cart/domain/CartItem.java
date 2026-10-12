@@ -1,7 +1,7 @@
 package com.ok.order.cart.domain;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.common.jpa.entity.BaseIdAndTime;
+import com.ok.common.jpa.entity.BaseTime;
 import com.ok.order.cart.exception.CartErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -14,7 +14,11 @@ import java.time.LocalDateTime;
 @Table(name = "cart_item")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class CartItem extends BaseIdAndTime {
+public class CartItem extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cart_id", nullable = false)
