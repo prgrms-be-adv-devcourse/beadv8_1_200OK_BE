@@ -60,6 +60,9 @@ dependencies {
     // ---------- AWS ----------
     implementation("software.amazon.awssdk:s3")
 
+    // ---------- Image ----------
+    implementation("net.coobird:thumbnailator:0.4.21")
+
     // ---------- 개발 편의 ----------
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")

@@ -74,3 +74,7 @@ $RECYCLE.BIN/
 
 ### jenv ###
 .java-version
+
+# 개인 환경 / 개인 메모
+.mcp.json
+docs/private/
