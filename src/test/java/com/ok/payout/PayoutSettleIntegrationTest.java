@@ -93,7 +93,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
         // Assert: 포함된 2,000 + 4,000만 합산
         assertThat(settled).isEqualTo(1);
-        assertThat(findPayouts()).containsExactly(tuple(10L, 6_000L));
+        assertThat(findPayouts()).containsExactly(tuple(10L, false, 6_000L));
     }
 
     @Test
@@ -107,7 +107,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         payoutService.settle(null, TO, LIMIT);
 
         // Assert
-        assertThat(findPayouts()).containsExactly(tuple(10L, 3_000L));
+        assertThat(findPayouts()).containsExactly(tuple(10L, false, 3_000L));
     }
 
     @Test
@@ -129,8 +129,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(countRows("payout")).isEqualTo(2);              // 판매자 10 + 시스템, 늘지 않음
         assertThat(countRows("payout_item")).isEqualTo(3);         // 후보 3건 = 정산 항목 3건
         assertThat(findPayouts()).containsExactlyInAnyOrder(
-                tuple(10L, 12_700L),                               // 대금 + 배송비
-                tuple(PayoutPolicy.SYSTEM_PAYEE_ID, 300L));        // 수수료
+                tuple(10L, false, 12_700L),                        // 대금 + 배송비
+                tuple(null, true, 300L));                          // 수수료 (시스템 몫 → 수취인 없음)
     }
 
     @Test
@@ -145,11 +145,11 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutService.settle(FROM, TO, 2)).isEqualTo(2);   // 1회차: 2명
         assertThat(payoutService.settle(FROM, TO, 2)).isEqualTo(1);   // 2회차: 남은 1명
         assertThat(payoutService.settle(FROM, TO, 2)).isZero();       // 3회차: 없음 → 종료 신호
-        // 3회에 걸쳐 판매자 3명 모두 정산됨 (수취인 ID, 금액). 대금만 넣었으므로 시스템(수수료) 정산은 없음
+        // 3회에 걸쳐 판매자 3명 모두 정산됨 (수취인 ID, 시스템 몫 여부, 금액). 대금만 넣었으므로 시스템(수수료) 정산은 없음
         assertThat(findPayouts()).containsExactlyInAnyOrder(
-                tuple(10L, 1_000L),
-                tuple(20L, 1_000L),
-                tuple(30L, 1_000L));
+                tuple(10L, false, 1_000L),
+                tuple(20L, false, 1_000L),
+                tuple(30L, false, 1_000L));
     }
 
     // ---------- PayoutQueryRepository ----------
@@ -178,7 +178,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // Arrange: 판매자 150명, 각 1건씩 (생성 20일 전 → 15일 지남). 첫 실행이라 from = null
         int sellerCount = LIMIT + 50;//150명
         LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
-        for (long sellerId = 1_001L; sellerId < 1_001L + sellerCount; sellerId++) {   // 판매자 ID 1(SYSTEM_PAYEE_ID)은 피함
+        for (long sellerId = 1_001L; sellerId < 1_001L + sellerCount; sellerId++) {
             long orderItemId = nextOrderItemId();
             insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, 9_700L, createdAt);
             insertCandidate(PayoutEventType.SALE_FEE, orderItemId, sellerId, 300L, createdAt);
@@ -189,8 +189,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
         // Assert
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
-        assertThat(countPayouts("payee_id <> ?", PayoutPolicy.SYSTEM_PAYEE_ID)).isEqualTo(sellerCount); // 판매자 150명 전원
-        assertThat(countPayouts("payee_id = ?", PayoutPolicy.SYSTEM_PAYEE_ID)).isEqualTo(2);            // 100명 + 50명 → 회차마다 시스템 1건
+        assertThat(countPayouts("is_system = ?", false)).isEqualTo(sellerCount); // 판매자 150명 전원
+        assertThat(countPayouts("is_system = ?", true)).isEqualTo(2);            // 100명 + 50명 → 회차마다 시스템 1건
         assertThat(execution.getStepExecutions())                                                        // 실행 기록의 write count = 정산한 판매자 수
                 .singleElement()
                 .satisfies(step -> assertThat(step.getWriteCount()).isEqualTo(sellerCount));
@@ -219,6 +219,19 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // Assert: 실패하고, 정산은 하나도 만들어지지 않음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.FAILED);
         assertThat(countRows("payout")).isZero();
+    }
+
+    @Test
+    @DisplayName("Job 실행 기록이 DB(BATCH_JOB_EXECUTION)에 저장된다 (batch-jdbc 적용 확인)")
+    void job_savesExecutionToDb() throws Exception {
+        // Act: 정산 대상 없이 실행 (대상 유무와 상관없이 실행 기록은 남아야 함)
+        JobExecution execution = payoutJobRunner.run();
+
+        // Assert: 반환된 실행 ID로 메타 테이블을 직접 조회 → 메모리 저장이면 행이 없어 실패
+        String status = jdbcTemplate.queryForObject(
+                "SELECT STATUS FROM BATCH_JOB_EXECUTION WHERE JOB_EXECUTION_ID = ?",
+                String.class, execution.getId());
+        assertThat(status).isEqualTo(BatchStatus.COMPLETED.name());
     }
 
     // ---------- 도우미 ----------
@@ -251,13 +264,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
     }
 
-    // 생성된 정산 목록 (수취인 ID, 금액)
+    // 생성된 정산 목록 (수취인 ID, 시스템 몫 여부, 금액). 시스템 몫은 수취인 ID가 null
     // jdbcTemplate.query(SQL, RowMapper): 조회 결과를 한 행씩 RowMapper에 넘겨 원하는 객체로 바꾼다
-    // rs = 현재 행, rowNum = 행 번호(여기선 안 씀). 행마다 tuple(수취인 ID, 금액)을 만들어 List로 반환
-    // → assertThat(findPayouts()).containsExactly(tuple(10L, 6_000L)) 처럼 바로 비교 가능
+    // rs = 현재 행, rowNum = 행 번호(여기선 안 씀). 행마다 tuple(수취인 ID, 시스템 몫 여부, 금액)을 만들어 List로 반환
+    // → assertThat(findPayouts()).containsExactly(tuple(10L, false, 6_000L)) 처럼 바로 비교 가능
+    // payee_id는 getObject로 읽음 (getLong은 NULL을 0으로 바꿔버려 시스템 몫과 구분이 안 됨)
     private List<Tuple> findPayouts() {
-        return jdbcTemplate.query("SELECT payee_id, amount FROM payout",
-                (rs, rowNum) -> tuple(rs.getLong("payee_id"), rs.getLong("amount")));
+        return jdbcTemplate.query("SELECT payee_id, is_system, amount FROM payout",
+                (rs, rowNum) -> tuple(
+                        rs.getObject("payee_id", Long.class),
+                        rs.getBoolean("is_system"),
+                        rs.getLong("amount")));
     }
 
     private int countPayouts(String condition, Object arg) {

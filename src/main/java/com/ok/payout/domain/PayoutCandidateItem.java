@@ -49,8 +49,8 @@ public class PayoutCandidateItem extends BaseIdAndTime {
         return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount);
     }
 
-    // 수취인: SALE_FEE는 시스템, 나머지는 판매자. 이벤트 타입이 추가되면 함께 수정
-    public Long payeeId() {
-        return eventType == PayoutEventType.SALE_FEE ? PayoutPolicy.SYSTEM_PAYEE_ID : sellerId;
+    // 시스템(플랫폼) 몫 여부: SALE_FEE는 시스템, 나머지는 판매자. 이벤트 타입이 추가되면 함께 수정
+    public boolean isSystemShare() {
+        return eventType == PayoutEventType.SALE_FEE;
     }
 }

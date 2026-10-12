@@ -8,9 +8,6 @@ public class PayoutPolicy {
     // 판매 수수료율 3.00%
     private static final long SALE_FEE_RATE_BP = 300L;
 
-    // 시스템(플랫폼) 수취인 ID: 판매 수수료를 받는 계정
-    public static final long SYSTEM_PAYEE_ID = 1L;   // TODO: 실제 시스템 계정 ID로 확정 (회의 안건)
-
     // 배치 정산 시 한 번에 처리하는 판매자 수
     public static final int PAYOUT_BATCH_PAYEE_SIZE = 100;   // TODO: 정책 값 확정 (#52)
 
