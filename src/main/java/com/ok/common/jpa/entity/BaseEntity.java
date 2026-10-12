@@ -6,7 +6,6 @@ import java.time.LocalDateTime;
 
 @MappedSuperclass
 public abstract class BaseEntity {
-    public abstract Long getId();
     public abstract LocalDateTime getCreatedAt();
     public abstract LocalDateTime getUpdatedAt();
 }
