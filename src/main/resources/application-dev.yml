@@ -6,6 +6,9 @@ spring:
     job:
       # 앱 시작 시 Job 자동 실행 여부 (운영은 true 고정)
       enabled: ${BATCH_JOB_ENABLED:false}
+    jdbc:
+      # 배치 메타데이터 테이블은 Flyway 마이그레이션으로 관리하므로 자동 생성 안 함
+      initialize-schema: never
   jpa:
     hibernate:
       # 기본은 스키마 검증, .env의 JPA_DDL_AUTO 로 변경 가능 (운영은 validate 고정)

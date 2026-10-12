@@ -5,6 +5,8 @@ spring:
   batch:
     job:
       enabled: true
+    jdbc:
+      initialize-schema: never
   jpa:
     hibernate:
       ddl-auto: validate
