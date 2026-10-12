@@ -38,7 +38,7 @@ dependencies {
     runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
 
     // ---------- Batch ----------
-    implementation("org.springframework.boot:spring-boot-starter-batch")
+    implementation("org.springframework.boot:spring-boot-starter-batch-jdbc") // 배치 실행 기록 DB 저장(BATCH_* 테이블)
 
     // ---------- Security ----------
     implementation("org.springframework.boot:spring-boot-starter-security")
