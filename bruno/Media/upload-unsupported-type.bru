@@ -1,0 +1,28 @@
+meta {
+  name: 업로드 실패 - 지원하지 않는 형식
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/media/:purpose
+  body: multipartForm
+  auth: none
+}
+
+params:path {
+  purpose: PRODUCT
+}
+
+body:multipart-form {
+  file: @file(files/sample.txt)
+}
+
+assert {
+  res.status: eq 400
+  res.body.detail: contains 지원하지 않는
+}
+
+docs {
+  text/plain 파일을 올리면 400 "해당 파일은 지원하지 않는 형식입니다." 가 옵니다.
+}

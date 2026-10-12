@@ -14,6 +14,10 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 30MB
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/paldogotgan?serverTimezone=${APP_TIME_ZONE:UTC}&characterEncoding=UTF-8}
     username: ${DB_USERNAME:myuser}
@@ -29,3 +33,6 @@ spring:
 app:
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION}
+    bucket: ${S3_BUCKET}
