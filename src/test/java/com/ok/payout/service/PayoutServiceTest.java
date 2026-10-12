@@ -1,5 +1,6 @@
 package com.ok.payout.service;
 
+import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutPolicy;
@@ -13,6 +14,7 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -25,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 
@@ -39,12 +42,19 @@ class PayoutServiceTest {
     @Mock
     private PayoutRepository payoutRepository;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     @InjectMocks
     private PayoutService payoutService;
 
     // saveAll에 넘어간 Payout 목록을 붙잡아서 검증할 때 사용
     @Captor
     private ArgumentCaptor<List<Payout>> payoutsCaptor;
+
+    // publishEvent에 넘어간 이벤트를 붙잡아서 검증할 때 사용
+    @Captor
+    private ArgumentCaptor<SellerPayoutCreatedEvent> eventCaptor;
 
 
     @Test
@@ -72,12 +82,19 @@ class PayoutServiceTest {
         assertThat(settled).isEqualTo(2);   // 정산한 판매자 수 (시스템은 판매자 수에 안 셈)
         verify(payoutRepository).saveAll(payoutsCaptor.capture()); // saveAll이 1번 불렸는지 검증 + 넘어간 리스트 꺼내기
         assertThat(payoutsCaptor.getValue())
-                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .extracting(Payout::getPayeeId, Payout::isSystem, Payout::getAmount)
                 .containsExactlyInAnyOrder(
-                        tuple(10L, 12_700L),      // 판매자 10 : 대금 9,700 + 배송비 3,000
-                        tuple(20L, 19_400L),    // 판매자 20 : 대금 19,400 (배송비 없음)
-                        tuple(PayoutPolicy.SYSTEM_PAYEE_ID, 900L)  // 시스템 : 수수료 300 + 600
+                        tuple(10L, false, 12_700L),   // 판매자 10 : 대금 9,700 + 배송비 3,000
+                        tuple(20L, false, 19_400L),   // 판매자 20 : 대금 19,400 (배송비 없음)
+                        tuple(null, true, 900L)       // 시스템 : 수수료 300 + 600 (회원 수취인 없음)
                 );
+        // 이벤트는 판매자 정산 2건만 발행 (시스템 몫은 정산에 기록)
+        verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues())   // payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 검증 안 함
+                .extracting(SellerPayoutCreatedEvent::payeeId, SellerPayoutCreatedEvent::amount)
+                .containsExactlyInAnyOrder(
+                        tuple(10L, 12_700L),
+                        tuple(20L, 19_400L));
     }
 
     @Test
@@ -121,7 +138,7 @@ class PayoutServiceTest {
     @DisplayName("조회 하한(from)은 마지막 정산일 − (15일 + 여유 3일) 00:00")
     void settlementFrom_isLastPayoutDateMinusWaitingAndMarginDays() {
         // Arrange: 마지막 정산이 10/09 02:00에 생성됨
-        // Payout.create()로 만든 객체는 created_at이 비어 있으므로(저장 시 Auditing이 채움) 가짜 Payout을 사용
+        // Payout.forSeller()로 만든 객체는 created_at이 비어 있으므로(저장 시 Auditing이 채움) 가짜 Payout을 사용
         Payout lastPayout = mock(Payout.class);
         given(lastPayout.getCreatedAt()).willReturn(LocalDateTime.of(2026, 10, 9, 2, 0));
         given(payoutRepository.findFirstByOrderByIdDesc()).willReturn(Optional.of(lastPayout));
