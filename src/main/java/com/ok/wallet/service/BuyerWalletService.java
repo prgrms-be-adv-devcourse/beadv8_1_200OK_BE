@@ -8,11 +8,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-public class WalletService {
+public class BuyerWalletService {
     private final BuyerWalletRepository buyerWalletRepository;
 
     @Transactional
-    public void createBuyerWallet(Long memberId) {
+    public void create(Long memberId) {
         if (buyerWalletRepository.existsByMemberId(memberId)) {
             return;
         }

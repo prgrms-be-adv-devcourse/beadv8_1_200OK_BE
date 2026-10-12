@@ -23,7 +23,7 @@ class BuyerWalletServiceTest {
     BuyerWalletRepository buyerWalletRepository;
 
     @InjectMocks
-    WalletService walletService;
+    BuyerWalletService buyerWalletService;
 
     @Test
     void 지갑이_없으면_구매자_지갑을_생성한다() {
@@ -32,7 +32,7 @@ class BuyerWalletServiceTest {
         given(buyerWalletRepository.existsByMemberId(memberId)).willReturn(false);
 
         // When
-        walletService.createBuyerWallet(memberId);
+        buyerWalletService.create(memberId);
 
         // Then
         ArgumentCaptor<BuyerWallet> captor = ArgumentCaptor.forClass(BuyerWallet.class);
@@ -49,7 +49,7 @@ class BuyerWalletServiceTest {
         given(buyerWalletRepository.existsByMemberId(memberId)).willReturn(true);
 
         // When
-        walletService.createBuyerWallet(memberId);
+        buyerWalletService.create(memberId);
 
         // Then
         then(buyerWalletRepository).should(never()).save(any(BuyerWallet.class));
@@ -64,7 +64,7 @@ class BuyerWalletServiceTest {
                 .willThrow(new DataIntegrityViolationException("duplicate wallet"));
 
         // When & Then
-        assertThatThrownBy(() -> walletService.createBuyerWallet(memberId))
+        assertThatThrownBy(() -> buyerWalletService.create(memberId))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 }
