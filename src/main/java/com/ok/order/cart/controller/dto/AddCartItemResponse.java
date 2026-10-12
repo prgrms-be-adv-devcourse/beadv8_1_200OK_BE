@@ -1,4 +1,4 @@
-package com.ok.order.controller.dto;
+package com.ok.order.cart.controller.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 

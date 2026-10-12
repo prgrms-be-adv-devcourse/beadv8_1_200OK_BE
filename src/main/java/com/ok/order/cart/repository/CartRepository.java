@@ -1,6 +1,6 @@
-package com.ok.order.repository;
+package com.ok.order.cart.repository;
 
-import com.ok.order.domain.Cart;
+import com.ok.order.cart.domain.Cart;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

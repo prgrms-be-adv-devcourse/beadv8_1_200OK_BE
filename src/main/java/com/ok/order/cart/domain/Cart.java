@@ -1,4 +1,4 @@
-package com.ok.order.domain;
+package com.ok.order.cart.domain;
 
 import com.ok.common.jpa.entity.BaseIdAndTime;
 import jakarta.persistence.Column;

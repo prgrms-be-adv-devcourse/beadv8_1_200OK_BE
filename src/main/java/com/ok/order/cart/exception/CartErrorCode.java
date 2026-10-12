@@ -1,4 +1,4 @@
-package com.ok.order.exception;
+package com.ok.order.cart.exception;
 
 import com.ok.common.exception.ErrorCode;
 import lombok.Getter;
@@ -7,10 +7,9 @@ import org.springframework.http.HttpStatus;
 
 @Getter
 @RequiredArgsConstructor
-public enum OrderErrorCode implements ErrorCode {
+public enum CartErrorCode implements ErrorCode {
 
     // 회원
-    MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "Member not found", "회원 정보를 찾을 수 없습니다."),
     MEMBER_CANNOT_PURCHASE(HttpStatus.FORBIDDEN, "Member cannot purchase", "구매할 수 없는 회원입니다."),
 
     // 상품
@@ -29,5 +28,10 @@ public enum OrderErrorCode implements ErrorCode {
     @Override
     public HttpStatus status() {
         return httpStatus;
+    }
+
+    @Override
+    public String slug() {
+        return "order/cart/" + ErrorCode.super.slug();
     }
 }

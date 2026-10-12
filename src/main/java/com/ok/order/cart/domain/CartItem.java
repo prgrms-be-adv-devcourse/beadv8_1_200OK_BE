@@ -1,8 +1,8 @@
-package com.ok.order.domain;
+package com.ok.order.cart.domain;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseIdAndTime;
-import com.ok.order.exception.OrderErrorCode;
+import com.ok.order.cart.exception.CartErrorCode;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -37,7 +37,7 @@ public class CartItem extends BaseIdAndTime {
 
     public static CartItem create(Cart cart, Long productId, Long productOptionId, int quantity) {
         if (quantity < 1) {
-            throw new RestApiException(OrderErrorCode.INVALID_QUANTITY);
+            throw new RestApiException(CartErrorCode.INVALID_QUANTITY);
         }
 
         CartItem item = new CartItem();
