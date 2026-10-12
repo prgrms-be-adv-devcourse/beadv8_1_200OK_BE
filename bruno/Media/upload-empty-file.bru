@@ -1,0 +1,28 @@
+meta {
+  name: 업로드 실패 - 빈 파일
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/media/:purpose
+  body: multipartForm
+  auth: none
+}
+
+params:path {
+  purpose: PRODUCT
+}
+
+body:multipart-form {
+  file: @file(files/empty.png)
+}
+
+assert {
+  res.status: eq 400
+  res.body.detail: contains 빈 파일
+}
+
+docs {
+  0 바이트 파일을 올리면 400 "빈 파일은 업로드할 수 없습니다." 가 옵니다.
+}
