@@ -23,7 +23,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class AccessTokenProviderTest {
 
     private static final String ISSUER = "paldo-gotgan";
-    private static final String SECRET = "test-secret-key-for-jwt-must-be-32-bytes-or-more";
+    private static final String SECRET = "dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl";
+    private static final String OTHER_SECRET = "YW5vdGhlci1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1sb25n";
     private static final Duration EXPIRATION = Duration.ofMinutes(30);
 
     private final JwtConfig jwtConfig = new JwtConfig();
@@ -75,7 +76,7 @@ public class AccessTokenProviderTest {
     void decode_differentSecret() {
         // given
         JwtProperties otherProperties = new JwtProperties(
-                ISSUER, "another-secret-key-for-jwt-must-be-32-bytes-long", EXPIRATION);
+                ISSUER, OTHER_SECRET, EXPIRATION);
         AccessTokenProvider otherProvider =
                 new AccessTokenProvider(jwtConfig.jwtEncoder(otherProperties), otherProperties);
         AccessToken forged = otherProvider.issue(1L, MemberRole.ADMIN);

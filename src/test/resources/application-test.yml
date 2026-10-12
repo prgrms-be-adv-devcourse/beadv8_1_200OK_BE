@@ -17,4 +17,4 @@ app:
     region: ap-northeast-2
     bucket: test-mock-bucket
 jwt:
-  secret: test-secret-key-for-jwt-must-be-32-bytes-or-more
+  secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl

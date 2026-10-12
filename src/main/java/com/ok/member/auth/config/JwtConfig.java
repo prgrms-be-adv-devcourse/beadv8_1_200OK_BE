@@ -44,8 +44,7 @@ public class JwtConfig {
      * 인코더와 디코더가 반드시 같은 키를 쓰도록 한 곳에서 만든다.
      */
     private static SecretKey secretKey(JwtProperties properties) {
-        byte[] keyBytes = properties.secret().getBytes(StandardCharsets.UTF_8);
-        return new SecretKeySpec(keyBytes, "HmacSHA256");
+        return new SecretKeySpec(properties.secretKeyBytes(), "HmacSHA256");
     }
 
 }
