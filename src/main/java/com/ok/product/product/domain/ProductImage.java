@@ -27,4 +27,13 @@ public class ProductImage extends BaseTime {
 	// 0번이 대표 이미지 (product.thumbnail_url로 복사)
 	@Column(name = "sort_order", nullable = false)
 	private int sortOrder;
+
+	// 이미지는 Product를 통해서만
+	static ProductImage create(Product product, String url, int sortOrder) {
+		ProductImage image = new ProductImage();
+		image.product = product;
+		image.url = url;
+		image.sortOrder = sortOrder;
+		return image;
+	}
 }

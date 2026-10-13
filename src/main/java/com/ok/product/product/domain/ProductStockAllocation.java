@@ -31,4 +31,16 @@ public class ProductStockAllocation extends BaseTime {
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 20, updatable = false)
 	private StockAllocationStatus status;
+
+	public static ProductStockAllocation allocate(Long orderId, Long productOptionId, int quantity) {
+		if (quantity < 1) {
+			throw new IllegalArgumentException("배정 수량은 1개 이상이어야 합니다.");
+		}
+		ProductStockAllocation allocation = new ProductStockAllocation();
+		allocation.orderId = orderId;
+		allocation.productOptionId = productOptionId;
+		allocation.quantity = quantity;
+		allocation.status = StockAllocationStatus.ALLOCATED;
+		return allocation;
+	}
 }
