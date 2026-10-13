@@ -101,6 +101,31 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
         assertThat(countPublications(orderItemId, "FAILED")).isZero();
     }
 
+    @Test
+    @DisplayName("같은 주문상품에 관리자 조정 후보가 있어도 구매확정 이벤트는 정상 처리된다")
+    void createsPayoutCandidates_whenAdjustmentCandidateAlreadyExists() {
+        // Arrange: 같은 주문상품·같은 타입의 조정 후보가 먼저 있음 (조정 번호 1)
+        Long orderItemId = nextOrderItemId();
+        repository.save(PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 200L, 1L, 99L, "테스트 조정"));
+        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(orderItemId, 10L, 10_000L, 3_000L);
+
+        // Act
+        publishInTransaction(event);
+
+        // Assert: 조정 후보 1건 + 구매확정 후보 3건 (조정 후보 때문에 무시되지 않음)
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(repository.findAllByOrderItemId(orderItemId))
+                        .extracting(PayoutCandidateItem::getEventType, PayoutCandidateItem::getAmount,
+                                PayoutCandidateItem::getAdjustmentId)
+                        .containsExactlyInAnyOrder(
+                                tuple(PayoutEventType.SALE_AMOUNT, 200L, 1L),      // 조정
+                                tuple(PayoutEventType.SALE_AMOUNT, 9_700L, 0L),    // 구매확정
+                                tuple(PayoutEventType.SALE_FEE, 300L, 0L),
+                                tuple(PayoutEventType.SALE_SHIPPING_FEE, 3_000L, 0L)
+                        ));
+    }
+
     //이벤트테이블에 실패로 기록된다.
     @Test
     @DisplayName("잘못된 값의 이벤트는 정산후보를 만들지 않고 실패로 기록된다")
