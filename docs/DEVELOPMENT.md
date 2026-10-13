@@ -1,6 +1,16 @@
 # 개발 가이드
 
-paldo-gotgan 프로젝트의 기본 설정, 실행 방법, 개발 규칙을 정리한 문서입니다.
+paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 정리한 문서입니다. 개발을 시작하기 전에 이 문서를 먼저 읽으세요.
+
+## 문서 안내
+
+| 문서 | 내용 |
+|---|---|
+| `DEVELOPMENT.md` (이 문서) | 프로젝트를 시작하고 실행하는 데 필요한 정보: 기술 스택, 사전 준비, 로컬 실행, 설정과 환경변수, 타임존, Docker, 시스템 아키텍처 |
+| [`CONVENTION.md`](CONVENTION.md) | 기능을 구현할 때 지키는 기준: 이름, 구조, 패키지별 코드, 테스트 작성 기준, Git 규칙 |
+
+같은 내용을 두 문서에 적으면 서로 어긋나므로, 한 내용은 **한 문서에만** 두고 다른 문서에서는 링크합니다.
+기능을 구현하기 전에 `CONVENTION.md`도 읽어 주세요.
 
 ## 1. 기술 스택
 
@@ -112,27 +122,11 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 ## 5. DB 마이그레이션 (Flyway)
 
-- 스키마 변경은 항상 `src/main/resources/db/migration`에 SQL 파일로 추가합니다.
-- 파일명: `V{yyyyMMddHHmm}__{도메인}__{설명}.sql`. 구분자는 밑줄(`_`) 두 개, 설명 안의 단어 구분은 밑줄 한 개입니다.
-  - 버전은 파일을 만드는 시점의 시각(12자리)입니다. 순번(`V2`, `V3`)을 쓰지 않아 브랜치끼리 버전이 겹치지 않습니다.
-  - 도메인은 모듈 이름(`member`, `order`, `common` 등)입니다.
-  - 설명은 `create_*_table`, `add_*_to_*`, `add_index_*`처럼 동작으로 시작합니다.
+스키마는 Flyway로 관리합니다. 마이그레이션 파일 작성 규칙(파일명, 수정 금지, 병합 순서 등)은 [`CONVENTION.md`의 DB 마이그레이션](CONVENTION.md#8-db-마이그레이션-flyway)을 참고하세요.
 
-```
-db/migration/
-├── V202610081030__order__create_orders_table.sql
-├── V202610081031__order__create_order_lines_table.sql
-├── V202610121420__order__add_coupon_id_to_orders.sql
-└── V202610150915__order__add_index_orders_member_id.sql
-```
-
-- 다른 브랜치에서 더 늦은 버전이 먼저 병합되면, 그보다 이른 버전의 파일은 Flyway가 적용하지 않고 오류를 냅니다.
-  병합 전에 `main`을 합치고, 필요하면 내 파일의 버전을 현재 시각으로 바꾸세요(아직 병합 전인 파일만).
-- **이미 적용된 마이그레이션은 수정하지 않습니다.** 체크섬이 달라져 앱이 기동하지 않습니다.
-  변경이 필요하면 새 버전 파일을 추가하세요. 로컬에서만 쓴 파일이라면 `data/mysql`을 지우고 다시 적용해도 됩니다.
-- `ddl-auto`는 `validate`입니다. 엔티티를 추가하거나 수정하면 대응하는 마이그레이션이 반드시 필요하고,
-  없으면 앱이 기동하지 않습니다 (테스트에서도 같은 검증이 돕니다).
-- `V202610081120__common__create_event_publication_table.sql`은 Spring Modulith의 이벤트 발행 기록 테이블입니다. 지우지 마세요.
+- 마이그레이션 파일 위치: `src/main/resources/db/migration`
+- `ddl-auto`는 `validate`입니다. 엔티티를 추가하거나 수정하면 대응하는 마이그레이션이 반드시 필요하고, 없으면 앱이 기동하지 않습니다 (테스트에서도 같은 검증이 돕니다).
+- 개발 환경(dev 프로파일)은 `flyway.out-of-order: true`로 순서가 뒤바뀐 마이그레이션도 적용합니다. 운영은 순서대로 적용됩니다.
 
 ## 6. 모듈 구조 (Spring Modulith)
 
@@ -144,14 +138,7 @@ db/migration/
 | `common` | 공통 코드. 도메인을 참조하지 않는 코드만 둡니다 |
 | `config` | 설정 클래스 (`SecurityConfig` 등). 도메인 모듈을 참조해도 됩니다 |
 
-규칙
-
-- 다른 모듈에 공개할 클래스(서비스, 이벤트)는 **모듈의 최상위 패키지**에 둡니다.
-  하위 패키지(예: `order.internal`)는 다른 모듈에서 접근할 수 없습니다.
-- 모듈 간 순환 의존은 금지입니다. `common`은 도메인 모듈을 import하지 않습니다.
-- 모듈 간 연동은 가능하면 이벤트(`@ApplicationModuleListener`)로 합니다.
-- 위반하면 `ModulithStructureTest`가 실패합니다. 새 모듈을 추가하면 이 테스트의 모듈 목록도 갱신하세요.
-- 각 모듈 패키지의 `package-info.java`는 모듈 선언입니다. 지우지 마세요.
+모듈 안의 패키지 구조와 모듈 간 규칙(공개 위치, 순환 의존 금지 등)은 [`CONVENTION.md`의 패키지·모듈 구조](CONVENTION.md#2-패키지모듈-구조)를 참고하세요.
 
 ## 7. 예외 처리 (ProblemDetail)
 
@@ -218,96 +205,17 @@ db/migration/
 | `https://docs.example.com/problems/` | `https://docs.example.com/problems/validation-failed` | 유형별 제목 (`Validation failed`) |
 
 - 오류 설명 페이지가 생기면 그 주소를 `.env`에 넣으면 됩니다. 접두사 끝의 `/`는 없어도 자동으로 붙습니다.
-- 슬러그는 에러 코드 enum 이름을 소문자와 하이픈으로 바꾼 값입니다 (`VALIDATION_FAILED` → `validation-failed`).
+- 공통 오류의 슬러그는 에러 코드 enum 이름을 소문자와 하이픈으로 바꾼 값입니다 (`VALIDATION_FAILED` → `validation-failed`).
+  모듈 에러 코드는 앞에 모듈 이름을 붙입니다 (`order/member-not-found`). 규칙은 [`CONVENTION.md`의 에러 응답 `type` 주소](CONVENTION.md#63-에러-응답의-type-주소slug)를 참고하세요.
   **배포한 뒤에는 `type`을 바꾸지 않습니다.** enum 이름을 바꿔야 하면 `slug()`를 재정의해 기존 값을 유지하세요.
 
-### 모듈에서 에러 코드 추가
+### 참고
 
-각 모듈은 `ErrorCode`를 구현한 enum을 만들고, 예외는 `RestApiException`으로 던집니다.
-
-```java
-@Getter
-@RequiredArgsConstructor
-public enum OrderErrorCode implements ErrorCode {
-    ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order not found", "주문을 찾을 수 없습니다."),
-    ORDER_ALREADY_PAID(HttpStatus.CONFLICT, "Order already paid", "이미 결제된 주문입니다.");
-
-    private final HttpStatus httpStatus;
-    private final String title;     // 유형별 고정 제목
-    private final String message;   // 기본 detail
-
-    @Override
-    public HttpStatus status() { return httpStatus; }
-}
-
-throw new RestApiException(OrderErrorCode.ORDER_NOT_FOUND);                        // 기본 detail
-throw new RestApiException(OrderErrorCode.ORDER_NOT_FOUND, "주문 123을 찾을 수 없습니다."); // detail 지정
-```
-
-규칙
-
-- `detail`에는 응답으로 내보내도 되는 값만 넣습니다 (요청에서 받은 값, 식별자 정도).
 - 처리되지 않은 예외(500)는 내부 메시지와 스택 트레이스를 응답에 담지 않고 서버 로그에만 남깁니다.
 - Spring Security 필터에서 발생하는 예외(인증/인가)는 이 핸들러를 거치지 않습니다. 인증을 구현할 때 별도로 처리하세요.
+- 모듈에서 에러 코드를 만들고 예외를 던지는 방법은 [`CONVENTION.md`의 예외 처리](CONVENTION.md#6-예외-처리)를 참고하세요.
 
 ## 8. 테스트
-
-### 종류와 위치
-
-테스트는 `src/test/java`에서 main과 같은 패키지 구조로 둡니다. 이름은 한글로 동작을 설명합니다.
-
-| 종류 | 사용 | 예 |
-|---|---|---|
-| 단위 테스트 | 순수 JUnit + AssertJ (Mockito). Spring 없이 | 도메인 로직, 서비스 로직 |
-| 슬라이스 테스트 | `@DataJpaTest` + Testcontainers | 리포지토리, 쿼리, 마이그레이션 |
-| **통합 테스트** | **`AbstractIntegrationTest`를 상속** | 여러 계층을 함께 검증하는 테스트 |
-| 구조 테스트 | `ModulithStructureTest`, ArchUnit | 모듈 의존 규칙 |
-
-작성 순서는 테스트 먼저(실패 확인) → 구현 → 정리입니다. 구조는 Arrange / Act / Assert로 나눕니다.
-
-### 통합 테스트: `AbstractIntegrationTest` 상속
-
-Spring 컨텍스트 전체와 MySQL 컨테이너가 필요한 테스트는 `com.ok.testsupport.AbstractIntegrationTest`를 상속합니다.
-
-```java
-class OrderServiceIntegrationTest extends AbstractIntegrationTest {
-
-    @Autowired
-    private OrderService orderService;
-
-    @Test
-    void 주문을_생성하면_저장된다() {
-        // Arrange
-        // Act
-        // Assert
-    }
-}
-```
-
-이 클래스가 대신 해 주는 것
-
-- `@SpringBootTest`로 전체 컨텍스트 로드
-- `@ActiveProfiles("test")`로 test 프로파일 적용
-- `TestcontainersConfiguration`을 가져와 MySQL 컨테이너를 띄우고 데이터소스에 자동 연결 (`@ServiceConnection`)
-- `@Tag("integrationTest")`로 통합 테스트 표시
-
-직접 컨테이너를 만들거나 `@DynamicPropertySource`로 접속 정보를 넣을 필요가 없습니다.
-
-### 슬라이스 테스트 (리포지토리)
-
-```java
-@DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(TestcontainersConfiguration.class)
-class MemberRepositoryTest {
-    // @Autowired 로 리포지토리 주입
-}
-```
-
-- import 경로 (Spring Boot 4):
-  - `org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest`
-  - `org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase`
-- 저장 여부를 확인하려면 `flush()`와 `clear()`로 영속성 컨텍스트를 비운 뒤 다시 조회하세요.
 
 ### 테스트 환경 설정
 
@@ -330,8 +238,6 @@ class MemberRepositoryTest {
 
 - HTML: `build/reports/jacoco/test/html/index.html`
 - XML: `build/reports/jacoco/test/jacocoTestReport.xml`
-
-목표 커버리지는 80% 이상입니다. Querydsl이 생성하는 `Q*` 클래스는 현재 커버리지에서 제외하지 않았습니다.
 
 ## 9. Docker 이미지
 
@@ -360,25 +266,3 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 - 태그에는 영문, 숫자, `_`, `.`, `-`만 쓸 수 있고 저장소 이름은 소문자여야 합니다.
 - 이미지 안에는 `.env`가 들어가지 않습니다(`.dockerignore`). 접속 정보는 실행할 때 환경변수로 넘기세요.
 - 컨테이너에서 DB가 같은 compose 네트워크(`db-net`)에 있다면 호스트 이름은 `mysql`입니다.
-
-## 10. Git 규칙
-
-- `main`에 직접 커밋하지 않습니다. 이슈를 만든 뒤 브랜치를 만들어 작업하고 PR로 병합합니다.
-- 브랜치: `feature/<이슈번호>` (예: `feature/42`)
-- 커밋 메시지 형식
-
-```
-<Type>: <제목>
-
-- 상세 내용
-
-Ref: #<이슈번호>
-```
-
-- Type: `Feat`, `Fix`, `Docs`, `Style`, `Refactor`, `Test`, `Chore`, `Design`, `Comment`, `Rename`, `Remove`, `!BREAKING CHANGE`, `!HOTFIX`
-- 커밋은 변경의 성격별로 나눕니다
-- `.env`, 비밀번호, 토큰은 절대 커밋하지 않습니다. `.env.example`만 올립니다.
-- 제목 첫 글자는 대문자로, 끝에는 `.` 금지
-- 제목은 영문 기준 50자 이내로 할 것
-- 여러가지 항목이 있다면 글머리 기호를 통해 가독성 높이기
-- 이슈 번호는 본문 아래 꼬리말에 작성

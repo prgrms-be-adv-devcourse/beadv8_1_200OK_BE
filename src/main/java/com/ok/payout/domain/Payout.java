@@ -1,6 +1,6 @@
 package com.ok.payout.domain;
 
-import com.ok.common.jpa.entity.BaseIdAndTime;
+import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -10,12 +10,18 @@ import org.hibernate.annotations.Immutable;
 import java.util.ArrayList;
 import java.util.List;
 
+import static jakarta.persistence.GenerationType.IDENTITY;
+
 @Entity
 @Immutable
 @Table(name = "payout")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Payout extends BaseIdAndTime {
+public class Payout extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = IDENTITY)
+    private Long id;
 
     // 수취인 회원 ID (판매자). 시스템 몫이면 회원 수취인이 없으므로 null
     private Long payeeId;

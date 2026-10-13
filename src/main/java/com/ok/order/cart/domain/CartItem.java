@@ -1,0 +1,66 @@
+package com.ok.order.cart.domain;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.common.jpa.entity.BaseTime;
+import com.ok.order.cart.exception.CartErrorCode;
+import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "cart_item")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class CartItem extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cart_id", nullable = false)
+    private Cart cart;
+
+    @Column(name = "product_option_id", nullable = false)
+    private Long productOptionId;
+
+    @Column(nullable = false)
+    private int quantity;
+
+    @Column(nullable = false)
+    private boolean selected;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    public static CartItem create(Cart cart, Long productOptionId, int quantity) {
+        if (quantity < 1) {
+            throw new RestApiException(CartErrorCode.INVALID_QUANTITY);
+        }
+
+        CartItem item = new CartItem();
+        item.cart = cart;
+        item.productOptionId = productOptionId;
+        item.quantity = quantity;
+        item.selected = true;
+        return item;
+    }
+
+    public void changeQuantity(int quantity) {
+        validateQuantity(quantity);
+        this.quantity = quantity;
+    }
+
+    public void changeSelected(boolean selected) {
+        this.selected = selected;
+    }
+
+    private static void validateQuantity(int quantity) {
+        if (quantity < 1) {
+            throw new RestApiException(CartErrorCode.INVALID_QUANTITY);
+        }
+    }
+}
