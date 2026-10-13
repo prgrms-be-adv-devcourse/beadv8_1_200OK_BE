@@ -1,9 +1,7 @@
-package com.ok.order.domain;
+package com.ok.order.cart.domain;
 
-import com.ok.common.jpa.entity.BaseIdAndTime;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Table;
+import com.ok.common.jpa.entity.BaseTime;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -14,7 +12,11 @@ import java.time.LocalDateTime;
 @Table(name = "cart")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Cart extends BaseIdAndTime {
+public class Cart extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     @Column(name = "member_id", nullable = false)
     private Long memberId;
