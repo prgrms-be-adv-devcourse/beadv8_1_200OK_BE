@@ -29,7 +29,7 @@ public class PayoutCandidateService {
         // 평소 이벤트(adjustmentId = 0)만 확인해서, 같은 주문상품에 조정 후보가 있어도 구매 확정 처리를 막지 않는다.
         // 동시에 두 번 처리되는 드문 경우는 DB 유니크 제약이 중복 저장을 막고, 실패한 쪽은 재처리 시 이 확인에서 무시되어 정리된다.
         if (repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
-                event.orderItemId(), PayoutEventType.PURCHASE_CONFIRMED_TYPES, 0L)) {
+                event.orderItemId(), PayoutEventType.PURCHASE_CONFIRMED_TYPES, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)) {
             log.info("이미 처리된 구매확정 이벤트, 무시. orderItemId={}", event.orderItemId());
             return;
         }

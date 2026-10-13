@@ -32,6 +32,15 @@ class PayoutCandidateItemTest {
     }
 
     @Test
+    @DisplayName("조정 번호가 음수면 예외가 난다")
+    void manualAdjustment_throwsException_whenAdjustmentIdIsNegative() {
+        // Act & Assert
+        RestApiException e = assertThrows(RestApiException.class, () -> PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, 1L, 10L, -500L, -1L, 99L, "금액 오입력 차감"));
+        assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
+    }
+
+    @Test
     @DisplayName("수동 조정에 관리자 ID가 없으면 예외가 난다")
     void manualAdjustment_throwsException_whenAdminIdIsNull() {
         // Act & Assert

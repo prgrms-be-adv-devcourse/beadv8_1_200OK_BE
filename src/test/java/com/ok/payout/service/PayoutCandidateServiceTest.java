@@ -108,7 +108,7 @@ class PayoutCandidateServiceTest {
         // Arrange
         OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
         given(repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
-                ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, 0L))
+                ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .willReturn(true);
 
         // Act & Assert
@@ -188,7 +188,7 @@ class PayoutCandidateServiceTest {
     // 가짜 리포지토리가 "아직 처리 안 된 주문항목"이라고 대답하게 함
     private void givenNotProcessedYet() {
         given(repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
-                ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, 0L))
+                ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .willReturn(false);
     }
 

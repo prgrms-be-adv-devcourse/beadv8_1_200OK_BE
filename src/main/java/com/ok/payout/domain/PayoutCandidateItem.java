@@ -34,6 +34,9 @@ public class PayoutCandidateItem extends BaseTime {
     @Column(nullable = false)
     private Long amount;
 
+    // 관리자 조정이 없는 평소 이벤트(구매 확정 등)의 조정 번호. NULL은 UK 중복 검사가 안 되므로 0으로 저장
+    public static final long NO_ADMIN_ADJUSTMENT_ID = 0L;
+
     // 0이면 평소 이벤트, 0보다 크면 관리자 조정 요청 ID
     @Column(nullable = false)
     private Long adjustmentId;
@@ -45,8 +48,11 @@ public class PayoutCandidateItem extends BaseTime {
 
     private static PayoutCandidateItem create(PayoutEventType eventType, Long orderItemId, Long sellerId, Long amount,
                                              Long adjustmentId, Long adminId, String reason) {
-        long resolvedAdjustmentId = adjustmentId == null ? 0L : adjustmentId;
-        if (resolvedAdjustmentId > 0) {
+        long resolvedAdjustmentId = adjustmentId == null ? NO_ADMIN_ADJUSTMENT_ID : adjustmentId;
+        if (resolvedAdjustmentId < 0) {
+            throw new RestApiException(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
+        }
+        if (resolvedAdjustmentId > NO_ADMIN_ADJUSTMENT_ID) {
             validateManualAdjustment(adminId, reason);
         }
         PayoutCandidateItem item = new PayoutCandidateItem();
@@ -61,15 +67,15 @@ public class PayoutCandidateItem extends BaseTime {
     }
 
     public static PayoutCandidateItem ofSaleFee(Long orderItemId, Long sellerId, Long amount) {
-        return create(PayoutEventType.SALE_FEE, orderItemId, sellerId, amount, 0L, null, null);
+        return create(PayoutEventType.SALE_FEE, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
     }
 
     public static PayoutCandidateItem ofSaleAmount(Long orderItemId, Long sellerId, Long amount) {
-        return create(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount, 0L, null, null);
+        return create(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
     }
 
     public static PayoutCandidateItem ofSaleShippingFee(Long orderItemId, Long sellerId, Long amount) {
-        return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount, 0L, null, null);
+        return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
     }
 
     // 관리자 수동 조정 (오류 수정용, 원래 정산후보와 같은 eventType). 음수 금액 허용
