@@ -77,6 +77,8 @@ class WalletModuleTest {
     }
 
     // 해당 회원에 대한 MemberRegisteredEvent 중 리스너 처리가 완료된 건수
+    // 완료된 이벤트 발행 기록(event_publication)이 남아 있다는 전제에 의존한다.
+    // 완료 기록을 삭제하도록 설정이 바뀌면, 중복 이벤트 테스트에서 처리 완료를 기다리는 방식을 바꿔야 한다.
     private long countCompletedEvents(Long memberId) {
         return completedEventPublications.findAll().stream()
                 .map(EventPublication::getEvent)
@@ -132,6 +134,8 @@ class WalletModuleTest {
     }
 
     // 해당 회원에 대한 SellerApprovedEvent 중 리스너 처리가 완료된 건수
+    // 완료된 이벤트 발행 기록(event_publication)이 남아 있다는 전제에 의존한다.
+    // 완료 기록을 삭제하도록 설정이 바뀌면, 중복 이벤트 테스트에서 처리 완료를 기다리는 방식을 바꿔야 한다.
     private long countCompletedSellerApprovedEvents(Long memberId) {
         return completedEventPublications.findAll().stream()
                 .map(EventPublication::getEvent)
