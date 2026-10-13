@@ -22,7 +22,7 @@ public interface ProductOptionRepository extends JpaRepository<ProductOption, Lo
 		""")
 	int allocate(@Param("id") Long id, @Param("quantity") int quantity);
 
-	// 해제: 삭제된 옵션도 해제한다 (주문 취소·만료 시점에 옵션이 삭제되어 있을 수 있음)
+	// 해제: 삭제된 옵션도 해제한다
 	@Modifying
 	@Query("""
 		update ProductOption o
@@ -31,7 +31,7 @@ public interface ProductOptionRepository extends JpaRepository<ProductOption, Lo
 		""")
 	int release(@Param("id") Long id, @Param("quantity") int quantity);
 
-	// 총재고 변경: 현재 배정 수량보다 작게는 못 바꾼다. 0이면 STOCK_BELOW_ALLOCATED
+	// 재고 변경: 현재 배정 수량(allocatedQuantity)보다 작게는 못 바꾼다.
 	@Modifying
 	@Query("""
 		update ProductOption o

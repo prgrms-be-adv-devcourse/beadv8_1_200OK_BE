@@ -4,13 +4,17 @@ import com.ok.common.exception.RestApiException;
 import com.ok.member.MemberRole;
 import com.ok.product.product.controller.dto.ProductCreateRequest;
 import com.ok.product.product.controller.dto.ProductCreateResponse;
+import com.ok.product.product.controller.dto.ProductUpdateRequest;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.service.ProductService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -40,5 +44,26 @@ public class ProductController implements ProductControllerSpec {
 		}
 		Long productId = productService.create(memberId, request.toCommand());
 		return ResponseEntity.status(HttpStatus.CREATED).body(new ProductCreateResponse(productId));
+	}
+
+	@Override
+	@PutMapping("/{productId}")
+	public ResponseEntity<Void> update(
+		@RequestHeader(MEMBER_ID_HEADER) Long memberId,
+		@RequestHeader(MEMBER_ROLE_HEADER) MemberRole memberRole,
+		@PathVariable Long productId,
+		@Valid @RequestBody ProductUpdateRequest request
+	) {
+		// TODO: 로그인 정보에서 권한을 꺼내는 방식이 정해지면 임시 헤더 대신 그 값으로 확인한다
+		if (memberRole != MemberRole.SELLER) {
+			throw new RestApiException(ProductErrorCode.PRODUCT_ACCESS_DENIED);
+		}
+		try {
+			productService.update(memberId, productId, request.toCommand());
+		} catch (OptimisticLockingFailureException e) {
+			// 커밋 시점의 version 검사 실패(그 사이 다른 수정이 먼저 커밋됨). 커밋은 서비스 메서드가 끝난 뒤 일어나 서비스 안에서는 못 잡는다
+			throw new RestApiException(ProductErrorCode.PRODUCT_CONCURRENT_MODIFICATION);
+		}
+		return ResponseEntity.noContent().build();
 	}
 }
