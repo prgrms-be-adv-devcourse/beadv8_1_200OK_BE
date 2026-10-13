@@ -59,13 +59,40 @@ class PayoutCandidateItemTest {
     }
 
     @Test
-    @DisplayName("조정 번호가 없으면 0(평소 이벤트)으로 저장되고 관리자 ID·사유는 없어도 된다")
-    void adjustmentIdIsZero_whenAdjustmentIdIsNull() {
-        // Act (관리자 ID·사유 검증에서 예외가 나면 여기서 테스트 실패)
+    @DisplayName("조정 사유가 255자면 수동 조정이 생성된다")
+    void manualAdjustment_succeeds_whenReasonIsMaxLength() {
+        // Act (길이 검증에서 예외가 나면 여기서 테스트 실패)
         PayoutCandidateItem item = PayoutCandidateItem.manualAdjustment(
-                PayoutEventType.SALE_AMOUNT, 1L, 10L, 9_700L, null, null, null);
+                PayoutEventType.SALE_AMOUNT, 1L, 10L, -500L, 1L, 99L, "가".repeat(255));
 
         // Assert
-        assertThat(item.getAdjustmentId()).isZero();
+        assertThat(item.getReason()).hasSize(255);
+    }
+
+    @Test
+    @DisplayName("조정 사유가 255자를 넘으면 예외가 난다")
+    void manualAdjustment_throwsException_whenReasonIsTooLong() {
+        // Act & Assert
+        RestApiException e = assertThrows(RestApiException.class, () -> PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, 1L, 10L, -500L, 1L, 99L, "가".repeat(256)));
+        assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.ADJUSTMENT_REASON_TOO_LONG);
+    }
+
+    @Test
+    @DisplayName("수동 조정에 조정 번호가 없으면 예외가 난다")
+    void manualAdjustment_throwsException_whenAdjustmentIdIsNull() {
+        // Act & Assert
+        RestApiException e = assertThrows(RestApiException.class, () -> PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, 1L, 10L, -500L, null, 99L, "금액 오입력 차감"));
+        assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
+    }
+
+    @Test
+    @DisplayName("수동 조정에 조정 번호 0(평소 이벤트 전용)이 오면 예외가 난다")
+    void manualAdjustment_throwsException_whenAdjustmentIdIsZero() {
+        // Act & Assert
+        RestApiException e = assertThrows(RestApiException.class, () -> PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, 1L, 10L, -500L, 0L, 99L, "금액 오입력 차감"));
+        assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
     }
 }

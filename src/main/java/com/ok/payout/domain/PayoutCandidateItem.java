@@ -37,6 +37,9 @@ public class PayoutCandidateItem extends BaseTime {
     // 관리자 조정이 없는 평소 이벤트(구매 확정 등)의 조정 번호. NULL은 UK 중복 검사가 안 되므로 0으로 저장
     public static final long NO_ADMIN_ADJUSTMENT_ID = 0L;
 
+    // 조정 사유 최대 길이 (DB reason VARCHAR(255)와 맞춤)
+    public static final int MAX_REASON_LENGTH = 255;
+
     // 0이면 평소 이벤트, 0보다 크면 관리자 조정 요청 ID
     @Column(nullable = false)
     private Long adjustmentId;
@@ -44,23 +47,18 @@ public class PayoutCandidateItem extends BaseTime {
     // 수동 조정 시에만 사용
     private Long adminId;
 
+    @Column(length = MAX_REASON_LENGTH)
     private String reason;
 
+    // 검증 없이 값만 채움 (검증은 각 생성 메서드에서)
     private static PayoutCandidateItem create(PayoutEventType eventType, Long orderItemId, Long sellerId, Long amount,
-                                             Long adjustmentId, Long adminId, String reason) {
-        long resolvedAdjustmentId = adjustmentId == null ? NO_ADMIN_ADJUSTMENT_ID : adjustmentId;
-        if (resolvedAdjustmentId < 0) {
-            throw new RestApiException(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
-        }
-        if (resolvedAdjustmentId > NO_ADMIN_ADJUSTMENT_ID) {
-            validateManualAdjustment(adminId, reason);
-        }
+                                             long adjustmentId, Long adminId, String reason) {
         PayoutCandidateItem item = new PayoutCandidateItem();
         item.eventType = eventType;
         item.orderItemId = orderItemId;
         item.sellerId = sellerId;
         item.amount = amount;
-        item.adjustmentId = resolvedAdjustmentId;
+        item.adjustmentId = adjustmentId;
         item.adminId = adminId;
         item.reason = reason;
         return item;
@@ -79,8 +77,13 @@ public class PayoutCandidateItem extends BaseTime {
     }
 
     // 관리자 수동 조정 (오류 수정용, 원래 정산후보와 같은 eventType). 음수 금액 허용
+    // 조정 번호는 관리자 조정 요청 ID라 1 이상만 허용 (0은 평소 이벤트 전용, null·0은 호출 쪽 버그)
     public static PayoutCandidateItem manualAdjustment(PayoutEventType eventType, Long orderItemId, Long sellerId,
                                                        Long amount, Long adjustmentId, Long adminId, String reason) {
+        if (adjustmentId == null || adjustmentId <= NO_ADMIN_ADJUSTMENT_ID) {
+            throw new RestApiException(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
+        }
+        validateManualAdjustment(adminId, reason);
         return create(eventType, orderItemId, sellerId, amount, adjustmentId, adminId, reason);
     }
 
@@ -90,6 +93,9 @@ public class PayoutCandidateItem extends BaseTime {
         }
         if (reason == null || reason.isBlank()) {
             throw new RestApiException(PayoutErrorCode.MISSING_ADJUSTMENT_REASON);
+        }
+        if (reason.length() > MAX_REASON_LENGTH) {
+            throw new RestApiException(PayoutErrorCode.ADJUSTMENT_REASON_TOO_LONG);
         }
     }
 
