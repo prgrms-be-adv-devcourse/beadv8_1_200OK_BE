@@ -64,9 +64,9 @@ public class ProductOption extends BaseTime {
 		this.sortOrder = sortOrder;
 	}
 
-	void delete() {
+	void delete(LocalDateTime now) {
 		if (deletedAt == null) {
-			deletedAt = LocalDateTime.now();
+			deletedAt = now;
 		}
 	}
 

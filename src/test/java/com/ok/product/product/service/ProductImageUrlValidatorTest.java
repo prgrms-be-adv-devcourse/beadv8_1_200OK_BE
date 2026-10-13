@@ -27,6 +27,18 @@ class ProductImageUrlValidatorTest {
 	}
 
 	@Test
+	void 상품_이미지_경로가_아니면_거부한다() {
+		assertThat(validator.isAllowed("https://bucket.s3.ap-northeast-2.amazonaws.com/member_profile/a.jpg")).isFalse();
+		assertThat(validator.isAllowed("https://bucket.s3.ap-northeast-2.amazonaws.com/a.jpg")).isFalse();
+	}
+
+	@Test
+	void 상위_경로로_벗어나는_주소는_거부한다() {
+		assertThat(validator.isAllowed("https://bucket.s3.ap-northeast-2.amazonaws.com/product/../member_profile/a.jpg"))
+			.isFalse();
+	}
+
+	@Test
 	void http이거나_null이면_거부한다() {
 		assertThat(validator.isAllowed("http://bucket.s3.ap-northeast-2.amazonaws.com/product/a.jpg")).isFalse();
 		assertThat(validator.isAllowed(null)).isFalse();

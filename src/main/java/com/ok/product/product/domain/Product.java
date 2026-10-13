@@ -115,6 +115,10 @@ public class Product extends BaseTime {
 		if (imageUrls == null || imageUrls.isEmpty()) {
 			throw new IllegalArgumentException("상품 이미지는 1장 이상이어야 합니다.");
 		}
+		// 같은 이미지를 같은 순서로 보냈으면 DELETE·INSERT 없이 그대로 둔다
+		if (images.stream().map(ProductImage::getUrl).toList().equals(imageUrls)) {
+			return;
+		}
 		// orphanRemoval 컬렉션은 새 리스트로 바꾸지 않고 clear 후 다시 채운다
 		images.clear();
 		for (int i = 0; i < imageUrls.size(); i++) {
@@ -123,11 +127,8 @@ public class Product extends BaseTime {
 		thumbnailUrl = imageUrls.get(0);
 	}
 
-	/**
-	 * 요청된 옵션을 맞춘다.
-	 * id가 있으면 수정, 없으면 추가, 요청에 없는 활성 옵션은 삭제 표시.
-	 */
-	public void mergeOptions(List<ProductOptionSpec> optionSpecs) {
+	// id가 있으면 수정, 없으면 추가, 요청에 없는 활성 옵션은 삭제 표시.
+	public void mergeOptions(List<ProductOptionSpec> optionSpecs, LocalDateTime now) {
 		validateOptionSpecs(optionSpecs);
 
 		// 상품의 기존 옵션 Ids 저장
@@ -155,7 +156,7 @@ public class Product extends BaseTime {
 		// 요청에 없는 활성 옵션(기존 옵션)은 판매자가 삭제한것으로 판단
 		for (ProductOption option : activeById.values()) {
 			if (!requestedIds.contains(option.getId())) {
-				option.delete();
+				option.delete(now);
 			}
 		}
 
@@ -181,13 +182,13 @@ public class Product extends BaseTime {
 		this.visibility = visibility;
 	}
 
-	public void delete() {
+	public void delete(LocalDateTime now) {
 		if (deletedAt != null) {
 			return;
 		}
-		deletedAt = LocalDateTime.now();
+		deletedAt = now;
 		// 상품에 포함된 각 옵션 소프트 삭제
-		options.forEach(ProductOption::delete);
+		options.forEach(option -> option.delete(now));
 	}
 
 	public boolean isDeleted() {

@@ -147,6 +147,15 @@ class ProductCreateIntegrationTest {
 	}
 
 	@Test
+	void 상세설명_원문이_너무_길면_정제하기_전에_422() throws Exception {
+		String longDescription = "<p>" + "가".repeat(200_000) + "</p>";
+
+		create(body(images(1), "[" + OPTION + "]").replace("<p>설명</p>", longDescription))
+			.andExpect(status().isUnprocessableEntity())
+			.andExpect(jsonPath("$.errors[0].path").value("descriptionHtml"));
+	}
+
+	@Test
 	void 옵션명이_겹치면_409이고_저장되지_않는다() throws Exception {
 		create(body(images(1), "[" + OPTION + ", " + OPTION + "]"))
 			.andExpect(status().isConflict())
@@ -165,7 +174,7 @@ class ProductCreateIntegrationTest {
 		assertThat(productRepository.count()).isZero();
 	}
 
-	// TODO: 업로드 API로 받은 URL만 허용할지 정해지면 같은 버킷의 미등록 URL도 거절하는 테스트 추가 (지금은 버킷 접두사만 검사)
+	// TODO(논의 필요): 판매자 본인이 업로드한 URL만 허용할지. 정해지면 같은 경로의 남의 이미지도 거절하는 테스트 추가 (지금은 product/ 경로만 검사)
 	@Test
 	void 우리_버킷이_아닌_이미지_URL이면_422이고_저장되지_않는다() throws Exception {
 		create(body(List.of("https://evil.com/a.jpg"), "[" + OPTION + "]"))

@@ -31,6 +31,11 @@ interface ProductControllerSpec {
 			schema = @Schema(implementation = ProblemDetail.class))
 		),
 		@ApiResponse(
+			responseCode = "409", description = "옵션명 중복",
+			content = @Content(mediaType = "application/problem+json",
+			schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
 			responseCode = "422", description = "요청 값 검증 실패, 판매가가 정가보다 큼, 업로드하지 않은 이미지 URL 등",
 			content = @Content(schema = @Schema(implementation = ProblemDetail.class), mediaType = "application/problem+json")
 		)
@@ -75,6 +80,7 @@ interface ProductControllerSpec {
 
 	@Operation(summary = "상품 판매 상태 변경", description = """
 		판매 상태(READY, ON_SALE, PAUSED, ENDED)만 바꿉니다. 판매자 상품 목록에서 바로 바꾸는 용도입니다.
+		version을 받지 않아 마지막 요청이 반영됩니다. 다른 정보는 바꾸지 않습니다.
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "성공"),
@@ -104,6 +110,7 @@ interface ProductControllerSpec {
 
 	@Operation(summary = "상품 노출 변경", description = """
 		노출 여부(VISIBLE, HIDDEN)만 바꿉니다. 판매자 상품 목록에서 바로 바꾸는 용도입니다.
+		version을 받지 않아 마지막 요청이 반영됩니다. 다른 정보는 바꾸지 않습니다.
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "성공"),
@@ -133,6 +140,7 @@ interface ProductControllerSpec {
 
 	@Operation(summary = "상품 삭제", description = """
 		상품과 옵션을 삭제 표시합니다. 되돌릴 수 없고, 삭제 후에는 조회·수정·주문이 모두 불가합니다.
+		version을 받지 않으므로 다른 화면에서 수정 중이어도 삭제됩니다.
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "성공"),

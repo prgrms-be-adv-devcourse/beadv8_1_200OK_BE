@@ -2,6 +2,7 @@ package com.ok.product.product.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +62,7 @@ class ProductRepositoryTest {
 	@Test
 	void 삭제된_상품은_조회되지_않는다() {
 		Product product = save();
-		product.delete();
+		product.delete(LocalDateTime.now());
 		entityManager.flush();
 
 		assertThat(productRepository.findByIdAndDeletedAtIsNull(product.getId())).isEmpty();

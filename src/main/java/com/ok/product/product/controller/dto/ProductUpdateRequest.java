@@ -30,6 +30,7 @@ public record ProductUpdateRequest(
 	@Schema(description = "상세설명 HTML. 허용하지 않은 태그·속성과 업로드하지 않은 이미지는 저장 전에 제거됩니다.",
 		example = "<p>청송 사과입니다</p>")
 	@NotBlank(message = "상세설명은 필수입니다.")
+	@Size(max = 200_000, message = "상세설명이 너무 깁니다.")
 	String descriptionHtml,
 
 	@Schema(description = "하위 카테고리", example = "FRUIT")

@@ -2,6 +2,7 @@ package com.ok.product.product.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +62,7 @@ class ProductOptionRepositoryTest {
 
 	@Test
 	void 삭제된_옵션에는_배정할_수_없다() {
-		productOptionRepository.findById(optionId).orElseThrow().getProduct().delete();
+		productOptionRepository.findById(optionId).orElseThrow().getProduct().delete(LocalDateTime.now());
 		entityManager.flush();
 
 		assertThat(productOptionRepository.allocate(optionId, 1)).isZero();

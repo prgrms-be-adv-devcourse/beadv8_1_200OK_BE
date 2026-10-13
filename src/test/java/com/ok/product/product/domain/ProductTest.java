@@ -3,6 +3,7 @@ package com.ok.product.product.domain;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import com.ok.product.product.exception.ProductErrorCode;
 
 class ProductTest {
 
+	private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 13, 12, 0);
 	private static final List<String> IMAGES = List.of("https://bucket/product/a.jpg", "https://bucket/product/b.jpg");
 
 	@Test
@@ -50,6 +52,18 @@ class ProductTest {
 	}
 
 	@Test
+	void 옵션명은_앞뒤_공백을_지우고_저장하며_공백만_다르면_중복이다() {
+		Product product = create(List.of(ProductOptionSpec.newOption(" 3kg ", null, 30_000L, 10)));
+		assertThat(product.getOptions().getFirst().getName()).isEqualTo("3kg");
+
+		assertThatThrownBy(() -> create(List.of(
+			ProductOptionSpec.newOption("3kg", null, 30_000L, 10),
+			ProductOptionSpec.newOption("3kg ", null, 35_000L, 10))))
+			.isInstanceOf(RestApiException.class)
+			.extracting("errorCode").isEqualTo(ProductErrorCode.DUPLICATE_OPTION_NAME);
+	}
+
+	@Test
 	void 대표_가격은_최저_판매가_옵션의_판매가와_정가다() {
 		Product product = create(List.of(
 			ProductOptionSpec.newOption("5kg", 35_000L, 35_000L, 10),
@@ -78,7 +92,7 @@ class ProductTest {
 
 		product.mergeOptions(List.of(
 			new ProductOptionSpec(a.getId(), "A 특품", 40_000L, 35_000L, 10),
-			ProductOptionSpec.newOption("C", null, 25_000L, 5)));
+			ProductOptionSpec.newOption("C", null, 25_000L, 5)), NOW);
 
 		assertThat(a.getName()).isEqualTo("A 특품");
 		assertThat(a.getSalePrice()).isEqualTo(35_000L);
@@ -94,10 +108,10 @@ class ProductTest {
 			ProductOptionSpec.newOption("B", null, 20_000L, 10)));
 		ProductOption a = assignIds(product).get(0);
 
-		product.mergeOptions(List.of(new ProductOptionSpec(a.getId(), "A", null, 30_000L, 10)));
+		product.mergeOptions(List.of(new ProductOptionSpec(a.getId(), "A", null, 30_000L, 10)), NOW);
 		product.mergeOptions(List.of(
 			new ProductOptionSpec(a.getId(), "A", null, 30_000L, 10),
-			ProductOptionSpec.newOption("B", null, 22_000L, 10)));
+			ProductOptionSpec.newOption("B", null, 22_000L, 10)), NOW);
 
 		assertThat(product.activeOptions()).extracting(ProductOption::getName).containsExactly("A", "B");
 		assertThat(product.getOptions()).hasSize(3);
@@ -108,7 +122,7 @@ class ProductTest {
 		Product product = create(List.of(ProductOptionSpec.newOption("A", null, 30_000L, 10)));
 		assignIds(product);
 
-		assertThatThrownBy(() -> product.mergeOptions(List.of(new ProductOptionSpec(999L, "A", null, 30_000L, 10))))
+		assertThatThrownBy(() -> product.mergeOptions(List.of(new ProductOptionSpec(999L, "A", null, 30_000L, 10)), NOW))
 			.isInstanceOf(RestApiException.class)
 			.extracting("errorCode").isEqualTo(ProductErrorCode.OPTION_NOT_FOUND);
 	}
@@ -120,7 +134,7 @@ class ProductTest {
 
 		assertThatThrownBy(() -> product.mergeOptions(List.of(
 			new ProductOptionSpec(a.getId(), "A", null, 30_000L, 10),
-			new ProductOptionSpec(a.getId(), "A2", null, 30_000L, 10))))
+			new ProductOptionSpec(a.getId(), "A2", null, 30_000L, 10)), NOW))
 			.isInstanceOf(RestApiException.class)
 			.extracting("errorCode").isEqualTo(ProductErrorCode.OPTION_NOT_FOUND);
 	}
@@ -138,15 +152,27 @@ class ProductTest {
 	}
 
 	@Test
+	void 같은_이미지를_같은_순서로_보내면_이미지를_다시_만들지_않는다() {
+		Product product = create(List.of(ProductOptionSpec.newOption("3kg", null, 30_000L, 10)));
+		List<ProductImage> before = List.copyOf(product.getImages());
+
+		product.replaceImages(IMAGES);
+
+		assertThat(product.getImages()).containsExactlyElementsOf(before);
+		product.replaceImages(List.of(IMAGES.get(1), IMAGES.get(0)));
+		assertThat(product.getImages()).doesNotContainAnyElementsOf(before);
+	}
+
+	@Test
 	void 삭제하면_상품과_모든_옵션에_삭제_표시가_남는다() {
 		Product product = create(List.of(
 			ProductOptionSpec.newOption("A", null, 30_000L, 10),
 			ProductOptionSpec.newOption("B", null, 20_000L, 10)));
 
-		product.delete();
+		product.delete(NOW);
 
-		assertThat(product.isDeleted()).isTrue();
-		assertThat(product.getOptions()).allMatch(ProductOption::isDeleted);
+		assertThat(product.getDeletedAt()).isEqualTo(NOW);
+		assertThat(product.getOptions()).extracting(ProductOption::getDeletedAt).containsOnly(NOW);
 	}
 
 	@Test
