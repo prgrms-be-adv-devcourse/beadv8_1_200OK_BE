@@ -62,9 +62,52 @@ public class CartService {
         // TODO: 상품 모듈의 API를 사용하여 검증 로직을 구현
     }
 
-    // 장바구니 조회
+    // 장바구니 상품 수량 변경
+    @Transactional
+    public void changeQuantity(Long memberId, Long cartItemId, int quantity) {
+        CartItem item = getMyCartItem(memberId, cartItemId);
+        item.changeQuantity(quantity);
+    }
+
+    // 장바구니 상품 선택·해제
+    @Transactional
+    public void changeSelected(Long memberId, Long cartItemId, boolean selected) {
+        CartItem item = getMyCartItem(memberId, cartItemId);
+        item.changeSelected(selected);
+    }
+
+    // 장바구니 상품 전체 선택·해제
+    @Transactional
+    public void changeAllSelected(Long memberId, boolean selected) {
+        Cart cart = getCart(memberId);
+        cartItemRepository.findAllByCartId(cart.getId())
+                .forEach(item -> item.changeSelected(selected));
+    }
+
+    // 장바구니 상품 삭제
+    @Transactional
+    public void deleteItem(Long memberId, Long cartItemId) {
+        CartItem item = getMyCartItem(memberId, cartItemId);
+        cartItemRepository.delete(item);
+    }
+
+    // 선택한 장바구니 상품 삭제
+    @Transactional
+    public void deleteSelectedItems(Long memberId) {
+        Cart cart = getCart(memberId);
+        cartItemRepository.deleteAllByCartIdAndSelectedTrue(cart.getId());
+    }
+
+    // 내 장바구니 조회
     private Cart getCart(Long memberId) {
         return cartRepository.findByMemberId(memberId)
                 .orElseThrow(() -> new RestApiException(CartErrorCode.CART_NOT_FOUND));
+    }
+
+    // 내 장바구니 안의 상품 조회
+    private CartItem getMyCartItem(Long memberId, Long cartItemId) {
+        Cart cart = getCart(memberId);
+        return cartItemRepository.findByIdAndCartId(cartItemId, cart.getId())
+                .orElseThrow(() -> new RestApiException(CartErrorCode.CART_ITEM_NOT_FOUND));
     }
 }

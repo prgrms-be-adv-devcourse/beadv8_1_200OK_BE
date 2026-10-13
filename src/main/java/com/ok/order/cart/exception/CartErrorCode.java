@@ -18,6 +18,7 @@ public enum CartErrorCode implements ErrorCode {
 
     // 장바구니
     CART_NOT_FOUND(HttpStatus.NOT_FOUND, "Cart not found", "장바구니를 찾을 수 없습니다."),
+    CART_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Cart item not found", "장바구니 상품을 찾을 수 없습니다."),
     CANNOT_ADD_OWN_PRODUCT(HttpStatus.BAD_REQUEST, "Cannot add own product", "본인이 판매하는 상품은 담을 수 없습니다."),
     CART_ITEM_ALREADY_EXISTS(HttpStatus.CONFLICT, "Cart item already exists", "이미 장바구니에 담긴 상품입니다."),
     INVALID_QUANTITY(HttpStatus.BAD_REQUEST, "Invalid quantity", "수량은 1개 이상이어야 합니다.");
