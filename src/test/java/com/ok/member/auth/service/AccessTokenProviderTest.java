@@ -9,8 +9,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jwt.*;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
@@ -21,6 +23,15 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 /**
  * Spring을 띄우지 않고, JwtConfig가 만드는 실제 인코더·디코더로 발급과 검증을 함께 확인한다.
  * mock 인코더를 쓰면 "실제로 검증 가능한 토큰인지"를 확인할 수 없기 때문이다.
+ * <p>발급 시각은 테스트 시작 시점(초 단위)으로 고정한다. 디코더는 실제 현재 시각으로 만료를 검증하므로,
+ * 과거의 임의 시각으로 고정하면 발급한 토큰이 모두 만료되어 버린다.
+ *
+ * <p>디코딩 실패는 메시지 대신 예외 타입으로 검증한다. 메시지는 라이브러리(Nimbus)가 만들어 버전마다 바뀔 수 있고,
+ * 타입만으로 실패 원인을 구분할 수 있다.
+ * <ul>
+ *   <li>{@link BadJwtException}: 서명이 맞지 않는 등 토큰 자체가 잘못됨</li>
+ *   <li>{@link JwtValidationException}: 서명은 맞지만 만료, 발급자 등 검증 규칙 위반</li>
+ * </ul>
  */
 public class AccessTokenProviderTest {
 
@@ -33,17 +44,23 @@ public class AccessTokenProviderTest {
     private static final Duration REFRESH_EXPIRATION = Duration.ofDays(14);
 
     private final JwtConfig jwtConfig = new JwtConfig();
-    private final JwtProperties properties = new JwtProperties(ISSUER, SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+    private final JwtProperties properties = new JwtProperties(
+            ISSUER, SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION
+    );
 
+    private Instant now;
+    private Clock fixedClock;
     private JwtEncoder jwtEncoder;
     private JwtDecoder jwtDecoder;
     private AccessTokenProvider accessTokenProvider;
 
     @BeforeEach
     void setUp() {
+        now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        fixedClock = Clock.fixed(now, ZoneId.of("Asia/Seoul"));
         jwtEncoder = jwtConfig.jwtEncoder(properties);
         jwtDecoder = jwtConfig.jwtDecoder(properties);
-        accessTokenProvider = new AccessTokenProvider(jwtEncoder, properties);
+        accessTokenProvider = new AccessTokenProvider(jwtEncoder, properties, fixedClock);
     }
 
     @Test
@@ -81,10 +98,7 @@ public class AccessTokenProviderTest {
     }
 
     @Test
-    void 만료_시각은_발급_시각으로부터_유효기간_뒤이고_토큰의_exp와_같다() {
-        // given
-        Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-
+    void 발급_시각은_현재_시각이고_만료_시각은_유효기간_뒤이며_토큰의_exp와_같다() {
         // when
         AccessToken sut = accessTokenProvider.issue(1L, MemberRole.BUYER);
 
@@ -92,9 +106,9 @@ public class AccessTokenProviderTest {
         Jwt jwt = jwtDecoder.decode(sut.value());
         assertThat(jwt).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(Duration.between(jwt.getIssuedAt(), jwt.getExpiresAt())).isEqualTo(ACCESS_EXPIRATION);
-            softly.assertThat(jwt.getExpiresAt()).isEqualTo(sut.expiresAt());
-            softly.assertThat(jwt.getIssuedAt()).isAfterOrEqualTo(before);
+            softly.assertThat(jwt.getIssuedAt()).isEqualTo(now);
+            softly.assertThat(jwt.getExpiresAt()).isEqualTo(now.plus(ACCESS_EXPIRATION));
+            softly.assertThat(sut.expiresAt()).isEqualTo(jwt.getExpiresAt());
         });
     }
 
@@ -124,7 +138,6 @@ public class AccessTokenProviderTest {
     void 만료_시각이_지난_토큰은_허용_오차_없이_거부된다() {
         // given
         // 1초 전에 만료된 토큰을 같은 키로 직접 만든다. (기본 허용 오차 60초였다면 통과했을 토큰)
-        Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(ISSUER)
                 .subject("1")
@@ -143,9 +156,11 @@ public class AccessTokenProviderTest {
     @Test
     void 다른_비밀키로_서명된_토큰은_거부된다() {
         // given
-        JwtProperties otherProperties = new JwtProperties(ISSUER, OTHER_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties otherProperties = new JwtProperties(
+                ISSUER, OTHER_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION
+        );
         AccessTokenProvider otherProvider =
-                new AccessTokenProvider(jwtConfig.jwtEncoder(otherProperties), otherProperties);
+                new AccessTokenProvider(jwtConfig.jwtEncoder(otherProperties), otherProperties, fixedClock);
         String forged = otherProvider.issue(1L, MemberRole.ADMIN).value();
 
         // when & then
@@ -175,8 +190,12 @@ public class AccessTokenProviderTest {
     @Test
     void 발급자가_다른_토큰은_거부된다() {
         // given
-        JwtProperties otherIssuer = new JwtProperties("other-service", SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
-        AccessTokenProvider otherProvider = new AccessTokenProvider(jwtConfig.jwtEncoder(otherIssuer), otherIssuer);
+        JwtProperties otherIssuer = new JwtProperties(
+                "other-service", SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION
+        );
+        AccessTokenProvider otherProvider = new AccessTokenProvider(
+                jwtConfig.jwtEncoder(otherIssuer), otherIssuer, fixedClock
+        );
         String token = otherProvider.issue(1L, MemberRole.BUYER).value();
 
         // when & then

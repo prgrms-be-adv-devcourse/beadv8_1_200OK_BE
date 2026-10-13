@@ -7,5 +7,6 @@ CREATE TABLE refresh_token (
     updated_at DATETIME(6) NOT NULL,
     PRIMARY KEY (id),
     CONSTRAINT uk_refresh_token_token_hash UNIQUE (token_hash),
-    INDEX idx_refresh_token_member_id (member_id)
+    INDEX idx_refresh_token_member_id (member_id),
+    INDEX idx_refresh_token_expires_at (expires_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;

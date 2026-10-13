@@ -11,8 +11,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,6 +27,9 @@ import static org.mockito.Mockito.*;
 class RefreshTokenServiceTest {
 
     private static final Duration REFRESH_EXPIRATION = Duration.ofDays(14);
+    private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
+    /** 발급 시각을 고정한다. 나노초를 포함해 마이크로초 단위로 잘리는지도 함께 확인한다. */
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 12, 14, 0, 0, 123_456_789);
 
     @Mock
     RefreshTokenRepository refreshTokenRepository;
@@ -38,7 +43,8 @@ class RefreshTokenServiceTest {
                 "dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl",
                 Duration.ofMinutes(30),
                 REFRESH_EXPIRATION);
-        refreshTokenService = new RefreshTokenService(refreshTokenRepository, properties);
+        Clock fixedClock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);
+        refreshTokenService = new RefreshTokenService(refreshTokenRepository, properties, fixedClock);
     }
 
     @Test
@@ -74,19 +80,13 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    void 만료_일시는_발급_시점으로부터_유효기간_뒤다() {
-        // given
-        LocalDateTime before = LocalDateTime.now();
-
+    void 만료_일시는_발급_시각으로부터_유효기간_뒤이고_마이크로초_단위로_잘린다() {
         // when
         IssuedRefreshToken sut = refreshTokenService.issue(1L);
 
         // then
-        LocalDateTime after = LocalDateTime.now();
-        // 만료 일시는 마이크로초 단위로 잘리므로 before 기준보다 최대 1마이크로초 이를 수 있다.
-        assertThat(sut.expiresAt())
-                .isAfterOrEqualTo(before.plus(REFRESH_EXPIRATION).minusNanos(1_000))
-                .isBeforeOrEqualTo(after.plus(REFRESH_EXPIRATION));
+        // 2026-10-12 14:00:00.123456789 + 14일 → 마이크로초 단위로 잘려 .123456
+        assertThat(sut.expiresAt()).isEqualTo(LocalDateTime.of(2026, 10, 26, 14, 0, 0, 123_456_000));
     }
 
     @Test

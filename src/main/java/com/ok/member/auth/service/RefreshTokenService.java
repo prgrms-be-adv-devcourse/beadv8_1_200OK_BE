@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
@@ -39,6 +40,9 @@ public class RefreshTokenService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
 
+    /** 현재 시각 기준. 테스트에서 고정할 수 있도록 주입받는다. (ClockConfig 참고) */
+    private final Clock clock;
+
     /**
      * 암호학적으로 안전한 난수 생성기. java.util.Random은 다음 값을 예측할 수 있어 토큰 생성에 쓰면 안 된다.
      * SecureRandom은 스레드에 안전해서 하나를 만들어 재사용한다.
@@ -60,7 +64,7 @@ public class RefreshTokenService {
 
         // DB 컬럼이 DATETIME(6)(마이크로초)이라, 나노초가 섞이면 반환값과 저장값이 달라질 수 있다.
         // 마이크로초 단위로 맞춰 두 값을 정확히 일치시킨다.
-        LocalDateTime expiresAt = LocalDateTime.now()
+        LocalDateTime expiresAt = LocalDateTime.now(clock)
                 .plus(jwtProperties.refreshTokenExpiration())
                 .truncatedTo(ChronoUnit.MICROS);
 
