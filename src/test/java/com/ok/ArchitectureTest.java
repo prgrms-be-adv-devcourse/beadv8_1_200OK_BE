@@ -3,7 +3,9 @@ package com.ok;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
+import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
+import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
@@ -16,12 +18,30 @@ import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.GeneralCodingRules;
 
+import com.ok.common.exception.ErrorCode;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import jakarta.persistence.Entity;
 
 @AnalyzeClasses(packages = "com.ok", importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
 
     // 레이어
+
+    // freeze: 기존 위반은 archunit_store에 기준선으로 두고, 새 위반만 실패시킨다.
+    @ArchTest
+    static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = freeze(layeredArchitecture()
+            .consideringOnlyDependenciesInLayers()
+            .layer("Controller").definedBy("..controller..")
+            .layer("Service").definedBy("..service..")
+            .layer("Repository").definedBy("..repository..")
+            .layer("Domain").definedBy("..domain..")
+            .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
+            .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
+            .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
+            .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
+            .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)"));
 
     @ArchTest
     static final ArchRule 패키지_간_순환_의존이_없다 = slices()
@@ -58,6 +78,41 @@ class ArchitectureTest {
             .that().areAnnotatedWith(Entity.class)
             .should().resideInAPackage("..domain..")
             .because("엔티티가 domain 패키지에 있어야 레이어 규칙이 엔티티 의존을 검사할 수 있다 (컨벤션 2.1)");
+
+    // freeze
+    @ArchTest
+    static final ArchRule ErrorCode_구현체는_ErrorCode로_끝나고_exception_패키지에_있다 = freeze(classes()
+            .that().implement(ErrorCode.class)
+            .should().haveSimpleNameEndingWith("ErrorCode")
+            .andShould().resideInAPackage("..exception..")
+            .because("모듈의 에러 코드를 exception 패키지 한곳에서 찾을 수 있어야 한다 (컨벤션 2.1, 3.2)"));
+
+    // freeze
+    @ArchTest
+    static final ArchRule Request와_Response는_controller_dto_패키지에_있다 = freeze(classes()
+            .that().haveSimpleNameEndingWith("Request")
+            .or().haveSimpleNameEndingWith("Response")
+            .should().resideInAPackage("..controller.dto..")
+            .because("경로만 보고 컨트롤러의 입출력 타입인지 알 수 있어야 한다. 클래스 안 중첩 record는 파일을 키우고 찾기 어렵다 (컨벤션 2.3)"));
+
+    // freeze
+    @ArchTest
+    static final ArchRule Command_Query_Result는_service_dto_패키지에_있다 = freeze(classes()
+            .that().haveSimpleNameEndingWith("Command")
+            .or().haveSimpleNameEndingWith("Query")
+            .or().haveSimpleNameEndingWith("Result")
+            .should().resideInAPackage("..service.dto..")
+            .because("경로만 보고 서비스의 입출력 타입인지 알 수 있어야 한다. 클래스 안 중첩 record는 파일을 키우고 찾기 어렵다 (컨벤션 2.3)"));
+
+    // freeze
+    @ArchTest
+    static final ArchRule Swagger_인터페이스는_Spec으로_끝나고_컨트롤러와_같은_패키지에_있다 = freeze(classes()
+            .that().areInterfaces()
+            .and().areAnnotatedWith(Tag.class)
+            .should().haveSimpleNameEndingWith("Spec")
+            .andShould().notBePublic()
+            .andShould().resideOutsideOfPackage("..spec..")
+            .because("문서 어노테이션은 컨트롤러 옆에 두고, 다른 곳에서 쓰지 않으므로 공개하지 않는다 (컨벤션 3.3)"));
 
     // 기타
 
