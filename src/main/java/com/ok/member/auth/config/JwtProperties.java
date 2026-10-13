@@ -2,7 +2,6 @@ package com.ok.member.auth.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 
@@ -35,12 +34,14 @@ import java.util.Base64;
  * @param issuer                토큰 발급자(iss claim). 검증 시 이 값과 다른 토큰은 거부한다.
  * @param secret                Base64로 인코딩된 HS256 서명 키. 반드시 환경 변수로 주입하고 저장소에 두지 않는다.
  * @param accessTokenExpiration Access Token 유효 기간. "30m", "1h"처럼 Duration 형식으로 지정한다.
+ * @param refreshTokenExpiration Refresh Token 유효 기간. "14d"처럼 Duration 형식으로 지정한다.
  */
 @ConfigurationProperties(prefix = "jwt")
 public record JwtProperties(
         String issuer,
         String secret,
-        Duration accessTokenExpiration
+        Duration accessTokenExpiration,
+        Duration refreshTokenExpiration
 ) {
 
     /**
@@ -65,8 +66,12 @@ public record JwtProperties(
                     "jwt.secret은 Base64 디코딩한 값이 %d바이트 이상이어야 합니다. (openssl rand -base64 32로 생성)"
                             .formatted(MIN_SECRET_BYTES));
         }
-        if (accessTokenExpiration == null || accessTokenExpiration.isZero() || accessTokenExpiration.isNegative()) {
-            throw new IllegalArgumentException("jwt.access-token-expiration은 0보다 커야 합니다.");
+        requirePositive(accessTokenExpiration, "jwt.access-token-expiration");
+        requirePositive(refreshTokenExpiration, "jwt.refresh-token-expiration");
+        // Refresh Token은 Access Token을 다시 발급받기 위한 토큰이므로, 더 오래 유효해야 의미가 있다.
+        if (refreshTokenExpiration.compareTo(accessTokenExpiration) <= 0) {
+            throw new IllegalArgumentException(
+                    "jwt.refresh-token-expiration은 jwt.access-token-expiration보다 길어야 합니다.");
         }
     }
 
@@ -79,6 +84,15 @@ public record JwtProperties(
      */
     public byte[] secretKeyBytes() {
         return decode(secret);
+    }
+
+    /**
+     * 유효 기간이 지정되어 있고 0보다 큰지 검사한다.
+     */
+    private static void requirePositive(Duration duration, String propertyName) {
+        if (duration == null || duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException(propertyName + "은 0보다 커야 합니다.");
+        }
     }
 
     /**
@@ -99,8 +113,8 @@ public record JwtProperties(
      */
     @Override
     public String toString() {
-        return "JwtProperties[issuer=%s, secret=****, accessTokenExpiration=%s]"
-                .formatted(issuer, accessTokenExpiration);
+        return "JwtProperties[issuer=%s, secret=****, accessTokenExpiration=%s, refreshTokenExpiration=%s]"
+                .formatted(issuer, accessTokenExpiration, refreshTokenExpiration);
     }
 
 }
