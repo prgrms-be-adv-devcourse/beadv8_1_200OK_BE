@@ -4,7 +4,7 @@ import com.ok.config.JpaConfig;
 import com.ok.member.MemberRegisteredEvent;
 import com.ok.member.MemberRole;
 import com.ok.testsupport.TestcontainersConfiguration;
-import com.ok.wallet.repository.WalletRepository;
+import com.ok.wallet.repository.BuyerWalletRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Import({JpaConfig.class, TestcontainersConfiguration.class})
 class WalletModuleTest {
     @Autowired
-    WalletRepository walletRepository;
+    BuyerWalletRepository buyerWalletRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -32,7 +32,7 @@ class WalletModuleTest {
     @AfterEach
     void tearDown() {
         // @ApplicationModuleTest는 롤백되지 않으므로 테스트마다 데이터를 정리한다.
-        walletRepository.deleteAll();
+        buyerWalletRepository.deleteAll();
     }
 
     @Test
@@ -64,7 +64,7 @@ class WalletModuleTest {
 
     private long countBuyerWallets(Long memberId) {
         return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM wallet WHERE member_id = ? AND type = 'BUYER'",
+                "SELECT COUNT(*) FROM buyer_wallet WHERE member_id = ?",
                 Long.class, memberId);
     }
 
