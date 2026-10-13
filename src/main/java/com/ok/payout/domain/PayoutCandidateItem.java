@@ -1,18 +1,24 @@
 package com.ok.payout.domain;
 
-import com.ok.common.jpa.entity.BaseIdAndTime;
+import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 
+import static jakarta.persistence.GenerationType.IDENTITY;
+
 @Entity
 @Immutable
 @Table(name = "payout_candidate_items")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class PayoutCandidateItem extends BaseIdAndTime {
+public class PayoutCandidateItem extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = IDENTITY)
+    private Long id;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
