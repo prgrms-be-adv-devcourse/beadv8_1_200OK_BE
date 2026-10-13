@@ -103,11 +103,12 @@ class PayoutCandidateServiceTest {
     }
 
     @Test
-    @DisplayName("이미 처리된 주문항목이면 예외 없이 저장하지 않는다")
-    void skipsWithoutSaving_whenOrderItemAlreadyProcessed() {
+    @DisplayName("관리자 조정이 아닌 평소 이벤트로 이미 처리된 주문항목이면 예외 없이 저장하지 않는다")
+    void skipsWithoutSaving_whenOrderItemAlreadyProcessedByNormalEvent() {
         // Arrange
         OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
-        given(repository.existsByOrderItemIdAndEventTypeIn(ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES))
+        given(repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
+                ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, 0L))
                 .willReturn(true);
 
         // Act & Assert
@@ -186,7 +187,8 @@ class PayoutCandidateServiceTest {
 
     // 가짜 리포지토리가 "아직 처리 안 된 주문항목"이라고 대답하게 함
     private void givenNotProcessedYet() {
-        given(repository.existsByOrderItemIdAndEventTypeIn(ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES))
+        given(repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
+                ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, 0L))
                 .willReturn(false);
     }
 

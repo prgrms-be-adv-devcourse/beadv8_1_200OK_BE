@@ -18,7 +18,9 @@ public interface PayoutCandidateItemRepository extends Repository<PayoutCandidat
 
     List<PayoutCandidateItem> findAllByOrderItemId(Long orderItemId);
 
-    boolean existsByOrderItemIdAndEventTypeIn(Long orderItemId, Collection<PayoutEventType> eventTypes);
+    // 구매 확정 중복 확인용 (평소 이벤트만 보려면 adjustmentId = 0)
+    boolean existsByOrderItemIdAndEventTypeInAndAdjustmentId(Long orderItemId, Collection<PayoutEventType> eventTypes,
+                                                             Long adjustmentId);
 
     List<PayoutCandidateItem> saveAll(Iterable<PayoutCandidateItem> items);
 }
