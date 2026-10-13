@@ -117,19 +117,23 @@ private Wallet(Long memberId, WalletType type) {
 
 - 요청·응답 DTO(`*Request`, `*Response`)는 `controller/dto`에 둔다.
 - DTO를 컨트롤러 안의 중첩 `record`로 두지 않는다.
-- 서비스는 `*Response`를 반환하지 않으므로, 컨트롤러가 서비스의 반환값(식별자, 도메인 값, `*Result`)으로 `*Response`를 만든다.
+- 서비스는 `*Response`를 반환하지 않으므로, 컨트롤러가 서비스의 반환값(식별자, `*Result`)으로 `*Response`를 만든다.
+- 컨트롤러와 `controller/dto`는 `domain` 패키지의 타입(엔티티, enum 등)을 쓰지 않는다.
 
-**이유**: 패키지로 나누면 어느 계층의 타입인지 경로만 보고 안다. 중첩 `record`는 컨트롤러 파일을 키우고 다른 곳에서 찾기 어렵다. 웹 응답 타입은 프레젠테이션 레이어의 책임이다.
+**이유**: 패키지로 나누면 어느 계층의 타입인지 경로만 보고 안다. 중첩 `record`는 컨트롤러 파일을 키우고 다른 곳에서 찾기 어렵다. 웹 응답 타입은 프레젠테이션 레이어의 책임이다. 컨트롤러가 엔티티를 알면 엔티티 변경이 API 응답까지 번진다. `ArchitectureTest`가 검사한다.
 
 ```java
 // O
 Long memberId = memberSignupService.signup(command);
 return ResponseEntity.status(HttpStatus.CREATED).body(new SignupResponse(memberId));
 
+return ResponseEntity.ok(CartResponse.from(cartService.getMyCart(memberId)));   // CartResult → CartResponse
+
 // X
 public class PayoutController {
     public record PayoutRunResponse(Long executionId, String status) { }   // 컨트롤러 안의 중첩 record
 }
+public static CartResponse of(Cart cart, List<CartItem> items) { ... }    // 응답 DTO가 엔티티를 받는다
 ```
 
 ## Swagger 문서용 인터페이스 (`*Spec`)
