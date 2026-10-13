@@ -3,6 +3,8 @@ package com.ok.product.product.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.html.HtmlSanitizer;
 import com.ok.product.product.domain.Product;
+import com.ok.product.product.domain.ProductStatus;
+import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductRepository;
@@ -44,14 +46,7 @@ public class ProductService {
 
 	@Transactional
 	public void update(Long sellerId, Long productId, ProductUpdateCommand command) {
-		Product product = productRepository.findForUpdateByIdAndDeletedAtIsNull(productId).orElseThrow(() ->
-				new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND)
-		);
-
-		// 해당 상품의 주인이 아니면
-		if (!product.isOwnedBy(sellerId)) {
-			throw new RestApiException(ProductErrorCode.PRODUCT_ACCESS_DENIED);
-		}
+		Product product = findOwnedProduct(sellerId, productId);
 
 		// 현재 상품 버전이 command로 넘어온 상품 버전과 다르다면 (다른 누군가의 수정이 먼저 커밋 됨)
 		if (!product.getVersion().equals(command.version())) {
@@ -85,6 +80,24 @@ public class ProductService {
 				});
 	}
 
+	@Transactional
+	public void changeStatus(Long sellerId, Long productId, ProductStatus status) {
+		Product product = findOwnedProduct(sellerId, productId);
+		product.changeStatus(status);
+	}
+
+	@Transactional
+	public void changeVisibility(Long sellerId, Long productId, ProductVisibility visibility) {
+		Product product = findOwnedProduct(sellerId, productId);
+		product.changeVisibility(visibility);
+	}
+
+	@Transactional
+	public void delete(Long sellerId, Long productId) {
+		Product product = findOwnedProduct(sellerId, productId);
+		product.delete();
+	}
+
 	private void validateImageUrls(List<String> imageUrls) {
 		if (!imageUrls.stream().allMatch(productImageUrlValidator::isAllowed)) {
 			throw new RestApiException(ProductErrorCode.INVALID_IMAGE_URL);
@@ -98,5 +111,15 @@ public class ProductService {
 			throw new RestApiException(ProductErrorCode.DESCRIPTION_TOO_LONG);
 		}
 		return sanitized;
+	}
+
+	// 수정, 변경, 삭제 전에 상품을 가져오고 본인 상품인지 확인한다
+	private Product findOwnedProduct(Long sellerId, Long productId) {
+		Product product = productRepository.findForUpdateByIdAndDeletedAtIsNull(productId)
+				.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		if (!product.isOwnedBy(sellerId)) {
+			throw new RestApiException(ProductErrorCode.PRODUCT_ACCESS_DENIED);
+		}
+		return product;
 	}
 }

@@ -3,7 +3,9 @@ package com.ok.product.product.controller;
 import com.ok.member.MemberRole;
 import com.ok.product.product.controller.dto.ProductCreateRequest;
 import com.ok.product.product.controller.dto.ProductCreateResponse;
+import com.ok.product.product.controller.dto.ProductStatusChangeRequest;
 import com.ok.product.product.controller.dto.ProductUpdateRequest;
+import com.ok.product.product.controller.dto.ProductVisibilityChangeRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -69,5 +71,87 @@ interface ProductControllerSpec {
 		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
 		@Parameter(description = "상품 ID", example = "1") Long productId,
 		ProductUpdateRequest request
+	);
+
+	@Operation(summary = "상품 판매 상태 변경", description = """
+		판매 상태(READY, ON_SALE, PAUSED, ENDED)만 바꿉니다. 판매자 상품 목록에서 바로 바꾸는 용도입니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "204", description = "성공"),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "409", description = "다른 요청이 먼저 상품을 바꿈",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "422", description = "판매 상태가 없음 (없는 값을 보내면 400)",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<Void> changeStatus(
+		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
+		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		@Parameter(description = "상품 ID", example = "1") Long productId,
+		ProductStatusChangeRequest request
+	);
+
+	@Operation(summary = "상품 노출 변경", description = """
+		노출 여부(VISIBLE, HIDDEN)만 바꿉니다. 판매자 상품 목록에서 바로 바꾸는 용도입니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "204", description = "성공"),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "409", description = "다른 요청이 먼저 상품을 바꿈",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "422", description = "노출 여부가 없음 (없는 값을 보내면 400)",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<Void> changeVisibility(
+		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
+		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		@Parameter(description = "상품 ID", example = "1") Long productId,
+		ProductVisibilityChangeRequest request
+	);
+
+	@Operation(summary = "상품 삭제", description = """
+		상품과 옵션을 삭제 표시합니다. 되돌릴 수 없고, 삭제 후에는 조회·수정·주문이 모두 불가합니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "204", description = "성공"),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "409", description = "다른 요청이 먼저 상품을 바꿈",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<Void> delete(
+		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
+		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		@Parameter(description = "상품 ID", example = "1") Long productId
 	);
 }
