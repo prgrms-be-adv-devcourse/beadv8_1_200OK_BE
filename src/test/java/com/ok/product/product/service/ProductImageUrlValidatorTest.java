@@ -2,7 +2,11 @@ package com.ok.product.product.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.stream.Stream;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class ProductImageUrlValidatorTest {
 
@@ -33,9 +37,30 @@ class ProductImageUrlValidatorTest {
 	}
 
 	@Test
-	void 상위_경로로_벗어나는_주소는_거부한다() {
-		assertThat(validator.isAllowed("https://bucket.s3.ap-northeast-2.amazonaws.com/product/../member_profile/a.jpg"))
-			.isFalse();
+	void 업로드_키_형식의_파일명이면_허용한다() {
+		assertThat(validator.isAllowed(
+			"https://bucket.s3.ap-northeast-2.amazonaws.com/product/3f2b8c1e-9a4d-4e6f-b7a1-0c2d3e4f5a6b.jpg")).isTrue();
+	}
+
+	@ParameterizedTest
+	@MethodSource("상품_이미지_경로를_벗어날_수_있는_경로")
+	void 상품_이미지_경로를_벗어날_수_있는_주소는_거부한다(String path) {
+		assertThat(validator.isAllowed("https://bucket.s3.ap-northeast-2.amazonaws.com/product/" + path)).isFalse();
+	}
+
+	static Stream<String> 상품_이미지_경로를_벗어날_수_있는_경로() {
+		return Stream.of(
+			"../member_profile/a.jpg",
+			"%2e%2e/member_profile/a.jpg",
+			"%2E%2E/member_profile/a.jpg",
+			".%2e/member_profile/a.jpg",
+			"..%5cmember_profile/a.jpg",
+			"..\\member_profile\\a.jpg",
+			"sub/a.jpg",
+			"a.jpg?x=1",
+			"a.jpg#x",
+			"",
+			"a");
 	}
 
 	@Test

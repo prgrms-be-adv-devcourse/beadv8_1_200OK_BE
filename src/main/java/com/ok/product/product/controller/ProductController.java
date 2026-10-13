@@ -11,6 +11,7 @@ import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.service.ProductService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Profile;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +25,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// TODO: 임시 헤더는 클라이언트가 아무 회원으로 위장할 수 있어 운영에는 등록하지 않는다. 인증이 붙으면 @Profile 제거한다
+@Profile("!prod")
 @RestController
 @RequestMapping("/api/v1/products")
 @RequiredArgsConstructor

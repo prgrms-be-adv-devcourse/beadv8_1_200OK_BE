@@ -174,7 +174,6 @@ class ProductCreateIntegrationTest {
 		assertThat(productRepository.count()).isZero();
 	}
 
-	// TODO(논의 필요): 판매자 본인이 업로드한 URL만 허용할지. 정해지면 같은 경로의 남의 이미지도 거절하는 테스트 추가 (지금은 product/ 경로만 검사)
 	@Test
 	void 우리_버킷이_아닌_이미지_URL이면_422이고_저장되지_않는다() throws Exception {
 		create(body(List.of("https://evil.com/a.jpg"), "[" + OPTION + "]"))

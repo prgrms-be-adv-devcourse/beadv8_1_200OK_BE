@@ -182,6 +182,9 @@ public class Product extends BaseTime {
 		this.visibility = visibility;
 	}
 
+
+	// 배정 수량이 남아 있어도 삭제한다. allocated_quantity에는 결제 완료, 배송된 수량도 포함돼 현재 진행 중인 주문만 골라낼 수 없다.
+	// 소프트 삭제라 옵션 행이 남으므로 이미 들어온 주문은 그대로 진행되고, 새 재고 배정만 막힌다.
 	public void delete(LocalDateTime now) {
 		if (deletedAt != null) {
 			return;
