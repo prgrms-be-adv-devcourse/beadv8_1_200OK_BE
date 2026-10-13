@@ -9,6 +9,20 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
+/**
+ * 발급된 Refresh Token의 저장 기록.
+ *
+ * <p><b>원문을 저장하지 않는다.</b> 클라이언트에게 준 토큰 원문은 DB에 남기지 않고 SHA-256 해시만 저장한다.
+ * DB가 유출되어도 해시로는 원래 토큰을 알아낼 수 없어, 유출된 데이터로 로그인 상태를 탈취할 수 없다.
+ *
+ * <p>auth는 추후 member에서 별도 모듈로 분리할 예정이라, 다른 모듈의 ID로 보고 member와 외래 키를 두지 않는다.
+ * (마이그레이션 컨벤션 8.6) 회원별 조회를 위한 인덱스(idx_refresh_token_member_id)만 둔다.
+ * 엔티티도 {@code @ManyToOne Member} 대신 memberId만 가진다. 분리할 때 엔티티를 바꾸지 않아도 되고,
+ * 토큰을 다룰 때 회원 정보가 필요 없어 불필요한 조회를 만들지 않는다.
+ *
+ * <p>외래 키가 없으므로 탈퇴·정지 회원의 토큰 정리는 DB가 아닌 애플리케이션이 맡는다.
+ * (로그아웃·회원 탈퇴 이슈에서 member의 이벤트를 구독해 해당 회원의 토큰을 삭제)
+ */
 @Entity
 @Table(name = "refresh_token")
 @Getter
