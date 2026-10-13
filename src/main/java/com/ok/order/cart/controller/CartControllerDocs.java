@@ -31,7 +31,8 @@ public interface CartControllerDocs {
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "변경 성공"),
             @ApiResponse(responseCode = "404", description = "장바구니 또는 장바구니 상품 없음 (다른 회원의 상품 포함)"),
-            @ApiResponse(responseCode = "422", description = "수량이 1개 미만")
+            @ApiResponse(responseCode = "400", description = "요청 본문 형식 오류"),
+            @ApiResponse(responseCode = "422", description = "수량이 1개 미만이거나 누락")
     })
     ResponseEntity<Void> changeQuantity(Long memberId, Long cartItemId, UpdateCartItemQuantityRequest request);
 
