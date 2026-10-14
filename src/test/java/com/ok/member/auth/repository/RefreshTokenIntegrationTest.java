@@ -15,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 
@@ -43,6 +44,9 @@ class RefreshTokenIntegrationTest {
     @Autowired
     RefreshTokenRepository refreshTokenRepository;
 
+    @Autowired
+    Clock clock;
+
     @AfterEach
     void tearDown() {
         refreshTokenRepository.deleteAllInBatch();
@@ -60,7 +64,7 @@ class RefreshTokenIntegrationTest {
         assertSoftly(softly -> {
             softly.assertThat(sut.getMemberId()).isEqualTo(MEMBER_ID);
             softly.assertThat(sut.getTokenHash()).isNotEqualTo(issued.value());
-            softly.assertThat(sut.getExpiresAt()).isEqualTo(issued.expiresAt());
+            softly.assertThat(sut.getExpiresAt()).isEqualTo(LocalDateTime.ofInstant(issued.expiresAt(), clock.getZone()));
             softly.assertThat(sut.getCreatedAt()).isNotNull();
             softly.assertThat(refreshTokenRepository.findByTokenHash(issued.value())).isEmpty();
         });

@@ -8,7 +8,7 @@ import java.time.Instant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-public class LoginResponseTest {
+class LoginResponseTest {
 
     private static final Instant ACCESS_EXPIRES_AT = Instant.parse("2026-10-12T05:30:00Z");
     private static final Instant REFRESH_EXPIRES_AT = Instant.parse("2026-10-26T05:00:00Z");

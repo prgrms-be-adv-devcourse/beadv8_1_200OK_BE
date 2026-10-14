@@ -3,9 +3,7 @@ package com.ok.member.auth;
 import com.jayway.jsonpath.JsonPath;
 import com.ok.member.auth.repository.RefreshTokenRepository;
 import com.ok.member.auth.service.AccessTokenProvider;
-import com.ok.member.auth.service.AuthService;
 import com.ok.member.auth.service.TokenHasher;
-import com.ok.member.auth.service.dto.LoginCommand;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
@@ -27,20 +25,21 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-public class AuthLoginIntegrationTest extends AbstractIntegrationTest {
+class AuthLoginIntegrationTest extends AbstractIntegrationTest {
 
     private static final String LOGIN_ID = "tester01";
     private static final String PASSWORD = "password1!";
@@ -59,6 +58,9 @@ public class AuthLoginIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JwtDecoder jwtDecoder;
+
+    @Autowired
+    JsonMapper jsonMapper;
 
     private MockMvc mockMvc;
 
@@ -136,6 +138,19 @@ public class AuthLoginIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 탈퇴한_회원은_비밀번호가_맞아도_401을_반환한다() throws Exception {
+        // given
+        saveMember(MemberStatus.WITHDRAWN);
+
+        // when
+        ResultActions result = performLogin(LOGIN_ID, PASSWORD);
+
+        // then
+        result.andExpect(status().isUnauthorized());
+        assertThat(refreshTokenRepository.count()).isZero();
+    }
+
+    @Test
     void 정지된_회원은_403을_반환한다() throws Exception {
         // given
         saveMember(MemberStatus.SUSPENDED);
@@ -167,12 +182,9 @@ public class AuthLoginIntegrationTest extends AbstractIntegrationTest {
     }
 
     private ResultActions performLogin(String loginId, String password) throws Exception {
-        String body = """
-                {
-                  "loginId": "%s",
-                  "password": "%s"
-                }
-                """.formatted(loginId, password);
+        // 문자열 포맷으로 만들면 따옴표·백슬래시가 들어간 값에서 JSON이 깨지므로 직렬화한다.
+        // LoginRequest를 직렬화하면 생성자에서 아이디가 미리 정규화되어 HTTP 경로의 정규화를 검증할 수 없으므로 Map을 쓴다.
+        String body = jsonMapper.writeValueAsString(Map.of("loginId", loginId, "password", password));
         return mockMvc.perform(post("/api/v1/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));

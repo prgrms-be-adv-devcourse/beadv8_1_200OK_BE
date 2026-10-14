@@ -1,12 +1,11 @@
 package com.ok.member.auth.service;
 
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-public class TokenHasherTest {
+class TokenHasherTest {
 
     @Test
     void SHA256_표준_테스트_벡터와_같은_값을_반환한다() {
