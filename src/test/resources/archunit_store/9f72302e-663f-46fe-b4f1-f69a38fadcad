@@ -1,2 +1,1 @@
-Class <com.ok.member.member.domain.MemberErrorCode> does not reside in a package '..exception..' in (MemberErrorCode.java:0)
 Class <com.ok.payout.domain.PayoutErrorCode> does not reside in a package '..exception..' in (PayoutErrorCode.java:0)
