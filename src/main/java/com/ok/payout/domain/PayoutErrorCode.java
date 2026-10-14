@@ -21,7 +21,6 @@ public enum PayoutErrorCode implements ErrorCode {
     MISSING_CANDIDATE_ID(HttpStatus.INTERNAL_SERVER_ERROR, "Missing candidate id", "정산 항목은 저장된 정산후보로만 만들 수 있습니다."),
     UNSETTLED_CANDIDATES_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "Unsettled candidates not found", "정산 대상 판매자의 미정산 후보가 없습니다. 조회 조건 불일치를 확인하세요.");
 
-
     private final HttpStatus httpStatus;
     private final String title;
     private final String message;
@@ -29,5 +28,14 @@ public enum PayoutErrorCode implements ErrorCode {
     @Override
     public HttpStatus status() {
         return httpStatus;
+    }
+
+    /**
+     * 다른 모듈의 에러코드와 type URI가 겹치지 않도록 모듈 접두사를 붙인다.
+     * 예) https://.../problems/payout/missing-seller-id
+     */
+    @Override
+    public String slug() {
+        return "payout/" + ErrorCode.super.slug();
     }
 }
