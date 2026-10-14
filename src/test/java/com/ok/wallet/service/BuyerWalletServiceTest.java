@@ -95,6 +95,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         } finally {
             // 중간에 실패해도 스레드가 남아 DB 커넥션을 잡고 있지 않도록 정리한다
             executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
         }
     }
 
