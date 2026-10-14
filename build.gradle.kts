@@ -38,10 +38,11 @@ dependencies {
     runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
 
     // ---------- Batch ----------
-    implementation("org.springframework.boot:spring-boot-starter-batch")
+    implementation("org.springframework.boot:spring-boot-starter-batch-jdbc") // 배치 실행 기록 DB 저장(BATCH_* 테이블)
 
     // ---------- Security ----------
     implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
 
     // ---------- Database (JPA, Querydsl, MySQL) ----------
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -62,6 +63,9 @@ dependencies {
 
     // ---------- Image ----------
     implementation("net.coobird:thumbnailator:0.4.21")
+
+    // ---------- HTML ----------
+    implementation("com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer:20260924.2") // 상품 상세설명 HTML 정제 (XSS 방지)
 
     // ---------- 개발 편의 ----------
     compileOnly("org.projectlombok:lombok")
