@@ -1,9 +1,19 @@
 package com.ok.delivery.domain;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.common.jpa.entity.BaseIdAndTime;
+import com.ok.common.jpa.entity.BaseTime;
 import com.ok.delivery.exception.DeliveryErrorCode;
-import jakarta.persistence.*;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -20,10 +30,14 @@ import java.time.LocalDateTime;
 @Getter
 @Table(name = "shipment_address_change_request")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class ShipmentAddressChangeRequest extends BaseIdAndTime {
+public class ShipmentAddressChangeRequest extends BaseTime {
 
     /** 판매자 거절과 송장 등록 시 자동 거절에 쓰는 고정 거절 사유 */
     public static final String REJECT_REASON = "상품 준비가 완료되어 배송지 변경이 불가능합니다.";
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     @Column(name = "shipment_id", nullable = false)
     private Long shipmentId;

@@ -1,9 +1,19 @@
 package com.ok.delivery.domain;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.common.jpa.entity.BaseIdAndTime;
+import com.ok.common.jpa.entity.BaseTime;
 import com.ok.delivery.exception.DeliveryErrorCode;
-import jakarta.persistence.*;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -31,7 +41,11 @@ import java.util.List;
 @Getter
 @Table(name = "shipment")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Shipment extends BaseIdAndTime {
+public class Shipment extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
     @Column(name = "order_id", nullable = false)
     private Long orderId;
