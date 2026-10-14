@@ -12,7 +12,6 @@ import java.util.List;
 
 public record ProductDetailResult(
 	Long productId,
-	Long sellerId,
 	String name,
 	String descriptionHtml,
 	ProductCategory category,
@@ -38,7 +37,7 @@ public record ProductDetailResult(
 		List<ProductOptionResult> options = product.activeOptions().stream()
 			.map(ProductOptionResult::from)
 			.toList();
-		return new ProductDetailResult(product.getId(), product.getSellerId(), product.getName(),
+		return new ProductDetailResult(product.getId(), product.getName(),
 			product.getDescriptionHtml(), product.getCategory(), product.getRegion(), product.getStatus(),
 			product.getMinSalePrice(), product.getMinPriceListPrice(), product.discountRate(), product.isSoldOut(),
 			product.getReviewCount(), product.averageRating(), imageUrls, options, product.getCreatedAt(),

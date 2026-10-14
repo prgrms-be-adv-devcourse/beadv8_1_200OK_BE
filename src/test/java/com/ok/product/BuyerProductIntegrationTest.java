@@ -169,7 +169,6 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 		mockMvc.perform(get("/api/v1/products/{productId}", productId))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.productId").value(productId))
-			.andExpect(jsonPath("$.sellerId").value(1))
 			.andExpect(jsonPath("$.name").value("청송 꿀사과"))
 			.andExpect(jsonPath("$.descriptionHtml").value("<p>설명</p>"))
 			.andExpect(jsonPath("$.categoryGroup").value("AGRICULTURE"))

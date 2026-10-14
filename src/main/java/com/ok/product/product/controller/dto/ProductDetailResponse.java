@@ -17,9 +17,6 @@ public record ProductDetailResponse(
 	@Schema(description = "상품 ID", example = "1")
 	Long productId,
 
-	@Schema(description = "판매자 회원 ID", example = "7")
-	Long sellerId,
-
 	@Schema(description = "상품명", example = "청송 꿀사과")
 	String name,
 
@@ -70,7 +67,7 @@ public record ProductDetailResponse(
 ) {
 
 	public static ProductDetailResponse from(ProductDetailResult result) {
-		return new ProductDetailResponse(result.productId(), result.sellerId(), result.name(),
+		return new ProductDetailResponse(result.productId(), result.name(),
 			result.descriptionHtml(), result.category().getGroup(), result.category(), result.region(),
 			result.status(), result.minSalePrice(), result.minPriceListPrice(), result.discountRate(),
 			result.soldOut(), result.reviewCount(), result.averageRating(), result.imageUrls(),

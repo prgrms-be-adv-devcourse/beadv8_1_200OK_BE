@@ -211,8 +211,9 @@ public class Product extends BaseTime {
 			.toList();
 	}
 
+	// 활성된 옵션은 항상 1개 이상이다.
 	public boolean isSoldOut() {
-		return activeOptions().stream().mapToInt(ProductOption::availableStock).sum() == 0;
+		return activeOptions().stream().mapToInt(ProductOption::availableStock).sum() <= 0;
 	}
 
 	// 대표 가격의 할인율
