@@ -1,4 +1,4 @@
-package com.ok.member;
+package com.ok.common.event;
 
 import java.time.LocalDateTime;
 import java.util.Objects;

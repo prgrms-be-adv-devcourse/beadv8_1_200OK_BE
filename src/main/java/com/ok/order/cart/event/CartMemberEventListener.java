@@ -1,6 +1,6 @@
 package com.ok.order.cart.event;
 
-import com.ok.member.MemberRegisteredEvent;
+import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.order.cart.service.CartService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
