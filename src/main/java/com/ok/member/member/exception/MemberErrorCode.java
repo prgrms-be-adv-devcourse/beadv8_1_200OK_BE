@@ -1,4 +1,4 @@
-package com.ok.member.member.domain;
+package com.ok.member.member.exception;
 
 import com.ok.common.exception.ErrorCode;
 import lombok.Getter;

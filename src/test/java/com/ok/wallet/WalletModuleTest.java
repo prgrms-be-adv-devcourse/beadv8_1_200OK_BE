@@ -1,9 +1,8 @@
 package com.ok.wallet;
 
 import com.ok.config.JpaConfig;
-import com.ok.member.MemberRegisteredEvent;
-import com.ok.member.MemberRole;
-import com.ok.member.SellerApprovedEvent;
+import com.ok.common.event.MemberRegisteredEvent;
+import com.ok.common.event.SellerApprovedEvent;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.repository.SellerWalletRepository;
@@ -49,7 +48,7 @@ class WalletModuleTest {
         Long memberId = 1L;
 
         // When & Then
-        scenario.publish(new MemberRegisteredEvent(memberId, MemberRole.BUYER))
+        scenario.publish(new MemberRegisteredEvent(memberId))
                 .andWaitForStateChange(() -> countBuyerWallets(memberId), count -> count == 1)
                 .andVerify(count -> assertThat(count).isEqualTo(1));
     }
@@ -58,7 +57,7 @@ class WalletModuleTest {
     void 같은_회원가입_이벤트를_두_번_받아도_지갑은_하나만_생성된다(Scenario scenario) {
         // Given
         Long memberId = 2L;
-        MemberRegisteredEvent event = new MemberRegisteredEvent(memberId, MemberRole.BUYER);
+        MemberRegisteredEvent event = new MemberRegisteredEvent(memberId);
         scenario.publish(event)
                 .andWaitForStateChange(() -> countCompletedEvents(memberId), count -> count == 1);
 
@@ -120,7 +119,7 @@ class WalletModuleTest {
         Long memberId = 5L;
 
         // When: 구매자 지갑이 생성될 때까지 기다려 이벤트 처리가 끝났음을 확인
-        scenario.publish(new MemberRegisteredEvent(memberId, MemberRole.SELLER))
+        scenario.publish(new MemberRegisteredEvent(memberId))
                 .andWaitForStateChange(() -> countBuyerWallets(memberId), count -> count == 1);
 
         // Then

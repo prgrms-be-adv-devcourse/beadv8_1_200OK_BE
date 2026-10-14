@@ -1,9 +1,8 @@
 package com.ok.member.member.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.member.member.domain.MemberErrorCode;
+import com.ok.member.member.exception.MemberErrorCode;
 import com.ok.member.member.repository.MemberRepository;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -15,7 +14,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.BDDMockito.given;
 
 @ExtendWith(MockitoExtension.class)
-public class MemberDuplicateValidatorTest {
+class MemberDuplicateValidatorTest {
 
     private static final String LOGIN_ID = "tester01";
     private static final String EMAIL = "tester@example.com";
@@ -27,69 +26,60 @@ public class MemberDuplicateValidatorTest {
     MemberDuplicateValidator validator;
 
     @Test
-    @DisplayName("중복이 없으면 예외가 발생하지 않는다")
-    void validate_noDuplicate() {
+    void 아이디와_이메일이_모두_사용_중이_아니면_예외가_발생하지_않는다() {
         // given
-        // 모든 exists 조회가 기본값 false를 반환한다
+        // exists 조회는 stub하지 않으면 false를 반환한다
 
         // when & then
-        assertThatCode(() -> validator.validate(LOGIN_ID, EMAIL))
-                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(LOGIN_ID, EMAIL)).doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("이미 사용 중인 아이디면 DUPLICATE_LOGIN_ID 예외가 발생한다")
-    void validate_duplicateLoginId() {
+    void 이미_사용_중인_아이디면_DUPLICATE_LOGIN_ID가_발생한다() {
         // given
         given(memberRepository.existsByLoginId(LOGIN_ID)).willReturn(true);
 
         // when & then
         assertThatThrownBy(() -> validator.validate(LOGIN_ID, EMAIL))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(MemberErrorCode.DUPLICATE_LOGIN_ID);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_LOGIN_ID));
     }
 
     @Test
-    @DisplayName("이미 사용 중인 이메일이면 DUPLICATE_EMAIL 예외가 발생한다")
-    void validate_duplicateEmail() {
+    void 이미_사용_중인_이메일이면_DUPLICATE_EMAIL이_발생한다() {
         // given
         given(memberRepository.existsByEmail(EMAIL)).willReturn(true);
 
         // when & then
         assertThatThrownBy(() -> validator.validate(LOGIN_ID, EMAIL))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(MemberErrorCode.DUPLICATE_EMAIL);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_EMAIL));
     }
 
     @Test
-    @DisplayName("unique 제약 위반은 제약 이름에 맞는 중복 에러로 변환한다")
-    void toDuplicateException_knownConstraint() {
+    void unique_제약_위반은_제약_이름에_맞는_중복_에러로_바꾼다() {
         // given
         DataIntegrityViolationException e = new DataIntegrityViolationException(
                 "Duplicate entry 'tester@example.com' for key 'member.uk_member_email'");
 
         // when
-        RuntimeException result = validator.toDuplicateException(e);
+        RuntimeException sut = validator.toDuplicateException(e);
 
         // then
-        assertThat(result).isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(MemberErrorCode.DUPLICATE_EMAIL);
+        assertThat(sut).isInstanceOfSatisfying(RestApiException.class,
+                ex -> assertThat(ex.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_EMAIL));
     }
 
     @Test
-    @DisplayName("회원 unique 제약이 아닌 무결성 위반은 원래 예외를 그대로 반환한다")
-    void toDuplicateException_unknownConstraint() {
+    void 회원_unique_제약이_아닌_무결성_위반은_원래_예외를_그대로_반환한다() {
         // given
         DataIntegrityViolationException e = new DataIntegrityViolationException("Column 'name' cannot be null");
 
         // when
-        RuntimeException result = validator.toDuplicateException(e);
+        RuntimeException sut = validator.toDuplicateException(e);
 
         // then
-        assertThat(result).isSameAs(e);
+        assertThat(sut).isSameAs(e);
     }
 
 }
