@@ -77,8 +77,7 @@ public record SignupRequest(
     @Override
     public String toString() {
         return "SignupRequest[loginId=%s, password=****, email=%s, name=%s, nickname=%s, " +
-                "termsAgreed=%s, privacyAgreed=%s]"
-                .formatted(loginId, email, name, nickname, termsAgreed, privacyAgreed);
+                "termsAgreed=%s, privacyAgreed=%s]".formatted(loginId, email, name, nickname, termsAgreed, privacyAgreed);
     }
 
     private static String trim(String value) {
@@ -86,7 +85,9 @@ public record SignupRequest(
     }
 
     private static String toLowerCaseTrimmed(String value) {
-        return value == null ? null : value.strip().toLowerCase();
+        // 아이디 정규화는 auth의 LoginRequest와 같은 규칙이어야 가입한 아이디로 로그인할 수 있다. 한쪽을 바꾸면 다른 쪽도 함께 바꾼다.
+        // Locale.ROOT를 지정하지 않으면 서버 기본 로케일에 따라 결과가 달라진다(예: 터키어에서 "I" → "ı")
+        return value == null ? null : value.strip().toLowerCase(Locale.ROOT);
     }
 
 }
