@@ -32,6 +32,7 @@ import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
+import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
@@ -49,12 +50,16 @@ class ProductServiceTest {
 	@Mock
 	ProductOptionRepository productOptionRepository;
 
+	@Mock
+	ProductQueryRepository productQueryRepository;
+
 	ProductService service;
 
 	@BeforeEach
 	void setUp() {
-		service = new ProductService(productRepository, new ProductImageUrlValidator("bucket", "ap-northeast-2"),
-			productOptionRepository);
+		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
+		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
+			productQueryRepository, new ProductDescriptionSanitizer(imageUrlValidator));
 	}
 
 	@Test
