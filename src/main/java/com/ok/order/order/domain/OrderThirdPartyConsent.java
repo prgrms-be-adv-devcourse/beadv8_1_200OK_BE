@@ -28,4 +28,12 @@ public class OrderThirdPartyConsent extends BaseTime {
     // 정보를 제공받는 사람 (판매자 회원 ID)
     @Column(nullable = false)
     private Long sellerId;
+
+    static OrderThirdPartyConsent create(Order order, Long sellerId) {
+        OrderThirdPartyConsent consent = new OrderThirdPartyConsent();
+        consent.order = order;
+        consent.buyerId = order.getBuyerId();
+        consent.sellerId = sellerId;
+        return consent;
+    }
 }
