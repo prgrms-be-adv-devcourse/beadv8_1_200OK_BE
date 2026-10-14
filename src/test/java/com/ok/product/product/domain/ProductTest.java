@@ -5,8 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.ok.common.exception.RestApiException;
@@ -185,6 +188,56 @@ class ProductTest {
 	}
 
 	@Test
+	void 판매_중이고_노출된_상품은_판매_조건을_만족한다() {
+		// given
+		Product sut = onSale();
+
+		// when & then
+		assertThat(sut.isOnSale()).isTrue();
+	}
+
+	@ParameterizedTest
+	@MethodSource("판매_중이_아닌_상태")
+	void 판매_중이_아니면_판매_조건을_만족하지_않는다(ProductStatus status) {
+		// given
+		Product sut = onSale();
+
+		// when
+		sut.changeStatus(status);
+
+		// then
+		assertThat(sut.isOnSale()).isFalse();
+	}
+
+	static Stream<ProductStatus> 판매_중이_아닌_상태() {
+		return Stream.of(ProductStatus.READY, ProductStatus.PAUSED, ProductStatus.ENDED);
+	}
+
+	@Test
+	void 숨긴_상품은_판매_조건을_만족하지_않는다() {
+		// given
+		Product sut = onSale();
+
+		// when
+		sut.changeVisibility(ProductVisibility.HIDDEN);
+
+		// then
+		assertThat(sut.isOnSale()).isFalse();
+	}
+
+	@Test
+	void 삭제한_상품은_판매_조건을_만족하지_않는다() {
+		// given
+		Product sut = onSale();
+
+		// when
+		sut.delete(NOW);
+
+		// then
+		assertThat(sut.isOnSale()).isFalse();
+	}
+
+	@Test
 	void 리뷰가_없으면_평균_별점은_0이고_있으면_소수_첫째_자리까지() {
 		Product product = create(List.of(ProductOptionSpec.newOption("A", null, 30_000L, 10)));
 		assertThat(product.averageRating()).isZero();
@@ -205,6 +258,13 @@ class ProductTest {
 	private Product create(List<ProductOptionSpec> options) {
 		return Product.create(1L, "꿀고구마", "<p>설명</p>", ProductCategory.ROOT_CROP, ProductRegion.JEONNAM,
 			options, IMAGES);
+	}
+
+	private Product onSale() {
+		Product product = create(List.of(ProductOptionSpec.newOption("A", null, 30_000L, 10)));
+		product.changeStatus(ProductStatus.ON_SALE);
+		product.changeVisibility(ProductVisibility.VISIBLE);
+		return product;
 	}
 
 	// DB 없이 병합을 테스트하려고 저장된 것처럼 옵션에 id를 넣는다

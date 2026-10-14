@@ -6,12 +6,22 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
+
 /**
  * 재고 두 컬럼(total_stock, allocated_quantity)은 엔티티에서 updatable = false라 아래 쿼리로만 바뀐다.
- * 모두 반영된 행 수를 돌려준다. 0이면 조건 불충족(재고 부족 등)이다.
  * 쿼리는 영속성 컨텍스트를 거치지 않으므로, 같은 트랜잭션에서 바뀐 값이 필요하면 다시 조회한다.
  */
 public interface ProductOptionRepository extends JpaRepository<ProductOption, Long> {
+
+	// 옵션 조회
+	@Query("""
+		select o from ProductOption o join fetch o.product
+		where o.id in :ids
+		order by o.id
+		""")
+	List<ProductOption> findAllWithProductByIdIn(@Param("ids") Collection<Long> ids);
 
 	// 배정: 판매 가능 수량(총재고 - 배정 수량)이 충분할 때만 배정 수량을 늘린다
 	@Modifying
