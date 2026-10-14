@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 // TODO: 임시 헤더는 클라이언트가 아무 회원으로 위장할 수 있어 운영에는 등록하지 않는다. 인증이 붙으면 @Profile 제거한다
-@Profile({"local", "dev"})
+@Profile({"dev", "test"})
 @RestController
 @RequestMapping("/api/v1/products")
 @RequiredArgsConstructor
