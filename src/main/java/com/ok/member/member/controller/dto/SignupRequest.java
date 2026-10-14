@@ -77,8 +77,7 @@ public record SignupRequest(
     @Override
     public String toString() {
         return "SignupRequest[loginId=%s, password=****, email=%s, name=%s, nickname=%s, " +
-                "termsAgreed=%s, privacyAgreed=%s]"
-                        .formatted(loginId, email, name, nickname, termsAgreed, privacyAgreed);
+                "termsAgreed=%s, privacyAgreed=%s]".formatted(loginId, email, name, nickname, termsAgreed, privacyAgreed);
     }
 
     private static String trim(String value) {

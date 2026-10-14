@@ -11,11 +11,8 @@ import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.Clock;
-import java.time.Instant;
-import java.util.Optional;
 
 /**
  * 로그인 아이디와 비밀번호로 회원을 인증하고 Access Token과 Refresh Token을 발급한다.
@@ -28,7 +25,6 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AccessTokenProvider accessTokenProvider;
     private final RefreshTokenService refreshTokenService;
-    private final Clock clock;
 
     /**
      * 존재하지 않는 아이디로 로그인할 때 비밀번호 비교에 쓰는 해시.
@@ -41,14 +37,13 @@ public class AuthService {
     public AuthService(MemberRepository memberRepository,
                        PasswordEncoder passwordEncoder,
                        AccessTokenProvider accessTokenProvider,
-                       RefreshTokenService refreshTokenService,
-                       Clock clock) {
+                       RefreshTokenService refreshTokenService) {
         this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.accessTokenProvider = accessTokenProvider;
         this.refreshTokenService = refreshTokenService;
-        this.clock = clock;
-        // 실제 회원 비밀번호와 같은 인코더로 만들어야 비교 비용(bcrypt 강도)이 같아진다
+        // 회원가입과 같은 인코더(DelegatingPasswordEncoder, 기본 bcrypt 강도 10)로 만들어야 비교 비용이 같아진다.
+        // 인코더 알고리즘이나 강도를 바꾸면 기존 회원 해시와 비용이 달라지므로 이 부분도 함께 점검한다.
         this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-timing");
     }
 
@@ -56,10 +51,14 @@ public class AuthService {
      * 로그인 아이디와 비밀번호를 확인하고 토큰을 발급한다.
      * Refresh Token은 해시로 저장되므로 원문은 반환값으로만 얻을 수 있다.
      *
+     * <p>트랜잭션 없이 실행한다. bcrypt 비교(수십~수백 ms)를 트랜잭션 안에서 하면 그동안 DB 커넥션을 붙잡고 있어,
+     * 동시 로그인이 많을 때 커넥션 풀이 먼저 고갈된다. 회원 조회와 Refresh Token 저장은 각각 리포지토리·서비스의
+     * 짧은 트랜잭션에서 처리된다.
+     *
      * @throws RestApiException 아이디가 없거나 비밀번호가 틀리거나 탈퇴한 회원이면 {@code INVALID_CREDENTIALS},
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public LoginResult login(LoginCommand command) {
         Member member = authenticate(command);
         validateLoginable(member);
@@ -67,10 +66,8 @@ public class AuthService {
         AccessToken accessToken = accessTokenProvider.issue(member.getId(), member.getRole());
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
 
-        // Refresh Token 만료 일시는 Clock의 시간대로 계산한 LocalDateTime이므로, 같은 시간대로 Instant로 바꾼다
-        Instant refreshTokenExpiresAt = refreshToken.expiresAt().atZone(clock.getZone()).toInstant();
         return new LoginResult(accessToken.value(), accessToken.expiresAt(),
-                refreshToken.value(), refreshTokenExpiresAt);
+                refreshToken.value(), refreshToken.expiresAt());
     }
 
     private Member authenticate(LoginCommand command) {

@@ -12,6 +12,7 @@ public record LoginRequest(
 
         @Schema(description = "로그인 아이디. 대소문자를 구분하지 않습니다.", example = "tester01")
         @NotBlank(message = "아이디는 필수입니다.")
+        @Size(max = 20, message = "아이디는 20자 이하여야 합니다.")
         String loginId,
 
         // bcrypt는 72바이트를 넘는 비밀번호를 비교하지 못하고 예외를 던진다(500).

@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 
 /**
- * 인증(로그인·토큰) 관련 에러 코드를 정의
+ * 인증(로그인·토큰) 관련 에러 코드를 정의한다.
  */
 @Getter
 @RequiredArgsConstructor
@@ -29,7 +29,7 @@ public enum AuthErrorCode implements ErrorCode {
 
     @Override
     public String slug() {
-        return "member/" + ErrorCode.super.slug();
+        return "auth/" + ErrorCode.super.slug();
     }
 
 }
