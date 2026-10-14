@@ -25,8 +25,12 @@ public record LoginRequest(
     /**
      * 가입 시와 같은 규칙으로 아이디를 정규화한다. 검증은 정규화된 값을 기준으로 수행된다.
      * 비밀번호는 공백도 값의 일부일 수 있어 정규화하지 않는다.
+     *
+     * <p>member의 {@code SignupRequest}와 같은 규칙이어야 가입한 아이디로 로그인할 수 있다.
+     * auth를 별도 모듈로 분리할 예정이라 member의 코드를 참조하지 않고 규칙을 따로 둔다. 한쪽을 바꾸면 다른 쪽도 함께 바꾼다.
      */
     public LoginRequest {
+        // Locale.ROOT를 지정하지 않으면 서버 기본 로케일에 따라 결과가 달라진다(예: 터키어에서 "I" → "ı")
         loginId = loginId == null ? null : loginId.strip().toLowerCase(Locale.ROOT);
     }
 

@@ -32,8 +32,9 @@ public class AuthService {
 
     /**
      * 존재하지 않는 아이디로 로그인할 때 비밀번호 비교에 쓰는 해시.
-     * 아이디가 없을 때 bcrypt 비교를 건너뛰면 응답이 눈에 띄게 빨라져, 응답 시간만으로 가입 여부를 알아낼 수 있다.
-     * 아이디가 없어도 같은 비용의 비교를 한 번 수행해 응답 시간을 맞춘다.
+     * 응답 시간에서 가장 큰 차이를 만드는 bcrypt 비교(수십~수백 ms)를 아이디 존재 여부와 관계없이 한 번씩 수행해,
+     * 응답 시간으로 가입 여부를 짐작하기 어렵게 한다.
+     * DB 조회 시간 등 작은 차이는 남으므로 완전한 방어가 아니라 차이를 줄이는 근사적인 대응이다.
      */
     private final String dummyPasswordHash;
 
@@ -41,8 +42,7 @@ public class AuthService {
                        PasswordEncoder passwordEncoder,
                        AccessTokenProvider accessTokenProvider,
                        RefreshTokenService refreshTokenService,
-                       Clock clock
-    ) {
+                       Clock clock) {
         this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.accessTokenProvider = accessTokenProvider;
@@ -74,15 +74,16 @@ public class AuthService {
     }
 
     private Member authenticate(LoginCommand command) {
-        Optional<Member> member = memberRepository.findByLoginId(command.loginId());
-        if (member.isEmpty()) {
-            passwordEncoder.matches(command.password(), dummyPasswordHash);
+        Member member = memberRepository.findByLoginId(command.loginId()).orElse(null);
+
+        // 회원이 없어도 더미 해시로 비교를 한 번 수행한다. 비교를 한 곳에서만 하면 두 경로의 비용이 구조적으로 같아진다.
+        String passwordHash = member != null ? member.getPassword() : dummyPasswordHash;
+        boolean matches = passwordEncoder.matches(command.password(), passwordHash);
+
+        if (member == null || !matches) {
             throw new RestApiException(AuthErrorCode.INVALID_CREDENTIALS);
         }
-        if (!passwordEncoder.matches(command.password(), member.get().getPassword())) {
-            throw new RestApiException(AuthErrorCode.INVALID_CREDENTIALS);
-        }
-        return member.get();
+        return member;
     }
 
     private void validateLoginable(Member member) {

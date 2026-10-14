@@ -3,6 +3,8 @@ package com.ok.member.auth.controller.dto;
 import com.ok.member.auth.service.dto.LoginCommand;
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
@@ -19,6 +21,24 @@ public class LoginRequestTest {
             softly.assertThat(sut.loginId()).isEqualTo("tester01");
             softly.assertThat(sut.password()).isEqualTo(" Password1! ");
         });
+    }
+
+    @Test
+    void 서버_기본_로케일과_관계없이_아이디를_같은_값으로_정규화한다() {
+        // given
+        // 터키어 로케일에서 기본 toLowerCase()는 "I"를 점 없는 "ı"로 바꾼다
+        Locale original = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
+        try {
+            // when
+            LoginRequest sut = new LoginRequest("ADMIN01", "password1!");
+
+            // then
+            assertThat(sut.loginId()).isEqualTo("admin01");
+        } finally {
+            Locale.setDefault(original);
+        }
     }
 
     @Test
