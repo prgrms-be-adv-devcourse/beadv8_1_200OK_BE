@@ -14,16 +14,19 @@ public class BuyerWalletService {
     private final BuyerWalletRepository buyerWalletRepository;
 
     /**
-     * 구매자 지갑을 잠금 조회로 반환한다. 지갑이 없다면 생성한 뒤 반환한다
+     * 구매자 지갑을 잠금 조회로 반환한다. 지갑이 없으면 생성한 뒤 반환한다.
      * 존재 확인은 일반 조회로 하고, 없으면 저장한 뒤 잠금 조회로 반환한다.
+     * 반환된 지갑은 호출한 트랜잭션이 끝날 때까지 잠겨 있으므로, 잔액을 바꾸지 않는 호출에는 쓰지 않는다.
      */
     @Transactional
     public BuyerWallet getOrCreate(Long memberId) {
         if (!buyerWalletRepository.existsByMemberId(memberId)) {
+            // TODO: 공통 Clock 빈이 생기면 LocalDateTime.now(clock)으로 변경 (.claude/rules/service.md)
             buyerWalletRepository.insertIfAbsent(memberId, LocalDateTime.now());
         }
 
-        // 사용자가 일으킬 수 없는 코드나 DB의 이상 : 표준 예외
+        // 바로 앞에서 저장했거나 존재를 확인했으므로 여기서 없을 수 없다.
+        // 없다면 사용자 입력이 아닌 코드·DB의 이상이므로 500으로 드러나도록 IllegalStateException을 던진다.
         return buyerWalletRepository.findForUpdateByMemberId(memberId)
                 .orElseThrow(() -> new IllegalStateException("구매자 지갑 생성 후 조회에 실패했습니다. memberId=" + memberId));
     }
