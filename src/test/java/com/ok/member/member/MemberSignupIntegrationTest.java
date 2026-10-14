@@ -3,14 +3,10 @@ package com.ok.member.member;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
-import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -33,11 +29,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest(properties = {
-        "app.problem.base-uri=https://api.example.com/problems"
-})
-@AutoConfigureMockMvc
-@Import(TestcontainersConfiguration.class)
 class MemberSignupIntegrationTest extends AbstractIntegrationTest {
 
     private static final String PASSWORD = "password1!";
@@ -167,5 +158,6 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
         return Member.createBuyer(loginId, "{bcrypt}encoded", email, "홍길동", "길동이",
                 LocalDateTime.of(2026, 10, 1, 12, 0));
     }
+
 
 }
