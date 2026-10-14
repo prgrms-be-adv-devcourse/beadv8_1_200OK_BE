@@ -1,7 +1,7 @@
 package com.ok.wallet.event;
 
-import com.ok.member.MemberRegisteredEvent;
-import com.ok.member.SellerApprovedEvent;
+import com.ok.common.event.MemberRegisteredEvent;
+import com.ok.common.event.SellerApprovedEvent;
 import com.ok.wallet.service.BuyerWalletService;
 import com.ok.wallet.service.SellerWalletService;
 import lombok.RequiredArgsConstructor;

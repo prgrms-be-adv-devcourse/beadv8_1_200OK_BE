@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-public class LoginCommandTest {
+class LoginCommandTest {
 
     @Test
     void toString에_비밀번호가_노출되지_않는다() {

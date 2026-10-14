@@ -1,5 +1,6 @@
 package com.ok.member;
 
+import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.config.JpaConfig;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.MemberSignupService;
@@ -42,7 +43,6 @@ public class MemberModuleTest {
         // when & then
         scenario.stimulate(() -> memberSignupService.signup(command))
                 .andWaitForEventOfType(MemberRegisteredEvent.class)
-                .matching(event -> event.memberRole() == MemberRole.BUYER)
                 .toArriveAndVerify(event -> assertThat(event.memberId()).isNotNull());
     }
 

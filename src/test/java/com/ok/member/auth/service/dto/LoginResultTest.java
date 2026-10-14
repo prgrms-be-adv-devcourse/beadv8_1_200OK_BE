@@ -6,7 +6,7 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-public class LoginResultTest {
+class LoginResultTest {
 
     @Test
     void toString에_토큰이_노출되지_않는다() {

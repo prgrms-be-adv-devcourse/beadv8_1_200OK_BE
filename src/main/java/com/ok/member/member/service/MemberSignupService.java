@@ -1,6 +1,6 @@
 package com.ok.member.member.service;
 
-import com.ok.member.MemberRegisteredEvent;
+import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.dto.SignupCommand;
@@ -43,7 +43,7 @@ public class MemberSignupService {
         Member saved = save(member);
 
         // 회원 가입 이벤트 발행
-        eventPublisher.publishEvent(new MemberRegisteredEvent(saved.getId(), saved.getRole()));
+        eventPublisher.publishEvent(new MemberRegisteredEvent(saved.getId()));
 
         return saved.getId();
     }

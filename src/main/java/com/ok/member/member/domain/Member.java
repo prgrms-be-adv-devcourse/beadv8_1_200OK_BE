@@ -1,6 +1,6 @@
 package com.ok.member.member.domain;
 
-import com.ok.common.jpa.entity.BaseIdAndTime;
+import com.ok.common.jpa.entity.BaseTime;
 import com.ok.member.MemberRole;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -9,11 +9,16 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
+import static jakarta.persistence.GenerationType.IDENTITY;
+
 @Entity
 @Table(name = "member")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Member extends BaseIdAndTime {
+public class Member extends BaseTime {
+    @Id
+    @GeneratedValue(strategy = IDENTITY)
+    private Long id;
 
     @Column(nullable = false, length = 20)
     private String loginId;
