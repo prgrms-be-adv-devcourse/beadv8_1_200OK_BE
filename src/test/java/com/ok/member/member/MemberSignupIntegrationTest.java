@@ -135,6 +135,19 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
                 .hasMessageContaining("uk_member_email");
     }
 
+    @Test
+    void 대문자_이메일은_소문자로_저장되고_대소문자만_다른_이메일은_중복으로_처리한다() throws Exception {
+        // given
+        performSignup(signupBody("tester01", "Tester@Example.COM")).andExpect(status().isCreated());
+
+        // when
+        ResultActions result = performSignup(signupBody("tester02", "tester@example.com"));
+
+        // then
+        result.andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/member/duplicate-email")));
+    }
+
     private ResultActions performSignup(Map<String, Object> body) throws Exception {
         // 문자열 포맷으로 만들면 따옴표·백슬래시가 들어간 값에서 JSON이 깨지므로 직렬화한다
         return mockMvc.perform(post("/api/v1/members/signup")
