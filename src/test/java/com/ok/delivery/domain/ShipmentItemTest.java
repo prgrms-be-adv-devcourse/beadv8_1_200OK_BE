@@ -34,21 +34,29 @@ class ShipmentItemTest {
         });
     }
 
+    @Test
+    void orderItemId가_없으면_생성할_수_없다() {
+        // when & then
+        assertThatThrownBy(() -> ShipmentItem.create(null, "무선 키보드", null, 1, 1_000))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("orderItemId는 필수입니다.");
+    }
+
     @ParameterizedTest
     @MethodSource("invalidItems")
-    void 잘못된_값으로는_생성할_수_없다(Long orderItemId, String productName, int quantity, int unitPrice, String message) {
+    void 잘못된_값으로는_생성할_수_없다(String productName, int quantity, int unitPrice, DeliveryErrorCode errorCode) {
         // when & then
-        assertThatThrownBy(() -> ShipmentItem.create(orderItemId, productName, null, quantity, unitPrice))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(message);
+        assertThatThrownBy(() -> ShipmentItem.create(1L, productName, null, quantity, unitPrice))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(errorCode));
     }
 
     static Stream<Arguments> invalidItems() {
         return Stream.of(
-                Arguments.of(null, "무선 키보드", 1, 1_000, "orderItemId는 필수입니다."),
-                Arguments.of(1L, " ", 1, 1_000, "상품명은 필수입니다."),
-                Arguments.of(1L, "무선 키보드", 0, 1_000, "수량은 1 이상이어야 합니다."),
-                Arguments.of(1L, "무선 키보드", 1, -1, "단가는 0 이상이어야 합니다.")
+                Arguments.of(null, 1, 1_000, DeliveryErrorCode.MISSING_PRODUCT_NAME),
+                Arguments.of(" ", 1, 1_000, DeliveryErrorCode.MISSING_PRODUCT_NAME),
+                Arguments.of("무선 키보드", 0, 1_000, DeliveryErrorCode.INVALID_ITEM_QUANTITY),
+                Arguments.of("무선 키보드", 1, -1, DeliveryErrorCode.INVALID_UNIT_PRICE)
         );
     }
 
@@ -83,23 +91,23 @@ class ShipmentItemTest {
 
     @ParameterizedTest
     @MethodSource("invalidCancelQuantities")
-    void 취소_수량은_1_이상이고_누적이_주문_수량을_넘을_수_없다(int quantity, String message) {
+    void 취소_수량은_1_이상이고_누적이_주문_수량을_넘을_수_없다(int quantity, DeliveryErrorCode errorCode) {
         // given
         ShipmentItem sut = item(1L);
 
         // when & then
         assertThatThrownBy(() -> sut.cancel(quantity))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(message);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(errorCode));
         assertThat(sut.getCanceledQuantity()).isZero();
     }
 
     // item(1L)의 주문 수량은 2
     static Stream<Arguments> invalidCancelQuantities() {
         return Stream.of(
-                Arguments.of(0, "취소 수량은 1 이상이어야 합니다."),
-                Arguments.of(-1, "취소 수량은 1 이상이어야 합니다."),
-                Arguments.of(3, "취소 수량이 주문 수량을 넘을 수 없습니다.")
+                Arguments.of(0, DeliveryErrorCode.INVALID_CANCEL_QUANTITY),
+                Arguments.of(-1, DeliveryErrorCode.INVALID_CANCEL_QUANTITY),
+                Arguments.of(3, DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED)
         );
     }
 

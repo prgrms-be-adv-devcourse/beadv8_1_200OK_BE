@@ -8,6 +8,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -104,8 +105,43 @@ class ShipmentTest {
     void 상품_항목이_없으면_생성할_수_없다() {
         // when & then
         assertThatThrownBy(ShipmentFixture::shipment)
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("상품 항목은 1개 이상이어야 합니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_SHIPMENT_ITEMS));
+    }
+
+    @Test
+    void 배송비가_음수면_생성할_수_없다() {
+        // given
+        var sut = validBuilder().regionSurcharge(-1);
+
+        // when & then
+        assertThatThrownBy(sut::build)
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPPING_FEE));
+    }
+
+    @Test
+    void 도착_예정일_시작이_끝보다_늦으면_생성할_수_없다() {
+        // given
+        var sut = validBuilder()
+                .estimatedDeliveryStart(LocalDate.of(2026, 10, 15))
+                .estimatedDeliveryEnd(LocalDate.of(2026, 10, 14));
+
+        // when & then
+        assertThatThrownBy(sut::build)
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_ESTIMATED_DELIVERY));
+    }
+
+    private static Shipment.ShipmentBuilder validBuilder() {
+        return Shipment.builder()
+                .orderId(1L)
+                .sellerId(10L)
+                .address(address())
+                .regionGroup("GENERAL")
+                .estimatedDeliveryStart(LocalDate.of(2026, 10, 13))
+                .estimatedDeliveryEnd(LocalDate.of(2026, 10, 14))
+                .items(List.of(item(1L)));
     }
 
     @Test
@@ -128,22 +164,22 @@ class ShipmentTest {
 
     @ParameterizedTest
     @MethodSource("missingDispatchValues")
-    void 택배사나_송장번호가_없으면_송장을_등록할_수_없다(String carrier, String trackingNumber, String message) {
+    void 택배사나_송장번호가_없으면_송장을_등록할_수_없다(String carrier, String trackingNumber, DeliveryErrorCode errorCode) {
         // given
         Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
 
         // when & then
         assertThatThrownBy(() -> sut.dispatch(carrier, trackingNumber, NOW))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(message);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(errorCode));
     }
 
     static Stream<Arguments> missingDispatchValues() {
         return Stream.of(
-                Arguments.of(null, "1234567890", "택배사는 필수입니다."),
-                Arguments.of(" ", "1234567890", "택배사는 필수입니다."),
-                Arguments.of("CJ_LOGISTICS", null, "송장번호는 필수입니다."),
-                Arguments.of("CJ_LOGISTICS", " ", "송장번호는 필수입니다.")
+                Arguments.of(null, "1234567890", DeliveryErrorCode.MISSING_CARRIER),
+                Arguments.of(" ", "1234567890", DeliveryErrorCode.MISSING_CARRIER),
+                Arguments.of("CJ_LOGISTICS", null, DeliveryErrorCode.MISSING_TRACKING_NUMBER),
+                Arguments.of("CJ_LOGISTICS", " ", DeliveryErrorCode.MISSING_TRACKING_NUMBER)
         );
     }
 

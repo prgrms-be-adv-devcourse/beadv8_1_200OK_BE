@@ -105,6 +105,10 @@ public class Shipment extends BaseTime {
 
     /**
      * 결제 완료 시점에 만든다. 상태는 {@code PREPARING}, 상품 항목은 1개 이상이어야 한다.
+     *
+     * @throws RestApiException 배송비가 음수면 {@code INVALID_SHIPPING_FEE},
+     *                          도착 예정일 시작이 끝보다 늦으면 {@code INVALID_ESTIMATED_DELIVERY},
+     *                          상품 항목이 없으면 {@code MISSING_SHIPMENT_ITEMS}
      */
     @Builder
     private Shipment(
@@ -126,13 +130,13 @@ public class Shipment extends BaseTime {
         requireNonNull(estimatedDeliveryStart, "도착 예정일 시작은 필수입니다.");
         requireNonNull(estimatedDeliveryEnd, "도착 예정일 끝은 필수입니다.");
         if (baseShippingFee < 0 || regionSurcharge < 0 || freeShippingThreshold < 0) {
-            throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");
+            throw new RestApiException(DeliveryErrorCode.INVALID_SHIPPING_FEE);
         }
         if (estimatedDeliveryStart.isAfter(estimatedDeliveryEnd)) {
-            throw new IllegalArgumentException("도착 예정일 시작은 끝보다 늦을 수 없습니다.");
+            throw new RestApiException(DeliveryErrorCode.INVALID_ESTIMATED_DELIVERY);
         }
         if (items == null || items.isEmpty()) {
-            throw new IllegalArgumentException("상품 항목은 1개 이상이어야 합니다.");
+            throw new RestApiException(DeliveryErrorCode.MISSING_SHIPMENT_ITEMS);
         }
         this.orderId = orderId;
         this.sellerId = sellerId;
@@ -161,12 +165,17 @@ public class Shipment extends BaseTime {
      *
      * <p>송장번호 중복은 DB UNIQUE 제약이 막는다. 대기 중인 배송지 변경 요청의 자동 거절은 호출하는 서비스가 한다.
      *
-     * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE}
+     * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE},
+     *                          택배사나 송장번호가 비어 있으면 {@code MISSING_CARRIER}, {@code MISSING_TRACKING_NUMBER}
      */
     public void dispatch(String carrier, String trackingNumber, LocalDateTime now) {
         requireStatus(ShipmentStatus.PREPARING);
-        requireText(carrier, "택배사는 필수입니다.");
-        requireText(trackingNumber, "송장번호는 필수입니다.");
+        if (isBlank(carrier)) {
+            throw new RestApiException(DeliveryErrorCode.MISSING_CARRIER);
+        }
+        if (isBlank(trackingNumber)) {
+            throw new RestApiException(DeliveryErrorCode.MISSING_TRACKING_NUMBER);
+        }
         this.carrier = carrier;
         this.trackingNumber = trackingNumber;
         this.status = ShipmentStatus.SHIPPING;
@@ -236,7 +245,8 @@ public class Shipment extends BaseTime {
      * 서비스가 shipment 행 잠금 아래에서 확인한다.
      *
      * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 결제하지 않고 판매자가 직접 받는다
-     * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED}
+     * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED},
+     *                          추가 운임 안내 금액이 음수면 {@code INVALID_ADDITIONAL_FEE_NOTICE}
      */
     public ShipmentAddressChangeRequest requestAddressChange(Address requestedAddress, int additionalFeeNotice, LocalDateTime now) {
         requireAddressChangeable();
@@ -269,8 +279,12 @@ public class Shipment extends BaseTime {
     }
 
     private static void requireText(String value, String message) {
-        if (value == null || value.isBlank()) {
+        if (isBlank(value)) {
             throw new IllegalArgumentException(message);
         }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

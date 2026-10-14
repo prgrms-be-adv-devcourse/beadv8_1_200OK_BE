@@ -96,7 +96,7 @@ class ShipmentAddressChangeRequestTest {
 
         // when & then
         assertThatThrownBy(() -> shipment.requestAddressChange(otherAddress(), -1, NOW))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("추가 운임 안내 금액은 0 이상이어야 합니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_ADDITIONAL_FEE_NOTICE));
     }
 }

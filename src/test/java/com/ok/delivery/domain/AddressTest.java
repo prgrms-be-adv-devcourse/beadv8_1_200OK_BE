@@ -1,5 +1,7 @@
 package com.ok.delivery.domain;
 
+import com.ok.common.exception.RestApiException;
+import com.ok.delivery.exception.DeliveryErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -99,8 +101,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> address(phone, postalCode))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("연락처는 숫자 10~11자리여야 합니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_RECIPIENT_PHONE));
     }
 
     static Stream<String> phonesWithInvalidLength() {
@@ -115,8 +117,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> address(phone, postalCode))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("연락처는 숫자 10~11자리여야 합니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_RECIPIENT_PHONE));
     }
 
     static Stream<String> phonesWithInvalidCharacters() {
@@ -146,8 +148,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> address(phone, postalCode))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("우편번호는 숫자 5자리여야 합니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_POSTAL_CODE));
     }
 
     static Stream<String> invalidPostalCodes() {
@@ -163,8 +165,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> Address.of(recipientName, phone, postalCode, "주소", "상세", null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("수령인은 필수입니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_ADDRESS_FIELD));
     }
 
     // 필수 필드 5개 테스트가 함께 사용한다.
@@ -181,8 +183,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> Address.of(recipientName, phone, postalCode, "주소", "상세", null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("연락처는 필수입니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_ADDRESS_FIELD));
     }
 
     @ParameterizedTest
@@ -194,8 +196,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> Address.of(recipientName, phone, postalCode, "주소", "상세", null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("우편번호는 필수입니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_ADDRESS_FIELD));
     }
 
     @ParameterizedTest
@@ -208,8 +210,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> Address.of(recipientName, phone, postalCode, address, "상세", null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("주소는 필수입니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_ADDRESS_FIELD));
     }
 
     @ParameterizedTest
@@ -222,8 +224,8 @@ class AddressTest {
 
         // when & then
         assertThatThrownBy(() -> Address.of(recipientName, phone, postalCode, "주소", addressDetail, null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("상세 주소는 필수입니다.");
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_ADDRESS_FIELD));
     }
 
     @Test
