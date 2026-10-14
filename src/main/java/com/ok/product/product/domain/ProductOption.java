@@ -78,8 +78,12 @@ public class ProductOption extends BaseTime {
 		return totalStock - allocatedQuantity;
 	}
 
-	// 할인률 계산
 	public int discountRate() {
+		return discountRate(listPrice, salePrice);
+	}
+
+	// 할인율은 저장하지 않고 정가와 판매가로 계산한다 (소수점 버림). 상품 대표 할인율도 같은 식을 쓴다
+	static int discountRate(Long listPrice, Long salePrice) {
 		if (listPrice == 0) {
 			return 0;
 		}

@@ -215,6 +215,11 @@ public class Product extends BaseTime {
 		return activeOptions().stream().mapToInt(ProductOption::availableStock).sum() == 0;
 	}
 
+	// 대표 가격의 할인율
+	public int discountRate() {
+		return ProductOption.discountRate(minPriceListPrice, minSalePrice);
+	}
+
 	// 소수 첫째 자리 반올림. 리뷰가 없으면 0
 	public double averageRating() {
 		if (reviewCount == 0) {

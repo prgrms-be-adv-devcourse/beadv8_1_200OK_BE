@@ -1,15 +1,21 @@
 package com.ok.product.product.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.common.html.HtmlSanitizer;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
+import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.dto.ProductCreateCommand;
+import com.ok.product.product.service.dto.ProductDetailResult;
+import com.ok.product.product.service.dto.ProductSearchQuery;
+import com.ok.product.product.service.dto.ProductSummaryResult;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +23,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class ProductService {
 
 	// 정제 후 상세설명 최대 길이
@@ -25,15 +33,8 @@ public class ProductService {
 	private final ProductRepository productRepository;
 	private final ProductImageUrlValidator productImageUrlValidator;
 	private final ProductOptionRepository productOptionRepository;
-	private final HtmlSanitizer descriptionSanitizer;
-
-	public ProductService(ProductRepository productRepository, ProductImageUrlValidator productImageUrlValidator,
-		ProductOptionRepository productOptionRepository) {
-		this.productRepository = productRepository;
-		this.productImageUrlValidator = productImageUrlValidator;
-		this.productOptionRepository = productOptionRepository;
-		this.descriptionSanitizer = new HtmlSanitizer(productImageUrlValidator::isAllowed);
-	}
+	private final ProductQueryRepository productQueryRepository;
+	private final ProductDescriptionSanitizer descriptionSanitizer;
 
 	// TODO(추후 고려): 필요시 ADMIN이 판매자 대신 등록하는 기능
 	@Transactional
@@ -104,6 +105,22 @@ public class ProductService {
 	public void delete(Long sellerId, Long productId) {
 		Product product = findOwnedProduct(sellerId, productId);
 		product.delete(now());
+	}
+
+	// 구매자에게 보이는 상품 목록을 최신순으로 조회한다.
+	public Page<ProductSummaryResult> searchVisibleProducts(ProductSearchQuery query) {
+		Page<Product> products = productQueryRepository.findVisibleProducts(query.categoryGroup(), query.category(),
+			query.region(), PageRequest.of(query.page(), query.size()));
+		// 품절 판정은 상세와 같은 Product.isSoldOut()을 쓴다. 옵션은 지연 로딩이지만
+		// default_batch_fetch_size 덕분에 첫 접근 때 페이지 상품들의 옵션을 IN 쿼리 한 번으로 불러온다
+		return products.map(ProductSummaryResult::from);
+	}
+
+	// 구매자에게 보이는 상품 상세를 조회한다.
+	public ProductDetailResult getVisibleProduct(Long productId) {
+		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
+			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		return ProductDetailResult.from(product);
 	}
 
 	private void validateImageUrls(List<String> imageUrls) {
