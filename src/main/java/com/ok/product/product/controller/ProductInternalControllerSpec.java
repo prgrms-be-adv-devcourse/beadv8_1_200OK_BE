@@ -18,7 +18,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 
-@Tag(name = "Product Internal", description = "order 모듈 연동용 내부 API (외부 공개 안 함)")
+@Tag(name = "Product (Internal)", description = "order 모듈 연동용 내부 API (외부 공개 안 함)")
 interface ProductInternalControllerSpec {
 
 	@Operation(summary = "옵션 일괄 조회", description = """

@@ -16,7 +16,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 
-@Tag(name = "Product", description = "상품 API")
+@Tag(name = "Product (Seller)", description = "판매자 상품 관리 API")
 interface ProductControllerSpec {
 
 	@Operation(summary = "상품 등록")
