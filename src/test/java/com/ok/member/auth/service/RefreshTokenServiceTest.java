@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -65,7 +66,7 @@ class RefreshTokenServiceTest {
             softly.assertThat(saved.getMemberId()).isEqualTo(memberId);
             softly.assertThat(saved.getTokenHash()).isNotEqualTo(sut.value());
             softly.assertThat(saved.getTokenHash()).isEqualTo(TokenHasher.sha256Hex(sut.value()));
-            softly.assertThat(saved.getExpiresAt()).isEqualTo(sut.expiresAt());
+            softly.assertThat(saved.getExpiresAt()).isEqualTo(LocalDateTime.ofInstant(sut.expiresAt(), ZONE));
         });
     }
 
@@ -86,7 +87,8 @@ class RefreshTokenServiceTest {
 
         // then
         // 2026-10-12 14:00:00.123456789 + 14일 → 마이크로초 단위로 잘려 .123456
-        assertThat(sut.expiresAt()).isEqualTo(LocalDateTime.of(2026, 10, 26, 14, 0, 0, 123_456_000));
+        Instant expected = LocalDateTime.of(2026, 10, 26, 14, 0, 0, 123_456_000).atZone(ZONE).toInstant();
+        assertThat(sut.expiresAt()).isEqualTo(expected);
     }
 
     @Test
@@ -117,4 +119,5 @@ class RefreshTokenServiceTest {
                 .hasMessage("memberId는 null일 수 없습니다.");
         verify(refreshTokenRepository, never()).save(any());
     }
+
 }

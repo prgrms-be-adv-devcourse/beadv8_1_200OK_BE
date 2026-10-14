@@ -1,5 +1,6 @@
 package com.ok.member.auth.domain;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 /**
@@ -9,9 +10,9 @@ import java.time.LocalDateTime;
  * 원문을 다시 조회할 방법이 없으므로 발급 응답에서 반드시 전달해야 한다.
  *
  * @param value     토큰 원문
- * @param expiresAt 만료 일시 (DB에 저장된 값과 같음)
+ * @param expiresAt 만료 시각. 시간대 해석이 필요 없도록 Instant로 반환한다. (DB에는 Clock 시간대의 일시로 저장)
  */
-public record IssuedRefreshToken(String value, LocalDateTime expiresAt) {
+public record IssuedRefreshToken(String value, Instant expiresAt) {
 
     /**
      * 토큰 원문은 그 자체로 인증 수단이라 로그에 남으면 안 된다.

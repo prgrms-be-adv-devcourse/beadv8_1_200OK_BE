@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
@@ -64,12 +65,14 @@ public class RefreshTokenService {
 
         // DB 컬럼이 DATETIME(6)(마이크로초)이라, 나노초가 섞이면 반환값과 저장값이 달라질 수 있다.
         // 마이크로초 단위로 맞춰 두 값을 정확히 일치시킨다.
-        LocalDateTime expiresAt = LocalDateTime.now(clock)
+        Instant expiresAt = clock.instant()
                 .plus(jwtProperties.refreshTokenExpiration())
                 .truncatedTo(ChronoUnit.MICROS);
 
+        // 엔티티는 LocalDateTime으로 저장하므로 Clock의 시간대로 바꾼다. 시간대 변환은 이 한 곳에서만 한다.
+        LocalDateTime expiresAtInClockZone = LocalDateTime.ofInstant(expiresAt, clock.getZone());
         refreshTokenRepository.save(
-                RefreshToken.create(memberId, TokenHasher.sha256Hex(tokenValue), expiresAt));
+                RefreshToken.create(memberId, TokenHasher.sha256Hex(tokenValue), expiresAtInClockZone));
 
         return new IssuedRefreshToken(tokenValue, expiresAt);
     }
