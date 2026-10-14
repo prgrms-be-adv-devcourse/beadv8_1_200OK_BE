@@ -5,10 +5,15 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutErrorCode;
-import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.PayoutSellerDraft;
+import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.repository.PayoutQueryRepository;
+import com.ok.payout.repository.PayoutQueryRepository.CountAndAmount;
 import com.ok.payout.repository.PayoutRepository;
-import org.junit.jupiter.api.DisplayName;
+import com.ok.payout.repository.PayoutSellerDraftRepository;
+import com.ok.payout.repository.PayoutSnapshotItemRepository;
+import com.ok.payout.repository.PayoutSnapshotRepository;
+import com.ok.payout.repository.PayoutSystemDraftItemRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -25,20 +30,22 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-
 
 // 단위 테스트: Spring 없이, 리포지토리는 Mockito 가짜 객체로 대체
-// DB가 필요한 검증(기간 조건, NOT EXISTS, 반복 실행)은 PayoutSettleIntegrationTest에서 확인.
+// 분기·실패·이벤트 발행만 확인하고, DB가 필요한 정상 흐름(스냅샷 → 확정)은 PayoutSettleIntegrationTest에서 확인
 @ExtendWith(MockitoExtension.class)
 class PayoutServiceTest {
+
+    private static final Long SNAPSHOT_ID = 12L;
 
     @Mock
     private PayoutQueryRepository payoutQueryRepository;
@@ -47,133 +54,203 @@ class PayoutServiceTest {
     private PayoutRepository payoutRepository;
 
     @Mock
+    private PayoutSnapshotRepository payoutSnapshotRepository;
+
+    @Mock
+    private PayoutSnapshotItemRepository payoutSnapshotItemRepository;
+
+    @Mock
+    private PayoutSellerDraftRepository payoutSellerDraftRepository;
+
+    @Mock
+    private PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
+
+    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
-    private PayoutService payoutService;
+    private PayoutService sut;
 
-    // saveAll에 넘어간 Payout 목록을 붙잡아서 검증할 때 사용
     @Captor
-    private ArgumentCaptor<List<Payout>> payoutsCaptor;
+    private ArgumentCaptor<List<PayoutSellerDraft>> sellerDraftsCaptor;
 
-    // publishEvent에 넘어간 이벤트를 붙잡아서 검증할 때 사용
+    @Captor
+    private ArgumentCaptor<List<PayoutSystemDraftItem>> systemItemsCaptor;
+
     @Captor
     private ArgumentCaptor<SellerPayoutCreatedEvent> eventCaptor;
 
+    // ---------- draft ----------
 
     @Test
-    @DisplayName("판매자 Payout 2건 + 시스템 Payout 1건이 생기고, 금액이 맞음")
-    void createsSellerAndSystemPayouts_whenCandidatesExist() {
-        // Arrange
-        LocalDateTime from = LocalDateTime.of(2026, 9, 21, 0, 0);
-        LocalDateTime to = LocalDateTime.of(2026, 9, 25, 0, 0);
+    void 판매자_몫은_판매자별_draft로_수수료는_시스템_draft_항목으로_나눠_저장한다() {
+        // given: 판매자 10(대금·수수료·배송비), 판매자 20(대금·수수료)
         List<Long> sellerIds = List.of(10L, 20L);
-        List<PayoutCandidateItem> candidates = List.of(
-                // 판매자 10: 판매가 10,000 / 배송비 3,000
+        given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
+        given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds)).willReturn(List.of(
                 withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L),
                 withId(PayoutCandidateItem.ofSaleFee(1001L, 10L, 300L), 2L),
                 withId(PayoutCandidateItem.ofSaleShippingFee(1001L, 10L, 3_000L), 3L),
-                // 판매자 20: 판매가 20,000 / 배송비 없음
                 withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L), 4L),
-                withId(PayoutCandidateItem.ofSaleFee(2001L, 20L, 600L), 5L)
-        );
-        given(payoutQueryRepository.findUnsettledSellerIds(from, to, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(sellerIds);
-        given(payoutQueryRepository.findUnsettledCandidates(sellerIds, from, to)).willReturn(candidates);
-        // Act
-        int settled = payoutService.settle(from, to, 100);
+                withId(PayoutCandidateItem.ofSaleFee(2001L, 20L, 600L), 5L)));
 
-        // Assert
-        assertThat(settled).isEqualTo(2);   // 정산한 판매자 수 (시스템은 판매자 수에 안 셈)
-        verify(payoutRepository).saveAll(payoutsCaptor.capture()); // saveAll이 1번 불렸는지 검증 + 넘어간 리스트 꺼내기
-        assertThat(payoutsCaptor.getValue())
-                .extracting(Payout::getPayeeId, Payout::isSystem, Payout::getAmount)
+        // when
+        int drafted = sut.draft(SNAPSHOT_ID, 100);
+
+        // then: 처리한 판매자 수 (시스템 몫은 판매자 수에 안 셈)
+        assertThat(drafted).isEqualTo(2);
+
+        then(payoutSellerDraftRepository).should().saveAll(sellerDraftsCaptor.capture());
+        assertThat(sellerDraftsCaptor.getValue())
+                .extracting(PayoutSellerDraft::getSellerId, PayoutSellerDraft::getAmount)
                 .containsExactlyInAnyOrder(
-                        tuple(10L, false, 12_700L),   // 판매자 10 : 대금 9,700 + 배송비 3,000
-                        tuple(20L, false, 19_400L),   // 판매자 20 : 대금 19,400 (배송비 없음)
-                        tuple(null, true, 900L)       // 시스템 : 수수료 300 + 600 (회원 수취인 없음)
-                );
-        // 이벤트는 판매자 정산 2건만 발행 (시스템 몫은 정산에 기록)
-        verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getAllValues())   // payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 검증 안 함
+                        tuple(10L, 12_700L),    // 대금 9,700 + 배송비 3,000
+                        tuple(20L, 19_400L));   // 대금만
+
+        then(payoutSystemDraftItemRepository).should().saveAll(systemItemsCaptor.capture());
+        assertThat(systemItemsCaptor.getValue())
+                .extracting(PayoutSystemDraftItem::getCandidateId, PayoutSystemDraftItem::getAmount)
+                .containsExactlyInAnyOrder(
+                        tuple(2L, 300L),
+                        tuple(5L, 600L));
+    }
+
+    @Test
+    void 처리할_판매자가_없으면_0을_반환하고_저장하지_않는다() {
+        // given
+        given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(List.of());
+
+        // when
+        int drafted = sut.draft(SNAPSHOT_ID, 100);
+
+        // then: 0을 반환하면 tasklet이 FINISHED로 끝남
+        // 처리할 판매자가 없으면 저장하지 않도록 일단 정해 두어, 저장 호출이 없는지 확인
+        assertThat(drafted).isZero();
+        then(payoutSellerDraftRepository).should(never()).saveAll(any());
+        then(payoutSystemDraftItemRepository).should(never()).saveAll(any());
+    }
+
+    @Test
+    void 판매자는_뽑혔는데_후보가_없으면_무한_반복_대신_예외로_멈춘다() {
+        // given: 두 조회 조건이 어긋난 상황 (판매자 조회 결과는 있는데 후보 조회 결과가 없음)
+        List<Long> sellerIds = List.of(10L);
+        given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
+        given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds)).willReturn(List.of());
+
+        // when & then
+        assertThatThrownBy(() -> sut.draft(SNAPSHOT_ID, 100))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.UNSETTLED_CANDIDATES_NOT_FOUND));
+    }
+
+    // ---------- verify ----------
+
+    @Test
+    void 스냅샷과_draft의_건수_금액이_같고_판매자_헤더_합계가_맞으면_통과한다() {
+        // given: 스냅샷 3건 10,000원 = 판매자 항목 2건 9,700원 + 시스템 항목 1건 300원
+        givenSummaries(new CountAndAmount(3, 10_000), new CountAndAmount(2, 9_700), new CountAndAmount(1, 300), 9_700);
+
+        // when & then
+        assertThatCode(() -> sut.verify(SNAPSHOT_ID)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void 스냅샷보다_draft가_적으면_검증에_실패한다() {
+        // given: 스냅샷 3건인데 draft는 2건 (1건 누락)
+        givenSummaries(new CountAndAmount(3, 10_000), new CountAndAmount(1, 9_700), new CountAndAmount(1, 300), 9_700);
+        given(payoutQueryRepository.findUndraftedCandidateIds(SNAPSHOT_ID, 100)).willReturn(List.of(7L));
+
+        // when & then
+        assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_VERIFICATION_FAILED));
+    }
+
+    @Test
+    void 판매자_헤더_합계가_항목_합계와_다르면_검증에_실패한다() {
+        // given: 항목 건수·금액은 맞는데 판매자 헤더 합계만 다름 (헤더 합계 계산 버그)
+        givenSummaries(new CountAndAmount(3, 10_000), new CountAndAmount(2, 9_700), new CountAndAmount(1, 300), 9_000);
+
+        // when & then
+        assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_VERIFICATION_FAILED));
+    }
+
+    // ---------- publish ----------
+
+    @Test
+    void 조회한_판매자_몫_정산마다_지갑_이벤트를_1건씩_발행한다() {
+        // given: 이번 스냅샷의 판매자 몫 정산 2건 (시스템 몫 제외는 조회 쿼리가 맡음 → 통합 테스트에서 확인)
+        Payout seller10 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L))));
+        Payout seller20 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L), 4L))));
+        given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID)).willReturn(List.of(seller10, seller20));
+
+        // when
+        int published = sut.publish(SNAPSHOT_ID);
+
+        // then: payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 확인하지 않음
+        assertThat(published).isEqualTo(2);
+        then(eventPublisher).should(times(2)).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues())
                 .extracting(SellerPayoutCreatedEvent::payeeId, SellerPayoutCreatedEvent::amount)
                 .containsExactlyInAnyOrder(
-                        tuple(10L, 12_700L),
+                        tuple(10L, 9_700L),
                         tuple(20L, 19_400L));
     }
 
-    @Test
-    @DisplayName("정산할 판매자가 없으면 0을 반환하고 아무것도 저장하지 않음")
-    void returnsZeroAndSavesNothing_whenNoUnsettledSellers() {
-        // Arrange: 판매자 조회 결과가 빈 리스트 (given 없이도 Mock 기본값은 빈 리스트지만, 의도를 드러내려고 명시)
-        LocalDateTime from = LocalDateTime.of(2026, 9, 21, 0, 0);
-        LocalDateTime to = LocalDateTime.of(2026, 9, 25, 0, 0);
-        given(payoutQueryRepository.findUnsettledSellerIds(from, to, 100)).willReturn(List.of());
-
-        // Act
-        int settled = payoutService.settle(from, to, 100);
-
-        // Assert
-        assertThat(settled).isZero();                                          // 0 → tasklet이 FINISHED로 종료
-        verify(payoutQueryRepository, never()).findUnsettledCandidates(any(), any(), any()); // 후보 조회까지 가지 않음
-        verify(payoutRepository, never()).saveAll(any());                      // 저장도 안 함
-    }
+    // ---------- settlementTo / settlementFrom ----------
 
     @Test
-    @DisplayName("저장 전(id 없는) 후보로는 정산 항목을 만들 수 없다")
-    void throwsException_whenCandidateHasNoId() {
-        // Arrange
-        LocalDateTime from = LocalDateTime.of(2026, 9, 21, 0, 0);
-        LocalDateTime to = LocalDateTime.of(2026, 9, 25, 0, 0);
-        List<Long> sellerIds = List.of(10L);
-        given(payoutQueryRepository.findUnsettledSellerIds(from, to, 100)).willReturn(sellerIds);
-        given(payoutQueryRepository.findUnsettledCandidates(sellerIds, from, to))
-                .willReturn(List.of(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L)));   // id 없음
+    void 조회_상한은_실행일에서_15일_전_0시다() {
+        // when
+        LocalDateTime to = sut.settlementTo(LocalDate.of(2026, 10, 10));
 
-        // Act & Assert
-        RestApiException e = assertThrows(RestApiException.class, () -> payoutService.settle(from, to, 100));
-        assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.MISSING_CANDIDATE_ID);
-        verify(payoutRepository, never()).saveAll(any());
-    }
-
-    @Test
-    @DisplayName("조회 상한(to)은 실행일 − 15일 00:00")
-    void settlementTo_isRunDateMinusWaitingDays() {
-        // Act
-        LocalDateTime to = payoutService.settlementTo(LocalDate.of(2026, 10, 10));
-
-        // Assert: 10/10 − 15일 = 09/25 00:00
+        // then: 10/10 − 15일 = 09/25 00:00
         assertThat(to).isEqualTo(LocalDateTime.of(2026, 9, 25, 0, 0));
     }
 
     @Test
-    @DisplayName("정산이 한 건도 없으면(첫 실행) 조회 하한(from)은 null")
-    void settlementFrom_isNull_whenNoPayoutExists() {
-        // Arrange
+    void 정산이_한_건도_없으면_조회_하한은_null이다() {
+        // given: 첫 실행
         given(payoutRepository.findFirstByOrderByIdDesc()).willReturn(Optional.empty());
 
-        // Act & Assert
-        assertThat(payoutService.settlementFrom()).isNull();
+        // when
+        LocalDateTime from = sut.settlementFrom();
+
+        // then
+        assertThat(from).isNull();
     }
 
     @Test
-    @DisplayName("조회 하한(from)은 마지막 정산일 − (15일 + 여유 3일) 00:00")
-    void settlementFrom_isLastPayoutDateMinusWaitingAndMarginDays() {
-        // Arrange: 마지막 정산이 10/09 02:00에 생성됨
+    void 조회_하한은_마지막_정산일에서_대기_15일과_여유_3일을_뺀_0시다() {
+        // given: 마지막 정산이 10/09 02:00에 생성됨
         // Payout.forSeller()로 만든 객체는 created_at이 비어 있으므로(저장 시 Auditing이 채움) 가짜 Payout을 사용
         Payout lastPayout = mock(Payout.class);
         given(lastPayout.getCreatedAt()).willReturn(LocalDateTime.of(2026, 10, 9, 2, 0));
         given(payoutRepository.findFirstByOrderByIdDesc()).willReturn(Optional.of(lastPayout));
 
-        // Act
-        LocalDateTime from = payoutService.settlementFrom();
+        // when
+        LocalDateTime from = sut.settlementFrom();
 
-        // Assert: 10/09 − 18일 = 09/21 00:00 (시각 02:00은 버리고 날짜 시작으로)
+        // then: 10/09 − 18일 = 09/21 00:00 (시각 02:00은 버리고 날짜 시작으로)
         assertThat(from).isEqualTo(LocalDateTime.of(2026, 9, 21, 0, 0));
     }
 
-    // 저장된 후보처럼 id를 채움 (PayoutItem은 저장된 후보로만 만들 수 있음)
-    // ReflectionTestUtils.setField(객체, "필드이름", 값): 스프링 테스트 도구, setter가 없어도 private 필드에 값을 강제로 넣음
-    // (PayoutCandidateItem은 setId()가 없고 id는 DB 저장 시 AUTO_INCREMENT로 채워지므로, DB 없는 단위 테스트에서 직접 넣음)
+    // ---------- 도우미 ----------
+
+    // verify가 비교할 집계값을 한 번에 준비 (스냅샷, 판매자 항목, 시스템 항목, 판매자 헤더 금액 합계)
+    private void givenSummaries(CountAndAmount snapshot, CountAndAmount sellerItems,
+                                CountAndAmount systemItems, long sellerHeaderAmount) {
+        given(payoutQueryRepository.summarizeSnapshotItems(SNAPSHOT_ID)).willReturn(snapshot);
+        given(payoutQueryRepository.summarizeSellerDraftItems(SNAPSHOT_ID)).willReturn(sellerItems);
+        given(payoutQueryRepository.summarizeSystemDraftItems(SNAPSHOT_ID)).willReturn(systemItems);
+        given(payoutQueryRepository.sumSellerDraftAmount(SNAPSHOT_ID)).willReturn(sellerHeaderAmount);
+    }
+
+    // 저장된 후보처럼 id를 채움 (setId가 없고 id는 DB 저장 시 채워지므로 단위 테스트에서 직접 넣음)
     private PayoutCandidateItem withId(PayoutCandidateItem candidate, Long id) {
         ReflectionTestUtils.setField(candidate, "id", id);
         return candidate;
