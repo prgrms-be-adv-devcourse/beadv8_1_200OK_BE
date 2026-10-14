@@ -86,7 +86,7 @@ class WalletModuleTest {
         buyerWalletService.getOrCreate(memberId);
 
         // When: 이벤트 처리가 완료될 때까지 기다림
-        scenario.publish(new MemberRegisteredEvent(memberId, MemberRole.BUYER))
+        scenario.publish(new MemberRegisteredEvent(memberId))
                 .andWaitForStateChange(() -> countCompletedEvents(memberId), count -> count == 1);
 
         // Then
