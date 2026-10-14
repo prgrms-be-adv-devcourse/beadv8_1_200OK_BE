@@ -28,7 +28,7 @@ CREATE TABLE order_seller_group (
                                     created_at      DATETIME(6) NOT NULL,
                                     updated_at      DATETIME(6) NOT NULL,
                                     PRIMARY KEY (id),
-                                    KEY idx_order_seller_group_order (order_id),
+                                    UNIQUE KEY uk_order_seller_group (order_id, seller_id),
                                     KEY idx_order_seller_group_seller (seller_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
@@ -59,6 +59,5 @@ CREATE TABLE order_third_party_consent (
                                            created_at DATETIME(6) NOT NULL COMMENT '동의 시각',
                                            updated_at DATETIME(6) NOT NULL,
                                            PRIMARY KEY (id),
-                                           UNIQUE KEY uk_order_third_party_consent (order_id, seller_id),
-                                           KEY idx_order_third_party_consent_buyer_seller (buyer_id, seller_id)
+                                           UNIQUE KEY uk_order_third_party_consent (order_id, seller_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
