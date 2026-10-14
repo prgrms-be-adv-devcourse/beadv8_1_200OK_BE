@@ -5,6 +5,7 @@ import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.repository.BuyerWalletLedgerRepository;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class BuyerWalletService {
     private final BuyerWalletRepository buyerWalletRepository;
     private final BuyerWalletLedgerRepository buyerWalletLedgerRepository;
@@ -45,6 +47,7 @@ public class BuyerWalletService {
         // 다른 지갑에 같은 키가 있는 경우는 일부러 넘기지 않는다. 조용히 무시하지 않고 저장 시 유니크 제약으로 실패하게 해 오류를 드러낸다.
         // 같은 지갑에서 같은 키가 동시에 확인을 통과하더라도 유니크 제약이 두 번째 저장을 막는다.
         if (buyerWalletLedgerRepository.existsByBuyerWalletIdAndReferenceKey(wallet.getId(), referenceKey)) {
+            log.info("이미 반영된 근거 키라 충전을 건너뜁니다. buyerWalletId={}, referenceKey={}", wallet.getId(), referenceKey);
             return;
         }
         BuyerWalletLedger ledger = wallet.charge(amount, referenceKey);

@@ -40,12 +40,18 @@ public class BuyerWallet extends BaseTime {
         return new BuyerWallet(memberId);
     }
 
-    /** 잔액을 늘리고 충전 원장을 반환한다. */
+    /**
+     * 잔액을 늘리고 충전 원장을 반환한다.
+     * referenceKey는 "CHARGE:{paymentKey}" 형식으로, 지갑 전체에서 한 번만 쓰여야 한다.
+     */
     public BuyerWalletLedger charge(long amount, String referenceKey) {
         return increase(BuyerWalletLedgerType.CHARGE, amount, referenceKey);
     }
 
-    /** 잔액을 줄이고 결제 원장을 반환한다. 잔액이 부족하면 변경하지 않고 예외를 던진다. */
+    /**
+     * 잔액을 줄이고 결제 원장을 반환한다. 잔액이 부족하면 변경하지 않고 예외를 던진다.
+     * referenceKey는 "PAYMENT:{주문 ID}" 형식이며, 모든 지갑을 통틀어 한 번만 쓰여야 한다.
+     */
     public BuyerWalletLedger pay(long amount, String referenceKey) {
         validate(amount, referenceKey);
         if (this.balance < amount) {
@@ -58,6 +64,7 @@ public class BuyerWallet extends BaseTime {
     /**
      * 결제했던 금액을 지갑으로 되돌리고 환불 원장을 반환한다. 세미에서는 배송 전 취소 시 호출된다.
      * 돌려줄 금액이 맞는지는 호출하는 쪽에서 확인한다.
+     * referenceKey는 "REFUND:{취소 건 ID 또는 주문 상품 ID}" 형식이며, 모든 지갑을 통틀어 한 번만 쓰여야 한다.
      */
     public BuyerWalletLedger refund(long amount, String referenceKey) {
         return increase(BuyerWalletLedgerType.REFUND, amount, referenceKey);
