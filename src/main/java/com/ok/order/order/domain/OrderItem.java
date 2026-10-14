@@ -52,4 +52,18 @@ public class OrderItem extends BaseTime {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private OrderItemStatus status;
+
+    static OrderItem create(OrderSellerGroup sellerGroup, OrderLine line) {
+        OrderItem item = new OrderItem();
+        item.sellerGroup = sellerGroup;
+        item.productId = line.productId();
+        item.productOptionId = line.productOptionId();
+        item.productName = line.productName();
+        item.productOptionName = line.productOptionName();
+        item.unitPrice = line.unitPrice();
+        item.quantity = line.quantity();
+        item.itemAmount = line.unitPrice() * line.quantity();
+        item.status = OrderItemStatus.PAYMENT_PENDING;
+        return item;
+    }
 }
