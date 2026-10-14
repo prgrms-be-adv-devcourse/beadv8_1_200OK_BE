@@ -65,6 +65,8 @@ public class BuyerWallet extends BaseTime {
 
     private BuyerWalletLedger increase(BuyerWalletLedgerType type, long amount, String referenceKey) {
         validate(amount, referenceKey);
+        // 금액은 PG 승인 한도 안에서 들어오므로 넘칠 일이 없다.
+        // 넘친다면 잘못된 값이 들어온 것이므로 잔액이 음수로 바뀌지 않도록 예외로 멈춘다.
         this.balance = Math.addExact(this.balance, amount);
         return BuyerWalletLedger.create(this.id, type, amount, this.balance, referenceKey);
     }
