@@ -138,4 +138,111 @@ public class CartServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(CartErrorCode.CART_NOT_FOUND);
     }
+
+    // ---------- 수량 변경 · 선택 · 삭제 ----------
+
+    @Test
+    void 내_장바구니_상품의_수량을_변경할_수_있다() {
+        // Given
+        Cart cart = Cart.create(BUYER_ID);
+        CartItem item = CartItem.create(cart, 100L, 1);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByIdAndCartId(1L, cart.getId())).willReturn(Optional.of(item));
+
+        // When
+        cartService.changeQuantity(BUYER_ID, 1L, 5);
+
+        // Then
+        assertThat(item.getQuantity()).isEqualTo(5);
+    }
+
+    @Test
+    void 다른_사람의_장바구니_상품은_변경할_수_없다() {
+        // Given: 내 장바구니에서 찾으면 없음 (다른 사람의 상품)
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByIdAndCartId(999L, cart.getId())).willReturn(Optional.empty());
+
+        // When & Then
+        assertThatThrownBy(() -> cartService.changeQuantity(BUYER_ID, 999L, 5))
+                .isInstanceOf(RestApiException.class)
+                .extracting("errorCode")
+                .isEqualTo(CartErrorCode.CART_ITEM_NOT_FOUND);
+    }
+
+    @Test
+    void 장바구니_상품의_선택을_해제할_수_있다() {
+        // Given
+        Cart cart = Cart.create(BUYER_ID);
+        CartItem item = CartItem.create(cart, 100L, 1);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByIdAndCartId(1L, cart.getId())).willReturn(Optional.of(item));
+
+        // When
+        cartService.changeSelected(BUYER_ID, 1L, false);
+
+        // Then
+        assertThat(item.isSelected()).isFalse();
+    }
+
+    @Test
+    void 장바구니_상품을_전체_선택_해제할_수_있다() {
+        // Given
+        Cart cart = Cart.create(BUYER_ID);
+        CartItem apple = CartItem.create(cart, 100L, 1);
+        CartItem mackerel = CartItem.create(cart, 200L, 2);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findAllByCartId(cart.getId())).willReturn(List.of(apple, mackerel));
+
+        // When
+        cartService.changeAllSelected(BUYER_ID, false);
+
+        // Then
+        assertThat(List.of(apple, mackerel))
+                .extracting("selected")
+                .containsOnly(false);
+    }
+
+    @Test
+    void 장바구니_상품을_하나씩_삭제할_수_있다() {
+        // Given
+        Cart cart = Cart.create(BUYER_ID);
+        CartItem item = CartItem.create(cart, 100L, 1);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByIdAndCartId(1L, cart.getId())).willReturn(Optional.of(item));
+
+        // When
+        cartService.deleteItem(BUYER_ID, 1L);
+
+        // Then
+        then(cartItemRepository).should().delete(item);
+    }
+
+    @Test
+    void 다른_사람의_장바구니_상품은_삭제할_수_없다() {
+        // Given
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByIdAndCartId(999L, cart.getId())).willReturn(Optional.empty());
+
+        // When & Then
+        assertThatThrownBy(() -> cartService.deleteItem(BUYER_ID, 999L))
+                .isInstanceOf(RestApiException.class)
+                .extracting("errorCode")
+                .isEqualTo(CartErrorCode.CART_ITEM_NOT_FOUND);
+        then(cartItemRepository).should(never()).delete(any(CartItem.class));
+    }
+
+    @Test
+    void 선택한_상품을_한_번에_삭제할_수_있다() {
+        // Given
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+
+        // When
+        cartService.deleteSelectedItems(BUYER_ID);
+
+        // Then
+        then(cartItemRepository).should().deleteAllByCartIdAndSelectedTrue(cart.getId());
+    }
 }

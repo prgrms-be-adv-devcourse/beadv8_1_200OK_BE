@@ -64,6 +64,9 @@ dependencies {
     // ---------- Image ----------
     implementation("net.coobird:thumbnailator:0.4.21")
 
+    // ---------- HTML ----------
+    implementation("com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer:20260924.2") // 상품 상세설명 HTML 정제 (XSS 방지)
+
     // ---------- 개발 편의 ----------
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")

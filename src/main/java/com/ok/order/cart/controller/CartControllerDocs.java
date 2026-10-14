@@ -1,8 +1,6 @@
 package com.ok.order.cart.controller;
 
-import com.ok.order.cart.controller.dto.AddCartItemRequest;
-import com.ok.order.cart.controller.dto.AddCartItemResponse;
-import com.ok.order.cart.controller.dto.CartResponse;
+import com.ok.order.cart.controller.dto.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -28,4 +26,43 @@ public interface CartControllerDocs {
             @ApiResponse(responseCode = "404", description = "장바구니 없음")
     })
     ResponseEntity<CartResponse> getMyCart(Long memberId);
+
+    @Operation(summary = "장바구니 상품 수량 변경")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "변경 성공"),
+            @ApiResponse(responseCode = "404", description = "장바구니 또는 장바구니 상품 없음 (다른 회원의 상품 포함)"),
+            @ApiResponse(responseCode = "400", description = "요청 본문 형식 오류"),
+            @ApiResponse(responseCode = "422", description = "수량이 1개 미만이거나 누락")
+    })
+    ResponseEntity<Void> changeQuantity(Long memberId, Long cartItemId, UpdateCartItemQuantityRequest request);
+
+    @Operation(summary = "장바구니 상품 선택·해제")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "변경 성공"),
+            @ApiResponse(responseCode = "404", description = "장바구니 또는 장바구니 상품 없음 (다른 회원의 상품 포함)"),
+            @ApiResponse(responseCode = "422", description = "선택 여부 누락")
+    })
+    ResponseEntity<Void> changeSelected(Long memberId, Long cartItemId, UpdateCartItemSelectionRequest request);
+
+    @Operation(summary = "장바구니 상품 전체 선택·해제")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "변경 성공"),
+            @ApiResponse(responseCode = "404", description = "장바구니 없음"),
+            @ApiResponse(responseCode = "422", description = "선택 여부 누락")
+    })
+    ResponseEntity<Void> changeAllSelected(Long memberId, UpdateCartItemSelectionRequest request);
+
+    @Operation(summary = "장바구니 상품 삭제")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "삭제 성공"),
+            @ApiResponse(responseCode = "404", description = "장바구니 또는 장바구니 상품 없음 (다른 회원의 상품 포함)")
+    })
+    ResponseEntity<Void> deleteItem(Long memberId, Long cartItemId);
+
+    @Operation(summary = "선택한 장바구니 상품 삭제")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "삭제 성공"),
+            @ApiResponse(responseCode = "404", description = "장바구니 없음")
+    })
+    ResponseEntity<Void> deleteSelectedItems(Long memberId);
 }

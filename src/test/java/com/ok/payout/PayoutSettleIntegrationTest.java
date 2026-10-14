@@ -1,7 +1,11 @@
 package com.ok.payout;
 
+import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutItem;
 import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.repository.PayoutItemRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.service.PayoutJobRunner;
 import com.ok.payout.service.PayoutService;
@@ -23,6 +27,7 @@ import org.assertj.core.groups.Tuple;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -58,6 +63,12 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private Job payoutJob;
+
+    @Autowired
+    private PayoutCandidateItemRepository candidateRepository;
+
+    @Autowired
+    private PayoutItemRepository payoutItemRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -131,6 +142,50 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(findPayouts()).containsExactlyInAnyOrder(
                 tuple(10L, false, 12_700L),                        // 대금 + 배송비
                 tuple(null, true, 300L));                          // 수수료 (시스템 몫 → 수취인 없음)
+        // 정산 항목은 각 정산후보와 1:1로 연결된다
+        assertPayoutItemsMatchCandidates(orderItemId);
+    }
+
+    @Test
+    @DisplayName("같은 주문상품·같은 타입의 수동 조정 2건은 원래 후보와 함께 각각 한 번씩 정산된다")
+    void settlesEachManualAdjustmentOnce() {
+        // Arrange: 원래 판매 대금 + 같은 주문상품·같은 타입의 조정 2건 (차감 -500, 보정 +200)
+        long orderItemId = nextOrderItemId();
+        LocalDateTime createdAt = TO.minusDays(1);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 9_700L, createdAt);
+        insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, -500L, 1L, createdAt);
+        insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 200L, 2L, createdAt);
+
+        // Act
+        payoutService.settle(FROM, TO, LIMIT);
+
+        // Assert: 판매자 10 정산 1건, 금액 = 9,700 - 500 + 200
+        assertThat(findPayouts()).containsExactly(tuple(10L, false, 9_400L));
+        // 후보 3건이 각각 정산 항목 1건씩 (candidate_id 중복 없음)
+        assertPayoutItemsMatchCandidates(orderItemId);
+    }
+
+    @Test
+    @DisplayName("원래 후보가 정산된 뒤 생긴 같은 주문상품·같은 타입의 조정 후보도 다음 배치에서 정산된다")
+    void settlesAdjustmentCreatedAfterOriginalSettled() {
+        // Arrange: 원래 판매 대금 후보를 먼저 정산
+        long orderItemId = nextOrderItemId();
+        LocalDateTime createdAt = TO.minusDays(1);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 9_700L, createdAt);
+        payoutService.settle(FROM, TO, LIMIT);   // 1차 정산 (원래 후보)
+
+        // 그 뒤 같은 주문상품·같은 타입으로 조정 후보가 들어옴
+        insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 200L, 1L, createdAt);
+
+        // Act: 다음 배치
+        int settled = payoutService.settle(FROM, TO, LIMIT);
+
+        // Assert: 조정 후보가 미정산으로 잡혀 판매자 10이 한 번 더 정산됨
+        assertThat(settled).isEqualTo(1);
+        assertThat(findPayouts()).containsExactlyInAnyOrder(
+                tuple(10L, false, 9_700L),   // 1차: 원래 후보
+                tuple(10L, false, 200L));    // 2차: 조정 후보
+        assertPayoutItemsMatchCandidates(orderItemId);
     }
 
     @Test
@@ -251,6 +306,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 eventType.name(), orderItemId, sellerId, amount, dbCreatedAt, dbCreatedAt);
     }
 
+    // 관리자 수동 조정 후보를 원하는 created_at으로 직접 저장 (관리자 ID·사유는 테스트용 고정값)
+    private void insertAdjustment(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
+                                  long adjustmentId, LocalDateTime createdAt) {
+        LocalDateTime dbCreatedAt = toDbTime(createdAt);
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items " +
+                        "(event_type, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderItemId, sellerId, amount, adjustmentId, 99L, "테스트 조정", dbCreatedAt, dbCreatedAt);
+    }
+
     // Hibernate는 LocalDateTime을 DB에 보낼 때 JVM 시간대 → hibernate.jdbc.time_zone(UTC)으로 변환한다
     // jdbcTemplate은 이 변환을 거치지 않으므로, 직접 넣을 때도 같은 기준으로 바꿔야 QueryDSL 조회와 비교가 맞는다
     // (안 바꾸면 한국 PC에서 9시간 차이가 나서 기간 경계 테스트가 실패함)
@@ -285,6 +351,24 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private int countRows(String table) {
         Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
         return count == null ? 0 : count;
+    }
+
+    // 주문항목의 정산후보와 정산 항목이 1:1로 연결됐는지 확인 (candidate_id가 후보 id와 정확히 일치, 중복 없음)
+    private void assertPayoutItemsMatchCandidates(long orderItemId) {
+        // 이 주문항목의 정산후보 id 목록
+        List<Long> candidateIds = new ArrayList<>();
+        for (PayoutCandidateItem candidate : candidateRepository.findAllByOrderItemId(orderItemId)) {
+            candidateIds.add(candidate.getId());
+        }
+
+        // 정산 항목에 저장된 candidate_id 목록
+        List<Long> payoutItemCandidateIds = new ArrayList<>();
+        for (PayoutItem payoutItem : payoutItemRepository.findAll()) {
+            payoutItemCandidateIds.add(payoutItem.getCandidateId());
+        }
+
+        // 두 목록이 순서 상관없이 개수·값까지 정확히 같아야 통과
+        assertThat(payoutItemCandidateIds).containsExactlyInAnyOrderElementsOf(candidateIds);
     }
 
     // 정산은 전부, 정산 후보는 이 클래스 번호대만 지움 (자식 테이블 payout_item 먼저)

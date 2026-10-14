@@ -93,14 +93,14 @@ class PayoutCandidateItemRepositoryTest {
     }
 
     @Test
-    @DisplayName("같은 주문항목에 같은 이벤트타입은 두 번 저장할 수 없다")
-    void cannotSaveSameEventTypeTwiceForSameOrderItem() {
+    @DisplayName("관리자 조정이 아닌 평소 이벤트는 같은 주문항목·같은 이벤트타입으로 두 번 저장할 수 없다")
+    void cannotSaveSameEventTypeTwiceForSameOrderItem_whenNormalEvent() {
         // Arrange
         Long orderItemId = nextOrderItemId();
         repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L));
         em.flush();
 
-        // Act & Assert (DB 유니크 제약 uk_payout_candidate_items_order_item_id_event_type)
+        // Act & Assert (DB 유니크 제약 uk_payout_candidate_items_order_item_id_event_type_adjustment_id, 평소 이벤트는 adjustment_id = 0으로 같음)
         // em.flush()는 리포지토리를 거치지 않아 예외가 Spring 예외로 바뀌지 않을 수 있으므로,
         // 예외 타입 대신 가장 밑의 원인이 MySQL 중복 키 예외인지 확인
         assertThatThrownBy(() -> {
@@ -122,6 +122,43 @@ class PayoutCandidateItemRepositoryTest {
 
         // Assert
         assertThat(repository.findAllByOrderItemId(orderItemId)).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("같은 주문항목·같은 이벤트타입이라도 조정 번호가 다른 수동 조정은 모두 저장된다")
+    void savesManualAdjustmentsWithDifferentAdjustmentIds() {
+        // Arrange: 원래 평소 이벤트 후보 (adjustment_id = 0)
+        Long orderItemId = nextOrderItemId();
+        repository.save(PayoutCandidateItem.ofSaleAmount(orderItemId, 10L, 9_700L));
+
+        // Act: 같은 주문항목·같은 타입으로 조정 번호만 다른 수동 조정 2건 (음수 차감 포함)
+        repository.save(PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, orderItemId, 10L, -500L, 1L, 99L, "금액 오입력 차감"));
+        repository.save(PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 200L, 2L, 99L, "차감 과다 보정"));
+        em.flush();
+
+        // Assert: 원래 후보 1건 + 조정 2건 = 3건, 조정 번호로 구분됨
+        assertThat(repository.findAllByOrderItemId(orderItemId))
+                .extracting(PayoutCandidateItem::getAdjustmentId)
+                .containsExactlyInAnyOrder(0L, 1L, 2L);
+    }
+
+    @Test
+    @DisplayName("같은 조정 번호로 수동 조정을 두 번 저장할 수 없다")
+    void cannotSaveSameAdjustmentIdTwice() {
+        // Arrange: 조정 번호 1번으로 수동 조정 1건 저장
+        Long orderItemId = nextOrderItemId();
+        repository.save(PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_AMOUNT, orderItemId, 10L, -500L, 1L, 99L, "금액 오입력 차감"));
+        em.flush();
+
+        // Act & Assert: 같은 조정 요청이 한 번 더 들어온 상황 (조정 번호가 같으면 UK 충돌)
+        assertThatThrownBy(() -> {
+            repository.save(PayoutCandidateItem.manualAdjustment(
+                    PayoutEventType.SALE_AMOUNT, orderItemId, 10L, -500L, 1L, 99L, "금액 오입력 차감"));
+            em.flush();
+        }).hasRootCauseInstanceOf(SQLIntegrityConstraintViolationException.class);
     }
 
 

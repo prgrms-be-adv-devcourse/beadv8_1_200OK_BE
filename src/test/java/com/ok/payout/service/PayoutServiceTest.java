@@ -1,8 +1,10 @@
 package com.ok.payout.service;
 
 import com.ok.common.event.SellerPayoutCreatedEvent;
+import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutErrorCode;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutRepository;
@@ -15,6 +17,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -23,6 +26,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
@@ -66,12 +70,12 @@ class PayoutServiceTest {
         List<Long> sellerIds = List.of(10L, 20L);
         List<PayoutCandidateItem> candidates = List.of(
                 // 판매자 10: 판매가 10,000 / 배송비 3,000
-                PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L),
-                PayoutCandidateItem.ofSaleFee(1001L, 10L, 300L),
-                PayoutCandidateItem.ofSaleShippingFee(1001L, 10L, 3_000L),
+                withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L),
+                withId(PayoutCandidateItem.ofSaleFee(1001L, 10L, 300L), 2L),
+                withId(PayoutCandidateItem.ofSaleShippingFee(1001L, 10L, 3_000L), 3L),
                 // 판매자 20: 판매가 20,000 / 배송비 없음
-                PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L),
-                PayoutCandidateItem.ofSaleFee(2001L, 20L, 600L)
+                withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L), 4L),
+                withId(PayoutCandidateItem.ofSaleFee(2001L, 20L, 600L), 5L)
         );
         given(payoutQueryRepository.findUnsettledSellerIds(from, to, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(sellerIds);
         given(payoutQueryRepository.findUnsettledCandidates(sellerIds, from, to)).willReturn(candidates);
@@ -115,6 +119,23 @@ class PayoutServiceTest {
     }
 
     @Test
+    @DisplayName("저장 전(id 없는) 후보로는 정산 항목을 만들 수 없다")
+    void throwsException_whenCandidateHasNoId() {
+        // Arrange
+        LocalDateTime from = LocalDateTime.of(2026, 9, 21, 0, 0);
+        LocalDateTime to = LocalDateTime.of(2026, 9, 25, 0, 0);
+        List<Long> sellerIds = List.of(10L);
+        given(payoutQueryRepository.findUnsettledSellerIds(from, to, 100)).willReturn(sellerIds);
+        given(payoutQueryRepository.findUnsettledCandidates(sellerIds, from, to))
+                .willReturn(List.of(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L)));   // id 없음
+
+        // Act & Assert
+        RestApiException e = assertThrows(RestApiException.class, () -> payoutService.settle(from, to, 100));
+        assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.MISSING_CANDIDATE_ID);
+        verify(payoutRepository, never()).saveAll(any());
+    }
+
+    @Test
     @DisplayName("조회 상한(to)은 실행일 − 15일 00:00")
     void settlementTo_isRunDateMinusWaitingDays() {
         // Act
@@ -148,5 +169,13 @@ class PayoutServiceTest {
 
         // Assert: 10/09 − 18일 = 09/21 00:00 (시각 02:00은 버리고 날짜 시작으로)
         assertThat(from).isEqualTo(LocalDateTime.of(2026, 9, 21, 0, 0));
+    }
+
+    // 저장된 후보처럼 id를 채움 (PayoutItem은 저장된 후보로만 만들 수 있음)
+    // ReflectionTestUtils.setField(객체, "필드이름", 값): 스프링 테스트 도구, setter가 없어도 private 필드에 값을 강제로 넣음
+    // (PayoutCandidateItem은 setId()가 없고 id는 DB 저장 시 AUTO_INCREMENT로 채워지므로, DB 없는 단위 테스트에서 직접 넣음)
+    private PayoutCandidateItem withId(PayoutCandidateItem candidate, Long id) {
+        ReflectionTestUtils.setField(candidate, "id", id);
+        return candidate;
     }
 }

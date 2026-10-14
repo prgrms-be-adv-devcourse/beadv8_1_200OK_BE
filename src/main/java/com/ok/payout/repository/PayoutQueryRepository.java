@@ -52,12 +52,11 @@ public class PayoutQueryRepository {
             condition.and(payoutCandidateItem.createdAt.goe(from));
         }
         condition.and(payoutCandidateItem.createdAt.lt(to));
-        // payout_item에 같은 (order_item_id, event_type)이 없으면 미정산
+        // payout_item에 같은 candidate_id가 없으면 미정산
+        // (정산후보 단위로 판단해야, 원래 후보가 정산된 뒤 생긴 같은 주문상품·같은 타입의 조정 후보도 정산됨)
         condition.and(JPAExpressions.selectOne()
                 .from(payoutItem)
-                .where(
-                        payoutItem.orderItemId.eq(payoutCandidateItem.orderItemId),
-                        payoutItem.eventType.eq(payoutCandidateItem.eventType))
+                .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
                 .notExists());
         return condition;
     }

@@ -48,4 +48,19 @@ public class CartItem extends BaseTime {
         item.selected = true;
         return item;
     }
+
+    public void changeQuantity(int quantity) {
+        validateQuantity(quantity);
+        this.quantity = quantity;
+    }
+
+    public void changeSelected(boolean selected) {
+        this.selected = selected;
+    }
+
+    private static void validateQuantity(int quantity) {
+        if (quantity < 1) {
+            throw new RestApiException(CartErrorCode.INVALID_QUANTITY);
+        }
+    }
 }
