@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -177,6 +178,48 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             assertThat(balanceOf(memberId)).isEqualTo(10_000);
             assertThat(countLedgers(memberId)).isEqualTo(threadCount);
             assertThat(latestBalanceAfter(memberId)).isEqualTo(10_000);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void 같은_근거_키로_동시에_충전해도_한_번만_반영된다() throws Exception {
+        // Given
+        Long memberId = 14L;
+        buyerWalletService.getOrCreate(memberId);
+        int threadCount = 2;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> results = new ArrayList<>();
+
+        try {
+            // When: 같은 결제 건으로 동시에 두 번 충전
+            for (int i = 0; i < threadCount; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-1");
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+
+            // 두 번째 요청은 실행 시점에 따라 정상 skip되거나 원장 유니크 제약으로 실패한다
+            for (Future<?> result : results) {
+                try {
+                    result.get(30, TimeUnit.SECONDS);
+                } catch (ExecutionException e) {
+                    assertThat(e.getCause()).isInstanceOf(DataIntegrityViolationException.class);
+                }
+            }
+
+            // Then: 어느 경우든 잔액과 원장은 한 번만 반영된다
+            assertThat(balanceOf(memberId)).isEqualTo(10_000);
+            assertThat(countLedgers(memberId)).isEqualTo(1);
         } finally {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
