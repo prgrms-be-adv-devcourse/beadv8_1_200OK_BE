@@ -11,7 +11,10 @@ import java.time.LocalDateTime;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-import static com.ok.delivery.fixture.ShipmentFixture.*;
+import static com.ok.delivery.fixture.ShipmentFixture.NOW;
+import static com.ok.delivery.fixture.ShipmentFixture.otherAddress;
+import static com.ok.delivery.fixture.ShipmentFixture.shipmentIn;
+import static com.ok.delivery.fixture.ShipmentFixture.withId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -71,9 +74,8 @@ class ShipmentAddressChangeRequestTest {
 
         // when & then
         assertThatThrownBy(() -> secondAction.accept(sut))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_ALREADY_PROCESSED);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_ALREADY_PROCESSED));
     }
 
     static Stream<Arguments> reprocessCases() {
@@ -94,6 +96,7 @@ class ShipmentAddressChangeRequestTest {
 
         // when & then
         assertThatThrownBy(() -> shipment.requestAddressChange(otherAddress(), -1, NOW))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("추가 운임 안내 금액은 0 이상이어야 합니다.");
     }
 }

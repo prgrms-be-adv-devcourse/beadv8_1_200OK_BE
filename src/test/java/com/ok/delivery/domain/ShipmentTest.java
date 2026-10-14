@@ -9,17 +9,26 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-import static com.ok.delivery.fixture.ShipmentFixture.*;
+import static com.ok.delivery.fixture.ShipmentFixture.NOW;
+import static com.ok.delivery.fixture.ShipmentFixture.address;
+import static com.ok.delivery.fixture.ShipmentFixture.item;
+import static com.ok.delivery.fixture.ShipmentFixture.otherAddress;
+import static com.ok.delivery.fixture.ShipmentFixture.shipment;
+import static com.ok.delivery.fixture.ShipmentFixture.shipmentIn;
+import static com.ok.delivery.fixture.ShipmentFixture.withId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class ShipmentTest {
-    
 
     /**
      * 상태별로 허용된 전이. 상태 전이 다이어그램의 화살표와 1:1로 대응한다.
@@ -87,14 +96,16 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(sut::build)
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("orderId는 필수입니다.");
     }
 
     @Test
     void 상품_항목이_없으면_생성할_수_없다() {
         // when & then
         assertThatThrownBy(ShipmentFixture::shipment)
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("상품 항목은 1개 이상이어야 합니다.");
     }
 
     @Test
@@ -117,21 +128,22 @@ class ShipmentTest {
 
     @ParameterizedTest
     @MethodSource("missingDispatchValues")
-    void 택배사나_송장번호가_없으면_송장을_등록할_수_없다(String carrier, String trackingNumber) {
+    void 택배사나_송장번호가_없으면_송장을_등록할_수_없다(String carrier, String trackingNumber, String message) {
         // given
         Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
 
         // when & then
         assertThatThrownBy(() -> sut.dispatch(carrier, trackingNumber, NOW))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
     }
 
     static Stream<Arguments> missingDispatchValues() {
         return Stream.of(
-                Arguments.of(null, "1234567890"),
-                Arguments.of(" ", "1234567890"),
-                Arguments.of("CJ_LOGISTICS", null),
-                Arguments.of("CJ_LOGISTICS", " ")
+                Arguments.of(null, "1234567890", "택배사는 필수입니다."),
+                Arguments.of(" ", "1234567890", "택배사는 필수입니다."),
+                Arguments.of("CJ_LOGISTICS", null, "송장번호는 필수입니다."),
+                Arguments.of("CJ_LOGISTICS", " ", "송장번호는 필수입니다.")
         );
     }
 
@@ -144,6 +156,7 @@ class ShipmentTest {
         sut.deliver(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
             softly.assertThat(sut.getDeliveredAt()).isEqualTo(NOW);
@@ -160,6 +173,7 @@ class ShipmentTest {
         sut.complete(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.COMPLETED);
             softly.assertThat(sut.getCompletedAt()).isEqualTo(NOW);
@@ -190,9 +204,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(() -> sut.complete(NOW))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
     }
 
     @Test
@@ -205,6 +218,7 @@ class ShipmentTest {
         sut.cancel(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.CANCELLED);
             softly.assertThat(sut.getCancelledAt()).isEqualTo(NOW);
@@ -219,9 +233,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(() -> sut.cancel(NOW))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
     }
 
     @ParameterizedTest(name = "{0}에서 {1}")
@@ -232,9 +245,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(() -> transition.action.accept(sut))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
         assertThat(sut.getStatus()).isEqualTo(current);
     }
 
@@ -265,9 +277,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(() -> sut.changeAddress(otherAddress()))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_NOT_ALLOWED);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_NOT_ALLOWED));
     }
 
     @Test
@@ -300,9 +311,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(() -> sut.requestAddressChange(otherAddress(), 0, NOW))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_NOT_ALLOWED);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_NOT_ALLOWED));
     }
 
     static Stream<ShipmentStatus> statusesExceptPreparing() {

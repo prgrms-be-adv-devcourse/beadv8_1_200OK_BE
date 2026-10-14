@@ -11,13 +11,21 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
-import static com.ok.delivery.fixture.ShipmentFixture.*;
+import static com.ok.delivery.fixture.ShipmentFixture.item;
+import static com.ok.delivery.fixture.ShipmentFixture.otherAddress;
+import static com.ok.delivery.fixture.ShipmentFixture.shipment;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-class ShipmentAddressChangeServiceConcurrencyTest extends AbstractIntegrationTest {
+class ShipmentAddressChangeServiceConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     private static final int THREAD_COUNT = 2;
 
@@ -57,7 +65,7 @@ class ShipmentAddressChangeServiceConcurrencyTest extends AbstractIntegrationTes
         try (ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT)) {
             List<Future<String>> futures = List.of(executor.submit(request), executor.submit(request));
             start.countDown();
-            results = futures.stream().map(ShipmentAddressChangeServiceConcurrencyTest::await).toList();
+            results = futures.stream().map(ShipmentAddressChangeServiceConcurrencyIntegrationTest::await).toList();
         }
 
         // then
@@ -75,9 +83,8 @@ class ShipmentAddressChangeServiceConcurrencyTest extends AbstractIntegrationTes
     void 없는_shipment에는_요청할_수_없다() {
         // when & then
         assertThatThrownBy(() -> sut.request(Long.MAX_VALUE, otherAddress(), 0))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(DeliveryErrorCode.SHIPMENT_NOT_FOUND);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
     }
 
     private static String await(Future<String> future) {

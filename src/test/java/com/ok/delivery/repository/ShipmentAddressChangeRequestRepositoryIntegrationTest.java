@@ -1,25 +1,23 @@
 package com.ok.delivery.repository;
 
-import com.ok.config.JpaConfig;
 import com.ok.delivery.domain.AddressChangeStatus;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentAddressChangeRequest;
-import com.ok.testsupport.TestcontainersConfiguration;
-import jakarta.persistence.EntityManager;
+import com.ok.testsupport.AbstractIntegrationTest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
-import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-import static com.ok.delivery.fixture.ShipmentFixture.*;
+import static com.ok.delivery.fixture.ShipmentFixture.NOW;
+import static com.ok.delivery.fixture.ShipmentFixture.address;
+import static com.ok.delivery.fixture.ShipmentFixture.item;
+import static com.ok.delivery.fixture.ShipmentFixture.otherAddress;
+import static com.ok.delivery.fixture.ShipmentFixture.shipment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-@DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
-class ShipmentAddressChangeRequestRepositoryTest {
+class ShipmentAddressChangeRequestRepositoryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     ShipmentRepository shipmentRepository;
@@ -28,7 +26,14 @@ class ShipmentAddressChangeRequestRepositoryTest {
     ShipmentAddressChangeRequestRepository requestRepository;
 
     @Autowired
-    EntityManager entityManager;
+    JdbcTemplate jdbcTemplate;
+
+    @AfterEach
+    void tearDown() {
+        jdbcTemplate.update("DELETE FROM shipment_address_change_request");
+        jdbcTemplate.update("DELETE FROM shipment_item");
+        jdbcTemplate.update("DELETE FROM shipment");
+    }
 
     @Test
     void 요청_배송지와_변경_전_배송지를_각각_저장하고_조회한다() {
@@ -36,7 +41,6 @@ class ShipmentAddressChangeRequestRepositoryTest {
         Shipment shipment = shipmentRepository.saveAndFlush(shipment(item(1L)));
         ShipmentAddressChangeRequest request = requestRepository.saveAndFlush(
                 shipment.requestAddressChange(otherAddress(), 3_000, NOW));
-        entityManager.clear();
 
         // when
         ShipmentAddressChangeRequest sut = requestRepository.findById(request.getId()).orElseThrow();

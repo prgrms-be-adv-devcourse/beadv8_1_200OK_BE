@@ -1,42 +1,53 @@
 package com.ok.delivery.repository;
 
-import com.ok.config.JpaConfig;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
-import com.ok.testsupport.TestcontainersConfiguration;
-import jakarta.persistence.EntityManager;
+import com.ok.testsupport.AbstractIntegrationTest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
-import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import static com.ok.delivery.fixture.ShipmentFixture.*;
+import static com.ok.delivery.fixture.ShipmentFixture.NOW;
+import static com.ok.delivery.fixture.ShipmentFixture.address;
+import static com.ok.delivery.fixture.ShipmentFixture.item;
+import static com.ok.delivery.fixture.ShipmentFixture.shipment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-@DataJpaTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
-class ShipmentRepositoryTest {
+class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     ShipmentRepository shipmentRepository;
 
     @Autowired
-    EntityManager entityManager;
+    TransactionTemplate transactionTemplate;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    @AfterEach
+    void tearDown() {
+        jdbcTemplate.update("DELETE FROM shipment_item");
+        jdbcTemplate.update("DELETE FROM shipment");
+    }
 
     @Test
     void 배송지와_상품_항목을_함께_저장하고_조회한다() {
         // given
-        Shipment shipment = shipmentRepository.saveAndFlush(shipment(item(1L), item(2L)));
-        entityManager.clear();
+        Long shipmentId = shipmentRepository.saveAndFlush(shipment(item(1L), item(2L))).getId();
 
         // when
-        Shipment sut = shipmentRepository.findById(shipment.getId()).orElseThrow();
+        // items는 지연 로딩이라 트랜잭션 안에서 함께 읽는다
+        Shipment sut = transactionTemplate.execute(status -> {
+            Shipment found = shipmentRepository.findById(shipmentId).orElseThrow();
+            found.getItems().size();
+            return found;
+        });
 
         // then
         assertThat(sut).isNotNull();
@@ -65,7 +76,8 @@ class ShipmentRepositoryTest {
 
         // when & then
         assertThatThrownBy(() -> shipmentRepository.saveAndFlush(second))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("uk_shipment_tracking_number");
     }
 
     @Test
@@ -74,10 +86,10 @@ class ShipmentRepositoryTest {
         shipmentRepository.saveAndFlush(shipment(1L, 10L, item(1L)));
 
         // when
-        shipmentRepository.saveAndFlush(shipment(2L, 10L, item(2L)));
+        Shipment sut = shipmentRepository.saveAndFlush(shipment(2L, 10L, item(2L)));
 
         // then
-        assertThat(shipmentRepository.count()).isEqualTo(2);
+        assertThat(sut.getId()).isNotNull();
     }
 
     @Test
@@ -87,7 +99,8 @@ class ShipmentRepositoryTest {
 
         // when & then
         assertThatThrownBy(() -> shipmentRepository.saveAndFlush(shipment(1L, 10L, item(2L))))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("uk_shipment_order_seller");
     }
 
     @Test
@@ -97,6 +110,7 @@ class ShipmentRepositoryTest {
 
         // when & then
         assertThatThrownBy(() -> shipmentRepository.saveAndFlush(shipment(2L, 10L, item(1L))))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("uk_shipment_item_order_item_id");
     }
 }
