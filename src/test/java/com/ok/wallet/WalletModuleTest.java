@@ -7,6 +7,7 @@ import com.ok.member.SellerApprovedEvent;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.repository.SellerWalletRepository;
+import com.ok.wallet.service.BuyerWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +36,9 @@ class WalletModuleTest {
 
     @Autowired
     CompletedEventPublications completedEventPublications;
+
+    @Autowired
+    BuyerWalletService buyerWalletService;
 
     @AfterEach
     void tearDown() {
@@ -74,6 +78,20 @@ class WalletModuleTest {
         return jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM buyer_wallet WHERE member_id = ?",
                 Long.class, memberId);
+    }
+
+    @Test
+    void 요청으로_지갑이_먼저_생성된_뒤_회원가입_이벤트가_와도_지갑은_하나다(Scenario scenario) {
+        // Given: 이벤트보다 먼저 요청 시점 보완 생성으로 지갑이 만들어짐
+        Long memberId = 6L;
+        buyerWalletService.getOrCreate(memberId);
+
+        // When: 이벤트 처리가 완료될 때까지 기다림
+        scenario.publish(new MemberRegisteredEvent(memberId, MemberRole.BUYER))
+                .andWaitForStateChange(() -> countCompletedEvents(memberId), count -> count == 1);
+
+        // Then
+        assertThat(countBuyerWallets(memberId)).isEqualTo(1);
     }
 
     // 해당 회원에 대한 MemberRegisteredEvent 중 리스너 처리가 완료된 건수
