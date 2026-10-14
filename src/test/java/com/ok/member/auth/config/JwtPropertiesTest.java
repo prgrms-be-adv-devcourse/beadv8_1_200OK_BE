@@ -12,7 +12,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.*;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-public class JwtPropertiesTest {
+class JwtPropertiesTest {
 
     private static final String ISSUER = "paldo-gotgan";
     /** "test-secret-key-for-jwt-must-be-32-bytes-or-more"(48바이트)를 Base64로 인코딩한 값 */
