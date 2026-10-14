@@ -72,26 +72,30 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         CountDownLatch start = new CountDownLatch(1);
         List<Future<Long>> results = new ArrayList<>();
 
-        // When: 모든 스레드가 준비된 뒤 동시에 호출
-        for (int i = 0; i < threadCount; i++) {
-            results.add(executor.submit(() -> {
-                ready.countDown();
-                start.await();
-                return buyerWalletService.getOrCreate(memberId).getId();
-            }));
-        }
-        ready.await();
-        start.countDown();
+        try {
+            // When: 모든 스레드가 준비된 뒤 동시에 호출
+            for (int i = 0; i < threadCount; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return buyerWalletService.getOrCreate(memberId).getId();
+                }));
+            }
+            ready.await();
+            start.countDown();
 
-        List<Long> walletIds = new ArrayList<>();
-        for (Future<Long> result : results) {
-            walletIds.add(result.get(10, TimeUnit.SECONDS)); // 스레드에서 예외가 나면 여기서 실패한다
-        }
-        executor.shutdown();
+            List<Long> walletIds = new ArrayList<>();
+            for (Future<Long> result : results) {
+                walletIds.add(result.get(10, TimeUnit.SECONDS)); // 스레드에서 예외가 나면 여기서 실패한다
+            }
 
-        // Then
-        assertThat(walletIds).containsOnly(walletIds.get(0));
-        assertThat(countBuyerWallets(memberId)).isEqualTo(1);
+            // Then
+            assertThat(walletIds).containsOnly(walletIds.get(0));
+            assertThat(countBuyerWallets(memberId)).isEqualTo(1);
+        } finally {
+            // 중간에 실패해도 스레드가 남아 DB 커넥션을 잡고 있지 않도록 정리한다
+            executor.shutdownNow();
+        }
     }
 
     private long countBuyerWallets(Long memberId) {
