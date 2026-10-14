@@ -60,7 +60,7 @@ public class Shipment extends BaseTime {
     @Column(name = "carrier", length = 30)
     private String carrier;
 
-    @Column(name = "tracking_number", length = 13, unique = true)
+    @Column(name = "tracking_number", length = 13)
     private String trackingNumber;
 
     @Embedded
@@ -163,7 +163,8 @@ public class Shipment extends BaseTime {
     /**
      * 판매자가 송장을 등록해 출고한다. {@code PREPARING → SHIPPING}
      *
-     * <p>송장번호 중복은 DB UNIQUE 제약이 막는다. 대기 중인 배송지 변경 요청의 자동 거절은 호출하는 서비스가 한다.
+     * <p>송장번호 중복은 DB UNIQUE 제약({@code carrier, tracking_number})이 막는다. 송장번호는 택배사마다 따로 발급하므로
+     * 택배사가 다르면 같은 번호도 허용한다. 대기 중인 배송지 변경 요청의 자동 거절은 호출하는 서비스가 한다.
      *
      * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE},
      *                          택배사나 송장번호가 비어 있으면 {@code MISSING_CARRIER}, {@code MISSING_TRACKING_NUMBER}

@@ -66,7 +66,22 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 송장번호가_중복되면_저장할_수_없다() {
+    void 같은_택배사의_송장번호가_중복되면_저장할_수_없다() {
+        // given
+        Shipment first = shipment(1L, 10L, item(1L));
+        first.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+        shipmentRepository.saveAndFlush(first);
+        Shipment second = shipment(2L, 10L, item(2L));
+        second.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+
+        // when & then
+        assertThatThrownBy(() -> shipmentRepository.saveAndFlush(second))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("uk_shipment_carrier_tracking_number");
+    }
+
+    @Test
+    void 택배사가_다르면_같은_송장번호도_저장할_수_있다() {
         // given
         Shipment first = shipment(1L, 10L, item(1L));
         first.dispatch("CJ_LOGISTICS", "1234567890", NOW);
@@ -74,10 +89,11 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
         Shipment second = shipment(2L, 10L, item(2L));
         second.dispatch("HANJIN", "1234567890", NOW);
 
-        // when & then
-        assertThatThrownBy(() -> shipmentRepository.saveAndFlush(second))
-                .isInstanceOf(DataIntegrityViolationException.class)
-                .hasMessageContaining("uk_shipment_tracking_number");
+        // when
+        Shipment sut = shipmentRepository.saveAndFlush(second);
+
+        // then
+        assertThat(sut.getId()).isNotNull();
     }
 
     @Test

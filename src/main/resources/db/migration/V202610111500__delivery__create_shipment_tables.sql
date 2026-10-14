@@ -26,7 +26,7 @@ CREATE TABLE shipment (
     created_at               DATETIME(6)  NOT NULL,
     updated_at               DATETIME(6)  NOT NULL,
     PRIMARY KEY (id),
-    CONSTRAINT uk_shipment_tracking_number UNIQUE (tracking_number),
+    CONSTRAINT uk_shipment_carrier_tracking_number UNIQUE (carrier, tracking_number),
     CONSTRAINT uk_shipment_order_seller UNIQUE (order_id, seller_id),
     CONSTRAINT ck_shipment_fee CHECK (base_shipping_fee >= 0 AND region_surcharge >= 0 AND free_shipping_threshold >= 0),
     CONSTRAINT ck_shipment_estimated_delivery CHECK (estimated_delivery_start <= estimated_delivery_end)
