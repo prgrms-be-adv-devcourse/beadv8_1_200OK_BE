@@ -351,6 +351,52 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 같은_주문으로_동시에_배정하면_한_번만_반영되고_나머지는_204나_409다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		int requests = 5;
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<Integer>> results = new ArrayList<>();
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests)) {
+			for (int i = 0; i < requests; i++) {
+				results.add(executor.submit(() -> {
+					start.await();
+					return allocate(orderId, item(optionId, 2)).andReturn().getResponse().getStatus();
+				}));
+			}
+			start.countDown();
+		}
+
+		// then
+		List<Integer> statuses = new ArrayList<>();
+		for (Future<Integer> result : results) {
+			statuses.add(result.get());
+		}
+		assertThat(statuses).containsOnly(204, 409).contains(204);
+		assertThat(availableStock(optionId)).isEqualTo(8);
+	}
+
+	@Test
+	void 해제한_주문으로_다시_배정하면_거부하고_재고는_그대로다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 4));
+		release(orderId);
+
+		// when & then
+		assertThatThrownBy(() -> productStockService.allocate(orderId, List.of(new StockChange(optionId, 4))))
+			.isInstanceOfSatisfying(RestApiException.class,
+				e -> assertThat(e.getErrorCode()).isEqualTo(ProductErrorCode.ALLOCATION_ALREADY_RELEASED));
+		allocate(orderId, item(optionId, 4))
+			.andExpect(status().isConflict());
+		assertThat(availableStock(optionId)).isEqualTo(10);
+	}
+
+	@Test
 	void 배정_기록이_없는_주문을_해제해도_204() throws Exception {
 		release(ORDER_IDS.incrementAndGet())
 			.andExpect(status().isNoContent());

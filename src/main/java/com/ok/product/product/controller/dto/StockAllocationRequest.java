@@ -11,7 +11,7 @@ import java.util.List;
 @Schema(description = "재고 배정 요청")
 public record StockAllocationRequest(
 
-	@Schema(description = "주문 ID. 같은 주문 ID로 다시 보내면 한 번만 배정한다", example = "10")
+	@Schema(description = "주문 ID. 같은 주문 ID로 다시 보내면 items는 비교하지 않고 첫 배정을 유지한다", example = "10")
 	@NotNull(message = "주문 ID는 필수입니다.")
 	Long orderId,
 

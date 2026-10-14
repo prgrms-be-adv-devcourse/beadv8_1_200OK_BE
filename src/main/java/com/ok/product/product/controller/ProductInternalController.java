@@ -1,11 +1,14 @@
 package com.ok.product.product.controller;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.product.product.controller.dto.ProductOptionInfoResponse;
 import com.ok.product.product.controller.dto.StockAllocationRequest;
+import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.service.ProductService;
 import com.ok.product.product.service.ProductStockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,7 +42,12 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 	@Override
 	@PostMapping("/stock-allocations")
 	public ResponseEntity<Void> allocateStock(@RequestBody StockAllocationRequest request) {
-		productStockService.allocate(request.orderId(), request.toChanges());
+		try {
+			productStockService.allocate(request.orderId(), request.toChanges());
+		} catch (DataIntegrityViolationException e) {
+			// 같은 주문 ID 요청이 동시에 와서 배정 기록의 유니크 키가 겹친 경우 409
+			throw new RestApiException(ProductErrorCode.ALLOCATION_IN_PROGRESS);
+		}
 		return ResponseEntity.noContent().build();
 	}
 

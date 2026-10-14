@@ -35,10 +35,15 @@ public class ProductStockService {
 	 * 같은 주문으로 다시 호출하면 아무것도 하지 않는다. 하나라도 실패하면 이 주문의 배정은 모두 롤백된다.
 	 *
 	 * @throws RestApiException 옵션이 없으면 {@code OPTION_NOT_FOUND}, 판매 중이 아니면 {@code OPTION_NOT_PURCHASABLE},
-	 *                          판매 가능 수량이 모자라면 {@code INSUFFICIENT_STOCK}
+	 *                          판매 가능 수량이 모자라면 {@code INSUFFICIENT_STOCK},
+	 *                          이미 해제한 주문이면 {@code ALLOCATION_ALREADY_RELEASED}
 	 */
 	@Transactional
 	public void allocate(Long orderId, List<StockChange> changes) {
+		// 배정 해지 된 주문인지 체크
+		if (allocationRepository.existsByOrderIdAndStatus(orderId, StockAllocationStatus.RELEASED)) {
+			throw new RestApiException(ProductErrorCode.ALLOCATION_ALREADY_RELEASED);
+		}
 		if (allocationRepository.existsByOrderId(orderId)) {
 			return;
 		}
