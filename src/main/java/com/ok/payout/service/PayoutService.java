@@ -200,6 +200,8 @@ public class PayoutService {
     //   1) 새 검사에 필요한 숫자가 있으면 → 아래 1단계 Input에 값 추가 (+ PayoutQueryRepository에 집계 쿼리 추가)
     //   2) 비교 규칙 자체 → PayoutDraftValidator에 check...() 메서드 추가 후 validate()에 한 줄 추가
     //   3) 이 메서드의 2·3단계는 보통 고치지 않음 (실패 사유는 Validator가 모아서 돌려줌)
+    // readOnly 트랜잭션: 1단계 집계 쿼리들이 같은 시점의 데이터를 보도록 함 (읽기만 하므로 readOnly)
+    @Transactional(readOnly = true)
     public void verify(Long snapshotId) {
         // 1) 비교할 숫자 모으기 (DB 집계)
         //    ↳ 검사 추가 시: 새로 필요한 숫자는 여기에 넣음 (PayoutDraftValidator.Input 필드도 함께 추가)
