@@ -6,6 +6,7 @@ import com.ok.wallet.repository.BuyerWalletRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // 동시 요청에서 각 트랜잭션이 실제로 커밋되어야 하므로 테스트에 @Transactional을 붙이지 않음
 class BuyerWalletServiceTest extends AbstractIntegrationTest {
@@ -179,6 +181,17 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }
+    }
+
+    @Test
+    void 다른_지갑에_이미_쓰인_근거_키로_충전하면_무시하지_않고_실패한다() {
+        // Given
+        buyerWalletService.charge(20L, 10_000, "CHARGE:pay-1");
+
+        // When & Then: 조용히 넘어가지 않고 오류로 드러난다
+        assertThatThrownBy(() -> buyerWalletService.charge(21L, 10_000, "CHARGE:pay-1"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(balanceOf(20L)).isEqualTo(10_000);
     }
 
     private long countBuyerWallets(Long memberId) {

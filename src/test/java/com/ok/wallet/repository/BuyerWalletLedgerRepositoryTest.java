@@ -63,13 +63,16 @@ class BuyerWalletLedgerRepositoryTest {
     }
 
     @Test
-    void 근거_키로_원장_존재_여부를_확인한다() {
+    void 지갑과_근거_키로_원장_존재_여부를_확인한다() {
         // Given
         insertLedger(walletId, "CHARGE", 10_000, 10_000, "CHARGE:pay-3");
+        Long otherWalletId = buyerWalletRepository.saveAndFlush(BuyerWallet.create(2L)).getId();
 
         // When & Then
-        assertThat(buyerWalletLedgerRepository.existsByReferenceKey("CHARGE:pay-3")).isTrue();
-        assertThat(buyerWalletLedgerRepository.existsByReferenceKey("CHARGE:pay-4")).isFalse();
+        assertThat(buyerWalletLedgerRepository.existsByBuyerWalletIdAndReferenceKey(walletId, "CHARGE:pay-3")).isTrue();
+        assertThat(buyerWalletLedgerRepository.existsByBuyerWalletIdAndReferenceKey(walletId, "CHARGE:pay-4")).isFalse();
+        // 다른 지갑의 원장은 이 지갑의 확인에 걸리지 않는다
+        assertThat(buyerWalletLedgerRepository.existsByBuyerWalletIdAndReferenceKey(otherWalletId, "CHARGE:pay-3")).isFalse();
     }
 
     private void insertLedger(Long buyerWalletId, String type, long amount, long balanceAfter, String referenceKey) {

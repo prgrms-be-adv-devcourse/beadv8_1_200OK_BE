@@ -41,9 +41,10 @@ public class BuyerWalletService {
     @Transactional
     public void charge(Long memberId, long amount, String referenceKey) {
         BuyerWallet wallet = getOrCreate(memberId);
-        // 지갑을 잠근 뒤에 확인하므로 같은 지갑의 요청은 순서대로 이 확인을 거친다.
-        // 같은 근거 키가 동시에 확인을 통과하더라도 원장의 유니크 제약이 두 번째 저장을 막는다.
-        if (buyerWalletLedgerRepository.existsByReferenceKey(referenceKey)) {
+        // 이 지갑에 이미 반영한 근거 키면 넘어간다. 지갑을 잠근 뒤 확인하므로 같은 지갑의 요청은 순서대로 이 확인을 거친다.
+        // 다른 지갑에 같은 키가 있는 경우는 일부러 넘기지 않는다. 조용히 무시하지 않고 저장 시 유니크 제약으로 실패하게 해 오류를 드러낸다.
+        // 같은 지갑에서 같은 키가 동시에 확인을 통과하더라도 유니크 제약이 두 번째 저장을 막는다.
+        if (buyerWalletLedgerRepository.existsByBuyerWalletIdAndReferenceKey(wallet.getId(), referenceKey)) {
             return;
         }
         BuyerWalletLedger ledger = wallet.charge(amount, referenceKey);

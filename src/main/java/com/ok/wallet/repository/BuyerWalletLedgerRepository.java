@@ -7,7 +7,7 @@ import org.springframework.data.repository.Repository;
 public interface BuyerWalletLedgerRepository extends Repository<BuyerWalletLedger, Long> {
     BuyerWalletLedger save(BuyerWalletLedger ledger);
 
-    BuyerWalletLedger saveAndFlush(BuyerWalletLedger ledger);
-
-    boolean existsByReferenceKey(String referenceKey);
+    // 같은 지갑에 이미 반영한 근거 키인지 확인한다.
+    // 다른 지갑에 같은 키가 있는 경우는 여기서 넘기지 않고, 저장 시 유니크 제약으로 실패하게 둔다.
+    boolean existsByBuyerWalletIdAndReferenceKey(Long buyerWalletId, String referenceKey);
 }
