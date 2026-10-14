@@ -6,22 +6,28 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 public class BuyerWalletService {
     private final BuyerWalletRepository buyerWalletRepository;
 
     /**
-     * 구매자 지갑을 생성한다. 이미 존재하면 아무것도 하지 않는다.
-     * 동시 중복 처리로 unique 제약 위반이 발생하면 예외를 그대로 전파한다.
-     * 이벤트는 미완료로 남아 재처리되며, 재처리 시에는 이미 존재하는 지갑이 확인되어 정상 완료된다.
-     * 예외를 잡아 무시하면 중복이 아닌 다른 저장 실패까지 삼킬 수 있어 전파를 유지한다.
+     * 구매자 지갑을 잠금 조회로 반환한다. 지갑이 없으면 생성한 뒤 반환한다.
+     * 존재 확인은 일반 조회로 하고, 없으면 저장한 뒤 잠금 조회로 반환한다.
+     * 반환된 지갑은 호출한 트랜잭션이 끝날 때까지 잠겨 있으므로, 잔액을 바꾸지 않는 호출에는 쓰지 않는다.
      */
     @Transactional
-    public void create(Long memberId) {
-        if (buyerWalletRepository.existsByMemberId(memberId)) {
-            return;
+    public BuyerWallet getOrCreate(Long memberId) {
+        if (!buyerWalletRepository.existsByMemberId(memberId)) {
+            // TODO: 공통 Clock 빈이 생기면 LocalDateTime.now(clock)으로 변경 (.claude/rules/service.md)
+            buyerWalletRepository.insertIfAbsent(memberId, LocalDateTime.now());
         }
-        buyerWalletRepository.save(BuyerWallet.create(memberId));
+
+        // 바로 앞에서 저장했거나 존재를 확인했으므로 여기서 없을 수 없다.
+        // 없다면 사용자 입력이 아닌 코드·DB의 이상이므로 500으로 드러나도록 IllegalStateException을 던진다.
+        return buyerWalletRepository.findForUpdateByMemberId(memberId)
+                .orElseThrow(() -> new IllegalStateException("구매자 지갑 생성 후 조회에 실패했습니다. memberId=" + memberId));
     }
 }
