@@ -1,0 +1,19 @@
+meta {
+  name: 재고 해제 - 다시 호출
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations/{{orderId}}/release
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  여러 번 호출해도 재고는 한 번만 복구됩니다. 다음 요청에서 확인합니다.
+}

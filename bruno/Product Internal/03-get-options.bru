@@ -1,0 +1,39 @@
+meta {
+  name: 옵션 일괄 조회
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/internal/v1/products/options?optionIds={{optionA}},{{optionB}},999999999
+  body: none
+  auth: none
+}
+
+params:query {
+  optionIds: {{optionA}},{{optionB}},999999999
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("없는 ID는 빠지고 두 옵션만 온다", function () {
+    expect(res.body).to.have.lengthOf(2);
+    expect(res.body[0].optionId).to.equal(bru.getVar("optionA"));
+  });
+
+  test("판매 중이고 재고가 있으면 구매할 수 있다", function () {
+    const a = res.body[0];
+    expect(a.purchasable).to.equal(true);
+    expect(a.availableStock).to.equal(10);
+    expect(a.sellerId).to.equal(7);
+    expect(a.status).to.equal("ON_SALE");
+    expect(a.productThumbnailUrl).to.contain("/product/");
+  });
+}
+
+docs {
+  없는 ID(999999999)는 에러 없이 응답에서 빠집니다. 숨김·삭제된 옵션도 플래그와 함께 포함됩니다.
+}
