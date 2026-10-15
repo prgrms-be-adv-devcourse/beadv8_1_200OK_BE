@@ -33,7 +33,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  *   <li>{@link JwtValidationException}: 서명은 맞지만 만료, 발급자 등 검증 규칙 위반</li>
  * </ul>
  */
-public class AccessTokenProviderTest {
+class AccessTokenProviderTest {
 
     private static final String ISSUER = "paldo-gotgan";
     /** "test-secret-key-for-jwt-must-be-32-bytes-or-more"를 Base64로 인코딩한 값 (application-test.yml과 같은 형식) */

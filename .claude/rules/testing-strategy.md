@@ -18,7 +18,7 @@ paths:
 | 서비스 단위 | 분기, 예외, 이벤트 발행, 외부 경계 호출, 실패 경로 | Mockito |
 | 통합 | Controller → Service → Repository 전체 흐름, 영속성·쿼리·제약·트랜잭션 | `AbstractIntegrationTest` 상속 |
 | 모듈 | 한 모듈 안의 이벤트 연동 (이벤트 계약이 있는 모듈마다 둔다) | `@ApplicationModuleTest` |
-| 구조 | 모듈 의존 규칙 | `ModulithStructureTest`, ArchUnit |
+| 구조 | 모듈 간 의존(Modulith), 모듈 안 레이어 의존 방향과 클래스 이름·위치(ArchUnit) | `ModulithStructureTest`, `ArchitectureTest` |
 
 - Controller는 통합 테스트로만 검증한다. `@WebMvcTest`, `@DataJpaTest`는 쓰지 않는다.
 - 통합 테스트는 `AbstractIntegrationTest`를 상속한다. `@SpringBootTest(properties=...)`나 `@Import`로 직접 설정하지 않는다(컨텍스트가 새로 떠서 느려진다).
@@ -83,7 +83,7 @@ verify(walletRepository, times(1)).save(any(Wallet.class));
 - 로직이 없는 DTO(필드만 가진 `record`)는 테스트하지 않는다.
 - 로직이 있는 DTO(정규화, `toCommand` 같은 변환, `toString` 마스킹)는 순수 단위 테스트로 검증한다.
 - 같은 타입 필드가 여러 개인 변환은 필드마다 다른 값을 넣고 모두 `assertSoftly`로 검증한다(순서 뒤바뀜을 잡기 위해서다).
-- Entity → Response 매핑은 따로 테스트하지 않고, 통합 테스트에서 응답의 모든 필드를 확인한다.
+- `*Result` → `*Response` 매핑은 따로 테스트하지 않고, 통합 테스트에서 응답의 모든 필드를 확인한다.
 
 **이유**: `record`는 필드를 추가하면 생성하는 모든 곳이 컴파일 오류가 나므로 필드 누락은 컴파일러가 막는다. 컴파일러가 못 잡는 것은 같은 타입 필드의 순서 뒤바뀜이고, 변환 테스트는 이를 잡기 위해 쓴다.
 

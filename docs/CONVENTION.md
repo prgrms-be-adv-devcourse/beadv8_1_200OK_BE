@@ -116,12 +116,17 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 하위 도메인이 하나뿐인 모듈은 패키지를 한 단계 더 만들지 않는다. 의미 없는 패키지를 두지 않는다.
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `com.ok.config` 모듈에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
+- 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다.
+- 서비스는 `service/publisher`의 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받고, 구현체는 `event` 패키지에 둔다.
+- `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다.
 
 **이유**: 
 한 모듈에 성격이 다른 하위 도메인이 있으면(예: product와 review) `Service`, `Repository` 같은 클래스 이름이 겹치고, 이름만으로 구분하기 어렵다. 
 모듈 이름과 하위 도메인 이름이 구분되어 헷갈리지 않는다면, 두 이름이 같은 네이밍 중복은 허용한다. 
 하위 도메인이 없는 모듈은 경로가 단순한 편이 낫다. 
 설정과 리스너를 서비스·도메인과 구분하면 역할별로 코드를 찾기 쉽다. 
+리스너는 컨트롤러처럼 외부 입력이 들어오는 진입점이므로, 트랜잭션과 도메인 처리는 서비스에 맡긴다. 
+서비스가 발행 인터페이스에만 의존하면 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 모듈 밖에서는 Modulith가 접근을 막는다. 
 
 
 ```
@@ -129,10 +134,11 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 com.ok.wallet
 ├── controller
 ├── service
+│   └── publisher  이벤트 발행 인터페이스
 ├── domain
 ├── repository
 ├── exception      에러 코드
-├── event          이벤트 리스너
+├── event          이벤트 리스너, 발행 인터페이스 구현체
 └── config         모듈 전용 설정
 
 // 좋은 예: 하위 도메인이 있는 모듈 (member 모듈의 회원과 인증)
@@ -180,11 +186,12 @@ public record MemberRegisteredEvent(Long memberId, MemberRole memberRole) { }
 
 **규칙**
 - 요청·응답 DTO(`*Request`, `*Response`)는 `controller/dto`에 둔다.
-- `*Command`, `*Query`는 `service/dto`에 둔다.
-- DTO를 컨트롤러 클래스 안의 중첩 `record`로 두지 않는다.
-- 서비스는 `*Response`를 반환하지 않는다. 식별자나 도메인 값을 반환하고, 컨트롤러가 `*Response`를 만든다. 반환할 값이 여러 개라 묶어야 하면 서비스 결과 DTO `*Result`를 `service/dto`에 둔다.
+- `*Command`, `*Query`, `*Result`는 `service/dto`에 둔다.
+- DTO를 컨트롤러나 서비스 클래스 안의 중첩 `record`로 두지 않는다.
+- 서비스는 `*Response`를 반환하지 않는다. 컨트롤러에는 식별자나 서비스 결과 DTO `*Result`를 반환하고, 컨트롤러가 `*Result`로 `*Response`를 만든다.
+- 컨트롤러(`controller/dto` 포함)는 `domain` 패키지의 타입(엔티티, enum 등)을 쓰지 않는다.
 
-**이유**: 컨트롤러 계층과 서비스 계층의 입출력 타입을 패키지로 나누면, 어느 계층이 쓰는 타입인지 경로만 보고 알 수 있다. 중첩 `record`는 컨트롤러 파일을 키우고 다른 곳에서 찾기 어렵다. 웹 응답 타입의 책임은 프레젠테이션 레이어에 있다. 프레젠테이션과 영속성은 바뀔 수 있어도 비즈니스(서비스)는 그 영향을 받지 않아야 하므로, 서비스가 컨트롤러의 타입(`*Response`)을 알면 안 된다.
+**이유**: 컨트롤러 계층과 서비스 계층의 입출력 타입을 패키지로 나누면, 어느 계층이 쓰는 타입인지 경로만 보고 알 수 있다. 중첩 `record`는 파일을 키우고 다른 곳에서 찾기 어렵다. 웹 응답 타입의 책임은 프레젠테이션 레이어에 있다. 프레젠테이션과 영속성은 바뀔 수 있어도 비즈니스(서비스)는 그 영향을 받지 않아야 하므로, 서비스가 컨트롤러의 타입(`*Response`)을 알면 안 된다. 반대로 컨트롤러가 엔티티를 알면 엔티티 변경이 API 응답까지 번지고, 지연 로딩 필드를 트랜잭션 밖에서 읽게 된다.
 
 ```
 // 좋은 예
@@ -209,6 +216,15 @@ return ResponseEntity.status(HttpStatus.CREATED).body(new SignupResponse(memberI
 
 // 나쁜 예: 서비스가 응답 DTO를 반환한다 (비즈니스가 컨트롤러의 타입을 알게 된다)
 public MediaResponse upload(MediaPurpose purpose, MultipartFile file) { ... }  // 서비스
+```
+
+```java
+// 좋은 예: 묶어서 넘길 값은 서비스가 *Result로 만들고, 컨트롤러가 *Response로 바꾼다
+public CartResult getMyCart(Long memberId) { ... }                             // 서비스
+return ResponseEntity.ok(CartResponse.from(cartService.getMyCart(memberId)));  // 컨트롤러
+
+// 나쁜 예: 컨트롤러 쪽 DTO가 엔티티를 받는다 (엔티티 변경이 API 응답까지 번진다)
+public static CartResponse of(Cart cart, List<CartItem> items) { ... }
 ```
 
 ### 2.4 `common`에 두는 코드
@@ -290,7 +306,7 @@ record SignupResult(Long memberId) { ... }   // Response 역할
 interface MediaControllerSpec {
 
     @Operation(summary = "미디어 업로드")
-    ResponseEntity<MediaInfo> upload(MediaPurpose purpose, MultipartFile file);
+    ResponseEntity<MediaResponse> upload(String purpose, MultipartFile file);
 }
 
 public class MediaController implements MediaControllerSpec { ... }
@@ -1016,7 +1032,7 @@ Wallet result = Wallet.create(memberId, WalletType.BUYER);
 | 서비스 단위 테스트 | 유스케이스의 분기, 예외, 협력 동작(이벤트 발행, 외부 경계 호출, 실패 경로) | Mockito |
 | 통합 테스트 | Controller → Service → Repository 전체 흐름, 실제 DB가 필요한 것(영속성, 쿼리, 제약, 트랜잭션) | `AbstractIntegrationTest` 상속 |
 | 모듈 테스트 | 한 모듈 안의 이벤트 연동. 이벤트 발행·수신 같은 모듈 외부 계약이 있는 모듈마다 모듈 테스트 클래스를 둔다 | `@ApplicationModuleTest` |
-| 구조 테스트 | 모듈 의존 규칙 | `ModulithStructureTest`, ArchUnit |
+| 구조 테스트 | 모듈 간 의존 규칙(Modulith), 모듈 안의 레이어 의존 방향과 클래스 이름·위치(ArchUnit) | `ModulithStructureTest`, `ArchitectureTest` |
 
 **이유**: 통합 테스트가 레이어를 통과하며 흐름과 DB 동작을 검증하므로, 저장소와 컨트롤러를 따로 테스트하면 같은 것을 다시 검증하게 된다. 컨트롤러는 단위 테스트와 통합 테스트가 검증하는 내용이 크게 다르지 않다. 반면 서비스의 분기와 실패 경로는 통합 시나리오로 모두 덮으면 너무 많아지므로 단위 테스트가 맡는다. 핵심 비즈니스 로직은 가장 중요하므로 Spring 없이 빠르고 촘촘하게 먼저 검증한다. 또한 스프링 컨텍스트는 설정이 조금이라도 다르면 새로 뜨고(8~10초), `AbstractIntegrationTest`를 상속한 테스트는 컨텍스트 하나를 공유하므로, 컨텍스트가 이미 떠 있으면 테스트 11개가 약 2초에 끝난다.
 
@@ -1029,6 +1045,31 @@ class OrderServiceIntegrationTest extends AbstractIntegrationTest { ... }
 @Import(TestcontainersConfiguration.class)
 class OrderServiceIntegrationTest { ... }
 ```
+
+**구조 테스트 (ArchUnit)**: `ArchitectureTest`는 이 문서의 규칙 중 코드로 검사할 수 있는 것을 검사한다. 규칙마다 `because`에 이유와 근거 절을 적어, 실패 메시지만 보고 원인을 알 수 있게 한다.
+
+| 검사 | 근거 |
+|---|---|
+| Controller → Service → Repository 방향으로만 의존하고, `domain`은 Service·Repository만 쓴다 | 2.1, 2.3 |
+| 패키지 사이에 순환 의존이 없다 (모듈 안 패키지까지) | 2.2 확장 |
+| 이벤트 리스너(`event`)는 `controller`, `repository`, `domain`을 쓰지 않는다 | 2.1 |
+| `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지만 쓴다 | 2.1 |
+| `service/publisher`에는 인터페이스만 둔다 | 2.1 |
+| `@RestController`는 `*Controller`, `@Service`는 `*Service`이고 각 레이어 패키지에 있다 | 3.2 |
+| 저장소는 `repository`, 엔티티는 `domain`, `ErrorCode` 구현체는 `exception` 패키지에 있다 | 2.1, 3.2 |
+| Swagger 문서 인터페이스는 `*Spec`, package-private이고 `spec` 패키지에 두지 않는다 | 3.3 |
+| 컨트롤러 클래스·메서드에 `@Transactional`을 붙이지 않는다 | 7.1 |
+| `System.out`, `System.err`를 쓰지 않는다 | 일반 |
+
+규칙을 넣을 때 이미 있던 위반은 freeze로 `src/test/resources/archunit_store/`에 기준선으로 저장한다. 기준선에 있는 위반은 통과하고, 새로 생긴 위반만 실패한다. 위반을 고치면 기준선에서 자동으로 빠지므로, 바뀐 `archunit_store` 파일도 같이 커밋한다.
+
+freeze 규칙을 추가하거나 문구(`because` 포함)를 바꾸면 기준선을 다시 만든다. 기준선은 규칙 설명 문장으로 찾으므로 문구만 바뀌어도 다른 규칙으로 본다.
+
+1. `archunit.properties`의 `freeze.store.default.allowStoreCreation`을 `true`로 바꾼다. 이미 기준선이 있는 규칙을 다시 만들려면 `freeze.refreeze=true`도 넣는다.
+2. `./gradlew test --tests com.ok.ArchitectureTest`를 실행한다.
+3. 설정을 되돌리고, 기록된 위반이 예상과 같은지 확인한 뒤 커밋한다.
+
+Gradle의 `-D` 옵션은 테스트 JVM에 전달되지 않으므로 설정 파일을 직접 고친다.
 
 ### 9.5 파라미터화 테스트
 
@@ -1191,7 +1232,7 @@ verify(walletRepository, times(1)).save(any(Wallet.class));
 **규칙**
 - 로직이 없는 DTO(필드만 가진 `record`)는 테스트하지 않는다.
 - 로직이 있는 DTO(값 정규화, `toCommand` 같은 변환, `toString` 마스킹)는 순수 단위 테스트로 검증한다. 같은 타입의 필드가 여러 개인 변환은 서로 다른 값을 넣고 모든 필드를 `assertSoftly`로 검증한다.
-- Entity → Response 매핑은 따로 테스트하지 않고, 통합 테스트에서 응답의 모든 필드를 확인한다.
+- `*Result` → `*Response` 매핑은 따로 테스트하지 않고, 통합 테스트에서 응답의 모든 필드를 확인한다.
 
 **이유**: `record`는 필드를 추가하면 생성하는 모든 곳이 컴파일 오류가 나므로, 필드 누락은 컴파일러가 막는다. 컴파일러가 못 잡는 것은 같은 타입 필드의 순서 뒤바뀜(예: 모두 `String`인 `name`과 `nickname`)이고, 변환 테스트는 이것을 잡기 위해 쓴다.
 

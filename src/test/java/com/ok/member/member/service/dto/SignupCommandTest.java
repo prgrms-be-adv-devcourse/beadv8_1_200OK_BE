@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-public class SignupCommandTest {
+class SignupCommandTest {
 
     @Test
     @DisplayName("toString에 비밀번호 평문이 포함되지 않는다")

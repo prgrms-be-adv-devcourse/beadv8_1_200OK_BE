@@ -4,15 +4,10 @@ import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
 import com.ok.member.auth.service.RefreshTokenService;
 import com.ok.member.auth.service.TokenHasher;
-import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
-import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.Clock;
@@ -32,9 +27,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  * <p>DB 제약 위반은 전체 메시지 대신 위반한 제약 이름이 메시지에 포함되는지로 검증한다.
  * 전체 메시지에는 SQL과 입력값이 들어가 매번 달라지고, 제약 이름만 있으면 어떤 제약에 걸렸는지 구분된다.
  */
-@SpringBootTest
-@Import(TestcontainersConfiguration.class)
-class RefreshTokenIntegrationTest {
+class RefreshTokenIntegrationTest extends AbstractIntegrationTest {
 
     private static final Long MEMBER_ID = 1L;
 

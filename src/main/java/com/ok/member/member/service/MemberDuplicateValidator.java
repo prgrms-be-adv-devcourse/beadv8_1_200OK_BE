@@ -1,7 +1,7 @@
 package com.ok.member.member.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.member.member.domain.MemberErrorCode;
+import com.ok.member.member.exception.MemberErrorCode;
 import com.ok.member.member.repository.MemberRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;

@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-public class RefreshTokenTest {
+class RefreshTokenTest {
 
     private static final LocalDateTime EXPIRES_AT = LocalDateTime.of(2026, 10, 26, 12, 0);
 

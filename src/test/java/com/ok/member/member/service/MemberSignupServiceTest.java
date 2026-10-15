@@ -1,14 +1,13 @@
 package com.ok.member.member.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.member.MemberRegisteredEvent;
+import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.member.MemberRole;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.domain.MemberErrorCode;
+import com.ok.member.member.exception.MemberErrorCode;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.dto.SignupCommand;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -22,14 +21,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.BDDMockito.*;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
-public class MemberSignupServiceTest {
+class MemberSignupServiceTest {
 
     @Mock
     MemberRepository memberRepository;
@@ -47,12 +45,10 @@ public class MemberSignupServiceTest {
     MemberSignupService memberSignupService;
 
     private final SignupCommand command = new SignupCommand(
-            "tester01", "password1!",
-            "tester@example.com", "홍길동", "길동이");
+            "tester01", "password1!", "tester@example.com", "홍길동", "길동이");
 
     @Test
-    @DisplayName("회원가입에 성공하면 인코딩된 비밀번호로 저장하고 이벤트를 발행한다")
-    void signup_success() {
+    void 회원가입에_성공하면_인코딩된_비밀번호와_구매자_권한으로_저장하고_가입_이벤트를_발행한다() {
         // given
         given(passwordEncoder.encode("password1!")).willReturn("{bcrypt}encoded");
         given(memberRepository.saveAndFlush(any(Member.class))).willAnswer(invocation -> {
@@ -65,40 +61,38 @@ public class MemberSignupServiceTest {
         Long memberId = memberSignupService.signup(command);
 
         // then
-        assertThat(memberId).isEqualTo(1L);
-        verify(duplicateValidator).validate("tester01", "tester@example.com");
+        ArgumentCaptor<Member> captor = ArgumentCaptor.forClass(Member.class);
+        then(memberRepository).should().saveAndFlush(captor.capture());
+        Member sut = captor.getValue();
 
-        ArgumentCaptor<Member> memberCaptor = ArgumentCaptor.forClass(Member.class);
-        verify(memberRepository).saveAndFlush(memberCaptor.capture());
-        Member saved = memberCaptor.getValue();
-        assertThat(saved.getPassword()).isEqualTo("{bcrypt}encoded");
-        assertThat(saved.getRole()).isEqualTo(MemberRole.BUYER);
-        assertThat(saved.getStatus()).isEqualTo(MemberStatus.ACTIVE);
-        assertThat(saved.getTermsAgreedAt()).isNotNull();
-        assertThat(saved.getPrivacyAgreedAt()).isNotNull();
-
-        verify(eventPublisher).publishEvent(new MemberRegisteredEvent(1L, MemberRole.BUYER));
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(memberId).isEqualTo(1L);
+            softly.assertThat(sut.getPassword()).isEqualTo("{bcrypt}encoded");
+            softly.assertThat(sut.getRole()).isEqualTo(MemberRole.BUYER);
+            softly.assertThat(sut.getStatus()).isEqualTo(MemberStatus.ACTIVE);
+            softly.assertThat(sut.getTermsAgreedAt()).isNotNull();
+            softly.assertThat(sut.getPrivacyAgreedAt()).isNotNull();
+        });
+        then(eventPublisher).should().publishEvent(new MemberRegisteredEvent(1L));
     }
 
     @Test
-    @DisplayName("중복 검증에 실패하면 저장하지 않고 이벤트도 발행하지 않는다")
-    void signup_duplicate() {
+    void 중복_검증에_실패하면_저장하지_않고_이벤트도_발행하지_않는다() {
         // given
         willThrow(new RestApiException(MemberErrorCode.DUPLICATE_EMAIL))
                 .given(duplicateValidator).validate(any(), any());
 
         // when & then
         assertThatThrownBy(() -> memberSignupService.signup(command))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(MemberErrorCode.DUPLICATE_EMAIL);
-        verify(memberRepository, never()).saveAndFlush(any());
-        verify(eventPublisher, never()).publishEvent(any());
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_EMAIL));
+        then(memberRepository).should(never()).saveAndFlush(any());
+        then(eventPublisher).should(never()).publishEvent(any());
     }
 
     @Test
-    @DisplayName("저장 중 unique 제약을 위반하면 변환된 예외를 던지고 이벤트를 발행하지 않는다")
-    void signup_uniqueConstraintViolation() {
+    void 저장_중_unique_제약을_위반하면_중복_예외로_바꿔_던지고_이벤트를_발행하지_않는다() {
         // given
         DataIntegrityViolationException violation = new DataIntegrityViolationException(
                 "Duplicate entry 'tester@example.com' for key 'member.uk_member_email'");
@@ -109,10 +103,9 @@ public class MemberSignupServiceTest {
 
         // when & then
         assertThatThrownBy(() -> memberSignupService.signup(command))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(MemberErrorCode.DUPLICATE_EMAIL);
-        verify(eventPublisher, never()).publishEvent(any());
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_EMAIL));
+        then(eventPublisher).should(never()).publishEvent(any());
     }
 
 }

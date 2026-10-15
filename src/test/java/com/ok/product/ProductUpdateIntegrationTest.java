@@ -52,6 +52,9 @@ class ProductUpdateIntegrationTest {
 	// application-test.yml의 버킷(test-mock-bucket)과 리전으로 만든 업로드 URL
 	private static final String IMAGE = "https://test-mock-bucket.s3.ap-northeast-2.amazonaws.com/product/a.jpg";
 	private static final String IMAGE_B = "https://test-mock-bucket.s3.ap-northeast-2.amazonaws.com/product/b.jpg";
+	// 위 URL로 요청하면 DB에는 objectKey만 저장된다
+	private static final String IMAGE_KEY = "product/a.jpg";
+	private static final String IMAGE_B_KEY = "product/b.jpg";
 	private static final Long SELLER_ID = 1L;
 
 	@Autowired
@@ -79,7 +82,7 @@ class ProductUpdateIntegrationTest {
 	void setUp() {
 		Product product = productRepository.save(Product.create(SELLER_ID, "청송 꿀사과", "<p>설명</p>",
 			ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
-			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)), List.of(IMAGE)));
+			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)), List.of(IMAGE_KEY)));
 		productId = product.getId();
 		optionId = product.getOptions().getFirst().getId();
 	}
@@ -106,8 +109,8 @@ class ProductUpdateIntegrationTest {
 			assertThat(product.getVersion()).isPositive();
 			assertThat(product.getName()).isEqualTo("청송 꿀사과 (수정)");
 			assertThat(product.getDescriptionHtml()).isEqualTo("<p>수정한 설명</p>");
-			assertThat(product.getImages()).extracting(ProductImage::getUrl).containsExactly(IMAGE_B);
-			assertThat(product.getThumbnailUrl()).isEqualTo(IMAGE_B);
+			assertThat(product.getImages()).extracting(ProductImage::getObjectKey).containsExactly(IMAGE_B_KEY);
+			assertThat(product.getThumbnailKey()).isEqualTo(IMAGE_B_KEY);
 
 			List<ProductOption> active = product.activeOptions();
 			assertThat(active).extracting(ProductOption::getName, ProductOption::getListPrice,
@@ -175,7 +178,7 @@ class ProductUpdateIntegrationTest {
 
 		inTransaction(product -> {
 			assertThat(product.getName()).isEqualTo("첫 번째 수정");
-			assertThat(product.getThumbnailUrl()).isEqualTo(IMAGE);
+			assertThat(product.getThumbnailKey()).isEqualTo(IMAGE_KEY);
 			assertThat(product.activeOptions().getFirst().getSalePrice()).isEqualTo(32_000L);
 		});
 	}
@@ -198,8 +201,8 @@ class ProductUpdateIntegrationTest {
 		inTransaction(product -> {
 			assertThat(product.getVersion()).isZero();
 			assertThat(product.getName()).isEqualTo("청송 꿀사과");
-			assertThat(product.getImages()).extracting(ProductImage::getUrl).containsExactly(IMAGE);
-			assertThat(product.getThumbnailUrl()).isEqualTo(IMAGE);
+			assertThat(product.getImages()).extracting(ProductImage::getObjectKey).containsExactly(IMAGE_KEY);
+			assertThat(product.getThumbnailKey()).isEqualTo(IMAGE_KEY);
 			assertThat(product.getOptions()).hasSize(1);
 			ProductOption option = product.getOptions().getFirst();
 			assertThat(option.getSalePrice()).isEqualTo(32_000L);
