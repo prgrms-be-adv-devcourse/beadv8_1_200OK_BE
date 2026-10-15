@@ -1,5 +1,6 @@
 package com.ok.member.auth.service;
 
+import com.ok.common.security.TokenClaims;
 import com.ok.member.MemberRole;
 import com.ok.member.auth.config.JwtConfig;
 import com.ok.member.auth.config.JwtProperties;
@@ -76,7 +77,7 @@ class AccessTokenProviderTest {
         assertThat(jwt).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(jwt.getSubject()).isEqualTo("1");
-            softly.assertThat(jwt.getClaimAsString(AccessTokenProvider.ROLE_CLAIM)).isEqualTo("BUYER");
+            softly.assertThat(jwt.getClaimAsString(TokenClaims.ROLE)).isEqualTo("BUYER");
             softly.assertThat(jwt.getClaimAsString("iss")).isEqualTo(ISSUER);
         });
     }
@@ -143,7 +144,7 @@ class AccessTokenProviderTest {
                 .subject("1")
                 .issuedAt(now.minus(ACCESS_EXPIRATION).minusSeconds(1))
                 .expiresAt(now.minusSeconds(1))
-                .claim(AccessTokenProvider.ROLE_CLAIM, "BUYER")
+                .claim(TokenClaims.ROLE, "BUYER")
                 .build();
         JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM).build();
         String expired = jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
