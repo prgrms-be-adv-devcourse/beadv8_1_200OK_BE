@@ -1,8 +1,8 @@
 package com.ok.member.auth;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.common.security.TokenClaims;
 import com.ok.member.auth.repository.RefreshTokenRepository;
-import com.ok.member.auth.service.AccessTokenProvider;
 import com.ok.member.auth.service.TokenHasher;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
@@ -95,7 +95,7 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
         assertSoftly(softly -> {
             softly.assertThat((String) JsonPath.read(body, "$.tokenType")).isEqualTo("Bearer");
             softly.assertThat(sut.getSubject()).isEqualTo(String.valueOf(member.getId()));
-            softly.assertThat(sut.getClaimAsString(AccessTokenProvider.ROLE_CLAIM)).isEqualTo("BUYER");
+            softly.assertThat(sut.getClaimAsString(TokenClaims.ROLE)).isEqualTo("BUYER");
             softly.assertThat((String) JsonPath.read(body, "$.accessTokenExpiresAt")).isNotBlank();
             softly.assertThat((String) JsonPath.read(body, "$.refreshTokenExpiresAt")).isNotBlank();
             softly.assertThat(refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken)))

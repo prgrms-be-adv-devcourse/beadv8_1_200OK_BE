@@ -4,12 +4,15 @@ import com.ok.member.auth.controller.dto.LoginRequest;
 import com.ok.member.auth.controller.dto.LoginResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 
 @Tag(name = "Auth", description = "인증 API")
 interface AuthControllerSpec {
 
+    // 토큰이 필요 없는 API라 Swagger의 전역 Bearer 인증(자물쇠 표시)에서 제외한다
+    @SecurityRequirements
     @Operation(
             summary = "로그인",
             description = """
