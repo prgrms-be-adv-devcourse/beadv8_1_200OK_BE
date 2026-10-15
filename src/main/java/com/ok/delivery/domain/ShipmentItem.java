@@ -62,13 +62,13 @@ public class ShipmentItem extends BaseTime {
             throw new IllegalArgumentException("orderItemId는 필수입니다.");
         }
         if (productName == null || productName.isBlank()) {
-            throw new RestApiException(DeliveryErrorCode.MISSING_PRODUCT_NAME);
+            throw new IllegalArgumentException("상품명은 필수입니다.");
         }
         if (quantity <= 0) {
-            throw new RestApiException(DeliveryErrorCode.INVALID_ITEM_QUANTITY);
+            throw new IllegalArgumentException("수량은 1 이상이어야 합니다.");
         }
         if (unitPrice < 0) {
-            throw new RestApiException(DeliveryErrorCode.INVALID_UNIT_PRICE);
+            throw new IllegalArgumentException("단가는 0 이상이어야 합니다.");
         }
         this.orderItemId = orderItemId;
         this.productName = productName;
@@ -82,8 +82,9 @@ public class ShipmentItem extends BaseTime {
     /**
      * 항목을 만든다. shipment 연결은 {@link Shipment} 생성 시 이루어진다.
      *
-     * @throws RestApiException 상품명이 비어 있으면 {@code MISSING_PRODUCT_NAME},
-     *                          수량이 1 미만이면 {@code INVALID_ITEM_QUANTITY}, 단가가 음수면 {@code INVALID_UNIT_PRICE}
+     * <p>값은 모두 주문 항목의 결제 시점 값이다. 사용자 입력이 아니므로 잘못된 값은 호출한 코드의 버그로 보고 표준 예외를 던진다.
+     *
+     * @throws IllegalArgumentException orderItemId나 상품명이 없거나, 수량이 1 미만이거나, 단가가 음수면
      */
     public static ShipmentItem create(Long orderItemId, String productName, String optionName, int quantity, int unitPrice) {
         return new ShipmentItem(orderItemId, productName, optionName, quantity, unitPrice);
@@ -103,6 +104,9 @@ public class ShipmentItem extends BaseTime {
 
     /**
      * 취소 확정된 수량을 누적한다.
+     *
+     * <p>취소 수량은 사용자의 취소 요청(주문 취소, 배송 상품 일부 취소)에서 온다.
+     * 더 취소할 수 없는 상태에서 다시 요청할 수 있으므로 응답으로 알릴 수 있게 에러 코드로 던진다.
      *
      * @throws RestApiException 수량이 1 미만이면 {@code INVALID_CANCEL_QUANTITY},
      *                          누적 취소 수량이 주문 수량을 넘으면 {@code CANCEL_QUANTITY_EXCEEDED}

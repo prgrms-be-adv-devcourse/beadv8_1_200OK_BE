@@ -95,7 +95,7 @@ public class ShipmentAddressChangeRequest extends BaseTime {
             throw new IllegalArgumentException("배송지는 필수입니다.");
         }
         if (additionalFeeNotice < 0) {
-            throw new RestApiException(DeliveryErrorCode.INVALID_ADDITIONAL_FEE_NOTICE);
+            throw new IllegalArgumentException("추가 운임 안내 금액은 0 이상이어야 합니다.");
         }
         if (requestedAt == null) {
             throw new IllegalArgumentException("요청 시각은 필수입니다.");

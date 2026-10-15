@@ -1,6 +1,6 @@
 package com.ok.delivery.controller.dto;
 
-import com.ok.delivery.domain.Address;
+import com.ok.delivery.service.dto.AddressCommand;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 
@@ -26,8 +26,8 @@ public record AddressRequest(
         String deliveryNote
 ) implements AddressRequestSpec {
 
-    public Address toAddress() {
-        return Address.of(
+    public AddressCommand toCommand() {
+        return new AddressCommand(
                 recipientName,
                 recipientPhone,
                 postalCode,

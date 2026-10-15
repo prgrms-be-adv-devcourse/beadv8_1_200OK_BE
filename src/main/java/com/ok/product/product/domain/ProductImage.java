@@ -21,18 +21,19 @@ public class ProductImage extends BaseTime {
 	@JoinColumn(name = "product_id", nullable = false)
 	private Product product;
 
-	@Column(nullable = false, length = 500)
-	private String url;
+	// media 모듈의 objectKey. URL은 조회할 때 media 모듈에서 만든다
+	@Column(name = "object_key", nullable = false)
+	private String objectKey;
 
-	// 0번이 대표 이미지 (product.thumbnail_url로 복사)
+	// 0번이 대표 이미지 (product.thumbnail_key로 복사)
 	@Column(name = "sort_order", nullable = false)
 	private int sortOrder;
 
 	// 이미지는 Product를 통해서만
-	static ProductImage create(Product product, String url, int sortOrder) {
+	static ProductImage create(Product product, String objectKey, int sortOrder) {
 		ProductImage image = new ProductImage();
 		image.product = product;
-		image.url = url;
+		image.objectKey = objectKey;
 		image.sortOrder = sortOrder;
 		return image;
 	}

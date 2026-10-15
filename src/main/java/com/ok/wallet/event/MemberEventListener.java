@@ -29,10 +29,11 @@ public class MemberEventListener {
 
     /**
      * 판매자 승인이 완료되면 판매자 지갑을 생성한다.
-     * 판매자 지갑은 회원가입이 아니라 승인 시점에만 생성된다.
+     * 판매자 지갑은 회원가입이 아니라 승인 시점에 생성된다.
+     * 지갑이 이미 있으면 기존 지갑을 그대로 두므로, 같은 이벤트를 여러 번 받아도 지갑은 하나만 생긴다.
      */
     @ApplicationModuleListener
     void on(SellerApprovedEvent event) {
-        sellerWalletService.create(event.memberId());
+        sellerWalletService.getOrCreate(event.memberId());
     }
 }

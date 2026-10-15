@@ -102,9 +102,10 @@ class ProductCreateIntegrationTest {
 				.containsExactly(
 					tuple("3kg 특품", 40_000L, 32_000L, 100, 0),
 					tuple("5kg 특품", 49_000L, 49_000L, 50, 1));
-			assertThat(product.getImages()).extracting(ProductImage::getUrl, ProductImage::getSortOrder)
-				.containsExactly(tuple(IMAGE, 0), tuple(BUCKET_URL + "b.jpg", 1));
-			assertThat(product.getThumbnailUrl()).isEqualTo(IMAGE);
+			// URL로 받지만 objectKey만 저장한다
+			assertThat(product.getImages()).extracting(ProductImage::getObjectKey, ProductImage::getSortOrder)
+				.containsExactly(tuple("product/a.jpg", 0), tuple("product/b.jpg", 1));
+			assertThat(product.getThumbnailKey()).isEqualTo("product/a.jpg");
 			assertThat(product.getMinSalePrice()).isEqualTo(32_000L);
 			assertThat(product.getMinPriceListPrice()).isEqualTo(40_000L);
 		});

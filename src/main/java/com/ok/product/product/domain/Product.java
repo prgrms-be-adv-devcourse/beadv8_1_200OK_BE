@@ -61,8 +61,8 @@ public class Product extends BaseTime {
 	private Long minPriceListPrice;
 
 	// product_image sort_order 0번 복사본
-	@Column(name = "thumbnail_url", nullable = false, length = 500)
-	private String thumbnailUrl;
+	@Column(name = "thumbnail_key", nullable = false)
+	private String thumbnailKey;
 
 	@Column(name = "review_count", nullable = false)
 	private int reviewCount;
@@ -87,7 +87,7 @@ public class Product extends BaseTime {
 
 	public static Product create(
 			Long sellerId, String name, String descriptionHtml, ProductCategory category,
-			ProductRegion region, List<ProductOptionSpec> optionSpecs, List<String> imageUrls
+			ProductRegion region, List<ProductOptionSpec> optionSpecs, List<String> imageKeys
 	) {
 		validateOptionSpecs(optionSpecs);
 
@@ -99,7 +99,7 @@ public class Product extends BaseTime {
 		for (int i = 0; i < optionSpecs.size(); i++) {
 			product.addOption(optionSpecs.get(i), i);
 		}
-		product.replaceImages(imageUrls);
+		product.replaceImages(imageKeys);
 		product.recalculatePrice();
 		return product;
 	}
@@ -111,20 +111,20 @@ public class Product extends BaseTime {
 		this.region = region;
 	}
 
-	public void replaceImages(List<String> imageUrls) {
-		if (imageUrls == null || imageUrls.isEmpty()) {
+	public void replaceImages(List<String> imageKeys) {
+		if (imageKeys == null || imageKeys.isEmpty()) {
 			throw new IllegalArgumentException("상품 이미지는 1장 이상이어야 합니다.");
 		}
 		// 같은 이미지를 같은 순서로 보냈으면 DELETE·INSERT 없이 그대로 둔다
-		if (images.stream().map(ProductImage::getUrl).toList().equals(imageUrls)) {
+		if (images.stream().map(ProductImage::getObjectKey).toList().equals(imageKeys)) {
 			return;
 		}
 		// orphanRemoval 컬렉션은 새 리스트로 바꾸지 않고 clear 후 다시 채운다
 		images.clear();
-		for (int i = 0; i < imageUrls.size(); i++) {
-			images.add(ProductImage.create(this, imageUrls.get(i), i));
+		for (int i = 0; i < imageKeys.size(); i++) {
+			images.add(ProductImage.create(this, imageKeys.get(i), i));
 		}
-		thumbnailUrl = imageUrls.get(0);
+		thumbnailKey = imageKeys.get(0);
 	}
 
 	// id가 있으면 수정, 없으면 추가, 요청에 없는 활성 옵션은 삭제 표시.
@@ -235,6 +235,14 @@ public class Product extends BaseTime {
 
 	public List<ProductImage> getImages() {
 		return Collections.unmodifiableList(images);
+	}
+
+	// 이미지 objectKey를 화면 표시 순서(0번이 대표)대로 돌려준다
+	public List<String> imageKeys() {
+		return images.stream()
+			.sorted(Comparator.comparingInt(ProductImage::getSortOrder))
+			.map(ProductImage::getObjectKey)
+			.toList();
 	}
 
 	private void addOption(ProductOptionSpec spec, int sortOrder) {

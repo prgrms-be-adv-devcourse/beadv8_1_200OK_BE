@@ -4,6 +4,7 @@ import com.ok.delivery.domain.Address;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.service.dto.AddressCommand;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -23,6 +24,10 @@ public final class ShipmentFixture {
 
     public static Address otherAddress() {
         return Address.of("김철수", "0212345678", "63100", "제주특별자치도 제주시 첨단로 1", "2층", null);
+    }
+
+    public static AddressCommand otherAddressCommand() {
+        return new AddressCommand("김철수", "0212345678", "63100", "제주특별자치도 제주시 첨단로 1", "2층", null);
     }
 
     public static ShipmentItem item(long orderItemId) {

@@ -116,12 +116,17 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 하위 도메인이 하나뿐인 모듈은 패키지를 한 단계 더 만들지 않는다. 의미 없는 패키지를 두지 않는다.
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `com.ok.config` 모듈에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
+- 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다.
+- 서비스는 `service/publisher`의 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받고, 구현체는 `event` 패키지에 둔다.
+- `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다.
 
 **이유**: 
 한 모듈에 성격이 다른 하위 도메인이 있으면(예: product와 review) `Service`, `Repository` 같은 클래스 이름이 겹치고, 이름만으로 구분하기 어렵다. 
 모듈 이름과 하위 도메인 이름이 구분되어 헷갈리지 않는다면, 두 이름이 같은 네이밍 중복은 허용한다. 
 하위 도메인이 없는 모듈은 경로가 단순한 편이 낫다. 
 설정과 리스너를 서비스·도메인과 구분하면 역할별로 코드를 찾기 쉽다. 
+리스너는 컨트롤러처럼 외부 입력이 들어오는 진입점이므로, 트랜잭션과 도메인 처리는 서비스에 맡긴다. 
+서비스가 발행 인터페이스에만 의존하면 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 모듈 밖에서는 Modulith가 접근을 막는다. 
 
 
 ```
@@ -129,10 +134,11 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 com.ok.wallet
 ├── controller
 ├── service
+│   └── publisher  이벤트 발행 인터페이스
 ├── domain
 ├── repository
 ├── exception      에러 코드
-├── event          이벤트 리스너
+├── event          이벤트 리스너, 발행 인터페이스 구현체
 └── config         모듈 전용 설정
 
 // 좋은 예: 하위 도메인이 있는 모듈 (member 모듈의 회원과 인증)
@@ -484,11 +490,14 @@ String loginId = command.loginId().toLowerCase();
 ### 6.1 예외 종류
 
 **규칙**
-- 클라이언트에 오류 응답으로 나가야 하는 경우(사용자 입력 오류, 도메인 규칙 위반)는 `RestApiException`에 모듈의 `ErrorCode`를 담아 던진다.
-- 응답이 없는 곳(이벤트 리스너, 배치)에서도 도메인 규칙이나 모듈 간 계약을 어긴 경우는 `RestApiException`을 쓴다.
-- 호출한 코드의 실수(예: 필수 인자에 `null`을 넘김)는 표준 예외(`IllegalArgumentException` 등)를 던진다.
+- 예외 종류는 호출 경로(HTTP, 이벤트, 배치)가 아니라 **값의 출처**로 정한다. 같은 값의 검사는 어느 경로로 들어와도 같은 예외를 던진다.
+- 사용자 입력이 닿을 수 있는 값의 오류(입력값 오류, 도메인 규칙 위반, 상태 충돌)는 `RestApiException`에 모듈의 `ErrorCode`를 담아 던진다.
+- 다른 모듈이나 시스템이 계산해서 넘긴 값의 오류는 호출한 코드의 버그로 보고 표준 예외(`IllegalArgumentException`, `IllegalStateException`)를 던진다. 이벤트 리스너나 배치가 받은 값도 같다.
+- 상태 충돌(현재 상태에서 허용되지 않는 전이)은 호출 경로와 관계없이 `RestApiException`이다. 시스템 경로(택배사 알림, 자동 구매확정 배치 등)에서 호출해도 같다.
 
-**이유**: 응답으로 나가는 오류는 에러 코드로 유형을 구분해서 클라이언트가 분기할 수 있어야 한다. 이벤트로 받은 값이 계약과 다른 것도 모듈 간 계약 위반이라 유형을 구분해 두는 편이 낫다. 호출한 코드의 실수는 사용자에게 보여 줄 오류가 아니라 개발 중에 고칠 버그이고, 처리되지 않은 예외로 500 응답이 된다.
+**이유**: 사용자가 고칠 수 있는 오류는 에러 코드로 유형을 구분해야 클라이언트가 분기할 수 있다. 시스템이 만든 값이 잘못된 것은 사용자가 고칠 수 없는 버그다. 처리되지 않은 예외로 500이 되어야 모니터링에서 실제 장애로 잡히고, 4xx 에러 코드를 붙이면 사용자 입력 오류에 섞여 놓친다. 호출 경로로 정하면 같은 엔티티의 같은 검사가 어디서 호출하느냐에 따라 달라져야 해서 기준이 흔들린다. 상태 전이 메서드는 사용자와 시스템이 함께 호출하고, 충돌은 값이 아니라 현재 상태 때문에 생기므로 한 가지로 정한다. 시스템 경로에서 같은 알림이 중복으로 와서 충돌이 나면, 호출하는 쪽이 멱등 처리로 거른다.
+
+> 정산 모듈은 이벤트·배치 경로에서 받은 값의 오류에 `PayoutErrorCode`를 쓰고 있다(`PayoutCandidateService` 등). 정산 담당과 협의해 정리한다(#117).
 
 ```java
 // 좋은 예: 사용자 입력 오류는 RestApiException + ErrorCode
@@ -496,14 +505,19 @@ if (quantity < 1) {
     throw new RestApiException(OrderErrorCode.INVALID_QUANTITY);
 }
 
-// 좋은 예: 이벤트 리스너에서도 모듈 간 계약 위반은 RestApiException + ErrorCode
+// 좋은 예: 다른 모듈이 넘긴 값의 오류는 표준 예외 (이벤트 리스너가 받은 값도 같다)
 if (event.orderItemId() == null) {
-    throw new RestApiException(PayoutErrorCode.MISSING_ORDER_ITEM_ID);
+    throw new IllegalArgumentException("orderItemId는 필수입니다.");
 }
 
-// 좋은 예: 호출한 코드의 실수는 표준 예외
-if (memberId == null) {
-    throw new IllegalArgumentException("memberId는 필수입니다.");
+// 좋은 예: 시스템이 계산한 값의 오류도 표준 예외
+if (baseShippingFee < 0) {
+    throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");
+}
+
+// 나쁜 예: 시스템이 계산한 값에 4xx 에러 코드를 쓴다 (버그가 사용자 입력 오류로 기록된다)
+if (baseShippingFee < 0) {
+    throw new RestApiException(DeliveryErrorCode.INVALID_SHIPPING_FEE);
 }
 
 // 나쁜 예: 사용자 입력 오류에 표준 예외를 쓴다 (클라이언트가 유형을 구분할 수 없고 500이 된다)
@@ -603,7 +617,7 @@ throw new RestApiException(OrderErrorCode.ORDER_NOT_FOUND, e.getMessage());
 **규칙**
 - 요청 형식 검증(필수값, 길이, 패턴, 범위)은 요청 DTO의 Bean Validation으로 하고, 컨트롤러에서 `@Valid`로 검증한다.
 - 비즈니스 규칙 검증(중복 여부, 상태, 정책)은 서비스나 도메인(엔티티, 정책)에서 한다.
-- 엔티티·값 객체의 불변식(생성할 때 반드시 지켜야 하는 조건)은 생성자나 정적 팩토리에서 검증한다. 위반한 값이 사용자 입력에서 올 수 있으면 `RestApiException`, 호출한 코드의 실수라면 표준 예외를 던진다(6.1).
+- 엔티티·값 객체의 불변식(생성할 때 반드시 지켜야 하는 조건)은 생성자나 정적 팩토리에서 검증한다. 위반한 값이 사용자 입력에서 올 수 있으면 `RestApiException`, 다른 모듈이나 시스템이 넘긴 값이면 표준 예외를 던진다(6.1).
 
 **이유**: 요청 형식 오류는 서비스에 도착하기 전에 422로 거절하고 필드별 오류를 돌려줄 수 있다. 비즈니스 규칙은 요청 형식과 상관없이 지켜야 하므로 서비스나 도메인이 맡는다. 불변식을 객체가 스스로 검증하면 어떤 경로로 만들어도 유효한 객체만 존재한다.
 
@@ -1046,9 +1060,11 @@ class OrderServiceIntegrationTest { ... }
 |---|---|
 | Controller → Service → Repository 방향으로만 의존하고, `domain`은 Service·Repository만 쓴다 | 2.1, 2.3 |
 | 패키지 사이에 순환 의존이 없다 (모듈 안 패키지까지) | 2.2 확장 |
+| 이벤트 리스너(`event`)는 `controller`, `repository`, `domain`을 쓰지 않는다 | 2.1 |
+| `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지만 쓴다 | 2.1 |
+| `service/publisher`에는 인터페이스만 둔다 | 2.1 |
 | `@RestController`는 `*Controller`, `@Service`는 `*Service`이고 각 레이어 패키지에 있다 | 3.2 |
 | 저장소는 `repository`, 엔티티는 `domain`, `ErrorCode` 구현체는 `exception` 패키지에 있다 | 2.1, 3.2 |
-| `*Request`·`*Response`는 `controller/dto`, `*Command`·`*Query`·`*Result`는 `service/dto`에 있다 | 2.3 |
 | Swagger 문서 인터페이스는 `*Spec`, package-private이고 `spec` 패키지에 두지 않는다 | 3.3 |
 | 컨트롤러 클래스·메서드에 `@Transactional`을 붙이지 않는다 | 7.1 |
 | `System.out`, `System.err`를 쓰지 않는다 | 일반 |

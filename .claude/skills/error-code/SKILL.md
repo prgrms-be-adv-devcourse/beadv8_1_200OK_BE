@@ -9,9 +9,9 @@ description: 모듈의 ErrorCode enum에 에러 코드를 추가하거나 새 �
 
 ## 절차
 
-1. **예외 종류를 정한다.**
-   - 클라이언트 응답으로 나가는 오류, 이벤트 리스너·배치의 도메인 규칙·모듈 간 계약 위반 → `RestApiException` + 모듈의 `*ErrorCode`
-   - 호출한 코드의 실수(필수 인자 `null` 등) → `IllegalArgumentException` 등 표준 예외. 이 스킬 대상이 아니다.
+1. **예외 종류를 값의 출처로 정한다.** 호출 경로(HTTP, 이벤트, 배치)로 정하지 않는다.
+   - 사용자 입력이 닿을 수 있는 값의 오류(입력값 오류, 도메인 규칙 위반, 상태 충돌) → `RestApiException` + 모듈의 `*ErrorCode`
+   - 다른 모듈이나 시스템이 계산해서 넘긴 값의 오류(이벤트·배치가 받은 값 포함) → `IllegalArgumentException` 등 표준 예외. 이 스킬 대상이 아니다.
 2. **모듈의 `*ErrorCode`를 찾는다.**
    ```bash
    find src/main -name '*ErrorCode.java'

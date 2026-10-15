@@ -20,8 +20,8 @@ public record ProductSummaryResult(
 	double averageRating
 ) {
 
-	public static ProductSummaryResult from(Product product) {
-		return new ProductSummaryResult(product.getId(), product.getName(), product.getThumbnailUrl(),
+	public static ProductSummaryResult from(Product product, String thumbnailUrl) {
+		return new ProductSummaryResult(product.getId(), product.getName(), thumbnailUrl,
 			product.getMinSalePrice(), product.getMinPriceListPrice(), product.discountRate(), product.getCategory(),
 			product.getRegion(), product.getStatus(), product.isSoldOut(), product.getReviewCount(), product.averageRating());
 	}

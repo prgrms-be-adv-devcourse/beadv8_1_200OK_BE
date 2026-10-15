@@ -1,13 +1,13 @@
 package com.ok.delivery.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.domain.Address;
 import com.ok.delivery.domain.AddressChangeStatus;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentAddressChangeRequest;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.repository.ShipmentRepository;
+import com.ok.delivery.service.dto.AddressCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,20 +28,23 @@ public class ShipmentAddressChangeService {
      * 배송지 변경 요청을 만든다.
      * shipment 행 잠금 아래에서 대기 중인 요청을 확인하므로, 동시에 요청해도 {@code PENDING}은 shipment당 1건만 생긴다.
      *
-     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 결제하지 않고 판매자가 직접 받는다
+     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 시스템이 계산하고, 결제하지 않고 판매자가 직접 받는다
      * @throws RestApiException shipment가 없으면 {@code SHIPMENT_NOT_FOUND},
      *                          대기 중인 요청이 있으면 {@code ADDRESS_CHANGE_ALREADY_PENDING},
      *                          {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED},
-     *                          추가 운임 안내 금액이 음수면 {@code INVALID_ADDITIONAL_FEE_NOTICE}
+     *                          배송지 검증에 실패하면 {@link com.ok.delivery.domain.Address#of}의 에러 코드
+     * @throws IllegalArgumentException 추가 운임 안내 금액이 음수면
      */
     @Transactional
-    public ShipmentAddressChangeRequest request(Long shipmentId, Address requestedAddress, int additionalFeeNotice) {
+    public ShipmentAddressChangeRequest request(Long shipmentId, AddressCommand requestedAddress, int additionalFeeNotice) {
+        // TODO(#111): 추가 운임 안내 금액을 운임 정책으로 계산하고 매개변수에서 뺀다.
+        //  시스템 계산 값이라 음수면 표준 예외(500)가 나므로, 그전까지 요청 DTO에서 이 값을 받지 않는다.
         Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
                 .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
         if (requestRepository.existsByShipmentIdAndStatus(shipmentId, AddressChangeStatus.PENDING)) {
             throw new RestApiException(DeliveryErrorCode.ADDRESS_CHANGE_ALREADY_PENDING);
         }
-        ShipmentAddressChangeRequest request = shipment.requestAddressChange(requestedAddress, additionalFeeNotice, LocalDateTime.now(clock));
+        ShipmentAddressChangeRequest request = shipment.requestAddressChange(requestedAddress.toAddress(), additionalFeeNotice, LocalDateTime.now(clock));
         return requestRepository.save(request);
     }
 }
