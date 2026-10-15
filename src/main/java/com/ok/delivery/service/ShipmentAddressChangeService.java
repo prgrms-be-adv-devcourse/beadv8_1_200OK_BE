@@ -37,6 +37,8 @@ public class ShipmentAddressChangeService {
      */
     @Transactional
     public ShipmentAddressChangeRequest request(Long shipmentId, AddressCommand requestedAddress, int additionalFeeNotice) {
+        // TODO(#111): 추가 운임 안내 금액을 운임 정책으로 계산하고 매개변수에서 뺀다.
+        //  시스템 계산 값이라 음수면 표준 예외(500)가 나므로, 그전까지 요청 DTO에서 이 값을 받지 않는다.
         Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
                 .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
         if (requestRepository.existsByShipmentIdAndStatus(shipmentId, AddressChangeStatus.PENDING)) {
