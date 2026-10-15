@@ -235,7 +235,7 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 	private Product product(String name, ProductCategory category, ProductRegion region,
 		List<ProductOptionSpec> options) {
 		return Product.create(1L, name, "<p>설명</p>", category, region, options,
-			List.of(BUCKET_URL + "a.jpg", BUCKET_URL + "b.jpg"));
+			List.of("product/a.jpg", "product/b.jpg"));
 	}
 
 	private List<ProductOptionSpec> option(int totalStock) {

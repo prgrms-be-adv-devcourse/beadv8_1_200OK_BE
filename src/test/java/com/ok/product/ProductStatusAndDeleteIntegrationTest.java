@@ -66,7 +66,7 @@ class ProductStatusAndDeleteIntegrationTest {
 	void setUp() {
 		Product product = productRepository.save(Product.create(SELLER_ID, "청송 꿀사과", "<p>설명</p>",
 			ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
-			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)), List.of(IMAGE)));
+			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)), List.of("product/a.jpg")));
 		productId = product.getId();
 		optionId = product.getOptions().getFirst().getId();
 	}
