@@ -28,12 +28,12 @@ public class ShipmentAddressChangeService {
      * 배송지 변경 요청을 만든다.
      * shipment 행 잠금 아래에서 대기 중인 요청을 확인하므로, 동시에 요청해도 {@code PENDING}은 shipment당 1건만 생긴다.
      *
-     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 결제하지 않고 판매자가 직접 받는다
+     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 시스템이 계산하고, 결제하지 않고 판매자가 직접 받는다
      * @throws RestApiException shipment가 없으면 {@code SHIPMENT_NOT_FOUND},
      *                          대기 중인 요청이 있으면 {@code ADDRESS_CHANGE_ALREADY_PENDING},
      *                          {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED},
-     *                          추가 운임 안내 금액이 음수면 {@code INVALID_ADDITIONAL_FEE_NOTICE},
      *                          배송지 검증에 실패하면 {@link com.ok.delivery.domain.Address#of}의 에러 코드
+     * @throws IllegalArgumentException 추가 운임 안내 금액이 음수면
      */
     @Transactional
     public ShipmentAddressChangeRequest request(Long shipmentId, AddressCommand requestedAddress, int additionalFeeNotice) {
