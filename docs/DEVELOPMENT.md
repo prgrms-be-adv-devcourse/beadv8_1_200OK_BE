@@ -191,6 +191,8 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `invalid-query-parameter` | 400 | 파라미터 타입 불일치 |
 | `bad-request` | 400 | 그 밖의 잘못된 요청 (필수 파라미터 누락 등) |
 | `internal-error` | 500 | 처리되지 않은 예외 |
+| `unauthorized` | 401 | 토큰이 없거나 만료·위조된 토큰 (`WWW-Authenticate: Bearer` 헤더 포함) |
+| `forbidden` | 403 | 로그인했지만 역할이 맞지 않음 (`@PreAuthorize` 등) |
 
 404, 405, 406, 415 같은 그 밖의 Spring MVC 표준 예외는 Spring 기본 `ProblemDetail`로 응답합니다. 이 경우 `type`은 `about:blank`, `title`은 상태 코드 이름이고
 `PROBLEM_BASE_URI`는 적용되지 않습니다. 구분이 필요해지면 `CommonErrorCode`에 유형을 추가하세요.
@@ -212,10 +214,76 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ### 참고
 
 - 처리되지 않은 예외(500)는 내부 메시지와 스택 트레이스를 응답에 담지 않고 서버 로그에만 남깁니다.
-- Spring Security 필터에서 발생하는 예외(인증/인가)는 이 핸들러를 거치지 않습니다. 인증을 구현할 때 별도로 처리하세요.
+- Spring Security 필터에서 발생하는 인증·인가 예외도 `ProblemDetailAuthenticationEntryPoint`, `ProblemDetailAccessDeniedHandler`가 이 핸들러로 넘겨 같은 형식으로 응답합니다.
 - 모듈에서 에러 코드를 만들고 예외를 던지는 방법은 [`CONVENTION.md`의 예외 처리](CONVENTION.md#6-예외-처리)를 참고하세요.
 
-## 8. 테스트
+## 8. 인증 (JWT)
+
+로그인(`POST /api/v1/auth/login`)으로 받은 Access Token을 `Authorization: Bearer {토큰}` 헤더로 보냅니다.
+보안 필터가 요청마다 토큰의 서명·만료·발급자를 검증하고, 실패하면 401로 응답합니다.
+
+### 컨트롤러에서 로그인 회원 받기
+
+요청 헤더(`X-Member-Id` 등)로 회원을 받지 말고 `@CurrentMemberId`를 씁니다. 값은 검증된 토큰에서 꺼내므로 클라이언트가 바꿀 수 없습니다.
+
+```java
+@GetMapping
+public ResponseEntity<CartResponse> getMyCart(@CurrentMemberId Long memberId) {
+    return ResponseEntity.ok(cartService.getMyCart(memberId));
+}
+```
+
+`@CurrentMemberId`가 있는 API는 토큰 없이 호출하면 401이 됩니다. 별도 설정 없이 로그인이 필요한 API가 됩니다.
+
+### 역할 제한
+
+특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 역할(`role` claim)이 `ROLE_{역할}` 권한으로 바뀌어 있습니다.
+
+```java
+@PreAuthorize("hasRole('SELLER')")
+@PostMapping
+public ResponseEntity<ProductCreateResponse> create(@CurrentMemberId Long memberId, ...) { ... }
+```
+
+역할이 맞지 않으면 403, 토큰이 없으면 401입니다. 역할 규칙은 중앙 보안 설정이 아니라 각 모듈의 컨트롤러에 둡니다.
+
+### 테스트에서 토큰 보내기
+
+**통합 테스트** (`AbstractIntegrationTest` 상속): `TestAccessTokens`로 토큰을 만들고, MockMvc에 보안 필터를 적용합니다.
+
+```java
+@Autowired
+TestAccessTokens tokens;
+
+@BeforeEach
+void setUp() {
+    mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+}
+
+mockMvc.perform(get("/api/v1/cart")
+        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "BUYER")));
+```
+
+**컨트롤러 슬라이스 테스트** (`@WebMvcTest`): 실제 토큰 없이 `jwt()`로 로그인한 회원을 흉내 냅니다.
+`@PreAuthorize`를 확인하려면 보안 필터를 끄지 말고(`addFilters = false` 제거) `SecurityConfig`를 함께 불러옵니다.
+
+```java
+mockMvc.perform(post("/api/v1/products")
+        .with(jwt().jwt(token -> token.subject("1"))
+                .authorities(new SimpleGrantedAuthority("ROLE_SELLER"))));
+```
+
+### Swagger, Bruno
+
+- Swagger UI: 로그인 API로 받은 `accessToken`을 우측 상단 **Authorize**에 넣으면 모든 요청에 Bearer 헤더가 붙습니다.
+- Bruno: `Auth/로그인` 요청을 보내면 토큰이 `accessToken` 변수에 저장되고, 컬렉션 전체 요청에 Bearer 헤더로 붙습니다.
+
+### 주의
+
+- 토큰이 있으면 공개 API여도 검증합니다. 만료되거나 잘못된 토큰을 보내면 공개 API도 401입니다. 401을 받으면 토큰을 지우고 다시 로그인하세요.
+- 역할은 토큰에 담기므로, 판매자 승인처럼 역할이 바뀌어도 기존 토큰이 만료되기 전(최대 30분)까지는 이전 역할로 판단합니다.
+
+## 9. 테스트
 
 ### 테스트 환경 설정
 
@@ -239,7 +307,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - HTML: `build/reports/jacoco/test/html/index.html`
 - XML: `build/reports/jacoco/test/jacocoTestReport.xml`
 
-## 9. Docker 이미지
+## 10. Docker 이미지
 
 `Dockerfile`은 멀티 스테이지입니다 (빌드: JDK 25, 실행: JRE 25 Alpine, 비루트 사용자). 테스트는 이미지 빌드에서 제외됩니다.
 
