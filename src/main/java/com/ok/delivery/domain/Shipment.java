@@ -106,9 +106,10 @@ public class Shipment extends BaseTime {
     /**
      * 결제 완료 시점에 만든다. 상태는 {@code PREPARING}, 상품 항목은 1개 이상이어야 한다.
      *
-     * @throws RestApiException 배송비가 음수면 {@code INVALID_SHIPPING_FEE},
-     *                          도착 예정일 시작이 끝보다 늦으면 {@code INVALID_ESTIMATED_DELIVERY},
-     *                          상품 항목이 없으면 {@code MISSING_SHIPMENT_ITEMS}
+     * <p>값은 모두 주문·결제와 운임 정책이 계산해 넘긴다. 사용자 입력이 아니므로 잘못된 값은 호출한 코드의 버그로 보고 표준 예외를 던진다.
+     * 사용자가 입력하는 배송지는 {@link Address#of}가 먼저 검증한다.
+     *
+     * @throws IllegalArgumentException 필수값이 없거나, 배송비가 음수거나, 도착 예정일 시작이 끝보다 늦거나, 상품 항목이 없으면
      */
     @Builder
     private Shipment(
@@ -130,13 +131,13 @@ public class Shipment extends BaseTime {
         requireNonNull(estimatedDeliveryStart, "도착 예정일 시작은 필수입니다.");
         requireNonNull(estimatedDeliveryEnd, "도착 예정일 끝은 필수입니다.");
         if (baseShippingFee < 0 || regionSurcharge < 0 || freeShippingThreshold < 0) {
-            throw new RestApiException(DeliveryErrorCode.INVALID_SHIPPING_FEE);
+            throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");
         }
         if (estimatedDeliveryStart.isAfter(estimatedDeliveryEnd)) {
-            throw new RestApiException(DeliveryErrorCode.INVALID_ESTIMATED_DELIVERY);
+            throw new IllegalArgumentException("도착 예정일 시작은 끝보다 늦을 수 없습니다.");
         }
         if (items == null || items.isEmpty()) {
-            throw new RestApiException(DeliveryErrorCode.MISSING_SHIPMENT_ITEMS);
+            throw new IllegalArgumentException("상품 항목은 1개 이상이어야 합니다.");
         }
         this.orderId = orderId;
         this.sellerId = sellerId;
@@ -245,9 +246,9 @@ public class Shipment extends BaseTime {
      * <p>shipment당 {@code PENDING} 1건 확인은 다른 행을 봐야 해서 이 메서드가 하지 않는다.
      * 서비스가 shipment 행 잠금 아래에서 확인한다.
      *
-     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 결제하지 않고 판매자가 직접 받는다
-     * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED},
-     *                          추가 운임 안내 금액이 음수면 {@code INVALID_ADDITIONAL_FEE_NOTICE}
+     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 시스템이 계산하고, 결제하지 않고 판매자가 직접 받는다
+     * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED}
+     * @throws IllegalArgumentException 추가 운임 안내 금액이 음수면
      */
     public ShipmentAddressChangeRequest requestAddressChange(Address requestedAddress, int additionalFeeNotice, LocalDateTime now) {
         requireAddressChangeable();
