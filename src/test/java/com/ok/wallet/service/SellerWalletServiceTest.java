@@ -4,6 +4,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.domain.SellerWallet;
 import com.ok.wallet.repository.SellerWalletRepository;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -23,6 +24,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // 동시 요청에서 각 트랜잭션이 실제로 커밋되어야 하므로 테스트에 @Transactional을 붙이지 않음
 class SellerWalletServiceTest extends AbstractIntegrationTest {
+    // 실제 정산 ID와 겹치지 않는 이 클래스 전용 번호대 (정산 테스트가 만든 정산의 입금 원장과 근거 키가 겹치지 않게)
+    private static final long PAYOUT_ID = 9_100_001L;
+
     @Autowired
     SellerWalletService sellerWalletService;
 
@@ -32,9 +36,19 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    // 다른 테스트가 남긴 원장(정산 배치가 발행한 이벤트로 입금된 것 등)이 있어도 영향받지 않도록 시작 전에도 정리
+    @BeforeEach
+    void setUp() {
+        cleanUp();
+    }
+
     @AfterEach
     void tearDown() {
-        // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
+        cleanUp();
+    }
+
+    // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
+    private void cleanUp() {
         jdbcTemplate.update("DELETE FROM seller_wallet_ledger");
         sellerWalletRepository.deleteAll();
     }
@@ -74,13 +88,13 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         sellerWalletService.getOrCreate(sellerId);
 
         // When
-        sellerWalletService.depositPayout(sellerId, 101L, 9_700);
+        sellerWalletService.depositPayout(sellerId, PAYOUT_ID, 9_700);
 
         // Then
         assertThat(balanceOf(sellerId)).isEqualTo(9_700);
         assertThat(countLedgers(sellerId)).isEqualTo(1);
         assertThat(latestBalanceAfter(sellerId)).isEqualTo(balanceOf(sellerId));
-        assertThat(latestReferenceKey(sellerId)).isEqualTo("PAYOUT:101");
+        assertThat(latestReferenceKey(sellerId)).isEqualTo("PAYOUT:" + PAYOUT_ID);
     }
 
     @Test
@@ -89,7 +103,7 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         Long sellerId = 11L;
 
         // When
-        sellerWalletService.depositPayout(sellerId, 101L, 9_700);
+        sellerWalletService.depositPayout(sellerId, PAYOUT_ID, 9_700);
 
         // Then
         assertThat(countSellerWallets(sellerId)).isEqualTo(1);
@@ -100,10 +114,10 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_정산을_다시_입금하면_예외_없이_한_번만_반영된다() {
         // Given
         Long sellerId = 12L;
-        sellerWalletService.depositPayout(sellerId, 101L, 9_700);
+        sellerWalletService.depositPayout(sellerId, PAYOUT_ID, 9_700);
 
         // When: 재발행으로 같은 정산이 다시 옴
-        sellerWalletService.depositPayout(sellerId, 101L, 9_700);
+        sellerWalletService.depositPayout(sellerId, PAYOUT_ID, 9_700);
 
         // Then
         assertThat(balanceOf(sellerId)).isEqualTo(9_700);
@@ -116,8 +130,8 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         Long sellerId = 13L;
 
         // When
-        sellerWalletService.depositPayout(sellerId, 101L, 9_700);
-        sellerWalletService.depositPayout(sellerId, 102L, 4_850);
+        sellerWalletService.depositPayout(sellerId, PAYOUT_ID, 9_700);
+        sellerWalletService.depositPayout(sellerId, PAYOUT_ID + 1, 4_850);
 
         // Then
         assertThat(balanceOf(sellerId)).isEqualTo(14_550);
@@ -127,10 +141,10 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
     @Test
     void 다른_판매자에게_이미_입금된_정산이면_무시하지_않고_실패한다() {
         // Given
-        sellerWalletService.depositPayout(14L, 101L, 9_700);
+        sellerWalletService.depositPayout(14L, PAYOUT_ID, 9_700);
 
         // When & Then: 조용히 넘어가지 않고 오류로 드러난다
-        assertThatThrownBy(() -> sellerWalletService.depositPayout(15L, 101L, 9_700))
+        assertThatThrownBy(() -> sellerWalletService.depositPayout(15L, PAYOUT_ID, 9_700))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(balanceOf(14L)).isEqualTo(9_700);
     }
@@ -160,7 +174,7 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
                 results.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();
-                    sellerWalletService.depositPayout(sellerId, 101L, 9_700);
+                    sellerWalletService.depositPayout(sellerId, PAYOUT_ID, 9_700);
                     return null;
                 }));
             }
@@ -199,7 +213,7 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         try {
             // When: 서로 다른 정산 10건이 동시에 1,000원씩 입금
             for (int i = 0; i < threadCount; i++) {
-                long payoutId = 200L + i;
+                long payoutId = PAYOUT_ID + 100 + i;
                 results.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();

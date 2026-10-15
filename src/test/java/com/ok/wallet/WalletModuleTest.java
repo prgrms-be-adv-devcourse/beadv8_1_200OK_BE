@@ -26,6 +26,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ApplicationModuleTest
 @Import({JpaConfig.class, TestcontainersConfiguration.class})
 class WalletModuleTest {
+    // 실제 정산 ID와 겹치지 않는 이 클래스 전용 번호대
+    private static final long PAYOUT_ID = 9_200_001L;
+
     @Autowired
     BuyerWalletRepository buyerWalletRepository;
 
@@ -172,7 +175,7 @@ class WalletModuleTest {
         Long sellerId = 20L;
 
         // When & Then
-        scenario.publish(new SellerPayoutCreatedEvent(301L, sellerId, 9_700L, LocalDateTime.now()))
+        scenario.publish(new SellerPayoutCreatedEvent(PAYOUT_ID, sellerId, 9_700L, LocalDateTime.now()))
                 .andWaitForStateChange(() -> sellerBalanceOf(sellerId), balance -> balance == 9_700)
                 .andVerify(balance -> assertThat(balance).isEqualTo(9_700));
     }
@@ -181,13 +184,14 @@ class WalletModuleTest {
     void 같은_정산_이벤트를_두_번_받아도_한_번만_입금된다(Scenario scenario) {
         // Given
         Long sellerId = 21L;
-        SellerPayoutCreatedEvent event = new SellerPayoutCreatedEvent(302L, sellerId, 9_700L, LocalDateTime.now());
+        long payoutId = PAYOUT_ID + 1;
+        SellerPayoutCreatedEvent event = new SellerPayoutCreatedEvent(payoutId, sellerId, 9_700L, LocalDateTime.now());
         scenario.publish(event)
-                .andWaitForStateChange(() -> countCompletedPayoutEvents(302L), count -> count == 1);
+                .andWaitForStateChange(() -> countCompletedPayoutEvents(payoutId), count -> count == 1);
 
         // When
         scenario.publish(event)
-                .andWaitForStateChange(() -> countCompletedPayoutEvents(302L), count -> count == 2);
+                .andWaitForStateChange(() -> countCompletedPayoutEvents(payoutId), count -> count == 2);
 
         // Then
         assertThat(sellerBalanceOf(sellerId)).isEqualTo(9_700);
@@ -197,10 +201,11 @@ class WalletModuleTest {
     void 금액이_0_이하인_정산_이벤트는_입금하지_않고_처리를_끝낸다(Scenario scenario) {
         // Given
         Long sellerId = 22L;
+        long payoutId = PAYOUT_ID + 2;
 
         // When: 처리 불가 이벤트도 완료로 처리되어 재처리 대상에 남지 않는지 기다림
-        scenario.publish(new SellerPayoutCreatedEvent(303L, sellerId, 0L, LocalDateTime.now()))
-                .andWaitForStateChange(() -> countCompletedPayoutEvents(303L), count -> count == 1);
+        scenario.publish(new SellerPayoutCreatedEvent(payoutId, sellerId, 0L, LocalDateTime.now()))
+                .andWaitForStateChange(() -> countCompletedPayoutEvents(payoutId), count -> count == 1);
 
         // Then: 서비스까지 가지 않아 지갑도 만들어지지 않는다
         assertThat(countSellerWallets(sellerId)).isZero();
