@@ -13,12 +13,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
-import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -91,19 +92,36 @@ public class CartServiceTest {
                 .isInstanceOf(RestApiException.class)
                 .extracting("errorCode")
                 .isEqualTo(CartErrorCode.CART_ITEM_ALREADY_EXISTS);
-        then(cartItemRepository).should(never()).save(any(CartItem.class));
+        then(cartItemRepository).should(never()).saveAndFlush(any(CartItem.class));
     }
 
     @Test
-    void 장바구니가_없는_회원은_담을_수_없다() {
-        // Given
+    void 장바구니가_없으면_만들고_담는다() {
+        // given
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
+        given(cartRepository.save(any(Cart.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(cartItemRepository.saveAndFlush(any(CartItem.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        // When & Then
+        // when
+        cartService.addItem(BUYER_ID, 100L, 1);
+
+        // then
+        then(cartRepository).should().save(any(Cart.class));
+        then(cartItemRepository).should().saveAndFlush(any(CartItem.class));
+    }
+
+    @Test
+    void 동시에_같은_상품을_담아_유니크_제약을_위반하면_이미_담긴_상품_예외로_바꾼다() {
+        // given
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.saveAndFlush(any(CartItem.class)))
+                .willThrow(new DataIntegrityViolationException("uk_cart_item_cart_option"));
+
+        // when & then
         assertThatThrownBy(() -> cartService.addItem(BUYER_ID, 100L, 1))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(CartErrorCode.CART_NOT_FOUND);
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CartErrorCode.CART_ITEM_ALREADY_EXISTS));
     }
 
     // ---------- 조회 ----------
@@ -128,15 +146,18 @@ public class CartServiceTest {
     }
 
     @Test
-    void 장바구니가_없는_회원은_조회할_수_없다() {
-        // Given
+    void 장바구니가_없으면_만들고_빈_목록을_응답한다() {
+        // given
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
+        given(cartRepository.save(any(Cart.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        // When & Then
-        assertThatThrownBy(() -> cartService.getMyCart(BUYER_ID))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(CartErrorCode.CART_NOT_FOUND);
+        // when
+        CartResponse sut = cartService.getMyCart(BUYER_ID);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertThat(sut.items()).isEmpty();
+        then(cartRepository).should().save(any(Cart.class));
     }
 
     // ---------- 수량 변경 · 선택 · 삭제 ----------
@@ -158,7 +179,7 @@ public class CartServiceTest {
 
     @Test
     void 다른_사람의_장바구니_상품은_변경할_수_없다() {
-        // Given: 내 장바구니에서 찾으면 없음 (다른 사람의 상품)
+        // Given
         Cart cart = Cart.create(BUYER_ID);
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
         given(cartItemRepository.findByIdAndCartId(999L, cart.getId())).willReturn(Optional.empty());
