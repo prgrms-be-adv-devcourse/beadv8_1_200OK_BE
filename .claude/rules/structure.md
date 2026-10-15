@@ -18,15 +18,19 @@ paths:
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정)를 추가한다. 하위 도메인이 있으면 그 아래에 둔다.
 - 전역 설정(`SecurityConfig` 등)은 `com.ok.config`에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
+- 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다(`ArchitectureTest`가 검사).
+- 서비스는 `service/publisher`의 인터페이스로만 이벤트를 발행한다. 인터페이스는 값이나 `*Command`를 받고(이벤트 클래스 금지), 구현체는 `event`에 둔다.
+- `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다(`ArchitectureTest`가 검사).
 
-**이유**: 성격이 다른 하위 도메인이 한 패키지에 섞이면 `Service`, `Repository` 같은 이름이 겹쳐 구분하기 어렵다. 하위 도메인이 없으면 경로가 단순한 편이 낫고, 설정·리스너를 분리하면 역할별로 찾기 쉽다. 모듈 이름과 하위 도메인 이름이 같은 중복은 헷갈리지 않을 때만 허용한다.
+**이유**: 성격이 다른 하위 도메인이 한 패키지에 섞이면 `Service`, `Repository` 같은 이름이 겹쳐 구분하기 어렵다. 하위 도메인이 없으면 경로가 단순한 편이 낫고, 설정·리스너를 분리하면 역할별로 찾기 쉽다. 모듈 이름과 하위 도메인 이름이 같은 중복은 헷갈리지 않을 때만 허용한다. 리스너는 컨트롤러처럼 외부 입력의 진입점이므로 트랜잭션과 도메인 처리는 서비스에 맡긴다. 서비스가 발행 인터페이스에만 의존하면 발행 방식을 바꿔도 서비스는 바뀌지 않는다. 인터페이스를 `event`에 두면 리스너와 순환 의존이 생기므로 서비스 쪽에 `public`으로 둔다(모듈 밖 접근은 Modulith가 막는다).
 
 ```
 // O
 com.ok.wallet
 ├── controller / service / domain / repository
+├── service/publisher  이벤트 발행 인터페이스
 ├── exception      에러 코드
-├── event          이벤트 리스너
+├── event          이벤트 리스너, 발행 인터페이스 구현체
 └── config         모듈 전용 설정
 
 // O: 하위 도메인이 있는 경우
