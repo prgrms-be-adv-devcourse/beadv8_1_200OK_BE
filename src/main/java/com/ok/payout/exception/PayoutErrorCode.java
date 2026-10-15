@@ -1,4 +1,4 @@
-package com.ok.payout.domain;
+package com.ok.payout.exception;
 
 import com.ok.common.exception.ErrorCode;
 import lombok.Getter;

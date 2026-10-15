@@ -2,6 +2,7 @@ package com.ok.payout.domain;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
+import com.ok.payout.exception.PayoutErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
