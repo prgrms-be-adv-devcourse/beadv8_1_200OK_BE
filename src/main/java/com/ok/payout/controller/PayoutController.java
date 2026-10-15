@@ -33,7 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/payouts")
 @RequiredArgsConstructor
-public class PayoutController {
+public class PayoutController implements PayoutControllerSpec {
 
     // TODO(#52): 임시 헤더. 로그인(#98)은 JWT 발급만 하고 요청마다 토큰을 검증하는 부분이 아직 연결되지 않아 회원 정보를 꺼낼 수 없음
     // 클라이언트가 아무 회원으로나 위장할 수 있어 보안 수단이 아님(그래서 prod 미등록). 인증이 붙으면 principal로 바꾸고 권한 판단 로직은 그대로 둠
@@ -44,6 +44,7 @@ public class PayoutController {
     private final PayoutService payoutService;
 
     // 정산 전체 수동 실행 (개발 중 수동 실행용. 권한은 #52, 실패 응답은 #67에서 처리)
+    @Override
     @PostMapping("/run")
     public ResponseEntity<PayoutRunResponse> run() throws Exception {
         JobExecution execution = payoutJobRunner.run();
@@ -56,6 +57,7 @@ public class PayoutController {
     }
 
     // 정산 1건 수동 실행. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.runOrderItem 참고)
+    @Override
     @PostMapping("/run/order-items/{orderItemId}")
     public ResponseEntity<Void> runOrderItem(
             // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
@@ -68,6 +70,7 @@ public class PayoutController {
 
     // 정산 수동 조정. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.createAdjustment 참고)
     // 조정 기능을 열면 201과 생성된 정산후보 ID를 응답할 예정
+    @Override
     @PostMapping("/adjustments")
     public ResponseEntity<Void> createAdjustment(
             // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
@@ -80,6 +83,7 @@ public class PayoutController {
     }
 
     // 정산 목록 조회 (관리자: 전체, 판매자: 본인 정산만)
+    @Override
     @GetMapping
     public ResponseEntity<PayoutPageResponse<PayoutSummaryResponse>> search(
             // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
@@ -93,6 +97,7 @@ public class PayoutController {
 
     // 정산 상세 조회 (관리자: 모든 정산, 판매자: 본인 정산만). 판매자 정산이면 그 판매자의 수수료 합계도 함께 보여 줌
     // 항목 목록은 /{payoutId}/items에서 따로 조회
+    @Override
     @GetMapping("/{payoutId}")
     public ResponseEntity<PayoutDetailResponse> getDetail(
             // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
@@ -104,6 +109,7 @@ public class PayoutController {
     }
 
     // 정산 항목 조회 (상세와 같은 권한). 항목마다 정산후보 생성 시각과, 조정 건이면 조정 정보를 함께 보여 줌
+    @Override
     @GetMapping("/{payoutId}/items")
     public ResponseEntity<PayoutPageResponse<PayoutItemResponse>> getItems(
             // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
