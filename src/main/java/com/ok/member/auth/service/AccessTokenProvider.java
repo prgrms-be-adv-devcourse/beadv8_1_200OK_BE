@@ -1,11 +1,11 @@
 package com.ok.member.auth.service;
 
+import com.ok.common.security.TokenClaims;
 import com.ok.member.MemberRole;
 import com.ok.member.auth.config.JwtConfig;
 import com.ok.member.auth.config.JwtProperties;
 import com.ok.member.auth.domain.AccessToken;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -36,9 +36,6 @@ import java.util.UUID;
 @Component
 @RequiredArgsConstructor
 public class AccessTokenProvider {
-
-    /** 회원 권한을 담는 claim 이름. 인가 규칙에서 같은 이름으로 읽어야 하므로 상수로 공유한다. */
-    public static final String ROLE_CLAIM = "role";
 
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
@@ -71,7 +68,7 @@ public class AccessTokenProvider {
                 .id(UUID.randomUUID().toString())
                 .issuedAt(issuedAt)
                 .expiresAt(expiresAt)
-                .claim(ROLE_CLAIM, role.name())
+                .claim(TokenClaims.ROLE, role.name())
                 .build();
 
         // 대칭키 인코더는 알고리즘을 스스로 고르지 못하므로 명시한다. 검증 쪽과 같은 상수를 사용한다. (JwtConfig 참고)
