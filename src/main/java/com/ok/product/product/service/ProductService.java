@@ -1,6 +1,7 @@
 package com.ok.product.product.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
@@ -35,6 +36,7 @@ public class ProductService {
 	private final ProductOptionRepository productOptionRepository;
 	private final ProductQueryRepository productQueryRepository;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
+	private final MediaUrlResolver mediaUrlResolver;
 
 	// TODO(추후 고려): 필요시 ADMIN이 판매자 대신 등록하는 기능
 	@Transactional
@@ -43,7 +45,7 @@ public class ProductService {
 		String descriptionHtml = sanitizeDescription(command.descriptionHtml());
 
 		Product product = Product.create(sellerId, command.name(), descriptionHtml, command.category(),
-			command.region(), command.options(), command.imageUrls());
+			command.region(), command.options(), toObjectKeys(command.imageUrls()));
 		if (command.status() != null) {
 			product.changeStatus(command.status());
 		}
@@ -67,7 +69,7 @@ public class ProductService {
 
 		// 상품 정보 업데이트
 		product.updateInfo(command.name(), descriptionHtml, command.category(), command.region());
-		product.replaceImages(command.imageUrls());
+		product.replaceImages(toObjectKeys(command.imageUrls()));
 		product.mergeOptions(command.options(), now());
 		if (command.status() != null) {
 			product.changeStatus(command.status());
@@ -113,20 +115,27 @@ public class ProductService {
 			query.region(), PageRequest.of(query.page(), query.size()));
 		// 품절 판정은 상세와 같은 Product.isSoldOut()을 쓴다. 옵션은 지연 로딩이지만
 		// default_batch_fetch_size 덕분에 첫 접근 때 페이지 상품들의 옵션을 IN 쿼리 한 번으로 불러온다
-		return products.map(ProductSummaryResult::from);
+		return products.map(product -> ProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
 	}
 
 	// 구매자에게 보이는 상품 상세를 조회한다.
 	public ProductDetailResult getVisibleProduct(Long productId) {
 		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
-		return ProductDetailResult.from(product);
+		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
 	}
 
 	private void validateImageUrls(List<String> imageUrls) {
 		if (!imageUrls.stream().allMatch(productImageUrlValidator::isAllowed)) {
 			throw new RestApiException(ProductErrorCode.INVALID_IMAGE_URL);
 		}
+	}
+
+	private List<String> toObjectKeys(List<String> imageUrls) {
+		return imageUrls.stream()
+			.map(url -> mediaUrlResolver.toObjectKey(url)
+				.orElseThrow(() -> new RestApiException(ProductErrorCode.INVALID_IMAGE_URL)))
+			.toList();
 	}
 
 	// 허용 태그만 남기고 본문에 있는 외부 이미지는 거절하지 않고 지운다
