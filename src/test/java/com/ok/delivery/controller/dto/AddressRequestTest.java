@@ -1,6 +1,6 @@
 package com.ok.delivery.controller.dto;
 
-import com.ok.delivery.domain.Address;
+import com.ok.delivery.service.dto.AddressCommand;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
@@ -160,23 +160,23 @@ class AddressRequestTest {
     }
 
     @Test
-    void 요청을_Address_값_객체로_변환하면_연락처는_숫자만_남는다() {
+    void 요청을_AddressCommand로_변환하면_모든_필드를_그대로_옮긴다() {
         // given
         AddressRequest sut = request("010-1234-5678", "06236");
 
         // when
-        Address address = sut.toAddress();
+        AddressCommand command = sut.toCommand();
 
         // then
-        assertThat(address).isNotNull();
+        assertThat(command).isNotNull();
         assertSoftly(
                 softly -> {
-                    softly.assertThat(address.getRecipientName()).isEqualTo("홍길동");
-                    softly.assertThat(address.getRecipientPhone()).isEqualTo("01012345678");
-                    softly.assertThat(address.getPostalCode()).isEqualTo("06236");
-                    softly.assertThat(address.getAddress()).isEqualTo("서울시 강남구 테헤란로 1");
-                    softly.assertThat(address.getAddressDetail()).isEqualTo("101동 202호");
-                    softly.assertThat(address.getDeliveryNote()).isEqualTo("문 앞에 놓아주세요");
+                    softly.assertThat(command.recipientName()).isEqualTo("홍길동");
+                    softly.assertThat(command.recipientPhone()).isEqualTo("010-1234-5678");
+                    softly.assertThat(command.postalCode()).isEqualTo("06236");
+                    softly.assertThat(command.address()).isEqualTo("서울시 강남구 테헤란로 1");
+                    softly.assertThat(command.addressDetail()).isEqualTo("101동 202호");
+                    softly.assertThat(command.deliveryNote()).isEqualTo("문 앞에 놓아주세요");
                 }
         );
     }

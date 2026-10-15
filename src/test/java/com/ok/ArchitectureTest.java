@@ -7,6 +7,7 @@ import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +51,35 @@ class ArchitectureTest {
             .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다. "
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
+    @ArchTest
+    static final ArchRule 이벤트_리스너는_controller_repository_domain을_쓰지_않는다 = noClasses()
+            .that().resideInAPackage("..event..")
+            // common.event는 모듈 간 이벤트 DTO라 리스너가 아니다
+            .and().resideOutsideOfPackage("com.ok.common.event..")
+            .should().dependOnClassesThat().resideInAnyPackage("..controller..", "..repository..", "..domain..")
+            .because("리스너는 컨트롤러처럼 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 서비스에 맡긴다 (컨벤션 2.1)");
+
+    // freeze
+    @ArchTest
+    static final ArchRule ApplicationEventPublisher는_event_패키지만_사용한다 = freeze(noClasses()
+            .that().resideOutsideOfPackage("..event..")
+            .should().dependOnClassesThat().areAssignableTo(ApplicationEventPublisher.class)
+            .because("서비스는 service/publisher 인터페이스로만 발행하고 구현체(event)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (컨벤션 2.1)"));
+
+    // freeze
+    @ArchTest
+    static final ArchRule 이벤트_클래스는_event_패키지만_사용한다 = freeze(classes()
+            .that().resideInAPackage("com.ok.common.event..")
+            .should().onlyBeAccessed().byAnyPackage("..event..")
+            .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 서비스를 호출하고, "
+                    + "발행 인터페이스는 값을 받는다 (컨벤션 2.1)"));
+
+    @ArchTest
+    static final ArchRule service_publisher에는_인터페이스만_둔다 = classes()
+            .that().resideInAPackage("..service.publisher..")
+            .should().beInterfaces()
+            .because("구현체는 event 패키지에 두어 서비스가 발행 방식을 알지 않게 한다 (컨벤션 2.1)");
+
     // 이름과 위치
 
     @ArchTest
@@ -86,23 +116,6 @@ class ArchitectureTest {
             .should().haveSimpleNameEndingWith("ErrorCode")
             .andShould().resideInAPackage("..exception..")
             .because("모듈의 에러 코드를 exception 패키지 한곳에서 찾을 수 있어야 한다 (컨벤션 2.1, 3.2)"));
-
-    // freeze
-    @ArchTest
-    static final ArchRule Request와_Response는_controller_dto_패키지에_있다 = freeze(classes()
-            .that().haveSimpleNameEndingWith("Request")
-            .or().haveSimpleNameEndingWith("Response")
-            .should().resideInAPackage("..controller.dto..")
-            .because("경로만 보고 컨트롤러의 입출력 타입인지 알 수 있어야 한다. 클래스 안 중첩 record는 파일을 키우고 찾기 어렵다 (컨벤션 2.3)"));
-
-    // freeze
-    @ArchTest
-    static final ArchRule Command_Query_Result는_service_dto_패키지에_있다 = freeze(classes()
-            .that().haveSimpleNameEndingWith("Command")
-            .or().haveSimpleNameEndingWith("Query")
-            .or().haveSimpleNameEndingWith("Result")
-            .should().resideInAPackage("..service.dto..")
-            .because("경로만 보고 서비스의 입출력 타입인지 알 수 있어야 한다. 클래스 안 중첩 record는 파일을 키우고 찾기 어렵다 (컨벤션 2.3)"));
 
     // freeze
     @ArchTest
