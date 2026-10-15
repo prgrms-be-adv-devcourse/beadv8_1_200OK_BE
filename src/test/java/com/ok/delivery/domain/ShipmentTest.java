@@ -105,8 +105,8 @@ class ShipmentTest {
     void 상품_항목이_없으면_생성할_수_없다() {
         // when & then
         assertThatThrownBy(ShipmentFixture::shipment)
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_SHIPMENT_ITEMS));
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("상품 항목은 1개 이상이어야 합니다.");
     }
 
     @Test
@@ -116,8 +116,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(sut::build)
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPPING_FEE));
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("배송비 금액은 0 이상이어야 합니다.");
     }
 
     @Test
@@ -129,8 +129,8 @@ class ShipmentTest {
 
         // when & then
         assertThatThrownBy(sut::build)
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_ESTIMATED_DELIVERY));
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("도착 예정일 시작은 끝보다 늦을 수 없습니다.");
     }
 
     private static Shipment.ShipmentBuilder validBuilder() {

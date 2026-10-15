@@ -44,19 +44,19 @@ class ShipmentItemTest {
 
     @ParameterizedTest
     @MethodSource("invalidItems")
-    void 잘못된_값으로는_생성할_수_없다(String productName, int quantity, int unitPrice, DeliveryErrorCode errorCode) {
+    void 잘못된_값으로는_생성할_수_없다(String productName, int quantity, int unitPrice, String message) {
         // when & then
         assertThatThrownBy(() -> ShipmentItem.create(1L, productName, null, quantity, unitPrice))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(errorCode));
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
     }
 
     static Stream<Arguments> invalidItems() {
         return Stream.of(
-                Arguments.of(null, 1, 1_000, DeliveryErrorCode.MISSING_PRODUCT_NAME),
-                Arguments.of(" ", 1, 1_000, DeliveryErrorCode.MISSING_PRODUCT_NAME),
-                Arguments.of("무선 키보드", 0, 1_000, DeliveryErrorCode.INVALID_ITEM_QUANTITY),
-                Arguments.of("무선 키보드", 1, -1, DeliveryErrorCode.INVALID_UNIT_PRICE)
+                Arguments.of(null, 1, 1_000, "상품명은 필수입니다."),
+                Arguments.of(" ", 1, 1_000, "상품명은 필수입니다."),
+                Arguments.of("무선 키보드", 0, 1_000, "수량은 1 이상이어야 합니다."),
+                Arguments.of("무선 키보드", 1, -1, "단가는 0 이상이어야 합니다.")
         );
     }
 
