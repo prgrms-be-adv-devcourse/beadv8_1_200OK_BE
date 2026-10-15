@@ -26,6 +26,8 @@ public record PayoutDetailResult(
         // 관리자가 판매자 정산을 볼 때만 값. 판매자는 이 정산을 열 수 없어(403) null, 시스템 몫 정산을 볼 때도 null
         Long systemPayoutId,
         // 이 판매자 판매에서 떼어 간 수수료 합계 (원). 판매자 정산일 때 값(관리자·판매자 모두), 시스템 몫 정산이면 null
+        // 시스템 몫 정산은 특정 판매자의 정산이 아니라 모든 판매자 수수료를 모은 총합이라 "이 판매자의 수수료"가 없음
+        // (총합은 amount·itemCount, 판매자별 내역은 항목 조회의 sellerId로 봄)
         Long sellerFeeAmount,
         // 위 수수료 항목 수. sellerFeeAmount와 같은 조건으로 값이 있음
         Long sellerFeeItemCount

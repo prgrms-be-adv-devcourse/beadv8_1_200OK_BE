@@ -95,7 +95,7 @@ interface PayoutControllerSpec {
             정산을 확정 시각 최신순으로 조회합니다(같은 시각이면 정산 ID 역순).
             관리자는 조건을 자유롭게 쓰고, payeeId를 생략하면 전체 정산이 나옵니다.
             판매자는 payeeId에 반드시 본인 ID를 넣어야 합니다. 생략하거나 다른 ID를 넣거나 system=true를 넣으면 403입니다.
-            기간(from, to)은 정산 확정 시각 기준이며 from은 포함, to는 포함하지 않습니다.
+            기간(from, to)은 필수이며 정산 확정 시각 기준으로 from은 포함, to는 포함하지 않습니다. 기간은 최대 1년입니다.
             """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),
@@ -104,7 +104,7 @@ interface PayoutControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
-                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위, 시작 시각이 종료 시각보다 늦음 등)",
+                    responseCode = "422", description = "요청 값 검증 실패 (기간 누락, 시작 시각이 종료 시각보다 같거나 늦음, 기간 1년 초과, page·size 범위 등)",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
@@ -122,6 +122,8 @@ interface PayoutControllerSpec {
             정산 1건의 상세(정산 대상 기간, 항목 수)를 조회합니다. 항목 목록은 GET /api/v1/payouts/{payoutId}/items로 따로 조회합니다.
             관리자는 모든 정산을, 판매자는 본인 정산만 볼 수 있습니다.
             판매자 정산이면 그 판매자 판매에서 떼어 간 수수료 합계·건수를 함께 줍니다. 수수료가 들어 있는 시스템 몫 정산 ID는 관리자에게만 줍니다.
+            시스템 몫 정산을 열면 이 세 필드는 null입니다. 그 정산이 모든 판매자 수수료를 모은 총합이라 총합은 amount·itemCount에 있고,
+            판매자별 수수료는 항목 조회(GET /api/v1/payouts/{payoutId}/items)의 sellerId로 확인합니다.
             """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),

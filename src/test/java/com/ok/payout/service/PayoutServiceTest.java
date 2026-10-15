@@ -5,6 +5,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutSellerDraft;
+import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.repository.PayoutQueryRepository;
@@ -14,25 +15,37 @@ import com.ok.payout.repository.PayoutSellerDraftRepository;
 import com.ok.payout.repository.PayoutSnapshotItemRepository;
 import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.repository.PayoutSystemDraftItemRepository;
+import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
+import com.ok.payout.service.dto.PayoutDetailResult;
+import com.ok.payout.service.dto.PayoutItemSearchQuery;
+import com.ok.payout.service.dto.PayoutSearchQuery;
+import com.ok.payout.service.dto.PayoutSummaryResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -46,6 +59,9 @@ import static org.mockito.Mockito.times;
 class PayoutServiceTest {
 
     private static final Long SNAPSHOT_ID = 12L;
+    // 상세 조회 테스트의 스냅샷 대상 기간
+    private static final LocalDateTime PERIOD_FROM = LocalDateTime.of(2026, 9, 27, 0, 0);
+    private static final LocalDateTime PERIOD_TO = LocalDateTime.of(2026, 9, 30, 0, 0);
 
     @Mock
     private PayoutQueryRepository payoutQueryRepository;
@@ -260,6 +276,306 @@ class PayoutServiceTest {
         assertThat(from).isEqualTo(LocalDateTime.of(2026, 9, 21, 0, 0));
     }
 
+    // ---------- 막아 둔 API: 1건 수동 실행, 수동 조정 ----------
+
+    @ParameterizedTest
+    @MethodSource("관리자가_아닌_역할")
+    void 관리자가_아니면_1건_수동_실행을_권한_없음으로_거절한다(String role) {
+        // when & then
+        assertThatThrownBy(() -> sut.runOrderItem(role, 900L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    static Stream<String> 관리자가_아닌_역할() {
+        return Stream.of("SELLER", "BUYER", "admin", null);
+    }
+
+    @Test
+    void 관리자여도_1건_수동_실행은_아직_지원하지_않는_기능으로_거절한다() {
+        // when & then
+        assertThatThrownBy(() -> sut.runOrderItem("ADMIN", 900L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.FEATURE_NOT_SUPPORTED));
+    }
+
+    @ParameterizedTest
+    @MethodSource("관리자가_아닌_역할")
+    void 관리자가_아니면_수동_조정을_권한_없음으로_거절한다(String role) {
+        // when & then
+        assertThatThrownBy(() -> sut.createAdjustment(role, 1L, adjustmentCommand()))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 관리자여도_수동_조정은_아직_지원하지_않는_기능으로_거절한다() {
+        // when & then
+        assertThatThrownBy(() -> sut.createAdjustment("ADMIN", 1L, adjustmentCommand()))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.FEATURE_NOT_SUPPORTED));
+    }
+
+    // ---------- 정산 목록 조회 ----------
+
+    @Test
+    void 판매자가_payeeId를_생략하면_목록_조회를_거절한다() {
+        // given: 판매자 7이 누구의 정산인지 밝히지 않고 요청
+        PayoutSearchQuery query = searchQuery(null, null);
+
+        // when & then
+        assertThatThrownBy(() -> sut.search(7L, "SELLER", query))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 판매자가_다른_판매자_ID로_목록을_조회하면_거절한다() {
+        // given: 판매자 7이 판매자 9의 정산을 요청
+        PayoutSearchQuery query = searchQuery(9L, null);
+
+        // when & then
+        assertThatThrownBy(() -> sut.search(7L, "SELLER", query))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 판매자가_본인_ID여도_시스템_몫을_요청하면_거절한다() {
+        // given: 판매자 7이 본인 ID로 system = true 요청 (시스템 몫은 모든 판매자 수수료가 섞여 있음)
+        PayoutSearchQuery query = searchQuery(7L, true);
+
+        // when & then
+        assertThatThrownBy(() -> sut.search(7L, "SELLER", query))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 관리자_판매자가_아니면_목록_조회를_거절한다() {
+        // given: 구매자 7이 본인 ID로 요청해도 정산을 볼 권한이 없음
+        PayoutSearchQuery query = searchQuery(7L, null);
+
+        // when & then
+        assertThatThrownBy(() -> sut.search(7L, "BUYER", query))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 판매자가_본인_ID로_요청하면_그_조건_그대로_조회한다() {
+        // given: 리포지토리가 payeeId = 7, 0페이지 20건 조건으로 불려야만 결과를 돌려줌 (다른 조건이면 Mockito가 실패시킴)
+        PayoutSearchQuery query = searchQuery(7L, null);
+        given(payoutQueryRepository.searchPayouts(7L, null, query.from(), query.to(), PageRequest.of(0, 20)))
+                .willReturn(new PageImpl<>(List.of(sellerPayout(12L, 7L, 13_000L))));
+
+        // when
+        Page<PayoutSummaryResult> result = sut.search(7L, "SELLER", query);
+
+        // then
+        assertThat(result.getContent())
+                .extracting(PayoutSummaryResult::payoutId, PayoutSummaryResult::payeeId, PayoutSummaryResult::amount)
+                .containsExactly(tuple(12L, 7L, 13_000L));
+    }
+
+    @Test
+    void 관리자는_payeeId를_생략하면_조건_없이_전체를_조회한다() {
+        // given
+        PayoutSearchQuery query = searchQuery(null, null);
+        given(payoutQueryRepository.searchPayouts(null, null, query.from(), query.to(), PageRequest.of(0, 20)))
+                .willReturn(new PageImpl<>(List.of(sellerPayout(12L, 7L, 13_000L), systemPayout(14L))));
+
+        // when
+        Page<PayoutSummaryResult> result = sut.search(1L, "ADMIN", query);
+
+        // then
+        assertThat(result.getContent()).extracting(PayoutSummaryResult::payoutId).containsExactly(12L, 14L);
+    }
+
+    // ---------- 정산 상세 조회 ----------
+
+    @Test
+    void 정산이_없으면_상세_조회를_정산_없음으로_거절한다() {
+        // given
+        given(payoutRepository.findById(99L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.getDetail(1L, "ADMIN", 99L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_NOT_FOUND));
+    }
+
+    @Test
+    void 판매자가_다른_판매자의_정산을_상세_조회하면_거절한다() {
+        // given: 판매자 7이 판매자 9의 정산 13을 요청
+        given(payoutRepository.findById(13L)).willReturn(Optional.of(sellerPayout(13L, 9L, 19_400L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getDetail(7L, "SELLER", 13L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 판매자가_시스템_몫_정산을_상세_조회하면_거절한다() {
+        // given: 판매자 7이 시스템 몫 정산 14를 요청 (모든 판매자 수수료가 섞여 있음)
+        given(payoutRepository.findById(14L)).willReturn(Optional.of(systemPayout(14L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getDetail(7L, "SELLER", 14L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 관리자_판매자가_아니면_본인_정산이어도_상세_조회를_거절한다() {
+        // given: 구매자 역할로 회원 7의 정산 12를 요청
+        given(payoutRepository.findById(12L)).willReturn(Optional.of(sellerPayout(12L, 7L, 13_000L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getDetail(7L, "BUYER", 12L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 정산의_스냅샷이_없으면_스냅샷_없음으로_실패한다() {
+        // given: 외래키 때문에 정상이면 생길 수 없는 데이터 손상 상황
+        given(payoutRepository.findById(12L)).willReturn(Optional.of(sellerPayout(12L, 7L, 13_000L)));
+        given(payoutSnapshotRepository.findById(SNAPSHOT_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.getDetail(1L, "ADMIN", 12L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_SNAPSHOT_NOT_FOUND));
+    }
+
+    @Test
+    void 관리자가_판매자_정산을_보면_그_판매자_수수료와_시스템_몫_정산_ID를_함께_준다() {
+        // given: 판매자 7의 정산 12, 같은 스냅샷의 시스템 몫 정산 14에 판매자 7 수수료 1건 300원
+        givenDetail(sellerPayout(12L, 7L, 13_000L), 2L);
+        given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.of(systemPayout(14L)));
+        given(payoutQueryRepository.summarizeSellerFeeItems(14L, 7L)).willReturn(new CountAndAmount(1, 300));
+
+        // when
+        PayoutDetailResult result = sut.getDetail(1L, "ADMIN", 12L);
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.payoutId()).isEqualTo(12L);
+            softly.assertThat(result.payeeId()).isEqualTo(7L);
+            softly.assertThat(result.amount()).isEqualTo(13_000L);
+            softly.assertThat(result.periodFrom()).isEqualTo(PERIOD_FROM);
+            softly.assertThat(result.periodTo()).isEqualTo(PERIOD_TO);
+            softly.assertThat(result.itemCount()).isEqualTo(2L);
+            softly.assertThat(result.systemPayoutId()).isEqualTo(14L);
+            softly.assertThat(result.sellerFeeAmount()).isEqualTo(300L);
+            softly.assertThat(result.sellerFeeItemCount()).isEqualTo(1L);
+        });
+    }
+
+    @Test
+    void 판매자가_본인_정산을_보면_수수료는_주고_시스템_몫_정산_ID는_주지_않는다() {
+        // given
+        givenDetail(sellerPayout(12L, 7L, 13_000L), 2L);
+        given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.of(systemPayout(14L)));
+        given(payoutQueryRepository.summarizeSellerFeeItems(14L, 7L)).willReturn(new CountAndAmount(1, 300));
+
+        // when
+        PayoutDetailResult result = sut.getDetail(7L, "SELLER", 12L);
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.systemPayoutId()).isNull();
+            softly.assertThat(result.sellerFeeAmount()).isEqualTo(300L);
+            softly.assertThat(result.sellerFeeItemCount()).isEqualTo(1L);
+        });
+    }
+
+    @Test
+    void 시스템_몫_정산_상세에는_판매자_수수료_필드가_없다() {
+        // given: 시스템 몫 정산 자체가 수수료 묶음이라 따로 조회하지 않음
+        givenDetail(systemPayout(14L), 1L);
+
+        // when
+        PayoutDetailResult result = sut.getDetail(1L, "ADMIN", 14L);
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.system()).isTrue();
+            softly.assertThat(result.systemPayoutId()).isNull();
+            softly.assertThat(result.sellerFeeAmount()).isNull();
+            softly.assertThat(result.sellerFeeItemCount()).isNull();
+        });
+    }
+
+    @Test
+    void 같은_스냅샷에_시스템_몫_정산이_없으면_수수료_필드가_없다() {
+        // given: 이번 회차에 수수료가 하나도 없어서 시스템 몫 정산이 만들어지지 않음
+        givenDetail(sellerPayout(12L, 7L, 13_000L), 2L);
+        given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.empty());
+
+        // when
+        PayoutDetailResult result = sut.getDetail(1L, "ADMIN", 12L);
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.systemPayoutId()).isNull();
+            softly.assertThat(result.sellerFeeAmount()).isNull();
+            softly.assertThat(result.sellerFeeItemCount()).isNull();
+        });
+    }
+
+    // ---------- 정산 항목 조회 ----------
+
+    @Test
+    void 정산이_없으면_항목_조회를_정산_없음으로_거절한다() {
+        // given
+        given(payoutRepository.findById(99L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.getItems(1L, "ADMIN", 99L, new PayoutItemSearchQuery(0, 20)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_NOT_FOUND));
+    }
+
+    @Test
+    void 판매자가_다른_판매자의_정산_항목을_조회하면_거절한다() {
+        // given: 판매자 7이 판매자 9의 정산 13의 항목을 요청
+        given(payoutRepository.findById(13L)).willReturn(Optional.of(sellerPayout(13L, 9L, 19_400L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getItems(7L, "SELLER", 13L, new PayoutItemSearchQuery(0, 20)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 판매자가_시스템_몫_정산_항목을_조회하면_거절한다() {
+        // given: 판매자 7이 시스템 몫 정산 14의 항목을 요청 (모든 판매자 수수료가 섞여 있음)
+        given(payoutRepository.findById(14L)).willReturn(Optional.of(systemPayout(14L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getItems(7L, "SELLER", 14L, new PayoutItemSearchQuery(0, 20)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
+    @Test
+    void 관리자_판매자가_아니면_본인_정산이어도_항목_조회를_거절한다() {
+        // given: 구매자 역할로 회원 7의 정산 12의 항목을 요청
+        given(payoutRepository.findById(12L)).willReturn(Optional.of(sellerPayout(12L, 7L, 13_000L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getItems(7L, "BUYER", 12L, new PayoutItemSearchQuery(0, 20)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
+    }
+
     // ---------- 도우미 ----------
 
     // verify가 비교할 집계값을 한 번에 준비 (스냅샷, 판매자 항목, 시스템 항목, 판매자 헤더 금액 합계)
@@ -275,5 +591,39 @@ class PayoutServiceTest {
     private PayoutCandidateItem withId(PayoutCandidateItem candidate, Long id) {
         ReflectionTestUtils.setField(candidate, "id", id);
         return candidate;
+    }
+
+    // 목록 조회 조건 (기간은 필수라 10월 한 달로 고정, 0페이지 20건)
+    private PayoutSearchQuery searchQuery(Long payeeId, Boolean system) {
+        return new PayoutSearchQuery(payeeId, system,
+                LocalDateTime.of(2026, 10, 1, 0, 0), LocalDateTime.of(2026, 11, 1, 0, 0), 0, 20);
+    }
+
+    private PayoutAdjustmentCreateCommand adjustmentCommand() {
+        return new PayoutAdjustmentCreateCommand(900L, "SALE_AMOUNT", -2_000L, "금액 오입력 정정");
+    }
+
+    // 상세 조회의 공통 준비: 정산 조회, 스냅샷(대상 기간), 항목 수
+    private void givenDetail(Payout payout, long itemCount) {
+        given(payoutRepository.findById(payout.getId())).willReturn(Optional.of(payout));
+        given(payoutSnapshotRepository.findById(SNAPSHOT_ID))
+                .willReturn(Optional.of(PayoutSnapshot.create(1L, PERIOD_FROM, PERIOD_TO)));
+        given(payoutQueryRepository.countItemsByPayoutId(payout.getId())).willReturn(itemCount);
+    }
+
+    // 판매자 몫 정산 1건 (판매 대금 항목 1개). DB 없이 만들어서 ID는 직접 넣음
+    private Payout sellerPayout(Long payoutId, Long sellerId, long amount) {
+        Payout payout = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, sellerId,
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(9_000L + payoutId, sellerId, amount), 100L + payoutId))));
+        ReflectionTestUtils.setField(payout, "id", payoutId);
+        return payout;
+    }
+
+    // 시스템 몫 정산 1건 (판매자 7의 수수료 300원 항목 1개)
+    private Payout systemPayout(Long payoutId) {
+        Payout payout = Payout.forSystem(SNAPSHOT_ID, List.of(PayoutSystemDraftItem.create(SNAPSHOT_ID,
+                withId(PayoutCandidateItem.ofSaleFee(9_100L, 7L, 300L), 200L))));
+        ReflectionTestUtils.setField(payout, "id", payoutId);
+        return payout;
     }
 }

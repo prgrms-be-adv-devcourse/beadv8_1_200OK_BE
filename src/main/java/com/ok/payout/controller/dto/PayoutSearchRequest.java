@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -21,11 +22,15 @@ public record PayoutSearchRequest(
         @Schema(description = "true면 시스템 몫만, false면 판매자 몫만, 생략하면 둘 다", example = "false")
         Boolean system,
 
-        @Schema(description = "조회 시작 시각 (정산 확정 시각 기준, 이 시각 포함)", example = "2026-10-01T00:00:00")
+        @Schema(description = "조회 시작 시각 (필수. 정산 확정 시각 기준, 이 시각 포함)", example = "2026-10-01T00:00:00",
+                requiredMode = Schema.RequiredMode.REQUIRED)
+        @NotNull(message = "조회 시작 시각은 필수입니다.")
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
         LocalDateTime from,
 
-        @Schema(description = "조회 종료 시각 (정산 확정 시각 기준, 이 시각 미포함)", example = "2026-11-01T00:00:00")
+        @Schema(description = "조회 종료 시각 (필수. 정산 확정 시각 기준, 이 시각 미포함). 시작부터 최대 1년", example = "2026-11-01T00:00:00",
+                requiredMode = Schema.RequiredMode.REQUIRED)
+        @NotNull(message = "조회 종료 시각은 필수입니다.")
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
         LocalDateTime to,
 
@@ -41,6 +46,9 @@ public record PayoutSearchRequest(
 
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 20;
+    // 조회 기간 최대 길이. 기간 없이(또는 아주 길게) 조회하면 전체 개수를 세는 쿼리가 정산 테이블 전체를 훑어 느려지므로 상한을 둠
+    // 1년은 우선 정한 값이고, 정산 데이터 양이나 화면 요구에 따라 차후 조정 가능 (바꾸면 isPeriodWithinMaxRange의 메시지와 Swagger 설명도 함께)
+    private static final int MAX_PERIOD_YEARS = 1;
 
     /**
      * 생략된 페이지 번호와 크기에 기본값을 채운다. 검증은 기본값을 채운 값을 기준으로 수행된다.
@@ -50,13 +58,21 @@ public record PayoutSearchRequest(
         size = size == null ? DEFAULT_SIZE : size;
     }
 
-    // 시작이 종료보다 늦으면 결과가 항상 0건이라 클라이언트 실수로 보고 거절
-    // 둘 중 하나라도 생략하면 그쪽 경계는 없는 것으로 보고 통과
+    // 시작이 종료와 같거나 늦으면 결과가 항상 0건이라 클라이언트 실수로 보고 거절
+    // from·to가 null이면 @NotNull이 따로 잡으므로 여기서는 통과시켜 오류 메시지가 두 번 나오지 않게 함
     // is로 시작하는 메서드는 Swagger가 요청 필드로 오해해 문서에 나오므로 숨김
     @Schema(hidden = true)
     @AssertTrue(message = "조회 시작 시각은 종료 시각보다 앞이어야 합니다.")
     public boolean isPeriodValid() {
         return from == null || to == null || from.isBefore(to);
+    }
+
+    // 조회 기간은 최대 MAX_PERIOD_YEARS년 (to는 미포함이라 시작 + 1년까지 허용)
+    // from·to가 null이면 @NotNull이 따로 잡으므로 여기서는 통과
+    @Schema(hidden = true)
+    @AssertTrue(message = "조회 기간은 최대 1년입니다.")
+    public boolean isPeriodWithinMaxRange() {
+        return from == null || to == null || !to.isAfter(from.plusYears(MAX_PERIOD_YEARS));
     }
 
     public PayoutSearchQuery toQuery() {
