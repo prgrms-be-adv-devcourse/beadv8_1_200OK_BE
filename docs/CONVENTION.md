@@ -116,12 +116,17 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 하위 도메인이 하나뿐인 모듈은 패키지를 한 단계 더 만들지 않는다. 의미 없는 패키지를 두지 않는다.
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `com.ok.config` 모듈에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
+- 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다.
+- 서비스는 `service/publisher`의 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받고, 구현체는 `event` 패키지에 둔다.
+- `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다.
 
 **이유**: 
 한 모듈에 성격이 다른 하위 도메인이 있으면(예: product와 review) `Service`, `Repository` 같은 클래스 이름이 겹치고, 이름만으로 구분하기 어렵다. 
 모듈 이름과 하위 도메인 이름이 구분되어 헷갈리지 않는다면, 두 이름이 같은 네이밍 중복은 허용한다. 
 하위 도메인이 없는 모듈은 경로가 단순한 편이 낫다. 
 설정과 리스너를 서비스·도메인과 구분하면 역할별로 코드를 찾기 쉽다. 
+리스너는 컨트롤러처럼 외부 입력이 들어오는 진입점이므로, 트랜잭션과 도메인 처리는 서비스에 맡긴다. 
+서비스가 발행 인터페이스에만 의존하면 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 모듈 밖에서는 Modulith가 접근을 막는다. 
 
 
 ```
@@ -129,10 +134,11 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 com.ok.wallet
 ├── controller
 ├── service
+│   └── publisher  이벤트 발행 인터페이스
 ├── domain
 ├── repository
 ├── exception      에러 코드
-├── event          이벤트 리스너
+├── event          이벤트 리스너, 발행 인터페이스 구현체
 └── config         모듈 전용 설정
 
 // 좋은 예: 하위 도메인이 있는 모듈 (member 모듈의 회원과 인증)
@@ -1046,9 +1052,11 @@ class OrderServiceIntegrationTest { ... }
 |---|---|
 | Controller → Service → Repository 방향으로만 의존하고, `domain`은 Service·Repository만 쓴다 | 2.1, 2.3 |
 | 패키지 사이에 순환 의존이 없다 (모듈 안 패키지까지) | 2.2 확장 |
+| 이벤트 리스너(`event`)는 `controller`, `repository`, `domain`을 쓰지 않는다 | 2.1 |
+| `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지만 쓴다 | 2.1 |
+| `service/publisher`에는 인터페이스만 둔다 | 2.1 |
 | `@RestController`는 `*Controller`, `@Service`는 `*Service`이고 각 레이어 패키지에 있다 | 3.2 |
 | 저장소는 `repository`, 엔티티는 `domain`, `ErrorCode` 구현체는 `exception` 패키지에 있다 | 2.1, 3.2 |
-| `*Request`·`*Response`는 `controller/dto`, `*Command`·`*Query`·`*Result`는 `service/dto`에 있다 | 2.3 |
 | Swagger 문서 인터페이스는 `*Spec`, package-private이고 `spec` 패키지에 두지 않는다 | 3.3 |
 | 컨트롤러 클래스·메서드에 `@Transactional`을 붙이지 않는다 | 7.1 |
 | `System.out`, `System.err`를 쓰지 않는다 | 일반 |

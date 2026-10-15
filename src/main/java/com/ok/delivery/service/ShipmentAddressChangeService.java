@@ -1,13 +1,13 @@
 package com.ok.delivery.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.domain.Address;
 import com.ok.delivery.domain.AddressChangeStatus;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentAddressChangeRequest;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.repository.ShipmentRepository;
+import com.ok.delivery.service.dto.AddressCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,16 +32,17 @@ public class ShipmentAddressChangeService {
      * @throws RestApiException shipment가 없으면 {@code SHIPMENT_NOT_FOUND},
      *                          대기 중인 요청이 있으면 {@code ADDRESS_CHANGE_ALREADY_PENDING},
      *                          {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED},
-     *                          추가 운임 안내 금액이 음수면 {@code INVALID_ADDITIONAL_FEE_NOTICE}
+     *                          추가 운임 안내 금액이 음수면 {@code INVALID_ADDITIONAL_FEE_NOTICE},
+     *                          배송지 검증에 실패하면 {@link com.ok.delivery.domain.Address#of}의 에러 코드
      */
     @Transactional
-    public ShipmentAddressChangeRequest request(Long shipmentId, Address requestedAddress, int additionalFeeNotice) {
+    public ShipmentAddressChangeRequest request(Long shipmentId, AddressCommand requestedAddress, int additionalFeeNotice) {
         Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
                 .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
         if (requestRepository.existsByShipmentIdAndStatus(shipmentId, AddressChangeStatus.PENDING)) {
             throw new RestApiException(DeliveryErrorCode.ADDRESS_CHANGE_ALREADY_PENDING);
         }
-        ShipmentAddressChangeRequest request = shipment.requestAddressChange(requestedAddress, additionalFeeNotice, LocalDateTime.now(clock));
+        ShipmentAddressChangeRequest request = shipment.requestAddressChange(requestedAddress.toAddress(), additionalFeeNotice, LocalDateTime.now(clock));
         return requestRepository.save(request);
     }
 }
