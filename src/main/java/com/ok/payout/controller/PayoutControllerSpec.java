@@ -28,12 +28,13 @@ interface PayoutControllerSpec {
     @Operation(summary = "정산 전체 수동 실행", description = """
             정산 배치를 지금 1회 실행합니다. 개발 중 수동 실행용이며 prod 정산은 스케줄러로만 실행합니다.
             지금은 권한을 확인하지 않습니다(#52).
-            배치가 COMPLETED가 아니면 실패 응답을 줍니다. 실패 기록과 연결한 정식 응답은 #67에서 바뀝니다.
+            배치가 COMPLETED가 아니면 서버 오류(500)로 응답합니다. 실행 ID와 배치 상태는 서버 로그에 남습니다.
+            실패 기록과 연결한 정식 응답은 #67에서 바뀝니다.
             """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "배치 실행 성공"),
             @ApiResponse(
-                    responseCode = "500", description = "배치 실행 실패 (detail에 실행 ID와 배치 상태)",
+                    responseCode = "500", description = "배치 실행 실패 (실행 ID와 배치 상태는 서버 로그에 남음)",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })

@@ -332,8 +332,8 @@ public class PayoutService {
      * @param memberId 요청한 회원 ID. 판매자면 이 정산의 수취인이 본인인지 확인하는 데 씀
      * @param role     요청한 사람의 역할 문자열 (해석 규칙은 {@link PayoutRequesterRole#from})
      * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND},
-     *                          판매자가 남의 정산이나 시스템 몫을 조회하거나 관리자·판매자가 아니면 {@code PAYOUT_ACCESS_DENIED},
-     *                          정산의 스냅샷이 없으면(데이터 손상) {@code PAYOUT_SNAPSHOT_NOT_FOUND}
+     *                          판매자가 남의 정산이나 시스템 몫을 조회하거나 관리자·판매자가 아니면 {@code PAYOUT_ACCESS_DENIED}
+     * @throws IllegalStateException 정산의 스냅샷이 없으면 (외래키라 정상이면 생길 수 없는 데이터 손상)
      */
     @Transactional(readOnly = true)
     public PayoutDetailResult getDetail(Long memberId, String role, Long payoutId) {
@@ -341,9 +341,10 @@ public class PayoutService {
                 .orElseThrow(() -> new RestApiException(PayoutErrorCode.PAYOUT_NOT_FOUND));
         checkPayoutAccess(memberId, role, payout);
 
+        // 정산의 snapshot_id는 외래키(fk_payout_snapshot_id)라 정상이면 스냅샷이 없을 수 없음
+        // 데이터 손상은 사용자가 고칠 수 없는 시스템 오류라 표준 예외로 던져 500·ERROR 로그로 드러나게 함 (exception.md: 값의 출처 기준)
         PayoutSnapshot snapshot = payoutSnapshotRepository.findById(payout.getSnapshotId())
-                .orElseThrow(() -> new RestApiException(PayoutErrorCode.PAYOUT_SNAPSHOT_NOT_FOUND,
-                        "정산의 스냅샷을 찾을 수 없습니다. (payoutId: " + payoutId + ")"));
+                .orElseThrow(() -> new IllegalStateException("정산의 스냅샷이 없습니다. payoutId=" + payoutId));
         long itemCount = payoutQueryRepository.countItemsByPayoutId(payoutId);
 
         // 판매자 정산이면 이 판매자의 수수료를 함께 조회 (수수료는 판매자 정산이 아니라 같은 스냅샷의 시스템 몫 정산에 있음)

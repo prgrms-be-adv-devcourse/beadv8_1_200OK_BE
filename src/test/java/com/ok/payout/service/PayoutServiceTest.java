@@ -439,15 +439,15 @@ class PayoutServiceTest {
     }
 
     @Test
-    void 정산의_스냅샷이_없으면_스냅샷_없음으로_실패한다() {
+    void 정산의_스냅샷이_없으면_데이터_손상으로_보고_표준_예외를_던진다() {
         // given: 외래키 때문에 정상이면 생길 수 없는 데이터 손상 상황
         given(payoutRepository.findById(12L)).willReturn(Optional.of(sellerPayout(12L, 7L, 13_000L)));
         given(payoutSnapshotRepository.findById(SNAPSHOT_ID)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> sut.getDetail(1L, "ADMIN", 12L))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_SNAPSHOT_NOT_FOUND));
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("정산의 스냅샷이 없습니다. payoutId=12");
     }
 
     @Test
