@@ -129,6 +129,34 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 만료된_토큰을_보내도_회원가입_요청은_토큰을_무시하고_처리한다() throws Exception {
+        // given
+        // 형식은 맞지만 검증에 실패하는 본문을 보내, 토큰 검증(401 token-expired)이 아니라 요청 값 검증(422)까지 갔는지 확인한다.
+        // 회원을 실제로 만들지 않아 다른 테스트에 데이터를 남기지 않는다.
+        String body = """
+            {
+              "loginId": "",
+              "password": "",
+              "email": "",
+              "name": "",
+              "nickname": "",
+              "termsAgreed": false,
+              "privacyAgreed": false
+            }
+            """;
+
+        // when
+        ResultActions result = mockMvc.perform(post("/api/v1/members/signup")
+                .header(HttpHeaders.AUTHORIZATION, tokens.expiredBearer(MEMBER_ID, "BUYER"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
+
+        // then
+        result.andExpect(status().is(422))
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+    }
+
+    @Test
     void 역할이_맞으면_역할_제한_API를_호출할_수_있다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/test/security/seller-only")

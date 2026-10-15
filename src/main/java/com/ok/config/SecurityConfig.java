@@ -67,6 +67,9 @@ public class SecurityConfig {
      * <p>토큰이 있으면 공개 API여도 검증하므로, 만료된 토큰을 들고 다시 로그인하려는 요청이 401로 막힐 수 있다.
      * 로그인·회원가입은 토큰으로 얻을 정보가 없으니 토큰을 읽지 않아, 오래된 토큰이 재로그인을 막지 않게 한다.
      * 토큰 재발급 API가 생기면 같은 이유로 이 목록에 추가한다.
+     *
+     * <p>컨트롤러 경로와 문자열로 연결되어 있어, 경로가 바뀌면 여기만 어긋날 수 있다.
+     * {@code SecurityIntegrationTest}의 "만료 토큰으로 로그인·회원가입" 테스트가 이 어긋남을 잡는다.
      */
     private BearerTokenResolver bearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
