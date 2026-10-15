@@ -19,9 +19,10 @@ public class BuyerWalletService {
     private final BuyerWalletLedgerRepository buyerWalletLedgerRepository;
 
     /**
-     * 구매자 지갑을 잠금 조회로 반환한다. 지갑이 없으면 생성한 뒤 반환한다.
+     * 구매자 지갑을 잠금 조회로 반환한다. 지갑이 없다면 생성한 뒤 반환한다.
      * 존재 확인은 일반 조회로 하고, 없으면 저장한 뒤 잠금 조회로 반환한다.
-     * 반환된 지갑은 호출한 트랜잭션이 끝날 때까지 잠겨 있으므로, 잔액을 바꾸지 않는 호출에는 쓰지 않는다.
+     * 반환된 지갑은 호출한 트랜잭션이 끝날 때까지 잠겨 있으므로 잔액 조회처럼 읽기만 하는 곳에는 쓰지 않는다.
+     * 회원가입 리스너처럼 지갑이 있는지만 보장하면 되는 짧은 트랜잭션에서는, 생성 경로를 하나로 두기 위해 이 메서드를 쓴다.
      */
     @Transactional
     public BuyerWallet getOrCreate(Long memberId) {
