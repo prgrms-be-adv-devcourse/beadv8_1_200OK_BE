@@ -11,6 +11,12 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.AuthenticationTrustResolver;
+import org.springframework.security.authentication.AuthenticationTrustResolverImpl;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.ObjectError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -27,6 +33,9 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
 
     private static final String BLANK_TYPE = "about:blank";
     private static final String ERRORS_PROPERTY = "errors";
+    private static final String BEARER = "Bearer";
+
+    private final AuthenticationTrustResolver trustResolver = new AuthenticationTrustResolverImpl();
 
     private final String typePrefix;
 
@@ -38,6 +47,29 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
     public ResponseEntity<ProblemDetail> handleRestApiException(RestApiException ex) {
         ErrorCode errorCode = ex.getErrorCode();
         return ResponseEntity.status(errorCode.status()).body(toProblemDetail(errorCode, ex.getMessage()));
+    }
+
+    /**
+     * 인증 실패(토큰 없음, 만료·위조 토큰)를 401로 응답한다.
+     * 보안 필터에서 난 예외도 {@code ProblemDetailAuthenticationEntryPoint}가 이 핸들러로 넘겨, 응답 형식이 같다.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
+        return unauthorized();
+    }
+
+    /**
+     * 인가 실패를 403으로 응답한다.
+     * 단, 로그인하지 않은 요청이 {@code @PreAuthorize}에 걸려도 이 예외가 나므로, 그때는 권한 부족이 아니라 인증 필요(401)로 응답한다.
+     * 이 핸들러가 없으면 아래 {@link #handleUnexpectedException}이 잡아 500이 된다.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ProblemDetail> handleAccessDeniedException(AccessDeniedException ex) {
+        if (isAnonymous()) {
+            return unauthorized();
+        }
+        ErrorCode errorCode = CommonErrorCode.FORBIDDEN;
+        return ResponseEntity.status(errorCode.status()).body(toProblemDetail(errorCode, errorCode.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
@@ -80,6 +112,19 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
             applyType(problemDetail, CommonErrorCode.BAD_REQUEST);
         }
         return response;
+    }
+
+    private ResponseEntity<ProblemDetail> unauthorized() {
+        ErrorCode errorCode = CommonErrorCode.UNAUTHORIZED;
+        // RFC 6750: 401 응답에는 어떤 인증 방식이 필요한지 WWW-Authenticate 헤더로 알린다
+        return ResponseEntity.status(errorCode.status())
+                .header(HttpHeaders.WWW_AUTHENTICATE, BEARER)
+                .body(toProblemDetail(errorCode, errorCode.getMessage()));
+    }
+
+    private boolean isAnonymous() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication == null || trustResolver.isAnonymous(authentication);
     }
 
     private ResponseEntity<Object> toResponse(ErrorCode errorCode) {
