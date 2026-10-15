@@ -10,20 +10,24 @@ paths:
 
 ## 예외 종류
 
-- 클라이언트에 오류 응답으로 나가는 경우(사용자 입력 오류, 도메인 규칙 위반)는 `RestApiException`에 모듈의 `ErrorCode`를 담아 던진다.
-- 응답이 없는 곳(이벤트 리스너, 배치)에서도 도메인 규칙이나 모듈 간 계약을 어기면 `RestApiException`을 쓴다.
-- 호출한 코드의 실수(필수 인자에 `null`을 넘김 등)는 표준 예외(`IllegalArgumentException` 등)를 던진다.
+- 예외 종류는 호출 경로(HTTP, 이벤트, 배치)가 아니라 **값의 출처**로 정한다. 같은 값의 검사는 어느 경로로 들어와도 같은 예외를 던진다.
+- 사용자 입력이 닿을 수 있는 값의 오류(입력값 오류, 도메인 규칙 위반, 상태 충돌)는 `RestApiException`에 모듈의 `ErrorCode`를 담아 던진다.
+- 다른 모듈이나 시스템이 계산해서 넘긴 값의 오류는 호출한 코드의 버그로 보고 표준 예외(`IllegalArgumentException`, `IllegalStateException`)를 던진다. 이벤트 리스너나 배치가 받은 값도 같다.
+- 정산 모듈의 이벤트·배치 경로는 아직 `PayoutErrorCode`를 쓴다(#117에서 협의). 기존 코드를 임의로 바꾸지 않는다.
 
-**이유**: 응답으로 나가는 오류는 에러 코드로 유형을 구분해야 클라이언트가 분기할 수 있다. 이벤트로 받은 값이 계약과 다른 것도 모듈 간 계약 위반이라 유형을 구분해 둔다. 호출한 코드의 실수는 사용자에게 보일 오류가 아니라 개발 중 고칠 버그이고, 처리되지 않은 예외로 500이 된다.
+**이유**: 사용자가 고칠 수 있는 오류는 에러 코드로 유형을 구분해야 클라이언트가 분기할 수 있다. 시스템이 만든 값이 잘못된 것은 사용자가 고칠 수 없는 버그라 500으로 드러나야 모니터링에서 장애로 잡힌다. 호출 경로로 정하면 같은 검사가 호출하는 곳마다 달라져 기준이 흔들린다.
 
 ```java
 // O
-throw new RestApiException(OrderErrorCode.INVALID_QUANTITY);
-throw new RestApiException(PayoutErrorCode.MISSING_ORDER_ITEM_ID);   // 이벤트 계약 위반
-throw new IllegalArgumentException("memberId는 필수입니다.");          // 호출한 코드의 실수
+throw new RestApiException(OrderErrorCode.INVALID_QUANTITY);              // 사용자 입력 오류
+throw new IllegalArgumentException("orderItemId는 필수입니다.");             // 이벤트로 받은 값의 오류
+throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");      // 시스템이 계산한 값의 오류
 
 // X: 사용자 입력 오류에 표준 예외 (유형 구분 불가, 500이 된다)
 throw new IllegalArgumentException("수량은 1개 이상이어야 합니다.");
+
+// X: 시스템이 계산한 값에 4xx 에러 코드 (버그가 사용자 입력 오류로 기록된다)
+throw new RestApiException(DeliveryErrorCode.INVALID_SHIPPING_FEE);
 ```
 
 ## 에러 코드
