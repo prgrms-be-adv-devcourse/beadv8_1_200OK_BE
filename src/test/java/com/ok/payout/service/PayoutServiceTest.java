@@ -201,6 +201,27 @@ class PayoutServiceTest {
                         tuple(20L, 19_400L));
     }
 
+    @Test
+    void 금액이_0원_이하인_판매자_정산은_지갑_이벤트를_발행하지_않는다() {
+        // given: 판매자 10은 9,700원, 판매자 20은 0원(0원 상품만 판매), 판매자 30은 -2,000원(차감 조정만 남음)
+        Payout seller10 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L))));
+        Payout zeroSeller20 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 0L), 4L))));
+        Payout negativeSeller30 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 30L,
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(3001L, 30L, -2_000L), 7L))));
+        given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID))
+                .willReturn(List.of(seller10, zeroSeller20, negativeSeller30));
+
+        // when
+        int published = sut.publish(SNAPSHOT_ID);
+
+        // then
+        assertThat(published).isEqualTo(1);
+        then(eventPublisher).should().publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().payeeId()).isEqualTo(10L);
+    }
+
     // ---------- settlementTo / settlementFrom ----------
 
     @Test

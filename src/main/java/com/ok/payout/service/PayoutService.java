@@ -165,7 +165,7 @@ public class PayoutService {
         log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건)", snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1);
     }
 
-    // 이번 스냅샷에서 확정된 판매자 몫 정산만 지갑 이벤트로 발행하고, 발행 건수를 반환
+    // 이번 스냅샷에서 확정된 판매자 몫 정산만 지갑 이벤트로 발행하고(0원 이하 제외), 발행 건수를 반환
     // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
     // 수신은 커밋 후 → 이 트랜잭션이 롤백되면 전달 안 됨. 같은 정산이 두 번 전달돼도 지갑은 payoutId로 중복 반영을 막음
     //
@@ -184,19 +184,29 @@ public class PayoutService {
     @Transactional
     public int publish(Long snapshotId) {
         List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
+        int published = 0;
         for (Payout payout : payouts) {
+            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
+            //   0원: 지갑에 반영할 금액이 없음
+            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
+            // 정산(payout) 자체는 장부 기록으로 그대로 남김
+            if (payout.getAmount() <= 0) {
+                continue;
+            }
             eventPublisher.publishEvent(new SellerPayoutCreatedEvent(
                     payout.getId(),
                     payout.getPayeeId(),
                     payout.getAmount(),
                     payout.getCreatedAt()
             ));
+            published++;
         }
 
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 지갑으로 돈이 넘어가기 시작하는 시점이라 INFO로 남김. 발행 누락을 추적할 때 이 로그가 없는 snapshotId를 찾으면 됨
-        log.info("정산 지갑 이벤트 발행. snapshotId={}, 발행 건수={}", snapshotId, payouts.size());
-        return payouts.size();
+        log.info("정산 지갑 이벤트 발행. snapshotId={}, 발행 건수={}, 0원 이하라 제외한 건수={}",
+                snapshotId, published, payouts.size() - published);
+        return published;
     }
 
     // 스냅샷 목록과 draft 결과를 비교해, 어긋나면 예외로 Job을 멈춤 (payout 확정·이벤트 발행으로 넘어가지 않음)
