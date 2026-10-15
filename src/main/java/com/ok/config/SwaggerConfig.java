@@ -1,8 +1,10 @@
 package com.ok.config;
 
+import com.ok.common.security.CurrentMemberId;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springdoc.core.utils.SpringDocUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -13,6 +15,12 @@ import io.swagger.v3.oas.models.info.Info;
 public class SwaggerConfig {
 
     private static final String BEARER_AUTH = "bearerAuth";
+
+    static {
+        // @CurrentMemberId 파라미터는 토큰에서 채우므로 Swagger의 요청 파라미터로 노출하지 않는다.
+        // 이 설정이 없으면 회원 id가 쿼리 파라미터 입력란으로 보여 직접 넣어야 하는 값처럼 오해된다.
+        SpringDocUtils.getConfig().addAnnotationsToIgnore(CurrentMemberId.class);
+    }
 
     @Bean
     public OpenAPI openAPI() {
