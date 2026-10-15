@@ -1,5 +1,6 @@
 package com.ok.order.cart.controller;
 
+import com.ok.common.security.CurrentMemberId;
 import com.ok.order.cart.controller.dto.*;
 import com.ok.order.cart.service.CartService;
 import jakarta.validation.Valid;
@@ -11,17 +12,16 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/cart")
 @RequiredArgsConstructor
-public class ApiV1CartController implements CartControllerDocs{
+public class ApiV1CartController implements CartControllerDocs {
 
     private final CartService cartService;
 
     @Override
     @PostMapping("/items")
     public ResponseEntity<AddCartItemResponse> addItem(
-            @RequestHeader("X-Member-Id") Long memberId, // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId,
             @Valid @RequestBody AddCartItemRequest request
     ) {
-
         Long cartItemId = cartService.addItem(memberId, request.productOptionId(), request.quantity());
         return ResponseEntity.status(HttpStatus.CREATED).body(new AddCartItemResponse(cartItemId));
     }
@@ -29,7 +29,7 @@ public class ApiV1CartController implements CartControllerDocs{
     @Override
     @GetMapping
     public ResponseEntity<CartResponse> getMyCart(
-            @RequestHeader("X-Member-Id") Long memberId // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId
     ) {
         return ResponseEntity.ok(cartService.getMyCart(memberId));
     }
@@ -37,7 +37,7 @@ public class ApiV1CartController implements CartControllerDocs{
     @Override
     @PatchMapping("/items/{cartItemId}")
     public ResponseEntity<Void> changeQuantity(
-            @RequestHeader("X-Member-Id") Long memberId, // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId,
             @PathVariable Long cartItemId,
             @Valid @RequestBody UpdateCartItemQuantityRequest request
     ) {
@@ -48,7 +48,7 @@ public class ApiV1CartController implements CartControllerDocs{
     @Override
     @PatchMapping("/items/{cartItemId}/selection")
     public ResponseEntity<Void> changeSelected(
-            @RequestHeader("X-Member-Id") Long memberId, // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId,
             @PathVariable Long cartItemId,
             @Valid @RequestBody UpdateCartItemSelectionRequest request
     ) {
@@ -59,7 +59,7 @@ public class ApiV1CartController implements CartControllerDocs{
     @Override
     @PatchMapping("/items/selection")
     public ResponseEntity<Void> changeAllSelected(
-            @RequestHeader("X-Member-Id") Long memberId, // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId,
             @Valid @RequestBody UpdateCartItemSelectionRequest request
     ) {
         cartService.changeAllSelected(memberId, request.selected());
@@ -69,7 +69,7 @@ public class ApiV1CartController implements CartControllerDocs{
     @Override
     @DeleteMapping("/items/{cartItemId}")
     public ResponseEntity<Void> deleteItem(
-            @RequestHeader("X-Member-Id") Long memberId, // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId,
             @PathVariable Long cartItemId
     ) {
         cartService.deleteItem(memberId, cartItemId);
@@ -79,7 +79,7 @@ public class ApiV1CartController implements CartControllerDocs{
     @Override
     @DeleteMapping("/items/selected")
     public ResponseEntity<Void> deleteSelectedItems(
-            @RequestHeader("X-Member-Id") Long memberId // TODO 인증 적용 후 로그인 회원으로 교체
+            @CurrentMemberId Long memberId
     ) {
         cartService.deleteSelectedItems(memberId);
         return ResponseEntity.noContent().build();
