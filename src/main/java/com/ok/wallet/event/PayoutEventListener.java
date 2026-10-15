@@ -28,7 +28,10 @@ public class PayoutEventListener {
         // 확인은 트랜잭션이 걸린 서비스를 부르기 전에 끝낸다. 서비스 안에서 예외가 나면 트랜잭션이 롤백 전용이 되어 정상 종료할 수 없다.
         Optional<String> invalidReason = findInvalidReason(event);
         if (invalidReason.isPresent()) {
-            log.error("처리할 수 없는 정산 이벤트라 입금하지 않습니다. reason={}, event={}", invalidReason.get(), event);
+            // TODO: 처리 불가 이벤트의 공통 기록·알림 방식이 정해지면 이 로그를 교체한다.
+            // 건너뛴 정산은 정산 테이블에는 있고 판매자 지갑 원장에는 없으므로, 이 로그로 찾아 원인을 고친 뒤 수동으로 입금한다.
+            log.error("[PAYOUT_DEPOSIT_SKIPPED] 처리할 수 없는 정산 이벤트라 입금하지 않습니다. reason={}, event={}",
+                    invalidReason.get(), event);
             return;
         }
         // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 재처리 대상으로 남긴다.
