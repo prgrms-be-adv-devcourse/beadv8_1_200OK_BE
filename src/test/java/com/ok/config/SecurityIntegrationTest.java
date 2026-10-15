@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -18,9 +19,11 @@ import org.springframework.web.context.WebApplicationContext;
 
 import java.util.Map;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -83,25 +86,46 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 만료된_토큰이면_401을_반환한다() throws Exception {
+    void 만료된_토큰이면_재발급할_수_있도록_token_expired로_구분해_401을_반환한다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/test/security/me")
                 .header(HttpHeaders.AUTHORIZATION, tokens.expiredBearer(MEMBER_ID, "BUYER")));
 
         // then
         result.andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.type", endsWith("/unauthorized")));
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, containsString("error_description")))
+                .andExpect(jsonPath("$.type", endsWith("/token-expired")));
     }
 
     @Test
-    void 형식이_잘못된_토큰이면_401을_반환한다() throws Exception {
+    void 형식이_잘못된_토큰이면_invalid_token으로_구분해_401을_반환한다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/test/security/me")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer invalid.token.value"));
 
         // then
         result.andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.type", endsWith("/unauthorized")));
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, containsString("error=\"invalid_token\"")))
+                .andExpect(jsonPath("$.type", endsWith("/invalid-token")));
+    }
+
+    @Test
+    void 만료된_토큰을_보내도_로그인_요청은_토큰을_무시하고_처리한다() throws Exception {
+        // given
+        // 존재하지 않는 회원으로 로그인해, 토큰 검증(401 token-expired)이 아니라 로그인 처리(401 invalid-credentials)까지 갔는지 확인한다
+        String body = """
+            {"loginId": "nobody01", "password": "password1!"}
+            """;
+
+        // when
+        ResultActions result = mockMvc.perform(post("/api/v1/auth/login")
+                .header(HttpHeaders.AUTHORIZATION, tokens.expiredBearer(MEMBER_ID, "BUYER"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/auth/invalid-credentials")));
     }
 
     @Test

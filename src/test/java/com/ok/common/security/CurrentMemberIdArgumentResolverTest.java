@@ -74,17 +74,17 @@ public class CurrentMemberIdArgumentResolverTest {
     }
 
     @ParameterizedTest
-    @MethodSource("지원하지_않는_파라미터")
-    void 어노테이션이_없거나_Long이_아니면_처리하지_않는다(String methodName) throws Exception {
+    @MethodSource("지원하는_파라미터")
+    void 어노테이션이_붙은_Long과_long_파라미터는_처리한다(String methodName) throws Exception {
         // when
         boolean sut = resolver.supportsParameter(parameter(methodName));
 
         // then
-        assertThat(sut).isFalse();
+        assertThat(sut).isTrue();
     }
 
-    static Stream<String> 지원하지_않는_파라미터() {
-        return Stream.of("notAnnotated", "annotatedString");
+    static Stream<String> 지원하는_파라미터() {
+        return Stream.of("annotatedLong", "annotatedPrimitiveLong");
     }
 
     @Test
@@ -111,8 +111,12 @@ public class CurrentMemberIdArgumentResolverTest {
     }
 
     private MethodParameter parameter(String methodName) throws NoSuchMethodException {
-        Method method = SampleController.class.getDeclaredMethod(methodName,
-                methodName.equals("annotatedString") ? String.class : Long.class);
+        Class<?> parameterType = switch (methodName) {
+            case "annotatedString" -> String.class;
+            case "annotatedPrimitiveLong" -> long.class;
+            default -> Long.class;
+        };
+        Method method = SampleController.class.getDeclaredMethod(methodName, parameterType);
         return new MethodParameter(method, 0);
     }
 
@@ -126,6 +130,9 @@ public class CurrentMemberIdArgumentResolverTest {
         }
 
         void annotatedString(@CurrentMemberId String memberId) {
+        }
+
+        void annotatedPrimitiveLong(@CurrentMemberId long memberId) {
         }
 
     }

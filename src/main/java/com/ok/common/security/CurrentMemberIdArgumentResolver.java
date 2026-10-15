@@ -22,8 +22,9 @@ public class CurrentMemberIdArgumentResolver implements HandlerMethodArgumentRes
 
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
+        Class<?> type = parameter.getParameterType();
         return parameter.hasParameterAnnotation(CurrentMemberId.class)
-                && Long.class.equals(parameter.getParameterType());
+                && (Long.class.equals(type) || long.class.equals(type));
     }
 
     @Override

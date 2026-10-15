@@ -3,6 +3,7 @@ package com.ok.common.exception;
 import java.net.URI;
 import java.util.List;
 
+import com.ok.common.security.TokenValidationErrors;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -14,9 +15,12 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationTrustResolver;
 import org.springframework.security.authentication.AuthenticationTrustResolverImpl;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.jwt.JwtValidationException;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.ObjectError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -33,7 +37,11 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
 
     private static final String BLANK_TYPE = "about:blank";
     private static final String ERRORS_PROPERTY = "errors";
+    // RFC 6750: 401 응답의 WWW-Authenticate 헤더로 인증 방식과 실패 원인을 알린다. 헤더 값은 ASCII여야 한다.
     private static final String BEARER = "Bearer";
+    private static final String BEARER_INVALID_TOKEN = "Bearer error=\"invalid_token\"";
+    private static final String BEARER_TOKEN_EXPIRED =
+            "Bearer error=\"invalid_token\", error_description=\"The access token expired\"";
 
     private final AuthenticationTrustResolver trustResolver = new AuthenticationTrustResolverImpl();
 
@@ -50,11 +58,23 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
     }
 
     /**
-     * 인증 실패(토큰 없음, 만료·위조 토큰)를 401로 응답한다.
+     * 인증 실패를 401로 응답한다. 클라이언트가 다음 행동을 정할 수 있도록 원인을 구분한다.
+     * <ul>
+     *   <li>{@code token-expired}: 토큰 만료 → 토큰 재발급</li>
+     *   <li>{@code invalid-token}: 위조·형식 오류 → 토큰을 버리고 재로그인</li>
+     *   <li>{@code unauthorized}: 토큰 없음 → 로그인</li>
+     * </ul>
      * 보안 필터에서 난 예외도 {@code ProblemDetailAuthenticationEntryPoint}가 이 핸들러로 넘겨, 응답 형식이 같다.
      */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
+        if (isExpiredToken(ex)) {
+            return unauthorized(CommonErrorCode.TOKEN_EXPIRED, BEARER_TOKEN_EXPIRED);
+        }
+        // 토큰을 보냈지만 검증에 실패한 경우 (서명 불일치, 형식 오류, 발급자 불일치, 잘못된 회원 식별자)
+        if (ex instanceof OAuth2AuthenticationException || ex instanceof BadCredentialsException) {
+            return unauthorized(CommonErrorCode.INVALID_TOKEN, BEARER_INVALID_TOKEN);
+        }
         return unauthorized();
     }
 
@@ -115,11 +135,26 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
     }
 
     private ResponseEntity<ProblemDetail> unauthorized() {
-        ErrorCode errorCode = CommonErrorCode.UNAUTHORIZED;
-        // RFC 6750: 401 응답에는 어떤 인증 방식이 필요한지 WWW-Authenticate 헤더로 알린다
+        return unauthorized(CommonErrorCode.UNAUTHORIZED, BEARER);
+    }
+
+    private ResponseEntity<ProblemDetail> unauthorized(ErrorCode errorCode, String wwwAuthenticate) {
         return ResponseEntity.status(errorCode.status())
-                .header(HttpHeaders.WWW_AUTHENTICATE, BEARER)
+                .header(HttpHeaders.WWW_AUTHENTICATE, wwwAuthenticate)
                 .body(toProblemDetail(errorCode, errorCode.getMessage()));
+    }
+
+    /**
+     * 토큰 검증 단계에서 만료 오류 코드를 남겼는지 확인한다. 검증 예외는 인증 예외의 원인(cause)으로 감싸져 전달된다.
+     */
+    private boolean isExpiredToken(Throwable ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof JwtValidationException validationException) {
+                return validationException.getErrors().stream()
+                        .anyMatch(error -> TokenValidationErrors.EXPIRED.equals(error.getErrorCode()));
+            }
+        }
+        return false;
     }
 
     private boolean isAnonymous() {

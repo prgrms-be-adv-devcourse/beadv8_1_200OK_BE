@@ -82,6 +82,8 @@ public class JwtConfig {
 
         // JwtValidators.createDefaultWithIssuer()는 허용 오차 60초가 고정이라, 검증기를 직접 조합한다.
         OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
+                // 만료를 위조·형식 오류와 구분할 수 있도록 별도 오류 코드를 남긴다 (오류 응답에서 token-expired로 구분)
+                new ExpiredTokenValidator(),
                 new JwtTimestampValidator(CLOCK_SKEW),
                 new JwtIssuerValidator(properties.issuer())
         );

@@ -15,7 +15,8 @@ import java.lang.annotation.Target;
  * public ResponseEntity&lt;CartResponse&gt; getMyCart(&#64;CurrentMemberId Long memberId) { ... }
  * </pre>
  *
- * <p>토큰이 없는 요청이면 401로 응답한다. 파라미터 타입은 {@link Long}이어야 한다.
+ * <p>토큰이 없는 요청이면 401로 응답한다. 파라미터 타입은 {@code Long} 또는 {@code long}이어야 하며,
+ * 그 밖의 타입에 붙이면 리졸버가 처리하지 않는다.
  */
 @Documented
 @Target(ElementType.PARAMETER)

@@ -187,13 +187,14 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | 슬러그 | 상태 | 발생 상황 |
 |---|---|---|
 | `validation-failed` | 422 | `@Valid` 검증 실패 (`errors` 포함) |
+| `unauthorized` | 401 | 토큰 없음 → 로그인 (`WWW-Authenticate: Bearer`) |
+| `token-expired` | 401 | 토큰 만료 → 토큰 재발급 (`WWW-Authenticate: Bearer error="invalid_token", error_description=...`) |
+| `invalid-token` | 401 | 위조·형식 오류 토큰 → 토큰을 버리고 재로그인 (`WWW-Authenticate: Bearer error="invalid_token"`) |
+| `forbidden` | 403 | 로그인했지만 역할이 맞지 않음 (`@PreAuthorize` 등) |
 | `invalid-json` | 400 | 요청 본문을 읽을 수 없음 (깨진 JSON 등) |
 | `invalid-query-parameter` | 400 | 파라미터 타입 불일치 |
 | `bad-request` | 400 | 그 밖의 잘못된 요청 (필수 파라미터 누락 등) |
 | `internal-error` | 500 | 처리되지 않은 예외 |
-| `unauthorized` | 401 | 토큰이 없거나 만료·위조된 토큰 (`WWW-Authenticate: Bearer` 헤더 포함) |
-| `forbidden` | 403 | 로그인했지만 역할이 맞지 않음 (`@PreAuthorize` 등) |
-
 404, 405, 406, 415 같은 그 밖의 Spring MVC 표준 예외는 Spring 기본 `ProblemDetail`로 응답합니다. 이 경우 `type`은 `about:blank`, `title`은 상태 코드 이름이고
 `PROBLEM_BASE_URI`는 적용되지 않습니다. 구분이 필요해지면 `CommonErrorCode`에 유형을 추가하세요.
 
