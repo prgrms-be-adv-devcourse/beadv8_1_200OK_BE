@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOption;
@@ -59,7 +60,8 @@ class ProductServiceTest {
 	void setUp() {
 		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
-			productQueryRepository, new ProductDescriptionSanitizer(imageUrlValidator));
+			productQueryRepository, new ProductDescriptionSanitizer(imageUrlValidator),
+			new MediaUrlResolver("bucket", "ap-northeast-2"));
 	}
 
 	@Test
@@ -125,7 +127,7 @@ class ProductServiceTest {
 
 		assertThat(product.getName()).isEqualTo("수정한 이름");
 		assertThat(product.getDescriptionHtml()).isEqualTo("<p>수정</p>");
-		assertThat(product.getThumbnailUrl()).isEqualTo(BUCKET_URL + "b.jpg");
+		assertThat(product.getThumbnailKey()).isEqualTo("product/b.jpg");
 		assertThat(product.activeOptions()).extracting(ProductOption::getName).containsExactly("3kg 특품", "5kg");
 		assertThat(product.getMinSalePrice()).isEqualTo(30_000L);
 		// 새 옵션은 INSERT로 재고가 들어가므로 재고 변경 쿼리는 기존 옵션 1번만

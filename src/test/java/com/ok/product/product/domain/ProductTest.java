@@ -15,7 +15,7 @@ import com.ok.product.product.exception.ProductErrorCode;
 class ProductTest {
 
 	private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 13, 12, 0);
-	private static final List<String> IMAGES = List.of("https://bucket/product/a.jpg", "https://bucket/product/b.jpg");
+	private static final List<String> IMAGES = List.of("product/a.jpg", "product/b.jpg");
 
 	@Test
 	void 상품을_만들면_판매_준비_숨김_상태로_시작한다() {
@@ -23,7 +23,7 @@ class ProductTest {
 
 		assertThat(product.getStatus()).isEqualTo(ProductStatus.READY);
 		assertThat(product.getVisibility()).isEqualTo(ProductVisibility.HIDDEN);
-		assertThat(product.getThumbnailUrl()).isEqualTo(IMAGES.get(0));
+		assertThat(product.getThumbnailKey()).isEqualTo(IMAGES.get(0));
 		assertThat(product.getImages()).hasSize(2);
 		assertThat(product.getOptions()).allSatisfy(option -> assertThat(option.getProduct()).isSameAs(product));
 	}
@@ -143,12 +143,22 @@ class ProductTest {
 	void 이미지를_교체하면_순서대로_다시_저장되고_대표_이미지가_바뀐다() {
 		Product product = create(List.of(ProductOptionSpec.newOption("3kg", null, 30_000L, 10)));
 
-		product.replaceImages(List.of("https://bucket/product/c.jpg", "https://bucket/product/a.jpg"));
+		product.replaceImages(List.of("product/c.jpg", "product/a.jpg"));
 
-		assertThat(product.getImages()).extracting(ProductImage::getUrl)
-			.containsExactly("https://bucket/product/c.jpg", "https://bucket/product/a.jpg");
+		assertThat(product.getImages()).extracting(ProductImage::getObjectKey)
+			.containsExactly("product/c.jpg", "product/a.jpg");
 		assertThat(product.getImages()).extracting(ProductImage::getSortOrder).containsExactly(0, 1);
-		assertThat(product.getThumbnailUrl()).isEqualTo("https://bucket/product/c.jpg");
+		assertThat(product.getThumbnailKey()).isEqualTo("product/c.jpg");
+	}
+
+	@Test
+	void 이미지_키는_대표_이미지부터_표시_순서대로_돌려준다() {
+		Product product = create(List.of(ProductOptionSpec.newOption("3kg", null, 30_000L, 10)));
+		product.replaceImages(List.of("product/c.jpg", "product/a.jpg", "product/b.jpg"));
+
+		List<String> sut = product.imageKeys();
+
+		assertThat(sut).containsExactly("product/c.jpg", "product/a.jpg", "product/b.jpg");
 	}
 
 	@Test

@@ -2,12 +2,10 @@ package com.ok.product.product.service.dto;
 
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
-import com.ok.product.product.domain.ProductImage;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 
 import java.time.LocalDateTime;
-import java.util.Comparator;
 import java.util.List;
 
 public record ProductDetailResult(
@@ -29,11 +27,8 @@ public record ProductDetailResult(
 	LocalDateTime updatedAt
 ) {
 
-	public static ProductDetailResult from(Product product) {
-		List<String> imageUrls = product.getImages().stream()
-			.sorted(Comparator.comparingInt(ProductImage::getSortOrder))
-			.map(ProductImage::getUrl)
-			.toList();
+	// 엔티티에는 objectKey만 있어서 URL은 서비스가 media 모듈로 만들어 넘긴다
+	public static ProductDetailResult from(Product product, List<String> imageUrls) {
 		List<ProductOptionResult> options = product.activeOptions().stream()
 			.map(ProductOptionResult::from)
 			.toList();
