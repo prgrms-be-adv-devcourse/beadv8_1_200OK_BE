@@ -5,6 +5,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.PayoutRequesterRole;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
@@ -16,9 +17,14 @@ import com.ok.payout.repository.PayoutSellerDraftRepository;
 import com.ok.payout.repository.PayoutSnapshotItemRepository;
 import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.repository.PayoutSystemDraftItemRepository;
+import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
+import com.ok.payout.service.dto.PayoutSearchQuery;
+import com.ok.payout.service.dto.PayoutSummaryResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -228,5 +234,76 @@ public class PayoutService {
         throw new RestApiException(PayoutErrorCode.DRAFT_VERIFICATION_FAILED, String.format(
                 "정산 draft 검증 실패. snapshotId=%d, 실패 사유=%s, 누락 후보(최대 %d건)=%s",
                 snapshotId, failures, MISSING_CANDIDATE_LOG_LIMIT, missingIds));
+    }
+
+    /**
+     * 정산 1건 수동 실행을 요청한다. 지금은 막아 둔 기능이라 항상 예외를 던진다(성공하는 경우 없음).
+     * 관리자 전용 기능이라 권한부터 확인하고, 기능을 열 때는 TODO 아래의 예외만 실제 실행 로직으로 바꾼다.
+     *
+     * @param role 요청한 사람의 역할 문자열 (해석 규칙은 {@link PayoutRequesterRole#from})
+     * @throws RestApiException 관리자가 아니면 권한 없음({@code PAYOUT_ACCESS_DENIED}),
+     *                          관리자면 권한은 있지만 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
+     */
+    public void runOrderItem(String role, Long orderItemId) {
+        if (PayoutRequesterRole.from(role) != PayoutRequesterRole.ADMIN) {
+            throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
+        }
+        // TODO(논의 필요): 1건 수동 실행은 재처리 정책(이미 정산된 건 처리, 실패 건 재시도 범위)이 정해지지 않아 막아 둠
+        throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
+                "정산 1건 수동 실행은 아직 지원하지 않습니다. (orderItemId: " + orderItemId + ")");
+    }
+
+    /**
+     * 정산 수동 조정을 요청한다. 지금은 막아 둔 기능이라 항상 예외를 던진다(성공하는 경우 없음).
+     * 관리자 전용 기능이라 권한부터 확인하고, 기능을 열 때는 TODO 아래의 예외만 실제 조정 로직으로 바꾼다.
+     *
+     * @param role    요청한 사람의 역할 문자열 (해석 규칙은 {@link PayoutRequesterRole#from})
+     * @param adminId 요청한 관리자 ID. 조정 기능을 열면 정산후보의 adminId로 기록함 (#65 리뷰 후속: 요청 바디가 아닌 인증 정보에서 받음)
+     * @throws RestApiException 관리자가 아니면 권한 없음({@code PAYOUT_ACCESS_DENIED}),
+     *                          관리자면 권한은 있지만 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
+     */
+    public void createAdjustment(String role, Long adminId, PayoutAdjustmentCreateCommand command) {
+        if (PayoutRequesterRole.from(role) != PayoutRequesterRole.ADMIN) {
+            throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
+        }
+        // TODO(논의 필요): 조정 번호(adjustmentId) 발급 방식(조정 요청 테이블에서 서버 발급 vs 클라이언트 전달)이 정해지지 않아 막아 둠
+        throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
+                "정산 수동 조정은 아직 지원하지 않습니다. (orderItemId: " + command.orderItemId() + ")");
+    }
+
+    /**
+     * 정산 목록을 조회한다.
+     * 관리자는 보낸 조건을 그대로 쓰고({@code payeeId}를 생략하면 전체), 판매자는 본인 ID를 {@code payeeId}로 넣어야만 본인 정산을 조회할 수 있다.
+     *
+     * @param memberId 요청한 회원 ID. 판매자가 넣은 {@code payeeId}가 본인 것인지 확인하는 데 씀
+     * @param role     요청한 사람의 역할 문자열 (해석 규칙은 {@link PayoutRequesterRole#from})
+     * @throws RestApiException 판매자가 {@code payeeId}를 생략했거나 본인 ID가 아니거나 시스템 몫을 요청하면,
+     *                          또는 관리자·판매자가 아니면 {@code PAYOUT_ACCESS_DENIED}
+     */
+    @Transactional(readOnly = true)
+    public Page<PayoutSummaryResult> search(Long memberId, String role, PayoutSearchQuery query) {
+        checkSearchPermission(memberId, role, query);
+        return payoutQueryRepository.searchPayouts(query.payeeId(), query.system(), query.from(), query.to(),
+                        PageRequest.of(query.page(), query.size()))
+                .map(PayoutSummaryResult::from);
+    }
+
+    // 역할별 조회 권한 확인
+    // 판매자는 payeeId를 반드시 본인 ID로 넣어야 함. 생략을 본인으로 채우지 않는 이유: 클라이언트가 누구의 정산을 요청했는지 항상 드러나게 하려고
+    // 판매자 몫은 항상 system = false라서 payeeId = 본인이면 시스템 몫은 섞이지 않지만, system = true를 명시하면 남의 몫 요청으로 보고 거절
+    private void checkSearchPermission(Long memberId, String role, PayoutSearchQuery query) {
+        switch (PayoutRequesterRole.from(role)) {
+            case ADMIN -> {
+            }
+            case SELLER -> {
+                // TODO(논의 필요): 지금은 회원 ID(memberId)와 정산 수취인 ID(payeeId)가 같은 회원 번호라는 전제로 비교함
+                // 관리자·판매자 번호 체계(번호 발급 방식)가 따로 정해지면 이 비교 방식도 함께 수정해야 함
+                boolean ownPayee = memberId.equals(query.payeeId());
+                if (!ownPayee || Boolean.TRUE.equals(query.system())) {
+                    throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
+                }
+            }
+            case OTHER -> throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
+        }
     }
 }

@@ -1,16 +1,22 @@
 package com.ok.payout.repository;
 
+import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
+import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
@@ -130,6 +136,44 @@ public class PayoutQueryRepository {
                 .orderBy(payoutCandidateItem.id.asc())
                 .limit(limit)
                 .fetch();
+    }
+
+    // 정산 목록 (관리자·판매자 조회). null인 조건은 걸지 않음
+    // 정렬은 확정 시각 최신순 고정. 같은 시각에 확정된 정산이 여러 건이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    public Page<Payout> searchPayouts(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to,
+                                      Pageable pageable) {
+        BooleanBuilder condition = payoutSearchCondition(payeeId, system, from, to);
+        List<Payout> content = queryFactory
+                .selectFrom(payout)
+                .where(condition)
+                .orderBy(payout.createdAt.desc(), payout.id.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> Objects.requireNonNullElse(queryFactory
+                .select(payout.count())
+                .from(payout)
+                .where(condition)
+                .fetchOne(), 0L));
+    }
+
+    // 정산 목록 조건. 기간은 스냅샷 기간과 같은 규칙: from 포함, to 미포함
+    private BooleanBuilder payoutSearchCondition(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to) {
+        BooleanBuilder condition = new BooleanBuilder();
+        if (payeeId != null) {
+            condition.and(payout.payeeId.eq(payeeId));
+        }
+        if (system != null) {
+            condition.and(payout.system.eq(system));
+        }
+        if (from != null) {
+            condition.and(payout.createdAt.goe(from));
+        }
+        if (to != null) {
+            condition.and(payout.createdAt.lt(to));
+        }
+        return condition;
     }
 
     // 스냅샷 대상 조건: [from, to) 기간 안 + 아직 정산 안 된 후보 (from이 null이면 하한 없음)
