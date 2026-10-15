@@ -138,14 +138,22 @@ class WalletChargeService { ... }
 
 ## DTO 위치
 
-- `*Command`, `*Query`, `*Result`는 `service/dto`에 둔다.
-- 서비스는 `*Response`를 반환하지 않는다. 식별자나 도메인 값을 반환하고 컨트롤러가 `*Response`를 만든다. 반환값이 여러 개면 `*Result`를 쓴다.
+- `*Command`, `*Query`, `*Result`는 `service/dto`에 둔다. 서비스 클래스 안의 중첩 `record`로 두지 않는다.
+- 서비스는 `*Response`를 반환하지 않는다. 컨트롤러에는 식별자나 `*Result`를 반환하고, 엔티티는 반환하지 않는다. 컨트롤러가 `*Result`로 `*Response`를 만든다.
 
-**이유**: 서비스(비즈니스)는 프레젠테이션 변화에 영향받지 않아야 하므로, 서비스가 컨트롤러의 타입(`*Response`)을 알면 안 된다.
+**이유**: 서비스(비즈니스)는 프레젠테이션 변화에 영향받지 않아야 하므로, 서비스가 컨트롤러의 타입(`*Response`)을 알면 안 된다. 반대로 컨트롤러가 엔티티를 받으면 엔티티 변경이 API 응답까지 번지고, 지연 로딩 필드를 트랜잭션 밖에서 읽게 된다. `ArchitectureTest`가 검사한다.
 
 ```java
+// O
+public CartResult getMyCart(Long memberId) { ... }
+
 // X: 서비스가 응답 DTO를 반환한다
 public MediaResponse upload(MediaPurpose purpose, MultipartFile file) { ... }
+
+// X: 서비스 안의 중첩 record
+public class MediaService {
+    public record UploadResult(Long mediaId, String url) { }
+}
 ```
 
 ## 쓰기와 읽기 구분 (CQRS-lite)
