@@ -2,6 +2,9 @@ package com.ok.payout.controller;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.controller.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.controller.dto.PayoutDetailResponse;
+import com.ok.payout.controller.dto.PayoutItemResponse;
+import com.ok.payout.controller.dto.PayoutItemSearchRequest;
 import com.ok.payout.controller.dto.PayoutPageResponse;
 import com.ok.payout.controller.dto.PayoutRunResponse;
 import com.ok.payout.controller.dto.PayoutSearchRequest;
@@ -86,5 +89,30 @@ public class PayoutController {
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutService.search(memberId, memberRole, request.toQuery()).map(PayoutSummaryResponse::from)));
+    }
+
+    // 정산 상세 조회 (관리자: 모든 정산, 판매자: 본인 정산만). 판매자 정산이면 그 판매자의 수수료 합계도 함께 보여 줌
+    // 항목 목록은 /{payoutId}/items에서 따로 조회
+    @GetMapping("/{payoutId}")
+    public ResponseEntity<PayoutDetailResponse> getDetail(
+            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
+            @RequestHeader(MEMBER_ID_HEADER) Long memberId,
+            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
+            @PathVariable Long payoutId
+    ) {
+        return ResponseEntity.ok(PayoutDetailResponse.from(payoutService.getDetail(memberId, memberRole, payoutId)));
+    }
+
+    // 정산 항목 조회 (상세와 같은 권한). 항목마다 정산후보 생성 시각과, 조정 건이면 조정 정보를 함께 보여 줌
+    @GetMapping("/{payoutId}/items")
+    public ResponseEntity<PayoutPageResponse<PayoutItemResponse>> getItems(
+            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
+            @RequestHeader(MEMBER_ID_HEADER) Long memberId,
+            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
+            @PathVariable Long payoutId,
+            @Valid @ModelAttribute PayoutItemSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutService.getItems(memberId, memberRole, payoutId, request.toQuery()).map(PayoutItemResponse::from)));
     }
 }
