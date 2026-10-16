@@ -1,7 +1,7 @@
 package com.ok.member.auth.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.member.MemberRole;
+import com.ok.common.security.TokenRoles;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
@@ -22,11 +22,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -75,7 +74,7 @@ class AuthServiceTest {
 
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
-        given(accessTokenProvider.issue(MEMBER_ID, MemberRole.BUYER))
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
                 .willReturn(new AccessToken("access-token", accessExpiresAt));
         given(refreshTokenService.issue(MEMBER_ID))
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));

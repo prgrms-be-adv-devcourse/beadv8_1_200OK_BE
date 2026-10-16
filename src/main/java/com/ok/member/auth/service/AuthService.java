@@ -63,7 +63,7 @@ public class AuthService {
         Member member = authenticate(command);
         validateLoginable(member);
 
-        AccessToken accessToken = accessTokenProvider.issue(member.getId(), member.getRole());
+        AccessToken accessToken = accessTokenProvider.issue(member.getId(), TokenRoleMapper.toTokenRoles(member.getRole()));
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
 
         return new LoginResult(accessToken.value(), accessToken.expiresAt(),

@@ -28,7 +28,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-
 /**
  * 보안 필터의 토큰 검증, {@code @CurrentMemberId}, 401·403 응답 형식을 검증한다.
  * 실제 모듈 API는 아직 토큰 방식으로 전환되지 않았으므로, 테스트 전용 컨트롤러({@link SecurityTestController})로 확인한다.
@@ -185,6 +184,44 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
         // then
         result.andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.type", endsWith("/unauthorized")));
+    }
+
+    @Test
+    void 판매자이면서_구매자인_토큰은_판매자_API와_회원_API를_모두_호출할_수_있다() throws Exception {
+        // given
+        String token = tokens.bearer(MEMBER_ID, "BUYER", "SELLER");
+
+        // when
+        ResultActions sellerOnly = mockMvc.perform(get("/test/security/seller-only")
+                .header(HttpHeaders.AUTHORIZATION, token));
+        ResultActions me = mockMvc.perform(get("/test/security/me")
+                .header(HttpHeaders.AUTHORIZATION, token));
+
+        // then
+        sellerOnly.andExpect(status().isOk());
+        me.andExpect(status().isOk());
+    }
+
+    @Test
+    void 권한이_없는_토큰으로_역할_제한_API를_호출하면_403을_반환한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/seller-only")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID)));
+
+        // then
+        result.andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.type", endsWith("/forbidden")));
+    }
+
+    @Test
+    void subject가_숫자가_아닌_토큰이면_invalid_token으로_401을_반환한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/me")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearerForSubject("not-a-number", "BUYER")));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/invalid-token")));
     }
 
     @Test

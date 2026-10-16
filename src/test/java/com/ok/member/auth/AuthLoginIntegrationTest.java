@@ -95,7 +95,7 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
         assertSoftly(softly -> {
             softly.assertThat((String) JsonPath.read(body, "$.tokenType")).isEqualTo("Bearer");
             softly.assertThat(sut.getSubject()).isEqualTo(String.valueOf(member.getId()));
-            softly.assertThat(sut.getClaimAsString(TokenClaims.ROLE)).isEqualTo("BUYER");
+            softly.assertThat(sut.getClaimAsStringList(TokenClaims.ROLES)).containsExactly("BUYER");
             softly.assertThat((String) JsonPath.read(body, "$.accessTokenExpiresAt")).isNotBlank();
             softly.assertThat((String) JsonPath.read(body, "$.refreshTokenExpiresAt")).isNotBlank();
             softly.assertThat(refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken)))
