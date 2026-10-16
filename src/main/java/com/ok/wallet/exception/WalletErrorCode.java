@@ -15,6 +15,7 @@ public enum WalletErrorCode implements ErrorCode {
     TERMS_AGREEMENT_REQUIRED(HttpStatus.CONFLICT, "Terms agreement required", "충전 전 필수 약관 동의가 필요합니다."),
     INVALID_TERMS_TYPE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid terms type", "알 수 없는 약관 유형입니다."),
     INVALID_CHARGE_AMOUNT(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid charge amount", "충전 금액은 10,000원 이상, 10,000원 단위여야 합니다."),
+    BALANCE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "Balance limit exceeded", "충전 후 잔액은 500,000원을 넘을 수 없습니다."),
     ;
 
     private final HttpStatus httpStatus;

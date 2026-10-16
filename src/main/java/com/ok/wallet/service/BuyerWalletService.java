@@ -57,4 +57,15 @@ public class BuyerWalletService {
         BuyerWalletLedger ledger = wallet.charge(amount, referenceKey);
         buyerWalletLedgerRepository.save(ledger);
     }
+
+    /**
+     * 현재 잔액을 잠그지 않고 조회한다. 지갑이 아직 없으면 0으로 본다.
+     * 잔액을 바꾸지 않는 확인용이며, 잔액 변경 전 확인은 잠금 조회 후에 다시 해야 한다.
+     */
+    @Transactional(readOnly = true)
+    public long getBalance(Long memberId) {
+        return buyerWalletRepository.findByMemberId(memberId)
+                .map(BuyerWallet::getBalance)
+                .orElse(0L);
+    }
 }
