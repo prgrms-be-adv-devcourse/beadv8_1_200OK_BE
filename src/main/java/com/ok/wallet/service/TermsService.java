@@ -49,11 +49,13 @@ public class TermsService {
      */
     @Transactional
     public void agree(Long memberId, List<TermsAgreeCommand> commands) {
+        // 사용자가 보낸 유형 문자열을 먼저 확인한다. 모르는 유형이면 버전 비교 전에 알려 준다.
+        Set<TermsType> requestedTypes = commands.stream()
+                .map(command -> toTermsType(command.type()))
+                .collect(Collectors.toSet());
+
         List<Terms> currentTerms = currentTerms();
         validateCurrentVersions(commands, currentTerms);
-        Set<TermsType> requestedTypes = commands.stream()
-                .map(TermsAgreeCommand::type)
-                .collect(Collectors.toSet());
         validateRequiredIncluded(requestedTypes);
 
         Set<Long> agreedTermsIds = agreedTermsIds(memberId, currentTerms);
@@ -64,6 +66,14 @@ public class TermsService {
                 .filter(terms -> !agreedTermsIds.contains(terms.getId()))
                 .forEach(terms -> termsAgreementRepository.save(
                         TermsAgreement.create(memberId, terms.getId(), now)));
+    }
+
+    // 약관 유형은 사용자 요청에서 오므로, 모르는 유형은 규칙 위반으로 응답한다 (값의 출처 기준, #123)
+    private TermsType toTermsType(String type) {
+        return Arrays.stream(TermsType.values())
+                .filter(termsType -> termsType.name().equals(type))
+                .findFirst()
+                .orElseThrow(() -> new RestApiException(WalletErrorCode.INVALID_TERMS_TYPE));
     }
 
     /**
@@ -100,7 +110,8 @@ public class TermsService {
     private void validateCurrentVersions(List<TermsAgreeCommand> commands, List<Terms> currentTerms) {
         for (TermsAgreeCommand command : commands) {
             boolean isCurrent = currentTerms.stream()
-                    .anyMatch(terms -> terms.getType() == command.type() && terms.getVersion() == command.version());
+                    .anyMatch(terms -> terms.getType().name().equals(command.type())
+                            && terms.getVersion() == command.version());
             if (!isCurrent) {
                 throw new RestApiException(WalletErrorCode.TERMS_VERSION_OUTDATED);
             }

@@ -1,11 +1,10 @@
 package com.ok.wallet.service.dto;
 
 import com.ok.wallet.domain.Terms;
-import com.ok.wallet.domain.TermsType;
 
-// 현재 버전 약관 한 건과 회원의 동의 여부
+// 현재 버전 약관 한 건과 회원의 동의 여부. 유형은 컨트롤러가 그대로 쓸 수 있게 문자열로 내보낸다 (컨벤션 2.3).
 public record TermsResult(
-        TermsType type,
+        String type,
         int version,
         String title,
         String content,
@@ -14,7 +13,7 @@ public record TermsResult(
 ) {
     public static TermsResult of(Terms terms, boolean agreed) {
         return new TermsResult(
-                terms.getType(),
+                terms.getType().name(),
                 terms.getVersion(),
                 terms.getTitle(),
                 terms.getContent(),

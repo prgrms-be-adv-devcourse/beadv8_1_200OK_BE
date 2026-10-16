@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,6 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -40,7 +40,8 @@ class TermsServiceTest {
     // 2026-10-16 12:00 (Asia/Seoul)
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 12, 0);
 
-    @TestConfiguration
+    // @TestConfiguration을 붙이지 않는다. 통합 테스트(AbstractIntegrationTest)의 @ComponentScan이 테스트 폴더까지 스캔해
+    // 운영 ClockConfig와 clock 빈이 겹치기 때문이다. @Import로 부른 이 테스트에서만 등록된다 (TestClockConfiguration과 같은 방식).
     static class FixedClockConfig {
         @Bean
         Clock clock() {
@@ -95,8 +96,8 @@ class TermsServiceTest {
     void 필수_약관이_하나라도_빠지면_저장되지_않는다() {
         // Given: 개인정보 수집 동의가 빠진 요청
         List<TermsAgreeCommand> commands = List.of(
-                new TermsAgreeCommand(TermsType.ELECTRONIC_FINANCIAL_TRANSACTION, 1),
-                new TermsAgreeCommand(TermsType.PREPAID_PAYMENT_INSTRUMENT, 1));
+                new TermsAgreeCommand(TermsType.ELECTRONIC_FINANCIAL_TRANSACTION.name(), 1),
+                new TermsAgreeCommand(TermsType.PREPAID_PAYMENT_INSTRUMENT.name(), 1));
 
         // When & Then
         assertThatThrownBy(() -> termsService.agree(MEMBER_ID, commands))
@@ -114,6 +115,19 @@ class TermsServiceTest {
         assertThatThrownBy(() -> termsService.agree(MEMBER_ID, currentVersionCommandsOf(1)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.TERMS_VERSION_OUTDATED));
+        assertThat(countAgreements(MEMBER_ID)).isZero();
+    }
+
+    @Test
+    void 알_수_없는_약관_유형이_포함되면_저장되지_않는다() {
+        // Given
+        List<TermsAgreeCommand> commands = new ArrayList<>(currentVersionCommands());
+        commands.add(new TermsAgreeCommand("UNKNOWN_TERMS", 1));
+
+        // When & Then
+        assertThatThrownBy(() -> termsService.agree(MEMBER_ID, commands))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_TERMS_TYPE));
         assertThat(countAgreements(MEMBER_ID)).isZero();
     }
 
@@ -159,17 +173,17 @@ class TermsServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.TERMS_AGREEMENT_REQUIRED));
     }
 
-    // 모든 약관 유형을 현재 버전으로 동의하는 요청
+    // 모든 약관 유형을 현재 버전으로 동의하는 요청 (유형은 사용자 요청처럼 문자열로 보낸다)
     private List<TermsAgreeCommand> currentVersionCommands() {
         return Arrays.stream(TermsType.values())
-                .map(type -> new TermsAgreeCommand(type, currentVersion(type)))
+                .map(type -> new TermsAgreeCommand(type.name(), currentVersion(type)))
                 .toList();
     }
 
     // 모든 약관 유형을 지정한 버전으로 동의하는 요청
     private List<TermsAgreeCommand> currentVersionCommandsOf(int version) {
         return Arrays.stream(TermsType.values())
-                .map(type -> new TermsAgreeCommand(type, version))
+                .map(type -> new TermsAgreeCommand(type.name(), version))
                 .toList();
     }
 

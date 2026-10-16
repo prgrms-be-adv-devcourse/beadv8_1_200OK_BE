@@ -13,6 +13,7 @@ public enum WalletErrorCode implements ErrorCode {
     REQUIRED_TERMS_NOT_AGREED(HttpStatus.UNPROCESSABLE_ENTITY, "Required terms not agreed", "필수 약관에 모두 동의해야 합니다."),
     TERMS_VERSION_OUTDATED(HttpStatus.CONFLICT, "Terms version outdated", "약관이 변경되었습니다. 최신 약관을 확인해 주세요."),
     TERMS_AGREEMENT_REQUIRED(HttpStatus.FORBIDDEN, "Terms agreement required", "충전 전 필수 약관 동의가 필요합니다."),
+    INVALID_TERMS_TYPE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid terms type", "알 수 없는 약관 유형입니다."),
     ;
 
     private final HttpStatus httpStatus;
