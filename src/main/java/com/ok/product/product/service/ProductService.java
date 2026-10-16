@@ -11,6 +11,7 @@ import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductDetailResult;
+import com.ok.product.product.service.dto.ProductOptionInfoResult;
 import com.ok.product.product.service.dto.ProductSearchQuery;
 import com.ok.product.product.service.dto.ProductSummaryResult;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
@@ -20,6 +21,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -37,6 +39,9 @@ public class ProductService {
 	private final ProductQueryRepository productQueryRepository;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
 	private final MediaUrlResolver mediaUrlResolver;
+	// 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
+	// 옵션 변경·삭제 시각을 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
+	private final Clock clock;
 
 	// TODO(추후 고려): 필요시 ADMIN이 판매자 대신 등록하는 기능
 	@Transactional
@@ -78,6 +83,7 @@ public class ProductService {
 			product.changeVisibility(command.visibility());
 		}
 
+		// TODO: 재고가 그대로인 옵션도 매번 UPDATE가 나가고 updated_at이 바뀐다. 로드한 totalStock과 요청값이 다를 때만 호출하도록 바꾸기
 		// 옵션 재고 업데이트
 		command.options().stream()
 				.filter(spec -> !spec.isNew()) // isNew는 insert에 재고 등록됨
@@ -125,6 +131,16 @@ public class ProductService {
 		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
 	}
 
+	/**
+	 * 옵션 ID 목록으로 옵션 정보를 한 번에 조회한다.
+	 * 없는 ID는 빠지고, 숨기거나 삭제한 상품 및 옵션도 포함한다.
+	 */
+	public List<ProductOptionInfoResult> findOptionInfos(List<Long> optionIds) {
+		return productOptionRepository.findAllWithProductByIdIn(optionIds).stream()
+			.map(ProductOptionInfoResult::from)
+			.toList();
+	}
+
 	private void validateImageUrls(List<String> imageUrls) {
 		if (!imageUrls.stream().allMatch(productImageUrlValidator::isAllowed)) {
 			throw new RestApiException(ProductErrorCode.INVALID_IMAGE_URL);
@@ -147,9 +163,9 @@ public class ProductService {
 		return sanitized;
 	}
 
-	// TODO: Clock 빈이 생기면 주입받은 Clock으로 바꾼다 (service.md 현재 시각 규칙)
+	// 상품 수정·삭제에서 쓰는 현재 시각. 주입받은 Clock 기준 (#93에서 Clock 빈이 생겨 TODO 해결)
 	private LocalDateTime now() {
-		return LocalDateTime.now();
+		return LocalDateTime.now(clock);
 	}
 
 	// 수정, 변경, 삭제 전에 상품을 가져오고 본인 상품인지 확인한다

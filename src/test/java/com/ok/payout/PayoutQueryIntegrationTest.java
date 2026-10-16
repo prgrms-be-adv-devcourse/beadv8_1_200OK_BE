@@ -14,14 +14,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -39,6 +37,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // 통합 테스트: 정산 조회 API(목록·상세·항목)를 실제 HTTP 요청(MockMvc)과 MySQL 컨테이너로 확인
 // - 정산 데이터는 정산후보만 넣고 실제 정산 배치를 돌려 만든다 (운영과 같은 구조로 확인하기 위해)
 // - 정산후보는 created_at을 과거로 넣어야 하므로 SQL로 직접 넣는다 (저장 시 Auditing이 현재 시각으로 덮어쓰기 때문)
+// - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build.gradle.kts)과 Hibernate 시간대(application-test.yml)가
+//   모두 Asia/Seoul로 고정되어(#93), JPA가 저장·조회하는 시각과 기준이 같기 때문이다
 // - 정산 확정 시각도 SQL로 고정값을 넣는다. 실제 배치 시각은 마이크로초 단위로 달라 정렬·기간 결과를 미리 알 수 없고,
 //   Payout은 @Immutable이고 created_at은 updatable = false라 JPA로는 바꿀 수 없음
 // - 결과 확인은 API 응답과 JPA 리포지토리로 한다. JDBC는 데이터 준비·정리에만 쓴다
@@ -109,10 +109,6 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    // Hibernate가 DB와 시간을 주고받는 기준 시간대 (application.yaml: hibernate.jdbc.time_zone)
-    @Value("${spring.jpa.properties.hibernate.jdbc.time_zone}")
-    private String dbTimeZone;
 
     // 배치가 만든 정산 ID (DB가 매기므로 배치 후 조회해서 채움)
     private Long seller7PayoutId;
@@ -566,35 +562,25 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
 
     // 정산후보를 20일 전 시각으로 직접 저장
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount) {
-        LocalDateTime dbCreatedAt = toDbTime(candidateCreatedAt);
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items (event_type, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, dbCreatedAt, dbCreatedAt);
+                eventType.name(), orderItemId, sellerId, amount, candidateCreatedAt, candidateCreatedAt);
     }
 
     // 관리자 수동 조정 후보를 20일 전 시각으로 직접 저장
     private void insertAdjustment(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                   long adjustmentId, long adminId, String reason) {
-        LocalDateTime dbCreatedAt = toDbTime(candidateCreatedAt);
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items " +
                         "(event_type, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, adjustmentId, adminId, reason, dbCreatedAt, dbCreatedAt);
+                eventType.name(), orderItemId, sellerId, amount, adjustmentId, adminId, reason, candidateCreatedAt, candidateCreatedAt);
     }
 
     // 정산 확정 시각을 고정값으로 바꿈 (Payout은 @Immutable·created_at은 updatable = false라 JPA로는 바꿀 수 없음)
     private void setConfirmedAt(Long payoutId, LocalDateTime confirmedAt) {
-        jdbcTemplate.update("UPDATE payout SET created_at = ? WHERE id = ?", toDbTime(confirmedAt), payoutId);
-    }
-
-    // Hibernate는 LocalDateTime을 DB에 보낼 때 JVM 시간대 → hibernate.jdbc.time_zone으로 변환한다
-    // jdbcTemplate은 이 변환을 거치지 않으므로, 직접 넣을 때도 같은 기준으로 바꿔야 JPA 조회와 비교가 맞는다
-    private LocalDateTime toDbTime(LocalDateTime jvmTime) {
-        return jvmTime.atZone(ZoneId.systemDefault())
-                .withZoneSameInstant(ZoneId.of(dbTimeZone))
-                .toLocalDateTime();
+        jdbcTemplate.update("UPDATE payout SET created_at = ? WHERE id = ?", confirmedAt, payoutId);
     }
 
     private long nextOrderItemId() {

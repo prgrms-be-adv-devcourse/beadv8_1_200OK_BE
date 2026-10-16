@@ -1,0 +1,19 @@
+meta {
+  name: 재고 해제
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations/{{orderId}}/release
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  주문에 배정한 재고를 전부 되돌립니다. 기록이 없거나 이미 해제했어도 204 입니다.
+}

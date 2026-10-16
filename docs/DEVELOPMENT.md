@@ -102,7 +102,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `BATCH_JOB_ENABLED` | 앱 시작 시 배치 Job 자동 실행 (dev, 운영은 `true` 고정) | `false` |
 | `MODULITH_REPUBLISH_ON_RESTART` | 재시작 시 미완료 이벤트 재발행 (dev, 운영은 `true` 고정) | `false` |
 | `JPA_DDL_AUTO` | Hibernate `ddl-auto` (dev, 운영은 `validate` 고정) | `validate` |
-| `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `UTC` |
+| `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `Asia/Seoul` |
 | `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 
@@ -116,9 +116,9 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 ### 타임존
 
-기본은 UTC입니다. KST로 쓰려면 `.env`에 `APP_TIME_ZONE=Asia/Seoul`을 넣습니다.
+기본은 Asia/Seoul입니다. `.env`가 없어도 JDBC·Hibernate·Jackson이 Asia/Seoul을 쓰고, 서버(Dockerfile)·CI 테스트(build.gradle.kts)의 JVM과 MySQL 컨테이너도 Asia/Seoul로 고정되어 있습니다.
+`.env`에 `APP_TIME_ZONE=UTC`처럼 다른 값을 넣으면 기본값을 덮어쓰므로, 팀 기준과 다르게 두지 마세요.
 `DATETIME` 컬럼은 타임존 없이 값만 저장하므로, 데이터가 쌓인 뒤에 바꾸면 기존 값이 어긋나 보일 수 있습니다.
-데이터가 쌓이기 전에 정책을 정하세요.
 
 ## 5. DB 마이그레이션 (Flyway)
 

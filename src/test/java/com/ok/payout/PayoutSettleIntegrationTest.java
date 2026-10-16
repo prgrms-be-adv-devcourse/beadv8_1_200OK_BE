@@ -31,12 +31,10 @@ import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParameters;
 import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -48,6 +46,8 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 // 통합 테스트: 실제 Spring 컨텍스트 + MySQL 컨테이너에서 정산 배치(스냅샷 → draft → 검증 → 확정 → 발행) 확인
 // - 정산후보는 created_at을 과거로 넣어야 하므로 리포지토리 대신 SQL로 직접 넣는다 (저장 시 Auditing이 현재 시각으로 덮어쓰기 때문)
+// - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build.gradle.kts)과 Hibernate 시간대(application-test.yml)가
+//   모두 Asia/Seoul로 고정되어(#93), JPA가 저장·조회하는 시각과 기준이 같기 때문이다
 // - 결과 확인은 JPA 리포지토리로 한다 (팀 규칙). JDBC는 데이터 준비·정리에만 쓴다
 // - 정산·스냅샷·draft는 이 클래스만 만들고 "마지막 정산일"이 범위 계산에 쓰이므로, 테스트 전후로 전부 비운다
 class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
@@ -100,10 +100,6 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    // Hibernate가 DB와 시간을 주고받는 기준 시간대 (application.yaml: hibernate.jdbc.time_zone)
-    @Value("${spring.jpa.properties.hibernate.jdbc.time_zone}")
-    private String dbTimeZone;
 
     // 이전 테스트가 중간에 실패해 남긴 데이터가 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
@@ -544,22 +540,20 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 정산 후보를 원하는 created_at으로 직접 저장
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                  LocalDateTime createdAt) {
-        LocalDateTime dbCreatedAt = toDbTime(createdAt);
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items (event_type, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, dbCreatedAt, dbCreatedAt);
+                eventType.name(), orderItemId, sellerId, amount, createdAt, createdAt);
     }
 
     // 관리자 수동 조정 후보를 원하는 created_at으로 직접 저장 (관리자 ID·사유는 테스트용 고정값)
     private void insertAdjustment(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                   long adjustmentId, LocalDateTime createdAt) {
-        LocalDateTime dbCreatedAt = toDbTime(createdAt);
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items " +
                         "(event_type, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, adjustmentId, 99L, "테스트 조정", dbCreatedAt, dbCreatedAt);
+                eventType.name(), orderItemId, sellerId, amount, adjustmentId, 99L, "테스트 조정", createdAt, createdAt);
     }
 
     // 검증 실패 상황 만들기: draft가 끝난 스냅샷 목록에, draft되지 않은 후보 1건을 끼워 넣음
@@ -568,18 +562,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         long orderItemId = nextOrderItemId();
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount, LocalDateTime.now().minusDays(20));
         Long candidateId = candidateIdsOf(orderItemId).get(0);
-        LocalDateTime now = toDbTime(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
         jdbcTemplate.update(
                 "INSERT INTO payout_snapshot_item (snapshot_id, candidate_id, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 snapshotId, candidateId, amount, now, now);
-    }
-
-    // Hibernate는 LocalDateTime을 DB에 보낼 때 JVM 시간대 → hibernate.jdbc.time_zone으로 변환한다
-    // jdbcTemplate은 이 변환을 거치지 않으므로, 직접 넣을 때도 같은 기준으로 바꿔야 QueryDSL 조회와 비교가 맞는다
-    private LocalDateTime toDbTime(LocalDateTime jvmTime) {
-        return jvmTime.atZone(ZoneId.systemDefault())        // 이 PC(JVM) 시간대 기준 시각으로 보고
-                .withZoneSameInstant(ZoneId.of(dbTimeZone))  // 같은 순간을 DB 기준 시간대로 바꾼 뒤
-                .toLocalDateTime();                          // 시간대 정보를 떼서 저장용 값으로
     }
 
     private long nextOrderItemId() {
