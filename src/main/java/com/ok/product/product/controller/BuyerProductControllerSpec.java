@@ -23,7 +23,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
-@Tag(name = "Buyer Product", description = "구매자 상품 조회 API")
+@Tag(name = "Product (Buyer)", description = "구매자 상품 조회 API")
 interface BuyerProductControllerSpec {
 
 	@Operation(summary = "상품 목록 조회", description = """

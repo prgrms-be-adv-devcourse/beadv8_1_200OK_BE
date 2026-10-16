@@ -11,6 +11,7 @@ import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductDetailResult;
+import com.ok.product.product.service.dto.ProductOptionInfoResult;
 import com.ok.product.product.service.dto.ProductSearchQuery;
 import com.ok.product.product.service.dto.ProductSummaryResult;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
@@ -78,6 +79,7 @@ public class ProductService {
 			product.changeVisibility(command.visibility());
 		}
 
+		// TODO: 재고가 그대로인 옵션도 매번 UPDATE가 나가고 updated_at이 바뀐다. 로드한 totalStock과 요청값이 다를 때만 호출하도록 바꾸기
 		// 옵션 재고 업데이트
 		command.options().stream()
 				.filter(spec -> !spec.isNew()) // isNew는 insert에 재고 등록됨
@@ -123,6 +125,16 @@ public class ProductService {
 		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
 		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
+	}
+
+	/**
+	 * 옵션 ID 목록으로 옵션 정보를 한 번에 조회한다.
+	 * 없는 ID는 빠지고, 숨기거나 삭제한 상품 및 옵션도 포함한다.
+	 */
+	public List<ProductOptionInfoResult> findOptionInfos(List<Long> optionIds) {
+		return productOptionRepository.findAllWithProductByIdIn(optionIds).stream()
+			.map(ProductOptionInfoResult::from)
+			.toList();
 	}
 
 	private void validateImageUrls(List<String> imageUrls) {
