@@ -4,6 +4,7 @@ import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.config.JpaConfig;
+import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.repository.SellerWalletRepository;
@@ -24,7 +25,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @ApplicationModuleTest
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
+// 지갑 서비스가 Clock을 주입받으므로 Clock 빈이 필요하다.
+// 운영 ClockConfig(com.ok.config)는 다른 모듈이라 모듈 테스트에서 걸러지므로, 테스트용 TestClockConfiguration을 불러온다. (#93, 자세한 이유는 TestClockConfiguration 참고)
+@Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class})
 class WalletModuleTest {
     // 실제 정산 ID와 겹치지 않는 이 클래스 전용 번호대
     private static final long PAYOUT_ID = 9_200_001L;

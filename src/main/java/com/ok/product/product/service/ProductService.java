@@ -21,6 +21,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -38,6 +39,9 @@ public class ProductService {
 	private final ProductQueryRepository productQueryRepository;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
 	private final MediaUrlResolver mediaUrlResolver;
+	// 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
+	// 옵션 변경·삭제 시각을 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
+	private final Clock clock;
 
 	// TODO(추후 고려): 필요시 ADMIN이 판매자 대신 등록하는 기능
 	@Transactional
@@ -159,9 +163,9 @@ public class ProductService {
 		return sanitized;
 	}
 
-	// TODO: Clock 빈이 생기면 주입받은 Clock으로 바꾼다 (service.md 현재 시각 규칙)
+	// 상품 수정·삭제에서 쓰는 현재 시각. 주입받은 Clock 기준 (#93에서 Clock 빈이 생겨 TODO 해결)
 	private LocalDateTime now() {
-		return LocalDateTime.now();
+		return LocalDateTime.now(clock);
 	}
 
 	// 수정, 변경, 삭제 전에 상품을 가져오고 본인 상품인지 확인한다

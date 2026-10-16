@@ -6,6 +6,9 @@ services:
       - 'MYSQL_USER=${MYSQL_USER:-myuser}'
       - 'MYSQL_PASSWORD=${MYSQL_PASSWORD:-password}'
       - 'MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-secretpassword}'
+      # MySQL 서버 시간대를 팀 기준으로 고정 (#93). 설정이 없으면 컨테이너 기본값 UTC
+      # NOW(), CURRENT_TIMESTAMP 기본값(예: media 테이블)이 이 시간대를 따르므로 앱(JVM)과 같은 시간대로 맞춘다
+      - 'TZ=${APP_TIME_ZONE:-Asia/Seoul}'
     volumes:
       - '../../data/mysql:/var/lib/mysql'
     healthcheck:
