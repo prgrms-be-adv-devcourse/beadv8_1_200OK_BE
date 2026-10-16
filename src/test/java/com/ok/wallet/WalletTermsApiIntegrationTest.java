@@ -115,7 +115,7 @@ class WalletTermsApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 같은_회원의_동의_요청이_동시에_와도_오류_없이_한_번만_저장된다() throws Exception {
         // Given
-        int threadCount = 5;
+        int threadCount = 10;
         List<TermsAgreeCommand> commands = Arrays.stream(TermsType.values())
                 .map(type -> new TermsAgreeCommand(type.name(), 1))
                 .toList();
