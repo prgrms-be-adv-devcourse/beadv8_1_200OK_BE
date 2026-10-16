@@ -13,7 +13,6 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 
 import java.time.LocalDateTime;
-import java.util.Objects;
 
 /**
  * 회원이 특정 버전의 약관에 동의한 기록. 추가만 하고 수정·삭제하지 않는다.
@@ -44,11 +43,8 @@ public class TermsAgreement extends BaseTime {
         this.agreedAt = agreedAt;
     }
 
-    // 값은 토큰의 회원 ID와 서버가 조회한 약관에서 오므로, 없으면 코드의 버그로 본다 (값의 출처 기준, #123)
+    // 값은 경계(토큰의 회원 ID, 서버가 조회한 약관, Clock)에서 보장되므로 여기서는 다시 검사하지 않는다
     public static TermsAgreement create(Long memberId, Long termsId, LocalDateTime agreedAt) {
-        Objects.requireNonNull(memberId, "memberId는 필수입니다.");
-        Objects.requireNonNull(termsId, "termsId는 필수입니다.");
-        Objects.requireNonNull(agreedAt, "agreedAt은 필수입니다.");
         return new TermsAgreement(memberId, termsId, agreedAt);
     }
 }
