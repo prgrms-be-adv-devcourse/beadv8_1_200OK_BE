@@ -7,10 +7,19 @@ spring:
       enabled: false
     jdbc:
       initialize-schema: never
+  jackson:
+    # 테스트는 .env 와 상관없이 팀 기준 시간대를 쓴다 (#93, .env 영향 없음)
+    # 테스트 JVM(build.gradle.kts -Duser.timezone)과 같아야 jdbcTemplate 으로 넣은 시각과 JPA 로 읽은 시각이 맞는다
+    time-zone: Asia/Seoul
   jpa:
     hibernate:
       # 마이그레이션과 엔티티 일치 여부를 테스트에서 검증 (.env 영향 없음)
       ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          # 위와 같은 이유로 Hibernate 의 시간대 변환 기준도 고정 (.env 영향 없음, #93)
+          time_zone: Asia/Seoul
 logging:
   level:
     com.ok: DEBUG
