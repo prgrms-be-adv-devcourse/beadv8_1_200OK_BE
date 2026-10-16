@@ -11,6 +11,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 @Service
@@ -21,6 +22,9 @@ public class MemberSignupService {
     private final MemberDuplicateValidator memberDuplicateValidator;
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher eventPublisher;
+    // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
+    // 약관 동의 일시를 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
+    private final Clock clock;
 
     @Transactional
     public Long signup(SignupCommand command) {
@@ -36,7 +40,7 @@ public class MemberSignupService {
                 command.email(),
                 command.name(),
                 command.nickname(),
-                LocalDateTime.now()
+                LocalDateTime.now(clock)
         );
 
         // 회원 저장
