@@ -26,7 +26,7 @@ public record ProductOptionInfoResult(
 	public static ProductOptionInfoResult from(ProductOption option) {
 		Product product = option.getProduct();
 		return new ProductOptionInfoResult(option.getId(), product.getId(), product.getSellerId(), product.getName(),
-			option.getName(), product.getThumbnailUrl(), option.getListPrice(), option.getSalePrice(),
+			option.getName(), product.getThumbnailKey(), option.getListPrice(), option.getSalePrice(),
 			product.getStatus(), product.getVisibility(), product.isDeleted(), option.isDeleted(),
 			option.availableStock(), option.isPurchasable());
 	}
