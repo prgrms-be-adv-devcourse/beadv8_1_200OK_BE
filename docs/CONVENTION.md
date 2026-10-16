@@ -716,10 +716,10 @@ public MediaInfo upload(MediaPurpose purpose, MultipartFile file) {
 **규칙**
 - 현재 시각은 `Clock`을 주입받아 `LocalDateTime.now(clock)`처럼 얻는다. `LocalDateTime.now()`를 직접 호출하지 않는다.
 - 테스트에서는 고정된 시각의 `Clock`을 사용한다.
+- `Clock` 빈은 `com.ok.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
+- 모듈 테스트(`@ApplicationModuleTest`)에서는 `testsupport/TestClockConfiguration`을 `@Import`한다.
 
-**이유**: 시각에 의존하는 로직을 현재 시각과 상관없이 같은 결과로 테스트할 수 있다. 또한 `LocalDateTime.now()`는 JVM의 기본 타임존을 사용하므로, 앱의 타임존 설정(`APP_TIME_ZONE`)과 어긋날 수 있다. `Clock` 빈을 한 곳에서 앱 설정에 맞춰 등록하면 이를 막을 수 있다.
-
-> `Clock` 빈은 아직 없다. 별도 이슈에서 앱의 타임존 설정(`APP_TIME_ZONE`)을 따르도록 추가한다.
+**이유**: 시각에 의존하는 로직을 현재 시각과 상관없이 같은 결과로 테스트할 수 있다. 또한 `LocalDateTime.now()`는 JVM의 기본 타임존을 사용하므로, 앱의 타임존 설정(`APP_TIME_ZONE`)과 어긋날 수 있다. `Clock` 빈을 한 곳(`ClockConfig`)에 두고, JVM 시간대와 `APP_TIME_ZONE`을 모두 Asia/Seoul로 고정해 이를 막는다.
 
 ```java
 // 좋은 예
