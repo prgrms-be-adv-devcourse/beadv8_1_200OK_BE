@@ -1,0 +1,45 @@
+meta {
+  name: 준비 - 판매 중인 테스트 상품 등록
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/products
+  body: json
+  auth: none
+}
+
+headers {
+  X-Member-Id: 7
+  X-Member-Role: SELLER
+}
+
+body:json {
+  {
+    "name": "Bruno 테스트 사과",
+    "descriptionHtml": "<p>내부 API 테스트용 상품</p>",
+    "category": "FRUIT",
+    "region": "GYEONGBUK",
+    "status": "ON_SALE",
+    "visibility": "VISIBLE",
+    "imageUrls": ["https://{{process.env.S3_BUCKET}}.s3.{{process.env.AWS_REGION}}.amazonaws.com/product/bruno-sample.jpg"],
+    "options": [
+      { "name": "옵션 A", "listPrice": 40000, "salePrice": 32000, "totalStock": 10 },
+      { "name": "옵션 B", "salePrice": 20000, "totalStock": 1 }
+    ]
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.productId: isNumber
+}
+
+script:post-response {
+  bru.setVar("productId", res.body.productId);
+}
+
+docs {
+  판매 중(ON_SALE), 노출(VISIBLE) 상태로 바로 등록합니다. 400 INVALID_IMAGE_URL 이면 `bruno/.env` 의 S3 값을 확인하세요.
+}

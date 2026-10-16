@@ -198,6 +198,10 @@ public class Product extends BaseTime {
 		return deletedAt != null;
 	}
 
+	public boolean isOnSale() {
+		return status == ProductStatus.ON_SALE && visibility == ProductVisibility.VISIBLE && !isDeleted();
+	}
+
 	// 상품 소유자 여부 체크
 	public boolean isOwnedBy(Long memberId) {
 		return sellerId.equals(memberId);

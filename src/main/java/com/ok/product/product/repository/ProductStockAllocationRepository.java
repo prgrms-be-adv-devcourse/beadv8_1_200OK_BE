@@ -14,6 +14,9 @@ public interface ProductStockAllocationRepository extends JpaRepository<ProductS
 	// 이미 배정된 주문인지 (allocate 멱등 처리)
 	boolean existsByOrderId(Long orderId);
 
+	// 해제한 주문인지
+	boolean existsByOrderIdAndStatus(Long orderId, StockAllocationStatus status);
+
 	// 해제 대상. 옵션 id 오름차순으로 잠가 데드락을 막는다
 	List<ProductStockAllocation> findByOrderIdAndStatusOrderByProductOptionIdAsc(Long orderId,
 		StockAllocationStatus status);

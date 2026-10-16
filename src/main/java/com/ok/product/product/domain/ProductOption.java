@@ -78,6 +78,15 @@ public class ProductOption extends BaseTime {
 		return totalStock - allocatedQuantity;
 	}
 
+	// 재고를 뺀 판매 조건
+	public boolean isOnSale() {
+		return !isDeleted() && product.isOnSale();
+	}
+
+	public boolean isPurchasable() {
+		return isOnSale() && availableStock() > 0;
+	}
+
 	public int discountRate() {
 		return discountRate(listPrice, salePrice);
 	}

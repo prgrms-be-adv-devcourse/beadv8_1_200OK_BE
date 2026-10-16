@@ -1,0 +1,26 @@
+meta {
+  name: 배정 실패 - 요청 형식 오류
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "orderId": {{orderIdForShortage}},
+    "items": [{ "optionId": {{optionA}}, "quantity": 0 }]
+  }
+}
+
+assert {
+  res.status: eq 422
+}
+
+docs {
+  orderId 없음, items 비어 있음, 수량 0 이하는 422 입니다.
+}

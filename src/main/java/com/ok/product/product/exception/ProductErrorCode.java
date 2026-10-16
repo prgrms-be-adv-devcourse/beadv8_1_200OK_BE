@@ -20,7 +20,11 @@ public enum ProductErrorCode implements ErrorCode {
 	OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Option not found", "상품의 옵션을 찾을 수 없습니다."),
 	DUPLICATE_OPTION_NAME(HttpStatus.CONFLICT, "Duplicate option name", "같은 상품 안에 같은 이름의 옵션이 있습니다."),
 	PRICE_EXCEEDS_LIST_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "Price exceeds list price", "판매가는 정가보다 클 수 없습니다."),
-	STOCK_BELOW_ALLOCATED(HttpStatus.UNPROCESSABLE_ENTITY, "Stock below allocated", "재고는 주문에 배정된 수량보다 적게 줄일 수 없습니다.");
+	STOCK_BELOW_ALLOCATED(HttpStatus.UNPROCESSABLE_ENTITY, "Stock below allocated", "재고는 주문에 배정된 수량보다 적게 줄일 수 없습니다."),
+	OPTION_NOT_PURCHASABLE(HttpStatus.CONFLICT, "Option not purchasable", "판매 중인 옵션이 아닙니다."),
+	INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Insufficient stock", "재고가 부족합니다."),
+	ALLOCATION_ALREADY_RELEASED(HttpStatus.CONFLICT, "Allocation already released", "이미 재고를 해제한 주문입니다. 새 주문으로 요청해주세요."),
+	ALLOCATION_IN_PROGRESS(HttpStatus.CONFLICT, "Allocation in progress", "같은 주문의 재고 배정이 처리 중입니다. 잠시 후 다시 요청해주세요.");
 
 	private final HttpStatus httpStatus;
 	private final String title;
