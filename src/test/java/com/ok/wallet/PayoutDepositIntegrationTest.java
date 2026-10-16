@@ -9,14 +9,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,9 +39,6 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
-
-    @Value("${spring.jpa.properties.hibernate.jdbc.time_zone}")
-    String dbTimeZone;
 
     @BeforeEach
     void setUp() {
@@ -82,11 +77,11 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
                 "SELECT COUNT(*) FROM payout_candidate_items WHERE order_item_id = ?", Long.class, ORDER_ITEM_ID);
     }
 
+    // 앱 시간대가 Asia/Seoul로 고정되어(#137), JdbcTemplate으로 넣은 시각과 Hibernate가 비교하는 시각의 기준이 같다
     private void backdateCandidates(LocalDateTime createdAt) {
-        LocalDateTime dbTime = toDbTime(createdAt);
         jdbcTemplate.update(
                 "UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_item_id = ?",
-                dbTime, dbTime, ORDER_ITEM_ID);
+                createdAt, createdAt, ORDER_ITEM_ID);
     }
 
     // 지갑이 아직 없으면 0으로 본다 (리스너가 처리 중일 수 있음)
@@ -117,13 +112,6 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     private long sellerPayoutId() {
         return jdbcTemplate.queryForObject(
                 "SELECT id FROM payout WHERE payee_id = ?", Long.class, SELLER_ID);
-    }
-
-    // PayoutSettleIntegrationTest.toDbTime과 같은 변환: jdbcTemplate은 Hibernate의 시간대 변환을 거치지 않는다
-    private LocalDateTime toDbTime(LocalDateTime jvmTime) {
-        return jvmTime.atZone(ZoneId.systemDefault())
-                .withZoneSameInstant(ZoneId.of(dbTimeZone))
-                .toLocalDateTime();
     }
 
     // FK 때문에 자식 테이블 먼저. 정산 데이터는 전부, 후보와 지갑은 이 클래스 번호만 지운다
