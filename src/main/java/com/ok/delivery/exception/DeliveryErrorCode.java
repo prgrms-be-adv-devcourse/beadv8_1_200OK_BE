@@ -15,14 +15,8 @@ public enum DeliveryErrorCode implements ErrorCode {
     TRACKING_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "Tracking number duplicated", "이미 사용된 송장번호입니다."),
     MISSING_CARRIER(HttpStatus.UNPROCESSABLE_ENTITY, "Missing carrier", "택배사는 필수입니다."),
     MISSING_TRACKING_NUMBER(HttpStatus.UNPROCESSABLE_ENTITY, "Missing tracking number", "송장번호는 필수입니다."),
-    INVALID_SHIPPING_FEE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid shipping fee", "배송비 금액은 0 이상이어야 합니다."),
-    INVALID_ESTIMATED_DELIVERY(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid estimated delivery", "도착 예정일 시작은 끝보다 늦을 수 없습니다."),
-    MISSING_SHIPMENT_ITEMS(HttpStatus.UNPROCESSABLE_ENTITY, "Missing shipment items", "상품 항목은 1개 이상이어야 합니다."),
 
     // 배송 상품 항목
-    MISSING_PRODUCT_NAME(HttpStatus.UNPROCESSABLE_ENTITY, "Missing product name", "상품명은 필수입니다."),
-    INVALID_ITEM_QUANTITY(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid item quantity", "수량은 1 이상이어야 합니다."),
-    INVALID_UNIT_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid unit price", "단가는 0 이상이어야 합니다."),
     INVALID_CANCEL_QUANTITY(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid cancel quantity", "취소 수량은 1 이상이어야 합니다."),
     CANCEL_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Cancel quantity exceeded", "취소 수량이 주문 수량을 넘을 수 없습니다."),
 
@@ -32,7 +26,6 @@ public enum DeliveryErrorCode implements ErrorCode {
     INVALID_POSTAL_CODE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid postal code", "우편번호는 숫자 5자리여야 합니다."),
 
     // 배송지 변경
-    INVALID_ADDITIONAL_FEE_NOTICE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid additional fee notice", "추가 운임 안내 금액은 0 이상이어야 합니다."),
     ADDRESS_CHANGE_NOT_ALLOWED(HttpStatus.CONFLICT, "Address change not allowed", "배송지를 변경할 수 없는 상태입니다."),
     ADDRESS_CHANGE_ALREADY_PENDING(HttpStatus.CONFLICT, "Address change already pending", "처리 대기 중인 배송지 변경 요청이 있습니다."),
     ADDRESS_CHANGE_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "Address change request not found", "배송지 변경 요청을 찾을 수 없습니다."),

@@ -1,8 +1,8 @@
 package com.ok.payout.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.payout.domain.PayoutErrorCode;
 import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.exception.PayoutErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;

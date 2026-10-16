@@ -1,16 +1,24 @@
 package com.ok.payout.repository;
 
+import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutEventType;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
+import com.querydsl.core.types.Projections;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
+import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
@@ -130,6 +138,111 @@ public class PayoutQueryRepository {
                 .orderBy(payoutCandidateItem.id.asc())
                 .limit(limit)
                 .fetch();
+    }
+
+    // 정산 목록 (관리자·판매자 조회). null인 조건은 걸지 않음
+    // 정렬은 확정 시각 최신순 고정. 같은 시각에 확정된 정산이 여러 건이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    public Page<Payout> searchPayouts(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to,
+                                      Pageable pageable) {
+        BooleanBuilder condition = payoutSearchCondition(payeeId, system, from, to);
+        List<Payout> content = queryFactory
+                .selectFrom(payout)
+                .where(condition)
+                .orderBy(payout.createdAt.desc(), payout.id.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> Objects.requireNonNullElse(queryFactory
+                .select(payout.count())
+                .from(payout)
+                .where(condition)
+                .fetchOne(), 0L));
+    }
+
+    // 정산 항목 한 줄 + 그 항목의 정산후보 정보 (항목 조회용)
+    // 서비스 쪽 타입(service/dto)을 리포지토리가 쓰면 레이어 규칙에 걸려서, 리포지토리 안에 조회 결과용 record를 둠
+    public record PayoutItemRow(
+            Long payoutItemId,
+            Long candidateId,
+            PayoutEventType eventType,
+            Long orderItemId,
+            Long sellerId,
+            Long amount,
+            LocalDateTime candidateCreatedAt,  // 정산후보 생성 시각
+            // 0이면 평소 건, 1 이상이면 관리자 조정. 엔티티 필드와 같은 Long으로 둠 (Querydsl이 생성자를 타입으로 찾아서 long이면 못 찾음)
+            Long adjustmentId,
+            Long adminId,                      // 조정 건일 때만 값
+            String reason                      // 조정 건일 때만 값
+    ) {
+    }
+
+    // 정산 1건의 항목을 정산후보와 함께 페이지 단위로 조회 (항목마다 후보를 따로 조회하지 않도록 조인 1번)
+    // 정산 항목은 후보를 객체 연관 없이 candidateId 숫자로만 들고 있어서 on 조건으로 조인 (FK가 있어 후보가 없는 항목은 없음)
+    // 정렬은 항목 저장 순서(id) 고정
+    public Page<PayoutItemRow> findItemsWithCandidate(Long payoutId, Pageable pageable) {
+        List<PayoutItemRow> content = queryFactory
+                .select(Projections.constructor(PayoutItemRow.class,
+                        payoutItem.id,
+                        payoutItem.candidateId,
+                        payoutItem.eventType,
+                        payoutItem.orderItemId,
+                        payoutItem.sellerId,
+                        payoutItem.amount,
+                        payoutCandidateItem.createdAt,
+                        payoutCandidateItem.adjustmentId,
+                        payoutCandidateItem.adminId,
+                        payoutCandidateItem.reason))
+                .from(payoutItem)
+                .join(payoutCandidateItem).on(payoutCandidateItem.id.eq(payoutItem.candidateId))
+                .where(payoutItem.payout.id.eq(payoutId))
+                .orderBy(payoutItem.id.asc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> countItemsByPayoutId(payoutId));
+    }
+
+    // 정산 1건에 묶인 정산 항목 수 (상세 조회용). 항목을 다 불러오지 않고 개수만 셈
+    public long countItemsByPayoutId(Long payoutId) {
+        Long count = queryFactory
+                .select(payoutItem.count())
+                .from(payoutItem)
+                .where(payoutItem.payout.id.eq(payoutId))
+                .fetchOne();
+        return Objects.requireNonNullElse(count, 0L);
+    }
+
+    // 시스템 몫 정산 항목(수수료) 중 한 판매자 판매에서 나온 것의 건수·금액 합계 (정산 상세용)
+    // 수수료는 판매자 정산이 아니라 같은 스냅샷의 시스템 몫 정산에 모든 판매자 것이 섞여 들어가므로 sellerId로 골라냄
+    //   예) 시스템 몫 정산 14의 수수료 300(판매자 7) + 600(판매자 9) → 판매자 7이면 (1건, 300원)
+    public CountAndAmount summarizeSellerFeeItems(Long systemPayoutId, Long sellerId) {
+        Tuple row = queryFactory
+                .select(payoutItem.count(), payoutItem.amount.sumLong().coalesce(0L))
+                .from(payoutItem)
+                .where(payoutItem.payout.id.eq(systemPayoutId),
+                        payoutItem.sellerId.eq(sellerId))
+                .fetchOne();
+        return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
+    }
+
+    // 정산 목록 조건. 기간은 스냅샷 기간과 같은 규칙: from 포함, to 미포함
+    private BooleanBuilder payoutSearchCondition(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to) {
+        BooleanBuilder condition = new BooleanBuilder();
+        if (payeeId != null) {
+            condition.and(payout.payeeId.eq(payeeId));
+        }
+        if (system != null) {
+            condition.and(payout.system.eq(system));
+        }
+        if (from != null) {
+            condition.and(payout.createdAt.goe(from));
+        }
+        if (to != null) {
+            condition.and(payout.createdAt.lt(to));
+        }
+        return condition;
     }
 
     // 스냅샷 대상 조건: [from, to) 기간 안 + 아직 정산 안 된 후보 (from이 null이면 하한 없음)

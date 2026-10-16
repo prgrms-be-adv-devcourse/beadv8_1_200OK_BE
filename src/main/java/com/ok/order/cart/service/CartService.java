@@ -8,6 +8,7 @@ import com.ok.order.cart.exception.CartErrorCode;
 import com.ok.order.cart.repository.CartItemRepository;
 import com.ok.order.cart.repository.CartRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,28 +39,24 @@ public class CartService {
         // TODO 상품 모듈 옵션 조회 API 연동 후: 판매 중인지, 본인 상품인지 검증
 
 
-        Cart cart = getCart(memberId);
+        Cart cart = getOrCreateCart(memberId);
 
         if (cartItemRepository.existsByCartIdAndProductOptionId(cart.getId(), productOptionId)) {
             throw new RestApiException(CartErrorCode.CART_ITEM_ALREADY_EXISTS);
         }
 
         CartItem cartItem = CartItem.create(cart, productOptionId, quantity);
-        return cartItemRepository.save(cartItem).getId();
+        return saveItem(cartItem).getId();
     }
 
     // 장바구니 리스트 조회
+    @Transactional
     public CartResponse getMyCart(Long memberId) {
-        Cart cart = getCart(memberId);
+        Cart cart = getOrCreateCart(memberId);
 
         List<CartItem> items = cartItemRepository.findAllByCartId(cart.getId());
 
         return CartResponse.of(cart, items);
-    }
-
-    // 담을 수 있는 상품 옵션인지 검증
-    private void validateAddable(Long memberId, Long productOptionId) {
-        // TODO: 상품 모듈의 API를 사용하여 검증 로직을 구현
     }
 
     // 장바구니 상품 수량 변경
@@ -79,7 +76,7 @@ public class CartService {
     // 장바구니 상품 전체 선택·해제
     @Transactional
     public void changeAllSelected(Long memberId, boolean selected) {
-        Cart cart = getCart(memberId);
+        Cart cart = getOrCreateCart(memberId);
         cartItemRepository.findAllByCartId(cart.getId())
                 .forEach(item -> item.changeSelected(selected));
     }
@@ -94,19 +91,28 @@ public class CartService {
     // 선택한 장바구니 상품 삭제
     @Transactional
     public void deleteSelectedItems(Long memberId) {
-        Cart cart = getCart(memberId);
+        Cart cart = getOrCreateCart(memberId);
         cartItemRepository.deleteAllByCartIdAndSelectedTrue(cart.getId());
     }
 
-    // 내 장바구니 조회
-    private Cart getCart(Long memberId) {
+    // 내 장바구니 조회, 없으면 생성
+    private Cart getOrCreateCart(Long memberId) {
         return cartRepository.findByMemberId(memberId)
-                .orElseThrow(() -> new RestApiException(CartErrorCode.CART_NOT_FOUND));
+                .orElseGet(() -> cartRepository.save(Cart.create(memberId)));
+    }
+
+    // 동시 담기 대비 : 유니크 제약 위반을 중복 예외로 변환
+    private CartItem saveItem(CartItem cartItem) {
+        try {
+            return cartItemRepository.saveAndFlush(cartItem);
+        } catch (DataIntegrityViolationException e) {
+            throw new RestApiException(CartErrorCode.CART_ITEM_ALREADY_EXISTS);
+        }
     }
 
     // 내 장바구니 안의 상품 조회
     private CartItem getMyCartItem(Long memberId, Long cartItemId) {
-        Cart cart = getCart(memberId);
+        Cart cart = getOrCreateCart(memberId);
         return cartItemRepository.findByIdAndCartId(cartItemId, cart.getId())
                 .orElseThrow(() -> new RestApiException(CartErrorCode.CART_ITEM_NOT_FOUND));
     }

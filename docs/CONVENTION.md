@@ -490,11 +490,14 @@ String loginId = command.loginId().toLowerCase();
 ### 6.1 예외 종류
 
 **규칙**
-- 클라이언트에 오류 응답으로 나가야 하는 경우(사용자 입력 오류, 도메인 규칙 위반)는 `RestApiException`에 모듈의 `ErrorCode`를 담아 던진다.
-- 응답이 없는 곳(이벤트 리스너, 배치)에서도 도메인 규칙이나 모듈 간 계약을 어긴 경우는 `RestApiException`을 쓴다.
-- 호출한 코드의 실수(예: 필수 인자에 `null`을 넘김)는 표준 예외(`IllegalArgumentException` 등)를 던진다.
+- 예외 종류는 호출 경로(HTTP, 이벤트, 배치)가 아니라 **값의 출처**로 정한다. 같은 값의 검사는 어느 경로로 들어와도 같은 예외를 던진다.
+- 사용자 입력이 닿을 수 있는 값의 오류(입력값 오류, 도메인 규칙 위반, 상태 충돌)는 `RestApiException`에 모듈의 `ErrorCode`를 담아 던진다.
+- 다른 모듈이나 시스템이 계산해서 넘긴 값의 오류는 호출한 코드의 버그로 보고 표준 예외(`IllegalArgumentException`, `IllegalStateException`)를 던진다. 이벤트 리스너나 배치가 받은 값도 같다.
+- 상태 충돌(현재 상태에서 허용되지 않는 전이)은 호출 경로와 관계없이 `RestApiException`이다. 시스템 경로(택배사 알림, 자동 구매확정 배치 등)에서 호출해도 같다.
 
-**이유**: 응답으로 나가는 오류는 에러 코드로 유형을 구분해서 클라이언트가 분기할 수 있어야 한다. 이벤트로 받은 값이 계약과 다른 것도 모듈 간 계약 위반이라 유형을 구분해 두는 편이 낫다. 호출한 코드의 실수는 사용자에게 보여 줄 오류가 아니라 개발 중에 고칠 버그이고, 처리되지 않은 예외로 500 응답이 된다.
+**이유**: 사용자가 고칠 수 있는 오류는 에러 코드로 유형을 구분해야 클라이언트가 분기할 수 있다. 시스템이 만든 값이 잘못된 것은 사용자가 고칠 수 없는 버그다. 처리되지 않은 예외로 500이 되어야 모니터링에서 실제 장애로 잡히고, 4xx 에러 코드를 붙이면 사용자 입력 오류에 섞여 놓친다. 호출 경로로 정하면 같은 엔티티의 같은 검사가 어디서 호출하느냐에 따라 달라져야 해서 기준이 흔들린다. 상태 전이 메서드는 사용자와 시스템이 함께 호출하고, 충돌은 값이 아니라 현재 상태 때문에 생기므로 한 가지로 정한다. 시스템 경로에서 같은 알림이 중복으로 와서 충돌이 나면, 호출하는 쪽이 멱등 처리로 거른다.
+
+> 정산 모듈은 이벤트·배치 경로에서 받은 값의 오류에 `PayoutErrorCode`를 쓰고 있다(`PayoutCandidateService` 등). 정산 담당과 협의해 정리한다(#117).
 
 ```java
 // 좋은 예: 사용자 입력 오류는 RestApiException + ErrorCode
@@ -502,14 +505,19 @@ if (quantity < 1) {
     throw new RestApiException(OrderErrorCode.INVALID_QUANTITY);
 }
 
-// 좋은 예: 이벤트 리스너에서도 모듈 간 계약 위반은 RestApiException + ErrorCode
+// 좋은 예: 다른 모듈이 넘긴 값의 오류는 표준 예외 (이벤트 리스너가 받은 값도 같다)
 if (event.orderItemId() == null) {
-    throw new RestApiException(PayoutErrorCode.MISSING_ORDER_ITEM_ID);
+    throw new IllegalArgumentException("orderItemId는 필수입니다.");
 }
 
-// 좋은 예: 호출한 코드의 실수는 표준 예외
-if (memberId == null) {
-    throw new IllegalArgumentException("memberId는 필수입니다.");
+// 좋은 예: 시스템이 계산한 값의 오류도 표준 예외
+if (baseShippingFee < 0) {
+    throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");
+}
+
+// 나쁜 예: 시스템이 계산한 값에 4xx 에러 코드를 쓴다 (버그가 사용자 입력 오류로 기록된다)
+if (baseShippingFee < 0) {
+    throw new RestApiException(DeliveryErrorCode.INVALID_SHIPPING_FEE);
 }
 
 // 나쁜 예: 사용자 입력 오류에 표준 예외를 쓴다 (클라이언트가 유형을 구분할 수 없고 500이 된다)
@@ -609,7 +617,7 @@ throw new RestApiException(OrderErrorCode.ORDER_NOT_FOUND, e.getMessage());
 **규칙**
 - 요청 형식 검증(필수값, 길이, 패턴, 범위)은 요청 DTO의 Bean Validation으로 하고, 컨트롤러에서 `@Valid`로 검증한다.
 - 비즈니스 규칙 검증(중복 여부, 상태, 정책)은 서비스나 도메인(엔티티, 정책)에서 한다.
-- 엔티티·값 객체의 불변식(생성할 때 반드시 지켜야 하는 조건)은 생성자나 정적 팩토리에서 검증한다. 위반한 값이 사용자 입력에서 올 수 있으면 `RestApiException`, 호출한 코드의 실수라면 표준 예외를 던진다(6.1).
+- 엔티티·값 객체의 불변식(생성할 때 반드시 지켜야 하는 조건)은 생성자나 정적 팩토리에서 검증한다. 위반한 값이 사용자 입력에서 올 수 있으면 `RestApiException`, 다른 모듈이나 시스템이 넘긴 값이면 표준 예외를 던진다(6.1).
 
 **이유**: 요청 형식 오류는 서비스에 도착하기 전에 422로 거절하고 필드별 오류를 돌려줄 수 있다. 비즈니스 규칙은 요청 형식과 상관없이 지켜야 하므로 서비스나 도메인이 맡는다. 불변식을 객체가 스스로 검증하면 어떤 경로로 만들어도 유효한 객체만 존재한다.
 

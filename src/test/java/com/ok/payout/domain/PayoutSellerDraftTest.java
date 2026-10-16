@@ -1,6 +1,7 @@
 package com.ok.payout.domain;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.payout.exception.PayoutErrorCode;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
