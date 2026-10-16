@@ -1,11 +1,11 @@
 package com.ok.payout.service;
 
-import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.service.dto.PurchaseConfirmedCommand;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,11 +47,11 @@ class PayoutCandidateServiceTest {
     @DisplayName("배송비가 있으면 대금, 수수료, 배송비 3건을 저장한다.")
     void savesThreeCandidates_whenShippingFeeExists() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
         givenNotProcessedYet();
 
         // Act
-        service.createFromPurchaseConfirmed(event);
+        service.createFromPurchaseConfirmed(command);
 
         // Assert
         verify(repository).saveAll(itemsCaptor.capture());// saveAll이 1번 불렸는지 검증 + 넘어간 리스트 꺼내기
@@ -69,11 +69,11 @@ class PayoutCandidateServiceTest {
     @DisplayName("무료배송이면 배송비 후보는 만들지 않는다")
     void doesNotCreateShippingFeeCandidate_whenFreeShipping() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 0L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, 10_000L, 0L);
         givenNotProcessedYet();
 
         // Act
-        service.createFromPurchaseConfirmed(event);
+        service.createFromPurchaseConfirmed(command);
 
         // Assert
         verify(repository).saveAll(itemsCaptor.capture());
@@ -89,11 +89,11 @@ class PayoutCandidateServiceTest {
         // Arrange
         long totalItemPrice = 10_050L;
         //배송비 0원처리로 계산
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, totalItemPrice, 0L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, totalItemPrice, 0L);
         givenNotProcessedYet();
 
         // Act
-        service.createFromPurchaseConfirmed(event);
+        service.createFromPurchaseConfirmed(command);
 
         // Assert
         verify(repository).saveAll(itemsCaptor.capture());
@@ -106,14 +106,14 @@ class PayoutCandidateServiceTest {
     @DisplayName("관리자 조정이 아닌 평소 이벤트로 이미 처리된 주문항목이면 예외 없이 저장하지 않는다")
     void skipsWithoutSaving_whenOrderItemAlreadyProcessedByNormalEvent() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
         given(repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
                 ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .willReturn(true);
 
         // Act & Assert
         // 중복 이벤트는 오류가 아니라 이미 처리된 건 → 예외 없이 조용히 끝나야 함 (멱등)
-        assertThatCode(() -> service.createFromPurchaseConfirmed(event)).doesNotThrowAnyException();
+        assertThatCode(() -> service.createFromPurchaseConfirmed(command)).doesNotThrowAnyException();
         verify(repository, never()).saveAll(any());// saveAll이 한 번도 안 불렸는지 확인 (중복이면 저장 시도 자체를 안 해야 함)
     }
 
@@ -123,10 +123,10 @@ class PayoutCandidateServiceTest {
     @DisplayName("주문항목 ID가 없으면 예외가 난다")
     void throwsException_whenOrderItemIdIsNull() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(null, SELLER_ID, 10_000L, 3_000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(null, SELLER_ID, 10_000L, 3_000L);
 
         // Act & Assert
-        assertErrorCode(event, PayoutErrorCode.MISSING_ORDER_ITEM_ID);
+        assertErrorCode(command, PayoutErrorCode.MISSING_ORDER_ITEM_ID);
         verify(repository, never()).saveAll(any());
     }
 
@@ -134,10 +134,10 @@ class PayoutCandidateServiceTest {
     @DisplayName("판매자 ID가 없으면 예외가 난다")
     void throwsException_whenSellerIdIsNull() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, null, 10_000L, 3_000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, null, 10_000L, 3_000L);
 
         // Act & Assert
-        assertErrorCode(event, PayoutErrorCode.MISSING_SELLER_ID);
+        assertErrorCode(command, PayoutErrorCode.MISSING_SELLER_ID);
         verify(repository, never()).saveAll(any());
     }
 
@@ -145,10 +145,10 @@ class PayoutCandidateServiceTest {
     @DisplayName("상품총액이 없으면 예외가 난다")
     void throwsException_whenTotalItemPriceIsNull() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, null, 3_000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, null, 3_000L);
 
         // Act & Assert
-        assertErrorCode(event, PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
+        assertErrorCode(command, PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
         verify(repository, never()).saveAll(any());
     }
 
@@ -156,10 +156,10 @@ class PayoutCandidateServiceTest {
     @DisplayName("상품총액이 음수면 예외가 난다")
     void throwsException_whenTotalItemPriceIsNegative() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, -1L, 3_000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, -1L, 3_000L);
 
         // Act & Assert
-        assertErrorCode(event, PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
+        assertErrorCode(command, PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
         verify(repository, never()).saveAll(any());
     }
 
@@ -167,10 +167,10 @@ class PayoutCandidateServiceTest {
     @DisplayName("배송비가 없으면 예외가 난다")
     void throwsException_whenShippingPriceIsNull() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, null);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, 10_000L, null);
 
         // Act & Assert
-        assertErrorCode(event, PayoutErrorCode.INVALID_SHIPPING_PRICE);
+        assertErrorCode(command, PayoutErrorCode.INVALID_SHIPPING_PRICE);
         verify(repository, never()).saveAll(any());
     }
 
@@ -178,10 +178,10 @@ class PayoutCandidateServiceTest {
     @DisplayName("배송비가 음수면 예외가 난다")
     void throwsException_whenShippingPriceIsNegative() {
         // Arrange
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, -1L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ITEM_ID, SELLER_ID, 10_000L, -1L);
 
         // Act & Assert
-        assertErrorCode(event, PayoutErrorCode.INVALID_SHIPPING_PRICE);
+        assertErrorCode(command, PayoutErrorCode.INVALID_SHIPPING_PRICE);
         verify(repository, never()).saveAll(any());
     }
 
@@ -193,8 +193,8 @@ class PayoutCandidateServiceTest {
     }
 
     // RestApiException이 나고, 그 안의 에러 코드가 기대값인지 확인
-    private void assertErrorCode(OrderProductConfirmedEvent event, PayoutErrorCode expected) {
-        RestApiException e = assertThrows(RestApiException.class, () -> service.createFromPurchaseConfirmed(event));
+    private void assertErrorCode(PurchaseConfirmedCommand command, PayoutErrorCode expected) {
+        RestApiException e = assertThrows(RestApiException.class, () -> service.createFromPurchaseConfirmed(command));
         assertThat(e.getErrorCode()).isEqualTo(expected);
     }
 }
