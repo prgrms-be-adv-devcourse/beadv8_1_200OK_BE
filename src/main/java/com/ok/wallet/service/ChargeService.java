@@ -3,12 +3,17 @@ package com.ok.wallet.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.Charge;
+import com.ok.wallet.domain.ChargeStatus;
 import com.ok.wallet.exception.WalletErrorCode;
 import com.ok.wallet.repository.ChargeRepository;
+import com.ok.wallet.service.dto.ChargeConfirmResult;
 import com.ok.wallet.service.dto.ChargeRequestResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.time.LocalDateTime;
 
 /**
  * 예치금 충전 요청을 담당한다. 토스 결제창을 열기 전에 충전 건을 대기 상태로 만들어,
@@ -20,6 +25,7 @@ public class ChargeService {
     private final ChargeRepository chargeRepository;
     private final TermsService termsService;
     private final BuyerWalletService buyerWalletService;
+    private final Clock clock;
 
     /**
      * 충전을 요청한다. 필수 약관 동의 → 금액 규칙 → 잔액 한도 순서로 확인한다.
@@ -40,5 +46,20 @@ public class ChargeService {
         if (BuyerWallet.exceedsMaxBalance(buyerWalletService.getBalance(memberId), amount)) {
             throw new RestApiException(WalletErrorCode.BALANCE_LIMIT_EXCEEDED);
         }
+    }
+
+    /**
+     * 토스 결제창에서 실패한 충전 건을 실패로 바꾼다.
+     * 대기 중인 건만 바꾸며, 이미 승인이 시작됐거나 끝난 건은 그대로 두고 현재 상태를 돌려준다.
+     */
+    @Transactional
+    public ChargeConfirmResult fail(Long memberId, String chargeNo, String failureCode, String failureMessage) {
+        Charge charge = chargeRepository.findByChargeNo(chargeNo)
+                .filter(found -> found.isOwnedBy(memberId))
+                .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
+        if (charge.getStatus() == ChargeStatus.PENDING) {
+            charge.fail(failureCode, failureMessage, LocalDateTime.now(clock));
+        }
+        return ChargeConfirmResult.from(charge);
     }
 }

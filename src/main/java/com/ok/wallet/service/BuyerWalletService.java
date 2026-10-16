@@ -41,11 +41,12 @@ public class BuyerWalletService {
     }
 
     /**
-     * 승인된 충전 금액을 구매자 지갑에 반영하고 원장에 기록한다.
-     * 같은 근거 키로 이미 반영했다면 아무것도 하지 않는다.
+     * 토스 결제 승인으로 예치금을 충전한다. 지갑을 잠근 뒤 같은 결제가 이미 반영됐는지 확인하고 잔액을 늘린다.
+     * 근거 키(CHARGE:{paymentKey})는 여기서 만들어, 호출하는 쪽이 접두어 규칙을 몰라도 되게 한다.
      */
     @Transactional
-    public void charge(Long memberId, long amount, String referenceKey) {
+    public void chargeByPayment(Long memberId, String paymentKey, long amount) {
+        String referenceKey = "CHARGE:" + paymentKey;
         BuyerWallet wallet = getOrCreate(memberId);
         // 이 지갑에 이미 반영한 근거 키면 넘어간다. 지갑을 잠근 뒤 확인하므로 같은 지갑의 요청은 순서대로 이 확인을 거친다.
         // 다른 지갑에 같은 키가 있는 경우는 일부러 넘기지 않는다. 조용히 무시하지 않고 저장 시 유니크 제약으로 실패하게 해 오류를 드러낸다.

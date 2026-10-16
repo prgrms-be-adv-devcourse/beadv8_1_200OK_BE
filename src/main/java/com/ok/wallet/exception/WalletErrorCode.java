@@ -16,6 +16,8 @@ public enum WalletErrorCode implements ErrorCode {
     INVALID_TERMS_TYPE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid terms type", "알 수 없는 약관 유형입니다."),
     INVALID_CHARGE_AMOUNT(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid charge amount", "충전 금액은 10,000원 이상, 10,000원 단위여야 합니다."),
     BALANCE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "Balance limit exceeded", "충전 후 잔액은 500,000원을 넘을 수 없습니다."),
+    CHARGE_NOT_FOUND(HttpStatus.NOT_FOUND, "Charge not found", "충전 내역을 찾을 수 없습니다."),
+    CHARGE_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_ENTITY, "Charge amount mismatch", "충전 요청 금액과 결제 금액이 다릅니다."),
     ;
 
     private final HttpStatus httpStatus;
