@@ -10,13 +10,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
-import org.springframework.dao.DataAccessException;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -43,32 +41,37 @@ class TermsAgreementRepositoryTest {
     @Test
     void 동의를_저장하면_동의한_약관과_시각이_기록된다() {
         // When
-        TermsAgreement saved = termsAgreementRepository.save(
-                TermsAgreement.create(1L, financialTermsId, AGREED_AT));
+        termsAgreementRepository.insertIfAbsent(1L, financialTermsId, AGREED_AT);
 
         // Then
-        assertThat(saved.getId()).isNotNull();
-        assertThat(saved.getTermsId()).isEqualTo(financialTermsId);
-        assertThat(saved.getAgreedAt()).isEqualTo(AGREED_AT);
+        List<TermsAgreement> agreements = termsAgreementRepository
+                .findAllByMemberIdAndTermsIdIn(1L, List.of(financialTermsId));
+        assertThat(agreements).singleElement().satisfies(agreement -> {
+            assertThat(agreement.getTermsId()).isEqualTo(financialTermsId);
+            assertThat(agreement.getAgreedAt()).isEqualTo(AGREED_AT);
+        });
     }
 
     @Test
-    void 같은_회원이_같은_약관_버전에_두_번_동의하면_저장되지_않는다() {
+    void 같은_회원이_같은_약관_버전에_다시_동의하면_처음_기록만_남는다() {
         // Given
-        termsAgreementRepository.save(TermsAgreement.create(1L, financialTermsId, AGREED_AT));
+        termsAgreementRepository.insertIfAbsent(1L, financialTermsId, AGREED_AT);
 
-        // When & Then
-        assertThatThrownBy(() -> termsAgreementRepository.save(
-                TermsAgreement.create(1L, financialTermsId, AGREED_AT.plusMinutes(1))))
-                .isInstanceOf(DataAccessException.class)
-                .hasMessageContaining("uk_wallet_terms_agreement_member_terms");
+        // When: 유니크 제약에 걸려도 예외 없이 넘어간다
+        termsAgreementRepository.insertIfAbsent(1L, financialTermsId, AGREED_AT.plusMinutes(1));
+
+        // Then: 처음 동의 시각이 그대로 유지된다
+        List<TermsAgreement> agreements = termsAgreementRepository
+                .findAllByMemberIdAndTermsIdIn(1L, List.of(financialTermsId));
+        assertThat(agreements).singleElement()
+                .satisfies(agreement -> assertThat(agreement.getAgreedAt()).isEqualTo(AGREED_AT));
     }
 
     @Test
     void 회원이_주어진_약관들_중_동의한_것만_조회한다() {
         // Given: 회원 1은 전자금융거래 약관만, 회원 2는 선불 약관에 동의
-        termsAgreementRepository.save(TermsAgreement.create(1L, financialTermsId, AGREED_AT));
-        termsAgreementRepository.save(TermsAgreement.create(2L, prepaidTermsId, AGREED_AT));
+        termsAgreementRepository.insertIfAbsent(1L, financialTermsId, AGREED_AT);
+        termsAgreementRepository.insertIfAbsent(2L, prepaidTermsId, AGREED_AT);
 
         // When
         List<TermsAgreement> agreements = termsAgreementRepository

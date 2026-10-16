@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 /**
  * 회원이 특정 버전의 약관에 동의한 기록. 추가만 하고 수정·삭제하지 않는다.
  * 약관 ID가 유형과 버전을 함께 가리키므로 어떤 버전에 언제 동의했는지 남는다.
+ * 저장은 동시 요청에서도 중복 없이 처리되도록 TermsAgreementRepository.insertIfAbsent로만 한다.
  */
 @Entity
 @Immutable // 동의 기록이라 UPDATE가 발생하지 않음
@@ -36,15 +37,4 @@ public class TermsAgreement extends BaseTime {
 
     @Column(name = "agreed_at", nullable = false)
     private LocalDateTime agreedAt;
-
-    private TermsAgreement(Long memberId, Long termsId, LocalDateTime agreedAt) {
-        this.memberId = memberId;
-        this.termsId = termsId;
-        this.agreedAt = agreedAt;
-    }
-
-    // 값은 경계(토큰의 회원 ID, 서버가 조회한 약관, Clock)에서 보장되므로 여기서는 다시 검사하지 않는다
-    public static TermsAgreement create(Long memberId, Long termsId, LocalDateTime agreedAt) {
-        return new TermsAgreement(memberId, termsId, agreedAt);
-    }
 }
