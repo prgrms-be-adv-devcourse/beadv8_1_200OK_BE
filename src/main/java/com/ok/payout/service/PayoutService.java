@@ -1,6 +1,5 @@
 package com.ok.payout.service;
 
-import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
@@ -24,9 +23,10 @@ import com.ok.payout.service.dto.PayoutItemResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
+import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
+import com.ok.payout.service.publisher.PayoutEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -56,7 +56,8 @@ public class PayoutService {
     private final PayoutSnapshotItemRepository payoutSnapshotItemRepository;
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
+    private final PayoutEventPublisher payoutEventPublisher;
 
     // 조회 상한: 실행일 − 대기 일수 00:00 (생성 후 대기 일수가 지난 후보만 정산)
     public LocalDateTime settlementTo(LocalDate runDate) {
@@ -198,7 +199,7 @@ public class PayoutService {
             if (payout.getAmount() <= 0) {
                 continue;
             }
-            eventPublisher.publishEvent(new SellerPayoutCreatedEvent(
+            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreatedCommand(
                     payout.getId(),
                     payout.getPayeeId(),
                     payout.getAmount(),
