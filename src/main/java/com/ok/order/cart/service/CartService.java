@@ -7,12 +7,15 @@ import com.ok.order.cart.domain.CartItem;
 import com.ok.order.cart.exception.CartErrorCode;
 import com.ok.order.cart.repository.CartItemRepository;
 import com.ok.order.cart.repository.CartRepository;
+import com.ok.order.cart.service.dto.SelectedCartItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -115,5 +118,28 @@ public class CartService {
         Cart cart = getOrCreateCart(memberId);
         return cartItemRepository.findByIdAndCartId(cartItemId, cart.getId())
                 .orElseThrow(() -> new RestApiException(CartErrorCode.CART_ITEM_NOT_FOUND));
+    }
+
+    // 선택된 장바구니 상품
+    public List<SelectedCartItem> getSelectedCartItems(Long memberId) {
+        // 회원의 장바구니 찾기
+        Optional<Cart> cartOptional = cartRepository.findByMemberId(memberId);
+
+        // 장바구니가 없으면 빈 목록
+        if (cartOptional.isEmpty()) {
+            return List.of();
+        }
+        Cart cart = cartOptional.get();
+
+        // 선택된 장바구니 상품들 가져오기
+        List<CartItem> items = cartItemRepository.findAllByCartIdAndSelectedTrue(cart.getId());
+
+        // 하나씩 productOptionId와 quantity를 selectedCartItem로 변환
+        List<SelectedCartItem> results = new ArrayList<>();
+        for (CartItem item : items) {
+            results.add(new SelectedCartItem(item.getProductOptionId(), item.getQuantity()));
+        }
+
+        return results;
     }
 }
