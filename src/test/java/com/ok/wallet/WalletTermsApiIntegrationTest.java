@@ -2,6 +2,9 @@ package com.ok.wallet;
 
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
+import com.ok.wallet.domain.TermsType;
+import com.ok.wallet.service.TermsService;
+import com.ok.wallet.service.dto.TermsAgreeCommand;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +17,16 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasSize;
@@ -23,6 +36,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 
 // 토큰으로 약관 조회·동의 API를 호출해, 경계 검증(토큰, 요청 본문)부터 저장까지 실제와 같게 확인한다.
 class WalletTermsApiIntegrationTest extends AbstractIntegrationTest {
@@ -44,6 +58,9 @@ class WalletTermsApiIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     TestAccessTokens tokens;
+
+    @Autowired
+    TermsService termsService;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -93,6 +110,44 @@ class WalletTermsApiIntegrationTest extends AbstractIntegrationTest {
 
         agree(ALL_AGREE_BODY)
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void 같은_회원의_동의_요청이_동시에_와도_오류_없이_한_번만_저장된다() throws Exception {
+        // Given
+        int threadCount = 5;
+        List<TermsAgreeCommand> commands = Arrays.stream(TermsType.values())
+                .map(type -> new TermsAgreeCommand(type.name(), 1))
+                .toList();
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> results = new ArrayList<>();
+
+        try {
+            // When: 더블 클릭처럼 같은 동의 요청이 동시에 들어옴
+            for (int i = 0; i < threadCount; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    termsService.agree(MEMBER_ID, commands);
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<?> result : results) {
+                result.get(30, TimeUnit.SECONDS); // 유니크 위반이 나면 여기서 실패한다
+            }
+
+            // Then
+            Long count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM wallet_terms_agreement WHERE member_id = ?", Long.class, MEMBER_ID);
+            assertThat(count).isEqualTo(TermsType.values().length);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
     }
 
     @Test
@@ -155,8 +210,14 @@ class WalletTermsApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 이 클래스의 회원 동의와, 테스트에서 추가한 개정 약관(v2 이상)을 지운다. 마이그레이션의 v1은 그대로 둔다.
+    // 개정 약관을 지우기 전에 그 약관을 가리키는 동의를 먼저 지워 FK에 막히지 않게 한다.
     private void cleanUp() {
         jdbcTemplate.update("DELETE FROM wallet_terms_agreement WHERE member_id = ?", MEMBER_ID);
+        jdbcTemplate.update("""
+                DELETE a FROM wallet_terms_agreement a
+                JOIN wallet_terms t ON a.terms_id = t.id
+                WHERE t.version > 1
+                """);
         jdbcTemplate.update("DELETE FROM wallet_terms WHERE version > 1");
     }
 }

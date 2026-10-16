@@ -61,11 +61,12 @@ public class TermsService {
         Set<Long> agreedTermsIds = agreedTermsIds(memberId, currentTerms);
         // 한 번의 요청에서 동의한 약관들은 같은 시각으로 기록한다
         LocalDateTime now = LocalDateTime.now(clock);
+        // 이미 동의한 약관은 건너뛰고, 동시에 들어온 요청과 겹치면 insertIfAbsent가 중복을 넘긴다.
+        // 약관 순서(TermsType 선언 순서)가 요청마다 같아, 동시 요청끼리 잠금 순서가 엇갈리지 않는다.
         currentTerms.stream()
                 .filter(terms -> requestedTypes.contains(terms.getType()))
                 .filter(terms -> !agreedTermsIds.contains(terms.getId()))
-                .forEach(terms -> termsAgreementRepository.save(
-                        TermsAgreement.create(memberId, terms.getId(), now)));
+                .forEach(terms -> termsAgreementRepository.insertIfAbsent(memberId, terms.getId(), now));
     }
 
     // 약관 유형은 사용자 요청에서 오므로, 모르는 유형은 규칙 위반으로 응답한다 (값의 출처 기준, #123)
@@ -85,8 +86,11 @@ public class TermsService {
         List<Terms> requiredTerms = currentTerms().stream()
                 .filter(terms -> terms.getType().isRequired())
                 .toList();
-        Set<Long> agreedTermsIds = agreedTermsIds(memberId, requiredTerms);
-        if (agreedTermsIds.size() != requiredTerms.size()) {
+        Set<Long> requiredTermsIds = requiredTerms.stream()
+                .map(Terms::getId)
+                .collect(Collectors.toSet());
+        // 현재 버전 필수 약관을 모두 동의 목록에 포함해야 충전할 수 있다
+        if (!agreedTermsIds(memberId, requiredTerms).containsAll(requiredTermsIds)) {
             throw new RestApiException(WalletErrorCode.TERMS_AGREEMENT_REQUIRED);
         }
     }
