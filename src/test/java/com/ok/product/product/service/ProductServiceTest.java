@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 
@@ -59,9 +60,10 @@ class ProductServiceTest {
 	@BeforeEach
 	void setUp() {
 		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
+		// ProductService가 Clock을 주입받으므로 생성자에 넣는다 (#93). 시각을 검증하는 테스트가 없어 실제 시계를 그대로 쓴다
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
 			productQueryRepository, new ProductDescriptionSanitizer(imageUrlValidator),
-			new MediaUrlResolver("bucket", "ap-northeast-2"));
+			new MediaUrlResolver("bucket", "ap-northeast-2"), Clock.systemDefaultZone());
 	}
 
 	@Test

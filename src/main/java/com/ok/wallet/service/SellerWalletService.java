@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 @Slf4j
@@ -19,6 +20,9 @@ public class SellerWalletService {
 
     private final SellerWalletRepository sellerWalletRepository;
     private final SellerWalletLedgerRepository sellerWalletLedgerRepository;
+    // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
+    // 지갑 생성 시각을 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
+    private final Clock clock;
 
     /**
      * 판매자 지갑을 잠금 조회로 반환한다. 지갑이 없다면 생성한 뒤 반환한다.
@@ -31,8 +35,7 @@ public class SellerWalletService {
     @Transactional
     public SellerWallet getOrCreate(Long memberId) {
         if (!sellerWalletRepository.existsByMemberId(memberId)) {
-            // TODO: 공통 Clock 빈이 생기면 LocalDateTime.now(clock)으로 변경
-            sellerWalletRepository.insertIfAbsent(memberId, LocalDateTime.now());
+            sellerWalletRepository.insertIfAbsent(memberId, LocalDateTime.now(clock));
         }
         // 바로 앞에서 저장했거나 존재를 확인했으므로 여기서 없을 수 없다.
         // 없다면 사용자 입력이 아닌 코드·DB의 이상이므로 500으로 드러나도록 IllegalStateException을 던진다.
