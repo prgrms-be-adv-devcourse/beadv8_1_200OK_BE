@@ -159,6 +159,43 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 같은_상품에_동시에_작성해도_모두_저장되고_집계에_빠짐없이_더해진다() throws Exception {
+		// given: 서로 다른 주문으로 같은 상품에 동시에 작성한다
+		int requests = 2;
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<Integer>> results = new ArrayList<>();
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests)) {
+			for (int i = 0; i < requests; i++) {
+				long orderId = ORDER_ID + i;
+				results.add(executor.submit(() -> {
+					start.await();
+					return mockMvc.perform(post("/api/v1/products/{productId}/reviews", productId)
+							.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
+							.contentType(MediaType.APPLICATION_JSON)
+							.content(createBody(orderId, 9)))
+						.andReturn().getResponse().getStatus();
+				}));
+			}
+			start.countDown();
+		}
+
+		// then: 상품 행을 먼저 잠가 데드락 없이 차례로 저장된다
+		List<Integer> statuses = new ArrayList<>();
+		for (Future<Integer> result : results) {
+			statuses.add(result.get());
+		}
+		assertThat(statuses).containsOnly(201);
+		Product sut = productRepository.findById(productId).orElseThrow();
+		assertThat(sut).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(sut.getReviewCount()).isEqualTo(2);
+			softly.assertThat(sut.getRatingSum()).isEqualTo(18);
+		});
+	}
+
+	@Test
 	void 같은_리뷰를_동시에_삭제하면_집계에서_한_번만_빠진다() throws Exception {
 		// given
 		long reviewId = writeReview(BUYER_ID, ORDER_ID);

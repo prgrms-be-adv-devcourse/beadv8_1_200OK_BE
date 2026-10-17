@@ -61,10 +61,11 @@ public class ProductReviewService {
 				productId, command.productOptionId(), command.orderId(), command.orderItemId(),
 				memberId, command.rating(), command.content(), toMediaSpecs(command.mediaUrls())
 		);
-		Long reviewId = saveReview(review);
-
+		// 집계를 INSERT보다 먼저 더해 상품 행에 배타 락을 먼저 잡는다.
+		// INSERT를 먼저 하면 FK 때문에 상품 행에 공유 락이 걸리고, 같은 상품에 동시에 쓰면 서로 배타 락을 기다리다 데드락이 난다.
+		// 저장이 실패하면 트랜잭션이 롤백되어 더한 집계도 되돌아간다
 		productRepository.addReviewStats(productId, 1, command.rating());
-		return reviewId;
+		return saveReview(review);
 	}
 
 	@Transactional
