@@ -1,5 +1,7 @@
 package com.ok;
 
+import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
@@ -13,12 +15,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.GeneralCodingRules;
 
+import com.ok.common.event.DomainEvent;
 import com.ok.common.exception.ErrorCode;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +32,11 @@ import jakarta.persistence.Entity;
 
 @AnalyzeClasses(packages = "com.ok", importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
+
+    private static final DescribedPredicate<JavaClass> ApplicationEventPublisher에_의존하는 = DescribedPredicate.describe(
+            "use ApplicationEventPublisher",
+            javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
+                    .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
 
     // 레이어
 
@@ -75,10 +85,29 @@ class ArchitectureTest {
                     + "발행 인터페이스는 값을 받는다 (컨벤션 2.1)"));
 
     @ArchTest
-    static final ArchRule service_publisher에는_인터페이스만_둔다 = classes()
-            .that().resideInAPackage("..service.publisher..")
-            .should().beInterfaces()
-            .because("구현체는 event 패키지에 두어 서비스가 발행 방식을 알지 않게 한다 (컨벤션 2.1)");
+    static final ArchRule 서비스는_event_패키지에_의존하지_않는다 = noClasses()
+            .that().resideInAPackage("..service..")
+            // common.event(이벤트 record)는 이벤트_클래스는_event_패키지만_사용한다 규칙이 검사한다
+            .should().dependOnClassesThat(resideInAPackage("..event..")
+                    .and(not(resideInAPackage("com.ok.common.event.."))))
+            .because("서비스는 service의 발행 인터페이스에만 의존하고, 구현체(event)를 바꿔도 서비스가 바뀌지 않게 한다 (컨벤션 2.1)");
+
+    @ArchTest
+    static final ArchRule 이벤트_발행_구현체는_service의_발행_인터페이스를_구현한다 = classes()
+            .that(ApplicationEventPublisher에_의존하는)
+            // event 밖에서 쓰는 경우는 ApplicationEventPublisher는_event_패키지만_사용한다 규칙이 막는다
+            .and().resideInAPackage("..event..")
+            .should().implement(resideInAPackage("..service.."))
+            .because("서비스는 service의 발행 인터페이스만 알고, event의 구현체가 발행 방식을 맡는다. "
+                    + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (컨벤션 2.1)");
+
+    // freeze
+    @ArchTest
+    static final ArchRule 모듈_간_이벤트는_DomainEvent를_구현한다 = freeze(classes()
+            .that().resideInAPackage("com.ok.common.event..")
+            .and().areNotInterfaces()
+            .should().implement(DomainEvent.class)
+            .because("발행 구현체가 모듈 간 계약으로 정한 이벤트(DomainEvent)만 발행하게 한다 (컨벤션 2.1)"));
 
     // 이름과 위치
 
