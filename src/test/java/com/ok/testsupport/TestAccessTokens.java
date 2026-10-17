@@ -3,8 +3,6 @@ package com.ok.testsupport;
 import com.ok.common.security.TokenClaims;
 import com.ok.member.auth.config.JwtConfig;
 import com.ok.member.auth.config.JwtProperties;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
