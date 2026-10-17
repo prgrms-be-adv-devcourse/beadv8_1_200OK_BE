@@ -20,6 +20,9 @@ import java.util.List;
  */
 final class TokenRoleMapper {
 
+    private TokenRoleMapper() {
+    }
+
     static List<String> toTokenRoles(MemberType type) {
         if (type == null) {
             throw new IllegalArgumentException("type은 필수입니다.");

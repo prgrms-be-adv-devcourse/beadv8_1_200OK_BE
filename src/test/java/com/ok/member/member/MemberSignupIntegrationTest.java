@@ -128,8 +128,8 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
     @Test
     void DB_unique_제약이_중복_이메일_저장을_막는다() {
         // given
-        memberRepository.saveAndFlush(buyer("tester01", "same@example.com"));
-        Member duplicated = buyer("tester02", "same@example.com");
+        memberRepository.saveAndFlush(user("tester01", "same@example.com"));
+        Member duplicated = user("tester02", "same@example.com");
 
         // when & then
         assertThatThrownBy(() -> memberRepository.saveAndFlush(duplicated))
@@ -169,7 +169,7 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
         return body;
     }
 
-    private Member buyer(String loginId, String email) {
+    private Member user(String loginId, String email) {
         return Member.createUser(loginId, "{bcrypt}encoded", email, "홍길동", "길동이",
                 LocalDateTime.of(2026, 10, 1, 12, 0));
     }
