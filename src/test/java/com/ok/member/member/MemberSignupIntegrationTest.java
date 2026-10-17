@@ -168,7 +168,7 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Member buyer(String loginId, String email) {
-        return Member.createBuyer(loginId, "{bcrypt}encoded", email, "홍길동", "길동이",
+        return Member.createUser(loginId, "{bcrypt}encoded", email, "홍길동", "길동이",
                 LocalDateTime.of(2026, 10, 1, 12, 0));
     }
 

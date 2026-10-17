@@ -23,7 +23,7 @@ interface MemberControllerSpec {
     @Operation(
             summary = "일반 회원가입",
             description = """
-                    구매자(BUYER) 권한의 일반 회원으로 가입합니다.
+                    일반 회원(USER)으로 가입합니다. 가입한 회원은 구매할 수 있고, 판매하려면 판매자 신청·승인을 거칩니다.
                     이용약관 동의와 개인정보 수집·이용 동의는 필수입니다.
                     가입이 완료되면 MemberRegisteredEvent가 발행됩니다.
                     """

@@ -65,7 +65,7 @@ public class AuthService {
         Member member = authenticate(command);
         validateLoginable(member);
 
-        List<String> roles = TokenRoleMapper.toTokenRoles(member.getRole());
+        List<String> roles = TokenRoleMapper.toTokenRoles(member.getType());
         AccessToken accessToken = accessTokenProvider.issue(member.getId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
 
