@@ -16,8 +16,9 @@ import com.ok.product.review.exception.ProductReviewErrorCode;
 @Component
 class ProductReviewMediaValidator {
 
-	// media 모듈이 만드는 키 형식. 업로드 시 이미지는 jpg로 바뀌고 영상은 mp4만 받는다
-	private static final Pattern OBJECT_KEY = Pattern.compile("product_review/[A-Za-z0-9-]+\\.(jpg|mp4)");
+	// media 모듈이 만드는 키 형식. 업로드 시 이미지는 jpg로 바뀌고 영상은 mp4만 받는다.
+	// 길이 상한이 없으면 긴 키가 object_key 컬럼(255자)을 넘어 저장 시 DB 오류가 나므로 여기서 422로 막는다
+	private static final Pattern OBJECT_KEY = Pattern.compile("product_review/[A-Za-z0-9-]{1,200}\\.(jpg|mp4)");
 
 	// 요청의 타입을 믿으면 영상 개수 제한을 우회할 수 있어 확장자로 정한다
 	private static final Map<String, ProductReviewMediaType> TYPE_BY_EXTENSION = Map.of(

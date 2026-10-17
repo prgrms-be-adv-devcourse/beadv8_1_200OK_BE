@@ -115,7 +115,7 @@ public class ProductReviewService {
 		}
 	}
 
-	// 동시에 검증을 통과한 요청은 UNIQUE 위반이 나서 중복으로 바꾼다
+	// 동시에 중복 검사를 통과한 요청은 UNIQUE 위반이 나서 중복으로 바꾼다
 	private Long saveReview(ProductReview review) {
 		try {
 			return productReviewRepository.saveAndFlush(review).getId();

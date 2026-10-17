@@ -19,10 +19,14 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -262,10 +266,19 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(status().isForbidden());
 	}
 
-	@Test
-	void 페이지_크기가_100을_넘으면_400() throws Exception {
-		mockMvc.perform(get("/api/v1/products/{productId}/reviews", productId).param("size", "101"))
+	// @Min·@Max가 Spec 인터페이스에만 있어도 검증돼야 한다. 안 되면 PageRequest.of가 예외를 던져 500이 된다
+	@ParameterizedTest
+	@MethodSource("범위를_벗어난_페이지_요청")
+	void 페이지_번호나_크기가_범위를_벗어나면_400(String page, String size) throws Exception {
+		mockMvc.perform(get("/api/v1/products/{productId}/reviews", productId).param("page", page).param("size", size))
 			.andExpect(status().isBadRequest());
+	}
+
+	static Stream<Arguments> 범위를_벗어난_페이지_요청() {
+		return Stream.of(
+			Arguments.of("-1", "20"),
+			Arguments.of("0", "0"),
+			Arguments.of("0", "101"));
 	}
 
 	@Test

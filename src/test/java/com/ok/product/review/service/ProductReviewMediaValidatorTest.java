@@ -64,6 +64,7 @@ class ProductReviewMediaValidatorTest {
 			BASE_URL + "product_review/a.jpg?x=1",
 			BASE_URL + "product_review/a",
 			BASE_URL + "product_review/",
+			BASE_URL + "product_review/" + "a".repeat(201) + ".jpg",
 			null);
 	}
 }
