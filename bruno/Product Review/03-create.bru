@@ -1,0 +1,39 @@
+meta {
+  name: 리뷰 작성
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/products/{{reviewProductId}}/reviews
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "productOptionId": {{reviewOptionId}},
+    "orderId": {{reviewOrderId}},
+    "orderItemId": {{reviewOrderItemId}},
+    "rating": 9,
+    "content": "달고 맛있어요",
+    "mediaUrls": [
+      "https://{{process.env.S3_BUCKET}}.s3.{{process.env.AWS_REGION}}.amazonaws.com/product_review/bruno-sample.jpg",
+      "https://{{process.env.S3_BUCKET}}.s3.{{process.env.AWS_REGION}}.amazonaws.com/product_review/bruno-sample.mp4"
+    ]
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.reviewId: isNumber
+}
+
+script:post-response {
+  bru.setVar("reviewId", res.body.reviewId);
+}
+
+docs {
+  첨부 URL은 미디어 업로드 API(purpose: PRODUCT_REVIEW)로 받은 주소를 씁니다. 파일이 실제로 있는지는 보지 않고 경로 형식만 검증합니다.
+  jpg는 이미지, mp4는 영상으로 저장하고 영상은 1개까지입니다.
+}

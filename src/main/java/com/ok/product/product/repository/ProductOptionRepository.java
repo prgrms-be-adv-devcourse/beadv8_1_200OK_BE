@@ -23,6 +23,9 @@ public interface ProductOptionRepository extends JpaRepository<ProductOption, Lo
 		""")
 	List<ProductOption> findAllWithProductByIdIn(@Param("ids") Collection<Long> ids);
 
+	// 리뷰 작성 시 옵션이 그 상품의 옵션인지 확인한다. 구매 후 옵션이 지워질 수 있어 삭제된 옵션도 포함한다
+	boolean existsByIdAndProductId(Long id, Long productId);
+
 	// 배정: 판매 가능 수량(총재고 - 배정 수량)이 충분할 때만 배정 수량을 늘린다
 	@Modifying
 	@Query("""
