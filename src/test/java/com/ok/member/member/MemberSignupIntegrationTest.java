@@ -1,6 +1,7 @@
 package com.ok.member.member;
 
 import com.ok.member.member.domain.Member;
+import com.ok.member.member.domain.MemberType;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
@@ -72,6 +73,7 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getPassword()).isNotEqualTo(PASSWORD);
             softly.assertThat(passwordEncoder.matches(PASSWORD, sut.getPassword())).isTrue();
             softly.assertThat(sut.getCreatedAt()).isNotNull();
+            softly.assertThat(sut.getType()).isEqualTo(MemberType.USER);
         });
     }
 
