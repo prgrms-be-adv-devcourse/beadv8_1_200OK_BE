@@ -96,6 +96,43 @@ public class CurrentMemberIdArgumentResolverTest {
         assertThat(sut).isTrue();
     }
 
+
+    @Test
+    void 어노테이션이_없는_파라미터는_처리하지_않는다() throws Exception {
+        // when
+        boolean sut = resolver.supportsParameter(parameter("notAnnotated"));
+
+        // then
+        assertThat(sut).isFalse();
+    }
+
+    @Test
+    void Long이_아닌_타입에_붙이면_조용히_넘어가지_않고_예외가_발생한다() throws Exception {
+        // given
+        MethodParameter parameter = parameter("annotatedString");
+
+        // when & then
+        assertThatThrownBy(() -> resolver.supportsParameter(parameter))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void subject가_없으면_잘못된_인증_예외가_발생한다() {
+        // given
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "HS256")
+                .claim("roles", java.util.List.of("BUYER"))
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .build();
+        authenticate(new JwtAuthenticationToken(jwt));
+
+        // when & then
+        assertThatThrownBy(() -> resolver.resolveArgument(parameter("annotatedLong"), null, null, null))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessage("토큰에 회원 식별자가 없습니다.");
+    }
+
     private void authenticate(Authentication authentication) {
         SecurityContextHolder.getContext().setAuthentication(authentication);
     }

@@ -223,6 +223,36 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 로그인(`POST /api/v1/auth/login`)으로 받은 Access Token을 `Authorization: Bearer {토큰}` 헤더로 보냅니다.
 보안 필터가 요청마다 토큰의 서명·만료·발급자를 검증하고, 실패하면 401로 응답합니다.
 
+### 토큰 형식
+
+토큰은 RFC 7519(JWT) 형식이고, 등록 클레임 중 필요한 것만 씁니다. 권한은 비공개 클레임(`roles`)으로 담습니다.
+
+| 위치 | 이름 | 값 | 용도 |
+|---|---|---|---|
+| 헤더 | `alg` | `HS256` | 서명 알고리즘 |
+| 헤더 | `typ` | `at+jwt` | Access Token임을 표시. 이 타입만 받아 다른 용도의 JWT와 섞이지 않게 함 (RFC 9068, RFC 8725) |
+| 헤더 | `kid` | `jwt.key-id` 설정값 | 서명 키 식별자. 키를 교체할 때 어떤 키로 서명했는지 구분 |
+| 클레임 | `iss` | `paldo-gotgan` | 우리가 발급한 토큰인지 검증 |
+| 클레임 | `sub` | 회원 id | `@CurrentMemberId`가 읽는 값 |
+| 클레임 | `aud` | `jwt.audience` 설정값 | 이 서비스를 위한 토큰인지 검증 |
+| 클레임 | `jti` | UUID | 토큰 개별 폐기(로그아웃·탈취 대응)용 |
+| 클레임 | `iat` | 발급 시각 | 추적, 특정 시점 이전 토큰 일괄 무효화용 |
+| 클레임 | `exp` | 발급 시각 + 30분 | 만료 검증 (필수) |
+| 클레임 | `roles` | 예: `["BUYER", "SELLER"]` | 역할 기반 인가 (각 값이 `ROLE_` 권한으로 변환) |
+
+- `nbf`(사용 시작 시각)는 넣지 않습니다. 발급 즉시 유효한 토큰이라 `iat`와 같은 값이 되고, 서버 간 시계 차이로 정상 토큰이 거부될 위험만 생깁니다.
+- 이름·이메일 같은 개인정보는 넣지 않습니다. JWT는 누구나 내용을 볼 수 있고, 회원 정보가 바뀌어도 토큰 만료 전까지 예전 값이 남습니다.
+- `aud`는 지금 받는 서비스가 하나라 늘 같은 값이지만, 서비스가 분리되면 이미 발급된 토큰도 구분할 수 있도록 미리 넣습니다.
+- `roles`는 회원에 저장된 값이 아니라 토큰을 발급할 때 회원 정보로 계산한 인가용 권한입니다. 권한 이름은 `TokenRoles`에 있습니다.
+
+
+### 서명 방식과 전환 기준
+
+- **지금은 HS256(대칭키)를 씁니다.** 발급과 검증을 같은 애플리케이션에서 하므로, 비대칭키의 장점(검증하는 쪽은 위조할 수 없음)이 쓰이지 않고 키 관리가 단순합니다.
+- **비밀키 관리**: 환경 변수(`JWT_SECRET`)로만 주입하고, 디코딩한 값이 32바이트 이상이어야 기동됩니다. 개발·운영 환경은 서로 다른 키를 씁니다.
+- **키 교체**: 비밀키를 바꿀 때 `jwt.key-id`도 함께 바꿉니다. 옛 키와 새 키를 함께 받아들이는 기간이 필요하면, 디코더가 `kid`로 키를 고르도록 바꿉니다.
+- **비대칭키 전환 기준**: 토큰을 검증하는 프로그램이 둘 이상이 될 때(서비스 분리, 별도 서버) RS256 등으로 바꿉니다. 비밀키를 두 번째 서비스에 나눠주기 전에 바꿔야 합니다. 서명 알고리즘과 키는 `JwtConfig`에서만 관리하므로 각 모듈의 인가 코드는 바뀌지 않습니다.
+
 ### 컨트롤러에서 로그인 회원 받기
 
 요청 헤더(`X-Member-Id` 등)로 회원을 받지 말고 `@CurrentMemberId`를 씁니다. 값은 검증된 토큰에서 꺼내므로 클라이언트가 바꿀 수 없습니다.
@@ -238,7 +268,7 @@ public ResponseEntity<CartResponse> getMyCart(@CurrentMemberId Long memberId) {
 
 ### 역할 제한
 
-특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 역할(`role` claim)이 `ROLE_{역할}` 권한으로 바뀌어 있습니다.
+특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 권한 목록(`roles` claim)의 각 값이 `ROLE_{권한}` 권한으로 바뀌어 있습니다. 판매자 토큰에는 `BUYER`와 `SELLER`가 함께 들어 있어, 판매자도 구매 API를 쓸 수 있습니다.
 
 ```java
 @PreAuthorize("hasRole('SELLER')")
@@ -255,14 +285,16 @@ public ResponseEntity<ProductCreateResponse> create(@CurrentMemberId Long member
 ```java
 @Autowired
 TestAccessTokens tokens;
-
+ 
 @BeforeEach
 void setUp() {
     mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
 }
-
+ 
 mockMvc.perform(get("/api/v1/cart")
         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "BUYER")));
+ 
+// 여러 권한: tokens.bearer(1L, "BUYER", "SELLER")
 ```
 
 **컨트롤러 슬라이스 테스트** (`@WebMvcTest`): 실제 토큰 없이 `jwt()`로 로그인한 회원을 흉내 냅니다.

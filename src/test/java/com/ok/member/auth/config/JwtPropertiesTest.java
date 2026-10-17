@@ -15,6 +15,8 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 class JwtPropertiesTest {
 
     private static final String ISSUER = "paldo-gotgan";
+    private static final String AUDIENCE = "paldo-gotgan-api";
+    private static final String KEY_ID = "hs256-v1";
     /** "test-secret-key-for-jwt-must-be-32-bytes-or-more"(48바이트)를 Base64로 인코딩한 값 */
     private static final String VALID_SECRET = "dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl";
     private static final Duration ACCESS_EXPIRATION = Duration.ofMinutes(30);
@@ -23,12 +25,15 @@ class JwtPropertiesTest {
     @Test
     void 올바른_설정값이면_생성된다() {
         // when
-        JwtProperties sut = new JwtProperties(ISSUER, VALID_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, KEY_ID, VALID_SECRET,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // then
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.issuer()).isEqualTo(ISSUER);
+            softly.assertThat(sut.audience()).isEqualTo(AUDIENCE);
+            softly.assertThat(sut.keyId()).isEqualTo(KEY_ID);
             softly.assertThat(sut.accessTokenExpiration()).isEqualTo(ACCESS_EXPIRATION);
             softly.assertThat(sut.refreshTokenExpiration()).isEqualTo(REFRESH_EXPIRATION);
         });
@@ -37,7 +42,8 @@ class JwtPropertiesTest {
     @Test
     void 서명_키는_비밀키를_Base64_디코딩한_바이트다() {
         // given
-        JwtProperties properties = new JwtProperties(ISSUER, VALID_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties properties = new JwtProperties(ISSUER, AUDIENCE, KEY_ID, VALID_SECRET,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // when
         byte[] sut = properties.secretKeyBytes();
@@ -51,7 +57,8 @@ class JwtPropertiesTest {
     @MethodSource("비어_있는_문자열")
     void 발급자가_비어_있으면_예외가_발생한다(String issuer) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(issuer, VALID_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(issuer, AUDIENCE, KEY_ID, VALID_SECRET,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.issuer는 필수입니다.");
     }
@@ -64,7 +71,8 @@ class JwtPropertiesTest {
     @MethodSource("비어_있는_문자열")
     void 비밀키가_비어_있으면_예외가_발생한다(String secret) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, secret, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEY_ID, secret,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.secret은 필수입니다. 환경 변수 JWT_SECRET을 설정하세요.");
     }
@@ -75,7 +83,8 @@ class JwtPropertiesTest {
         String secret = "this is not base64!!! this is not base64!!!";
 
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, secret, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEY_ID, secret,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.secret은 Base64로 인코딩된 문자열이어야 합니다. (openssl rand -base64 32로 생성)");
     }
@@ -86,7 +95,8 @@ class JwtPropertiesTest {
         String secret = base64OfBytes(31);
 
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, secret, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEY_ID, secret,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.secret은 Base64 디코딩한 값이 32바이트 이상이어야 합니다. (openssl rand -base64 32로 생성)");
     }
@@ -97,7 +107,8 @@ class JwtPropertiesTest {
         String secret = base64OfBytes(32);
 
         // when
-        JwtProperties sut = new JwtProperties(ISSUER, secret, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, KEY_ID, secret,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // then
         assertThat(sut.secretKeyBytes()).hasSize(32);
@@ -107,7 +118,8 @@ class JwtPropertiesTest {
     @MethodSource("유효하지_않은_유효기간")
     void Access_Token_유효기간이_0_이하이거나_없으면_예외가_발생한다(Duration accessExpiration) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, VALID_SECRET, accessExpiration, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEY_ID, VALID_SECRET,
+                accessExpiration, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.access-token-expiration은 0보다 커야 합니다.");
     }
@@ -120,7 +132,8 @@ class JwtPropertiesTest {
     @MethodSource("유효하지_않은_유효기간")
     void Refresh_Token_유효기간이_0_이하이거나_없으면_예외가_발생한다(Duration refreshExpiration) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, VALID_SECRET, ACCESS_EXPIRATION, refreshExpiration))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEY_ID, VALID_SECRET,
+                ACCESS_EXPIRATION, refreshExpiration))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.refresh-token-expiration은 0보다 커야 합니다.");
     }
@@ -129,7 +142,8 @@ class JwtPropertiesTest {
     @MethodSource("Access_Token보다_길지_않은_유효기간")
     void Refresh_Token_유효기간이_Access_Token보다_길지_않으면_예외가_발생한다(Duration refreshExpiration) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, VALID_SECRET, ACCESS_EXPIRATION, refreshExpiration))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEY_ID, VALID_SECRET,
+                ACCESS_EXPIRATION, refreshExpiration))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.refresh-token-expiration은 jwt.access-token-expiration보다 길어야 합니다.");
     }
@@ -141,7 +155,8 @@ class JwtPropertiesTest {
     @Test
     void toString에_비밀키가_노출되지_않는다() {
         // given
-        JwtProperties properties = new JwtProperties(ISSUER, VALID_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties properties = new JwtProperties(ISSUER, AUDIENCE, KEY_ID, VALID_SECRET,
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // when
         String sut = properties.toString();
@@ -153,6 +168,26 @@ class JwtPropertiesTest {
     /** 지정한 바이트 수의 값을 Base64로 인코딩한다. (경계값 테스트용) */
     private static String base64OfBytes(int length) {
         return Base64.getEncoder().encodeToString("a".repeat(length).getBytes(StandardCharsets.UTF_8));
+    }
+
+    @ParameterizedTest
+    @MethodSource("비어_있는_문자열")
+    void 대상이_비어_있으면_예외가_발생한다(String audience) {
+        // when & then
+        assertThatThrownBy(() -> new JwtProperties(
+                ISSUER, audience, KEY_ID, VALID_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("jwt.audience는 필수입니다.");
+    }
+
+    @ParameterizedTest
+    @MethodSource("비어_있는_문자열")
+    void 키_식별자가_비어_있으면_예외가_발생한다(String keyId) {
+        // when & then
+        assertThatThrownBy(() -> new JwtProperties(
+                ISSUER, AUDIENCE, keyId, VALID_SECRET, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("jwt.key-id는 필수입니다.");
     }
 
 }

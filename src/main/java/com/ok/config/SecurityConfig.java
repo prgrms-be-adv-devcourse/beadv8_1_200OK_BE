@@ -36,7 +36,6 @@ public class SecurityConfig {
     private final ProblemDetailAuthenticationEntryPoint authenticationEntryPoint;
     private final ProblemDetailAccessDeniedHandler accessDeniedHandler;
 
-    // 인증 기능을 구현하기 전까지 로그인 페이지 없이 모든 요청을 허용 (인증 구현 시 교체할 것)
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -50,6 +49,9 @@ public class SecurityConfig {
                 //  토큰이 있으면 permitAll이어도 검증하므로(위조·만료 토큰은 401), 전환 기간 동안 두 방식이 함께 동작한다.
                 //  전환 전까지 헤더(X-Member-Id)로 회원을 받는 API는 다른 회원을 사칭할 수 있으므로, 운영 배포 전에 반드시 닫는다.
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                // 진입점·처리기를 두 곳에 지정하는 것은 중복이 아니다. 적용되는 실패가 다르다.
+                //  - oauth2ResourceServer: Bearer 토큰 검증 실패 (만료·위조 토큰)
+                //  - exceptionHandling: 토큰 없이 들어온 익명 요청의 접근 거부, 로그인한 회원의 권한 부족
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .bearerTokenResolver(bearerTokenResolver())
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
@@ -82,12 +84,12 @@ public class SecurityConfig {
     }
 
     /**
-     * 토큰의 role claim(예: SELLER)을 Spring Security 권한(ROLE_SELLER)으로 바꾼다.
+     * 토큰의 roles claim(예: ["BUYER", "SELLER"])의 각 값을 Spring Security 권한(ROLE_BUYER, ROLE_SELLER)으로 바꾼다.
      * 그래서 각 모듈에서 {@code @PreAuthorize("hasRole('SELLER')")}로 역할을 확인할 수 있다.
      */
     private JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtGrantedAuthoritiesConverter authoritiesConverter = new JwtGrantedAuthoritiesConverter();
-        authoritiesConverter.setAuthoritiesClaimName(TokenClaims.ROLE);
+        authoritiesConverter.setAuthoritiesClaimName(TokenClaims.ROLES);
         authoritiesConverter.setAuthorityPrefix(ROLE_PREFIX);
 
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
