@@ -33,12 +33,12 @@ import java.util.Base64;
  * <p>값이 잘못되면 애플리케이션 기동 시점에 바로 실패하도록 생성자에서 검증한다.
  * 잘못된 설정으로 서버가 떠서 런타임에 토큰 발급이 실패하는 것보다, 기동 자체를 막는 편이 원인을 찾기 쉽다.
  *
- * @param issuer                토큰 발급자(iss claim). 검증 시 이 값과 다른 토큰은 거부한다.
+ * @param issuer                 토큰 발급자(iss claim). 검증 시 이 값과 다른 토큰은 거부한다.
  * @param audience               토큰을 받는 서비스(aud claim). 검증 시 이 값이 없는 토큰은 거부한다.
  *                               지금은 발급·검증이 한 애플리케이션이라 값이 하나지만, 서비스가 분리되면 서비스마다 다른 값을 쓴다.
  * @param keyId                  서명 키 식별자(kid header). 비밀키를 바꿀 때 함께 바꿔, 어떤 키로 서명한 토큰인지 구분한다.
- * @param secret                Base64로 인코딩된 HS256 서명 키. 반드시 환경 변수로 주입하고 저장소에 두지 않는다.
- * @param accessTokenExpiration Access Token 유효 기간. "30m", "1h"처럼 Duration 형식으로 지정한다.
+ * @param secret                 Base64로 인코딩된 HS256 서명 키. 반드시 환경 변수로 주입하고 저장소에 두지 않는다.
+ * @param accessTokenExpiration  Access Token 유효 기간. "30m", "1h"처럼 Duration 형식으로 지정한다.
  * @param refreshTokenExpiration Refresh Token 유효 기간. "14d"처럼 Duration 형식으로 지정한다.
  */
 @ConfigurationProperties(prefix = "jwt")

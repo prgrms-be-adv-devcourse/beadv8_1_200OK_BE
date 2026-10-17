@@ -104,8 +104,10 @@ public class JwtConfig {
      * <p>활성 시작(nbf)은 우리가 발급하는 토큰에 넣지 않으므로 검증하지 않는다.
      * ({@code JwtTimestampValidator}는 nbf가 있을 때만 검사한다)
      *
-     * <p>지금은 키가 하나라 {@code kid}로 키를 고르지 않는다. 키를 교체할 때 여러 키 중 {@code kid}로 골라 검증하도록 바꾼다.
+     * <p>지금은 키가 하나라 {@code kid}로 키를 고르지 않는다. 키가 하나인 동안에는 {@code kid}가 달라도
+     * 우리 비밀키로 서명된 토큰이라 통과하며, {@code kid}는 키를 교체할 때 의미를 갖는다.
      */
+    // TODO: 키 교체 시 여러 키 중 kid로 검증할 키를 고르고, 등록되지 않은 kid는 거부한다.
     @Bean
     public JwtDecoder jwtDecoder(JwtProperties properties, Clock clock) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(secretKey(properties))
