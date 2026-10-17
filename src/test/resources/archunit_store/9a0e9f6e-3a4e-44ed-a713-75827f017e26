@@ -1,0 +1,4 @@
+Class <com.ok.common.event.MemberRegisteredEvent> does not implement com.ok.common.event.DomainEvent in (MemberRegisteredEvent.java:0)
+Class <com.ok.common.event.OrderProductConfirmedEvent> does not implement com.ok.common.event.DomainEvent in (OrderProductConfirmedEvent.java:0)
+Class <com.ok.common.event.SellerApprovedEvent> does not implement com.ok.common.event.DomainEvent in (SellerApprovedEvent.java:0)
+Class <com.ok.common.event.SellerPayoutCreatedEvent> does not implement com.ok.common.event.DomainEvent in (SellerPayoutCreatedEvent.java:0)
