@@ -1,7 +1,6 @@
 package com.ok.member.auth.service;
 
 import com.ok.common.security.TokenClaims;
-import com.ok.member.MemberRole;
 import com.ok.member.auth.config.JwtConfig;
 import com.ok.member.auth.config.JwtProperties;
 import com.ok.member.auth.domain.AccessToken;
