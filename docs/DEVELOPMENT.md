@@ -211,18 +211,43 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - 공통 오류의 슬러그는 에러 코드 enum 이름을 소문자와 하이픈으로 바꾼 값입니다 (`VALIDATION_FAILED` → `validation-failed`).
   모듈 에러 코드는 앞에 모듈 이름을 붙입니다 (`order/member-not-found`). 규칙은 [`CONVENTION.md`의 에러 응답 `type` 주소](CONVENTION.md#63-에러-응답의-type-주소slug)를 참고하세요.
   **배포한 뒤에는 `type`을 바꾸지 않습니다.** enum 이름을 바꿔야 하면 `slug()`를 재정의해 기존 값을 유지하세요.
-
 ### 참고
 
 - 처리되지 않은 예외(500)는 내부 메시지와 스택 트레이스를 응답에 담지 않고 서버 로그에만 남깁니다.
 - Spring Security 필터에서 발생하는 인증·인가 예외도 `ProblemDetailAuthenticationEntryPoint`, `ProblemDetailAccessDeniedHandler`가 이 핸들러로 넘겨 같은 형식으로 응답합니다.
 - 모듈에서 에러 코드를 만들고 예외를 던지는 방법은 [`CONVENTION.md`의 예외 처리](CONVENTION.md#6-예외-처리)를 참고하세요.
-
 ## 8. 인증 (JWT)
 
 로그인(`POST /api/v1/auth/login`)으로 받은 Access Token을 `Authorization: Bearer {토큰}` 헤더로 보냅니다.
 보안 필터가 요청마다 토큰의 서명·만료·발급자를 검증하고, 실패하면 401로 응답합니다.
 
+### 토큰 형식
+
+토큰은 RFC 7519(JWT) 형식이고, 등록 클레임 중 필요한 것만 씁니다. 권한은 비공개 클레임(`roles`)으로 담습니다.
+
+| 위치 | 이름 | 값 | 용도 |
+|---|---|---|---|
+| 헤더 | `alg` | `HS256` | 서명 알고리즘 |
+| 헤더 | `typ` | `at+jwt` | Access Token임을 표시. 이 타입만 받아 다른 용도의 JWT와 섞이지 않게 함 (RFC 9068, RFC 8725) |
+| 헤더 | `kid` | `jwt.key-id` 설정값 | 서명 키 식별자. 키를 교체할 때 어떤 키로 서명했는지 구분 |
+| 클레임 | `iss` | `paldo-gotgan` | 우리가 발급한 토큰인지 검증 |
+| 클레임 | `sub` | 회원 id | `@CurrentMemberId`가 읽는 값 |
+| 클레임 | `aud` | `jwt.audience` 설정값 | 이 서비스를 위한 토큰인지 검증 |
+| 클레임 | `jti` | UUID | 토큰 개별 폐기(로그아웃·탈취 대응)용 |
+| 클레임 | `iat` | 발급 시각 | 추적, 특정 시점 이전 토큰 일괄 무효화용 |
+| 클레임 | `exp` | 발급 시각 + 30분 | 만료 검증 (필수) |
+| 클레임 | `roles` | 예: `["BUYER", "SELLER"]` | 역할 기반 인가 (각 값이 `ROLE_` 권한으로 변환) |
+
+- `nbf`(사용 시작 시각)는 넣지 않습니다. 발급 즉시 유효한 토큰이라 `iat`와 같은 값이 되고, 서버 간 시계 차이로 정상 토큰이 거부될 위험만 생깁니다.
+- 이름·이메일 같은 개인정보는 넣지 않습니다. JWT는 누구나 내용을 볼 수 있고, 회원 정보가 바뀌어도 토큰 만료 전까지 예전 값이 남습니다.
+- `aud`는 지금 받는 서비스가 하나라 늘 같은 값이지만, 서비스가 분리되면 이미 발급된 토큰도 구분할 수 있도록 미리 넣습니다.
+- `roles`는 회원에 저장된 값이 아니라 토큰을 발급할 때 회원 정보로 계산한 인가용 권한입니다. 권한 이름은 `TokenRoles`에 있습니다.
+### 서명 방식과 전환 기준
+
+- **지금은 HS256(대칭키)를 씁니다.** 발급과 검증을 같은 애플리케이션에서 하므로, 비대칭키의 장점(검증하는 쪽은 위조할 수 없음)이 쓰이지 않고 키 관리가 단순합니다.
+- **비밀키 관리**: 환경 변수(`JWT_SECRET`)로만 주입하고, 디코딩한 값이 32바이트 이상이어야 기동됩니다. 개발·운영 환경은 서로 다른 키를 씁니다.
+- **키 교체**: 비밀키를 바꿀 때 `jwt.key-id`도 함께 바꿉니다. 옛 키와 새 키를 함께 받아들이는 기간이 필요하면, 디코더가 `kid`로 키를 고르도록 바꿉니다.
+- **비대칭키 전환 기준**: 토큰을 검증하는 프로그램이 둘 이상이 될 때(서비스 분리, 별도 서버) RS256 등으로 바꿉니다. 비밀키를 두 번째 서비스에 나눠주기 전에 바꿔야 합니다. 서명 알고리즘과 키는 `JwtConfig`에서만 관리하므로 각 모듈의 인가 코드는 바뀌지 않습니다.
 ### 컨트롤러에서 로그인 회원 받기
 
 요청 헤더(`X-Member-Id` 등)로 회원을 받지 말고 `@CurrentMemberId`를 씁니다. 값은 검증된 토큰에서 꺼내므로 클라이언트가 바꿀 수 없습니다.
@@ -238,7 +263,7 @@ public ResponseEntity<CartResponse> getMyCart(@CurrentMemberId Long memberId) {
 
 ### 역할 제한
 
-특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 역할(`role` claim)이 `ROLE_{역할}` 권한으로 바뀌어 있습니다.
+특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 권한 목록(`roles` claim)의 각 값이 `ROLE_{권한}` 권한으로 바뀌어 있습니다. 판매자 토큰에는 `BUYER`와 `SELLER`가 함께 들어 있어, 판매자도 구매 API를 쓸 수 있습니다.
 
 ```java
 @PreAuthorize("hasRole('SELLER')")
@@ -255,14 +280,16 @@ public ResponseEntity<ProductCreateResponse> create(@CurrentMemberId Long member
 ```java
 @Autowired
 TestAccessTokens tokens;
-
+ 
 @BeforeEach
 void setUp() {
     mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
 }
-
+ 
 mockMvc.perform(get("/api/v1/cart")
         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "BUYER")));
+ 
+// 여러 권한: tokens.bearer(1L, "BUYER", "SELLER")
 ```
 
 **컨트롤러 슬라이스 테스트** (`@WebMvcTest`): 실제 토큰 없이 `jwt()`로 로그인한 회원을 흉내 냅니다.
@@ -278,13 +305,11 @@ mockMvc.perform(post("/api/v1/products")
 
 - Swagger UI: 로그인 API로 받은 `accessToken`을 우측 상단 **Authorize**에 넣으면 모든 요청에 Bearer 헤더가 붙습니다.
 - Bruno: `Auth/로그인` 요청을 보내면 토큰이 `accessToken` 변수에 저장되고, 컬렉션 전체 요청에 Bearer 헤더로 붙습니다.
-
 ### 주의
 
 - 토큰이 있으면 공개 API여도 검증합니다. 만료되거나 잘못된 토큰을 보내면 공개 API도 401입니다. 401을 받으면 토큰을 지우고 다시 로그인하세요.
 - 역할은 토큰에 담기므로, 판매자 승인처럼 역할이 바뀌어도 기존 토큰이 만료되기 전(최대 30분)까지는 이전 역할로 판단합니다.
 - 공개 API(상품 조회 등)에 만료된 토큰을 붙이면 비로그인 화면도 401로 깨집니다. 프론트는 토큰 재발급이나 재로그인이 끝날 때까지 공개 API를 토큰 없이 호출하거나, 401을 받으면 토큰을 떼고 한 번 더 호출합니다.
-
 ## 9. 테스트
 
 ### 테스트 환경 설정
