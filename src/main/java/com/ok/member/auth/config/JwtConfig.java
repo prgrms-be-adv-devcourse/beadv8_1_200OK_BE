@@ -27,7 +27,6 @@ import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
-import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
@@ -69,7 +68,7 @@ public class JwtConfig {
     /**
      * 만료 시간 허용 오차. 기본값은 60초지만, 발급과 검증을 같은 애플리케이션(NTP로 시간 동기화된 서버)에서 하므로
      * 서버 간 시계 차이를 보정할 필요가 없다. 설정한 유효 기간(30분)이 정확히 지켜지도록 0으로 둔다.
-     * 만료를 판단하는 두 검증기({@link ExpiredTokenValidator}, {@code JwtTimestampValidator})가 모두 이 값을 쓴다.
+     * 만료는 {@link ExpiredTokenValidator} 하나가 이 값으로 판단한다.
      */
     private static final Duration CLOCK_SKEW = Duration.ZERO;
 
@@ -102,7 +101,7 @@ public class JwtConfig {
      * </ul>
      *
      * <p>활성 시작(nbf)은 우리가 발급하는 토큰에 넣지 않으므로 검증하지 않는다.
-     * ({@code JwtTimestampValidator}는 nbf가 있을 때만 검사한다)
+     * nbf를 발급하게 되면 {@code JwtTimestampValidator}를 검증기 목록에 다시 추가한다.
      *
      * <p>지금은 키가 하나라 {@code kid}로 키를 고르지 않는다. 키가 하나인 동안에는 {@code kid}가 달라도
      * 우리 비밀키로 서명된 토큰이라 통과하며, {@code kid}는 키를 교체할 때 의미를 갖는다.
@@ -117,17 +116,12 @@ public class JwtConfig {
                         new DefaultJOSEObjectTypeVerifier<>(new JOSEObjectType(TOKEN_TYPE))))
                 .build();
 
-        // 만료를 판단하는 두 검증기가 같은 허용 오차와 현재 시각을 쓰도록 한 곳에서 주입한다.
-        JwtTimestampValidator timestampValidator = new JwtTimestampValidator(CLOCK_SKEW);
-        timestampValidator.setClock(clock);
-
         // JwtValidators.createDefaultWithIssuer()는 허용 오차 60초가 고정이라, 검증기를 직접 조합한다.
         OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
-                // exp가 없는 토큰은 기본 검증기에서 만료 검사를 건너뛰어 영원히 유효해진다. 발급 실수로 빠져도 통과하지 않게 필수로 요구한다.
+                // exp가 없는 토큰은 만료 검사를 건너뛰어 영원히 유효해진다. 발급 실수로 빠져도 통과하지 않게 필수로 요구한다.
                 new JwtClaimValidator<Instant>(JwtClaimNames.EXP, Objects::nonNull),
-                // 만료를 위조·형식 오류와 구분할 수 있도록 별도 오류 코드를 남긴다 (오류 응답에서 token-expired로 구분)
+                // 만료 판단은 이 검증기 하나가 맡는다. 만료를 위조·형식 오류와 구분할 수 있도록 별도 오류 코드를 남긴다.
                 new ExpiredTokenValidator(CLOCK_SKEW, clock),
-                timestampValidator,
                 new JwtIssuerValidator(properties.issuer()),
                 new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
                         audience -> audience != null && audience.contains(properties.audience()))

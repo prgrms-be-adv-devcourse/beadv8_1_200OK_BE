@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 /**
  * 로그인 아이디와 비밀번호로 회원을 인증하고 Access Token과 Refresh Token을 발급한다.
  */
@@ -63,7 +65,8 @@ public class AuthService {
         Member member = authenticate(command);
         validateLoginable(member);
 
-        AccessToken accessToken = accessTokenProvider.issue(member.getId(), TokenRoleMapper.toTokenRoles(member.getRole()));
+        List<String> roles = TokenRoleMapper.toTokenRoles(member.getRole());
+        AccessToken accessToken = accessTokenProvider.issue(member.getId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
 
         return new LoginResult(accessToken.value(), accessToken.expiresAt(),
