@@ -31,4 +31,13 @@ public record TossPaymentsProperties(
             throw new IllegalArgumentException("toss.payments의 connect-timeout, read-timeout이 설정되지 않았습니다.");
         }
     }
+
+    // 레코드의 기본 toString은 모든 필드를 담으므로, 로그나 예외 메시지에 시크릿 키가 남지 않게 가린다
+    @Override
+    public String toString() {
+        return "TossPaymentsProperties[baseUrl=" + baseUrl
+                + ", secretKey=****"
+                + ", connectTimeout=" + connectTimeout
+                + ", readTimeout=" + readTimeout + "]";
+    }
 }
