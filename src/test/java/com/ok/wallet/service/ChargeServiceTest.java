@@ -21,11 +21,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -421,6 +417,54 @@ class ChargeServiceTest extends AbstractIntegrationTest {
             jdbcTemplate.update("DELETE FROM buyer_wallet WHERE member_id = ?", memberId);
             jdbcTemplate.update("DELETE FROM wallet_charge WHERE member_id = ?", memberId);
             jdbcTemplate.update("DELETE FROM wallet_terms_agreement WHERE member_id = ?", memberId);
+        }
+    }
+
+    @Test
+    void 같은_회원의_서로_다른_충전_건을_동시에_승인해도_한도를_넘지_않는다() throws Exception {
+        // Given: 잔액 49만원에서 1만원 충전 두 건을 요청 (요청 시점에는 둘 다 통과)
+        agreeAllTerms(MEMBER_ID);
+        buyerWalletService.chargeByPayment(MEMBER_ID, "seed-payment", 490_000);
+        String first = chargeService.request(MEMBER_ID, 10_000).chargeNo();
+        String second = chargeService.request(MEMBER_ID, 10_000).chargeNo();
+        // 토스 승인을 잠깐 붙잡아, 한 건이 처리 중인 동안 다른 건이 한도를 확인하게 한다
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willAnswer(invocation -> {
+                    Thread.sleep(300);
+                    return new TossConfirmResult.Approved(invocation.getArgument(0));
+                });
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            // When
+            Future<?> confirmFirst = executor.submit(() -> {
+                start.await();
+                return chargeConfirmService.confirm(MEMBER_ID, first, "payment-key-a", 10_000);
+            });
+            Future<?> confirmSecond = executor.submit(() -> {
+                start.await();
+                return chargeConfirmService.confirm(MEMBER_ID, second, "payment-key-b", 10_000);
+            });
+            start.countDown();
+            int limitExceeded = 0;
+            for (Future<?> result : List.of(confirmFirst, confirmSecond)) {
+                try {
+                    result.get(30, TimeUnit.SECONDS);
+                } catch (ExecutionException e) {
+                    assertThat(e.getCause()).isInstanceOfSatisfying(RestApiException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo(WalletErrorCode.BALANCE_LIMIT_EXCEEDED));
+                    limitExceeded++;
+                }
+            }
+
+            // Then: 한 건만 승인되고 다른 한 건은 토스를 호출하기 전에 막힌다
+            assertThat(limitExceeded).isEqualTo(1);
+            then(tossPaymentsClient).should(times(1)).confirm(anyString(), anyString(), anyLong());
+            assertThat(balanceOf(MEMBER_ID)).isEqualTo(500_000);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
         }
     }
 }

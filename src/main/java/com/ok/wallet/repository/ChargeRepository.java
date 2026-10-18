@@ -54,12 +54,4 @@ public interface ChargeRepository extends Repository<Charge, Long> {
     // 회원의 특정 상태 충전 금액 합계. 잔액 보유 한도 확인에서 처리 중 충전을 함께 계산할 때 쓴다.
     @Query("SELECT COALESCE(SUM(c.amount), 0) FROM Charge c WHERE c.memberId = :memberId AND c.status = :status")
     long sumAmountByMemberIdAndStatus(@Param("memberId") Long memberId, @Param("status") ChargeStatus status);
-
-    /**
-     * 조건부 UPDATE가 0행일 때 다른 트랜잭션이 커밋한 최신 상태를 읽는다.
-     * 같은 트랜잭션의 일반 조회는 처음 읽은 시점의 스냅샷(REPEATABLE READ)을 돌려주므로, 잠금 조회로 최신 값을 본다.
-     */
-    @Lock(LockModeType.PESSIMISTIC_READ)
-    @Query("SELECT c FROM Charge c WHERE c.chargeNo = :chargeNo")
-    Optional<Charge> findLatestByChargeNo(@Param("chargeNo") String chargeNo);
 }
