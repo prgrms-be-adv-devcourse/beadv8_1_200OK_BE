@@ -24,11 +24,22 @@ public class TossPaymentsClient {
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
     private static final String APPROVED_STATUS = "DONE";
 
-    // 4xx지만 승인됐을 수도 있는 응답. 실패로 처리하면 결제된 돈이 잔액에 반영되지 않으므로 불명확으로 둔다.
-    // 코드 이름은 토스페이먼츠 오류 코드 문서 기준
-    private static final Set<String> UNCERTAIN_ERROR_CODES = Set.of(
-            "IDEMPOTENT_REQUEST_PROCESSING", // 같은 멱등 키의 이전 요청이 아직 처리 중
-            "ALREADY_PROCESSED_PAYMENT"      // 이미 처리된 결제
+    // 결제가 승인되지 않았음이 확실한 거절 코드만 실패로 본다. 목록에 없는 코드는 불명확으로 두어
+    // 복구 스케줄러가 토스에 다시 확인하게 한다 (승인된 결제를 실패로 처리하지 않기 위해).
+    // 코드 이름은 토스페이먼츠 결제 승인 API 오류 코드 문서 기준
+    private static final Set<String> REJECTED_ERROR_CODES = Set.of(
+            "REJECT_CARD_PAYMENT",            // 한도 초과 또는 잔액 부족
+            "REJECT_CARD_COMPANY",            // 카드사 거절
+            "REJECT_ACCOUNT_PAYMENT",         // 계좌 잔액 부족
+            "INVALID_CARD_EXPIRATION",        // 유효기간 오류
+            "INVALID_STOPPED_CARD",           // 정지된 카드
+            "INVALID_CARD_LOST_OR_STOLEN",    // 분실·도난 카드
+            "INVALID_CARD_NUMBER",            // 카드 번호 오류
+            "INVALID_PASSWORD",               // 비밀번호 오류
+            "EXCEED_MAX_DAILY_PAYMENT_COUNT", // 하루 결제 횟수 초과
+            "EXCEED_MAX_PAYMENT_AMOUNT",      // 결제 한도 초과
+            "NOT_AVAILABLE_PAYMENT",          // 결제 불가 시간대
+            "NOT_FOUND_PAYMENT_SESSION"       // 결제 시간 만료로 결제 정보 없음
     );
 
     private final RestClient tossRestClient;
@@ -70,7 +81,12 @@ public class TossPaymentsClient {
                 || !APPROVED_STATUS.equals(response.status())
                 || response.totalAmount() == null
                 || response.totalAmount() != amount) {
-            log.error("토스 승인 응답이 요청과 맞지 않습니다. chargeNo={}, response={}", chargeNo, response);
+            // 결제 키는 결제 식별자라 로그에 남기지 않고, 판단에 필요한 값만 남긴다
+            log.error("토스 승인 응답이 요청과 맞지 않습니다. chargeNo={}, orderId={}, status={}, totalAmount={}",
+                    chargeNo,
+                    response == null ? null : response.orderId(),
+                    response == null ? null : response.status(),
+                    response == null ? null : response.totalAmount());
             return new TossConfirmResult.Unknown("승인 응답이 요청과 맞지 않음");
         }
         return new TossConfirmResult.Approved(response.paymentKey());
@@ -81,8 +97,9 @@ public class TossPaymentsClient {
         if (error == null || error.code() == null) {
             return unknown(chargeNo, "토스 오류 응답을 읽을 수 없음 " + e.getStatusCode().value());
         }
-        if (UNCERTAIN_ERROR_CODES.contains(error.code())) {
-            return unknown(chargeNo, "승인 여부 불명확: " + error.code());
+        if (!REJECTED_ERROR_CODES.contains(error.code())) {
+            // 키 설정 오류(401), 요청 제한(429), 처리 중·이미 처리됨, 토스 내부 처리 실패 등은 승인 여부를 알 수 없다
+            return unknown(chargeNo, "승인 여부 불명확: " + e.getStatusCode().value() + " " + error.code());
         }
         log.info("토스 승인 거절. chargeNo={}, code={}, message={}", chargeNo, error.code(), error.message());
         return new TossConfirmResult.Rejected(error.code(), error.message());

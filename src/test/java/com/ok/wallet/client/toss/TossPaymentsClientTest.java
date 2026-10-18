@@ -165,4 +165,37 @@ class TossPaymentsClientTest {
                 {"code": "%s", "message": "%s"}
                 """.formatted(code, message);
     }
+
+    @Test
+    void 우리_쪽_키_설정_오류는_불명확으로_분류한다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("UNAUTHORIZED_KEY", "인증되지 않은 시크릿 키입니다.")));
+
+        assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
+                .isInstanceOf(TossConfirmResult.Unknown.class);
+    }
+
+    @Test
+    void 요청_제한은_불명확으로_분류한다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("TOO_MANY_REQUESTS", "요청이 많습니다.")));
+
+        assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
+                .isInstanceOf(TossConfirmResult.Unknown.class);
+    }
+
+    @Test
+    void 거절_목록에_없는_오류_코드는_불명확으로_분류한다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("FAILED_INTERNAL_SYSTEM_PROCESSING", "내부 시스템 처리 작업이 실패했습니다.")));
+
+        assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
+                .isInstanceOf(TossConfirmResult.Unknown.class);
+    }
 }
