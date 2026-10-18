@@ -1,9 +1,8 @@
 package com.ok.member.member.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.common.event.MemberRegisteredEvent;
-import com.ok.member.MemberRole;
 import com.ok.member.member.domain.Member;
+import com.ok.member.member.domain.MemberType;
 import com.ok.member.member.exception.MemberErrorCode;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
@@ -14,7 +13,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -41,7 +39,7 @@ class MemberSignupServiceTest {
     PasswordEncoder passwordEncoder;
 
     @Mock
-    ApplicationEventPublisher eventPublisher;
+    MemberEventPublisher memberEventPublisher;
 
     MemberSignupService memberSignupService;
 
@@ -50,7 +48,8 @@ class MemberSignupServiceTest {
     @BeforeEach
     void setUp() {
         memberSignupService = new MemberSignupService(
-                memberRepository, duplicateValidator, passwordEncoder, eventPublisher, Clock.systemDefaultZone());
+                memberRepository, duplicateValidator, passwordEncoder,
+                memberEventPublisher, Clock.systemDefaultZone());
     }
 
     private final SignupCommand command = new SignupCommand(
@@ -78,12 +77,12 @@ class MemberSignupServiceTest {
         assertSoftly(softly -> {
             softly.assertThat(memberId).isEqualTo(1L);
             softly.assertThat(sut.getPassword()).isEqualTo("{bcrypt}encoded");
-            softly.assertThat(sut.getRole()).isEqualTo(MemberRole.BUYER);
+            softly.assertThat(sut.getType()).isEqualTo(MemberType.USER);
             softly.assertThat(sut.getStatus()).isEqualTo(MemberStatus.ACTIVE);
             softly.assertThat(sut.getTermsAgreedAt()).isNotNull();
             softly.assertThat(sut.getPrivacyAgreedAt()).isNotNull();
         });
-        then(eventPublisher).should().publishEvent(new MemberRegisteredEvent(1L));
+        then(memberEventPublisher).should().publishMemberRegistered(1L);
     }
 
     @Test
@@ -97,7 +96,7 @@ class MemberSignupServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_EMAIL));
         then(memberRepository).should(never()).saveAndFlush(any());
-        then(eventPublisher).should(never()).publishEvent(any());
+        then(memberEventPublisher).should(never()).publishMemberRegistered(any());
     }
 
     @Test
@@ -114,7 +113,7 @@ class MemberSignupServiceTest {
         assertThatThrownBy(() -> memberSignupService.signup(command))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.DUPLICATE_EMAIL));
-        then(eventPublisher).should(never()).publishEvent(any());
+        then(memberEventPublisher).should(never()).publishMemberRegistered(any());
     }
 
 }

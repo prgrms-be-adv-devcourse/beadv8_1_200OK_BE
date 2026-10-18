@@ -1,1 +1,0 @@
-Method <com.ok.member.member.service.MemberSignupService.signup(com.ok.member.member.service.dto.SignupCommand)> calls constructor <com.ok.common.event.MemberRegisteredEvent.<init>(java.lang.Long)> in (MemberSignupService.java:46)

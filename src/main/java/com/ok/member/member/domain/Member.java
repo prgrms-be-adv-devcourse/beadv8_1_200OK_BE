@@ -1,7 +1,6 @@
 package com.ok.member.member.domain;
 
 import com.ok.common.jpa.entity.BaseTime;
-import com.ok.member.MemberRole;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -36,8 +35,8 @@ public class Member extends BaseTime {
     private String nickname;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private MemberRole role;
+    @Column(name = "member_type", nullable = false, length = 20)
+    private MemberType type;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -52,29 +51,29 @@ public class Member extends BaseTime {
     private LocalDateTime privacyAgreedAt;
 
     private Member(String loginId, String password, String email, String name,
-                   String nickname, MemberRole role, LocalDateTime agreedAt) {
+                   String nickname, MemberType type, LocalDateTime agreedAt) {
         this.loginId = loginId;
         this.password = password;
         this.email = email;
         this.name = name;
         this.nickname = nickname;
-        this.role = role;
+        this.type = type;
         this.status = MemberStatus.ACTIVE;
         this.termsAgreedAt = agreedAt;
         this.privacyAgreedAt = agreedAt;
     }
 
     /**
-     * 일반 회원(구매자)을 생성한다.
+     * 일반 회원을 생성한다. 판매자가 되려면 가입 후 판매자 신청·승인을 거친다.
      * 이용약관·개인정보 수집·이용 동의는 요청 검증 단계에서 확인된 상태여야 하며, 두 동의 일시는 agreedAt으로 기록한다.
      *
      * @param encodedPassword 인코딩된 비밀번호 (평문 금지)
      * @param agreedAt        약관 동의 일시
      */
-    public static Member createBuyer(String loginId, String encodedPassword, String email,
-                                     String name, String nickname, LocalDateTime agreedAt) {
+    public static Member createUser(String loginId, String encodedPassword, String email,
+                                    String name, String nickname, LocalDateTime agreedAt) {
         return new Member(loginId, encodedPassword, email, name, nickname,
-                MemberRole.BUYER, agreedAt);
+                MemberType.USER, agreedAt);
     }
 
 }
