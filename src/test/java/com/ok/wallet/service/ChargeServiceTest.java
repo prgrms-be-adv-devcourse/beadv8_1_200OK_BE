@@ -303,6 +303,45 @@ class ChargeServiceTest extends AbstractIntegrationTest {
         assertThat(statusOf(chargeNo)).isEqualTo("PENDING");
     }
 
+    @Test
+    void 결제_실패와_승인이_동시에_와도_승인된_결제는_반드시_잔액에_반영된다() throws Exception {
+        // Given
+        String chargeNo = requestCharge(MEMBER_ID, 10_000);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willReturn(new TossConfirmResult.Approved(PAYMENT_KEY));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            // When: 결제창을 닫는 실패 요청과 승인 요청이 동시에 들어옴
+            Future<?> confirm = executor.submit(() -> {
+                start.await();
+                chargeConfirmService.confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, 10_000);
+                return null;
+            });
+            Future<?> fail = executor.submit(() -> {
+                start.await();
+                chargeService.fail(MEMBER_ID, chargeNo, "PAY_PROCESS_CANCELED", "사용자 취소");
+                return null;
+            });
+            start.countDown();
+            confirm.get(30, TimeUnit.SECONDS);
+            fail.get(30, TimeUnit.SECONDS);
+
+            // Then: 승인이 이겼으면 잔액 반영, 실패가 이겼으면 토스를 호출하지 않았어야 한다
+            if ("COMPLETED".equals(statusOf(chargeNo))) {
+                assertThat(balanceOf(MEMBER_ID)).isEqualTo(10_000);
+            } else {
+                assertThat(statusOf(chargeNo)).isEqualTo("FAILED");
+                then(tossPaymentsClient).should(never()).confirm(anyString(), anyString(), anyLong());
+                assertThat(balanceOrZero(MEMBER_ID)).isZero();
+            }
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
     private String requestCharge(Long memberId, long amount) {
         agreeAllTerms(memberId);
         return chargeService.request(memberId, amount).chargeNo();

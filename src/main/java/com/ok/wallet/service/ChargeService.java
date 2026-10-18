@@ -50,16 +50,20 @@ public class ChargeService {
 
     /**
      * 토스 결제창에서 실패한 충전 건을 실패로 바꾼다.
-     * 대기 중인 건만 바꾸며, 이미 승인이 시작됐거나 끝난 건은 그대로 두고 현재 상태를 돌려준다.
+     * 대기 중인 건만 조건부 UPDATE로 바꿔, 같은 건의 승인과 겹쳐도 처리 중이 된 건을 실패로 덮어쓰지 않는다.
      */
     @Transactional
     public ChargeConfirmResult fail(Long memberId, String chargeNo, String failureCode, String failureMessage) {
-        Charge charge = chargeRepository.findByChargeNo(chargeNo)
-                .filter(found -> found.isOwnedBy(memberId))
+        findOwnedCharge(memberId, chargeNo);
+        chargeRepository.markFailedIfPending(chargeNo, failureCode, failureMessage, LocalDateTime.now(clock));
+        // 조건부 UPDATE가 영속성 컨텍스트를 비우므로 다시 읽어 현재 상태를 돌려준다
+        return ChargeConfirmResult.from(findOwnedCharge(memberId, chargeNo));
+    }
+
+    // 타인의 충전 건은 존재 여부도 알리지 않도록 없는 것과 같게 응답한다
+    private Charge findOwnedCharge(Long memberId, String chargeNo) {
+        return chargeRepository.findByChargeNo(chargeNo)
+                .filter(charge -> charge.isOwnedBy(memberId))
                 .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
-        if (charge.getStatus() == ChargeStatus.PENDING) {
-            charge.fail(failureCode, failureMessage, LocalDateTime.now(clock));
-        }
-        return ChargeConfirmResult.from(charge);
     }
 }
