@@ -8,6 +8,7 @@ import com.ok.payout.repository.PayoutRepository;
 import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.service.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -79,8 +81,6 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     private static final long ORDER_ITEM_ID_END = 7_000_000L;
     private static final AtomicLong ORDER_ITEM_ID_SEQ = new AtomicLong(ORDER_ITEM_ID_START);
 
-    private static final String MEMBER_ID_HEADER = "X-Member-Id";
-    private static final String MEMBER_ROLE_HEADER = "X-Member-Role";
     private static final long ADMIN_ID = 1L;
     private static final long SELLER_7 = 7L;
     private static final long SELLER_9 = 9L;
@@ -97,6 +97,10 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    // 요청에 붙일 로그인 토큰을 만듦 (실제 토큰과 같은 형식이라 보안 필터가 똑같이 검증함)
+    @Autowired
+    private TestAccessTokens tokens;
 
     @Autowired
     private PayoutJobRunner payoutJobRunner;
@@ -163,7 +167,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 관리자는_payeeId_없이_기간_안의_정산을_모두_최신순으로_조회한다() throws Exception {
         // when & then: 확정 시각 시스템 12시 → 판매자 9 11시 → 판매자 7 10시
-        mockMvc.perform(listRequest(ADMIN_ID, "ADMIN"))           // GET /api/v1/payouts?from=10/01&to=10/02, 관리자 헤더
+        mockMvc.perform(listRequest(ADMIN_ID, "ADMIN"))           // GET /api/v1/payouts?from=10/01&to=10/02, 관리자 토큰
                 .andExpect(status().isOk())                      // 200
                 .andExpect(jsonPath("$.content[*].payoutId")     // 나온 정산 ID들이
                         .value(contains(systemPayoutId.intValue(), seller9PayoutId.intValue(), seller7PayoutId.intValue())))
@@ -204,7 +208,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 판매자는_본인_ID로_본인_정산만_조회하고_응답_필드가_모두_채워진다() throws Exception {
         // when & then
-        mockMvc.perform(listRequest(SELLER_7, "SELLER").param("payeeId", String.valueOf(SELLER_7)))
+        mockMvc.perform(listRequest(SELLER_7, "BUYER", "SELLER").param("payeeId", String.valueOf(SELLER_7)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].payoutId").value(seller7PayoutId.intValue()))
@@ -221,7 +225,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 판매자가_payeeId_없이_목록을_조회하면_403이다() throws Exception {
         // when & then
-        mockMvc.perform(listRequest(SELLER_7, "SELLER"))
+        mockMvc.perform(listRequest(SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isForbidden());
     }
 
@@ -233,8 +237,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         // given: from = 판매자 9 확정 시각(11시), to = 시스템 몫 확정 시각(12시)
         // when & then: 판매자 9(from과 같음, 포함)만 나오고, 시스템 몫(to와 같음)과 판매자 7(from보다 이른 10시)은 제외
         mockMvc.perform(get("/api/v1/payouts")
-                        .header(MEMBER_ID_HEADER, ADMIN_ID)
-                        .header(MEMBER_ROLE_HEADER, "ADMIN")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN"))
                         .param("from", CONFIRMED_SELLER_9.toString())
                         .param("to", CONFIRMED_SYSTEM.toString()))
                 .andExpect(status().isOk())
@@ -284,8 +287,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     void 기간을_빼고_조회하면_422이고_from과_to가_오류로_나온다() throws Exception {
         // when & then
         mockMvc.perform(get("/api/v1/payouts")
-                        .header(MEMBER_ID_HEADER, ADMIN_ID)
-                        .header(MEMBER_ROLE_HEADER, "ADMIN"))
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errors[*].path").value(containsInAnyOrder("from", "to")));
     }
@@ -297,8 +299,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     void 기간이_1년을_넘으면_422이다() throws Exception {
         // when & then
         mockMvc.perform(get("/api/v1/payouts")
-                        .header(MEMBER_ID_HEADER, ADMIN_ID)
-                        .header(MEMBER_ROLE_HEADER, "ADMIN")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN"))
                         .param("from", "2026-01-01T00:00:00")
                         .param("to", "2027-01-01T00:00:01"))
                 .andExpect(status().isUnprocessableEntity())
@@ -317,15 +318,15 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     // API: GET /api/v1/payouts (정산 목록 조회)
-    // 요청: 회원 헤더(X-Member-Id, X-Member-Role) 없음
-    // 확인: 400인지
+    // 요청: 로그인 토큰(Authorization 헤더) 없음, 기간은 올바름
+    // 확인: 401(로그인 필요)인지
     @Test
-    void 회원_헤더가_없으면_400이다() throws Exception {
+    void 토큰이_없으면_401이다() throws Exception {
         // when & then
         mockMvc.perform(get("/api/v1/payouts")
                         .param("from", LIST_FROM.toString())
                         .param("to", LIST_TO.toString()))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnauthorized());
     }
 
     // ---------- 상세 조회 ----------
@@ -344,7 +345,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         PayoutSnapshot snapshot = snapshotRepository.findAll().get(0);
 
         // when & then
-        mockMvc.perform(detailRequest(seller7PayoutId, SELLER_7, "SELLER"))
+        mockMvc.perform(detailRequest(seller7PayoutId, SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.payoutId").value(seller7PayoutId.intValue()))
                 .andExpect(jsonPath("$.snapshotId").value(snapshot.getId().intValue()))
@@ -408,7 +409,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 판매자가_다른_판매자_정산_상세를_보면_403이다() throws Exception {
         // when & then
-        mockMvc.perform(detailRequest(seller9PayoutId, SELLER_7, "SELLER"))
+        mockMvc.perform(detailRequest(seller9PayoutId, SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isForbidden());
     }
 
@@ -454,7 +455,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 판매자가_항목을_보면_조정_건에_사유만_있다() throws Exception {
         // when & then: 조정 정보가 있는 칸을 찾아서 확인
-        mockMvc.perform(itemsRequest(seller7PayoutId, SELLER_7, "SELLER"))
+        mockMvc.perform(itemsRequest(seller7PayoutId, SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustment.reason")
                         .value(contains("금액 오입력 정정")))
@@ -506,31 +507,30 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 판매자가_다른_판매자_정산_항목을_보면_403이다() throws Exception {
         // when & then
-        mockMvc.perform(itemsRequest(seller9PayoutId, SELLER_7, "SELLER"))
+        mockMvc.perform(itemsRequest(seller9PayoutId, SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isForbidden());
     }
 
     // ---------- 도우미: 요청 ----------
 
-    // 목록 조회 기본 요청 (회원 헤더 + 10월 1일 하루 기간)
-    private MockHttpServletRequestBuilder listRequest(long memberId, String role) {
+    // 요청 도우미의 roles는 토큰에 넣을 권한 목록 (관리자 "ADMIN", 판매자 "BUYER", "SELLER" — 실제 토큰 모양)
+
+    // 목록 조회 기본 요청 (로그인 토큰 + 10월 1일 하루 기간)
+    private MockHttpServletRequestBuilder listRequest(long memberId, String... roles) {
         return get("/api/v1/payouts")
-                .header(MEMBER_ID_HEADER, memberId)
-                .header(MEMBER_ROLE_HEADER, role)
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, roles))
                 .param("from", LIST_FROM.toString())
                 .param("to", LIST_TO.toString());
     }
 
-    private MockHttpServletRequestBuilder detailRequest(long payoutId, long memberId, String role) {
+    private MockHttpServletRequestBuilder detailRequest(long payoutId, long memberId, String... roles) {
         return get("/api/v1/payouts/{payoutId}", payoutId)
-                .header(MEMBER_ID_HEADER, memberId)
-                .header(MEMBER_ROLE_HEADER, role);
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, roles));
     }
 
-    private MockHttpServletRequestBuilder itemsRequest(long payoutId, long memberId, String role) {
+    private MockHttpServletRequestBuilder itemsRequest(long payoutId, long memberId, String... roles) {
         return get("/api/v1/payouts/{payoutId}/items", payoutId)
-                .header(MEMBER_ID_HEADER, memberId)
-                .header(MEMBER_ROLE_HEADER, role);
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, roles));
     }
 
     // 응답 JSON과 같은 시각 형식으로 바꿈 (LocalDateTime.toString()은 초가 0이면 초를 빼서 응답과 모양이 다름)
