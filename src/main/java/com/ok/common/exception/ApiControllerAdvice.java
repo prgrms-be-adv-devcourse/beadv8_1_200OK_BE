@@ -68,6 +68,8 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
      */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
+        // 위조·만료 토큰이 반복되는지 추적할 수 있도록 원인만 남긴다. 토큰 원문은 남기지 않는다.
+        log.debug("인증 실패: {}", ex.getMessage());
         if (isExpiredToken(ex)) {
             return unauthorized(CommonErrorCode.TOKEN_EXPIRED, BEARER_TOKEN_EXPIRED);
         }
@@ -148,10 +150,12 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
      * 토큰 검증 단계에서 만료 오류 코드를 남겼는지 확인한다. 검증 예외는 인증 예외의 원인(cause)으로 감싸져 전달된다.
      */
     private boolean isExpiredToken(Throwable ex) {
+        // 검증 예외가 여러 번 감싸여 있어도 찾을 수 있도록 원인 체인 끝까지 확인한다
         for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
-            if (cause instanceof JwtValidationException validationException) {
-                return validationException.getErrors().stream()
-                        .anyMatch(error -> TokenValidationErrors.EXPIRED.equals(error.getErrorCode()));
+            if (cause instanceof JwtValidationException validationException
+                    && validationException.getErrors().stream()
+                    .anyMatch(error -> TokenValidationErrors.EXPIRED.equals(error.getErrorCode()))) {
+                return true;
             }
         }
         return false;

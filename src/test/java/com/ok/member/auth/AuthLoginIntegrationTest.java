@@ -95,7 +95,7 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
         assertSoftly(softly -> {
             softly.assertThat((String) JsonPath.read(body, "$.tokenType")).isEqualTo("Bearer");
             softly.assertThat(sut.getSubject()).isEqualTo(String.valueOf(member.getId()));
-            softly.assertThat(sut.getClaimAsString(TokenClaims.ROLE)).isEqualTo("BUYER");
+            softly.assertThat(sut.getClaimAsStringList(TokenClaims.ROLES)).containsExactly("BUYER");
             softly.assertThat((String) JsonPath.read(body, "$.accessTokenExpiresAt")).isNotBlank();
             softly.assertThat((String) JsonPath.read(body, "$.refreshTokenExpiresAt")).isNotBlank();
             softly.assertThat(refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken)))
@@ -174,7 +174,7 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Member saveMember(MemberStatus status) {
-        Member member = Member.createBuyer(LOGIN_ID, passwordEncoder.encode(PASSWORD), "tester@example.com",
+        Member member = Member.createUser(LOGIN_ID, passwordEncoder.encode(PASSWORD), "tester@example.com",
                 "홍길동", "길동이", LocalDateTime.of(2026, 10, 1, 12, 0));
         // 정지·탈퇴로 바꾸는 도메인 메서드가 아직 없어 상태를 직접 설정한다
         ReflectionTestUtils.setField(member, "status", status);

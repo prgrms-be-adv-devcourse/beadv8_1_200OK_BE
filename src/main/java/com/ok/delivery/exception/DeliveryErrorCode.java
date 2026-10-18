@@ -38,7 +38,9 @@ public enum DeliveryErrorCode implements ErrorCode {
 
     // 도서산간 우편번호
     POSTAL_REGION_DUPLICATED(HttpStatus.CONFLICT, "Postal region duplicated", "이미 등록된 우편번호입니다."),
-    POSTAL_REGION_NOT_FOUND(HttpStatus.NOT_FOUND, "Postal region not found", "등록되지 않은 우편번호입니다.");
+    POSTAL_REGION_NOT_FOUND(HttpStatus.NOT_FOUND, "Postal region not found", "등록되지 않은 우편번호입니다."),
+    MISSING_REGION_GROUP(HttpStatus.UNPROCESSABLE_ENTITY, "Missing region group", "지역 그룹은 필수입니다."),
+    INVALID_EXTRA_DELIVERY_DAYS(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid extra delivery days", "추가 소요일은 0 이상이어야 합니다.");
 
     private final HttpStatus httpStatus;
     private final String title;

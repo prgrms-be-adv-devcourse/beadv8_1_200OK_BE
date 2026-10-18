@@ -1,6 +1,5 @@
 package com.ok.common.security;
 
-import org.jspecify.annotations.Nullable;
 import org.springframework.core.MethodParameter;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -22,9 +21,15 @@ public class CurrentMemberIdArgumentResolver implements HandlerMethodArgumentRes
 
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
+        if (!parameter.hasParameterAnnotation(CurrentMemberId.class)) {
+            return false;
+        }
         Class<?> type = parameter.getParameterType();
-        return parameter.hasParameterAnnotation(CurrentMemberId.class)
-                && (Long.class.equals(type) || long.class.equals(type));
+        if (!Long.class.equals(type) && !long.class.equals(type)) {
+            // 다른 타입에 붙이면 이 리졸버를 건너뛰고 기본 바인딩이 null을 넣는다. 조용히 넘어가지 않고 바로 알린다.
+            throw new IllegalStateException("@CurrentMemberId는 Long 또는 long 파라미터에만 쓸 수 있습니다: " + parameter);
+        }
+        return true;
     }
 
     @Override
@@ -35,7 +40,11 @@ public class CurrentMemberIdArgumentResolver implements HandlerMethodArgumentRes
         if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
             throw new AuthenticationCredentialsNotFoundException("로그인이 필요합니다.");
         }
+        // subject는 우리가 발급할 때 넣는 회원 id(양수)다. 발급 쪽에서만 만들므로 값의 범위는 검사하지 않고 형식만 확인한다.
         String subject = jwtAuthentication.getToken().getSubject();
+        if (subject == null) {
+            throw new BadCredentialsException("토큰에 회원 식별자가 없습니다.");
+        }
         try {
             return Long.valueOf(subject);
         } catch (NumberFormatException e) {

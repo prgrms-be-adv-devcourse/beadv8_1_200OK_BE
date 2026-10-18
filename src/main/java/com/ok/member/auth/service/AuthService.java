@@ -5,7 +5,8 @@ import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.service.dto.LoginCommand;
-import com.ok.member.auth.service.dto.LoginResult;
+import com.ok.member.auth.service.dto.TokenReissueCommand;
+import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
@@ -13,6 +14,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 /**
  * 로그인 아이디와 비밀번호로 회원을 인증하고 Access Token과 Refresh Token을 발급한다.
@@ -59,14 +62,50 @@ public class AuthService {
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public LoginResult login(LoginCommand command) {
+    public TokenResult login(LoginCommand command) {
         Member member = authenticate(command);
         validateLoginable(member);
+        return issueTokens(member);
+    }
 
-        AccessToken accessToken = accessTokenProvider.issue(member.getId(), member.getRole());
+    /**
+     * Refresh Token으로 새 Access Token과 Refresh Token을 발급한다.
+     *
+     * <p>쓴 Refresh Token은 지우고 새로 발급한다(rotation). 한 토큰은 한 번만 쓰이므로, 같은 토큰을 가진
+     * 정상 사용자와 탈취자 중 먼저 쓴 쪽만 재발급에 성공한다.
+     * 단, 이미 쓴 토큰이 다시 들어와도 처음부터 없던 토큰과 구분하지 못해 그 회원의 다른 토큰을 폐기하지는 않는다.
+     * 그래서 탈취자가 먼저 재발급하면 탈취자 쪽 토큰이 계속 유효하다. 재사용을 탐지해 모두 폐기하는 처리는 후속 과제다.
+     *
+     * <p>회원 정보를 다시 읽어 최신 상태와 권한으로 발급한다. 판매자 승인처럼 권한이 바뀌어도 재로그인 없이 반영된다.
+     * 토큰 삭제와 새 토큰 저장은 한 트랜잭션에서 처리해, 중간에 실패하면 기존 토큰이 그대로 남는다.
+     *
+     * <p>이 트랜잭션은 사용한 토큰의 행 잠금을 끝까지 쥐고 있다. 같은 토큰의 다른 요청이 그동안 기다리므로,
+     * 외부 호출이나 비용이 큰 작업(bcrypt 등)을 이 안에 넣지 않는다.
+     *
+     * @throws RestApiException 없거나 만료되었거나 이미 사용한 토큰이면, 또는 회원이 없거나 탈퇴했으면 {@code INVALID_REFRESH_TOKEN},
+     *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
+     */
+    @Transactional
+    public TokenResult reissue(TokenReissueCommand command) {
+        Long memberId = refreshTokenService.consume(command.refreshToken());
+
+        // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다
+        Member member = memberRepository.findById(memberId)
+                .filter(found -> found.getStatus() != MemberStatus.WITHDRAWN)
+                .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
+        if (member.getStatus() == MemberStatus.SUSPENDED) {
+            throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
+        }
+        return issueTokens(member);
+    }
+
+    // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보로 계산한다
+    private TokenResult issueTokens(Member member) {
+        List<String> roles = TokenRoleMapper.toTokenRoles(member.getType());
+        AccessToken accessToken = accessTokenProvider.issue(member.getId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
 
-        return new LoginResult(accessToken.value(), accessToken.expiresAt(),
+        return new TokenResult(accessToken.value(), accessToken.expiresAt(),
                 refreshToken.value(), refreshToken.expiresAt());
     }
 

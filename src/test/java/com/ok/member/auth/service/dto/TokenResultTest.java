@@ -6,12 +6,12 @@ import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class LoginResultTest {
+class TokenResultTest {
 
     @Test
     void toString에_토큰이_노출되지_않는다() {
         // given
-        LoginResult result = new LoginResult("access-token", Instant.parse("2026-10-12T05:30:00Z"),
+        TokenResult result = new TokenResult("access-token", Instant.parse("2026-10-12T05:30:00Z"),
                 "refresh-token", Instant.parse("2026-10-26T05:00:00Z"));
 
         // when

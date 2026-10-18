@@ -18,6 +18,8 @@ import org.springframework.security.web.servlet.util.matcher.PathPatternRequestM
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
+import java.util.List;
+
 /**
  * 요청마다 AccessToken(JWT)을 검증해 회원을 인증한다.
  *
@@ -33,10 +35,25 @@ public class SecurityConfig {
 
     private static final String ROLE_PREFIX = "ROLE_";
 
+    /**
+     * 토큰을 읽지 않는 요청 (HTTP 메서드 + 경로 패턴).
+     * 컨트롤러 경로와 문자열로 연결되어 있어, 경로를 바꾸면 여기도 함께 바꾼다.
+     * 하위 경로(예: 리뷰의 /me)까지 열리지 않도록 경로를 하나씩 지정한다. ({@link #bearerTokenResolver()} 참고)
+     */
+    private static final List<Endpoint> TOKEN_IGNORED_ENDPOINTS = List.of(
+            // 신원이 필요 없는 인증 요청
+            new Endpoint(HttpMethod.POST, "/api/v1/auth/login"),
+            new Endpoint(HttpMethod.POST, "/api/v1/members/signup"),
+            new Endpoint(HttpMethod.POST, "/api/v1/auth/reissue"),
+            // 누구나 볼 수 있는 상품 조회
+            new Endpoint(HttpMethod.GET, "/api/v1/products"),
+            new Endpoint(HttpMethod.GET, "/api/v1/products/{productId}"),
+            new Endpoint(HttpMethod.GET, "/api/v1/products/categories")
+    );
+
     private final ProblemDetailAuthenticationEntryPoint authenticationEntryPoint;
     private final ProblemDetailAccessDeniedHandler accessDeniedHandler;
 
-    // 인증 기능을 구현하기 전까지 로그인 페이지 없이 모든 요청을 허용 (인증 구현 시 교체할 것)
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -50,6 +67,9 @@ public class SecurityConfig {
                 //  토큰이 있으면 permitAll이어도 검증하므로(위조·만료 토큰은 401), 전환 기간 동안 두 방식이 함께 동작한다.
                 //  전환 전까지 헤더(X-Member-Id)로 회원을 받는 API는 다른 회원을 사칭할 수 있으므로, 운영 배포 전에 반드시 닫는다.
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                // 진입점·처리기를 두 곳에 지정하는 것은 중복이 아니다. 적용되는 실패가 다르다.
+                //  - oauth2ResourceServer: Bearer 토큰 검증 실패 (만료·위조 토큰)
+                //  - exceptionHandling: 토큰 없이 들어온 익명 요청의 접근 거부, 로그인한 회원의 권한 부족
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .bearerTokenResolver(bearerTokenResolver())
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
@@ -62,37 +82,54 @@ public class SecurityConfig {
     }
 
     /**
-     * 요청에서 Bearer 토큰을 꺼낸다. 단, 신원이 필요 없는 로그인·회원가입 요청에서는 토큰을 무시한다.
+     * 요청에서 Bearer 토큰을 꺼낸다. 단, 신원이 필요 없는 요청에서는 토큰을 무시한다.
      *
-     * <p>토큰이 있으면 공개 API여도 검증하므로, 만료된 토큰을 들고 다시 로그인하려는 요청이 401로 막힐 수 있다.
-     * 로그인·회원가입은 토큰으로 얻을 정보가 없으니 토큰을 읽지 않아, 오래된 토큰이 재로그인을 막지 않게 한다.
-     * 토큰 재발급 API가 생기면 같은 이유로 이 목록에 추가한다.
+     * <p>토큰이 있으면 공개 API여도 검증하므로, 만료된 토큰이 붙은 요청은 401로 막힌다.
+     * 신원이 필요 없는 요청까지 막히지 않도록 토큰을 읽지 않는다.
+     * <ul>
+     *   <li>로그인·회원가입·토큰 재발급</li>
+     *   <li>상품 조회</li>
+     * </ul>
      *
-     * <p>컨트롤러 경로와 문자열로 연결되어 있어, 경로가 바뀌면 여기만 어긋날 수 있다.
-     * {@code SecurityIntegrationTest}의 "만료 토큰으로 로그인·회원가입" 테스트가 이 어긋남을 잡는다.
+     * <p>여기 있는 요청은 토큰을 아예 읽지 않으므로 {@code @CurrentMemberId}를 쓸 수 없다(항상 401).
+     * 로그인 여부에 따라 응답이 달라져야 하는 API는 이 목록에 넣지 않는다.
+     *
+     * <p>이 목록은 "토큰을 읽지 않는 요청"이지 "로그인 없이 허용하는 요청"이 아니다.
+     * 기본 거부로 바꿀 때 공개 API 목록은 {@code authorizeHttpRequests}에 따로 둔다.
      */
     private BearerTokenResolver bearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
-        PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
-        RequestMatcher tokenIgnoredRequests = new OrRequestMatcher(
-                path.matcher(HttpMethod.POST, "/api/v1/auth/login"),
-                path.matcher(HttpMethod.POST, "/api/v1/members/signup")
-        );
+        RequestMatcher tokenIgnoredRequests = toMatcher(TOKEN_IGNORED_ENDPOINTS);
         return request -> tokenIgnoredRequests.matches(request) ? null : delegate.resolve(request);
     }
 
     /**
-     * 토큰의 role claim(예: SELLER)을 Spring Security 권한(ROLE_SELLER)으로 바꾼다.
+     * 요청 목록을 하나의 매처로 묶는다. 목록의 요청 중 하나라도 맞으면 일치한다.
+     */
+    private static RequestMatcher toMatcher(List<Endpoint> endpoints) {
+        PathPatternRequestMatcher.Builder path = PathPatternRequestMatcher.withDefaults();
+        List<RequestMatcher> matchers = endpoints.stream()
+                .map(endpoint -> (RequestMatcher) path.matcher(endpoint.method(), endpoint.pattern()))
+                .toList();
+        return new OrRequestMatcher(matchers);
+    }
+
+    /**
+     * 토큰의 roles claim(예: ["BUYER", "SELLER"])의 각 값을 Spring Security 권한(ROLE_BUYER, ROLE_SELLER)으로 바꾼다.
      * 그래서 각 모듈에서 {@code @PreAuthorize("hasRole('SELLER')")}로 역할을 확인할 수 있다.
      */
     private JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtGrantedAuthoritiesConverter authoritiesConverter = new JwtGrantedAuthoritiesConverter();
-        authoritiesConverter.setAuthoritiesClaimName(TokenClaims.ROLE);
+        authoritiesConverter.setAuthoritiesClaimName(TokenClaims.ROLES);
         authoritiesConverter.setAuthorityPrefix(ROLE_PREFIX);
 
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);
         return converter;
+    }
+
+    /** 요청 매칭에 쓰는 HTTP 메서드와 경로 패턴 한 쌍. */
+    private record Endpoint(HttpMethod method, String pattern) {
     }
 
 }

@@ -8,6 +8,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 |---|---|
 | `DEVELOPMENT.md` (이 문서) | 프로젝트를 시작하고 실행하는 데 필요한 정보: 기술 스택, 사전 준비, 로컬 실행, 설정과 환경변수, 타임존, Docker, 시스템 아키텍처 |
 | [`CONVENTION.md`](CONVENTION.md) | 기능을 구현할 때 지키는 기준: 이름, 구조, 패키지별 코드, 테스트 작성 기준, Git 규칙 |
+| [`INFRA.md`](INFRA.md) | AWS 인프라를 Terraform으로 관리하는 방법: 실행 순서, state 관리, 다른 계정으로 옮기기 |
 
 같은 내용을 두 문서에 적으면 서로 어긋나므로, 한 내용은 **한 문서에만** 두고 다른 문서에서는 링크합니다.
 기능을 구현하기 전에 `CONVENTION.md`도 읽어 주세요.
@@ -223,6 +224,48 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 로그인(`POST /api/v1/auth/login`)으로 받은 Access Token을 `Authorization: Bearer {토큰}` 헤더로 보냅니다.
 보안 필터가 요청마다 토큰의 서명·만료·발급자를 검증하고, 실패하면 401로 응답합니다.
 
+### 토큰 형식
+
+토큰은 RFC 7519(JWT) 형식이고, 등록 클레임 중 필요한 것만 씁니다. 권한은 비공개 클레임(`roles`)으로 담습니다.
+
+| 위치 | 이름 | 값 | 용도 |
+|---|---|---|---|
+| 헤더 | `alg` | `HS256` | 서명 알고리즘 |
+| 헤더 | `typ` | `at+jwt` | Access Token임을 표시. 이 타입만 받아 다른 용도의 JWT와 섞이지 않게 함 (RFC 9068, RFC 8725) |
+| 헤더 | `kid` | `jwt.key-id` 설정값 | 서명 키 식별자. 키를 교체할 때 어떤 키로 서명했는지 구분 |
+| 클레임 | `iss` | `paldo-gotgan` | 우리가 발급한 토큰인지 검증 |
+| 클레임 | `sub` | 회원 id | `@CurrentMemberId`가 읽는 값 |
+| 클레임 | `aud` | `jwt.audience` 설정값 | 이 서비스를 위한 토큰인지 검증 |
+| 클레임 | `jti` | UUID | 토큰 개별 폐기(로그아웃·탈취 대응)용 |
+| 클레임 | `iat` | 발급 시각 | 추적, 특정 시점 이전 토큰 일괄 무효화용 |
+| 클레임 | `exp` | 발급 시각 + 30분 | 만료 검증 (필수) |
+| 클레임 | `roles` | 예: `["BUYER", "SELLER"]` | 역할 기반 인가 (각 값이 `ROLE_` 권한으로 변환) |
+
+- `nbf`(사용 시작 시각)는 넣지 않습니다. 발급 즉시 유효한 토큰이라 `iat`와 같은 값이 되고, 서버 간 시계 차이로 정상 토큰이 거부될 위험만 생깁니다.
+- 이름·이메일 같은 개인정보는 넣지 않습니다. JWT는 누구나 내용을 볼 수 있고, 회원 정보가 바뀌어도 토큰 만료 전까지 예전 값이 남습니다.
+- `aud`는 지금 받는 서비스가 하나라 늘 같은 값이지만, 서비스가 분리되면 이미 발급된 토큰도 구분할 수 있도록 미리 넣습니다.
+- `roles`는 회원에 저장된 값이 아니라 토큰을 발급할 때 회원 정보로 계산한 인가용 권한입니다. 권한 이름은 `TokenRoles`에 있습니다.
+
+
+### 서명 방식과 전환 기준
+
+- **지금은 HS256(대칭키)를 씁니다.** 발급과 검증을 같은 애플리케이션에서 하므로, 비대칭키의 장점(검증하는 쪽은 위조할 수 없음)이 쓰이지 않고 키 관리가 단순합니다.
+- **비밀키 관리**: 환경 변수(`JWT_SECRET`)로만 주입하고, 디코딩한 값이 32바이트 이상이어야 기동됩니다. 개발·운영 환경은 서로 다른 키를 씁니다.
+- **키 교체**: 비밀키를 바꿀 때 `jwt.key-id`도 함께 바꿉니다. 옛 키와 새 키를 함께 받아들이는 기간이 필요하면, 디코더가 `kid`로 키를 고르도록 바꿉니다.
+- **비대칭키 전환 기준**: 토큰을 검증하는 프로그램이 둘 이상이 될 때(서비스 분리, 별도 서버) RS256 등으로 바꿉니다. 비밀키를 두 번째 서비스에 나눠주기 전에 바꿔야 합니다. 서명 알고리즘과 키는 `JwtConfig`에서만 관리하므로 각 모듈의 인가 코드는 바뀌지 않습니다.
+
+### 토큰 재발급
+
+Access Token(30분)이 만료되면 로그인 때 받은 Refresh Token으로 새 토큰을 받습니다.
+
+1. API가 401 `token-expired`를 반환하면 `POST /api/v1/auth/reissue`에 `{"refreshToken": "..."}`를 보냅니다.
+2. 성공하면 응답의 **새 Access Token과 새 Refresh Token으로 둘 다 교체**하고, 실패한 요청을 다시 보냅니다. 사용한 Refresh Token은 다시 쓸 수 없습니다.
+3. 재발급이 401(`auth/invalid-refresh-token`)이면 다시 로그인합니다. 403(`auth/member-suspended`)은 정지된 회원입니다.
+- 재발급할 때 회원 정보를 다시 읽어 최신 권한으로 발급합니다. 판매자 승인 같은 권한 변경도 재로그인 없이 반영됩니다.
+- 같은 Refresh Token으로 동시에 요청하면 하나만 성공합니다. 여러 요청이 동시에 `token-expired`를 받아도 **재발급은 한 번만** 보내고, 나머지 요청은 그 결과를 기다렸다가 새 토큰으로 다시 보내야 합니다.
+- 재발급 요청은 Access Token 없이 보냅니다. 만료된 토큰이 붙어 있어도 무시됩니다.
+- 401의 `type`으로 다음 행동을 정합니다: `token-expired`는 재발급, `invalid-token`·`unauthorized`는 재로그인.
+
 ### 컨트롤러에서 로그인 회원 받기
 
 요청 헤더(`X-Member-Id` 등)로 회원을 받지 말고 `@CurrentMemberId`를 씁니다. 값은 검증된 토큰에서 꺼내므로 클라이언트가 바꿀 수 없습니다.
@@ -238,7 +281,7 @@ public ResponseEntity<CartResponse> getMyCart(@CurrentMemberId Long memberId) {
 
 ### 역할 제한
 
-특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 역할(`role` claim)이 `ROLE_{역할}` 권한으로 바뀌어 있습니다.
+특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 권한 목록(`roles` claim)의 각 값이 `ROLE_{권한}` 권한으로 바뀌어 있습니다. 판매자 토큰에는 `BUYER`와 `SELLER`가 함께 들어 있어, 판매자도 구매 API를 쓸 수 있습니다.
 
 ```java
 @PreAuthorize("hasRole('SELLER')")
@@ -255,14 +298,16 @@ public ResponseEntity<ProductCreateResponse> create(@CurrentMemberId Long member
 ```java
 @Autowired
 TestAccessTokens tokens;
-
+ 
 @BeforeEach
 void setUp() {
     mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
 }
-
+ 
 mockMvc.perform(get("/api/v1/cart")
         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "BUYER")));
+ 
+// 여러 권한: tokens.bearer(1L, "BUYER", "SELLER")
 ```
 
 **컨트롤러 슬라이스 테스트** (`@WebMvcTest`): 실제 토큰 없이 `jwt()`로 로그인한 회원을 흉내 냅니다.
@@ -293,6 +338,7 @@ mockMvc.perform(post("/api/v1/products")
 - `build.gradle.kts`의 `systemProperty("spring.profiles.active", "test")` 덕분에 Gradle로 실행하면 test 프로파일이 적용됩니다.
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
+- MySQL 컨테이너는 테스트 실행(JVM) 한 번에 하나만 뜨고 모든 테스트 컨텍스트가 같은 DB를 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.
 
 ### 실행 명령

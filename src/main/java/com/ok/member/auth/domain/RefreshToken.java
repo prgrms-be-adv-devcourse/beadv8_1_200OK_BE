@@ -1,7 +1,12 @@
 package com.ok.member.auth.domain;
 
 import com.ok.common.jpa.entity.BaseTime;
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -64,7 +69,7 @@ public class RefreshToken extends BaseTime {
 
     /**
      * 주어진 시각 기준으로 만료되었는지 확인한다. 만료 시각과 같은 순간부터 만료로 본다.
-     * 이후 재발급 이슈에서 토큰 유효성을 판단할 때 사용한다.
+     * 재발급할 때 토큰이 아직 쓸 수 있는지 판단한다.
      */
     public boolean isExpired(LocalDateTime now) {
         return !now.isBefore(expiresAt);

@@ -1,8 +1,10 @@
 package com.ok.member.auth.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.config.JwtProperties;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
+import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.repository.RefreshTokenRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,7 +25,7 @@ import java.util.Objects;
  * Refresh Token은 어차피 사용할 때마다 DB에서 조회해 유효성을 확인하므로, 토큰 안에 정보를 담을 필요가 없다.
  * 내용이 없으니 탈취되어도 디코딩으로 얻을 정보가 없고, DB에서 지우는 것만으로 즉시 폐기할 수 있다.
  *
- * <p>이번 범위는 발급과 저장까지다. 재발급(rotation), 로그아웃(삭제)은 별도 이슈에서 이 서비스에 추가한다.
+ * <p>로그아웃(삭제)은 별도 이슈에서 이 서비스에 추가한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -37,6 +39,13 @@ public class RefreshTokenService {
      * 쿠키나 URL에 그대로 넣어도 이스케이프가 필요 없는 문자(A-Z a-z 0-9 - _)만 사용한다. 32바이트 → 43자.
      */
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
+
+    /**
+     * 토큰 원문의 길이. 패딩 없는 Base64URL은 3바이트를 4자로 바꾸므로 ceil(바이트 수 * 4 / 3)자다 (32바이트 → 43자).
+     * {@link #TOKEN_BYTES}에서 계산해, 바이트 수를 바꿔도 따로 고칠 필요가 없다.
+     * 요청 검증({@code TokenReissueRequest})이 이 값을 기준으로 길이를 제한한다.
+     */
+    public static final int TOKEN_LENGTH = (TOKEN_BYTES * 4 + 2) / 3;
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
@@ -75,6 +84,39 @@ public class RefreshTokenService {
                 RefreshToken.create(memberId, TokenHasher.sha256Hex(tokenValue), expiresAtInClockZone));
 
         return new IssuedRefreshToken(tokenValue, expiresAt);
+    }
+
+    /**
+     * Refresh Token을 사용 처리(삭제)하고, 토큰을 발급받은 회원 id를 반환한다. 한 토큰은 한 번만 쓸 수 있다.
+     *
+     * <p>있는 토큰의 행에만 쓰기 잠금을 걸어, 같은 토큰으로 동시에 요청이 와도 하나만 성공한다.
+     * 호출한 쪽의 트랜잭션에 참여하므로, 이후 처리(회원 확인, 새 토큰 발급)가 실패하면 삭제도 함께 취소된다.
+     *
+     * @param tokenValue 클라이언트가 보낸 토큰 원문
+     * @return 토큰을 발급받은 회원 id
+     * @throws RestApiException 없거나 만료되었거나 이미 사용한 토큰이면 {@code INVALID_REFRESH_TOKEN}
+     */
+    @Transactional
+    public Long consume(String tokenValue) {
+        Objects.requireNonNull(tokenValue, "tokenValue는 null일 수 없습니다.");
+
+        // 잠금 없이 먼저 찾는다. 없는 해시에 잠금 조회를 하면 MySQL이 인덱스 사이 구간(gap)을 잠가,
+        // 잘못된 토큰이 반복해 들어올 때 같은 구간에 새 토큰을 저장하는 로그인·재발급이 잠시 기다릴 수 있다.
+        Long refreshTokenId = refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(tokenValue))
+                .map(RefreshToken::getId)
+                .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
+
+        // 있는 행만 기본 키로 잠근다. 그 사이 다른 요청이 먼저 써서 지웠다면 여기서 찾지 못한다
+        RefreshToken refreshToken = refreshTokenRepository.findForUpdateById(refreshTokenId)
+                .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
+
+        // 저장할 때와 같은 Clock의 시간대로 비교한다 (issue() 참고)
+        if (refreshToken.isExpired(LocalDateTime.now(clock))) {
+            throw new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN);
+        }
+
+        refreshTokenRepository.delete(refreshToken);
+        return refreshToken.getMemberId();
     }
 
     private String generateTokenValue() {

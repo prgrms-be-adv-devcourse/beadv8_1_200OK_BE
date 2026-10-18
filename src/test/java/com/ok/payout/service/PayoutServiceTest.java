@@ -1,6 +1,5 @@
 package com.ok.payout.service;
 
-import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
@@ -20,6 +19,8 @@ import com.ok.payout.service.dto.PayoutDetailResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
+import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
+import com.ok.payout.service.publisher.PayoutEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -29,7 +30,6 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -82,7 +82,7 @@ class PayoutServiceTest {
     private PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
 
     @Mock
-    private ApplicationEventPublisher eventPublisher;
+    private PayoutEventPublisher payoutEventPublisher;
 
     @InjectMocks
     private PayoutService sut;
@@ -94,7 +94,7 @@ class PayoutServiceTest {
     private ArgumentCaptor<List<PayoutSystemDraftItem>> systemItemsCaptor;
 
     @Captor
-    private ArgumentCaptor<SellerPayoutCreatedEvent> eventCaptor;
+    private ArgumentCaptor<SellerPayoutCreatedCommand> commandCaptor;
 
     // ---------- draft ----------
 
@@ -209,9 +209,9 @@ class PayoutServiceTest {
 
         // then: payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 확인하지 않음
         assertThat(published).isEqualTo(2);
-        then(eventPublisher).should(times(2)).publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getAllValues())
-                .extracting(SellerPayoutCreatedEvent::payeeId, SellerPayoutCreatedEvent::amount)
+        then(payoutEventPublisher).should(times(2)).publishSellerPayoutCreated(commandCaptor.capture());
+        assertThat(commandCaptor.getAllValues())
+                .extracting(SellerPayoutCreatedCommand::payeeId, SellerPayoutCreatedCommand::amount)
                 .containsExactlyInAnyOrder(
                         tuple(10L, 9_700L),
                         tuple(20L, 19_400L));
@@ -234,8 +234,8 @@ class PayoutServiceTest {
 
         // then
         assertThat(published).isEqualTo(1);
-        then(eventPublisher).should().publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getValue().payeeId()).isEqualTo(10L);
+        then(payoutEventPublisher).should().publishSellerPayoutCreated(commandCaptor.capture());
+        assertThat(commandCaptor.getValue().payeeId()).isEqualTo(10L);
     }
 
     // ---------- settlementTo / settlementFrom ----------

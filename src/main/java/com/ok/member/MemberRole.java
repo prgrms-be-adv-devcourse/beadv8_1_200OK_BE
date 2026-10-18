@@ -1,8 +1,12 @@
 package com.ok.member;
 
+import com.ok.member.member.domain.MemberType;
+
 /**
- * 회원 권한. 다른 모듈도 이벤트·인가에서 참조하므로 member 모듈의 공개 API(루트 패키지)에 둔다.
+ * @deprecated 회원 유형과 권한을 분리하면서 {@link MemberType}으로 대체한다.
+ *             권한은 토큰 발급 시 계산하므로 이 enum을 직접 쓰지 않는다.
  */
+@Deprecated(since = "2026-10-18", forRemoval = true)
 public enum MemberRole {
     BUYER,
     SELLER,
