@@ -4,6 +4,7 @@ import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.repository.BuyerWalletLedgerRepository;
 import com.ok.wallet.repository.BuyerWalletRepository;
+import com.ok.wallet.service.dto.OrderPaymentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -56,5 +57,28 @@ public class BuyerWalletService {
         }
         BuyerWalletLedger ledger = wallet.charge(amount, referenceKey);
         buyerWalletLedgerRepository.save(ledger);
+    }
+
+    /**
+     * 주문 결제 금액을 구매자 지갑에서 차감하고 원장에 기록한다.
+     * 근거 키(PAYMENT:{orderId})는 여기서 만들어, 호출하는 쪽이 규칙을 몰라도 되고 같은 주문은 한 번만 차감된다.
+     * 지갑을 잠근 뒤 잔액을 확인하므로, 같은 회원의 결제·충전이 동시에 와도 순서대로 처리된다.
+     * 지갑이 없으면 잔액 0원인 지갑을 만든 뒤 판단하므로 잔액 부족이 된다.
+     */
+    @Transactional
+    public OrderPaymentResult payForOrder(Long memberId, Long orderId, long amount) {
+        String referenceKey = "PAYMENT:" + orderId;
+        BuyerWallet wallet = getOrCreate(memberId);
+        // 이 지갑에 이미 반영한 주문이면 넘어간다. 다른 지갑에 같은 키가 있으면 저장 시 유니크 제약으로 실패해 오류를 드러낸다
+        if (buyerWalletLedgerRepository.existsByBuyerWalletIdAndReferenceKey(wallet.getId(), referenceKey)) {
+            log.info("이미 결제된 주문이라 차감을 건너뜁니다. buyerWalletId={}, orderId={}", wallet.getId(), orderId);
+            return OrderPaymentResult.ALREADY_PAID;
+        }
+        if (!wallet.hasEnoughBalance(amount)) {
+            return OrderPaymentResult.INSUFFICIENT_BALANCE;
+        }
+        BuyerWalletLedger ledger = wallet.pay(amount, referenceKey);
+        buyerWalletLedgerRepository.save(ledger);
+        return OrderPaymentResult.PAID;
     }
 }
