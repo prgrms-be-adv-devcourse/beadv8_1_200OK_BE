@@ -6,6 +6,7 @@ package com.ok.delivery.domain;
 public enum PostalCodeHistoryAction {
 
     REGISTERED,
+    UPDATED,
     DELETED,
     RESTORED
 }

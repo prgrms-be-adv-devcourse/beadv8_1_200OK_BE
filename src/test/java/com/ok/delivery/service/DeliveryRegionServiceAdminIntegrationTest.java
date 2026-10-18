@@ -6,6 +6,7 @@ import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.service.dto.PostalRegionRegisterCommand;
 import com.ok.delivery.service.dto.PostalRegionResult;
+import com.ok.delivery.service.dto.PostalRegionUpdateCommand;
 import com.ok.delivery.service.dto.RegionResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
@@ -136,6 +137,79 @@ class DeliveryRegionServiceAdminIntegrationTest extends AbstractIntegrationTest 
     }
 
     @Test
+    void 우편번호를_수정하면_바로_판정에_반영되고_UPDATED_이력이_남는다() {
+        // given
+        deliveryRegionService.register(command("JEJU_ISLANDS", 2), ADMIN_ID);
+
+        // when
+        PostalRegionResult sut = deliveryRegionService.update(updateCommand("ULLEUNG", 3), 2L);
+
+        // then
+        assertThat(sut).isEqualTo(new PostalRegionResult(TEST_POSTAL_CODE, "ULLEUNG", 3));
+        assertSoftly(softly -> {
+            softly.assertThat(deliveryRegionService.resolve(TEST_POSTAL_CODE)).isEqualTo(new RegionResult("ULLEUNG", 5_000, 3));
+            softly.assertThat(histories()).containsExactly(
+                    "REGISTERED JEJU_ISLANDS 2 " + ADMIN_ID,
+                    "UPDATED ULLEUNG 3 2");
+        });
+    }
+
+    @Test
+    void 같은_값으로_수정하면_이력이_남지_않는다() {
+        // given
+        deliveryRegionService.register(command("JEJU_ISLANDS", 2), ADMIN_ID);
+
+        // when
+        PostalRegionResult sut = deliveryRegionService.update(updateCommand("JEJU_ISLANDS", 2), ADMIN_ID);
+
+        // then
+        assertThat(sut).isEqualTo(new PostalRegionResult(TEST_POSTAL_CODE, "JEJU_ISLANDS", 2));
+        assertThat(histories()).containsExactly("REGISTERED JEJU_ISLANDS 2 " + ADMIN_ID);
+    }
+
+    @Test
+    void 없는_우편번호는_수정할_수_없다() {
+        // when & then
+        assertThatThrownBy(() -> deliveryRegionService.update(updateCommand("ULLEUNG", 3), ADMIN_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_NOT_FOUND));
+    }
+
+    @Test
+    void 삭제된_우편번호는_수정할_수_없고_삭제_상태가_유지된다() {
+        // given
+        deliveryRegionService.register(command("JEJU_ISLANDS", 2), ADMIN_ID);
+        deliveryRegionService.delete(TEST_POSTAL_CODE, ADMIN_ID);
+
+        // when & then
+        assertThatThrownBy(() -> deliveryRegionService.update(updateCommand("ULLEUNG", 3), ADMIN_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_NOT_FOUND));
+        RemoteAreaPostalCode sut = postalCodeRepository.findById(TEST_POSTAL_CODE).orElseThrow();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getDeletedAt()).isNotNull();
+            softly.assertThat(sut.getRegionGroup()).isEqualTo("JEJU_ISLANDS");
+            softly.assertThat(histories()).hasSize(2);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("등록할_수_없는_지역_그룹")
+    void 없는_지역_그룹이나_일반_지역으로_수정하면_실패하고_기존_값이_유지된다(String regionGroup) {
+        // given
+        deliveryRegionService.register(command("JEJU_ISLANDS", 2), ADMIN_ID);
+
+        // when & then
+        assertThatThrownBy(() -> deliveryRegionService.update(updateCommand(regionGroup, 3), ADMIN_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.REGION_GROUP_NOT_FOUND));
+        assertSoftly(softly -> {
+            softly.assertThat(deliveryRegionService.resolve(TEST_POSTAL_CODE)).isEqualTo(new RegionResult("JEJU_ISLANDS", 5_000, 2));
+            softly.assertThat(histories()).containsExactly("REGISTERED JEJU_ISLANDS 2 " + ADMIN_ID);
+        });
+    }
+
+    @Test
     void 없는_우편번호는_삭제할_수_없다() {
         // when & then
         assertThatThrownBy(() -> deliveryRegionService.delete(TEST_POSTAL_CODE, ADMIN_ID))
@@ -167,6 +241,10 @@ class DeliveryRegionServiceAdminIntegrationTest extends AbstractIntegrationTest 
 
     private static PostalRegionRegisterCommand command(String regionGroup, int extraDeliveryDays) {
         return new PostalRegionRegisterCommand(TEST_POSTAL_CODE, regionGroup, extraDeliveryDays);
+    }
+
+    private static PostalRegionUpdateCommand updateCommand(String regionGroup, int extraDeliveryDays) {
+        return new PostalRegionUpdateCommand(TEST_POSTAL_CODE, regionGroup, extraDeliveryDays);
     }
 
     // 이력을 쌓인 순서대로 "동작 그룹 소요일 관리자ID"로 읽는다

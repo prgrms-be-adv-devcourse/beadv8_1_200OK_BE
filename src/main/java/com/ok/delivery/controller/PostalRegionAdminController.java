@@ -5,6 +5,7 @@ import com.ok.delivery.controller.dto.PostalRegionPageRequest;
 import com.ok.delivery.controller.dto.PostalRegionPageResponse;
 import com.ok.delivery.controller.dto.PostalRegionRegisterRequest;
 import com.ok.delivery.controller.dto.PostalRegionResponse;
+import com.ok.delivery.controller.dto.PostalRegionUpdateRequest;
 import com.ok.delivery.service.DeliveryRegionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +38,18 @@ public class PostalRegionAdminController implements PostalRegionAdminControllerS
     ) {
         PostalRegionResponse response = PostalRegionResponse.from(deliveryRegionService.register(request.toCommand(), adminId));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @Override
+    @PutMapping("/{postalCode}")
+    public ResponseEntity<PostalRegionResponse> update(
+            @CurrentMemberId Long adminId,
+            @PathVariable String postalCode,
+            @Valid @RequestBody PostalRegionUpdateRequest request
+    ) {
+        PostalRegionResponse response = PostalRegionResponse.from(
+                deliveryRegionService.update(request.toCommand(postalCode), adminId));
+        return ResponseEntity.ok(response);
     }
 
     @Override

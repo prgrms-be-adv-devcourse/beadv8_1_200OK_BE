@@ -15,7 +15,7 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 
 /**
- * 도서산간 우편번호의 등록·삭제·되살림 기록. 추가만 하고 수정·삭제하지 않는다.
+ * 도서산간 우편번호의 등록·수정·삭제·되살림 기록. 추가만 하고 수정·삭제하지 않는다.
  * 그룹과 소요일은 변경 직후(삭제는 삭제 시점) 값이다. 변경 시각은 {@code createdAt}이다.
  */
 @Entity

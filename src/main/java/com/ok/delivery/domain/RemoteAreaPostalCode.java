@@ -98,6 +98,28 @@ public class RemoteAreaPostalCode extends BaseTime implements Persistable<String
         this.deletedAt = null;
     }
 
+    /**
+     * 삭제되지 않은 우편번호의 그룹과 추가 소요일을 바꾼다.
+     * 삭제했다가 다시 등록하면 그 사이에 일반 지역으로 판정되므로, 값만 바꿀 때는 이 메서드를 쓴다.
+     *
+     * @return 값이 실제로 바뀌었으면 {@code true}. 같은 값이면 {@code false}이고 이력을 남기지 않는 데 쓴다
+     * @throws RestApiException 삭제되었으면 {@code POSTAL_REGION_NOT_FOUND},
+     *                          지역 그룹이 비어 있으면 {@code MISSING_REGION_GROUP},
+     *                          추가 소요일이 음수면 {@code INVALID_EXTRA_DELIVERY_DAYS}
+     */
+    public boolean update(String regionGroup, int extraDeliveryDays) {
+        if (isDeleted()) {
+            throw new RestApiException(DeliveryErrorCode.POSTAL_REGION_NOT_FOUND);
+        }
+        validateRegion(regionGroup, extraDeliveryDays);
+        if (this.regionGroup.equals(regionGroup) && this.extraDeliveryDays == extraDeliveryDays) {
+            return false;
+        }
+        this.regionGroup = regionGroup;
+        this.extraDeliveryDays = extraDeliveryDays;
+        return true;
+    }
+
     public boolean isDeleted() {
         return deletedAt != null;
     }

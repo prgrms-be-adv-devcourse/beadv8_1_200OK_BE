@@ -147,4 +147,73 @@ class RemoteAreaPostalCodeTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_DUPLICATED));
         assertThat(sut.getRegionGroup()).isEqualTo("JEJU_MAIN");
     }
+
+    @Test
+    void 수정하면_새_그룹과_소요일로_바뀌고_바뀌었다고_알린다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+
+        // when
+        boolean changed = sut.update("JEJU_ISLANDS", 2);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getRegionGroup()).isEqualTo("JEJU_ISLANDS");
+            softly.assertThat(sut.getExtraDeliveryDays()).isEqualTo(2);
+        });
+    }
+
+    @Test
+    void 같은_값으로_수정하면_바뀌지_않았다고_알린다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+
+        // when
+        boolean changed = sut.update("JEJU_MAIN", 1);
+
+        // then
+        assertThat(changed).isFalse();
+    }
+
+    @Test
+    void 삭제된_우편번호는_수정할_수_없다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+        sut.delete(NOW);
+
+        // when & then
+        assertThatThrownBy(() -> sut.update("JEJU_ISLANDS", 2))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_NOT_FOUND));
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isDeleted()).isTrue();
+            softly.assertThat(sut.getRegionGroup()).isEqualTo("JEJU_MAIN");
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_지역_그룹")
+    void 수정할_때_지역_그룹이_비어_있으면_거부한다(String regionGroup) {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+
+        // when & then
+        assertThatThrownBy(() -> sut.update(regionGroup, 2))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.MISSING_REGION_GROUP));
+        assertThat(sut.getRegionGroup()).isEqualTo("JEJU_MAIN");
+    }
+
+    @Test
+    void 수정할_때_추가_소요일이_음수면_거부한다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+
+        // when & then
+        assertThatThrownBy(() -> sut.update("JEJU_ISLANDS", -1))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_EXTRA_DELIVERY_DAYS));
+        assertThat(sut.getExtraDeliveryDays()).isEqualTo(1);
+    }
 }

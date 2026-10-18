@@ -4,6 +4,7 @@ import com.ok.delivery.controller.dto.PostalRegionPageRequest;
 import com.ok.delivery.controller.dto.PostalRegionPageResponse;
 import com.ok.delivery.controller.dto.PostalRegionRegisterRequest;
 import com.ok.delivery.controller.dto.PostalRegionResponse;
+import com.ok.delivery.controller.dto.PostalRegionUpdateRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -25,6 +26,22 @@ interface PostalRegionAdminControllerSpec {
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패, 없는 지역 그룹이거나 GENERAL (REGION_GROUP_NOT_FOUND)")
     })
     ResponseEntity<PostalRegionResponse> register(Long adminId, PostalRegionRegisterRequest request);
+
+    @Operation(summary = "도서산간 우편번호 수정",
+            description = "지역 그룹과 추가 소요일을 바꾼다. 삭제 후 재등록과 달리 일반 지역으로 판정되는 순간 없이 바로 반영된다. "
+                    + "바뀐 값은 변경 이력에 남고, 같은 값이면 이력을 남기지 않는다. 삭제된 우편번호는 등록 API로 되살린다.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "수정 성공"),
+            @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "관리자가 아님"),
+            @ApiResponse(responseCode = "404", description = "없거나 삭제된 우편번호 (POSTAL_REGION_NOT_FOUND)"),
+            @ApiResponse(responseCode = "422", description = "요청 값 검증 실패, 없는 지역 그룹이거나 GENERAL (REGION_GROUP_NOT_FOUND)")
+    })
+    ResponseEntity<PostalRegionResponse> update(
+            Long adminId,
+            @Parameter(description = "우편번호 (숫자 5자리)", example = "63000") String postalCode,
+            PostalRegionUpdateRequest request
+    );
 
     @Operation(summary = "도서산간 우편번호 삭제",
             description = "soft delete다. 삭제한 우편번호는 일반 지역으로 판정되고, 삭제는 변경 이력에 남는다.")

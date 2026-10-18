@@ -1,9 +1,9 @@
 -- 도서산간 우편번호 변경 이력 (추가만 하고 수정·삭제하지 않는다)
--- 그룹과 소요일은 변경 직후 값만 둔다. 되살림은 항상 삭제 다음이라 변경 전 값은 바로 앞 DELETED 이력에 있다.
+-- 그룹과 소요일은 변경 직후 값만 둔다. 변경 전 값은 같은 우편번호의 바로 앞 이력에 있다.
 CREATE TABLE remote_area_postal_code_history (
     id                  BIGINT      NOT NULL AUTO_INCREMENT,
     postal_code         VARCHAR(5)  NOT NULL,
-    action              VARCHAR(20) NOT NULL COMMENT '변경 동작: REGISTERED, DELETED, RESTORED',
+    action              VARCHAR(20) NOT NULL COMMENT '변경 동작: REGISTERED, UPDATED, DELETED, RESTORED',
     region_group        VARCHAR(30) NOT NULL COMMENT '변경 직후(삭제는 삭제 시점)의 지역 그룹 코드',
     extra_delivery_days INT         NOT NULL COMMENT '변경 직후(삭제는 삭제 시점)의 추가 소요일(영업일)',
     changed_by          BIGINT      NOT NULL COMMENT '변경한 관리자의 회원 모듈 ID',

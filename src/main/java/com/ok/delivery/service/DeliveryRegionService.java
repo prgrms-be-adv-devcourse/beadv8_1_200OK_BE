@@ -11,6 +11,7 @@ import com.ok.delivery.repository.RemoteAreaPostalCodeHistoryRepository;
 import com.ok.delivery.repository.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.service.dto.PostalRegionRegisterCommand;
 import com.ok.delivery.service.dto.PostalRegionResult;
+import com.ok.delivery.service.dto.PostalRegionUpdateCommand;
 import com.ok.delivery.service.dto.RegionResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -25,7 +26,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
- * 우편번호로 지역 그룹, 추가 운임, 추가 소요일을 판정하고, 관리자가 도서산간 우편번호를 등록·삭제·조회하게 한다.
+ * 우편번호로 지역 그룹, 추가 운임, 추가 소요일을 판정하고, 관리자가 도서산간 우편번호를 등록·수정·삭제·조회하게 한다.
  * 견적, 배송 생성, 배송지 변경이 같은 판정을 쓰도록 한 곳에 둔다.
  */
 @Service
@@ -79,6 +80,27 @@ public class DeliveryRegionService {
             action = PostalCodeHistoryAction.RESTORED;
         }
         historyRepository.save(RemoteAreaPostalCodeHistory.of(action, postalCode, adminId));
+        return PostalRegionResult.from(postalCode);
+    }
+
+    /**
+     * 도서산간 우편번호의 그룹과 추가 소요일을 바꾸고 {@code UPDATED} 이력을 같은 트랜잭션에 남긴다.
+     * 삭제 후 재등록과 달리 일반 지역으로 판정되는 순간이 없다. 같은 값이면 바꾸지 않고 이력도 남기지 않는다.
+     *
+     * @param adminId 수정하는 관리자의 회원 ID
+     * @throws RestApiException 없거나 삭제된 번호면 {@code POSTAL_REGION_NOT_FOUND},
+     *                          없는 그룹이거나 {@code GENERAL}이면 {@code REGION_GROUP_NOT_FOUND},
+     *                          값 검증은 {@link RemoteAreaPostalCode#update}를 따른다
+     */
+    @Transactional
+    public PostalRegionResult update(PostalRegionUpdateCommand command, Long adminId) {
+        RemoteAreaPostalCode postalCode = postalCodeRepository.findByIdForUpdate(command.postalCode())
+                .orElseThrow(() -> new RestApiException(DeliveryErrorCode.POSTAL_REGION_NOT_FOUND));
+        if (postalCode.update(command.regionGroup(), command.extraDeliveryDays())) {
+            // 엔티티 검증을 통과한 뒤에 확인한다. 실패하면 트랜잭션이 롤백되어 위의 변경은 반영되지 않는다
+            requireRegionGroup(postalCode.getRegionGroup());
+            historyRepository.save(RemoteAreaPostalCodeHistory.of(PostalCodeHistoryAction.UPDATED, postalCode, adminId));
+        }
         return PostalRegionResult.from(postalCode);
     }
 

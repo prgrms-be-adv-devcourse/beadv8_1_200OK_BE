@@ -22,11 +22,12 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // 토큰으로 관리자 API를 호출해, 권한·요청 검증·토큰의 관리자 ID가 이력까지 이어지는지 확인한다.
-// 등록·삭제의 업무 규칙은 DeliveryRegionServiceAdminIntegrationTest가 맡는다.
+// 등록·수정·삭제의 업무 규칙은 DeliveryRegionServiceAdminIntegrationTest가 맡는다.
 class PostalRegionAdminApiIntegrationTest extends AbstractIntegrationTest {
 
     private static final String URL = "/api/v1/admin/postal-regions";
@@ -108,6 +109,50 @@ class PostalRegionAdminApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 관리자가_수정하면_200과_수정값을_돌려준다() throws Exception {
+        // given
+        register(tokens.bearer(ADMIN_ID, "ADMIN"), REGISTER_BODY).andExpect(status().isCreated());
+        String body = """
+                {"regionGroup": "ULLEUNG", "extraDeliveryDays": 3}
+                """;
+
+        // when
+        ResultActions sut = update(tokens.bearer(ADMIN_ID, "ADMIN"), TEST_POSTAL_CODE, body);
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.postalCode", is(TEST_POSTAL_CODE)))
+                .andExpect(jsonPath("$.regionGroup", is("ULLEUNG")))
+                .andExpect(jsonPath("$.extraDeliveryDays", is(3)));
+    }
+
+    @Test
+    void 수정_요청_값이_형식에_맞지_않으면_422() throws Exception {
+        // given
+        String body = """
+                {"regionGroup": " ", "extraDeliveryDays": -1}
+                """;
+
+        // when & then
+        update(tokens.bearer(ADMIN_ID, "ADMIN"), TEST_POSTAL_CODE, body)
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+    }
+
+    @Test
+    void 등록되지_않은_우편번호를_수정하면_404() throws Exception {
+        // given
+        String body = """
+                {"regionGroup": "ULLEUNG", "extraDeliveryDays": 3}
+                """;
+
+        // when & then
+        update(tokens.bearer(ADMIN_ID, "ADMIN"), TEST_POSTAL_CODE, body)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", endsWith("/postal-region-not-found")));
+    }
+
+    @Test
     void 목록은_기본_25건씩_페이지_정보와_함께_돌려준다() throws Exception {
         // when & then
         mockMvc.perform(get(URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
@@ -130,6 +175,13 @@ class PostalRegionAdminApiIntegrationTest extends AbstractIntegrationTest {
 
     private ResultActions register(String bearer, String body) throws Exception {
         return mockMvc.perform(post(URL)
+                .header(HttpHeaders.AUTHORIZATION, bearer)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
+    }
+
+    private ResultActions update(String bearer, String postalCode, String body) throws Exception {
+        return mockMvc.perform(put(URL + "/" + postalCode)
                 .header(HttpHeaders.AUTHORIZATION, bearer)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));
