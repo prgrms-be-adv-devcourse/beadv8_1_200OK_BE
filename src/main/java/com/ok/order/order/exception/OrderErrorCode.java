@@ -23,7 +23,11 @@ public enum OrderErrorCode implements ErrorCode {
     STOCK_ALLOCATION_FAILED(HttpStatus.CONFLICT, "Stock allocation failed", "재고 확보에 실패했습니다. 잠시 후 다시 시도해 주세요."),
 
     // 지갑
-    INSUFFICIENT_BALANCE(HttpStatus.CONFLICT, "Insufficient balance", "잔액이 부족합니다.");
+    INSUFFICIENT_BALANCE(HttpStatus.CONFLICT, "Insufficient balance", "잔액이 부족합니다."),
+
+    PRODUCT_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Product API failed", "상품 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."),
+    WALLET_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Wallet API failed", "잔액을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."),
+    DELIVERY_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Delivery API failed", "배송비를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String title;
