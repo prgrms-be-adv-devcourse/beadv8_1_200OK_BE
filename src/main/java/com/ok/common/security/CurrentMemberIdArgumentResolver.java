@@ -22,24 +22,17 @@ public class CurrentMemberIdArgumentResolver implements HandlerMethodArgumentRes
 
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
-        CurrentMemberId annotation = parameter.getParameterAnnotation(CurrentMemberId.class);
-        if (annotation == null) {
-            return false;
-        }
         Class<?> type = parameter.getParameterType();
-        // 선택 로그인은 토큰이 없으면 null을 넣어야 하므로 long에는 쓸 수 없다
-        return Long.class.equals(type) || (annotation.required() && long.class.equals(type));
+        return parameter.hasParameterAnnotation(CurrentMemberId.class)
+                && (Long.class.equals(type) || long.class.equals(type));
     }
 
     @Override
-    public @Nullable Long resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
-                                          NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
+    public Long resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
+                                NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         // 토큰 없이 들어온 요청은 익명 인증이거나 인증 정보가 없다. 둘 다 회원을 식별할 수 없다.
         if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
-            if (!parameter.getParameterAnnotation(CurrentMemberId.class).required()) {
-                return null;
-            }
             throw new AuthenticationCredentialsNotFoundException("로그인이 필요합니다.");
         }
         String subject = jwtAuthentication.getToken().getSubject();

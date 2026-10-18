@@ -7,7 +7,7 @@ meta {
 get {
   url: {{baseUrl}}/api/v1/products/{{reviewProductId}}/reviews?page=0&size=20
   body: none
-  auth: inherit
+  auth: none
 }
 
 params:query {
@@ -20,10 +20,8 @@ assert {
   res.body.totalElements: eq 1
   res.body.content[0].optionName: eq 3kg 특품
   res.body.content[0].media.length: eq 2
-  res.body.content[0].mine: eq true
 }
 
 docs {
-  로그인하지 않아도 됩니다. 로그인하면 내가 쓴 리뷰의 mine이 true입니다.
-  최신순이고 page·size는 0부터, 1~100입니다.
+  로그인하지 않아도 됩니다. 최신순이고 page·size는 0부터, 1~100입니다.
 }

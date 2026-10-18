@@ -3,8 +3,6 @@ package com.ok.product.review.controller.dto;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import org.jspecify.annotations.Nullable;
-
 import com.ok.product.review.service.dto.ProductReviewResult;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -24,8 +22,8 @@ public record ProductReviewResponse(
 	@Schema(description = "구매한 옵션 이름", example = "3kg 특품")
 	String optionName,
 
-	@Schema(description = "내가 쓴 리뷰인지. 로그인하지 않았으면 false")
-	boolean mine,
+	@Schema(description = "작성자 회원 ID", example = "1")
+	Long memberId,
 
 	@Schema(description = "별점. 0.5점 단위 정수 (1~10, 화면에는 2로 나눠 표시)", example = "9")
 	int rating,
@@ -43,10 +41,9 @@ public record ProductReviewResponse(
 	LocalDateTime updatedAt
 ) {
 
-	// 작성자 회원 ID는 공개 목록에서 회원을 열거하는 데 쓰일 수 있어 내보내지 않고, 본인 여부만 알려 준다
-	public static ProductReviewResponse from(ProductReviewResult result, @Nullable Long viewerId) {
+	public static ProductReviewResponse from(ProductReviewResult result) {
 		return new ProductReviewResponse(result.reviewId(), result.productId(), result.productOptionId(),
-			result.optionName(), result.memberId().equals(viewerId), result.rating(), result.content(),
+			result.optionName(), result.memberId(), result.rating(), result.content(),
 			result.media().stream().map(ProductReviewMediaResponse::from).toList(),
 			result.createdAt(), result.updatedAt());
 	}
