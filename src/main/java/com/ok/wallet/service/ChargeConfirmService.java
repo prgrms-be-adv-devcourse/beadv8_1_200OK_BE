@@ -4,6 +4,7 @@ import com.ok.wallet.client.toss.TossConfirmResult;
 import com.ok.wallet.client.toss.TossPaymentsClient;
 import com.ok.wallet.service.dto.ChargeConfirmResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
  * 토스 응답을 기다리는 동안 DB 커넥션을 잡고 있으면 토스가 느려질 때 커넥션 풀이 고갈되어
  * 결제와 무관한 API까지 멈추므로, 토스 호출은 두 트랜잭션 사이(트랜잭션 밖)에서 한다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChargeConfirmService {
@@ -30,8 +32,15 @@ public class ChargeConfirmService {
 
         // [트랜잭션 2] 결과 반영
         return switch (result) {
-            case TossConfirmResult.Approved approved ->
-                    chargeTransaction.complete(memberId, chargeNo, approved.paymentKey());
+            case TossConfirmResult.Approved approved -> {
+                try {
+                    yield chargeTransaction.complete(memberId, chargeNo, approved.paymentKey());
+                } catch (RuntimeException e) {
+                    // 토스는 승인했는데 잔액 반영에 실패: 충전 건은 처리 중으로 남고 복구 스케줄러(#135)가 처리해야 한다
+                    log.error("[CHARGE_COMPLETE_FAILED] 승인된 결제의 잔액 반영에 실패했습니다. chargeNo={}", chargeNo, e);
+                    throw e;
+                }
+            }
             case TossConfirmResult.Rejected rejected ->
                     chargeTransaction.failApproval(memberId, chargeNo, rejected.code(), rejected.message());
             // 승인 여부를 알 수 없으므로 처리 중으로 두고, 복구 스케줄러(#135)가 토스에 확인한다
