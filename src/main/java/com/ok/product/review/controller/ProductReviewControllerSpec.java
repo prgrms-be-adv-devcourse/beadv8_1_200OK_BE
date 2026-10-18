@@ -18,6 +18,7 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -112,6 +113,7 @@ interface ProductReviewControllerSpec {
 		@Parameter(description = "리뷰 ID", example = "1") Long reviewId
 	);
 
+	@SecurityRequirements
 	@Operation(summary = "상품별 리뷰 목록", description = "노출된 상품의 리뷰를 최신순으로 조회합니다. 로그인하지 않아도 됩니다.")
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "성공"),
