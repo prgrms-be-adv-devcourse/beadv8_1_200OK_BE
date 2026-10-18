@@ -39,6 +39,18 @@ class ShippingFeePolicyTest {
     }
 
     @Test
+    void 무료배송_기준이_0원이면_항상_무료배송이다() {
+        // given
+        SellerShippingSetting zeroThreshold = new SellerShippingSetting(3_000, 0, LocalTime.of(13, 0));
+
+        // when
+        int actual = ShippingFeePolicy.baseShippingFee(0L, zeroThreshold);
+
+        // then
+        assertThat(actual).isZero();
+    }
+
+    @Test
     void 일반_지역은_추가_운임이_없다() {
         // when
         SellerShippingFee sut = ShippingFeePolicy.calculate(1L, 10_000L, SETTING, NO_SURCHARGE);
@@ -122,6 +134,37 @@ class ShippingFeePolicyTest {
         assertThatThrownBy(() -> ShippingFeePolicy.calculate(null, 10_000L, SETTING, NO_SURCHARGE))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("sellerId는 필수입니다.");
+    }
+
+    @Test
+    void 배송비_목록이_없으면_예외가_발생한다() {
+        // when & then
+        assertThatThrownBy(() -> ShippingFeePolicy.totalFee(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("배송비 목록은 필수입니다.");
+    }
+
+    @Test
+    void 배송비_합계가_int_범위를_넘으면_예외가_발생한다() {
+        // given
+        List<SellerShippingFee> fees = List.of(
+                new SellerShippingFee(1L, Integer.MAX_VALUE, 0),
+                new SellerShippingFee(2L, 1, 0)
+        );
+
+        // when & then
+        assertThatThrownBy(() -> ShippingFeePolicy.totalFee(fees))
+                .isInstanceOf(ArithmeticException.class);
+    }
+
+    @Test
+    void 판매자_배송비가_int_범위를_넘으면_예외가_발생한다() {
+        // given
+        SellerShippingFee fee = new SellerShippingFee(1L, Integer.MAX_VALUE, 1);
+
+        // when & then
+        assertThatThrownBy(fee::totalFee)
+                .isInstanceOf(ArithmeticException.class);
     }
 
     @Test

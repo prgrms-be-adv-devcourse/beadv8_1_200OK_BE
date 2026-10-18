@@ -5,7 +5,12 @@ package com.ok.delivery.domain;
  */
 public record SellerShippingFee(Long sellerId, int baseShippingFee, int regionSurcharge) {
 
+    /**
+     * 기본 배송비와 추가 운임의 합계를 반환한다.
+     *
+     * @throws ArithmeticException 합계가 {@code int} 범위를 넘으면
+     */
     public int totalFee() {
-        return baseShippingFee + regionSurcharge;
+        return Math.addExact(baseShippingFee, regionSurcharge);
     }
 }

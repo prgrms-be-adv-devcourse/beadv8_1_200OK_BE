@@ -119,6 +119,14 @@ class DeliveryDatePolicyTest {
     }
 
     @Test
+    void 영업일_계산기가_없으면_예외가_발생한다() {
+        // when & then
+        assertThatThrownBy(() -> new DeliveryDatePolicy(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("영업일 계산기는 필수입니다.");
+    }
+
+    @Test
     void 기준_시각이_없으면_예외가_발생한다() {
         // when & then
         assertThatThrownBy(() -> sut.shipDate(null, CUTOFF_13))

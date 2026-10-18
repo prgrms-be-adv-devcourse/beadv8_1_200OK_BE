@@ -17,7 +17,15 @@ public class DeliveryDatePolicy {
 
     private final BusinessDayCalendar calendar;
 
+    /**
+     * 날짜를 셀 때 쓸 영업일 계산기를 받는다.
+     *
+     * @throws IllegalArgumentException 영업일 계산기가 없으면
+     */
     public DeliveryDatePolicy(BusinessDayCalendar calendar) {
+        if (calendar == null) {
+            throw new IllegalArgumentException("영업일 계산기는 필수입니다.");
+        }
         this.calendar = calendar;
     }
 

@@ -88,6 +88,30 @@ class WeekendBusinessDayCalendarTest {
     }
 
     @Test
+    void 탐색_상한_안에_영업일이_없으면_예외가_발생한다() {
+        // given
+        BusinessDayCalendar noBusinessDay = date -> false;
+
+        // when & then
+        assertThatThrownBy(() -> noBusinessDay.nextBusinessDay(MONDAY))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("영업일을 찾을 수 없습니다. date=2026-10-12, searchDays=365");
+    }
+
+    @Test
+    void 탐색_상한의_마지막_날이_영업일이면_그날을_반환한다() {
+        // given
+        LocalDate lastSearchDay = MONDAY.plusDays(BusinessDayCalendar.MAX_SEARCH_DAYS);
+        BusinessDayCalendar onlyLastDay = date -> date.equals(lastSearchDay);
+
+        // when
+        LocalDate actual = onlyLastDay.nextBusinessDay(MONDAY);
+
+        // then
+        assertThat(actual).isEqualTo(lastSearchDay);
+    }
+
+    @Test
     void 영업일_수가_음수면_예외가_발생한다() {
         // when & then
         assertThatThrownBy(() -> sut.plusBusinessDays(MONDAY, -1))

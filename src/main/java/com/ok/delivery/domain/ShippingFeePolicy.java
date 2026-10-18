@@ -25,6 +25,7 @@ public final class ShippingFeePolicy {
         if (setting == null) {
             throw new IllegalArgumentException("판매자 배송 설정은 필수입니다.");
         }
+        // TODO(#122): 무료배송 기준 0원은 지금 "항상 무료"로 동작한다. "무료배송 없음"을 표현하는 방법은 판매자 설정 형식과 함께 정한다.
         return itemAmount >= setting.freeShippingThreshold() ? 0 : setting.baseShippingFee();
     }
 
@@ -46,10 +47,20 @@ public final class ShippingFeePolicy {
         return new SellerShippingFee(sellerId, baseShippingFee(itemAmount, setting), regionSurcharge);
     }
 
-    /** 모든 판매자의 배송비(기본 배송비 + 추가 운임) 합계를 반환한다. */
+    /**
+     * 모든 판매자의 배송비(기본 배송비 + 추가 운임) 합계를 반환한다.
+     * 배송비 컬럼({@link Shipment})에 맞춰 {@code int}로 반환하되, 넘치면 틀린 금액 대신 예외로 드러내도록 {@code long}으로 더한다.
+     *
+     * @throws IllegalArgumentException 목록이 없으면
+     * @throws ArithmeticException      합계가 {@code int} 범위를 넘으면
+     */
     public static int totalFee(List<SellerShippingFee> fees) {
-        return fees.stream()
-                .mapToInt(SellerShippingFee::totalFee)
+        if (fees == null) {
+            throw new IllegalArgumentException("배송비 목록은 필수입니다.");
+        }
+        long total = fees.stream()
+                .mapToLong(SellerShippingFee::totalFee)
                 .sum();
+        return Math.toIntExact(total);
     }
 }
