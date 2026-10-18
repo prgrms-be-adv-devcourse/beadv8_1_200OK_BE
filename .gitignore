@@ -78,3 +78,9 @@ $RECYCLE.BIN/
 # 개인 환경 / 개인 메모
 .mcp.json
 docs/private/
+
+### Terraform ###
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
