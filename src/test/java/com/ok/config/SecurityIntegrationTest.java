@@ -171,6 +171,42 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 만료된_토큰을_보내도_재발급_요청은_토큰을_무시하고_처리한다() throws Exception {
+        // given
+        // 저장되지 않은 Refresh Token을 보내, 토큰 검증(401 token-expired)이 아니라 재발급 처리(401 invalid-refresh-token)까지 갔는지 확인한다
+        String body = """
+                {"refreshToken": "unknown-refresh-token"}
+                """;
+
+        // when
+        ResultActions result = mockMvc.perform(post("/api/v1/auth/reissue")
+                .header(HttpHeaders.AUTHORIZATION, tokens.expiredBearer(MEMBER_ID, "BUYER"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/auth/invalid-refresh-token")));
+    }
+
+    @Test
+    void 만료된_토큰을_보내도_상품_조회_요청은_토큰을_무시하고_처리한다() throws Exception {
+        // given
+        // 비로그인 화면이 만료 토큰 때문에 깨지지 않는지 확인한다. 토큰을 검증했다면 401 token-expired가 나온다
+        String expiredToken = tokens.expiredBearer(MEMBER_ID, "BUYER");
+
+        // when
+        ResultActions categories = mockMvc.perform(get("/api/v1/products/categories")
+                .header(HttpHeaders.AUTHORIZATION, expiredToken));
+        ResultActions products = mockMvc.perform(get("/api/v1/products")
+                .header(HttpHeaders.AUTHORIZATION, expiredToken));
+
+        // then
+        categories.andExpect(status().isOk());
+        products.andExpect(status().isOk());
+    }
+
+    @Test
     void 역할이_맞으면_역할_제한_API를_호출할_수_있다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/test/security/seller-only")

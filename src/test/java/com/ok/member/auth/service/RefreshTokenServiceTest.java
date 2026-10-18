@@ -1,8 +1,10 @@
 package com.ok.member.auth.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.config.JwtProperties;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
+import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.repository.RefreshTokenRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,11 +19,14 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -120,6 +125,47 @@ class RefreshTokenServiceTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("memberId는 null일 수 없습니다.");
         verify(refreshTokenRepository, never()).save(any());
+    }
+
+    @Test
+    void 사용하면_토큰을_지우고_발급받은_회원_id를_반환한다() {
+        // given
+        RefreshToken stored = RefreshToken.create(1L, TokenHasher.sha256Hex("raw-token"), NOW.plusDays(1));
+        given(refreshTokenRepository.findForUpdateByTokenHash(TokenHasher.sha256Hex("raw-token")))
+                .willReturn(Optional.of(stored));
+
+        // when
+        Long sut = refreshTokenService.consume("raw-token");
+
+        // then
+        assertThat(sut).isEqualTo(1L);
+        then(refreshTokenRepository).should().delete(stored);
+    }
+
+    @Test
+    void 저장된_기록이_없는_토큰이면_INVALID_REFRESH_TOKEN이_발생한다() {
+        // given
+        // 처음부터 없거나, 이미 사용해 지워진 토큰
+        given(refreshTokenRepository.findForUpdateByTokenHash(any())).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> refreshTokenService.consume("unknown-token"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
+    }
+
+    @Test
+    void 만료된_토큰이면_INVALID_REFRESH_TOKEN이_발생하고_지우지_않는다() {
+        // given
+        // 만료 시각과 같은 순간부터 만료로 본다
+        RefreshToken expired = RefreshToken.create(1L, TokenHasher.sha256Hex("raw-token"), NOW);
+        given(refreshTokenRepository.findForUpdateByTokenHash(any())).willReturn(Optional.of(expired));
+
+        // when & then
+        assertThatThrownBy(() -> refreshTokenService.consume("raw-token"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
+        then(refreshTokenRepository).should(never()).delete(any());
     }
 
 }
