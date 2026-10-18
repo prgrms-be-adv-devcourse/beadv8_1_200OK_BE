@@ -10,7 +10,7 @@ data "aws_iam_policy_document" "app_assume_role" {
 }
 
 resource "aws_iam_role" "app" {
-  name               = "team01-200ok-app-role"
+  name               = "${local.name_prefix}-app-role"
   assume_role_policy = data.aws_iam_policy_document.app_assume_role.json
 }
 
@@ -23,12 +23,12 @@ data "aws_iam_policy_document" "app_s3" {
 }
 
 resource "aws_iam_role_policy" "app_s3" {
-  name   = "team01-200ok-app-s3"
+  name   = "${local.name_prefix}-app-s3"
   role   = aws_iam_role.app.id
   policy = data.aws_iam_policy_document.app_s3.json
 }
 
 resource "aws_iam_instance_profile" "app" {
-  name = "team01-200ok-app-profile"
+  name = "${local.name_prefix}-app-profile"
   role = aws_iam_role.app.name
 }
