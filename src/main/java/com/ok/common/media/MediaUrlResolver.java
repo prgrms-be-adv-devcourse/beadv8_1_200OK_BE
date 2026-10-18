@@ -1,4 +1,4 @@
-package com.ok.media;
+package com.ok.common.media;
 
 import java.util.List;
 import java.util.Optional;

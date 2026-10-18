@@ -1,7 +1,7 @@
 package com.ok.product.product.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.media.MediaUrlResolver;
+import com.ok.common.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
