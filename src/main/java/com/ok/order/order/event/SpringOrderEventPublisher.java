@@ -13,7 +13,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     private final ApplicationEventPublisher applicationEventPublisher;
 
     @Override
-    public void publishOrderCreatedEvent(Long orderId, Long buyerId, long totalAmount) {
+    public void publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount) {
         applicationEventPublisher.publishEvent(new OrderCreatedEvent(orderId, buyerId, totalAmount));
     }
 }
