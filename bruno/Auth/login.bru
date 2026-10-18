@@ -18,13 +18,16 @@ body:json {
 }
 
 script:post-response {
-  // 로그인에 성공하면 Access Token을 저장해, 컬렉션의 다른 요청에 Bearer 헤더로 붙인다
+  // 로그인에 성공하면 Access Token을 저장해, 컬렉션의 다른 요청에 Bearer 헤더로 붙인다.
+  // Refresh Token은 재발급 요청에 쓰도록 함께 저장한다.
   if (res.getStatus() === 200) {
     bru.setVar("accessToken", res.getBody().accessToken);
+    bru.setVar("refreshToken", res.getBody().refreshToken);
   }
 }
 
 docs {
   가입한 회원의 아이디와 비밀번호로 로그인합니다.
   성공하면 응답의 accessToken이 `accessToken` 변수에 저장되고, 컬렉션 전체 요청에 `Authorization: Bearer {accessToken}`이 붙습니다.
+  refreshToken은 `refreshToken` 변수에 저장되어 `토큰 재발급` 요청에 쓰입니다.
 }
