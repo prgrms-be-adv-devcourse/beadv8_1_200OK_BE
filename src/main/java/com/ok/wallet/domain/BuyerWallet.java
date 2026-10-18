@@ -95,6 +95,7 @@ public class BuyerWallet extends BaseTime {
 
     /** 지금 잔액에 금액을 더했을 때 보유 한도를 넘는지 확인한다. */
     public static boolean exceedsMaxBalance(long balance, long amount) {
-        return balance + amount > MAX_BALANCE;
+        // 잔액 + 금액은 아주 큰 금액에서 long 범위를 넘어 음수가 될 수 있어, 남은 한도와 비교한다
+        return amount > MAX_BALANCE - balance;
     }
 }

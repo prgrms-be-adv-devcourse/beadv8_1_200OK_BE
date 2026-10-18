@@ -155,4 +155,16 @@ class BuyerWalletTest {
         wallet.charge(balance, "CHARGE:setup");
         return wallet;
     }
+
+    @Test
+    void 아주_큰_금액이어도_넘침_없이_한도_초과로_판단한다() {
+        // 잔액 + 금액으로 계산하면 long 범위를 넘어 음수가 되어 한도 검사를 통과해 버린다
+        assertThat(BuyerWallet.exceedsMaxBalance(10_000, 9_223_372_036_854_770_000L)).isTrue();
+    }
+
+    @Test
+    void 한도에_정확히_맞으면_넘지_않는다() {
+        assertThat(BuyerWallet.exceedsMaxBalance(490_000, 10_000)).isFalse();
+        assertThat(BuyerWallet.exceedsMaxBalance(490_000, 20_000)).isTrue();
+    }
 }
