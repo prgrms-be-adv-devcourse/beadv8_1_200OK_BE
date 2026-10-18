@@ -1,5 +1,7 @@
 package com.ok.payout.controller;
 
+import com.ok.common.security.CurrentMemberId;
+import com.ok.common.security.TokenClaims;
 import com.ok.payout.controller.dto.PayoutAdjustmentCreateRequest;
 import com.ok.payout.controller.dto.PayoutDetailResponse;
 import com.ok.payout.controller.dto.PayoutItemResponse;
@@ -17,6 +19,9 @@ import org.springframework.batch.core.job.JobExecution;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,22 +31,28 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-// 개발 중 수동 실행용 임시 API. 인증 도입 전까지 prod에서는 등록하지 않음 (prod 정산은 스케줄러로만 실행)
+import java.util.List;
+
+// 개발 중 수동 실행용 임시 API. prod에서는 등록하지 않음 (prod 정산은 스케줄러로만 실행)
+// 토큰 인증은 붙었지만 SecurityConfig가 아직 전환 기간(permitAll)이라 prod에는 열지 않음 (기본 거부 전환은 #108)
 @Profile("!prod")
 @RestController
 @RequestMapping("/api/v1/payouts")
 @RequiredArgsConstructor
 public class PayoutController implements PayoutControllerSpec {
 
-    // TODO(#52): 임시 헤더. 로그인(#98)은 JWT 발급만 하고 요청마다 토큰을 검증하는 부분이 아직 연결되지 않아 회원 정보를 꺼낼 수 없음
-    // 클라이언트가 아무 회원으로나 위장할 수 있어 보안 수단이 아님(그래서 prod 미등록). 인증이 붙으면 principal로 바꾸고 권한 판단 로직은 그대로 둠
-    static final String MEMBER_ID_HEADER = "X-Member-Id";
+    // TODO(#52): 정산 1건 실행 API만 쓰는 임시 헤더. 이 API는 기능 없이 형태만 둔 상태(항상 501)라
+    // 토큰 전환은 기능을 열 때(재처리 정책 확정 후) 함께 함
     static final String MEMBER_ROLE_HEADER = "X-Member-Role";
 
     private final PayoutJobRunner payoutJobRunner;
     private final PayoutService payoutService;
 
-    // 정산 전체 수동 실행 (개발 중 수동 실행용. 권한은 #52, 실패 응답은 #67에서 처리)
+    // 정산 전체 수동 실행 (개발 중 수동 실행용. 실패 응답은 #67에서 처리)
+    // 관리자만 쓰는 운영 기능이라 컨트롤러에서 역할로 막음 (DEVELOPMENT.md "역할 제한": 특정 역할만 쓰는 API는 @PreAuthorize)
+    // 조회 API와 달리 역할마다 동작이 다르지 않아 서비스로 역할을 넘길 필요가 없음
+    // 토큰 없음은 401, 관리자가 아니면 403 (ApiControllerAdvice.handleAccessDeniedException)
+    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/run")
     public ResponseEntity<PayoutRunResponse> run() throws Exception {
@@ -70,29 +81,29 @@ public class PayoutController implements PayoutControllerSpec {
 
     // 정산 수동 조정. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.createAdjustment 참고)
     // 조정 기능을 열면 201과 생성된 정산후보 ID를 응답할 예정
+    // 관리자 전용이라 /run과 같이 @PreAuthorize로 막음. 토큰 없음은 401, 관리자가 아니면 403
+    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/adjustments")
     public ResponseEntity<Void> createAdjustment(
-            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
-            @RequestHeader(MEMBER_ID_HEADER) Long memberId,
-            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
+            @CurrentMemberId Long memberId,
             @Valid @RequestBody PayoutAdjustmentCreateRequest request
     ) {
-        payoutService.createAdjustment(memberRole, memberId, request.toCommand());
+        payoutService.createAdjustment(memberId, request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
     // 정산 목록 조회 (관리자: 전체, 판매자: 본인 정산만)
+    // 역할에 따라 동작이 달라 @PreAuthorize로 막지 않고, 토큰의 역할 목록을 서비스에 넘겨 서비스가 판단함 (#113: 정책 검증은 서비스)
     @Override
     @GetMapping
     public ResponseEntity<PayoutPageResponse<PayoutSummaryResponse>> search(
-            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
-            @RequestHeader(MEMBER_ID_HEADER) Long memberId,
-            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
+            @CurrentMemberId Long memberId,
+            @AuthenticationPrincipal Jwt jwt,
             @Valid @ModelAttribute PayoutSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.search(memberId, memberRole, request.toQuery()).map(PayoutSummaryResponse::from)));
+                payoutService.search(memberId, tokenRoles(jwt), request.toQuery()).map(PayoutSummaryResponse::from)));
     }
 
     // 정산 상세 조회 (관리자: 모든 정산, 판매자: 본인 정산만). 판매자 정산이면 그 판매자의 수수료 합계도 함께 보여 줌
@@ -100,25 +111,31 @@ public class PayoutController implements PayoutControllerSpec {
     @Override
     @GetMapping("/{payoutId}")
     public ResponseEntity<PayoutDetailResponse> getDetail(
-            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
-            @RequestHeader(MEMBER_ID_HEADER) Long memberId,
-            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
+            @CurrentMemberId Long memberId,
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long payoutId
     ) {
-        return ResponseEntity.ok(PayoutDetailResponse.from(payoutService.getDetail(memberId, memberRole, payoutId)));
+        return ResponseEntity.ok(PayoutDetailResponse.from(payoutService.getDetail(memberId, tokenRoles(jwt), payoutId)));
     }
 
     // 정산 항목 조회 (상세와 같은 권한). 항목마다 정산후보 생성 시각과, 조정 건이면 조정 정보를 함께 보여 줌
     @Override
     @GetMapping("/{payoutId}/items")
     public ResponseEntity<PayoutPageResponse<PayoutItemResponse>> getItems(
-            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
-            @RequestHeader(MEMBER_ID_HEADER) Long memberId,
-            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
+            @CurrentMemberId Long memberId,
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable Long payoutId,
             @Valid @ModelAttribute PayoutItemSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.getItems(memberId, memberRole, payoutId, request.toQuery()).map(PayoutItemResponse::from)));
+                payoutService.getItems(memberId, tokenRoles(jwt), payoutId, request.toQuery()).map(PayoutItemResponse::from)));
+    }
+
+    // 토큰의 권한 목록(roles 클레임)을 꺼냄. 값은 TokenRoles 이름 그대로(예: ["BUYER", "SELLER"])
+    // Spring 권한(ROLE_ADMIN)이 아니라 클레임을 읽는 이유: ROLE_ 접두사를 정산에서 다시 떼지 않으려고
+    // 컨트롤러는 domain 타입을 쓸 수 없어(api.md) 문자열 목록으로만 넘기고, PayoutRequesterRole 변환은 서비스가 함
+    // jwt가 null일 일은 없음: 같은 메서드의 @CurrentMemberId가 먼저 채워지며 토큰이 없으면 401로 끝남
+    private List<String> tokenRoles(Jwt jwt) {
+        return jwt.getClaimAsStringList(TokenClaims.ROLES);
     }
 }
