@@ -67,12 +67,14 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 	@Override
 	@GetMapping("/products/{productId}/reviews")
 	public ResponseEntity<ProductPageResponse<ProductReviewResponse>> getProductReviews(
+		@CurrentMemberId(required = false) Long memberId,
 		@PathVariable Long productId,
 		@RequestParam(defaultValue = "0") int page,
 		@RequestParam(defaultValue = "20") int size
 	) {
 		return ResponseEntity.ok(ProductPageResponse.from(
-			productReviewService.getProductReviews(productId, PageRequest.of(page, size)).map(ProductReviewResponse::from)));
+			productReviewService.getProductReviews(productId, PageRequest.of(page, size))
+				.map(result -> ProductReviewResponse.from(result, memberId))));
 	}
 
 	@Override
@@ -82,7 +84,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@PathVariable Long productId
 	) {
 		return ResponseEntity.ok(productReviewService.getMyReviewsOfProduct(memberId, productId).stream()
-			.map(ProductReviewResponse::from)
+			.map(result -> ProductReviewResponse.from(result, memberId))
 			.toList());
 	}
 
@@ -94,6 +96,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@RequestParam(defaultValue = "20") int size
 	) {
 		return ResponseEntity.ok(ProductPageResponse.from(
-			productReviewService.getMyReviews(memberId, PageRequest.of(page, size)).map(ProductReviewResponse::from)));
+			productReviewService.getMyReviews(memberId, PageRequest.of(page, size))
+				.map(result -> ProductReviewResponse.from(result, memberId))));
 	}
 }

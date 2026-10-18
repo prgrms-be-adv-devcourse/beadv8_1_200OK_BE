@@ -18,7 +18,6 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -113,8 +112,10 @@ interface ProductReviewControllerSpec {
 		@Parameter(description = "리뷰 ID", example = "1") Long reviewId
 	);
 
-	@SecurityRequirements
-	@Operation(summary = "상품별 리뷰 목록", description = "노출된 상품의 리뷰를 최신순으로 조회합니다. 로그인하지 않아도 됩니다.")
+	@Operation(summary = "상품별 리뷰 목록", description = """
+		노출된 상품의 리뷰를 최신순으로 조회합니다. 로그인하지 않아도 됩니다.
+		로그인한 상태로 요청하면 내가 쓴 리뷰의 mine이 true입니다.
+		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "성공"),
 		@ApiResponse(
@@ -127,6 +128,7 @@ interface ProductReviewControllerSpec {
 		)
 	})
 	ResponseEntity<ProductPageResponse<ProductReviewResponse>> getProductReviews(
+		Long memberId,
 		@Parameter(description = "상품 ID", example = "10") Long productId,
 		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
 		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size

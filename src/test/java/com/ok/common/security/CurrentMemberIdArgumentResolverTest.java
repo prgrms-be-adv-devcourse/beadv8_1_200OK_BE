@@ -62,6 +62,31 @@ public class CurrentMemberIdArgumentResolverTest {
         );
     }
 
+    @ParameterizedTest
+    @MethodSource("토큰_인증이_아닌_인증")
+    void 로그인이_선택이면_토큰_인증이_아니어도_null을_반환한다(Authentication authentication) throws Exception {
+        // given
+        authenticate(authentication);
+
+        // when
+        Long sut = resolver.resolveArgument(parameter("optionalLong"), null, null, null);
+
+        // then
+        assertThat(sut).isNull();
+    }
+
+    @Test
+    void 로그인이_선택이어도_토큰_인증이면_subject를_회원_id로_반환한다() throws Exception {
+        // given
+        authenticate(jwtAuthentication("1"));
+
+        // when
+        Long sut = resolver.resolveArgument(parameter("optionalLong"), null, null, null);
+
+        // then
+        assertThat(sut).isEqualTo(1L);
+    }
+
     @Test
     void subject가_숫자가_아니면_잘못된_인증_예외가_발생한다() {
         // given
@@ -84,7 +109,16 @@ public class CurrentMemberIdArgumentResolverTest {
     }
 
     static Stream<String> 지원하는_파라미터() {
-        return Stream.of("annotatedLong", "annotatedPrimitiveLong");
+        return Stream.of("annotatedLong", "annotatedPrimitiveLong", "optionalLong");
+    }
+
+    @Test
+    void 로그인이_선택인_long_파라미터는_null을_넣을_수_없어_처리하지_않는다() throws Exception {
+        // when
+        boolean sut = resolver.supportsParameter(parameter("optionalPrimitiveLong"));
+
+        // then
+        assertThat(sut).isFalse();
     }
 
     @Test
@@ -113,7 +147,7 @@ public class CurrentMemberIdArgumentResolverTest {
     private MethodParameter parameter(String methodName) throws NoSuchMethodException {
         Class<?> parameterType = switch (methodName) {
             case "annotatedString" -> String.class;
-            case "annotatedPrimitiveLong" -> long.class;
+            case "annotatedPrimitiveLong", "optionalPrimitiveLong" -> long.class;
             default -> Long.class;
         };
         Method method = SampleController.class.getDeclaredMethod(methodName, parameterType);
@@ -133,6 +167,12 @@ public class CurrentMemberIdArgumentResolverTest {
         }
 
         void annotatedPrimitiveLong(@CurrentMemberId long memberId) {
+        }
+
+        void optionalLong(@CurrentMemberId(required = false) Long memberId) {
+        }
+
+        void optionalPrimitiveLong(@CurrentMemberId(required = false) long memberId) {
         }
 
     }

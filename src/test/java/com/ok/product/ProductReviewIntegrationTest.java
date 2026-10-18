@@ -231,7 +231,7 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 상품별_목록과_내_리뷰에_옵션_이름과_첨부가_나온다() throws Exception {
+	void 상품별_목록과_내_리뷰에_옵션_이름과_첨부와_본인_여부가_나온다() throws Exception {
 		// given
 		writeReview(BUYER_ID, ORDER_ID, BUCKET_URL + "product_review/a.jpg", BUCKET_URL + "product_review/b.mp4");
 		writeReview(OTHER_BUYER_ID, 200L);
@@ -240,7 +240,8 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 		mockMvc.perform(get("/api/v1/products/{productId}/reviews", productId))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.totalElements").value(2))
-			.andExpect(jsonPath("$.content[*].memberId").value(contains(OTHER_BUYER_ID.intValue(), BUYER_ID.intValue())))
+			.andExpect(jsonPath("$.content[*].mine").value(contains(false, false)))
+			.andExpect(jsonPath("$.content[*].memberId").doesNotExist())
 			.andExpect(jsonPath("$.content[1].productId").value(productId))
 			.andExpect(jsonPath("$.content[1].productOptionId").value(optionId))
 			.andExpect(jsonPath("$.content[1].optionName").value("3kg"))
@@ -251,17 +252,22 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(jsonPath("$.content[1].createdAt").exists())
 			.andExpect(jsonPath("$.content[1].updatedAt").exists());
 
+		mockMvc.perform(get("/api/v1/products/{productId}/reviews", productId)
+				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content[*].mine").value(contains(false, true)));
+
 		mockMvc.perform(get("/api/v1/reviews/me")
 				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.totalElements").value(1))
-			.andExpect(jsonPath("$.content[0].memberId").value(BUYER_ID));
+			.andExpect(jsonPath("$.content[0].mine").value(true));
 
 		mockMvc.perform(get("/api/v1/products/{productId}/reviews/me", productId)
 				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(1))
-			.andExpect(jsonPath("$[0].memberId").value(BUYER_ID));
+			.andExpect(jsonPath("$[0].mine").value(true));
 	}
 
 	@Test
