@@ -207,6 +207,21 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 만료된_토큰을_보내도_상품_상세_조회_요청은_토큰을_무시하고_처리한다() throws Exception {
+        // given
+        // 없는 상품을 조회해, 토큰 검증(401 token-expired)이 아니라 상품 조회(404)까지 갔는지 확인한다.
+        // 상품 데이터를 만들지 않아도 상세 경로가 토큰 무시 목록과 맞는지 알 수 있다
+        Long notExistingProductId = Long.MAX_VALUE;
+
+        // when
+        ResultActions result = mockMvc.perform(get("/api/v1/products/{productId}", notExistingProductId)
+                .header(HttpHeaders.AUTHORIZATION, tokens.expiredBearer(MEMBER_ID, "BUYER")));
+
+        // then
+        result.andExpect(status().isNotFound());
+    }
+
+    @Test
     void 역할이_맞으면_역할_제한_API를_호출할_수_있다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/test/security/seller-only")

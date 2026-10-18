@@ -41,10 +41,11 @@ public class RefreshTokenService {
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
 
     /**
-     * 토큰 원문의 길이. 32바이트를 패딩 없는 Base64URL로 인코딩하면 43자다 (ceil(32 * 4 / 3)).
-     * 요청 검증({@code TokenReissueRequest})이 이 값을 기준으로 길이를 제한한다. 바이트 수를 바꾸면 이 값도 함께 바꾼다.
+     * 토큰 원문의 길이. 패딩 없는 Base64URL은 3바이트를 4자로 바꾸므로 ceil(바이트 수 * 4 / 3)자다 (32바이트 → 43자).
+     * {@link #TOKEN_BYTES}에서 계산해, 바이트 수를 바꿔도 따로 고칠 필요가 없다.
+     * 요청 검증({@code TokenReissueRequest})이 이 값을 기준으로 길이를 제한한다.
      */
-    public static final int TOKEN_LENGTH = 43;
+    public static final int TOKEN_LENGTH = (TOKEN_BYTES * 4 + 2) / 3;
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
