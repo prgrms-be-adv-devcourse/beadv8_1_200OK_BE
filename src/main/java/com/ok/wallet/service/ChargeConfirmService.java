@@ -41,8 +41,15 @@ public class ChargeConfirmService {
                     throw e;
                 }
             }
-            case TossConfirmResult.Rejected rejected ->
-                    chargeTransaction.failApproval(memberId, chargeNo, rejected.code(), rejected.message());
+            case TossConfirmResult.Rejected rejected -> {
+                try {
+                    yield chargeTransaction.failApproval(memberId, chargeNo, rejected.code(), rejected.message());
+                } catch (RuntimeException e) {
+                    // 토스는 거절했는데 실패 기록에 실패: 충전 건은 처리 중으로 남고 복구 스케줄러(#135)가 처리해야 한다
+                    log.error("[CHARGE_FAIL_RECORD_FAILED] 거절된 결제의 실패 기록에 실패했습니다. chargeNo={}", chargeNo, e);
+                    throw e;
+                }
+            }
             // 승인 여부를 알 수 없으므로 처리 중으로 두고, 복구 스케줄러(#135)가 토스에 확인한다
             case TossConfirmResult.Unknown unknown -> chargeTransaction.currentStatus(memberId, chargeNo);
         };
