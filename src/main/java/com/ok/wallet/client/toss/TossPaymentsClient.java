@@ -27,6 +27,8 @@ public class TossPaymentsClient {
     // 결제가 승인되지 않았음이 확실한 거절 코드만 실패로 본다. 목록에 없는 코드는 불명확으로 두어
     // 복구 스케줄러가 토스에 다시 확인하게 한다 (승인된 결제를 실패로 처리하지 않기 위해).
     // 코드 이름은 토스페이먼츠 결제 승인 API 오류 코드 문서 기준
+    // NOT_FOUND_PAYMENT_SESSION은 넣지 않는다: 세션 만료인지 이미 처리돼 세션이 정리된 것인지 응답만으로 구분할 수 없어
+    // 불명확으로 두고 복구 스케줄러가 토스 결제 조회로 확인한다
     private static final Set<String> REJECTED_ERROR_CODES = Set.of(
             "REJECT_CARD_PAYMENT",            // 한도 초과 또는 잔액 부족
             "REJECT_CARD_COMPANY",            // 카드사 거절
@@ -38,8 +40,7 @@ public class TossPaymentsClient {
             "INVALID_PASSWORD",               // 비밀번호 오류
             "EXCEED_MAX_DAILY_PAYMENT_COUNT", // 하루 결제 횟수 초과
             "EXCEED_MAX_PAYMENT_AMOUNT",      // 결제 한도 초과
-            "NOT_AVAILABLE_PAYMENT",          // 결제 불가 시간대
-            "NOT_FOUND_PAYMENT_SESSION"       // 결제 시간 만료로 결제 정보 없음
+            "NOT_AVAILABLE_PAYMENT"           // 결제 불가 시간대
     );
 
     private final RestClient tossRestClient;
@@ -60,7 +61,7 @@ public class TossPaymentsClient {
                     .body(new TossConfirmRequest(paymentKey, chargeNo, amount))
                     .retrieve()
                     .body(TossConfirmResponse.class);
-            return toApprovedOrUnknown(response, chargeNo, amount);
+            return toApprovedOrUnknown(response, paymentKey, chargeNo, amount);
         } catch (HttpClientErrorException e) {
             return fromClientError(e, chargeNo);
         } catch (HttpServerErrorException e) {
@@ -74,9 +75,11 @@ public class TossPaymentsClient {
     }
 
     // 응답은 시스템이 넘긴 값이라 이 경계에서 확인한다. 요청과 다르면 승인으로 믿지 않는다.
-    private TossConfirmResult toApprovedOrUnknown(TossConfirmResponse response, String chargeNo, long amount) {
+    // 결제 키는 잔액 반영 근거 키(CHARGE:{paymentKey})가 되므로 주문 번호·금액과 같은 수준으로 대조한다.
+    private TossConfirmResult toApprovedOrUnknown(TossConfirmResponse response, String paymentKey,
+                                                  String chargeNo, long amount) {
         if (response == null
-                || response.paymentKey() == null
+                || !paymentKey.equals(response.paymentKey())
                 || !chargeNo.equals(response.orderId())
                 || !APPROVED_STATUS.equals(response.status())
                 || response.totalAmount() == null

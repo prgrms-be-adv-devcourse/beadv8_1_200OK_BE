@@ -198,4 +198,26 @@ class TossPaymentsClientTest {
         assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
                 .isInstanceOf(TossConfirmResult.Unknown.class);
     }
+
+    @Test
+    void 승인_응답의_결제_키가_요청과_다르면_불명확으로_분류한다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withSuccess("""
+                    {"paymentKey": "other-payment-key", "orderId": "%s", "status": "DONE", "totalAmount": %d}
+                    """.formatted(CHARGE_NO, AMOUNT), MediaType.APPLICATION_JSON));
+
+        assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
+                .isInstanceOf(TossConfirmResult.Unknown.class);
+    }
+
+    @Test
+    void 결제_세션이_없다는_응답은_불명확으로_분류한다() {
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("NOT_FOUND_PAYMENT_SESSION", "결제 시간이 만료되어 결제 진행 데이터가 존재하지 않습니다.")));
+
+        assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
+                .isInstanceOf(TossConfirmResult.Unknown.class);
+    }
 }
