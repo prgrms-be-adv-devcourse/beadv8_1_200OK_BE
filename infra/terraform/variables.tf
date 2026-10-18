@@ -17,3 +17,8 @@ variable "bucket_name_tag" {
   description = "미디어 버킷의 Name 태그 값"
   type        = string
 }
+
+variable "ssh_public_key" {
+  description = "EC2 접속용 SSH 공개키. 레포가 공개라 끝의 주석(이메일)은 빼고 넣는다."
+  type        = string
+}
