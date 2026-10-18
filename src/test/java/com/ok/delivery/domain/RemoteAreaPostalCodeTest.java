@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.time.LocalDateTime;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -13,6 +14,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class RemoteAreaPostalCodeTest {
+
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 18, 10, 0);
 
     @Test
     void 정상값으로_도서산간_우편번호를_생성한다() {
@@ -85,5 +88,63 @@ class RemoteAreaPostalCodeTest {
         assertThatThrownBy(() -> RemoteAreaPostalCode.of("63000", "JEJU_MAIN", -1))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_EXTRA_DELIVERY_DAYS));
+    }
+
+    @Test
+    void 삭제하면_삭제_시각이_기록된다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+
+        // when
+        sut.delete(NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isDeleted()).isTrue();
+            softly.assertThat(sut.getDeletedAt()).isEqualTo(NOW);
+        });
+    }
+
+    @Test
+    void 이미_삭제된_우편번호는_다시_삭제할_수_없다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+        sut.delete(NOW);
+
+        // when & then
+        assertThatThrownBy(() -> sut.delete(NOW.plusMinutes(1)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_NOT_FOUND));
+        assertThat(sut.getDeletedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void 삭제된_우편번호를_다시_등록하면_새_값으로_되살아난다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+        sut.delete(NOW);
+
+        // when
+        sut.reregister("JEJU_ISLANDS", 2);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isDeleted()).isFalse();
+            softly.assertThat(sut.getDeletedAt()).isNull();
+            softly.assertThat(sut.getRegionGroup()).isEqualTo("JEJU_ISLANDS");
+            softly.assertThat(sut.getExtraDeliveryDays()).isEqualTo(2);
+        });
+    }
+
+    @Test
+    void 삭제되지_않은_우편번호는_다시_등록할_수_없다() {
+        // given
+        RemoteAreaPostalCode sut = RemoteAreaPostalCode.of("63000", "JEJU_MAIN", 1);
+
+        // when & then
+        assertThatThrownBy(() -> sut.reregister("JEJU_ISLANDS", 2))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_DUPLICATED));
+        assertThat(sut.getRegionGroup()).isEqualTo("JEJU_MAIN");
     }
 }
