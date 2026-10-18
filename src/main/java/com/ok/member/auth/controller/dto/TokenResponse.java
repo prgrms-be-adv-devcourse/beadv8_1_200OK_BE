@@ -8,7 +8,7 @@ import java.time.Instant;
 /**
  * 로그인·토큰 재발급 응답. 두 API가 같은 형식의 토큰 묶음을 돌려준다.
  */
-@Schema(description = "로그인 응답")
+@Schema(description = "로그인·토큰 재발급 응답")
 public record TokenResponse(
 
         @Schema(description = "토큰 유형. Authorization 헤더에 {tokenType} {accessToken} 형태로 보낸다.",

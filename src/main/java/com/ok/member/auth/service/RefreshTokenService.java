@@ -40,6 +40,12 @@ public class RefreshTokenService {
      */
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
 
+    /**
+     * 토큰 원문의 길이. 32바이트를 패딩 없는 Base64URL로 인코딩하면 43자다 (ceil(32 * 4 / 3)).
+     * 요청 검증({@code TokenReissueRequest})이 이 값을 기준으로 길이를 제한한다. 바이트 수를 바꾸면 이 값도 함께 바꾼다.
+     */
+    public static final int TOKEN_LENGTH = 43;
+
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
 
@@ -82,7 +88,7 @@ public class RefreshTokenService {
     /**
      * Refresh Token을 사용 처리(삭제)하고, 토큰을 발급받은 회원 id를 반환한다. 한 토큰은 한 번만 쓸 수 있다.
      *
-     * <p>조회할 때 쓰기 잠금을 걸어, 같은 토큰으로 동시에 요청이 와도 하나만 성공한다.
+     * <p>있는 토큰의 행에만 쓰기 잠금을 걸어, 같은 토큰으로 동시에 요청이 와도 하나만 성공한다.
      * 호출한 쪽의 트랜잭션에 참여하므로, 이후 처리(회원 확인, 새 토큰 발급)가 실패하면 삭제도 함께 취소된다.
      *
      * @param tokenValue 클라이언트가 보낸 토큰 원문
@@ -93,7 +99,14 @@ public class RefreshTokenService {
     public Long consume(String tokenValue) {
         Objects.requireNonNull(tokenValue, "tokenValue는 null일 수 없습니다.");
 
-        RefreshToken refreshToken = refreshTokenRepository.findForUpdateByTokenHash(TokenHasher.sha256Hex(tokenValue))
+        // 잠금 없이 먼저 찾는다. 없는 해시에 잠금 조회를 하면 MySQL이 인덱스 사이 구간(gap)을 잠가,
+        // 잘못된 토큰이 반복해 들어올 때 같은 구간에 새 토큰을 저장하는 로그인·재발급이 잠시 기다릴 수 있다.
+        Long refreshTokenId = refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(tokenValue))
+                .map(RefreshToken::getId)
+                .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
+
+        // 있는 행만 기본 키로 잠근다. 그 사이 다른 요청이 먼저 써서 지웠다면 여기서 찾지 못한다
+        RefreshToken refreshToken = refreshTokenRepository.findForUpdateById(refreshTokenId)
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
 
         // 저장할 때와 같은 Clock의 시간대로 비교한다 (issue() 참고)

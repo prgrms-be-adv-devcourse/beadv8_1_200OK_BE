@@ -33,6 +33,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -80,6 +81,10 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JsonMapper jsonMapper;
+
+    // 서비스가 만료를 판단하는 기준 시계. 테스트 데이터도 같은 시계로 만들어 시간대가 달라도 흔들리지 않게 한다
+    @Autowired
+    Clock clock;
 
     private MockMvc mockMvc;
 
@@ -149,10 +154,11 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 만료된_Refresh_Token이면_401을_반환한다() throws Exception {
         // given
+        // 서비스와 같은 시계로 하루 전에 만료된 토큰을 저장한다
         Member member = saveMember(MemberStatus.ACTIVE);
         String raw = "expired-refresh-token";
         refreshTokenRepository.saveAndFlush(RefreshToken.create(
-                member.getId(), TokenHasher.sha256Hex(raw), LocalDateTime.now().minusMinutes(1)));
+                member.getId(), TokenHasher.sha256Hex(raw), LocalDateTime.now(clock).minusDays(1)));
 
         // when
         ResultActions result = performReissue(raw);
