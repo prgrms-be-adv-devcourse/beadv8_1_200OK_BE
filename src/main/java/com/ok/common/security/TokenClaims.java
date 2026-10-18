@@ -6,8 +6,12 @@ package com.ok.common.security;
  */
 public final class TokenClaims {
 
-    /** 회원 권한 (BUYER, SELLER, ADMIN). 인증 시 {@code ROLE_} 접두사를 붙여 권한(authority)으로 바꾼다. */
-    public static final String ROLE = "role";
+    /**
+     * 회원 권한 목록 (예: ["BUYER", "SELLER"]). 인증 시 각 값에 {@code ROLE_} 접두사를 붙여 권한(authority)으로 바꾼다.
+     * 한 회원이 여러 권한을 가질 수 있어 배열로 담는다. (RFC 9068의 권한 클레임 이름과 같음)
+     * 값은 {@link TokenRoles}에 정의한다.
+     */
+    public static final String ROLES = "roles";
 
     private TokenClaims() {
     }

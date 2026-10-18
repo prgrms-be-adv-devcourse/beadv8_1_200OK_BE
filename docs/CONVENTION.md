@@ -117,7 +117,9 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `com.ok.config` 모듈에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
 - 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다.
-- 서비스는 `service/publisher`의 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받고, 구현체는 `event` 패키지에 둔다.
+- 서비스는 `service` 패키지에 둔 발행 인터페이스로만 이벤트를 발행한다. 인터페이스는 모듈마다 하나를 두고, 이벤트 클래스가 아니라 값이나 `*Command`를 받는다. 구현체는 `event` 패키지에 둔다.
+- 발행 인터페이스와 구현체 이름에는 모듈 이름을 붙인다(예: `PayoutEventPublisher`, `SpringPayoutEventPublisher`).
+- 모듈 간 이벤트 클래스는 `common.event.DomainEvent`를 구현하고, 발행 구현체는 `DomainEvent`만 발행한다.
 - `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다.
 
 **이유**: 
@@ -126,15 +128,17 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 하위 도메인이 없는 모듈은 경로가 단순한 편이 낫다. 
 설정과 리스너를 서비스·도메인과 구분하면 역할별로 코드를 찾기 쉽다. 
 리스너는 컨트롤러처럼 외부 입력이 들어오는 진입점이므로, 트랜잭션과 도메인 처리는 서비스에 맡긴다. 
-서비스가 발행 인터페이스에만 의존하면 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 모듈 밖에서는 Modulith가 접근을 막는다. 
+서비스가 발행 인터페이스에만 의존하고 구현체가 그 인터페이스를 구현하면(의존성 역전) 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 모듈 밖에서는 Modulith가 접근을 막는다. 
+발행 인터페이스는 "어떤 일이 일어났다"는 업무 개념이라 발행 방식을 바꿔도(예: Kafka) 개수가 늘지 않는다. 바뀌는 것은 `event`의 구현체뿐이라 하위 패키지를 따로 두지 않는다. 
+구현체가 같은 이름이면 스프링 빈 이름이 겹쳐 앱이 시작되지 않으므로 모듈 이름을 붙인다. 발행 구현체를 공통 모듈에 하나로 두지 않는 이유는, 메시지 브로커로 바꿀 때 토픽·메시지 키·아웃박스 여부가 모듈마다 다르고 모듈을 서비스로 분리하면 각자 구현체를 가져가기 때문이다. 
+`DomainEvent`는 모듈 간 계약으로 정한 타입만 발행되게 한다. 
 
 
 ```
 // 좋은 예: 하위 도메인이 없는 모듈
 com.ok.wallet
 ├── controller
-├── service
-│   └── publisher  이벤트 발행 인터페이스
+├── service        서비스, 이벤트 발행 인터페이스
 ├── domain
 ├── repository
 ├── exception      에러 코드
@@ -1062,7 +1066,9 @@ class OrderServiceIntegrationTest { ... }
 | 패키지 사이에 순환 의존이 없다 (모듈 안 패키지까지) | 2.2 확장 |
 | 이벤트 리스너(`event`)는 `controller`, `repository`, `domain`을 쓰지 않는다 | 2.1 |
 | `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지만 쓴다 | 2.1 |
-| `service/publisher`에는 인터페이스만 둔다 | 2.1 |
+| `service`는 `event` 패키지(`common.event` 제외)에 의존하지 않는다 | 2.1 |
+| `event`에서 `ApplicationEventPublisher`를 쓰는 클래스(발행 구현체)는 `service`의 인터페이스를 구현한다 | 2.1 |
+| `common.event`의 이벤트 클래스는 `DomainEvent`를 구현한다 | 2.1 |
 | `@RestController`는 `*Controller`, `@Service`는 `*Service`이고 각 레이어 패키지에 있다 | 3.2 |
 | 저장소는 `repository`, 엔티티는 `domain`, `ErrorCode` 구현체는 `exception` 패키지에 있다 | 2.1, 3.2 |
 | Swagger 문서 인터페이스는 `*Spec`, package-private이고 `spec` 패키지에 두지 않는다 | 3.3 |

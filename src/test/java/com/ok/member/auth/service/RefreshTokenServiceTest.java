@@ -41,6 +41,8 @@ class RefreshTokenServiceTest {
     void setUp() {
         JwtProperties properties = new JwtProperties(
                 "paldo-gotgan",
+                "paldo-gotgan-api",
+                "hs256-v1",
                 "dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl",
                 Duration.ofMinutes(30),
                 REFRESH_EXPIRATION);

@@ -1,6 +1,9 @@
 package com.ok.config;
 
 import com.ok.common.security.CurrentMemberId;
+import com.ok.common.security.TokenClaims;
+import com.ok.member.auth.config.JwtConfig;
+import com.ok.member.auth.config.JwtProperties;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
@@ -9,6 +12,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -17,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 import static org.hamcrest.Matchers.containsString;
@@ -27,7 +36,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 
 /**
  * 보안 필터의 토큰 검증, {@code @CurrentMemberId}, 401·403 응답 형식을 검증한다.
@@ -42,6 +50,12 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     TestAccessTokens tokens;
+
+    @Autowired
+    JwtEncoder jwtEncoder;
+
+    @Autowired
+    JwtProperties jwtProperties;
 
     private MockMvc mockMvc;
 
@@ -188,12 +202,84 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 판매자이면서_구매자인_토큰은_판매자_API와_회원_API를_모두_호출할_수_있다() throws Exception {
+        // given
+        String token = tokens.bearer(MEMBER_ID, "BUYER", "SELLER");
+
+        // when
+        ResultActions sellerOnly = mockMvc.perform(get("/test/security/seller-only")
+                .header(HttpHeaders.AUTHORIZATION, token));
+        ResultActions me = mockMvc.perform(get("/test/security/me")
+                .header(HttpHeaders.AUTHORIZATION, token));
+
+        // then
+        sellerOnly.andExpect(status().isOk());
+        me.andExpect(status().isOk());
+    }
+
+    @Test
+    void 권한이_없는_토큰으로_역할_제한_API를_호출하면_403을_반환한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/seller-only")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID)));
+
+        // then
+        result.andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.type", endsWith("/forbidden")));
+    }
+
+    @Test
+    void subject가_숫자가_아닌_토큰이면_invalid_token으로_401을_반환한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/me")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearerForSubject("not-a-number", "BUYER")));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/invalid-token")));
+    }
+
+    @Test
     void 토큰이_필요_없는_API는_토큰_없이_호출할_수_있다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/api/v1/products/categories"));
 
         // then
         result.andExpect(status().isOk());
+    }
+
+    @Test
+    void 만료_시각이_없는_토큰은_만료가_아니라_invalid_token으로_401을_반환한다() throws Exception {
+        // given
+        // exp가 없는 토큰은 재발급으로 해결되지 않으므로 token-expired(재발급 유도)로 분류되면 안 된다.
+        // 거부 원인("exp claim is not valid")은 응답이 아니라 인증 실패 debug 로그로 추적한다.
+        String token = "Bearer " + encodeWithoutExpiry();
+
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/me")
+                .header(HttpHeaders.AUTHORIZATION, token));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/invalid-token")));
+    }
+
+    /**
+     * exp만 빠진, 나머지는 실제 발급과 같은 토큰을 만든다. TestAccessTokens는 항상 exp를 넣으므로 직접 만든다.
+     */
+    private String encodeWithoutExpiry() {
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer(jwtProperties.issuer())
+                .subject(String.valueOf(MEMBER_ID))
+                .audience(List.of(jwtProperties.audience()))
+                .issuedAt(Instant.now())
+                .claim(TokenClaims.ROLES, List.of("BUYER"))
+                .build();
+        JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
+                .type(JwtConfig.TOKEN_TYPE)
+                .keyId(jwtProperties.keyId())
+                .build();
+        return jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }
 
     /**

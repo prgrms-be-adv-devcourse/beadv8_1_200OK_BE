@@ -43,6 +43,12 @@ app:
     bucket: ${S3_BUCKET}
 jwt:
   issuer: paldo-gotgan
+  # 토큰을 받는 서비스(aud). 서비스가 분리되면 서비스마다 다른 값을 쓴다.
+  audience: paldo-gotgan-api
+  # 서명 키 식별자(kid). 비밀키(JWT_SECRET)를 교체할 때 함께 바꾼다.
+  # - 토큰 헤더에 그대로 노출되는 값이므로 키 내용이나 추측 가능한 정보를 넣지 않는다.
+  # - 형식: {알고리즘}-v{버전} (예: hs256-v1 → hs256-v2, RS256 전환 시 rs256-v1)
+  key-id: hs256-v1
   secret: ${JWT_SECRET}
   access-token-expiration: 30m
   refresh-token-expiration: 14d
