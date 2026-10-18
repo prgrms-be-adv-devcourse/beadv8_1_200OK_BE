@@ -4,7 +4,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-// 토스 failUrl로 받은 값을 그대로 전달한다.
+// 토스 failUrl로 받은 값을 프론트가 그대로 전달한다. 클라이언트가 보낸 값이라 신뢰하지 않으며,
+// 길이만 제한하고 저장한다. 관리자 화면 등에 출력할 때는 이스케이프하고, 로그에는 개행을 걸러 남긴다.
 @Schema(description = "결제 실패 처리 요청")
 public record ChargeFailRequest(
         @Schema(description = "충전 번호 (failUrl의 orderId)", example = "CHG_3f2b1c9e-8a4d-4e6f-9b1a-2c3d4e5f6a7b")
