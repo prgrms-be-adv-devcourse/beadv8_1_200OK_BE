@@ -2,6 +2,7 @@ package com.ok.wallet.service;
 
 import com.ok.wallet.client.toss.TossConfirmResult;
 import com.ok.wallet.client.toss.TossPaymentsClient;
+import com.ok.wallet.domain.ChargeStatus;
 import com.ok.wallet.service.dto.ChargeConfirmResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,9 +37,10 @@ public class ChargeConfirmService {
                 try {
                     yield chargeTransaction.complete(memberId, chargeNo, approved.paymentKey());
                 } catch (RuntimeException e) {
-                    // 토스는 승인했는데 잔액 반영에 실패: 충전 건은 처리 중으로 남고 복구 스케줄러(#135)가 처리해야 한다
+                    // 토스는 승인했는데 잔액 반영에 실패: 충전 건은 처리 중으로 남고 복구 스케줄러(#135)가 처리해야 한다.
+                    // 결제는 된 상태라 500 대신 처리 중으로 응답해, 사용자가 실패로 오해해 다시 결제하지 않게 한다
                     log.error("[CHARGE_COMPLETE_FAILED] 승인된 결제의 잔액 반영에 실패했습니다. chargeNo={}", chargeNo, e);
-                    throw e;
+                    yield inProgress(chargeNo, amount);
                 }
             }
             case TossConfirmResult.Rejected rejected -> {
@@ -47,11 +49,16 @@ public class ChargeConfirmService {
                 } catch (RuntimeException e) {
                     // 토스는 거절했는데 실패 기록에 실패: 충전 건은 처리 중으로 남고 복구 스케줄러(#135)가 처리해야 한다
                     log.error("[CHARGE_FAIL_RECORD_FAILED] 거절된 결제의 실패 기록에 실패했습니다. chargeNo={}", chargeNo, e);
-                    throw e;
+                    yield inProgress(chargeNo, amount);
                 }
             }
             // 승인 여부를 알 수 없으므로 처리 중으로 두고, 복구 스케줄러(#135)가 토스에 확인한다
             case TossConfirmResult.Unknown unknown -> chargeTransaction.currentStatus(memberId, chargeNo);
         };
+    }
+
+    // DB에 다시 묻지 않고 처리 중 응답을 만든다 (반영 실패 원인이 DB일 수 있어서)
+    private static ChargeConfirmResult inProgress(String chargeNo, long amount) {
+        return new ChargeConfirmResult(chargeNo, ChargeStatus.IN_PROGRESS.name(), amount);
     }
 }
