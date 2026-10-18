@@ -28,6 +28,10 @@ public class BuyerWallet extends BaseTime {
     @Column(name = "balance", nullable = false)
     private long balance;
 
+    // 무기명식 선불전자지급수단 발행권면 최고한도 (전자금융거래법 시행령 제13조).
+    // 본인인증을 하지 않으므로 무기명식 기준을 적용한다.
+    public static final long MAX_BALANCE = 500_000;
+
     private BuyerWallet(Long memberId) {
         if (memberId == null) {
             throw new IllegalArgumentException("memberId는 필수입니다.");
@@ -88,10 +92,6 @@ public class BuyerWallet extends BaseTime {
             throw new RestApiException(WalletErrorCode.INVALID_AMOUNT);
         }
     }
-
-    // 무기명식 선불전자지급수단 발행권면 최고한도 (전자금융거래법 시행령 제13조).
-    // 본인인증을 하지 않으므로 무기명식 기준을 적용한다.
-    public static final long MAX_BALANCE = 500_000;
 
     /** 지금 잔액에 금액을 더했을 때 보유 한도를 넘는지 확인한다. */
     public static boolean exceedsMaxBalance(long balance, long amount) {

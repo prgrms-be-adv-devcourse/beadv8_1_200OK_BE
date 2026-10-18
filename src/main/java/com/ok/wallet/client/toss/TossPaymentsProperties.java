@@ -6,7 +6,7 @@ import java.time.Duration;
 
 /**
  * 토스페이먼츠 API 설정. application.yaml의 toss.payments.* 값이 바인딩된다.
- * 시크릿 키가 비어 있으면 충전 승인이 런타임에 실패하므로, 기동 시점에 바로 막는다 (JwtProperties와 같은 방식).
+ * 값이 비어 있으면 충전 승인이 런타임에 실패하므로, 기동 시점에 바로 막는다 (JwtProperties와 같은 방식).
  *
  * @param baseUrl        토스 API 주소
  * @param secretKey      시크릿 키. 환경 변수로만 주입하고 저장소에 두지 않는다.
@@ -21,8 +21,14 @@ public record TossPaymentsProperties(
         Duration readTimeout
 ) {
     public TossPaymentsProperties {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalArgumentException("toss.payments.base-url이 설정되지 않았습니다.");
+        }
         if (secretKey == null || secretKey.isBlank()) {
             throw new IllegalArgumentException("toss.payments.secret-key(TOSS_SECRET_KEY)가 설정되지 않았습니다.");
+        }
+        if (connectTimeout == null || readTimeout == null) {
+            throw new IllegalArgumentException("toss.payments의 connect-timeout, read-timeout이 설정되지 않았습니다.");
         }
     }
 }
