@@ -18,6 +18,7 @@ public enum WalletErrorCode implements ErrorCode {
     BALANCE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "Balance limit exceeded", "충전 후 잔액은 500,000원을 넘을 수 없습니다."),
     CHARGE_NOT_FOUND(HttpStatus.NOT_FOUND, "Charge not found", "충전 내역을 찾을 수 없습니다."),
     CHARGE_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_ENTITY, "Charge amount mismatch", "충전 요청 금액과 결제 금액이 다릅니다."),
+    PAYMENT_KEY_ALREADY_USED(HttpStatus.CONFLICT, "Payment key already used", "이미 다른 충전에 사용된 결제입니다."),
     ;
 
     private final HttpStatus httpStatus;

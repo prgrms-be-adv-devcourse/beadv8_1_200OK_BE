@@ -484,4 +484,20 @@ class ChargeServiceTest extends AbstractIntegrationTest {
         assertThat(statusOf(chargeNo)).isEqualTo("IN_PROGRESS");
         assertThat(balanceOrZero(MEMBER_ID)).isZero();
     }
+
+    @Test
+    void 다른_충전_건에_이미_쓰인_결제_키로_승인하면_토스를_호출하지_않고_409() {
+        // Given: 첫 충전 건이 결제 키를 가진 채 처리 중으로 남음
+        String first = requestCharge(MEMBER_ID, 10_000);
+        String second = requestCharge(MEMBER_ID, 10_000);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willReturn(new TossConfirmResult.Unknown("토스 응답 없음"));
+        chargeConfirmService.confirm(MEMBER_ID, first, PAYMENT_KEY, 10_000);
+
+        // When & Then: 같은 결제 키로 두 번째 충전 건을 승인
+        assertErrorCode(() -> chargeConfirmService.confirm(MEMBER_ID, second, PAYMENT_KEY, 10_000),
+                WalletErrorCode.PAYMENT_KEY_ALREADY_USED);
+        then(tossPaymentsClient).should(times(1)).confirm(anyString(), anyString(), anyLong());
+        assertThat(statusOf(second)).isEqualTo("PENDING");
+    }
 }

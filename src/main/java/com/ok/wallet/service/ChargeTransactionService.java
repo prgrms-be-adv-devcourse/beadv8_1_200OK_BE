@@ -8,6 +8,7 @@ import com.ok.wallet.exception.WalletErrorCode;
 import com.ok.wallet.repository.ChargeRepository;
 import com.ok.wallet.service.dto.ChargeConfirmResult;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,10 +52,21 @@ class ChargeTransactionService {
         }
 
         // 같은 건으로 승인이 동시에 오면 한 요청만 1을 받는다. 0이면 다른 요청이 커밋한 최신 상태를 돌려준다
-        if (chargeRepository.markInProgress(chargeNo, paymentKey, LocalDateTime.now(clock)) == 0) {
+        if (markInProgress(chargeNo, paymentKey) == 0) {
             return ConfirmStart.alreadyHandled(findOwnedCharge(memberId, chargeNo));
         }
         return ConfirmStart.begin();
+    }
+
+
+    // 결제 키는 클라이언트가 보낸 값이라, 이미 다른 충전 건에 쓰였으면 유니크 제약에 걸린다.
+    // 토스를 호출하기 전에 409로 막고, 예외로 트랜잭션이 롤백되어 충전 건은 대기 상태로 남는다
+    private int markInProgress(String chargeNo, String paymentKey) {
+        try {
+            return chargeRepository.markInProgress(chargeNo, paymentKey, LocalDateTime.now(clock));
+        } catch (DataIntegrityViolationException e) {
+            throw new RestApiException(WalletErrorCode.PAYMENT_KEY_ALREADY_USED);
+        }
     }
 
     /** [트랜잭션 2] 승인된 결제를 잔액에 반영하고 충전 건을 완료한다. */
