@@ -20,6 +20,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -134,8 +135,15 @@ public class PayoutController implements PayoutControllerSpec {
     // 토큰의 권한 목록(roles 클레임)을 꺼냄. 값은 TokenRoles 이름 그대로(예: ["BUYER", "SELLER"])
     // Spring 권한(ROLE_ADMIN)이 아니라 클레임을 읽는 이유: ROLE_ 접두사를 정산에서 다시 떼지 않으려고
     // 컨트롤러는 domain 타입을 쓸 수 없어(api.md) 문자열 목록으로만 넘기고, PayoutRequesterRole 변환은 서비스가 함
-    // jwt가 null인 채로 쓰일 일은 없음: 토큰이 없으면 같은 메서드의 @CurrentMemberId가 401을 던져 메서드 본문이 실행되지 않음
+    // 지금 쓰는 곳은 모두 @CurrentMemberId가 함께 있어 토큰이 없으면 그쪽에서 먼저 401이 남
+    // 그래도 다른 파라미터에 기대지 않도록 여기서도 직접 막음 (@CurrentMemberId 없이 쓰는 메서드가 생겨도 NPE → 500이 되지 않게)
+    // 거부를 OTHER(403)로 돌리지 않고 401로 던지는 이유: 로그인을 안 한 것이지 권한이 없는 게 아님
+    // RestApiException(CommonErrorCode.UNAUTHORIZED)이 아니라 인증 예외를 던지는 이유: 공통 처리기가 인증 예외를 받아야
+    //   CommonErrorCode.UNAUTHORIZED 응답에 WWW-Authenticate 헤더까지 붙여 다른 401과 같은 모양이 됨 (CurrentMemberIdArgumentResolver와 같은 방식)
     private List<String> tokenRoles(Jwt jwt) {
+        if (jwt == null) {
+            throw new AuthenticationCredentialsNotFoundException("로그인이 필요합니다.");
+        }
         return jwt.getClaimAsStringList(TokenClaims.ROLES);
     }
 }
