@@ -58,7 +58,6 @@ class ChargeTransactionService {
         return ConfirmStart.begin();
     }
 
-
     // 결제 키는 클라이언트가 보낸 값이라, 이미 다른 충전 건에 쓰였으면 유니크 제약에 걸린다.
     // 토스를 호출하기 전에 409로 막고, 예외로 트랜잭션이 롤백되어 충전 건은 대기 상태로 남는다
     private int markInProgress(String chargeNo, String paymentKey) {

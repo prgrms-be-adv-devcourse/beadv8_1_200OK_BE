@@ -41,8 +41,8 @@ public class TossPaymentsClient {
             "EXCEED_MAX_DAILY_PAYMENT_COUNT", // 하루 결제 횟수 초과
             "EXCEED_MAX_PAYMENT_AMOUNT",      // 결제 한도 초과
             "NOT_AVAILABLE_PAYMENT",          // 결제 불가 시간대
-            "NOT_FOUND_PAYMENT",              // 존재하지 않는 결제 (잘못된 결제 키): 승인될 결제가 없음
-            "INVALID_REQUEST"                 // 잘못된 요청: 토스가 요청을 처리하지 않음
+            "NOT_FOUND_PAYMENT"               // 존재하지 않는 결제 (잘못된 결제 키): 승인될 결제가 없음
+            // INVALID_REQUEST는 넣지 않는다: 범위가 넓어 승인 불가가 보장되지 않으므로 불명확으로 두고 복구 스케줄러가 확인한다
     );
 
     private final RestClient tossRestClient;
