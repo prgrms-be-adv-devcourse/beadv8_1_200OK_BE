@@ -155,4 +155,13 @@ class BuyerWalletTest {
         wallet.charge(balance, "CHARGE:setup");
         return wallet;
     }
+
+    @Test
+    void 잔액이_결제_금액_이상이면_결제할_수_있다() {
+        BuyerWallet wallet = BuyerWallet.create(1L);
+        wallet.charge(10_000, "CHARGE:pay-1");
+
+        assertThat(wallet.hasEnoughBalance(10_000)).isTrue();
+        assertThat(wallet.hasEnoughBalance(10_001)).isFalse();
+    }
 }

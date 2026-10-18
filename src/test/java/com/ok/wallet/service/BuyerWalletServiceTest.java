@@ -3,6 +3,7 @@ package com.ok.wallet.service;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.repository.BuyerWalletRepository;
+import com.ok.wallet.service.dto.OrderPaymentResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -263,5 +264,154 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             WHERE w.member_id = ?
             ORDER BY l.id DESC LIMIT 1
             """, Long.class, memberId);
+    }
+
+    // payForOrder
+
+    @Test
+    void 잔액이_충분하면_주문_금액만큼_차감하고_원장에_기록한다() {
+        // Given
+        Long memberId = 30L;
+        buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-30");
+
+        // When
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_001L, 3_000);
+
+        // Then
+        assertThat(result).isEqualTo(OrderPaymentResult.PAID);
+        assertThat(balanceOf(memberId)).isEqualTo(7_000);
+        assertThat(latestReferenceKey(memberId)).isEqualTo("PAYMENT:1001");
+        assertThat(latestBalanceAfter(memberId)).isEqualTo(7_000);
+    }
+
+    @Test
+    void 잔액이_부족하면_차감하지_않고_잔액_부족을_반환한다() {
+        // Given
+        Long memberId = 31L;
+        buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-31");
+
+        // When
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_002L, 20_000);
+
+        // Then: 예외가 아니라 결과로 돌려줘야 같은 트랜잭션에서 실패 이벤트를 발행할 수 있다
+        assertThat(result).isEqualTo(OrderPaymentResult.INSUFFICIENT_BALANCE);
+        assertThat(balanceOf(memberId)).isEqualTo(10_000);
+        assertThat(countLedgers(memberId)).isEqualTo(1); // 충전 원장만
+    }
+
+    @Test
+    void 지갑이_없으면_잔액_0원으로_보고_잔액_부족을_반환한다() {
+        // Given
+        Long memberId = 32L;
+
+        // When
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_003L, 3_000);
+
+        // Then
+        assertThat(result).isEqualTo(OrderPaymentResult.INSUFFICIENT_BALANCE);
+        assertThat(countBuyerWallets(memberId)).isEqualTo(1);
+        assertThat(balanceOf(memberId)).isZero();
+    }
+
+    @Test
+    void 같은_주문으로_다시_결제하면_차감하지_않고_이미_결제됨을_반환한다() {
+        // Given
+        Long memberId = 33L;
+        buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-33");
+        buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
+
+        // When: 주문 생성 이벤트가 재발행됨
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
+
+        // Then
+        assertThat(result).isEqualTo(OrderPaymentResult.ALREADY_PAID);
+        assertThat(balanceOf(memberId)).isEqualTo(7_000);
+        assertThat(countLedgers(memberId)).isEqualTo(2); // 충전 1 + 결제 1
+    }
+
+    @Test
+    void 같은_주문의_결제가_동시에_와도_한_번만_차감된다() throws Exception {
+        // Given
+        Long memberId = 34L;
+        buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-34");
+        int threadCount = 5;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<OrderPaymentResult>> results = new ArrayList<>();
+
+        try {
+            // When: 같은 주문 이벤트가 동시에 여러 번 처리됨
+            for (int i = 0; i < threadCount; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return buyerWalletService.payForOrder(memberId, 1_005L, 3_000);
+                }));
+            }
+            ready.await();
+            start.countDown();
+            List<OrderPaymentResult> outcomes = new ArrayList<>();
+            for (Future<OrderPaymentResult> result : results) {
+                outcomes.add(result.get(30, TimeUnit.SECONDS));
+            }
+
+            // Then: 지갑을 잠그고 확인하므로 한 요청만 차감하고 나머지는 이미 결제됨을 받는다
+            assertThat(outcomes).containsOnlyOnce(OrderPaymentResult.PAID);
+            assertThat(balanceOf(memberId)).isEqualTo(7_000);
+            assertThat(countLedgers(memberId)).isEqualTo(2);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void 같은_회원의_결제와_충전이_동시에_와도_잔액이_어긋나지_않는다() throws Exception {
+        // Given: 잔액 10,000원
+        Long memberId = 35L;
+        buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-35");
+        int pairCount = 5;
+        ExecutorService executor = Executors.newFixedThreadPool(pairCount * 2);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> results = new ArrayList<>();
+
+        try {
+            // When: 1,000원 결제 5건과 1,000원 충전 5건이 동시에 들어옴
+            for (int i = 0; i < pairCount; i++) {
+                long orderId = 2_000L + i;
+                String chargeKey = "CHARGE:pay-35-" + i;
+                results.add(executor.submit(() -> {
+                    start.await();
+                    buyerWalletService.payForOrder(memberId, orderId, 1_000);
+                    return null;
+                }));
+                results.add(executor.submit(() -> {
+                    start.await();
+                    buyerWalletService.charge(memberId, 1_000, chargeKey);
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> result : results) {
+                result.get(30, TimeUnit.SECONDS);
+            }
+
+            // Then: 덮어써졌다면 10,000원이 아닌 값이 남는다
+            assertThat(balanceOf(memberId)).isEqualTo(10_000);
+            assertThat(countLedgers(memberId)).isEqualTo(1 + pairCount * 2);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private String latestReferenceKey(Long memberId) {
+        return jdbcTemplate.queryForObject("""
+            SELECT l.reference_key FROM buyer_wallet_ledger l
+            JOIN buyer_wallet w ON l.buyer_wallet_id = w.id
+            WHERE w.member_id = ?
+            ORDER BY l.id DESC LIMIT 1
+            """, String.class, memberId);
     }
 }

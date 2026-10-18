@@ -8,6 +8,7 @@ import com.ok.wallet.service.dto.OrderPaymentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -64,8 +65,11 @@ public class BuyerWalletService {
      * 근거 키(PAYMENT:{orderId})는 여기서 만들어, 호출하는 쪽이 규칙을 몰라도 되고 같은 주문은 한 번만 차감된다.
      * 지갑을 잠근 뒤 잔액을 확인하므로, 같은 회원의 결제·충전이 동시에 와도 순서대로 처리된다.
      * 지갑이 없으면 잔액 0원인 지갑을 만든 뒤 판단하므로 잔액 부족이 된다.
+     *
+     * <p>READ COMMITTED로 실행해, 지갑 잠금을 기다리는 사이 같은 주문으로 먼저 커밋된 원장을 최신으로 읽는다.
+     * REPEATABLE READ에서는 잠금 전에 찍힌 스냅샷을 봐서, 동시에 온 같은 주문이 이미 결제됐는지 알 수 없다.
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderPaymentResult payForOrder(Long memberId, Long orderId, long amount) {
         String referenceKey = "PAYMENT:" + orderId;
         BuyerWallet wallet = getOrCreate(memberId);
