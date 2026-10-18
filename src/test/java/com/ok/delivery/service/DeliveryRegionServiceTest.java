@@ -1,21 +1,31 @@
 package com.ok.delivery.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.delivery.domain.RegionGroup;
 import com.ok.delivery.domain.RemoteAreaPostalCode;
+import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.RegionGroupRepository;
+import com.ok.delivery.repository.RemoteAreaPostalCodeHistoryRepository;
 import com.ok.delivery.repository.RemoteAreaPostalCodeRepository;
+import com.ok.delivery.service.dto.PostalRegionRegisterCommand;
 import com.ok.delivery.service.dto.RegionResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 
 @ExtendWith(MockitoExtension.class)
@@ -26,6 +36,9 @@ class DeliveryRegionServiceTest {
 
     @Mock
     RegionGroupRepository regionGroupRepository;
+
+    @Mock
+    RemoteAreaPostalCodeHistoryRepository historyRepository;
 
     @InjectMocks
     DeliveryRegionService deliveryRegionService;
@@ -83,5 +96,26 @@ class DeliveryRegionServiceTest {
         assertThatThrownBy(() -> deliveryRegionService.resolve(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("우편번호는 필수입니다.");
+    }
+
+    @ParameterizedTest
+    @MethodSource("동시_등록에서_나는_DB_예외")
+    void 같은_번호를_동시에_처음_등록해_DB에서_실패하면_중복으로_응답한다(RuntimeException dbException) {
+        // given
+        given(postalCodeRepository.findByIdForUpdate("40200")).willReturn(Optional.empty());
+        given(regionGroupRepository.existsById("ULLEUNG")).willReturn(true);
+        given(postalCodeRepository.saveAndFlush(any(RemoteAreaPostalCode.class))).willThrow(dbException);
+
+        // when & then
+        assertThatThrownBy(() -> deliveryRegionService.register(new PostalRegionRegisterCommand("40200", "ULLEUNG", 2), 1L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.POSTAL_REGION_DUPLICATED));
+    }
+
+    // PK 중복, 그리고 없는 행을 FOR UPDATE로 읽어 잡힌 gap 잠금끼리 INSERT에서 생기는 교착 상태
+    static Stream<RuntimeException> 동시_등록에서_나는_DB_예외() {
+        return Stream.of(
+                new DataIntegrityViolationException("Duplicate entry"),
+                new CannotAcquireLockException("Deadlock found"));
     }
 }
