@@ -9,7 +9,7 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_key_pair" "app" {
-  key_name   = "team01-200ok-key"
+  key_name   = "${local.name_prefix}-key"
   public_key = var.ssh_public_key
 }
 
@@ -20,7 +20,7 @@ resource "aws_ebs_volume" "mysql" {
   encrypted         = true
 
   tags = {
-    Name = "team01-200ok-mysql-data"
+    Name = "${local.name_prefix}-mysql-data"
   }
 
   # MySQL 데이터가 들어 있어서 인스턴스를 교체해도 볼륨은 지워지지 않게 막는다.
@@ -58,12 +58,12 @@ resource "aws_instance" "app" {
     encrypted   = true
 
     tags = {
-      Name = "team01-200ok-app-root"
+      Name = "${local.name_prefix}-app-root"
     }
   }
 
   tags = {
-    Name = "team01-200ok-app"
+    Name = "${local.name_prefix}-app"
   }
 
   # 새 Ubuntu AMI가 나올 때마다 인스턴스가 교체되지 않게 처음 AMI로 고정한다.
@@ -83,7 +83,7 @@ resource "aws_ec2_tag" "app_eni_team" {
 resource "aws_ec2_tag" "app_eni_name" {
   resource_id = aws_instance.app.primary_network_interface_id
   key         = "Name"
-  value       = "team01-200ok-app-eni"
+  value       = "${local.name_prefix}-app-eni"
 }
 
 resource "aws_volume_attachment" "mysql" {
