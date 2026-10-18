@@ -10,12 +10,12 @@ data "http" "my_ip" {
 }
 
 resource "aws_security_group" "app" {
-  name        = "team01-200ok-app-sg"
+  name        = "${local.name_prefix}-app-sg"
   description = "paldo-gotgan app server"
   vpc_id      = aws_vpc.main.id
 
   tags = {
-    Name = "team01-200ok-app-sg"
+    Name = "${local.name_prefix}-app-sg"
   }
 }
 
@@ -54,6 +54,6 @@ resource "aws_default_security_group" "default" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "team01-200ok-default-sg"
+    Name = "${local.name_prefix}-default-sg"
   }
 }

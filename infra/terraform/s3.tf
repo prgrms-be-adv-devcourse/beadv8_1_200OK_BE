@@ -3,7 +3,7 @@ resource "aws_s3_bucket" "media" {
   bucket_namespace = "account-regional"
 
   tags = {
-    Name = var.bucket_name_tag
+    Name = "${local.name_prefix}-s3"
   }
 
   # 앱이 쓰는 이미지가 들어 있어서 실수로 삭제·교체되지 않게 막는다.

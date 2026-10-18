@@ -11,3 +11,8 @@ output "app_public_ip" {
   description = "앱 EC2에 연결할 고정 퍼블릭 IP"
   value       = aws_eip.app.public_ip
 }
+
+output "ssh_command" {
+  description = "EC2 접속 명령"
+  value       = "ssh ubuntu@${aws_eip.app.public_ip}"
+}
