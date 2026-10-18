@@ -37,6 +37,7 @@ import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.dto.ProductCreateCommand;
+import com.ok.product.product.service.dto.ProductOptionCommand;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
 
 @ExtendWith(MockitoExtension.class)
@@ -124,8 +125,8 @@ class ProductServiceTest {
 		given(productOptionRepository.updateTotalStock(OPTION_ID, 150)).willReturn(1);
 
 		service.update(1L, PRODUCT_ID, updateCommand(0, List.of(
-			new ProductOptionSpec(OPTION_ID, "3kg 특품", 40_000L, 30_000L, 150),
-			ProductOptionSpec.newOption("5kg", null, 49_000L, 20))));
+			new ProductOptionCommand(OPTION_ID, "3kg 특품", 40_000L, 30_000L, 150),
+			new ProductOptionCommand(null, "5kg", null, 49_000L, 20))));
 
 		assertThat(product.getName()).isEqualTo("수정한 이름");
 		assertThat(product.getDescriptionHtml()).isEqualTo("<p>수정</p>");
@@ -210,7 +211,8 @@ class ProductServiceTest {
 	// id·version이 채워진 저장된 상품처럼 만들어 수정용 조회가 돌려주게 한다
 	private Product givenProduct(Long sellerId) {
 		Product product = Product.create(sellerId, "청송 꿀사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, options(), List.of(BUCKET_URL + "a.jpg"));
+			ProductRegion.GYEONGBUK, List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)),
+			List.of(BUCKET_URL + "a.jpg"));
 		ReflectionTestUtils.setField(product, "id", PRODUCT_ID);
 		ReflectionTestUtils.setField(product, "version", 0);
 		ReflectionTestUtils.setField(product.getOptions().getFirst(), "id", OPTION_ID);
@@ -218,14 +220,14 @@ class ProductServiceTest {
 		return product;
 	}
 
-	private ProductUpdateCommand updateCommand(int version, List<ProductOptionSpec> options) {
+	private ProductUpdateCommand updateCommand(int version, List<ProductOptionCommand> options) {
 		return new ProductUpdateCommand(version, "수정한 이름", "<p>수정</p><script>alert(1)</script>",
 			ProductCategory.FRUIT,
 			ProductRegion.GYEONGBUK, null, null, List.of(BUCKET_URL + "b.jpg"), options);
 	}
 
-	private List<ProductOptionSpec> sameOption(int totalStock) {
-		return List.of(new ProductOptionSpec(OPTION_ID, "3kg", 40_000L, 32_000L, totalStock));
+	private List<ProductOptionCommand> sameOption(int totalStock) {
+		return List.of(new ProductOptionCommand(OPTION_ID, "3kg", 40_000L, 32_000L, totalStock));
 	}
 
 	private ProductCreateCommand command(String descriptionHtml) {
@@ -233,8 +235,8 @@ class ProductServiceTest {
 			ProductRegion.GYEONGBUK, null, null, List.of(BUCKET_URL + "a.jpg"), options());
 	}
 
-	private List<ProductOptionSpec> options() {
-		return List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100));
+	private List<ProductOptionCommand> options() {
+		return List.of(new ProductOptionCommand(null, "3kg", 40_000L, 32_000L, 100));
 	}
 
 	private void givenSaveAssignsId(Long id) {

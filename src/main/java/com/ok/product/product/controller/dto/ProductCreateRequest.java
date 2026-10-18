@@ -56,7 +56,7 @@ public record ProductCreateRequest(
 	public ProductCreateCommand toCommand() {
 		return new ProductCreateCommand(
 				name, descriptionHtml, category, region, status, visibility, imageUrls,
-				options.stream().map(ProductOptionRequest::toSpec).toList()
+				options.stream().map(ProductOptionRequest::toCommand).toList()
 		);
 	}
 }

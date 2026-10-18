@@ -62,7 +62,7 @@ public record ProductUpdateRequest(
 	public ProductUpdateCommand toCommand() {
 		return new ProductUpdateCommand(
 				version, name, descriptionHtml, category, region, status, visibility, imageUrls,
-				options.stream().map(ProductOptionUpdateRequest::toSpec).toList()
+				options.stream().map(ProductOptionUpdateRequest::toCommand).toList()
 		);
 	}
 }

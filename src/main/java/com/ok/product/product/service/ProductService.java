@@ -3,6 +3,7 @@ package com.ok.product.product.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
+import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
@@ -11,6 +12,7 @@ import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductDetailResult;
+import com.ok.product.product.service.dto.ProductOptionCommand;
 import com.ok.product.product.service.dto.ProductOptionInfoResult;
 import com.ok.product.product.service.dto.ProductSearchQuery;
 import com.ok.product.product.service.dto.ProductSummaryResult;
@@ -50,7 +52,7 @@ public class ProductService {
 		String descriptionHtml = sanitizeDescription(command.descriptionHtml());
 
 		Product product = Product.create(sellerId, command.name(), descriptionHtml, command.category(),
-			command.region(), command.options(), toObjectKeys(command.imageUrls()));
+			command.region(), toOptionSpecs(command.options()), toObjectKeys(command.imageUrls()));
 		if (command.status() != null) {
 			product.changeStatus(command.status());
 		}
@@ -75,7 +77,8 @@ public class ProductService {
 		// 상품 정보 업데이트
 		product.updateInfo(command.name(), descriptionHtml, command.category(), command.region());
 		product.replaceImages(toObjectKeys(command.imageUrls()));
-		product.mergeOptions(command.options(), now());
+		List<ProductOptionSpec> optionSpecs = toOptionSpecs(command.options());
+		product.mergeOptions(optionSpecs, now());
 		if (command.status() != null) {
 			product.changeStatus(command.status());
 		}
@@ -85,7 +88,7 @@ public class ProductService {
 
 		// TODO: 재고가 그대로인 옵션도 매번 UPDATE가 나가고 updated_at이 바뀐다. 로드한 totalStock과 요청값이 다를 때만 호출하도록 바꾸기
 		// 옵션 재고 업데이트
-		command.options().stream()
+		optionSpecs.stream()
 				.filter(spec -> !spec.isNew()) // isNew는 insert에 재고 등록됨
 				.forEach(spec -> {
 					int updated = productOptionRepository.updateTotalStock(spec.id(), spec.totalStock());
@@ -152,6 +155,10 @@ public class ProductService {
 			.map(url -> mediaUrlResolver.toObjectKey(url)
 				.orElseThrow(() -> new RestApiException(ProductErrorCode.INVALID_IMAGE_URL)))
 			.toList();
+	}
+
+	private List<ProductOptionSpec> toOptionSpecs(List<ProductOptionCommand> options) {
+		return options.stream().map(ProductOptionCommand::toSpec).toList();
 	}
 
 	// 허용 태그만 남기고 본문에 있는 외부 이미지는 거절하지 않고 지운다
