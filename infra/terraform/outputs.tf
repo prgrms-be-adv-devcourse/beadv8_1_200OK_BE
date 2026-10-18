@@ -6,3 +6,8 @@ output "media_bucket_name" {
 output "media_bucket_arn" {
   value = aws_s3_bucket.media.arn
 }
+
+output "app_public_ip" {
+  description = "앱 EC2에 연결할 고정 퍼블릭 IP"
+  value       = aws_eip.app.public_ip
+}
