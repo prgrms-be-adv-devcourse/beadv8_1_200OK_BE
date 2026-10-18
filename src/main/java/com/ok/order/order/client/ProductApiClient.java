@@ -20,9 +20,7 @@ public class ProductApiClient {
     private final RestClient restClient;
 
     public ProductApiClient(@Value("${app.internal-api.base-url:http://localhost:8080}") String baseUrl) {
-        this.restClient = RestClient.builder()
-                .baseUrl(baseUrl + "/internal/v1/products")
-                .build();
+        this.restClient = InternalRestClient.create(baseUrl + "/internal/v1/products", OrderErrorCode.PRODUCT_API_FAILED);
     }
 
     // 상품 옵션 ID ','로 나눈 리스트로 변경 후 상품 모듈 API 호출
