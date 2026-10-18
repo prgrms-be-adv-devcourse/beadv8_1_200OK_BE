@@ -254,6 +254,18 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - **키 교체**: 비밀키를 바꿀 때 `jwt.key-id`도 함께 바꿉니다. 옛 키와 새 키를 함께 받아들이는 기간이 필요하면, 디코더가 `kid`로 키를 고르도록 바꿉니다.
 - **비대칭키 전환 기준**: 토큰을 검증하는 프로그램이 둘 이상이 될 때(서비스 분리, 별도 서버) RS256 등으로 바꿉니다. 비밀키를 두 번째 서비스에 나눠주기 전에 바꿔야 합니다. 서명 알고리즘과 키는 `JwtConfig`에서만 관리하므로 각 모듈의 인가 코드는 바뀌지 않습니다.
 
+### 토큰 재발급
+
+Access Token(30분)이 만료되면 로그인 때 받은 Refresh Token으로 새 토큰을 받습니다.
+
+1. API가 401 `token-expired`를 반환하면 `POST /api/v1/auth/reissue`에 `{"refreshToken": "..."}`를 보냅니다.
+2. 성공하면 응답의 **새 Access Token과 새 Refresh Token으로 둘 다 교체**하고, 실패한 요청을 다시 보냅니다. 사용한 Refresh Token은 다시 쓸 수 없습니다.
+3. 재발급이 401(`auth/invalid-refresh-token`)이면 다시 로그인합니다. 403(`auth/member-suspended`)은 정지된 회원입니다.
+- 재발급할 때 회원 정보를 다시 읽어 최신 권한으로 발급합니다. 판매자 승인 같은 권한 변경도 재로그인 없이 반영됩니다.
+- 같은 Refresh Token으로 동시에 요청하면 하나만 성공합니다. 여러 요청이 동시에 `token-expired`를 받아도 **재발급은 한 번만** 보내고, 나머지 요청은 그 결과를 기다렸다가 새 토큰으로 다시 보내야 합니다.
+- 재발급 요청은 Access Token 없이 보냅니다. 만료된 토큰이 붙어 있어도 무시됩니다.
+- 401의 `type`으로 다음 행동을 정합니다: `token-expired`는 재발급, `invalid-token`·`unauthorized`는 재로그인.
+
 ### 컨트롤러에서 로그인 회원 받기
 
 요청 헤더(`X-Member-Id` 등)로 회원을 받지 말고 `@CurrentMemberId`를 씁니다. 값은 검증된 토큰에서 꺼내므로 클라이언트가 바꿀 수 없습니다.
