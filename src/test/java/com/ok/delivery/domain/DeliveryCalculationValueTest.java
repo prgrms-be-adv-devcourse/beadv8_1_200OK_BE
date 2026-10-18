@@ -37,6 +37,14 @@ class DeliveryCalculationValueTest {
                 .hasMessage("출고 마감 시간은 필수입니다.");
     }
 
+    @Test
+    void 판매자_배송비의_기본_배송비가_음수면_예외가_발생한다() {
+        // when & then
+        assertThatThrownBy(() -> new SellerShippingFee(1L, -1, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("기본 배송비는 0 이상이어야 합니다.");
+    }
+
     @ParameterizedTest
     @MethodSource("빈_도착_예정일")
     void 도착_예정일이_없으면_예외가_발생한다(LocalDate start, LocalDate end) {

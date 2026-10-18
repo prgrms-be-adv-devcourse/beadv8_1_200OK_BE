@@ -8,10 +8,14 @@ import java.time.LocalTime;
  *
  * @param freeShippingThreshold 판매자별 상품 금액 합계가 이 금액 이상이면 기본 배송비가 0원이다
  * @param cutoffTime            이 시각 전에 결제되면 그날 출고한다
- * @throws IllegalArgumentException 금액이 음수이거나 마감 시간이 없으면
  */
 public record SellerShippingSetting(int baseShippingFee, int freeShippingThreshold, LocalTime cutoffTime) {
 
+    /**
+     * 생성할 때 값을 검증한다.
+     *
+     * @throws IllegalArgumentException 금액이 음수이거나 마감 시간이 없으면
+     */
     public SellerShippingSetting {
         if (baseShippingFee < 0 || freeShippingThreshold < 0) {
             throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");

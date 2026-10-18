@@ -35,15 +35,10 @@ public final class ShippingFeePolicy {
      *
      * @param itemAmount      한 판매자의 상품 금액 합계
      * @param regionSurcharge 배송지 지역 판정 결과의 추가 운임
-     * @throws IllegalArgumentException 판매자 ID나 배송 설정이 없거나, 상품 금액이나 추가 운임이 음수면
+     * @throws IllegalArgumentException 판매자 ID나 배송 설정이 없거나, 상품 금액이나 추가 운임이 음수면 ({@link SellerShippingFee} 생성자 검증 포함)
      */
     public static SellerShippingFee calculate(Long sellerId, long itemAmount, SellerShippingSetting setting, int regionSurcharge) {
-        if (sellerId == null) {
-            throw new IllegalArgumentException("sellerId는 필수입니다.");
-        }
-        if (regionSurcharge < 0) {
-            throw new IllegalArgumentException("추가 운임은 0 이상이어야 합니다.");
-        }
+        // 판매자 ID와 추가 운임 검증은 SellerShippingFee 생성자가 한다
         return new SellerShippingFee(sellerId, baseShippingFee(itemAmount, setting), regionSurcharge);
     }
 

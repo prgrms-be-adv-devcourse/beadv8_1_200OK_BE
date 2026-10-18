@@ -53,6 +53,9 @@ class DeliveryDatePolicyTest {
                 Arguments.of(MONDAY.atTime(14, 0), CUTOFF_13, TUESDAY),
                 // 같은 시각이어도 판매자 마감 시간에 따라 다르다
                 Arguments.of(MONDAY.atTime(14, 0), CUTOFF_15, MONDAY),
+                // 마감 시각 극단값: 자정 마감은 항상 다음 영업일, 하루 끝 마감은 영업일이면 항상 당일
+                Arguments.of(MONDAY.atStartOfDay(), LocalTime.MIDNIGHT, TUESDAY),
+                Arguments.of(MONDAY.atTime(23, 59, 59), LocalTime.MAX, MONDAY),
                 // 금요일 마감 후, 주말
                 Arguments.of(FRIDAY.atTime(14, 0), CUTOFF_13, NEXT_MONDAY),
                 Arguments.of(SATURDAY.atTime(10, 0), CUTOFF_13, NEXT_MONDAY),
@@ -115,6 +118,26 @@ class DeliveryDatePolicyTest {
         assertSoftly(softly -> {
             softly.assertThat(actual.start()).isEqualTo(NEXT_WEDNESDAY);
             softly.assertThat(actual.end()).isEqualTo(NEXT_THURSDAY);
+        });
+    }
+
+    @Test
+    void 캘린더를_공휴일이_있는_구현으로_바꾸면_공휴일을_건너뛰고_계산한다() {
+        // given
+        BusinessDayCalendar weekend = new WeekendBusinessDayCalendar();
+        BusinessDayCalendar withHoliday = date -> weekend.isBusinessDay(date) && !date.equals(WEDNESDAY);
+        DeliveryDatePolicy holidayPolicy = new DeliveryDatePolicy(withHoliday);
+
+        // when
+        LocalDate shipDate = holidayPolicy.shipDate(WEDNESDAY.atTime(10, 0), CUTOFF_13);
+        DeliveryDateRange actual = holidayPolicy.arrivalRange(MONDAY, 0);
+
+        // then
+        assertThat(actual).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(shipDate).isEqualTo(THURSDAY);
+            softly.assertThat(actual.start()).isEqualTo(THURSDAY);
+            softly.assertThat(actual.end()).isEqualTo(FRIDAY);
         });
     }
 
