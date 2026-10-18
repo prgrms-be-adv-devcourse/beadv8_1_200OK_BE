@@ -67,8 +67,9 @@ resource "aws_instance" "app" {
   }
 
   # 새 Ubuntu AMI가 나올 때마다 인스턴스가 교체되지 않게 처음 AMI로 고정한다.
+  # user_data는 첫 부팅에만 실행되므로, 스크립트를 고쳐도 기존 인스턴스를 중지·재시작하지 않고 새 인스턴스에만 적용한다.
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, user_data]
   }
 }
 

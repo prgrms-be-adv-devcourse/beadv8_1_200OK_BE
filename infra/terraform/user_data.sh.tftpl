@@ -1,28 +1,47 @@
 #!/bin/bash
 set -euo pipefail
 
-# docker 공식 저장소에서 docker와 compose 플러그인 설치
-apt-get update
-apt-get install -y ca-certificates curl
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-  > /etc/apt/sources.list.d/docker.list
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-usermod -aG docker ubuntu
+# docker 설치가 네트워크 문제로 실패해도 데이터 볼륨은 마운트되도록 볼륨부터 처리한다.
 
 # 데이터 볼륨은 인스턴스가 뜬 뒤에 붙으므로 최대 5분 기다린다.
 # Nitro 인스턴스는 장치 이름(nvme1n1 등)이 부팅마다 바뀔 수 있어 볼륨 ID 기반 경로를 쓴다.
 DEVICE="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${data_volume_id}"
 for i in $(seq 1 60); do [ -e "$DEVICE" ] && break; sleep 5; done
 [ -e "$DEVICE" ] || { echo "데이터 볼륨이 붙지 않았다: $DEVICE"; exit 1; }
+udevadm settle
 
-# 파일시스템이 없을 때(처음 붙을 때)만 포맷한다. 인스턴스 교체 후 재부착될 때 기존 데이터를 지우지 않기 위함이다.
-blkid "$DEVICE" || mkfs.ext4 "$DEVICE"
+# blkid 종료 코드 2는 "파일시스템 없음"이다. 일시적 읽기 오류 등 다른 실패에서 포맷해
+# 인스턴스 교체 후 재부착된 DB 볼륨을 지우지 않도록, 2일 때만 포맷하고 그 외 오류는 멈춘다.
+set +e
+blkid -p "$DEVICE" > /dev/null
+BLKID_RC=$?
+set -e
+if [ "$BLKID_RC" -eq 2 ]; then
+  mkfs.ext4 "$DEVICE"
+elif [ "$BLKID_RC" -ne 0 ]; then
+  echo "데이터 볼륨의 파일시스템을 확인하지 못했다 (blkid 종료 코드 $BLKID_RC)"
+  exit 1
+fi
 
+# 마운트되지 않은 /data에는 쓰지 못하게 막는다. nofail이라 마운트가 실패해도 부팅은 계속되는데,
+# 그때 MySQL이 루트 디스크에 조용히 데이터를 만들지 않고 실패하게 하기 위함이다.
 mkdir -p /data
+mountpoint -q /data || chattr +i /data
+
 UUID=$(blkid -s UUID -o value "$DEVICE")
 grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /data ext4 defaults,nofail 0 2" >> /etc/fstab
 mount -a
+mountpoint -q /data || { echo "/data 마운트에 실패했다"; exit 1; }
+
+# docker 공식 저장소에서 docker와 compose 플러그인 설치
+APT="apt-get -o Acquire::Retries=5"
+$APT update
+$APT install -y ca-certificates curl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL --retry 5 https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+$APT update
+$APT install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+usermod -aG docker ubuntu
