@@ -40,7 +40,9 @@ public class TossPaymentsClient {
             "INVALID_PASSWORD",               // 비밀번호 오류
             "EXCEED_MAX_DAILY_PAYMENT_COUNT", // 하루 결제 횟수 초과
             "EXCEED_MAX_PAYMENT_AMOUNT",      // 결제 한도 초과
-            "NOT_AVAILABLE_PAYMENT"           // 결제 불가 시간대
+            "NOT_AVAILABLE_PAYMENT",          // 결제 불가 시간대
+            "NOT_FOUND_PAYMENT",              // 존재하지 않는 결제 (잘못된 결제 키): 승인될 결제가 없음
+            "INVALID_REQUEST"                 // 잘못된 요청: 토스가 요청을 처리하지 않음
     );
 
     private final RestClient tossRestClient;

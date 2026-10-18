@@ -220,4 +220,16 @@ class TossPaymentsClientTest {
         assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
                 .isInstanceOf(TossConfirmResult.Unknown.class);
     }
+
+    @Test
+    void 존재하지_않는_결제라는_응답은_명확한_실패로_분류한다() {
+        // 잘못된 결제 키로 처리 중에 갇혀 한도를 차지하지 않도록 실패로 정리한다
+        server.expect(requestTo(CONFIRM_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다.")));
+
+        assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
+                .isInstanceOf(TossConfirmResult.Rejected.class);
+    }
 }
