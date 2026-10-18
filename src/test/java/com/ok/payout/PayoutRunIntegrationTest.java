@@ -2,15 +2,18 @@ package com.ok.payout;
 
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.endsWith;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -30,7 +33,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // [준비]
 // 정산할 데이터는 넣지 않음. 정산할 후보가 없어도 배치는 정상 종료(COMPLETED)하고 실행 기록은 남음
 // 읽는 방법(mockMvc·jsonPath)은 PayoutQueryIntegrationTest 위의 설명과 같음
-@AutoConfigureMockMvc
 class PayoutRunIntegrationTest extends AbstractIntegrationTest {
 
     private static final String RUN_URL = "/api/v1/payouts/run";
@@ -40,6 +42,8 @@ class PayoutRunIntegrationTest extends AbstractIntegrationTest {
     private static final String FORBIDDEN_TYPE = "/forbidden";
 
     @Autowired
+    private WebApplicationContext context;
+
     private MockMvc mockMvc;
 
     // 요청에 붙일 로그인 토큰을 만듦 (실제 토큰과 같은 형식이라 보안 필터가 똑같이 검증함)
@@ -48,6 +52,12 @@ class PayoutRunIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JobRepository jobRepository;
+
+    // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
+    @BeforeEach
+    void setUpMockMvc() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+    }
 
     // API: POST /api/v1/payouts/run (정산 전체 수동 실행)
     // 요청: 관리자 토큰

@@ -134,7 +134,7 @@ public class PayoutController implements PayoutControllerSpec {
     // 토큰의 권한 목록(roles 클레임)을 꺼냄. 값은 TokenRoles 이름 그대로(예: ["BUYER", "SELLER"])
     // Spring 권한(ROLE_ADMIN)이 아니라 클레임을 읽는 이유: ROLE_ 접두사를 정산에서 다시 떼지 않으려고
     // 컨트롤러는 domain 타입을 쓸 수 없어(api.md) 문자열 목록으로만 넘기고, PayoutRequesterRole 변환은 서비스가 함
-    // jwt가 null일 일은 없음: 같은 메서드의 @CurrentMemberId가 먼저 채워지며 토큰이 없으면 401로 끝남
+    // jwt가 null인 채로 쓰일 일은 없음: 토큰이 없으면 같은 메서드의 @CurrentMemberId가 401을 던져 메서드 본문이 실행되지 않음
     private List<String> tokenRoles(Jwt jwt) {
         return jwt.getClaimAsStringList(TokenClaims.ROLES);
     }

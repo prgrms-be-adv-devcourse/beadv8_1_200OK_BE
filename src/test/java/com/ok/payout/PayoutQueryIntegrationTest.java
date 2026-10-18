@@ -15,11 +15,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.nullValue;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -73,7 +75,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // 예) 아래 첫 번째 테스트를 풀어 읽으면
 //   관리자로 10월 1일 정산 목록을 요청하면 → 200 OK가 오고
 //   → 정산 3건이 시스템 몫, 판매자 9, 판매자 7 순서로 나오고 → 0페이지, 크기 20, 전체 3건, 1페이지여야 한다
-@AutoConfigureMockMvc
 class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
 
     // 이 클래스 전용 주문항목 ID 번호대 (PayoutSettleIntegrationTest는 8_000_000, PayoutCandidateIntegrationTest는 9_000_000부터)
@@ -96,6 +97,8 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     private static final long NOT_EXISTING_PAYOUT_ID = 999_999L;
 
     @Autowired
+    private WebApplicationContext context;
+
     private MockMvc mockMvc;
 
     // 요청에 붙일 로그인 토큰을 만듦 (실제 토큰과 같은 형식이라 보안 필터가 똑같이 검증함)
@@ -131,6 +134,8 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     //   시스템 몫: 수수료 300 + 600 = 900
     @BeforeEach
     void setUp() throws Exception {
+        // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         cleanUp();
         candidateCreatedAt = LocalDateTime.now().minusDays(20).truncatedTo(ChronoUnit.SECONDS);
 

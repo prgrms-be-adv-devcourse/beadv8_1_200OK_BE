@@ -4,17 +4,20 @@ import com.ok.payout.repository.PayoutCandidateItemRepository;
 import com.ok.payout.repository.PayoutRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.endsWith;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -45,7 +48,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // [요청 본문(JSON)]
 // POST 요청은 값을 JSON 본문으로 보내므로 텍스트 블록(""" ... """)에 실제로 보낼 JSON을 그대로 적음
 // (객체로 만들면 생성자가 공백을 지워 버려서, "공백뿐인 사유" 같은 잘못된 입력을 그대로 보낼 수 없음)
-@AutoConfigureMockMvc
 class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
 
     // 1건 수동 실행만 쓰는 임시 역할 헤더 (수동 조정은 토큰으로 바뀜)
@@ -71,6 +73,8 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
             """;
 
     @Autowired
+    private WebApplicationContext context;
+
     private MockMvc mockMvc;
 
     // 요청에 붙일 로그인 토큰을 만듦 (실제 토큰과 같은 형식이라 보안 필터가 똑같이 검증함)
@@ -82,6 +86,12 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutCandidateItemRepository candidateRepository;
+
+    // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
+    @BeforeEach
+    void setUpMockMvc() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+    }
 
     // ---------- 1건 수동 실행 ----------
 
