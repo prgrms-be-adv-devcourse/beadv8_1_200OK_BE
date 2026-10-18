@@ -1,7 +1,8 @@
-package com.ok.common.event;
+package com.ok.common.event.payload;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
@@ -37,6 +38,32 @@ class PaidSellerOrderTest {
 
     static Stream<List<PaidOrderItem>> 비어_있는_상품_항목() {
         return Stream.of(null, List.of());
+    }
+
+    @ParameterizedTest
+    @MethodSource("음수_금액")
+    void 금액이_음수면_예외가_발생한다(Long baseShippingFee, Long freeShippingThreshold, Long regionSurcharge, String message) {
+        // when & then
+        assertThatThrownBy(() -> new PaidSellerOrder(10L, baseShippingFee, freeShippingThreshold, regionSurcharge, List.of(item(100L))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+    }
+
+    static Stream<Arguments> 음수_금액() {
+        return Stream.of(
+                Arguments.of(-1L, 50_000L, 0L, "baseShippingFee는 0 이상이어야 합니다."),
+                Arguments.of(3_000L, -1L, 0L, "freeShippingThreshold는 0 이상이어야 합니다."),
+                Arguments.of(3_000L, 50_000L, -1L, "regionSurcharge는 0 이상이어야 합니다.")
+        );
+    }
+
+    @Test
+    void 금액이_0이면_만들_수_있다() {
+        // when
+        PaidSellerOrder sut = new PaidSellerOrder(10L, 0L, 0L, 0L, List.of(item(100L)));
+
+        // then
+        assertThat(sut.baseShippingFee()).isZero();
     }
 
     private static PaidOrderItem item(Long orderItemId) {
