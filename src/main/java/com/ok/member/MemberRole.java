@@ -1,11 +1,12 @@
 package com.ok.member;
 
+import com.ok.member.member.domain.MemberType;
+
 /**
- * 회원 권한.
- * @deprecated 회원은 {@code MemberType}(USER, ADMIN)을 갖고, 권한(BUYER, SELLER, ADMIN)은 토큰을 발급할 때 계산한다.
- * member 모듈은 더 이상 쓰지 않으며, 상품 API의 임시 헤더(X-Member-Role)만 참조한다.
+ * @deprecated 회원 유형과 권한을 분리하면서 {@link MemberType}으로 대체한다.
+ *             권한은 토큰 발급 시 계산하므로 이 enum을 직접 쓰지 않는다.
  */
-@Deprecated(forRemoval = true)
+@Deprecated(since = "2026-10-18", forRemoval = true)
 public enum MemberRole {
     BUYER,
     SELLER,
