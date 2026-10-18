@@ -201,8 +201,9 @@ class ChargeServiceTest extends AbstractIntegrationTest {
         // When
         ChargeConfirmResult result = chargeConfirmService.confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, 10_000);
 
-        // Then: 복구 스케줄러가 처리할 때까지 처리 중으로 남는다
+        // Then: 복구 스케줄러가 처리할 때까지 처리 중으로 남고, 어떤 결제인지 알 수 있게 결제 키가 저장된다
         assertThat(result.status()).isEqualTo("IN_PROGRESS");
+        assertThat(paymentKeyOf(chargeNo)).isEqualTo(PAYMENT_KEY);
         assertThat(balanceOrZero(MEMBER_ID)).isZero();
     }
 
@@ -466,5 +467,21 @@ class ChargeServiceTest extends AbstractIntegrationTest {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }
+    }
+
+    @Test
+    void 토스_호출_중_예상하지_못한_오류가_나도_처리_중으로_응답한다() {
+        // Given
+        String chargeNo = requestCharge(MEMBER_ID, 10_000);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willThrow(new IllegalStateException("예상하지 못한 오류"));
+
+        // When: 500 대신 처리 중을 받아야 한다
+        ChargeConfirmResult result = chargeConfirmService.confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, 10_000);
+
+        // Then
+        assertThat(result.status()).isEqualTo("IN_PROGRESS");
+        assertThat(statusOf(chargeNo)).isEqualTo("IN_PROGRESS");
+        assertThat(balanceOrZero(MEMBER_ID)).isZero();
     }
 }

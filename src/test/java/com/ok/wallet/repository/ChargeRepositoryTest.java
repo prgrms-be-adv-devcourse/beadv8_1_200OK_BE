@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Import({JpaConfig.class, TestcontainersConfiguration.class})
 class ChargeRepositoryTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 12, 0);
+    private static final String PAYMENT_KEY = "payment-key-1";
 
     @Autowired
     ChargeRepository chargeRepository;
@@ -36,26 +37,27 @@ class ChargeRepositoryTest {
     // 조건부 상태 변경
 
     @Test
-    void 대기_중인_충전_건은_처리_중으로_바뀐다() {
+    void 대기_중인_충전_건은_처리_중으로_바뀌고_결제_키가_저장된다() {
         // Given
         Charge charge = chargeRepository.save(Charge.request(1L, 10_000));
 
         // When
-        int updated = chargeRepository.markInProgress(charge.getChargeNo(), NOW);
+        int updated = chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW);
 
-        // Then
+        // Then: 승인 결과가 불명확해 처리 중으로 남아도 어떤 결제인지 알 수 있다
         assertThat(updated).isEqualTo(1);
         assertThat(statusOf(charge.getChargeNo())).isEqualTo(ChargeStatus.IN_PROGRESS);
+        assertThat(paymentKeyOf(charge.getChargeNo())).isEqualTo(PAYMENT_KEY);
     }
 
     @Test
     void 이미_처리_중으로_바뀐_충전_건은_다시_바뀌지_않는다() {
         // Given: 첫 승인 요청이 먼저 처리 중으로 바꿈
         Charge charge = chargeRepository.save(Charge.request(1L, 10_000));
-        chargeRepository.markInProgress(charge.getChargeNo(), NOW);
+        chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW);
 
         // When: 같은 건으로 승인 요청이 다시 옴
-        int updated = chargeRepository.markInProgress(charge.getChargeNo(), NOW);
+        int updated = chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW);
 
         // Then: 0을 받은 요청은 토스 승인을 호출하지 않는다
         assertThat(updated).isZero();
@@ -69,28 +71,27 @@ class ChargeRepositoryTest {
         chargeRepository.save(charge);
 
         // When & Then
-        assertThat(chargeRepository.markInProgress(charge.getChargeNo(), NOW)).isZero();
+        assertThat(chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW)).isZero();
         assertThat(statusOf(charge.getChargeNo())).isEqualTo(ChargeStatus.FAILED);
+        assertThat(paymentKeyOf(charge.getChargeNo())).isNull();
     }
 
     @Test
     void 처리_중인_충전_건을_완료하면_결제_키와_완료_시각이_저장된다() {
         // Given
         Charge saved = chargeRepository.save(Charge.request(1L, 10_000));
-        chargeRepository.markInProgress(saved.getChargeNo(), NOW);
+        chargeRepository.markInProgress(saved.getChargeNo(), PAYMENT_KEY, NOW);
         // 조건부 UPDATE가 영속성 컨텍스트를 비우므로 다시 읽어 처리 중 상태를 가져온다
         Charge inProgress = chargeRepository.findByChargeNo(saved.getChargeNo()).orElseThrow();
 
         // When
-        inProgress.complete("payment-key-1", NOW);
+        inProgress.complete(PAYMENT_KEY, NOW);
         // 테스트는 커밋되지 않으므로, JdbcTemplate으로 DB를 직접 읽기 전에 변경 내용을 보낸다
         entityManager.flush();
 
         // Then
         assertThat(statusOf(saved.getChargeNo())).isEqualTo(ChargeStatus.COMPLETED);
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT payment_key FROM wallet_charge WHERE charge_no = ?", String.class, saved.getChargeNo()))
-                .isEqualTo("payment-key-1");
+        assertThat(paymentKeyOf(saved.getChargeNo())).isEqualTo(PAYMENT_KEY);
     }
 
     // 처리 중 금액 합계
@@ -128,9 +129,9 @@ class ChargeRepositoryTest {
 
     @Test
     void 같은_결제_키가_두_충전_건에_연결되지_않는다() {
-        insertCharge("CHG_FIRST", 10_000, "payment-key-1");
+        insertCharge("CHG_FIRST", 10_000, PAYMENT_KEY);
 
-        assertThatThrownBy(() -> insertCharge("CHG_SECOND", 10_000, "payment-key-1"))
+        assertThatThrownBy(() -> insertCharge("CHG_SECOND", 10_000, PAYMENT_KEY))
                 .isInstanceOf(DataAccessException.class)
                 .hasMessageContaining("uk_wallet_charge_payment_key");
     }
@@ -153,14 +154,20 @@ class ChargeRepositoryTest {
                 .hasMessageContaining("ck_wallet_charge_amount");
     }
 
+    // 결제 키에 유니크 제약이 있으므로 충전 번호로 건마다 다른 키를 만든다
     private void inProgressCharge(Long memberId, long amount) {
         Charge charge = chargeRepository.save(Charge.request(memberId, amount));
-        chargeRepository.markInProgress(charge.getChargeNo(), NOW);
+        chargeRepository.markInProgress(charge.getChargeNo(), "pk-" + charge.getChargeNo(), NOW);
     }
 
     private ChargeStatus statusOf(String chargeNo) {
         return ChargeStatus.valueOf(jdbcTemplate.queryForObject(
                 "SELECT status FROM wallet_charge WHERE charge_no = ?", String.class, chargeNo));
+    }
+
+    private String paymentKeyOf(String chargeNo) {
+        return jdbcTemplate.queryForObject(
+                "SELECT payment_key FROM wallet_charge WHERE charge_no = ?", String.class, chargeNo);
     }
 
     // 엔티티 검증을 거치지 않고 DB 제약만 확인하려고 SQL로 직접 넣는다

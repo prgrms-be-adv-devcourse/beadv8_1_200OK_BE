@@ -22,14 +22,20 @@ public class ChargeConfirmService {
 
     public ChargeConfirmResult confirm(Long memberId, String chargeNo, String paymentKey, long amount) {
         // [트랜잭션 1] 소유자·금액·한도 확인 후 처리 중으로 전이
-        ChargeTransactionService.ConfirmStart start = chargeTransaction.startConfirm(memberId, chargeNo, amount);
+        ChargeTransactionService.ConfirmStart start = chargeTransaction.startConfirm(memberId, chargeNo, paymentKey, amount);
         if (!start.started()) {
             // 이미 다른 요청이 승인을 시작했거나 끝난 건: 토스를 다시 호출하지 않는다
             return start.current();
         }
 
-        // [트랜잭션 밖] 토스 승인
-        TossConfirmResult result = tossPaymentsClient.confirm(paymentKey, chargeNo, amount);
+        // [트랜잭션 밖] 토스 승인. 예상하지 못한 예외도 승인 여부를 알 수 없으므로 불명확으로 처리한다
+        TossConfirmResult result;
+        try {
+            result = tossPaymentsClient.confirm(paymentKey, chargeNo, amount);
+        } catch (RuntimeException e) {
+            log.error("[CHARGE_CONFIRM_UNKNOWN] 토스 승인 호출 중 예상하지 못한 오류가 났습니다. chargeNo={}", chargeNo, e);
+            result = new TossConfirmResult.Unknown("토스 승인 호출 중 예상하지 못한 오류");
+        }
 
         // [트랜잭션 2] 결과 반영
         return switch (result) {

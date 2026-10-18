@@ -33,7 +33,7 @@ class ChargeTransactionService {
      * 이미 처리 중이거나 끝난 건이면 토스를 호출하지 않도록 현재 상태를 돌려준다.
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public ConfirmStart startConfirm(Long memberId, String chargeNo, long amount) {
+    public ConfirmStart startConfirm(Long memberId, String chargeNo, String paymentKey, long amount) {
         Charge charge = findOwnedCharge(memberId, chargeNo);
         if (!charge.hasAmount(amount)) {
             throw new RestApiException(WalletErrorCode.CHARGE_AMOUNT_MISMATCH);
@@ -51,7 +51,7 @@ class ChargeTransactionService {
         }
 
         // 같은 건으로 승인이 동시에 오면 한 요청만 1을 받는다. 0이면 다른 요청이 커밋한 최신 상태를 돌려준다
-        if (chargeRepository.markInProgress(chargeNo, LocalDateTime.now(clock)) == 0) {
+        if (chargeRepository.markInProgress(chargeNo, paymentKey, LocalDateTime.now(clock)) == 0) {
             return ConfirmStart.alreadyHandled(findOwnedCharge(memberId, chargeNo));
         }
         return ConfirmStart.begin();
