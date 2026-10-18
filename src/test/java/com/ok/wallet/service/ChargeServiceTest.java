@@ -112,6 +112,18 @@ class ChargeServiceTest extends AbstractIntegrationTest {
         assertErrorCode(() -> chargeService.request(MEMBER_ID, 60_000), WalletErrorCode.BALANCE_LIMIT_EXCEEDED);
     }
 
+    @Test
+    void 처리_중인_충전이_있으면_요청_시점에도_한도에_포함한다() {
+        // Given: 30만원 충전의 승인 결과가 불명확해 처리 중으로 남음
+        String first = requestCharge(MEMBER_ID, 300_000);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willReturn(new TossConfirmResult.Unknown("토스 응답 없음"));
+        chargeConfirmService.confirm(MEMBER_ID, first, PAYMENT_KEY, 300_000);
+
+        // When & Then: 잔액은 0원이지만 처리 중 30만원을 더하면 30만원 추가 충전은 한도 초과
+        assertErrorCode(() -> chargeService.request(MEMBER_ID, 300_000), WalletErrorCode.BALANCE_LIMIT_EXCEEDED);
+    }
+
     // 승인
 
     @Test
@@ -238,11 +250,13 @@ class ChargeServiceTest extends AbstractIntegrationTest {
             }
             ready.await();
             start.countDown();
+            List<String> statuses = new ArrayList<>();
             for (Future<ChargeConfirmResult> result : results) {
-                result.get(30, TimeUnit.SECONDS); // 예외 없이 모두 현재 상태를 받아야 한다
+                statuses.add(result.get(30, TimeUnit.SECONDS).status()); // 예외 없이 모두 현재 상태를 받아야 한다
             }
 
-            // Then
+            // Then: 늦은 요청도 오래된 대기 상태가 아니라 처리 중이나 완료를 받아야 한다
+            assertThat(statuses).doesNotContain("PENDING");
             then(tossPaymentsClient).should(times(1)).confirm(anyString(), anyString(), anyLong());
             assertThat(balanceOf(MEMBER_ID)).isEqualTo(10_000);
             assertThat(countLedgers(MEMBER_ID, "CHARGE:" + PAYMENT_KEY)).isEqualTo(1);
@@ -319,16 +333,18 @@ class ChargeServiceTest extends AbstractIntegrationTest {
                 chargeConfirmService.confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, 10_000);
                 return null;
             });
-            Future<?> fail = executor.submit(() -> {
+            Future<ChargeConfirmResult> fail = executor.submit(() -> {
                 start.await();
-                chargeService.fail(MEMBER_ID, chargeNo, "PAY_PROCESS_CANCELED", "사용자 취소");
-                return null;
+                return chargeService.fail(MEMBER_ID, chargeNo, "PAY_PROCESS_CANCELED", "사용자 취소");
             });
             start.countDown();
             confirm.get(30, TimeUnit.SECONDS);
-            fail.get(30, TimeUnit.SECONDS);
+            ChargeConfirmResult failResult = fail.get(30, TimeUnit.SECONDS);
 
-            // Then: 승인이 이겼으면 잔액 반영, 실패가 이겼으면 토스를 호출하지 않았어야 한다
+            // Then: 실패 요청이 진 경우에도 오래된 대기 상태가 아니라 처리 중이나 완료를 받아야 한다
+            assertThat(failResult.status()).isNotEqualTo("PENDING");
+
+            // 승인이 이겼으면 잔액 반영, 실패가 이겼으면 토스를 호출하지 않았어야 한다
             if ("COMPLETED".equals(statusOf(chargeNo))) {
                 assertThat(balanceOf(MEMBER_ID)).isEqualTo(10_000);
             } else {

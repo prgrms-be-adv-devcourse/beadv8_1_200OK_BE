@@ -25,7 +25,7 @@ public class ChargeService {
     private final ChargeRepository chargeRepository;
     private final TermsService termsService;
     private final BuyerWalletService buyerWalletService;
-    private final Clock clock;
+    private final ChargeTransactionService chargeTransactionService;
 
     /**
      * 충전을 요청한다. 필수 약관 동의 → 금액 규칙 → 잔액 한도 순서로 확인한다.
@@ -42,28 +42,20 @@ public class ChargeService {
         return ChargeRequestResult.from(charge);
     }
 
+    // 처리 중 충전도 곧 잔액이 될 수 있어 함께 더한다. 정확한 확인은 승인 시점에 지갑을 잠근 뒤 다시 한다.
     private void validateMaxBalance(Long memberId, long amount) {
-        if (BuyerWallet.exceedsMaxBalance(buyerWalletService.getBalance(memberId), amount)) {
+        long balance = buyerWalletService.getBalance(memberId);
+        long inProgressAmount = chargeRepository.sumAmountByMemberIdAndStatus(memberId, ChargeStatus.IN_PROGRESS);
+        if (BuyerWallet.exceedsMaxBalance(balance + inProgressAmount, amount)) {
             throw new RestApiException(WalletErrorCode.BALANCE_LIMIT_EXCEEDED);
         }
     }
 
     /**
      * 토스 결제창에서 실패한 충전 건을 실패로 바꾼다.
-     * 대기 중인 건만 조건부 UPDATE로 바꿔, 같은 건의 승인과 겹쳐도 처리 중이 된 건을 실패로 덮어쓰지 않는다.
+     * 트랜잭션과 조건부 UPDATE는 ChargeTransactionService.failPending이 맡는다.
      */
-    @Transactional
     public ChargeConfirmResult fail(Long memberId, String chargeNo, String failureCode, String failureMessage) {
-        findOwnedCharge(memberId, chargeNo);
-        chargeRepository.markFailedIfPending(chargeNo, failureCode, failureMessage, LocalDateTime.now(clock));
-        // 조건부 UPDATE가 영속성 컨텍스트를 비우므로 다시 읽어 현재 상태를 돌려준다
-        return ChargeConfirmResult.from(findOwnedCharge(memberId, chargeNo));
-    }
-
-    // 타인의 충전 건은 존재 여부도 알리지 않도록 없는 것과 같게 응답한다
-    private Charge findOwnedCharge(Long memberId, String chargeNo) {
-        return chargeRepository.findByChargeNo(chargeNo)
-                .filter(charge -> charge.isOwnedBy(memberId))
-                .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
+        return chargeTransactionService.failPending(memberId, chargeNo, failureCode, failureMessage);
     }
 }
