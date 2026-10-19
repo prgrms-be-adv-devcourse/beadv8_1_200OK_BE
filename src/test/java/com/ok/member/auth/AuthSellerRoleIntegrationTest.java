@@ -184,6 +184,7 @@ class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
                 "512-81-04273", "제2026-경북청송-0031호", APPLIED_AT);
         switch (status) {
             case PENDING -> {
+                // 신청하면 심사 대기 상태라 바꿀 것이 없다
             }
             case IN_REVIEW -> application.startReview(REVIEW_STARTED_AT);
             case APPROVED -> {
