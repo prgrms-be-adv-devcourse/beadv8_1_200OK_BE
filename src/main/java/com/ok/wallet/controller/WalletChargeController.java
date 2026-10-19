@@ -12,6 +12,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -55,5 +57,14 @@ public class WalletChargeController implements WalletChargeControllerSpec {
     ) {
         return ResponseEntity.ok(ChargeStatusResponse.from(chargeService.fail(
                 memberId, request.chargeNo(), request.code(), request.message())));
+    }
+
+    @Override
+    @GetMapping("/{chargeNo}")
+    public ResponseEntity<ChargeStatusResponse> getStatus(
+            @CurrentMemberId Long memberId,
+            @PathVariable String chargeNo
+    ) {
+        return ResponseEntity.ok(ChargeStatusResponse.from(chargeService.getStatus(memberId, chargeNo)));
     }
 }
