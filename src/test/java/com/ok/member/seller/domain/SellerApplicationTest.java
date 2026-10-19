@@ -279,6 +279,17 @@ class SellerApplicationTest {
                 SellerApplicationStatus.PENDING, SellerApplicationStatus.IN_REVIEW, SellerApplicationStatus.APPROVED);
     }
 
+    @Test
+    void 새_신청을_막는_상태_목록은_수정할_수_없다() {
+        // given
+        Set<SellerApplicationStatus> statuses = SellerApplicationStatus.activeStatuses();
+
+        // when & then: 받은 쪽이 바꾸면 모든 중복 판정이 함께 바뀌므로 막는다
+        assertThatThrownBy(() -> statuses.add(SellerApplicationStatus.REJECTED))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(SellerApplicationStatus.activeStatuses()).doesNotContain(SellerApplicationStatus.REJECTED);
+    }
+
     private static SellerApplication apply() {
         return SellerApplication.apply(1L, "청송 햇살농원", "김영수", "512-81-04273", "제2026-경북청송-0031호", APPLIED_AT);
     }

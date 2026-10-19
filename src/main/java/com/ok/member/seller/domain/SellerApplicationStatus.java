@@ -1,5 +1,6 @@
 package com.ok.member.seller.domain;
 
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -22,12 +23,17 @@ public enum SellerApplicationStatus {
     /** 거절. 재신청 대기 기간 없이 바로 다시 신청할 수 있다. */
     REJECTED;
 
+    // 고정된 값이라 한 번만 만든다. EnumSet은 수정할 수 있어, 그대로 내주면 받은 쪽이 바꿨을 때 모든 판정이 함께 바뀐다
+    private static final Set<SellerApplicationStatus> ACTIVE =
+            Collections.unmodifiableSet(EnumSet.of(PENDING, IN_REVIEW, APPROVED));
+
     /**
-     * 새 신청을 막는 상태(거절을 뺀 상태) 목록을 반환한다.
-     * DB의 {@code active_*} 생성 컬럼 조건(거절이 아님)과 같아야 한다. 한쪽을 바꾸면 다른 쪽도 함께 바꾼다.
+     * 새 신청을 막는 상태(거절을 뺀 상태) 목록을 반환한다. 반환한 Set은 수정할 수 없다.
+     * DB의 {@code active_*} 생성 컬럼 조건(거절이 아님)과 같아야 한다. 한쪽을 바꾸면 다른 쪽도 함께 바꾼다
+     * (두 기준이 같은지는 {@code SellerApplicationIntegrationTest}가 모든 상태에 대해 확인한다).
      */
     public static Set<SellerApplicationStatus> activeStatuses() {
-        return EnumSet.of(PENDING, IN_REVIEW, APPROVED);
+        return ACTIVE;
     }
 
 }
