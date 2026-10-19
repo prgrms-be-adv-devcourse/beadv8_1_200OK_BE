@@ -19,7 +19,7 @@ class TokenRoleMapperTest {
     @MethodSource("회원_유형별_토큰_권한")
     void 회원_유형을_토큰_권한_목록으로_바꾼다(MemberType type, List<String> expected) {
         // when
-        List<String> sut = TokenRoleMapper.toTokenRoles(type);
+        List<String> sut = TokenRoleMapper.toTokenRoles(type, false);
 
         // then
         assertThat(sut).containsExactlyElementsOf(expected);
@@ -36,7 +36,7 @@ class TokenRoleMapperTest {
     @Test
     void 회원_유형이_null이면_예외가_발생한다() {
         // when & then
-        assertThatThrownBy(() -> TokenRoleMapper.toTokenRoles(null))
+        assertThatThrownBy(() -> TokenRoleMapper.toTokenRoles(null, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("type은 필수입니다.");
     }

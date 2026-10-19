@@ -11,6 +11,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.service.SellerApplicationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,13 +60,18 @@ class AuthServiceTest {
     @Mock
     RefreshTokenService refreshTokenService;
 
+    // 기본값 false라 별도 stub이 없는 테스트는 판매자가 아닌 회원(BUYER)으로 다룬다
+    @Mock
+    SellerApplicationService sellerApplicationService;
+
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         // 생성자에서 아이디가 없을 때 비교할 더미 해시를 만든다
         given(passwordEncoder.encode(anyString())).willReturn(DUMMY_HASH);
-        authService = new AuthService(memberRepository, passwordEncoder, accessTokenProvider, refreshTokenService);
+        authService = new AuthService(memberRepository, passwordEncoder, accessTokenProvider, refreshTokenService,
+                sellerApplicationService);
     }
 
     @Test

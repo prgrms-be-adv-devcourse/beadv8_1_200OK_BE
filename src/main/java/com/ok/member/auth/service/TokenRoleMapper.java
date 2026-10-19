@@ -23,13 +23,12 @@ final class TokenRoleMapper {
     private TokenRoleMapper() {
     }
 
-    static List<String> toTokenRoles(MemberType type) {
+    static List<String> toTokenRoles(MemberType type, boolean approvedSeller) {
         if (type == null) {
             throw new IllegalArgumentException("type은 필수입니다.");
         }
         return switch (type) {
-            // 판매자 권한(SELLER)은 판매자 승인 상태가 생기면 이 계산에 입력으로 추가한다
-            case USER -> List.of(TokenRoles.BUYER);
+            case USER -> approvedSeller ? List.of(TokenRoles.BUYER, TokenRoles.SELLER) : List.of(TokenRoles.BUYER);
             // 관리자는 운영 전용 계정이라 구매자·판매자 권한을 함께 주지 않는다
             case ADMIN -> List.of(TokenRoles.ADMIN);
         };
