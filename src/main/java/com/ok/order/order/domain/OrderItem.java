@@ -66,4 +66,15 @@ public class OrderItem extends BaseTime {
         item.status = OrderItemStatus.PAYMENT_PENDING;
         return item;
     }
+
+    // 결제 완료 -> 배송 준비
+    void markPreparing() {
+        this.status = OrderItemStatus.PREPARING;
+    }
+
+    // 결제 실패
+    void markPaymentFailed() {
+        this.status = OrderItemStatus.PAYMENT_FAILED;
+    }
+
 }

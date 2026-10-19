@@ -177,4 +177,29 @@ public class Order extends BaseTime {
         return allItems;
     }
 
+    // 결제 대기 상태인지
+    public boolean isPaymentPending() {
+        return status == OrderStatus.PAYMENT_PENDING;
+    }
+
+    // 결제 실패 상태인지
+    public boolean isPaymentFailed() {
+        return status == OrderStatus.PAYMENT_FAILED;
+    }
+
+    // 결제 완료
+    public void markPaid() {
+        this.status = OrderStatus.PAID;
+        for (OrderItem item : getAllItems()) {
+            item.markPreparing();
+        }
+    }
+
+    // 결제 실패 -> 주문과 상품 모두 결제 실패
+    public void markPaymentFailed() {
+        this.status = OrderStatus.PAYMENT_FAILED;
+        for (OrderItem item : getAllItems()) {
+            item.markPaymentFailed();
+        }
+    }
 }

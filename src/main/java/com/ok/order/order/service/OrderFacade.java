@@ -147,4 +147,14 @@ public class OrderFacade {
             log.error("주문 삭제 실패, orderId={}", orderId, e);
         }
     }
+
+    // 결제 실패 : 주문 상태 변경 후 선점한 재고 해제 (장바구니는 유지)
+    public void failPayment(Long orderId, String reason) {
+        log.info("[ORDER_PAYMENT_FAILED] orderId={}, reason={}", orderId, reason);
+
+        boolean shouldReleaseStock = orderService.failPayment(orderId);
+        if (shouldReleaseStock) {
+            productApiClient.releaseStock(orderId);
+        }
+    }
 }

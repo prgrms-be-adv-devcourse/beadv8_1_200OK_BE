@@ -142,4 +142,14 @@ public class CartService {
 
         return results;
     }
+
+    // 결제 완료된 주문의 상품을 장바구니에서 삭제
+    @Transactional
+    public void removeOrderItems(Long memberId, List<Long> productOptionIds) {
+        Optional<Cart> cartOptional = cartRepository.findByMemberId(memberId);
+        if (cartOptional.isEmpty()) {
+            return;
+        }
+        cartItemRepository.deleteAllByCartIdAndProductOptionIdIn(cartOptional.get().getId(), productOptionIds);
+    }
 }
