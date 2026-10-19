@@ -6,6 +6,7 @@ import com.ok.delivery.domain.AddressChangeStatus;
 import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.DeliveryDatePolicy;
 import com.ok.delivery.domain.DeliveryDateRange;
+import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.exception.DeliveryErrorCode;
@@ -26,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -38,7 +41,7 @@ public class ShipmentService {
     private final ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
     private final DeliveryRegionService deliveryRegionService;
     private final DeliveryDatePolicy deliveryDatePolicy;
-    private final SellerCutoffTimeReader sellerCutoffTimeReader;
+    private final SellerShippingSettingService sellerShippingSettingService;
     private final Clock clock;
 
     /**
@@ -60,8 +63,11 @@ public class ShipmentService {
         Address address = command.address().toAddress();
         RegionResult region = deliveryRegionService.resolve(address.getPostalCode());
         warnIfSurchargeMismatched(command, address, region);
+        // 견적과 같은 판매자 설정에서 마감 시간을 읽어야 견적에서 보여 준 도착 예정일과 어긋나지 않는다
+        Map<Long, SellerShippingSetting> settings = sellerShippingSettingService.getSettings(
+                command.sellers().stream().map(SellerShipmentCommand::sellerId).toList());
         List<Shipment> shipments = command.sellers().stream()
-                .map(seller -> toShipment(command, address, region, seller))
+                .map(seller -> toShipment(command, address, region, seller, settings.get(seller.sellerId()).cutoffTime()))
                 .toList();
         shipmentRepository.saveAll(shipments);
     }
@@ -99,8 +105,9 @@ public class ShipmentService {
         }
     }
 
-    private Shipment toShipment(ShipmentCreateCommand command, Address address, RegionResult region, SellerShipmentCommand seller) {
-        LocalDate shipDate = deliveryDatePolicy.shipDate(command.paidAt(), sellerCutoffTimeReader.cutoffTime(seller.sellerId()));
+    private Shipment toShipment(ShipmentCreateCommand command, Address address, RegionResult region,
+                                SellerShipmentCommand seller, LocalTime cutoffTime) {
+        LocalDate shipDate = deliveryDatePolicy.shipDate(command.paidAt(), cutoffTime);
         DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
         return Shipment.builder()
                 .orderId(command.orderId())

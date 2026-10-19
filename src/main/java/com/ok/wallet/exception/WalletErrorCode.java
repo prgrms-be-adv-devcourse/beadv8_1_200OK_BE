@@ -19,6 +19,8 @@ public enum WalletErrorCode implements ErrorCode {
     CHARGE_NOT_FOUND(HttpStatus.NOT_FOUND, "Charge not found", "충전 내역을 찾을 수 없습니다."),
     CHARGE_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_ENTITY, "Charge amount mismatch", "충전 요청 금액과 결제 금액이 다릅니다."),
     PAYMENT_KEY_ALREADY_USED(HttpStatus.CONFLICT, "Payment key already used", "이미 다른 충전에 사용된 결제입니다."),
+    INVALID_LEDGER_PERIOD(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid ledger period", "조회 시작일은 종료일보다 늦을 수 없습니다."),
+    UNSUPPORTED_LEDGER_TYPE(HttpStatus.UNPROCESSABLE_ENTITY, "Unsupported ledger type", "지원하지 않는 이용 내역 유형입니다."),
     ;
 
     private final HttpStatus httpStatus;

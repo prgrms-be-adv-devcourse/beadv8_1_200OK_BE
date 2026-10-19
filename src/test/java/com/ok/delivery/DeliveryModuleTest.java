@@ -29,7 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class})
 class DeliveryModuleTest {
 
-    // 모듈 테스트는 배송 모듈 빈만 띄워 상품 모듈의 구현체가 없다. 결제 완료 → shipment 생성 흐름은 판매자 배송 설정을 쓰지 않으므로 가짜로 채운다
+    // 판매자 배송 설정은 상품 모듈 빈이라 모듈 테스트에 뜨지 않는다. Modulith는 다른 모듈 타입의 빈 정의를 @Import로 넣어도 걸러 내므로 mock으로 채운다.
+    // mock은 빈 Map을 돌려줘 모든 판매자가 기본값으로 계산된다. 상품 쪽 실제 구현도 저장소가 생기기 전까지 같은 동작이다
     @MockitoBean
     SellerShippingPolicyProvider sellerShippingPolicyProvider;
 
