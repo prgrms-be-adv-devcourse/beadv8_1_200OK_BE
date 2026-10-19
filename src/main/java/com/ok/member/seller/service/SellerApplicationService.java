@@ -2,12 +2,19 @@ package com.ok.member.seller.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.member.seller.domain.SellerApplication;
+import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.repository.SellerApplicationRepository;
+import com.ok.member.seller.service.dto.SellerApplicationAdminResult;
 import com.ok.member.seller.service.dto.SellerApplicationResult;
+import com.ok.member.seller.service.dto.SellerApplicationSearchQuery;
 import com.ok.member.seller.service.dto.SellerApplyCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,12 +23,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 회원의 판매자 신청과 신청 조회를 처리한다. 승인·거절은 관리자 API가 맡는다.
+ * 판매자 신청을 처리한다. 회원의 신청·조회와 관리자의 조회·심사를 함께 맡는다.
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class SellerApplicationService {
+
+    // 먼저 신청한 순서대로 심사하도록 오래된 신청부터 보여 준다. 같은 일시면 id로 순서를 고정해 페이지 사이에서 흔들리지 않게 한다
+    private static final Sort OLDEST_FIRST = Sort.by(Sort.Order.asc("appliedAt"), Sort.Order.asc("id"));
 
     private final SellerApplicationRepository sellerApplicationRepository;
     private final SellerApplicationDuplicateValidator duplicateValidator;
@@ -68,6 +78,33 @@ public class SellerApplicationService {
     public SellerApplicationResult getMyApplication(Long memberId, Long applicationId) {
         return sellerApplicationRepository.findByIdAndMemberId(applicationId, memberId)
                 .map(SellerApplicationResult::from)
+                .orElseThrow(() -> new RestApiException(SellerErrorCode.SELLER_APPLICATION_NOT_FOUND));
+    }
+
+    /**
+     * 관리자용 신청 목록을 오래된 신청부터 한 페이지씩 반환한다.
+     *
+     * @param query 상태가 {@code null}이면 모든 상태를 조회한다
+     */
+    public Page<SellerApplicationAdminResult> getApplications(SellerApplicationSearchQuery query) {
+        Pageable pageable = PageRequest.of(query.page(), query.size(), OLDEST_FIRST);
+        Page<SellerApplication> applications = query.status() == null
+                ? sellerApplicationRepository.findAll(pageable)
+                : sellerApplicationRepository.findAllByStatus(SellerApplicationStatus.valueOf(query.status()), pageable);
+        return applications.map(SellerApplicationAdminResult::from);
+    }
+
+    /**
+     * 관리자용 신청 상세를 반환한다.
+     *
+     * @throws RestApiException 신청이 없으면 {@code SELLER_APPLICATION_NOT_FOUND}
+     */
+    public SellerApplicationAdminResult getApplication(Long applicationId) {
+        return SellerApplicationAdminResult.from(findApplication(applicationId));
+    }
+
+    private SellerApplication findApplication(Long applicationId) {
+        return sellerApplicationRepository.findById(applicationId)
                 .orElseThrow(() -> new RestApiException(SellerErrorCode.SELLER_APPLICATION_NOT_FOUND));
     }
 
