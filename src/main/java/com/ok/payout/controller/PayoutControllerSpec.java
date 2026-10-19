@@ -18,21 +18,30 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 /**
  * PayoutController의 Swagger 문서. 컨트롤러 코드와 문서 어노테이션을 분리하기 위해 인터페이스로 둔다.
  */
-@Tag(name = "Payout", description = "정산 API (개발용, prod 미등록. 인증 전까지 임시 헤더로 회원 정보를 받음)")
+@Tag(name = "Payout", description = "정산 API (개발용, prod 미등록)")
 interface PayoutControllerSpec {
 
     @Operation(summary = "정산 전체 수동 실행", description = """
             정산 배치를 지금 1회 실행합니다. 개발 중 수동 실행용이며 prod 정산은 스케줄러로만 실행합니다.
-            지금은 권한을 확인하지 않습니다(#52).
+            관리자만 실행할 수 있습니다.
             배치가 COMPLETED가 아니면 서버 오류(500)로 응답합니다. 실행 ID와 배치 상태는 서버 로그에 남습니다.
             실패 기록과 연결한 정식 응답은 #67에서 바뀝니다.
             """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "배치 실행 성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
             @ApiResponse(
                     responseCode = "500", description = "배치 실행 실패 (실행 ID와 배치 상태는 서버 로그에 남음)",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -65,10 +74,14 @@ interface PayoutControllerSpec {
 
     @Operation(summary = "정산 수동 조정 (막아 둠)", description = """
             관리자 전용 기능이지만 조정 번호 발급 방식이 정해지지 않아 막아 두었습니다. 누가 요청해도 조정되지 않습니다.
-            요청 형식 검증(422)이 먼저 이루어지고, 형식이 맞으면 관리자는 501, 관리자가 아니면 403입니다.
-            조정한 관리자 ID는 요청 바디가 아니라 회원 ID 헤더(인증 후에는 로그인 정보)에서 받습니다.
+            로그인하지 않았으면 401, 요청 형식이 틀리면 422가 먼저이고, 형식이 맞으면 관리자는 501, 관리자가 아니면 403입니다.
+            조정한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받습니다.
             """)
     @ApiResponses({
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
             @ApiResponse(
                     responseCode = "403", description = "관리자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -82,13 +95,12 @@ interface PayoutControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
-                    responseCode = "400", description = "회원 헤더 누락, 요청 본문을 읽을 수 없음",
+                    responseCode = "400", description = "요청 본문을 읽을 수 없음",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     ResponseEntity<Void> createAdjustment(
-            @Parameter(description = "요청 회원 ID (임시, #52). 조정한 관리자 ID로 기록될 값", example = "1") Long memberId,
-            @Parameter(description = "요청 회원 역할 (임시, #52). ADMIN, SELLER 외의 값은 권한 없음", example = "ADMIN") String memberRole,
+            @Parameter(hidden = true) Long memberId,
             PayoutAdjustmentCreateRequest request
     );
 
@@ -101,21 +113,21 @@ interface PayoutControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),
             @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
                     responseCode = "403", description = "판매자가 payeeId를 생략했거나 본인 ID가 아니거나 시스템 몫을 요청, 관리자·판매자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
                     responseCode = "422", description = "요청 값 검증 실패 (기간 누락, 시작 시각이 종료 시각보다 같거나 늦음, 기간 1년 초과, page·size 범위 등)",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
-            ),
-            @ApiResponse(
-                    responseCode = "400", description = "회원 헤더 누락",
-                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     ResponseEntity<PayoutPageResponse<PayoutSummaryResponse>> search(
-            @Parameter(description = "요청 회원 ID (임시, #52). 판매자면 payeeId와 같아야 함", example = "7") Long memberId,
-            @Parameter(description = "요청 회원 역할 (임시, #52). ADMIN, SELLER 외의 값은 권한 없음", example = "SELLER") String memberRole,
+            @Parameter(hidden = true) Long memberId,
+            @Parameter(hidden = true) Jwt jwt,
             @ParameterObject PayoutSearchRequest request
     );
 
@@ -129,6 +141,10 @@ interface PayoutControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),
             @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
                     responseCode = "403", description = "판매자가 남의 정산이나 시스템 몫 정산을 요청, 관리자·판매자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
@@ -141,13 +157,13 @@ interface PayoutControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
-                    responseCode = "400", description = "회원 헤더 누락, 정산 ID가 숫자가 아님",
+                    responseCode = "400", description = "정산 ID가 숫자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     ResponseEntity<PayoutDetailResponse> getDetail(
-            @Parameter(description = "요청 회원 ID (임시, #52)", example = "7") Long memberId,
-            @Parameter(description = "요청 회원 역할 (임시, #52). ADMIN, SELLER 외의 값은 권한 없음", example = "SELLER") String memberRole,
+            @Parameter(hidden = true) Long memberId,
+            @Parameter(hidden = true) Jwt jwt,
             @Parameter(description = "정산 ID", example = "12") Long payoutId
     );
 
@@ -158,6 +174,10 @@ interface PayoutControllerSpec {
             """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
             @ApiResponse(
                     responseCode = "403", description = "판매자가 남의 정산이나 시스템 몫 정산을 요청, 관리자·판매자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -171,13 +191,13 @@ interface PayoutControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
-                    responseCode = "400", description = "회원 헤더 누락, 정산 ID가 숫자가 아님",
+                    responseCode = "400", description = "정산 ID가 숫자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     ResponseEntity<PayoutPageResponse<PayoutItemResponse>> getItems(
-            @Parameter(description = "요청 회원 ID (임시, #52)", example = "7") Long memberId,
-            @Parameter(description = "요청 회원 역할 (임시, #52). ADMIN, SELLER 외의 값은 권한 없음", example = "SELLER") String memberRole,
+            @Parameter(hidden = true) Long memberId,
+            @Parameter(hidden = true) Jwt jwt,
             @Parameter(description = "정산 ID", example = "12") Long payoutId,
             @ParameterObject PayoutItemSearchRequest request
     );

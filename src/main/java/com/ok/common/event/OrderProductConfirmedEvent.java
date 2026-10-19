@@ -9,10 +9,10 @@ package com.ok.common.event;
  * @param shippingPrice  이 주문 상품의 배송비(원). 상품 단위로 부과하고 전액 판매자에게 귀속한다. 무료배송이면 0
  */
 public record OrderProductConfirmedEvent(
-        Long orderItemId,
-        Long sellerId,
-        Long totalItemPrice,
-        Long shippingPrice
-) {
-
+        Long orderId,               // 주문 ID
+        Long orderItemId,           // 주문항목 ID
+        Long sellerId,              // 판매자
+        Long totalItemPrice,        // 상품 총액
+        Long sellerShippingPrice    // 판매자 묶음 배송비 (같은 묶음의 상품마다 같은 값이 옴, 전액 판매자 귀속. 무료배송이면 0)
+) implements DomainEvent {
 }

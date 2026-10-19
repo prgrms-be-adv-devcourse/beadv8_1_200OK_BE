@@ -3,6 +3,7 @@ package com.ok.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.hamcrest.Matchers.endsWith;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,16 +13,16 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.context.WebApplicationContext;
 
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
@@ -31,32 +32,38 @@ import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.repository.ProductRepository;
-import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
 
 import com.jayway.jsonpath.JsonPath;
 
-@ActiveProfiles("test")
-@SpringBootTest(properties = {
-	"app.problem.base-uri=https://api.example.com/problems"
-})
-@AutoConfigureMockMvc
-@Import(TestcontainersConfiguration.class)
-class ProductCreateIntegrationTest {
+class ProductCreateIntegrationTest extends AbstractIntegrationTest {
 
 	// application-test.yml의 버킷(test-mock-bucket)과 리전으로 만든 업로드 URL
 	private static final String BUCKET_URL = "https://test-mock-bucket.s3.ap-northeast-2.amazonaws.com/product/";
 	private static final String IMAGE = BUCKET_URL + "a.jpg";
 	private static final String OPTION = """
 		{ "name": "3kg", "listPrice": 40000, "salePrice": 32000, "totalStock": 10 }""";
+	private static final Long SELLER_ID = 1L;
 
 	@Autowired
-	MockMvc mockMvc;
+	WebApplicationContext context;
+
+	@Autowired
+	TestAccessTokens tokens;
 
 	@Autowired
 	ProductRepository productRepository;
 
 	@Autowired
 	TransactionTemplate transactionTemplate;
+
+	private MockMvc mockMvc;
+
+	@BeforeEach
+	void setUp() {
+		mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+	}
 
 	@AfterEach
 	void tearDown() {
@@ -88,7 +95,7 @@ class ProductCreateIntegrationTest {
 		// 커밋된 뒤 새 트랜잭션에서 DB 값을 읽는다
 		transactionTemplate.executeWithoutResult(status -> {
 			Product product = productRepository.findById(productId).orElseThrow();
-			assertThat(product.getSellerId()).isEqualTo(1L);
+			assertThat(product.getSellerId()).isEqualTo(SELLER_ID);
 			assertThat(product.getName()).isEqualTo("청송 꿀사과");
 			assertThat(product.getCategory()).isEqualTo(ProductCategory.FRUIT);
 			assertThat(product.getRegion()).isEqualTo(ProductRegion.GYEONGBUK);
@@ -186,8 +193,7 @@ class ProductCreateIntegrationTest {
 
 	private ResultActions create(String body) throws Exception {
 		return mockMvc.perform(post("/api/v1/products")
-			.header("X-Member-Id", 1L)
-			.header("X-Member-Role", "SELLER")
+			.header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER_ID, "SELLER"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(body));
 	}
