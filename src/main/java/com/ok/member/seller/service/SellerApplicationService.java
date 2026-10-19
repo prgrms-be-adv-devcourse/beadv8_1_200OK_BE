@@ -2,10 +2,10 @@ package com.ok.member.seller.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.member.seller.domain.SellerApplication;
-import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.repository.SellerApplicationRepository;
 import com.ok.member.seller.service.dto.SellerApplicationResult;
+import com.ok.member.seller.service.dto.SellerApplyCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -14,8 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * 회원의 판매자 신청과 신청 조회를 처리한다. 승인·거절은 관리자 API가 맡는다.

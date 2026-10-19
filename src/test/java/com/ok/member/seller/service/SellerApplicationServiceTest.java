@@ -5,6 +5,7 @@ import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.repository.SellerApplicationRepository;
+import com.ok.member.seller.service.dto.SellerApplyCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,7 +25,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.BDDMockito.*;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
 class SellerApplicationServiceTest {

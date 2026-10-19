@@ -1,6 +1,6 @@
 package com.ok.member.seller.controller.dto;
 
-import com.ok.member.seller.service.SellerApplyCommand;
+import com.ok.member.seller.service.dto.SellerApplyCommand;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;

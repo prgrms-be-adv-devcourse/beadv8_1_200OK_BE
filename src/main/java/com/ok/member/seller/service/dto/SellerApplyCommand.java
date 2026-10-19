@@ -1,4 +1,4 @@
-package com.ok.member.seller.service;
+package com.ok.member.seller.service.dto;
 
 /**
  * 판매자 신청 입력. 값은 요청 DTO에서 정규화·형식 검증을 마친 상태다.

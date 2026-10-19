@@ -80,6 +80,7 @@ interface SellerApplicationControllerSpec {
     )
     @ApiResponse(responseCode = "200", description = "조회 성공")
     @ApiResponse(responseCode = "401", description = "로그인 필요")
+    @ApiResponse(responseCode = "403", description = "일반 회원이 아님 (관리자 계정)")
     ResponseEntity<SellerApplicationHistoryResponse> getMyApplications(Long memberId);
 
     @Operation(
@@ -88,6 +89,7 @@ interface SellerApplicationControllerSpec {
     )
     @ApiResponse(responseCode = "200", description = "조회 성공")
     @ApiResponse(responseCode = "401", description = "로그인 필요")
+    @ApiResponse(responseCode = "403", description = "일반 회원이 아님 (관리자 계정)")
     @ApiResponse(responseCode = "404", description = "신청이 없거나 본인의 신청이 아님")
     ResponseEntity<SellerApplicationResponse> getMyApplication(
             Long memberId,

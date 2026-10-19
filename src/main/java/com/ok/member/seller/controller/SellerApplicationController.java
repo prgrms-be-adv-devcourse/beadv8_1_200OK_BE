@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+// 판매자 신청은 일반 회원만 하는 일이다. 관리자는 운영 전용 계정이라 판매하지 않는다(MemberType.ADMIN).
+// 일반 회원 토큰에만 BUYER 권한이 있어, 신청과 조회 모두 이 권한으로 거른다. 관리자의 신청 조회는 관리자 API가 맡는다
+@PreAuthorize("hasRole('BUYER')")
 @RestController
 @RequestMapping("/api/v1/sellers/me/applications")
 @RequiredArgsConstructor
@@ -25,9 +28,7 @@ public class SellerApplicationController implements SellerApplicationControllerS
 
     private final SellerApplicationService sellerApplicationService;
 
-    // 관리자는 운영 전용 계정이라 판매하지 않는다(MemberType.ADMIN). 일반 회원 토큰에만 BUYER 권한이 있어 이것으로 거른다
     @Override
-    @PreAuthorize("hasRole('BUYER')")
     @PostMapping
     public ResponseEntity<SellerApplyResponse> apply(
             @CurrentMemberId Long memberId,
