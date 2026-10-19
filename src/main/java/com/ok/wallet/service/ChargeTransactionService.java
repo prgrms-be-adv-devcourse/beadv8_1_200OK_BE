@@ -93,7 +93,8 @@ class ChargeTransactionService {
     public ChargeConfirmResult failApproval(Long memberId, String chargeNo, String failureCode, String failureMessage) {
         Charge charge = findOwnedCharge(memberId, chargeNo);
         if (charge.getStatus() == ChargeStatus.IN_PROGRESS) {
-            charge.fail(failureCode, failureMessage, LocalDateTime.now(clock));
+            // 토스가 준 거절 코드·메시지는 길이를 통제할 수 없어, 컬럼 길이에 맞춰 잘라 저장한다
+            charge.fail(truncate(failureCode, 100), truncate(failureMessage, 500), LocalDateTime.now(clock));
         }
         return ChargeConfirmResult.from(charge);
     }
@@ -117,6 +118,11 @@ class ChargeTransactionService {
         return chargeRepository.findByChargeNo(chargeNo)
                 .filter(charge -> charge.isOwnedBy(memberId))
                 .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
+    }
+
+    // 값이 최대 길이를 넘으면 앞부분만 남긴다. 사용자 요청은 입구(@Size)에서 막고, 외부 응답처럼 통제할 수 없는 값에만 쓴다
+    private static String truncate(String value, int maxLength) {
+        return value == null || value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
     /** 트랜잭션 1의 결과. 이 요청이 승인을 시작했는지, 이미 처리된 건이었는지를 담는다. */
