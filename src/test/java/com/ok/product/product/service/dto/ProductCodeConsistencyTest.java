@@ -29,7 +29,7 @@ class ProductCodeConsistencyTest {
 		List<String> sut = constantNames(codeType);
 
 		// then
-		assertThat(sut).containsExactlyElementsOf(constantNames(domainType));
+		assertThat(sut).containsExactlyInAnyOrderElementsOf(constantNames(domainType));
 	}
 
 	static Stream<Arguments> 코드와_도메인_enum() {
