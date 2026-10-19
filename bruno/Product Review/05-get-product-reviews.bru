@@ -1,0 +1,27 @@
+meta {
+  name: 상품별 리뷰 목록
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/{{reviewProductId}}/reviews?page=0&size=20
+  body: none
+  auth: none
+}
+
+params:query {
+  page: 0
+  size: 20
+}
+
+assert {
+  res.status: eq 200
+  res.body.totalElements: eq 1
+  res.body.content[0].optionName: eq 3kg 특품
+  res.body.content[0].media.length: eq 2
+}
+
+docs {
+  로그인하지 않아도 됩니다. 최신순이고 page·size는 0부터, 1~100입니다.
+}

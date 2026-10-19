@@ -1,0 +1,150 @@
+package com.ok.order.order.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.order.cart.service.CartService;
+import com.ok.order.cart.service.dto.SelectedCartItem;
+import com.ok.order.order.client.DeliveryApiClient;
+import com.ok.order.order.client.ProductApiClient;
+import com.ok.order.order.client.WalletApiClient;
+import com.ok.order.order.client.dto.ProductOptionInfoResponse;
+import com.ok.order.order.client.dto.StockAllocationItemRequest;
+import com.ok.order.order.domain.Order;
+import com.ok.order.order.domain.OrderItem;
+import com.ok.order.order.domain.OrderLine;
+import com.ok.order.order.exception.OrderErrorCode;
+import com.ok.order.order.service.dto.CheckoutResult;
+import com.ok.order.order.service.dto.CreateOrderCommand;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class OrderFacade {
+
+    private final CartService cartService;
+    private final OrderService orderService;
+    private final ProductApiClient productApiClient;
+    private final DeliveryApiClient deliveryApiClient;
+    private final WalletApiClient walletApiClient;
+
+    // 주문서 조회
+    public CheckoutResult getCheckout(Long memberId) {
+        return CheckoutResult.from(buildOrder(memberId));
+    }
+
+    // 주문 생성
+    public Long createOrder(CreateOrderCommand command) {
+        // 장바구니 + 최신 상품 정보로 주문 만들기
+        Order order = buildOrder(command.memberId());
+        order.registerShippingAddress(command.recipientName(), command.recipientPhone(), command.zipCode(), command.address(), command.addressDetail());
+        order.agreeThirdPartyProvision(command.thirdPartyProvisionAgreed());
+
+        // 도서산간 운임 반영 -> 최종 금액 결정
+        long remoteAreaFee = deliveryApiClient.getRemoteAreaFee(command.zipCode()).additionalFee();
+        order.applyRemoteAreaFee(remoteAreaFee);
+
+        // 사용자가 본 금액과 다르면 중단
+        if (order.getTotalAmount() != command.expectedTotalAmount()) {
+            throw new RestApiException(OrderErrorCode.ORDER_AMOUNT_CHANGED);
+        }
+
+        // 잔액 확인
+        long balance = walletApiClient.getBalance(command.memberId()).balance();
+        if (balance < order.getTotalAmount()) {
+            throw new RestApiException(OrderErrorCode.INSUFFICIENT_BALANCE);
+        }
+
+        // 주문 저장
+        Long orderId = orderService.create(order);
+        log.info("주문 생성 완료, orderId={}", orderId);
+
+
+        // 재고 선점 + 이벤트 발행 (실패하면 되돌리기)
+        try {
+            productApiClient.allocateStock(orderId, toStockItems(order));
+            orderService.publishCreated(orderId);
+        } catch (RuntimeException e) {
+            cancelCreatedOrder(orderId);
+            throw e;
+        }
+
+        return orderId;
+    }
+
+    // 장바구니 선택 상품 + 상품 모듈의 최신 정보로 주문 객체 만들기 (저장 X)
+    private Order buildOrder(Long memberId) {
+        List<SelectedCartItem> cartItems = cartService.getSelectedCartItems(memberId);
+        if (cartItems.isEmpty()) {
+            throw new RestApiException(OrderErrorCode.EMPTY_ORDER_ITEMS);
+        }
+
+        // 각 상품별 옵션 ID 추출
+        List<Long> optionIds = new ArrayList<>();
+        for (SelectedCartItem item : cartItems) {
+            optionIds.add(item.productOptionId());
+        }
+
+        // 상품 옵션 ID로 상품 모듈에서 최신 정보 조회
+        Map<Long, ProductOptionInfoResponse> optionMap = new HashMap<>();
+        for (ProductOptionInfoResponse option : productApiClient.getOptions(optionIds)) {
+            optionMap.put(option.optionId(), option);
+        }
+
+        List<OrderLine> lines = new ArrayList<>();
+        for (SelectedCartItem item : cartItems) {
+            lines.add(toOrderLine(memberId, item, optionMap.get(item.productOptionId())));
+        }
+
+        return Order.create(memberId, lines);
+    }
+
+    // 장바구니 한 줄 + 상품 정보 -> 주문서 한 줄 + 구매 가능 여부 검사
+    private OrderLine toOrderLine(Long memberId, SelectedCartItem item, ProductOptionInfoResponse option) {
+        if (option == null) throw new RestApiException(OrderErrorCode.PRODUCT_OPTION_NOT_FOUND);
+        if (!option.purchasable()) throw new RestApiException(OrderErrorCode.PRODUCT_NOT_ON_SALE);
+        if (option.availableStock() < item.quantity()) throw new RestApiException(OrderErrorCode.OUT_OF_STOCK);
+        if (option.sellerId().equals(memberId)) throw new RestApiException(OrderErrorCode.CANNOT_ORDER_OWN_PRODUCT);
+
+        return new OrderLine(
+                option.productId(),
+                option.optionId(),
+                option.sellerId(),
+                option.productName(),
+                option.optionName(),
+                option.salePrice(),
+                item.quantity()
+        );
+    }
+
+    // 주문 상품 -> 재고 선점 요청 항목 추출
+    private List<StockAllocationItemRequest> toStockItems(Order order) {
+        List<StockAllocationItemRequest> items = new ArrayList<>();
+        for (OrderItem orderItem : order.getAllItems()) {
+            items.add(new StockAllocationItemRequest(orderItem.getProductOptionId(), orderItem.getQuantity()));
+        }
+        return items;
+    }
+
+    // 재고 선점 해제 + 주문 삭제
+    private void cancelCreatedOrder(Long orderId) {
+        // 재고 선점 해제
+        try {
+            productApiClient.releaseStock(orderId);
+        } catch(RuntimeException e) {
+            log.error("재고 선점 해제 실패, orderId={}", orderId, e);
+        }
+        // 주문 삭제
+        try {
+            orderService.delete(orderId);
+        } catch(RuntimeException e) {
+            log.error("주문 삭제 실패, orderId={}", orderId, e);
+        }
+    }
+}

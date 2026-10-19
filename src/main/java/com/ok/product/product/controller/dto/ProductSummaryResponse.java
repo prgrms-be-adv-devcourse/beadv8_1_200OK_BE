@@ -1,8 +1,8 @@
 package com.ok.product.product.controller.dto;
 
-import com.ok.product.product.domain.ProductCategory;
-import com.ok.product.product.domain.ProductRegion;
-import com.ok.product.product.domain.ProductStatus;
+import com.ok.product.product.service.dto.ProductCategoryCode;
+import com.ok.product.product.service.dto.ProductRegionCode;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductSummaryResult;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -29,13 +29,13 @@ public record ProductSummaryResponse(
 	int discountRate,
 
 	@Schema(description = "하위 카테고리", example = "FRUIT")
-	ProductCategory category,
+	ProductCategoryCode category,
 
 	@Schema(description = "산지 (시·도)", example = "GYEONGBUK")
-	ProductRegion region,
+	ProductRegionCode region,
 
 	@Schema(description = "판매 상태. 화면은 ON_SALE이 아니면 판매 예정·일시 중지·판매 종료로 표시한다", example = "ON_SALE")
-	ProductStatus status,
+	ProductStatusCode status,
 
 	@Schema(description = "품절 여부 (모든 옵션의 판매 가능 수량이 0)", example = "false")
 	boolean soldOut,

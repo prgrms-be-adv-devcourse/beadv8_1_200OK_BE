@@ -1,6 +1,5 @@
 package com.ok.payout.service;
 
-import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
@@ -20,6 +19,8 @@ import com.ok.payout.service.dto.PayoutDetailResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
+import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
+import com.ok.payout.service.publisher.PayoutEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -29,7 +30,6 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -62,6 +62,10 @@ class PayoutServiceTest {
     // 상세 조회 테스트의 스냅샷 대상 기간
     private static final LocalDateTime PERIOD_FROM = LocalDateTime.of(2026, 9, 27, 0, 0);
     private static final LocalDateTime PERIOD_TO = LocalDateTime.of(2026, 9, 30, 0, 0);
+    // 조회 API가 받는 토큰 권한 목록 (실제 토큰 모양: 판매자는 BUYER와 SELLER를 함께 가짐)
+    private static final List<String> ADMIN_ROLES = List.of("ADMIN");
+    private static final List<String> SELLER_ROLES = List.of("BUYER", "SELLER");
+    private static final List<String> BUYER_ROLES = List.of("BUYER");
 
     @Mock
     private PayoutQueryRepository payoutQueryRepository;
@@ -82,7 +86,7 @@ class PayoutServiceTest {
     private PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
 
     @Mock
-    private ApplicationEventPublisher eventPublisher;
+    private PayoutEventPublisher payoutEventPublisher;
 
     @InjectMocks
     private PayoutService sut;
@@ -94,7 +98,7 @@ class PayoutServiceTest {
     private ArgumentCaptor<List<PayoutSystemDraftItem>> systemItemsCaptor;
 
     @Captor
-    private ArgumentCaptor<SellerPayoutCreatedEvent> eventCaptor;
+    private ArgumentCaptor<SellerPayoutCreatedCommand> commandCaptor;
 
     // ---------- draft ----------
 
@@ -209,9 +213,9 @@ class PayoutServiceTest {
 
         // then: payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 확인하지 않음
         assertThat(published).isEqualTo(2);
-        then(eventPublisher).should(times(2)).publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getAllValues())
-                .extracting(SellerPayoutCreatedEvent::payeeId, SellerPayoutCreatedEvent::amount)
+        then(payoutEventPublisher).should(times(2)).publishSellerPayoutCreated(commandCaptor.capture());
+        assertThat(commandCaptor.getAllValues())
+                .extracting(SellerPayoutCreatedCommand::payeeId, SellerPayoutCreatedCommand::amount)
                 .containsExactlyInAnyOrder(
                         tuple(10L, 9_700L),
                         tuple(20L, 19_400L));
@@ -234,8 +238,8 @@ class PayoutServiceTest {
 
         // then
         assertThat(published).isEqualTo(1);
-        then(eventPublisher).should().publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getValue().payeeId()).isEqualTo(10L);
+        then(payoutEventPublisher).should().publishSellerPayoutCreated(commandCaptor.capture());
+        assertThat(commandCaptor.getValue().payeeId()).isEqualTo(10L);
     }
 
     // ---------- settlementTo / settlementFrom ----------
@@ -299,19 +303,11 @@ class PayoutServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.FEATURE_NOT_SUPPORTED));
     }
 
-    @ParameterizedTest
-    @MethodSource("관리자가_아닌_역할")
-    void 관리자가_아니면_수동_조정을_권한_없음으로_거절한다(String role) {
-        // when & then
-        assertThatThrownBy(() -> sut.createAdjustment(role, 1L, adjustmentCommand()))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
-    }
-
+    // 관리자가 아니면 거절하는 확인은 컨트롤러 @PreAuthorize로 옮겨서 서비스 테스트에는 없음 (PayoutBlockedApiIntegrationTest에서 확인)
     @Test
-    void 관리자여도_수동_조정은_아직_지원하지_않는_기능으로_거절한다() {
+    void 수동_조정은_아직_지원하지_않는_기능으로_거절한다() {
         // when & then
-        assertThatThrownBy(() -> sut.createAdjustment("ADMIN", 1L, adjustmentCommand()))
+        assertThatThrownBy(() -> sut.createAdjustment(1L, adjustmentCommand()))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.FEATURE_NOT_SUPPORTED));
     }
@@ -324,7 +320,7 @@ class PayoutServiceTest {
         PayoutSearchQuery query = searchQuery(null, null);
 
         // when & then
-        assertThatThrownBy(() -> sut.search(7L, "SELLER", query))
+        assertThatThrownBy(() -> sut.search(7L, SELLER_ROLES, query))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -335,7 +331,7 @@ class PayoutServiceTest {
         PayoutSearchQuery query = searchQuery(9L, null);
 
         // when & then
-        assertThatThrownBy(() -> sut.search(7L, "SELLER", query))
+        assertThatThrownBy(() -> sut.search(7L, SELLER_ROLES, query))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -346,7 +342,7 @@ class PayoutServiceTest {
         PayoutSearchQuery query = searchQuery(7L, true);
 
         // when & then
-        assertThatThrownBy(() -> sut.search(7L, "SELLER", query))
+        assertThatThrownBy(() -> sut.search(7L, SELLER_ROLES, query))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -357,7 +353,7 @@ class PayoutServiceTest {
         PayoutSearchQuery query = searchQuery(7L, null);
 
         // when & then
-        assertThatThrownBy(() -> sut.search(7L, "BUYER", query))
+        assertThatThrownBy(() -> sut.search(7L, BUYER_ROLES, query))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -370,7 +366,7 @@ class PayoutServiceTest {
                 .willReturn(new PageImpl<>(List.of(sellerPayout(12L, 7L, 13_000L))));
 
         // when
-        Page<PayoutSummaryResult> result = sut.search(7L, "SELLER", query);
+        Page<PayoutSummaryResult> result = sut.search(7L, SELLER_ROLES, query);
 
         // then
         assertThat(result.getContent())
@@ -386,7 +382,7 @@ class PayoutServiceTest {
                 .willReturn(new PageImpl<>(List.of(sellerPayout(12L, 7L, 13_000L), systemPayout(14L))));
 
         // when
-        Page<PayoutSummaryResult> result = sut.search(1L, "ADMIN", query);
+        Page<PayoutSummaryResult> result = sut.search(1L, ADMIN_ROLES, query);
 
         // then
         assertThat(result.getContent()).extracting(PayoutSummaryResult::payoutId).containsExactly(12L, 14L);
@@ -400,7 +396,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(99L)).willReturn(Optional.empty());
 
         // when & then
-        assertThatThrownBy(() -> sut.getDetail(1L, "ADMIN", 99L))
+        assertThatThrownBy(() -> sut.getDetail(1L, ADMIN_ROLES, 99L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_NOT_FOUND));
     }
@@ -411,7 +407,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(13L)).willReturn(Optional.of(sellerPayout(13L, 9L, 19_400L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getDetail(7L, "SELLER", 13L))
+        assertThatThrownBy(() -> sut.getDetail(7L, SELLER_ROLES, 13L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -422,7 +418,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(14L)).willReturn(Optional.of(systemPayout(14L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getDetail(7L, "SELLER", 14L))
+        assertThatThrownBy(() -> sut.getDetail(7L, SELLER_ROLES, 14L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -433,7 +429,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(12L)).willReturn(Optional.of(sellerPayout(12L, 7L, 13_000L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getDetail(7L, "BUYER", 12L))
+        assertThatThrownBy(() -> sut.getDetail(7L, BUYER_ROLES, 12L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -445,7 +441,7 @@ class PayoutServiceTest {
         given(payoutSnapshotRepository.findById(SNAPSHOT_ID)).willReturn(Optional.empty());
 
         // when & then
-        assertThatThrownBy(() -> sut.getDetail(1L, "ADMIN", 12L))
+        assertThatThrownBy(() -> sut.getDetail(1L, ADMIN_ROLES, 12L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("정산의 스냅샷이 없습니다. payoutId=12");
     }
@@ -458,7 +454,7 @@ class PayoutServiceTest {
         given(payoutQueryRepository.summarizeSellerFeeItems(14L, 7L)).willReturn(new CountAndAmount(1, 300));
 
         // when
-        PayoutDetailResult result = sut.getDetail(1L, "ADMIN", 12L);
+        PayoutDetailResult result = sut.getDetail(1L, ADMIN_ROLES, 12L);
 
         // then
         assertThat(result).isNotNull();
@@ -483,7 +479,7 @@ class PayoutServiceTest {
         given(payoutQueryRepository.summarizeSellerFeeItems(14L, 7L)).willReturn(new CountAndAmount(1, 300));
 
         // when
-        PayoutDetailResult result = sut.getDetail(7L, "SELLER", 12L);
+        PayoutDetailResult result = sut.getDetail(7L, SELLER_ROLES, 12L);
 
         // then
         assertThat(result).isNotNull();
@@ -500,7 +496,7 @@ class PayoutServiceTest {
         givenDetail(systemPayout(14L), 1L);
 
         // when
-        PayoutDetailResult result = sut.getDetail(1L, "ADMIN", 14L);
+        PayoutDetailResult result = sut.getDetail(1L, ADMIN_ROLES, 14L);
 
         // then
         assertThat(result).isNotNull();
@@ -519,7 +515,7 @@ class PayoutServiceTest {
         given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.empty());
 
         // when
-        PayoutDetailResult result = sut.getDetail(1L, "ADMIN", 12L);
+        PayoutDetailResult result = sut.getDetail(1L, ADMIN_ROLES, 12L);
 
         // then
         assertThat(result).isNotNull();
@@ -538,7 +534,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(99L)).willReturn(Optional.empty());
 
         // when & then
-        assertThatThrownBy(() -> sut.getItems(1L, "ADMIN", 99L, new PayoutItemSearchQuery(0, 20)))
+        assertThatThrownBy(() -> sut.getItems(1L, ADMIN_ROLES, 99L, new PayoutItemSearchQuery(0, 20)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_NOT_FOUND));
     }
@@ -549,7 +545,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(13L)).willReturn(Optional.of(sellerPayout(13L, 9L, 19_400L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getItems(7L, "SELLER", 13L, new PayoutItemSearchQuery(0, 20)))
+        assertThatThrownBy(() -> sut.getItems(7L, SELLER_ROLES, 13L, new PayoutItemSearchQuery(0, 20)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -560,7 +556,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(14L)).willReturn(Optional.of(systemPayout(14L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getItems(7L, "SELLER", 14L, new PayoutItemSearchQuery(0, 20)))
+        assertThatThrownBy(() -> sut.getItems(7L, SELLER_ROLES, 14L, new PayoutItemSearchQuery(0, 20)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
@@ -571,7 +567,7 @@ class PayoutServiceTest {
         given(payoutRepository.findById(12L)).willReturn(Optional.of(sellerPayout(12L, 7L, 13_000L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getItems(7L, "BUYER", 12L, new PayoutItemSearchQuery(0, 20)))
+        assertThatThrownBy(() -> sut.getItems(7L, BUYER_ROLES, 12L, new PayoutItemSearchQuery(0, 20)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
     }
