@@ -201,9 +201,10 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
         return new SellerShipmentCommand(sellerId, 3_000L, 50_000L, regionSurcharge, items);
     }
 
+    // 다른 테스트 데이터에 영향받지 않게 해당 주문의 행만 고른다. findAllById는 순서를 보장하지 않아 판매자 순으로 정렬한다
     private List<Shipment> shipmentsOf(Long orderId) {
-        return shipmentRepository.findAll().stream()
-                .filter(shipment -> shipment.getOrderId().equals(orderId))
+        List<Long> ids = jdbcTemplate.queryForList("SELECT id FROM shipment WHERE order_id = ?", Long.class, orderId);
+        return shipmentRepository.findAllById(ids).stream()
                 .sorted(Comparator.comparing(Shipment::getSellerId))
                 .toList();
     }
