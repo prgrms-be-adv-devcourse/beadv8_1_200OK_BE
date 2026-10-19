@@ -71,25 +71,30 @@ public class BuyerWalletService {
      * 지갑을 잠근 뒤 확인하므로, 같은 회원의 결제·충전이 동시에 와도 순서대로 처리된다.
      * 지갑이 없으면 잔액 0원인 지갑을 만든 뒤 판단하므로 잔액 부족이 된다.
      *
+     * <p>금액은 0보다 커야 한다. 호출하는 쪽이 걸러 넘기며, 0 이하가 오면 IllegalArgumentException을 던진다.
+     *
      * <p>READ COMMITTED로 실행해, 지갑 잠금을 기다리는 사이 같은 주문으로 먼저 커밋된 결과를 최신으로 읽는다.
      * REPEATABLE READ에서는 잠금 전에 찍힌 스냅샷을 봐서, 동시에 온 같은 주문이 이미 처리됐는지 알 수 없다.
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderPaymentResult payForOrder(Long memberId, Long orderId, long amount) {
+        // 호출하는 쪽(OrderPaymentService)이 금액을 걸러 넘긴다. 0 이하가 오면 시스템 값 이상이라 표준 예외로 막는다
+        if (amount <= 0) {
+            throw new IllegalArgumentException("결제 금액은 0보다 커야 합니다. amount=" + amount);
+        }
         BuyerWallet wallet = getOrCreate(memberId);
         Optional<WalletOrderPayment> processed = walletOrderPaymentRepository.findByOrderId(orderId);
         if (processed.isPresent()) {
             return processed.get().isPaid() ? OrderPaymentResult.ALREADY_PAID : OrderPaymentResult.ALREADY_FAILED;
         }
 
-        LocalDateTime now = LocalDateTime.now(clock);
         if (!wallet.hasEnoughBalance(amount)) {
-            walletOrderPaymentRepository.save(WalletOrderPayment.failed(orderId, memberId, amount, now));
+            walletOrderPaymentRepository.save(WalletOrderPayment.failed(orderId, memberId, amount));
             return OrderPaymentResult.INSUFFICIENT_BALANCE;
         }
         // 원장 근거 키는 마지막 안전장치로 남긴다 (같은 주문이 두 번 기록되려 하면 유니크 제약이 막는다)
         buyerWalletLedgerRepository.save(wallet.pay(amount, "PAYMENT:" + orderId));
-        walletOrderPaymentRepository.save(WalletOrderPayment.paid(orderId, memberId, amount, now));
+        walletOrderPaymentRepository.save(WalletOrderPayment.paid(orderId, memberId, amount));
         return OrderPaymentResult.PAID;
     }
 }
