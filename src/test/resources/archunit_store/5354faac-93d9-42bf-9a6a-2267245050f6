@@ -1,5 +1,3 @@
-Method <com.ok.media.controller.MediaController.upload(com.ok.media.domain.MediaPurpose, org.springframework.web.multipart.MultipartFile)> has parameter of type <com.ok.media.domain.MediaPurpose> in (MediaController.java:0)
-Method <com.ok.media.controller.spec.MediaApiSpec.upload(com.ok.media.domain.MediaPurpose, org.springframework.web.multipart.MultipartFile)> has parameter of type <com.ok.media.domain.MediaPurpose> in (MediaApiSpec.java:0)
 Method <com.ok.order.cart.controller.dto.CartItemResponse.from(com.ok.order.cart.domain.CartItem)> calls method <com.ok.order.cart.domain.CartItem.getId()> in (CartItemResponse.java:23)
 Method <com.ok.order.cart.controller.dto.CartItemResponse.from(com.ok.order.cart.domain.CartItem)> calls method <com.ok.order.cart.domain.CartItem.getProductOptionId()> in (CartItemResponse.java:24)
 Method <com.ok.order.cart.controller.dto.CartItemResponse.from(com.ok.order.cart.domain.CartItem)> calls method <com.ok.order.cart.domain.CartItem.getQuantity()> in (CartItemResponse.java:25)

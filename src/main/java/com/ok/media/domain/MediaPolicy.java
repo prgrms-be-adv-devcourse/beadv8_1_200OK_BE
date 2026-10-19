@@ -1,5 +1,6 @@
 package com.ok.media.domain;
 
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Set;
 
@@ -18,6 +19,12 @@ public class MediaPolicy {
 	// 디코딩 허용 해상도
 	public static final int MAX_DECODE_DIMENSION = 8000;
 	public static final long MAX_DECODE_PIXELS = 40_000_000L;
+
+	// 회원별 업로드 횟수 정책
+	// 상품 하나에 이미지가 최대 10장이라, 상품 여러 개를 연달아 등록해도 걸리지 않을 만큼 둔다
+	public static final int MAX_UPLOADS_PER_WINDOW = 50;
+	public static final long UPLOAD_LIMIT_WINDOW_MINUTES = 10;
+	public static final Duration UPLOAD_LIMIT_WINDOW = Duration.ofMinutes(UPLOAD_LIMIT_WINDOW_MINUTES);
 
 	// 허용 포멧 정책
 	private static final Set<String> IMAGE_CONTENT_TYPES = Set.of("image/jpeg", "image/png");

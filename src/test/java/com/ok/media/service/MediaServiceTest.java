@@ -6,12 +6,13 @@ import com.ok.common.media.dto.MediaInfo;
 import com.ok.media.domain.Media;
 import com.ok.media.domain.MediaPolicy;
 import com.ok.media.domain.MediaPurpose;
+import com.ok.media.exception.MediaErrorCode;
 import com.ok.media.repository.MediaRepository;
+import com.ok.media.service.dto.MediaPurposeCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
@@ -30,12 +31,17 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -45,6 +51,9 @@ class MediaServiceTest {
 
 	private static final String BUCKET = "test-bucket";
 	private static final String STUB_URL = "https://test-bucket.s3.amazonaws.com/k";
+	private static final Long MEMBER_ID = 1L;
+	private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
+	private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-19T03:00:00Z"), ZONE);
 
 	@Mock
 	S3Client s3Client;
@@ -55,11 +64,11 @@ class MediaServiceTest {
 	@Mock
 	MediaRepository mediaRepository;
 
-	@InjectMocks
 	MediaService mediaService;
 
 	@BeforeEach
 	void setUp() {
+		mediaService = new MediaService(s3Client, mediaRepository, CLOCK);
 		ReflectionTestUtils.setField(mediaService, "bucket", BUCKET);
 	}
 
@@ -71,11 +80,11 @@ class MediaServiceTest {
 		MockMultipartFile file = new MockMultipartFile("file", "empty.png", "image/png", new byte[0]);
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.BAD_REQUEST);
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
@@ -84,11 +93,11 @@ class MediaServiceTest {
 		MockMultipartFile file = new MockMultipartFile("file", "a.gif", "image/gif", new byte[]{1, 2, 3});
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.BAD_REQUEST);
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
@@ -97,11 +106,11 @@ class MediaServiceTest {
 		MultipartFile file = oversizedFile("image/png", MediaPolicy.MAX_IMAGE_SIZE_BYTES + 1);
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.CONTENT_TOO_LARGE);
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
@@ -110,11 +119,11 @@ class MediaServiceTest {
 		MultipartFile file = oversizedFile("video/mp4", MediaPolicy.MAX_VIDEO_SIZE_BYTES + 1);
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.CONTENT_TOO_LARGE);
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
@@ -123,11 +132,11 @@ class MediaServiceTest {
 		MockMultipartFile file = new MockMultipartFile("file", "fake.png", "image/png", "not an image".getBytes());
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.BAD_REQUEST);
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
@@ -137,11 +146,11 @@ class MediaServiceTest {
 		MockMultipartFile file = pngWithHeaderResolution(50_000, 50_000);
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOfSatisfying(RestApiException.class,
 						e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.CONTENT_TOO_LARGE));
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
@@ -154,11 +163,44 @@ class MediaServiceTest {
 		given(file.getInputStream()).willThrow(new IOException("read failed"));
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.INTERNAL_ERROR);
 		then(s3Client).shouldHaveNoInteractions();
-		then(mediaRepository).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
+	}
+
+	@Test
+	void 최근_10분_업로드가_50회에_도달하면_UPLOAD_LIMIT_EXCEEDED_예외가_발생하고_S3에_올리지_않는다() throws IOException {
+		// given
+		MockMultipartFile file = pngFile(10, 10);
+		given(mediaRepository.countByMemberIdAndCreatedAtAfter(eq(MEMBER_ID), any(LocalDateTime.class)))
+				.willReturn((long) MediaPolicy.MAX_UPLOADS_PER_WINDOW);
+
+		// when & then
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
+				.isInstanceOfSatisfying(RestApiException.class,
+						e -> assertThat(e.getErrorCode()).isEqualTo(MediaErrorCode.UPLOAD_LIMIT_EXCEEDED));
+		then(s3Client).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
+	}
+
+	@Test
+	void 업로드_횟수는_현재_시각부터_10분_전_이후에_올린_것으로_센다() throws IOException {
+		// given
+		MockMultipartFile file = pngFile(10, 10);
+		given(mediaRepository.countByMemberIdAndCreatedAtAfter(eq(MEMBER_ID), any(LocalDateTime.class)))
+				.willReturn((long) MediaPolicy.MAX_UPLOADS_PER_WINDOW - 1);
+		stubSuccessfulUpload();
+
+		// when
+		mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file);
+
+		// then
+		ArgumentCaptor<LocalDateTime> windowStartCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+		then(mediaRepository).should().countByMemberIdAndCreatedAtAfter(eq(MEMBER_ID), windowStartCaptor.capture());
+		assertThat(windowStartCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 10, 19, 11, 50));
+		then(mediaRepository).should().save(any(Media.class));
 	}
 
 	// ---------- 성공 분기 ----------
@@ -170,7 +212,7 @@ class MediaServiceTest {
 		stubSuccessfulUpload();
 
 		// when
-		MediaInfo result = mediaService.upload(MediaPurpose.PRODUCT, file);
+		MediaInfo result = mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file);
 
 		// then
 		ArgumentCaptor<PutObjectRequest> requestCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
@@ -183,6 +225,7 @@ class MediaServiceTest {
 		ArgumentCaptor<Media> mediaCaptor = ArgumentCaptor.forClass(Media.class);
 		then(mediaRepository).should().save(mediaCaptor.capture());
 		Media saved = mediaCaptor.getValue();
+		assertThat(saved.getMemberId()).isEqualTo(MEMBER_ID);
 		assertThat(saved.getPurpose()).isEqualTo(MediaPurpose.PRODUCT);
 		assertThat(saved.getObjectKey()).isEqualTo(request.key());
 		assertThat(saved.getContentType()).isEqualTo("image/jpeg");
@@ -200,7 +243,7 @@ class MediaServiceTest {
 		stubSuccessfulUpload();
 
 		// when
-		MediaInfo result = mediaService.upload(MediaPurpose.PRODUCT_REVIEW, file);
+		MediaInfo result = mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT_REVIEW, file);
 
 		// then
 		ArgumentCaptor<PutObjectRequest> requestCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
@@ -227,7 +270,7 @@ class MediaServiceTest {
 		stubSuccessfulUpload();
 
 		// when
-		mediaService.upload(MediaPurpose.PRODUCT, file);
+		mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file);
 
 		// then
 		ArgumentCaptor<RequestBody> bodyCaptor = ArgumentCaptor.forClass(RequestBody.class);
@@ -248,7 +291,7 @@ class MediaServiceTest {
 				.willThrow(S3Exception.builder().message("boom").build());
 
 		// when & then
-		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOf(S3Exception.class);
 		then(mediaRepository).should(never()).save(any());
 	}

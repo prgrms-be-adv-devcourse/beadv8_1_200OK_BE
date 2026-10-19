@@ -20,6 +20,10 @@ public class Media {
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
 
+	// 업로드 횟수 제한과 업로더 추적에 쓴다. 컬럼 추가 전에 올라온 미디어는 업로더를 알 수 없어 NULL이다
+	@Column(name = "member_id")
+	private Long memberId;
+
 	@Enumerated(EnumType.STRING)
 	@Column(name = "purpose", length = 30, nullable = false)
 	private MediaPurpose purpose;
@@ -37,14 +41,15 @@ public class Media {
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private LocalDateTime createdAt;
 
-	private Media(MediaPurpose purpose, String objectKey, String contentType, long fileSize) {
+	private Media(Long memberId, MediaPurpose purpose, String objectKey, String contentType, long fileSize) {
+		this.memberId = memberId;
 		this.purpose = purpose;
 		this.objectKey = objectKey;
 		this.contentType = contentType;
 		this.fileSize = fileSize;
 	}
 
-	public static Media of(MediaPurpose purpose, String objectKey, String contentType, long fileSize) {
-		return new Media(purpose, objectKey, contentType, fileSize);
+	public static Media of(Long memberId, MediaPurpose purpose, String objectKey, String contentType, long fileSize) {
+		return new Media(memberId, purpose, objectKey, contentType, fileSize);
 	}
 }

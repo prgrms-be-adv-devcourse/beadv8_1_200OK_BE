@@ -6,7 +6,9 @@ import com.ok.common.media.dto.MediaInfo;
 import com.ok.media.domain.Media;
 import com.ok.media.domain.MediaPolicy;
 import com.ok.media.domain.MediaPurpose;
+import com.ok.media.exception.MediaErrorCode;
 import com.ok.media.repository.MediaRepository;
+import com.ok.media.service.dto.MediaPurposeCode;
 import lombok.RequiredArgsConstructor;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,8 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.Iterator;
 import java.util.UUID;
 
@@ -35,6 +39,7 @@ public class MediaService {
 
 	private final S3Client s3Client;
 	private final MediaRepository mediaRepository;
+	private final Clock clock;
 
 	// S3 업로드 완료 후 저장된 객체의 최종 정보 (objectKey, 최종 contentType, 최종 바이트 크기)
 	private record UploadResult(String objectKey, String contentType, long size) {
@@ -87,7 +92,12 @@ public class MediaService {
 		}
 	}
 
-	public MediaInfo upload(MediaPurpose purpose, MultipartFile file) {
+	public MediaInfo upload(Long memberId, MediaPurposeCode purposeCode, MultipartFile file) {
+		MediaPurpose purpose = purposeCode.toDomain();
+
+		// 한도를 넘은 요청이 이미지 디코딩·S3 업로드 자원을 쓰기 전에 끊는다
+		validateUploadLimit(memberId);
+
 		if (file.isEmpty()) {
 			throw new RestApiException(CommonErrorCode.BAD_REQUEST, "빈 파일은 업로드할 수 없습니다.");
 		}
@@ -117,10 +127,20 @@ public class MediaService {
 
 		// S3 putObject 성공 후 메타데이터 저장
 		Media media = mediaRepository.save(
-				Media.of(purpose, result.objectKey(), result.contentType(), result.size())
+				Media.of(memberId, purpose, result.objectKey(), result.contentType(), result.size())
 		);
 
 		return new MediaInfo(media.getId(), buildUrl(result.objectKey()));
+	}
+
+	// 저장된 미디어 수로 세므로 실패한 업로드는 횟수에 들어가지 않는다.
+	// 세기와 저장이 원자적이지 않아 동시 요청이면 한도를 몇 건 넘을 수 있는데, 남용 방지가 목적이라 감수한다
+	private void validateUploadLimit(Long memberId) {
+		LocalDateTime windowStart = LocalDateTime.now(clock).minus(MediaPolicy.UPLOAD_LIMIT_WINDOW);
+		long recentUploads = mediaRepository.countByMemberIdAndCreatedAtAfter(memberId, windowStart);
+		if (recentUploads >= MediaPolicy.MAX_UPLOADS_PER_WINDOW) {
+			throw new RestApiException(MediaErrorCode.UPLOAD_LIMIT_EXCEEDED);
+		}
 	}
 
 	private UploadResult uploadImage(MultipartFile file, String objectKeyWithoutExtension) throws IOException {

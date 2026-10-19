@@ -1,9 +1,10 @@
 package com.ok.media.controller;
 
 import com.ok.common.media.dto.MediaInfo;
+import com.ok.common.security.CurrentMemberId;
 import com.ok.media.controller.spec.MediaApiSpec;
-import com.ok.media.domain.MediaPurpose;
 import com.ok.media.service.MediaService;
+import com.ok.media.service.dto.MediaPurposeCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -30,10 +31,11 @@ public class MediaController implements MediaApiSpec {
 			produces = MediaType.APPLICATION_JSON_VALUE
 	)
 	public ResponseEntity<MediaInfo> upload(
-			@PathVariable("purpose") MediaPurpose purpose,
+			@CurrentMemberId Long memberId,
+			@PathVariable("purpose") MediaPurposeCode purpose,
 			@RequestPart("file") MultipartFile file
 	) {
-		MediaInfo response = mediaService.upload(purpose, file);
+		MediaInfo response = mediaService.upload(memberId, purpose, file);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 }
