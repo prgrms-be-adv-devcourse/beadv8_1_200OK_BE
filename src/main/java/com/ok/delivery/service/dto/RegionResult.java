@@ -14,4 +14,12 @@ public record RegionResult(String regionGroup, int surcharge, int extraDeliveryD
     public static RegionResult general() {
         return new RegionResult(RegionGroup.GENERAL_CODE, 0, 0);
     }
+
+    /**
+     * 도서산간 지역인지 판단한다.
+     * 산간({@code MOUNTAIN})처럼 추가 운임이 0원이어도 도착 예정일이 늘어나므로, 운임이 아니라 지역 그룹으로 판단한다.
+     */
+    public boolean isRemoteArea() {
+        return !RegionGroup.GENERAL_CODE.equals(regionGroup);
+    }
 }
