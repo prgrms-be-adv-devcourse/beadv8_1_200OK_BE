@@ -24,7 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.media.MediaUrlResolver;
+import com.ok.common.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOption;

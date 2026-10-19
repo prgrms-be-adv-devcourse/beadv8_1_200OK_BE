@@ -248,13 +248,14 @@ class ProductTest {
 	}
 
 	@Test
-	void 리뷰가_없으면_평균_별점은_0이고_있으면_소수_첫째_자리까지() {
+	void 리뷰가_없으면_평균_별점은_0이고_있으면_5점_만점_소수_첫째_자리까지() {
 		Product product = create(List.of(ProductOptionSpec.newOption("A", null, 30_000L, 10)));
 		assertThat(product.averageRating()).isZero();
 
+		// 별점 저장값 1~10의 합. 25 / 3 / 2 = 4.166...
 		ReflectionTestUtils.setField(product, "reviewCount", 3);
-		ReflectionTestUtils.setField(product, "ratingSum", 13);
-		assertThat(product.averageRating()).isEqualTo(4.3);
+		ReflectionTestUtils.setField(product, "ratingSum", 25);
+		assertThat(product.averageRating()).isEqualTo(4.2);
 	}
 
 	@Test
