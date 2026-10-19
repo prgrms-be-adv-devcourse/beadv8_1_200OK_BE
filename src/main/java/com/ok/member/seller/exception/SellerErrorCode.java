@@ -20,6 +20,8 @@ public enum SellerErrorCode implements ErrorCode {
     INVALID_BUSINESS_NUMBER(HttpStatus.UNPROCESSABLE_CONTENT, "Invalid business number",
             "사업자등록번호는 000-00-00000 형식이어야 합니다."),
     INVALID_REJECT_REASON(HttpStatus.UNPROCESSABLE_CONTENT, "Invalid reject reason", "거절 사유가 올바르지 않습니다."),
+    SELLER_APPLICATION_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "Seller application concurrent modification",
+            "다른 관리자가 먼저 처리했습니다. 새로고침 후 다시 확인해 주세요."),
     ;
 
     private final HttpStatus httpStatus;

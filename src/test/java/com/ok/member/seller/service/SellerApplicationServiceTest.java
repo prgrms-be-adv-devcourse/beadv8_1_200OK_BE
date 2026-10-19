@@ -44,6 +44,9 @@ class SellerApplicationServiceTest {
     @Mock
     SellerApplicationDuplicateValidator duplicateValidator;
 
+    @Mock
+    SellerEventPublisher sellerEventPublisher;
+
     SellerApplicationService sellerApplicationService;
 
     private final SellerApplyCommand command =
@@ -52,7 +55,8 @@ class SellerApplicationServiceTest {
     // @InjectMocks는 @Mock 필드만 생성자에 넣어 주므로 Clock을 넣어 직접 만든다
     @BeforeEach
     void setUp() {
-        sellerApplicationService = new SellerApplicationService(sellerApplicationRepository, duplicateValidator, CLOCK);
+        sellerApplicationService = new SellerApplicationService(
+                sellerApplicationRepository, duplicateValidator, sellerEventPublisher, CLOCK);
     }
 
     @Test
