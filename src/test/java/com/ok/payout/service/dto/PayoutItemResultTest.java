@@ -16,7 +16,7 @@ class PayoutItemResultTest {
     @Test
     void 조회_결과_한_줄의_값을_항목_결과로_옮기고_항목_종류는_문자열로_바꾼다() {
         // given: ID들에 일부러 다른 숫자를 넣음. 같은 숫자면 서로 바뀌어 옮겨져도 티가 안 나서 실수를 못 잡음
-        PayoutItemRow row = new PayoutItemRow(101L, 55L, PayoutEventType.SALE_AMOUNT, 900L, 7L, 9_700L,
+        PayoutItemRow row = new PayoutItemRow(101L, 55L, PayoutEventType.SALE_AMOUNT, 300L, 900L, 7L, 9_700L,
                 CANDIDATE_CREATED_AT, 0L, null, null);
 
         // when
@@ -28,6 +28,7 @@ class PayoutItemResultTest {
             softly.assertThat(sut.payoutItemId()).isEqualTo(101L);
             softly.assertThat(sut.candidateId()).isEqualTo(55L);
             softly.assertThat(sut.eventType()).isEqualTo("SALE_AMOUNT");
+            softly.assertThat(sut.orderId()).isEqualTo(300L);
             softly.assertThat(sut.orderItemId()).isEqualTo(900L);
             softly.assertThat(sut.sellerId()).isEqualTo(7L);
             softly.assertThat(sut.amount()).isEqualTo(9_700L);
@@ -82,7 +83,7 @@ class PayoutItemResultTest {
     }
 
     private PayoutItemRow row(Long adjustmentId, Long adminId, String reason) {
-        return new PayoutItemRow(101L, 55L, PayoutEventType.SALE_AMOUNT, 900L, 7L, -2_000L,
+        return new PayoutItemRow(101L, 55L, PayoutEventType.SALE_AMOUNT, 300L, 900L, 7L, -2_000L,
                 CANDIDATE_CREATED_AT, adjustmentId, adminId, reason);
     }
 }

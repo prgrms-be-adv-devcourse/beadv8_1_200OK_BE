@@ -77,7 +77,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 //   → 정산 3건이 시스템 몫, 판매자 9, 판매자 7 순서로 나오고 → 0페이지, 크기 20, 전체 3건, 1페이지여야 한다
 class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
 
-    // 이 클래스 전용 주문항목 ID 번호대 (PayoutSettleIntegrationTest는 8_000_000, PayoutCandidateIntegrationTest는 9_000_000부터)
+    // 이 클래스 전용 주문항목 ID 번호대 (PayoutSettleIntegrationTest는 8_000_000, PayoutCandidateIntegrationTest는 주문항목 9_000_000·주문 9_500_000부터)
+    // 주문 ID에도 같은 번호를 쓰므로 정리는 order_id 이 범위로 함
     private static final long ORDER_ITEM_ID_START = 6_000_000L;
     private static final long ORDER_ITEM_ID_END = 7_000_000L;
     private static final AtomicLong ORDER_ITEM_ID_SEQ = new AtomicLong(ORDER_ITEM_ID_START);
@@ -142,7 +143,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         orderItemA = nextOrderItemId();
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemA, SELLER_7, 9_700L);
         insertCandidate(PayoutEventType.SALE_FEE, orderItemA, SELLER_7, 300L);
-        insertCandidate(PayoutEventType.SALE_SHIPPING_FEE, orderItemA, SELLER_7, 3_000L);
+        insertShippingFee(orderItemA, SELLER_7, 3_000L);   // 주문 A의 판매자 7 묶음 배송비 (주문 ID = orderItemA)
         insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemA, SELLER_7, -2_000L, 4L, ADMIN_ID, "금액 오입력 정정");
 
         long orderItemB = nextOrderItemId();
@@ -430,9 +431,15 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         String body = mockMvc.perform(itemsRequest(seller7PayoutId, ADMIN_ID, "ADMIN"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(3))
-                // 모든 항목 공통: 주문 항목 A, 판매자 7, 후보 생성 시각
-                .andExpect(jsonPath("$.content[*].orderItemId")
+                // 모든 항목 공통: 주문 A (배송비도 주문 ID는 있음. 이 테스트는 주문 ID = 주문항목 번호)
+                .andExpect(jsonPath("$.content[*].orderId")
                         .value(contains((int) orderItemA, (int) orderItemA, (int) orderItemA)))
+                // 판매 대금·조정 항목은 주문 항목 A, 배송비 항목은 주문 항목 없음 (판매자 묶음 단위)
+                .andExpect(jsonPath("$.content[?(@.eventType != 'SALE_SHIPPING_FEE')].orderItemId")
+                        .value(contains((int) orderItemA, (int) orderItemA)))
+                .andExpect(jsonPath("$.content[?(@.eventType == 'SALE_SHIPPING_FEE')].orderItemId")
+                        .value(contains(nullValue())))
+                // 모든 항목 공통: 판매자 7, 후보 생성 시각
                 .andExpect(jsonPath("$.content[*].sellerId").value(contains(7, 7, 7)))
                 .andExpect(jsonPath("$.content[*].candidateCreatedAt")
                         .value(contains(json(candidateCreatedAt), json(candidateCreatedAt), json(candidateCreatedAt))))
@@ -566,21 +573,32 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
     // ---------- 도우미: 데이터 준비·정리 (JDBC) ----------
 
     // 정산후보를 20일 전 시각으로 직접 저장
+    // 이 테스트는 상품 하나 = 주문 하나로 단순화해서 주문 ID에 주문항목 ID와 같은 값을 씀
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount) {
         jdbcTemplate.update(
-                "INSERT INTO payout_candidate_items (event_type, order_item_id, seller_id, amount, created_at, updated_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, candidateCreatedAt, candidateCreatedAt);
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderItemId, orderItemId, sellerId, amount, candidateCreatedAt, candidateCreatedAt);
+    }
+
+    // 배송비 후보를 20일 전 시각으로 직접 저장 (배송비는 판매자 묶음 단위라 order_item_id가 NULL)
+    private void insertShippingFee(long orderId, Long sellerId, Long amount) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, ?, NULL, ?, ?, ?, ?)",
+                PayoutEventType.SALE_SHIPPING_FEE.name(), orderId, sellerId, amount, candidateCreatedAt, candidateCreatedAt);
     }
 
     // 관리자 수동 조정 후보를 20일 전 시각으로 직접 저장
+    // 주문 ID는 insertCandidate와 같은 규칙 (주문항목 ID와 같은 값)
     private void insertAdjustment(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                   long adjustmentId, long adminId, String reason) {
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items " +
-                        "(event_type, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, adjustmentId, adminId, reason, candidateCreatedAt, candidateCreatedAt);
+                        "(event_type, order_id, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderItemId, orderItemId, sellerId, amount, adjustmentId, adminId, reason,
+                candidateCreatedAt, candidateCreatedAt);
     }
 
     // 정산 확정 시각을 고정값으로 바꿈 (Payout은 @Immutable·created_at은 updatable = false라 JPA로는 바꿀 수 없음)
@@ -602,7 +620,9 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
-        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_item_id > ? AND order_item_id <= ?",
+        // 주문 ID로 지우는 이유: 배송비 행은 order_item_id가 NULL이라 주문항목 범위로는 지워지지 않음
+        // (이 클래스는 주문 ID에 주문항목 번호를 그대로 쓰므로 같은 범위로 지울 수 있음)
+        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id > ? AND order_id <= ?",
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
     }
 }
