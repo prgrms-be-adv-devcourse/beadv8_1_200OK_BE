@@ -19,7 +19,8 @@ public record LedgerHistoryRequest(
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
         LocalDate to,
 
-        @Schema(description = "유형 (CHARGE: 충전, PAYMENT: 결제). 없으면 전체", example = "PAYMENT")
+        @Schema(description = "유형 (CHARGE: 충전, PAYMENT: 결제). 없거나 빈 값이면 전체, 대소문자를 구분함",
+                allowableValues = {"CHARGE", "PAYMENT"}, example = "PAYMENT")
         String type,
 
         @Schema(description = "페이지 번호 (0부터, 기본 0)", example = "0")

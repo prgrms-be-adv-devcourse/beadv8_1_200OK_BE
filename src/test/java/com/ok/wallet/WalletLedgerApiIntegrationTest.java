@@ -165,6 +165,41 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableContent());
     }
 
+    @Test
+    void 환불_내역은_전체_조회에_나오지_않는다() throws Exception {
+        // Given: 환불은 세미 범위 밖이라 이용 내역에 보여 주지 않는다
+        Long walletId = createWallet(MEMBER_ID);
+        insertLedger(walletId, "CHARGE", 10_000, 10_000, "CHARGE:pay-1", at(10, 12));
+        insertLedger(walletId, "REFUND", 3_000, 13_000, "REFUND:1", at(11, 12));
+
+        // When & Then
+        mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].type").value("CHARGE"));
+    }
+
+    @Test
+    void 보여_주지_않는_환불_유형으로_조회하면_422() throws Exception {
+        mockMvc.perform(get(LEDGERS_URL).param("type", "REFUND")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isUnprocessableContent());
+    }
+
+    @Test
+    void 유형이_빈_값이면_전체를_조회한다() throws Exception {
+        // Given
+        Long walletId = createWallet(MEMBER_ID);
+        insertLedger(walletId, "CHARGE", 10_000, 10_000, "CHARGE:pay-1", at(10, 12));
+        insertLedger(walletId, "PAYMENT", 3_000, 7_000, "PAYMENT:1001", at(15, 12));
+
+        // When & Then
+        mockMvc.perform(get(LEDGERS_URL).param("type", "")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+    }
+
     private String bearer(Long memberId) {
         return tokens.bearer(memberId, "BUYER");
     }

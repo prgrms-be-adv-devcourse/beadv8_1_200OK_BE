@@ -17,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * 구매자 지갑 이용 내역(원장) 조회.
@@ -28,6 +30,10 @@ public class WalletLedgerService {
     // 결제 원장의 근거 키 접두어. BuyerWalletService.payForOrder가 "PAYMENT:{orderId}"로 만든다.
     private static final String PAYMENT_KEY_PREFIX = "PAYMENT:";
 
+    // 이용 내역에 보여 주는 유형. 환불은 세미 범위 밖이라 아직 노출하지 않는다 (추가 시 여기와 API 문서를 함께 바꾼다)
+    private static final Set<BuyerWalletLedgerType> VISIBLE_TYPES =
+            EnumSet.of(BuyerWalletLedgerType.CHARGE, BuyerWalletLedgerType.PAYMENT);
+
     private final BuyerWalletRepository buyerWalletRepository;
     private final BuyerWalletLedgerQueryRepository ledgerQueryRepository;
 
@@ -36,27 +42,32 @@ public class WalletLedgerService {
      * 기간은 날짜로 받아 [시작일 0시, 종료일 다음 날 0시)로 바꿔, 종료일 하루 전체를 포함한다.
      */
     public Page<LedgerHistoryResult> getHistory(LedgerHistoryQuery query) {
-        BuyerWalletLedgerType type = toType(query.type());
+        Set<BuyerWalletLedgerType> types = toTypes(query.type());
         validatePeriod(query.from(), query.to());
         Pageable pageable = PageRequest.of(query.page(), query.size());
 
         return buyerWalletRepository.findByMemberId(query.memberId())
                 .map(wallet -> ledgerQueryRepository.findHistory(
-                                wallet.getId(), startOf(query.from()), endOf(query.to()), type, pageable)
+                                wallet.getId(), startOf(query.from()), endOf(query.to()), types, pageable)
                         .map(WalletLedgerService::toResult))
                 .orElseGet(() -> Page.empty(pageable));
     }
 
-    // 사용자가 보낸 유형이라 모르는 값이면 422로 알린다. 값이 없으면 전체 조회
-    private static BuyerWalletLedgerType toType(String type) {
+    // 값이 없으면 보여 주는 유형 전체, 있으면 그 유형 하나. 보여 주지 않는 유형이나 모르는 값은 422
+    private static Set<BuyerWalletLedgerType> toTypes(String type) {
         if (type == null || type.isBlank()) {
-            return null;
+            return VISIBLE_TYPES;
         }
+        BuyerWalletLedgerType parsed;
         try {
-            return BuyerWalletLedgerType.valueOf(type);
+            parsed = BuyerWalletLedgerType.valueOf(type);
         } catch (IllegalArgumentException e) {
             throw new RestApiException(WalletErrorCode.UNKNOWN_LEDGER_TYPE);
         }
+        if (!VISIBLE_TYPES.contains(parsed)) {
+            throw new RestApiException(WalletErrorCode.UNKNOWN_LEDGER_TYPE);
+        }
+        return EnumSet.of(parsed);
     }
 
     private static void validatePeriod(LocalDate from, LocalDate to) {

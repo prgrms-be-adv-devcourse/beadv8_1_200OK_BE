@@ -17,6 +17,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDateTime;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -117,7 +118,7 @@ class BuyerWalletLedgerQueryRepositoryTest {
 
         // When
         Page<BuyerWalletLedger> page = ledgerQueryRepository.findHistory(
-                walletId, null, null, BuyerWalletLedgerType.PAYMENT, PageRequest.of(0, 10));
+                walletId, null, null, Set.of(BuyerWalletLedgerType.PAYMENT), PageRequest.of(0, 10));
 
         // Then
         assertThat(page.getContent())

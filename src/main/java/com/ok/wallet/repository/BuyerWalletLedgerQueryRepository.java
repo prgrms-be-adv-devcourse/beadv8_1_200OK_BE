@@ -11,6 +11,7 @@ import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
@@ -19,6 +20,7 @@ import static com.ok.wallet.domain.QBuyerWalletLedger.buyerWalletLedger;
 /**
  * 구매자 지갑 원장의 이용 내역 조회. 기간·유형은 값이 있을 때만 조건에 더한다.
  * 기간은 [from, toExclusive) 반열린 구간이라, 종료일 하루 전체를 포함하려면 호출하는 쪽이 다음 날 0시를 넘긴다.
+ * 유형은 묶음으로 받아, 호출하는 쪽이 보여 줄 유형만 고를 수 있게 한다.
  */
 @Repository
 @RequiredArgsConstructor
@@ -30,10 +32,10 @@ public class BuyerWalletLedgerQueryRepository {
             Long buyerWalletId,
             LocalDateTime from,
             LocalDateTime toExclusive,
-            BuyerWalletLedgerType type,
+            Collection<BuyerWalletLedgerType> types,
             Pageable pageable
     ) {
-        BooleanBuilder condition = historyCondition(buyerWalletId, from, toExclusive, type);
+        BooleanBuilder condition = historyCondition(buyerWalletId, from, toExclusive, types);
         List<BuyerWalletLedger> content = queryFactory
                 .selectFrom(buyerWalletLedger)
                 .where(condition)
@@ -51,7 +53,7 @@ public class BuyerWalletLedgerQueryRepository {
     }
 
     private BooleanBuilder historyCondition(
-            Long buyerWalletId, LocalDateTime from, LocalDateTime toExclusive, BuyerWalletLedgerType type) {
+            Long buyerWalletId, LocalDateTime from, LocalDateTime toExclusive, Collection<BuyerWalletLedgerType> types) {
         BooleanBuilder condition = new BooleanBuilder()
                 .and(buyerWalletLedger.buyerWalletId.eq(buyerWalletId));
 
@@ -61,8 +63,9 @@ public class BuyerWalletLedgerQueryRepository {
         if (toExclusive != null) {
             condition.and(buyerWalletLedger.createdAt.lt(toExclusive));
         }
-        if (type != null) {
-            condition.and(buyerWalletLedger.type.eq(type));
+        // null이면 유형으로 거르지 않는다 (서비스는 항상 보여 줄 유형을 넘긴다)
+        if (types != null) {
+            condition.and(buyerWalletLedger.type.in(types));
         }
         return condition;
     }
