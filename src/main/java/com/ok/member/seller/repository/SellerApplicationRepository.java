@@ -2,6 +2,8 @@ package com.ok.member.seller.repository;
 
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
@@ -22,5 +24,8 @@ public interface SellerApplicationRepository extends JpaRepository<SellerApplica
     boolean existsByBusinessNumberAndStatusIn(String businessNumber, Collection<SellerApplicationStatus> statuses);
 
     boolean existsByMemberIdAndStatus(Long memberId, SellerApplicationStatus status);
+
+    // 상태로 거르지 않는 목록은 JpaRepository의 findAll(Pageable)을 쓴다
+    Page<SellerApplication> findAllByStatus(SellerApplicationStatus status, Pageable pageable);
 
 }
