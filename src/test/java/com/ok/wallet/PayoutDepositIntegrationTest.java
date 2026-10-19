@@ -25,6 +25,7 @@ import static org.awaitility.Awaitility.await;
 // - 정산 범위의 하한이 마지막 정산일이므로 정산 데이터는 테스트 전후로 전부 비운다
 class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     // 이 클래스 전용 번호 (정산 테스트는 주문항목 8_000_000~, 9_000_000~ 사용)
+    private static final long ORDER_ID = 600_001L;
     private static final long ORDER_ITEM_ID = 6_000_001L;
     private static final long SELLER_ID = 6_001L;
 
@@ -55,7 +56,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         // Given: 상품 10,000원, 배송비 3,000원 구매확정
         // 정산 후보 리스너는 커밋 후 실행되므로 트랜잭션 안에서 발행한다
         transactionTemplate.executeWithoutResult(status -> eventPublisher.publishEvent(
-                new OrderProductConfirmedEvent(ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L)));
+                new OrderProductConfirmedEvent(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L)));
         // 정산 후보 3건(판매 대금, 수수료, 배송비)이 만들어질 때까지 기다림
         await().atMost(Duration.ofSeconds(10)).until(() -> countCandidates() == 3);
         // 정산은 구매확정 15일 뒤가 대상이므로 후보 생성 시각을 20일 전으로 옮긴다

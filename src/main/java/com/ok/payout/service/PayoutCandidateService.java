@@ -35,7 +35,7 @@ public class PayoutCandidateService {
         }
         long saleFee = PayoutPolicy.calculateSaleFee(command.totalItemPrice());
         long sellerAmount = command.totalItemPrice() - saleFee;
-        long shippingPrice = command.shippingPrice();
+        long shippingPrice = command.sellerShippingPrice();
 
         List<PayoutCandidateItem> items = new ArrayList<>();
         items.add(PayoutCandidateItem.ofSaleFee(
@@ -51,6 +51,9 @@ public class PayoutCandidateService {
     }
 
     private void validate(PurchaseConfirmedCommand command) {
+        if (command.orderId() == null) {
+            throw new RestApiException(PayoutErrorCode.MISSING_ORDER_ID);
+        }
         if (command.orderItemId() == null) {
             throw new RestApiException(PayoutErrorCode.MISSING_ORDER_ITEM_ID);
         }
@@ -60,7 +63,7 @@ public class PayoutCandidateService {
         if (command.totalItemPrice() == null || command.totalItemPrice() < 0) {
             throw new RestApiException(PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
         }
-        if (command.shippingPrice() == null || command.shippingPrice() < 0) {
+        if (command.sellerShippingPrice() == null || command.sellerShippingPrice() < 0) {
             throw new RestApiException(PayoutErrorCode.INVALID_SHIPPING_PRICE);
         }
     }
