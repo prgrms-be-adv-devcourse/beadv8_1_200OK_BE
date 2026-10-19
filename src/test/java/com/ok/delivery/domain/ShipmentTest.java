@@ -121,6 +121,35 @@ class ShipmentTest {
     }
 
     @Test
+    void 부과한_배송비가_음수면_생성할_수_없다() {
+        // given
+        var sut = validBuilder().chargedShippingFee(-1);
+
+        // when & then
+        assertThatThrownBy(sut::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("배송비 금액은 0 이상이어야 합니다.");
+    }
+
+    @Test
+    void 무료배송이어도_결제_당시_기본_배송비와_부과한_배송비를_따로_남긴다() {
+        // when
+        Shipment sut = validBuilder()
+                .baseShippingFee(3_000)
+                .chargedShippingFee(0)
+                .freeShippingThreshold(50_000)
+                .build();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getBaseShippingFee()).isEqualTo(3_000);
+            softly.assertThat(sut.getChargedShippingFee()).isZero();
+            softly.assertThat(sut.getFreeShippingThreshold()).isEqualTo(50_000);
+        });
+    }
+
+    @Test
     void 도착_예정일_시작이_끝보다_늦으면_생성할_수_없다() {
         // given
         var sut = validBuilder()

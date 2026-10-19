@@ -45,6 +45,7 @@ public final class ShipmentFixture {
                 .address(address())
                 .regionGroup("GENERAL")
                 .baseShippingFee(3_000)
+                .chargedShippingFee(3_000)
                 .regionSurcharge(0)
                 .freeShippingThreshold(50_000)
                 .estimatedDeliveryStart(LocalDate.of(2026, 10, 13))

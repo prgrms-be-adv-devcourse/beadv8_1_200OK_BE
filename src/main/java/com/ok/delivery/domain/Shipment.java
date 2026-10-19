@@ -69,14 +69,20 @@ public class Shipment extends BaseTime {
     @Column(name = "region_group", nullable = false, length = 30)
     private String regionGroup;
 
+    // 무료배송이어도 판매자 설정의 기본 배송비를 그대로 둔다. 부분 취소처럼 결제 당시 규칙으로 다시 계산할 때 쓴다
     @Column(name = "base_shipping_fee", nullable = false)
     private int baseShippingFee;
+
+    // 구매자가 이 송장에 실제로 낸 배송비(무료배송 적용 후 기본 배송비 + 추가 운임). 규칙(위 값들)과 따로 결과를 남긴다
+    @Column(name = "charged_shipping_fee", nullable = false)
+    private int chargedShippingFee;
 
     @Column(name = "region_surcharge", nullable = false)
     private int regionSurcharge;
 
-    @Column(name = "free_shipping_threshold", nullable = false)
-    private int freeShippingThreshold;
+    // null이면 결제 시점의 판매자 설정에 무료배송이 없었다 (SellerShippingSetting)
+    @Column(name = "free_shipping_threshold")
+    private Integer freeShippingThreshold;
 
     @Column(name = "estimated_delivery_start", nullable = false)
     private LocalDate estimatedDeliveryStart;
@@ -118,8 +124,9 @@ public class Shipment extends BaseTime {
             Address address,
             String regionGroup,
             int baseShippingFee,
+            int chargedShippingFee,
             int regionSurcharge,
-            int freeShippingThreshold,
+            Integer freeShippingThreshold,
             LocalDate estimatedDeliveryStart,
             LocalDate estimatedDeliveryEnd,
             List<ShipmentItem> items
@@ -130,7 +137,8 @@ public class Shipment extends BaseTime {
         requireText(regionGroup, "지역 그룹은 필수입니다.");
         requireNonNull(estimatedDeliveryStart, "도착 예정일 시작은 필수입니다.");
         requireNonNull(estimatedDeliveryEnd, "도착 예정일 끝은 필수입니다.");
-        if (baseShippingFee < 0 || regionSurcharge < 0 || freeShippingThreshold < 0) {
+        if (baseShippingFee < 0 || chargedShippingFee < 0 || regionSurcharge < 0
+                || (freeShippingThreshold != null && freeShippingThreshold < 0)) {
             throw new IllegalArgumentException("배송비 금액은 0 이상이어야 합니다.");
         }
         if (estimatedDeliveryStart.isAfter(estimatedDeliveryEnd)) {
@@ -145,6 +153,7 @@ public class Shipment extends BaseTime {
         this.address = address;
         this.regionGroup = regionGroup;
         this.baseShippingFee = baseShippingFee;
+        this.chargedShippingFee = chargedShippingFee;
         this.regionSurcharge = regionSurcharge;
         this.freeShippingThreshold = freeShippingThreshold;
         this.estimatedDeliveryStart = estimatedDeliveryStart;

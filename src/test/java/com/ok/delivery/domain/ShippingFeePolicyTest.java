@@ -51,6 +51,18 @@ class ShippingFeePolicyTest {
     }
 
     @Test
+    void 무료배송_기준이_없으면_상품_금액과_상관없이_기본_배송비가_붙는다() {
+        // given
+        SellerShippingSetting noFreeShipping = new SellerShippingSetting(3_000, null, LocalTime.of(13, 0));
+
+        // when
+        int actual = ShippingFeePolicy.baseShippingFee(Long.MAX_VALUE, noFreeShipping);
+
+        // then
+        assertThat(actual).isEqualTo(3_000);
+    }
+
+    @Test
     void 일반_지역은_추가_운임이_없다() {
         // when
         SellerShippingFee sut = ShippingFeePolicy.calculate(1L, 10_000L, SETTING, NO_SURCHARGE);
