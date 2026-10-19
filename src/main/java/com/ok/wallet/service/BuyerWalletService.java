@@ -6,6 +6,7 @@ import com.ok.wallet.domain.WalletOrderPayment;
 import com.ok.wallet.repository.BuyerWalletLedgerRepository;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.repository.WalletOrderPaymentRepository;
+import com.ok.wallet.service.dto.BuyerBalanceResult;
 import com.ok.wallet.service.dto.OrderPaymentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -74,6 +75,15 @@ public class BuyerWalletService {
         return buyerWalletRepository.findByMemberId(memberId)
                 .map(BuyerWallet::getBalance)
                 .orElse(0L);
+    }
+
+    /**
+     * 현재 잔액과 잔액 보유 한도를 함께 조회한다. 지갑이 아직 없으면 잔액은 0으로 본다.
+     * 프론트가 충전 가능 금액(한도 - 잔액)을 계산할 수 있도록 한도를 같이 돌려준다.
+     */
+    @Transactional(readOnly = true)
+    public BuyerBalanceResult getBalanceSummary(Long memberId) {
+        return new BuyerBalanceResult(getBalance(memberId), BuyerWallet.MAX_BALANCE);
     }
 
     /**
