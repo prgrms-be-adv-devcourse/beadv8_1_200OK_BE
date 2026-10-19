@@ -297,4 +297,32 @@ public class CartServiceTest {
         assertThat(sut).isEmpty();
         then(cartRepository).should(never()).save(any(Cart.class));
     }
+
+    // ---------- 결제 완료 후 장바구니 정리 ----------
+
+    @Test
+    void 결제가_완료되면_주문한_옵션을_장바구니에서_삭제한다() {
+        // given
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+
+        // when
+        cartService.removeOrderItems(BUYER_ID, List.of(100L, 200L));
+
+        // then
+        then(cartItemRepository).should().deleteAllByCartIdAndProductOptionIdIn(cart.getId(), List.of(100L, 200L));
+    }
+
+    @Test
+    void 장바구니가_없으면_삭제하지_않고_장바구니도_만들지_않는다() {
+        // given
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
+
+        // when
+        cartService.removeOrderItems(BUYER_ID, List.of(100L));
+
+        // then
+        then(cartItemRepository).should(never()).deleteAllByCartIdAndProductOptionIdIn(any(), any());
+        then(cartRepository).should(never()).save(any(Cart.class));
+    }
 }
