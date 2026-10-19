@@ -33,3 +33,8 @@ app:
 jwt:
   # 테스트 전용 키. 개발·운영 환경의 JWT_SECRET으로 절대 사용하지 않는다.
   secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl
+
+toss:
+  # 토스 테스트 전용 키.
+  payments:
+    secret-key: test_sk_dummy-for-test
