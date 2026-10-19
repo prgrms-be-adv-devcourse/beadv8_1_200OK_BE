@@ -1,5 +1,6 @@
 package com.ok.delivery.repository;
 
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +13,8 @@ import java.util.Optional;
 public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
 
     boolean existsByOrderId(Long orderId);
+
+    boolean existsByCarrierAndTrackingNumber(Carrier carrier, String trackingNumber);
 
     /**
      * shipment 행을 쓰기 잠금({@code SELECT ... FOR UPDATE})으로 조회한다.

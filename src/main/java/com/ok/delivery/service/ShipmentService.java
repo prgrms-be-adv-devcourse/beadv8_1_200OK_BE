@@ -1,21 +1,31 @@
 package com.ok.delivery.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.delivery.domain.Address;
+import com.ok.delivery.domain.AddressChangeStatus;
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.DeliveryDatePolicy;
 import com.ok.delivery.domain.DeliveryDateRange;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
+import com.ok.delivery.exception.DeliveryErrorCode;
+import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.RegionResult;
 import com.ok.delivery.service.dto.SellerShipmentCommand;
+import com.ok.delivery.service.dto.ShipmentDispatchCommand;
+import com.ok.delivery.service.dto.ShipmentDispatchResult;
 import com.ok.delivery.service.dto.ShipmentCreateCommand;
 import com.ok.delivery.service.dto.ShipmentItemCommand;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -25,9 +35,11 @@ import java.util.List;
 public class ShipmentService {
 
     private final ShipmentRepository shipmentRepository;
+    private final ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
     private final DeliveryRegionService deliveryRegionService;
     private final DeliveryDatePolicy deliveryDatePolicy;
     private final SellerCutoffTimeReader sellerCutoffTimeReader;
+    private final Clock clock;
 
     /**
      * 결제 완료된 주문으로 판매자별 shipment를 {@code PREPARING} 상태로 만든다.
@@ -52,6 +64,39 @@ public class ShipmentService {
                 .map(seller -> toShipment(command, address, region, seller))
                 .toList();
         shipmentRepository.saveAll(shipments);
+    }
+
+    /**
+     * 판매자가 송장을 등록해 출고한다. {@code PREPARING → SHIPPING}
+     * shipment 행 잠금 아래에서 처리하므로 환불의 취소 확정 예약과 동시에 실행돼도 한쪽만 성공한다.
+     * 대기 중인 배송지 변경 요청은 송장 발행 후 바꿀 수 없으므로 고정 문구로 자동 거절한다.
+     *
+     * @throws RestApiException 없거나 다른 판매자의 shipment면 {@code SHIPMENT_NOT_FOUND},
+     *                          같은 택배사의 송장번호가 이미 쓰였으면 {@code TRACKING_NUMBER_DUPLICATED},
+     *                          상태·송장번호 형식·취소 예약 규칙은 {@link Shipment#dispatch}를 따른다
+     */
+    @Transactional
+    public ShipmentDispatchResult dispatch(ShipmentDispatchCommand command) {
+        // 다른 판매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
+        Shipment shipment = shipmentRepository.findByIdForUpdate(command.shipmentId())
+                .filter(found -> found.getSellerId().equals(command.sellerId()))
+                .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
+        LocalDateTime now = LocalDateTime.now(clock);
+        shipment.dispatch(Carrier.valueOf(command.carrier()), command.trackingNumber(), now);
+        flushDetectingDuplicatedTrackingNumber();
+        addressChangeRequestRepository.findAllByShipmentIdAndStatus(shipment.getId(), AddressChangeStatus.PENDING)
+                .forEach(request -> request.reject(now));
+        return ShipmentDispatchResult.from(shipment);
+    }
+
+    // 송장번호 중복은 사전 조회 없이 UNIQUE 제약 하나로 막는다. 사전 조회해도 동시 등록은 제약이 막아야 하므로 확인 경로를 하나로 둔다.
+    // 출고 변경만 반영된 시점에 flush해서, 이때 나는 제약 위반은 송장번호 중복뿐이다
+    private void flushDetectingDuplicatedTrackingNumber() {
+        try {
+            shipmentRepository.flush();
+        } catch (DataIntegrityViolationException e) {
+            throw new RestApiException(DeliveryErrorCode.TRACKING_NUMBER_DUPLICATED);
+        }
     }
 
     private Shipment toShipment(ShipmentCreateCommand command, Address address, RegionResult region, SellerShipmentCommand seller) {

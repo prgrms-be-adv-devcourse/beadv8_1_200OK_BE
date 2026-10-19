@@ -1,5 +1,6 @@
 package com.ok.delivery.repository;
 
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
@@ -98,10 +99,10 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
     void 같은_택배사의_송장번호가_중복되면_저장할_수_없다() {
         // given
         Shipment first = shipment(1L, 10L, item(1L));
-        first.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+        first.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
         shipmentRepository.saveAndFlush(first);
         Shipment second = shipment(2L, 10L, item(2L));
-        second.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+        second.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
 
         // when & then
         assertThatThrownBy(() -> shipmentRepository.saveAndFlush(second))
@@ -113,10 +114,10 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
     void 택배사가_다르면_같은_송장번호도_저장할_수_있다() {
         // given
         Shipment first = shipment(1L, 10L, item(1L));
-        first.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+        first.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
         shipmentRepository.saveAndFlush(first);
         Shipment second = shipment(2L, 10L, item(2L));
-        second.dispatch("HANJIN", "1234567890", NOW);
+        second.dispatch(Carrier.HANJIN, "1234567890", NOW);
 
         // when
         Shipment sut = shipmentRepository.saveAndFlush(second);

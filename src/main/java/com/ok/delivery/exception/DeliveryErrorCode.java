@@ -15,6 +15,8 @@ public enum DeliveryErrorCode implements ErrorCode {
     TRACKING_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "Tracking number duplicated", "이미 사용된 송장번호입니다."),
     MISSING_CARRIER(HttpStatus.UNPROCESSABLE_ENTITY, "Missing carrier", "택배사는 필수입니다."),
     MISSING_TRACKING_NUMBER(HttpStatus.UNPROCESSABLE_ENTITY, "Missing tracking number", "송장번호는 필수입니다."),
+    INVALID_TRACKING_NUMBER(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid tracking number", "송장번호는 숫자 10~13자리여야 합니다."),
+    CANCELLATION_RESERVED(HttpStatus.CONFLICT, "Cancellation reserved", "취소가 승인된 상품이 있어 송장을 등록할 수 없습니다."),
 
     // 배송 상품 항목
     INVALID_CANCEL_QUANTITY(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid cancel quantity", "취소 수량은 1 이상이어야 합니다."),
