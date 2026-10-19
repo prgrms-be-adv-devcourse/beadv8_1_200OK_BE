@@ -41,6 +41,14 @@ app:
   s3:
     region: ${AWS_REGION}
     bucket: ${S3_BUCKET}
+
+# 앱 시작 시 만들 최초 관리자 계정 (member.member.config.AdminBootstrapConfig)
+# - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)
+# - 같은 아이디의 회원이 이미 있으면 만들지 않고 비밀번호도 바꾸지 않는다
+admin-bootstrap:
+  login-id: ${ADMIN_BOOTSTRAP_LOGIN_ID:}
+  password: ${ADMIN_BOOTSTRAP_PASSWORD:}
+  email: ${ADMIN_BOOTSTRAP_EMAIL:}
 jwt:
   issuer: paldo-gotgan
   # 토큰을 받는 서비스(aud). 서비스가 분리되면 서비스마다 다른 값을 쓴다.
