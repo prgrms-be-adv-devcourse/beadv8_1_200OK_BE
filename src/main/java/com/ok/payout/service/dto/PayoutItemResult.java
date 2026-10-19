@@ -13,7 +13,9 @@ public record PayoutItemResult(
         Long candidateId,
         // 항목 종류 (SALE_AMOUNT, SALE_SHIPPING_FEE, SALE_FEE). 컨트롤러는 domain enum을 쓸 수 없어 문자열로 넘김
         String eventType,
-        // 주문 항목 ID
+        // 주문 ID
+        Long orderId,
+        // 주문 항목 ID. 배송비 항목은 null (배송비는 상품이 아니라 판매자 묶음 배송 1건의 금액)
         Long orderItemId,
         // 판매자 회원 ID. 시스템 몫(수수료) 항목이면 어느 판매자 판매에서 나온 수수료인지
         Long sellerId,
@@ -39,7 +41,7 @@ public record PayoutItemResult(
                     showInternalIds ? row.adminId() : null,
                     row.reason());
         }
-        return new PayoutItemResult(row.payoutItemId(), row.candidateId(), row.eventType().name(), row.orderItemId(),
-                row.sellerId(), row.amount(), row.candidateCreatedAt(), adjustment);
+        return new PayoutItemResult(row.payoutItemId(), row.candidateId(), row.eventType().name(), row.orderId(),
+                row.orderItemId(), row.sellerId(), row.amount(), row.candidateCreatedAt(), adjustment);
     }
 }
