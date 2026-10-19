@@ -38,6 +38,7 @@ import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.ProductService;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.testsupport.TestcontainersConfiguration;
 
 // 커밋 시점에 version이 오르는 것까지 보려고 테스트 메서드에 @Transactional을 붙이지 않는다
@@ -219,7 +220,7 @@ class ProductUpdateIntegrationTest {
 		other.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
 		assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status -> {
-			productService.changeStatus(SELLER_ID, productId, ProductStatus.ON_SALE); // version 0으로 읽음
+			productService.changeStatus(SELLER_ID, productId, ProductStatusCode.ON_SALE); // version 0으로 읽음
 			other.executeWithoutResult(s ->
 				productRepository.findById(productId).orElseThrow().changeVisibility(ProductVisibility.VISIBLE));
 		})).isInstanceOf(OptimisticLockingFailureException.class);
