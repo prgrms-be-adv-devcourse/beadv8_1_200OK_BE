@@ -13,7 +13,8 @@ import java.util.List;
  * 토큰 발급기({@code AccessTokenProvider})는 계산된 목록을 담기만 하고 회원 도메인을 모른다.
  *
  * <p>일반 회원은 구매자 권한을 갖는다. 판매자 권한은 회원 유형이 아니라 판매자 신청·승인 상태로 정해지므로,
- * 판매자 신청 기능이 생기면 승인 상태를 입력으로 받아 {@code SELLER}를 함께 준다.
+ * 승인 여부를 입력으로 받아 승인된 판매자에게 {@code SELLER}를 함께 준다. 판매자도 구매할 수 있어 {@code BUYER}는 그대로 둔다.
+ * 승인 여부 조회는 호출하는 쪽({@code AuthService})이 하고, 이 클래스는 DB 없이 받은 값으로 계산만 한다.
  *
  * <p>관리자는 운영 전용 계정이라 구매자·판매자 권한을 주지 않는다. 운영 계정으로 실수로 주문하거나 상품을 올리지 않도록
  * 권한을 분리하고, 관리자 기능은 {@code hasRole('ADMIN')} API로 따로 둔다.
@@ -23,6 +24,9 @@ final class TokenRoleMapper {
     private TokenRoleMapper() {
     }
 
+    /**
+     * @param approvedSeller 판매자 승인을 받았는지. 관리자는 판매하지 않으므로 이 값과 관계없이 {@code ADMIN}만 받는다
+     */
     static List<String> toTokenRoles(MemberType type, boolean approvedSeller) {
         if (type == null) {
             throw new IllegalArgumentException("type은 필수입니다.");
