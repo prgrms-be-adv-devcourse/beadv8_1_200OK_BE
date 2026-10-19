@@ -166,7 +166,8 @@ public class PayoutQueryRepository {
             Long payoutItemId,
             Long candidateId,
             PayoutEventType eventType,
-            Long orderItemId,
+            Long orderId,
+            Long orderItemId,                  // 배송비 항목은 null
             Long sellerId,
             Long amount,
             LocalDateTime candidateCreatedAt,  // 정산후보 생성 시각
@@ -186,6 +187,7 @@ public class PayoutQueryRepository {
                         payoutItem.id,
                         payoutItem.candidateId,
                         payoutItem.eventType,
+                        payoutItem.orderId,
                         payoutItem.orderItemId,
                         payoutItem.sellerId,
                         payoutItem.amount,

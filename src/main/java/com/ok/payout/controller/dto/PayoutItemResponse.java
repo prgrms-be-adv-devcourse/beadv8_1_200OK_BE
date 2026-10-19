@@ -17,7 +17,11 @@ public record PayoutItemResponse(
         @Schema(description = "항목 종류", example = "SALE_AMOUNT", allowableValues = {"SALE_AMOUNT", "SALE_SHIPPING_FEE", "SALE_FEE"})
         String eventType,
 
-        @Schema(description = "주문 항목 ID", example = "900")
+        @Schema(description = "주문 ID", example = "300")
+        Long orderId,
+
+        @Schema(description = "주문 항목 ID. 배송비 항목은 null (배송비는 상품이 아니라 판매자 묶음 배송 1건의 금액)",
+                example = "900", nullable = true)
         Long orderItemId,
 
         @Schema(description = "판매자 회원 ID. 수수료 항목이면 어느 판매자 판매에서 나온 수수료인지", example = "7")
@@ -38,6 +42,7 @@ public record PayoutItemResponse(
                 ? null
                 : PayoutAdjustmentResponse.from(result.adjustment());
         return new PayoutItemResponse(result.payoutItemId(), result.candidateId(), result.eventType(),
-                result.orderItemId(), result.sellerId(), result.amount(), result.candidateCreatedAt(), adjustment);
+                result.orderId(), result.orderItemId(), result.sellerId(), result.amount(),
+                result.candidateCreatedAt(), adjustment);
     }
 }

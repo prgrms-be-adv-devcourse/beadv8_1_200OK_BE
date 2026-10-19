@@ -30,4 +30,7 @@ public interface BuyerWalletRepository extends JpaRepository<BuyerWallet, Long> 
     // 최신 커밋 데이터를 읽어, 다른 트랜잭션이 방금 만든 지갑도 볼 수 있다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<BuyerWallet> findForUpdateByMemberId(Long memberId);
+
+    // 잔액을 읽기만 할 때 쓴다. 잠금 조회(findForUpdateByMemberId)와 달리 다른 트랜잭션을 기다리게 하지 않는다.
+    Optional<BuyerWallet> findByMemberId(Long memberId);
 }

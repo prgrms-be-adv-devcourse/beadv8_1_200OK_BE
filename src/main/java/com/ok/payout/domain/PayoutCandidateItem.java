@@ -3,7 +3,13 @@ package com.ok.payout.domain;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.payout.exception.PayoutErrorCode;
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -26,7 +32,11 @@ public class PayoutCandidateItem extends BaseTime {
     @Column(nullable = false, length = 50)
     private PayoutEventType eventType;
 
+    // 주문 ID. 배송비 후보는 (주문, 판매자) 단위라 주문 ID로 묶음
     @Column(nullable = false)
+    private Long orderId;
+
+    // 주문상품 ID. 배송비 행은 null (배송비는 상품이 아니라 판매자 묶음 배송 1건의 금액, DB CHECK가 보장)
     private Long orderItemId;
 
     @Column(nullable = false)
@@ -52,10 +62,11 @@ public class PayoutCandidateItem extends BaseTime {
     private String reason;
 
     // 검증 없이 값만 채움 (검증은 각 생성 메서드에서)
-    private static PayoutCandidateItem create(PayoutEventType eventType, Long orderItemId, Long sellerId, Long amount,
-                                             long adjustmentId, Long adminId, String reason) {
+    private static PayoutCandidateItem create(PayoutEventType eventType, Long orderId, Long orderItemId, Long sellerId,
+                                             Long amount, long adjustmentId, Long adminId, String reason) {
         PayoutCandidateItem item = new PayoutCandidateItem();
         item.eventType = eventType;
+        item.orderId = orderId;
         item.orderItemId = orderItemId;
         item.sellerId = sellerId;
         item.amount = amount;
@@ -65,27 +76,29 @@ public class PayoutCandidateItem extends BaseTime {
         return item;
     }
 
-    public static PayoutCandidateItem ofSaleFee(Long orderItemId, Long sellerId, Long amount) {
-        return create(PayoutEventType.SALE_FEE, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
+    public static PayoutCandidateItem ofSaleFee(Long orderId, Long orderItemId, Long sellerId, Long amount) {
+        return create(PayoutEventType.SALE_FEE, orderId, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
     }
 
-    public static PayoutCandidateItem ofSaleAmount(Long orderItemId, Long sellerId, Long amount) {
-        return create(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
+    public static PayoutCandidateItem ofSaleAmount(Long orderId, Long orderItemId, Long sellerId, Long amount) {
+        return create(PayoutEventType.SALE_AMOUNT, orderId, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
     }
 
-    public static PayoutCandidateItem ofSaleShippingFee(Long orderItemId, Long sellerId, Long amount) {
-        return create(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
+    // 배송비는 주문상품이 아니라 (주문, 판매자) 단위라 주문상품 ID를 받지 않음 (null로 저장)
+    public static PayoutCandidateItem ofSaleShippingFee(Long orderId, Long sellerId, Long amount) {
+        return create(PayoutEventType.SALE_SHIPPING_FEE, orderId, null, sellerId, amount, NO_ADMIN_ADJUSTMENT_ID, null, null);
     }
 
     // 관리자 수동 조정 (오류 수정용, 원래 정산후보와 같은 eventType). 음수 금액 허용
     // 조정 번호는 관리자 조정 요청 ID라 1 이상만 허용 (0은 평소 이벤트 전용, null·0은 호출 쪽 버그)
-    public static PayoutCandidateItem manualAdjustment(PayoutEventType eventType, Long orderItemId, Long sellerId,
+    // 배송비 조정이면 orderItemId는 null (원래 배송비 후보와 같은 (주문, 판매자) 단위)
+    public static PayoutCandidateItem manualAdjustment(PayoutEventType eventType, Long orderId, Long orderItemId, Long sellerId,
                                                        Long amount, Long adjustmentId, Long adminId, String reason) {
         if (adjustmentId == null || adjustmentId <= NO_ADMIN_ADJUSTMENT_ID) {
             throw new RestApiException(PayoutErrorCode.INVALID_ADJUSTMENT_ID);
         }
         validateManualAdjustment(adminId, reason);
-        return create(eventType, orderItemId, sellerId, amount, adjustmentId, adminId, reason);
+        return create(eventType, orderId, orderItemId, sellerId, amount, adjustmentId, adminId, reason);
     }
 
     private static void validateManualAdjustment(Long adminId, String reason) {

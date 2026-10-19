@@ -1,7 +1,16 @@
 package com.ok.payout.domain;
 
 import com.ok.common.jpa.entity.BaseTime;
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -35,6 +44,9 @@ public class PayoutItem extends BaseTime {
     private PayoutEventType eventType;
 
     @Column(nullable = false)
+    private Long orderId;
+
+    // 배송비 행은 null (정산후보와 같은 규칙)
     private Long orderItemId;
 
     @Column(nullable = false)
@@ -45,10 +57,12 @@ public class PayoutItem extends BaseTime {
 
     // draft 항목 1건을 정산 항목으로 옮긴다. Payout.addItem()에서만 호출 (public 아님)
     // 값은 draft 항목에서 복사 (draft 항목은 저장된 정산후보에서 만들어져 candidateId가 항상 있음)
-    PayoutItem(Payout payout, Long candidateId, PayoutEventType eventType, Long orderItemId, Long sellerId, Long amount) {
+    PayoutItem(Payout payout, Long candidateId, PayoutEventType eventType, Long orderId, Long orderItemId,
+               Long sellerId, Long amount) {
         this.payout = payout;
         this.candidateId = candidateId;
         this.eventType = eventType;
+        this.orderId = orderId;
         this.orderItemId = orderItemId;
         this.sellerId = sellerId;
         this.amount = amount;

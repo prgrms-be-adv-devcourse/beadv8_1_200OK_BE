@@ -52,7 +52,8 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // - 정산·스냅샷·draft는 이 클래스만 만들고 "마지막 정산일"이 범위 계산에 쓰이므로, 테스트 전후로 전부 비운다
 class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
-    // 이 클래스 전용 주문항목 ID 번호대 (PayoutCandidateIntegrationTest는 9_000_000부터 사용)
+    // 이 클래스 전용 주문항목 ID 번호대 (PayoutCandidateIntegrationTest는 주문항목 9_000_000, 주문 9_500_000부터 사용)
+    // 주문 ID에도 같은 번호를 쓰므로 정리는 order_id 이 범위로 함
     private static final long ORDER_ITEM_ID_START = 8_000_000L;
     private static final long ORDER_ITEM_ID_END = 9_000_000L;
     private static final AtomicLong ORDER_ITEM_ID_SEQ = new AtomicLong(ORDER_ITEM_ID_START);
@@ -217,7 +218,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         LocalDateTime createdAt = TO.minusDays(1);
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 9_700L, createdAt);
         insertCandidate(PayoutEventType.SALE_FEE, orderItemId, 10L, 300L, createdAt);
-        insertCandidate(PayoutEventType.SALE_SHIPPING_FEE, orderItemId, 10L, 3_000L, createdAt);
+        insertShippingFee(orderItemId, 10L, 3_000L, createdAt);   // 주문 ID = 주문항목 번호
         Long snapshotId = createSnapshot(FROM, TO);
 
         // when
@@ -311,6 +312,35 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 assertThat(payout.getItems()).extracting(PayoutItem::getEventType).doesNotContain(PayoutEventType.SALE_FEE);
             }
         }
+    }
+
+    @Test
+    void 배송비_후보는_정산_항목까지_주문_ID와_함께_저장되고_주문상품_ID는_비어_있다() {
+        // given: 판매자 10의 주문 1건 (대금 + 묶음 배송비)
+        long orderItemId = nextOrderItemId();
+        long orderId = orderItemId;   // 상품 하나 = 주문 하나로 단순화 (insertCandidate와 같은 규칙)
+        LocalDateTime createdAt = TO.minusDays(1);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, 10L, 9_700L, createdAt);
+        insertShippingFee(orderId, 10L, 3_000L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 판매자 정산 1건에 대금·배송비 항목이 모두 주문 ID와 함께 들어가고, 배송비만 주문상품 ID가 없음
+        Payout sellerPayout = null;
+        for (Payout payout : payoutRepository.findBySnapshotId(snapshotId)) {
+            if (!payout.isSystem()) {
+                sellerPayout = payout;
+            }
+        }
+        assertThat(sellerPayout).isNotNull();
+        assertThat(sellerPayout.getAmount()).isEqualTo(12_700L);
+        assertThat(sellerPayout.getItems())
+                .extracting(PayoutItem::getEventType, PayoutItem::getOrderId, PayoutItem::getOrderItemId)
+                .containsExactlyInAnyOrder(
+                        tuple(PayoutEventType.SALE_AMOUNT, orderId, orderItemId),
+                        tuple(PayoutEventType.SALE_SHIPPING_FEE, orderId, null)
+                );
     }
 
     @Test
@@ -538,22 +568,33 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 정산 후보를 원하는 created_at으로 직접 저장
+    // 이 테스트는 상품 하나 = 주문 하나로 단순화해서 주문 ID에 주문항목 ID와 같은 값을 씀
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                  LocalDateTime createdAt) {
         jdbcTemplate.update(
-                "INSERT INTO payout_candidate_items (event_type, order_item_id, seller_id, amount, created_at, updated_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, createdAt, createdAt);
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderItemId, orderItemId, sellerId, amount, createdAt, createdAt);
+    }
+
+    // 배송비 후보를 원하는 created_at으로 직접 저장 (배송비는 판매자 묶음 단위라 order_item_id가 NULL)
+    private void insertShippingFee(long orderId, Long sellerId, Long amount, LocalDateTime createdAt) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, ?, NULL, ?, ?, ?, ?)",
+                PayoutEventType.SALE_SHIPPING_FEE.name(), orderId, sellerId, amount, createdAt, createdAt);
     }
 
     // 관리자 수동 조정 후보를 원하는 created_at으로 직접 저장 (관리자 ID·사유는 테스트용 고정값)
+    // 주문 ID는 insertCandidate와 같은 규칙 (주문항목 ID와 같은 값)
     private void insertAdjustment(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                   long adjustmentId, LocalDateTime createdAt) {
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items " +
-                        "(event_type, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                eventType.name(), orderItemId, sellerId, amount, adjustmentId, 99L, "테스트 조정", createdAt, createdAt);
+                        "(event_type, order_id, order_item_id, seller_id, amount, adjustment_id, admin_id, reason, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderItemId, orderItemId, sellerId, amount, adjustmentId, 99L, "테스트 조정",
+                createdAt, createdAt);
     }
 
     // 검증 실패 상황 만들기: draft가 끝난 스냅샷 목록에, draft되지 않은 후보 1건을 끼워 넣음
@@ -572,10 +613,12 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
     }
 
-    // 주문항목의 정산후보 id 목록 (JPA 조회)
-    private List<Long> candidateIdsOf(long orderItemId) {
+    // 주문의 정산후보 id 목록 (JPA 조회)
+    // 주문 ID로 찾는 이유: 배송비 후보는 order_item_id가 NULL이라 주문항목 ID로는 빠짐
+    // 이 테스트는 주문 ID = 주문항목 ID라서 주문항목 번호를 그대로 넘겨도 됨
+    private List<Long> candidateIdsOf(long orderId) {
         List<Long> ids = new ArrayList<>();
-        for (PayoutCandidateItem candidate : candidateRepository.findAllByOrderItemId(orderItemId)) {
+        for (PayoutCandidateItem candidate : candidateRepository.findAllByOrderId(orderId)) {
             ids.add(candidate.getId());
         }
         return ids;
@@ -591,7 +634,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
-        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_item_id > ? AND order_item_id <= ?",
+        // 주문 ID로 지우는 이유: 배송비 행은 order_item_id가 NULL이라 주문항목 범위로는 지워지지 않음
+        // (이 클래스는 주문 ID에 주문항목 번호를 그대로 쓰므로 같은 범위로 지울 수 있음)
+        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id > ? AND order_id <= ?",
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
     }
 }

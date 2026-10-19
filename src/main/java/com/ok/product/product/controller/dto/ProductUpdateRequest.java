@@ -1,10 +1,10 @@
 package com.ok.product.product.controller.dto;
 
-import com.ok.product.product.domain.ProductCategory;
-import com.ok.product.product.domain.ProductRegion;
-import com.ok.product.product.domain.ProductStatus;
-import com.ok.product.product.domain.ProductVisibility;
+import com.ok.product.product.service.dto.ProductCategoryCode;
+import com.ok.product.product.service.dto.ProductRegionCode;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
+import com.ok.product.product.service.dto.ProductVisibilityCode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -35,17 +35,17 @@ public record ProductUpdateRequest(
 
 	@Schema(description = "하위 카테고리", example = "FRUIT")
 	@NotNull(message = "카테고리는 필수입니다.")
-	ProductCategory category,
+	ProductCategoryCode category,
 
 	@Schema(description = "산지 (시·도)", example = "GYEONGBUK")
 	@NotNull(message = "산지는 필수입니다.")
-	ProductRegion region,
+	ProductRegionCode region,
 
 	@Schema(description = "판매 상태. 생략하면 그대로 둡니다.", example = "ON_SALE", nullable = true)
-	ProductStatus status,
+	ProductStatusCode status,
 
 	@Schema(description = "노출 여부. 생략하면 그대로 둡니다.", example = "VISIBLE", nullable = true)
-	ProductVisibility visibility,
+	ProductVisibilityCode visibility,
 
 	@Schema(description = "상품 이미지 URL (1~10장, 첫 장이 대표 이미지). 보낸 목록으로 전체 교체됩니다.")
 	@NotNull(message = "상품 이미지는 필수입니다.")
@@ -62,7 +62,7 @@ public record ProductUpdateRequest(
 	public ProductUpdateCommand toCommand() {
 		return new ProductUpdateCommand(
 				version, name, descriptionHtml, category, region, status, visibility, imageUrls,
-				options.stream().map(ProductOptionUpdateRequest::toSpec).toList()
+				options.stream().map(ProductOptionUpdateRequest::toCommand).toList()
 		);
 	}
 }

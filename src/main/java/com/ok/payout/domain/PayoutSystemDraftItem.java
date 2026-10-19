@@ -41,6 +41,9 @@ public class PayoutSystemDraftItem extends BaseTime {
     private PayoutEventType eventType;
 
     @Column(nullable = false)
+    private Long orderId;
+
+    @Column(nullable = false)
     private Long orderItemId;
 
     // 수수료가 발생한 원래 판매자 (돈을 받는 사람이 아님)
@@ -62,6 +65,7 @@ public class PayoutSystemDraftItem extends BaseTime {
         item.snapshotId = snapshotId;
         item.candidateId = candidate.getId();
         item.eventType = candidate.getEventType();
+        item.orderId = candidate.getOrderId();
         item.orderItemId = candidate.getOrderItemId();
         item.sellerId = candidate.getSellerId();
         item.amount = candidate.getAmount();

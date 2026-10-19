@@ -1,8 +1,8 @@
 package com.ok.product.product.controller.dto;
 
-import com.ok.product.product.domain.ProductStatus;
-import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.service.dto.ProductOptionInfoResult;
+import com.ok.product.product.service.dto.ProductStatusCode;
+import com.ok.product.product.service.dto.ProductVisibilityCode;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -34,10 +34,10 @@ public record ProductOptionInfoResponse(
 	Long salePrice,
 
 	@Schema(description = "상품 판매 상태", example = "ON_SALE")
-	ProductStatus status,
+	ProductStatusCode status,
 
 	@Schema(description = "상품 노출 여부", example = "VISIBLE")
-	ProductVisibility visibility,
+	ProductVisibilityCode visibility,
 
 	@Schema(description = "상품 삭제 여부", example = "false")
 	boolean productDeleted,

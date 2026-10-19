@@ -18,10 +18,11 @@ public class PayoutCandidateEventListener {
     @ApplicationModuleListener
     void on(OrderProductConfirmedEvent event) {
         payoutCandidateService.createFromPurchaseConfirmed(new PurchaseConfirmedCommand(
+                event.orderId(),
                 event.orderItemId(),
                 event.sellerId(),
                 event.totalItemPrice(),
-                event.shippingPrice()
+                event.sellerShippingPrice()
         ));
     }
 }
