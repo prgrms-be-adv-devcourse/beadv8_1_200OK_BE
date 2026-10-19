@@ -1,8 +1,10 @@
 package com.ok.delivery.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.delivery.domain.RemoteAreaPostalCode;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.AddressCommand;
@@ -22,6 +24,7 @@ import java.util.Comparator;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
@@ -187,6 +190,33 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(shipmentsOf(7L)).extracting(Shipment::getSellerId).containsExactly(10L, 20L);
+    }
+
+    @Test
+    void 배송지_검증에_실패하면_shipment를_만들지_않는다() {
+        // given: 연락처가 숫자 10~11자리가 아니다
+        AddressCommand address = new AddressCommand("홍길동", "12345", GENERAL_POSTAL_CODE, "주소", "상세 주소", null);
+        ShipmentCreateCommand command = new ShipmentCreateCommand(8L, PAID_AT, address, List.of(seller(10L, 0L, 801L)));
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.create(command))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_RECIPIENT_PHONE));
+        assertThat(shipmentsOf(8L)).isEmpty();
+    }
+
+    @Test
+    void 금액이_int_범위를_넘으면_shipment를_만들지_않는다() {
+        // given: 컬럼이 INT라 저장할 수 없는 단가
+        ShipmentItemCommand item = new ShipmentItemCommand(901L, "상품", null, 1, Integer.MAX_VALUE + 1L);
+        SellerShipmentCommand seller = new SellerShipmentCommand(10L, 3_000L, 50_000L, 0L, List.of(item));
+        ShipmentCreateCommand command = command(9L, PAID_AT, GENERAL_POSTAL_CODE, seller);
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.create(command))
+                .isInstanceOf(ArithmeticException.class)
+                .hasMessage("integer overflow");
+        assertThat(shipmentsOf(9L)).isEmpty();
     }
 
     private static ShipmentCreateCommand command(Long orderId, LocalDateTime paidAt, String postalCode, SellerShipmentCommand... sellers) {
