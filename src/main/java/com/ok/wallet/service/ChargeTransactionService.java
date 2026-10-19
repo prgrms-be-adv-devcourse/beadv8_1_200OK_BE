@@ -8,6 +8,7 @@ import com.ok.wallet.exception.WalletErrorCode;
 import com.ok.wallet.repository.ChargeRepository;
 import com.ok.wallet.service.dto.ChargeConfirmResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -24,6 +25,7 @@ import java.time.LocalDateTime;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 class ChargeTransactionService {
     private final ChargeRepository chargeRepository;
     private final BuyerWalletService buyerWalletService;
@@ -72,8 +74,12 @@ class ChargeTransactionService {
     @Transactional
     public ChargeConfirmResult complete(Long memberId, String chargeNo, String paymentKey) {
         Charge charge = findOwnedCharge(memberId, chargeNo);
-        // 복구 스케줄러가 먼저 처리했다면 다시 반영하지 않는다
         if (charge.getStatus() != ChargeStatus.IN_PROGRESS) {
+            // 복구 스케줄러가 먼저 처리한 경우다. 이미 완료면 정상이지만, 실패로 처리된 건이면
+            // 토스는 승인했는데 잔액에 반영되지 않은 상태라 환불 등 확인이 필요하다
+            if (charge.getStatus() == ChargeStatus.FAILED) {
+                log.error("[CHARGE_APPROVED_BUT_FAILED] 토스는 승인했지만 충전 건이 이미 실패로 처리되어 있습니다. chargeNo={}", chargeNo);
+            }
             return ChargeConfirmResult.from(charge);
         }
         // 지갑 잠금 → 근거 키 확인 → 잔액 증가·원장 기록. 같은 결제는 근거 키로 한 번만 반영된다
