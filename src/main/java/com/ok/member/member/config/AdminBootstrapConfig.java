@@ -15,7 +15,7 @@ import org.springframework.util.StringUtils;
  *
  * <p>설정값은 이 설정이 등록될 때만 바인딩한다. 그래서 아이디를 비워 두면 비밀번호·이메일이 없어도 앱이 그대로 뜨고,
  * 아이디를 넣었으면 나머지 값이 빠졌을 때 시작이 막힌다({@link AdminBootstrapProperties}).
- * 테스트 설정에는 이 값이 없어 테스트 실행 중에는 동작하지 않는다.
+ * 테스트도 {@code .env}를 읽으므로, 테스트 설정({@code application-test.yml})이 아이디를 비워 테스트 실행 중에는 동작하지 않게 한다.
  */
 @Configuration(proxyBeanMethods = false)
 @Conditional(AdminBootstrapConfig.LoginIdConfigured.class)
