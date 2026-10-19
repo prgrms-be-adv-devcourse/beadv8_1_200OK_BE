@@ -1,0 +1,23 @@
+meta {
+  name: 준비 - 옵션 ID와 주문 ID 정하기
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/{{reviewProductId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  bru.setVar("reviewOptionId", res.body.options[0].optionId);
+  // order 모듈 주문 검증은 아직 없어(TODO) 실행마다 겹치지 않는 값을 쓴다
+  const base = Date.now();
+  bru.setVar("reviewOrderId", base);
+  bru.setVar("reviewOrderItemId", base + 1);
+}

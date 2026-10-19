@@ -1,12 +1,15 @@
 package com.ok.member.auth.controller.dto;
 
-import com.ok.member.auth.service.dto.LoginResult;
+import com.ok.member.auth.service.dto.TokenResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
 
-@Schema(description = "로그인 응답")
-public record LoginResponse(
+/**
+ * 로그인·토큰 재발급 응답. 두 API가 같은 형식의 토큰 묶음을 돌려준다.
+ */
+@Schema(description = "로그인·토큰 재발급 응답")
+public record TokenResponse(
 
         @Schema(description = "토큰 유형. Authorization 헤더에 {tokenType} {accessToken} 형태로 보낸다.",
                 example = "Bearer")
@@ -27,8 +30,8 @@ public record LoginResponse(
 
     private static final String BEARER = "Bearer";
 
-    public static LoginResponse from(LoginResult result) {
-        return new LoginResponse(BEARER, result.accessToken(), result.accessTokenExpiresAt(),
+    public static TokenResponse from(TokenResult result) {
+        return new TokenResponse(BEARER, result.accessToken(), result.accessTokenExpiresAt(),
                 result.refreshToken(), result.refreshTokenExpiresAt());
     }
 
@@ -37,7 +40,7 @@ public record LoginResponse(
      */
     @Override
     public String toString() {
-        return "LoginResponse[tokenType=%s, accessToken=****, accessTokenExpiresAt=%s, refreshToken=****, refreshTokenExpiresAt=%s]"
+        return "TokenResponse[tokenType=%s, accessToken=****, accessTokenExpiresAt=%s, refreshToken=****, refreshTokenExpiresAt=%s]"
                 .formatted(tokenType, accessTokenExpiresAt, refreshTokenExpiresAt);
     }
 
