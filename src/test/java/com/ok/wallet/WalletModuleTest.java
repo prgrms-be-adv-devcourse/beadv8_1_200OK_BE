@@ -239,7 +239,7 @@ class WalletModuleTest {
         // Given: 잔액 10,000원
         Long buyerId = 50L;
         Long orderId = 9_300_001L;
-        buyerWalletService.charge(buyerId, 10_000, "CHARGE:module-50");
+        buyerWalletService.chargeByPayment(buyerId, "module-50", 10_000);
 
         // When & Then: 주문 생성 → 지갑 리스너가 차감 → 결제 완료 이벤트
         scenario.publish(new OrderCreatedEvent(orderId, buyerId, 3_000L))
@@ -257,7 +257,7 @@ class WalletModuleTest {
         // Given: 잔액 10,000원
         Long buyerId = 51L;
         Long orderId = 9_300_002L;
-        buyerWalletService.charge(buyerId, 10_000, "CHARGE:module-51");
+        buyerWalletService.chargeByPayment(buyerId, "module-51", 10_000);
 
         // When & Then
         scenario.publish(new OrderCreatedEvent(orderId, buyerId, 20_000L))
