@@ -36,8 +36,10 @@ public class SellerApplication extends BaseTime {
     private static final int MAIL_ORDER_NUMBER_MAX_LENGTH = 50;
     private static final int REJECT_REASON_MAX_LENGTH = 500;
 
-    // 요청 DTO가 정규화한 형식이다. DTO를 거치지 않고 만들어도 같은 형식만 저장되어야 중복 검사가 맞는다
-    private static final Pattern BUSINESS_NUMBER = Pattern.compile("^\\d{3}-\\d{2}-\\d{5}$");
+    // 요청 DTO가 정규화한 형식이다(SellerApplyRequest.BUSINESS_NUMBER_FORMAT과 같아야 한다). matches()로 전체 일치를 검사한다.
+    // DTO를 거치지 않고 만들어도 같은 형식만 저장되어야 중복 검사가 맞는다.
+    // 형식만 확인하고 국세청 체크섬은 확인하지 않는다(000-00-00000도 통과).
+    private static final Pattern BUSINESS_NUMBER = Pattern.compile("\\d{3}-\\d{2}-\\d{5}");
 
     @Id
     @GeneratedValue(strategy = IDENTITY)
@@ -129,6 +131,7 @@ public class SellerApplication extends BaseTime {
      * @throws RestApiException 심사 대기 상태가 아니면 {@code INVALID_SELLER_APPLICATION_STATUS}
      */
     public void startReview(LocalDateTime startedAt) {
+        requireTime(startedAt, "startedAt");
         requireStatus(SellerApplicationStatus.PENDING);
         this.status = SellerApplicationStatus.IN_REVIEW;
         this.reviewStartedAt = startedAt;
@@ -143,6 +146,7 @@ public class SellerApplication extends BaseTime {
      */
     public void approve(Long reviewerId, LocalDateTime approvedAt) {
         requireReviewer(reviewerId);
+        requireTime(approvedAt, "approvedAt");
         requireStatus(SellerApplicationStatus.IN_REVIEW);
         this.status = SellerApplicationStatus.APPROVED;
         this.approvedAt = approvedAt;
@@ -161,11 +165,13 @@ public class SellerApplication extends BaseTime {
      */
     public void reject(Long reviewerId, String reason, LocalDateTime rejectedAt) {
         requireReviewer(reviewerId);
+        requireTime(rejectedAt, "rejectedAt");
         // 사유는 관리자가 입력하는 값이라 사용자 입력 오류(422)로 돌려준다
-        if (reason == null || reason.isBlank()) {
+        String strippedReason = reason == null ? null : reason.strip();
+        if (strippedReason == null || strippedReason.isEmpty()) {
             throw new RestApiException(SellerErrorCode.INVALID_REJECT_REASON, "거절 사유를 입력해야 합니다.");
         }
-        if (reason.length() > REJECT_REASON_MAX_LENGTH) {
+        if (strippedReason.length() > REJECT_REASON_MAX_LENGTH) {
             throw new RestApiException(SellerErrorCode.INVALID_REJECT_REASON, "거절 사유는 500자 이하여야 합니다.");
         }
         if (status != SellerApplicationStatus.PENDING && status != SellerApplicationStatus.IN_REVIEW) {
@@ -173,7 +179,7 @@ public class SellerApplication extends BaseTime {
         }
         this.status = SellerApplicationStatus.REJECTED;
         this.rejectedAt = rejectedAt;
-        this.rejectReason = reason;
+        this.rejectReason = strippedReason;
         this.reviewerId = reviewerId;
     }
 
@@ -181,14 +187,16 @@ public class SellerApplication extends BaseTime {
         return status == SellerApplicationStatus.APPROVED;
     }
 
+    // 앞뒤 공백을 지운 값으로 검증하고 그 값을 저장한다. DTO를 거치지 않는 경로에서도 DTO와 같은 값이 저장되게 한다
     private static String requireText(String value, int maxLength, String missingMessage, String tooLongMessage) {
-        if (value == null || value.isBlank()) {
+        String stripped = value == null ? null : value.strip();
+        if (stripped == null || stripped.isEmpty()) {
             throw new RestApiException(SellerErrorCode.INVALID_SELLER_APPLICATION_FIELD, missingMessage);
         }
-        if (value.length() > maxLength) {
+        if (stripped.length() > maxLength) {
             throw new RestApiException(SellerErrorCode.INVALID_SELLER_APPLICATION_FIELD, tooLongMessage);
         }
-        return value;
+        return stripped;
     }
 
     private static String requireBusinessNumber(String businessNumber) {
@@ -196,6 +204,13 @@ public class SellerApplication extends BaseTime {
             throw new RestApiException(SellerErrorCode.INVALID_BUSINESS_NUMBER);
         }
         return businessNumber;
+    }
+
+    // 처리 일시는 서버 시계에서 오는 값이라 사용자 입력 오류가 아니다. 없으면 상태만 바뀌고 일시가 빈 신청이 남는다
+    private static void requireTime(LocalDateTime time, String name) {
+        if (time == null) {
+            throw new IllegalArgumentException(name + "은 필수입니다.");
+        }
     }
 
     // 관리자 id는 토큰에서 오는 값이라 사용자 입력 오류가 아니다
