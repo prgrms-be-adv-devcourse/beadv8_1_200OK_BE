@@ -5,6 +5,7 @@ import com.ok.common.event.payload.PaidOrderItem;
 import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
 import com.ok.config.JpaConfig;
+import com.ok.product.SellerShippingPolicyProvider;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
@@ -16,6 +17,7 @@ import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,6 +28,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 지역 판정 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
 @Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class})
 class DeliveryModuleTest {
+
+    // 모듈 테스트는 배송 모듈 빈만 띄워 상품 모듈의 구현체가 없다. 결제 완료 → shipment 생성 흐름은 판매자 배송 설정을 쓰지 않으므로 가짜로 채운다
+    @MockitoBean
+    SellerShippingPolicyProvider sellerShippingPolicyProvider;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
