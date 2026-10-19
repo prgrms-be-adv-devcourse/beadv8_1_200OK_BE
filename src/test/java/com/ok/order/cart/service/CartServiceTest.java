@@ -7,6 +7,7 @@ import com.ok.order.cart.domain.CartItem;
 import com.ok.order.cart.exception.CartErrorCode;
 import com.ok.order.cart.repository.CartItemRepository;
 import com.ok.order.cart.repository.CartRepository;
+import com.ok.order.cart.service.dto.SelectedCartItem;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -265,5 +266,35 @@ public class CartServiceTest {
 
         // Then
         then(cartItemRepository).should().deleteAllByCartIdAndSelectedTrue(cart.getId());
+    }
+
+    // ---------- 주문용 선택 상품 ----------
+
+    @Test
+    void 주문용으로_선택된_장바구니_상품을_옵션과_수량으로_돌려준다() {
+        // given
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findAllByCartIdAndSelectedTrue(cart.getId()))
+                .willReturn(List.of(CartItem.create(cart, 100L, 2)));
+
+        // when
+        List<SelectedCartItem> sut = cartService.getSelectedCartItems(BUYER_ID);
+
+        // then
+        assertThat(sut).containsExactly(new SelectedCartItem(100L, 2));
+    }
+
+    @Test
+    void 장바구니가_없으면_주문용_선택_상품은_빈_목록이고_장바구니를_만들지_않는다() {
+        // given
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
+
+        // when
+        List<SelectedCartItem> sut = cartService.getSelectedCartItems(BUYER_ID);
+
+        // then
+        assertThat(sut).isEmpty();
+        then(cartRepository).should(never()).save(any(Cart.class));
     }
 }
