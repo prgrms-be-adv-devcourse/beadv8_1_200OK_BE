@@ -1,10 +1,9 @@
 package com.ok.order.order.controller;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.order.order.controller.dto.CheckoutResponse;
-import com.ok.order.order.controller.dto.CreateOrderRequest;
-import com.ok.order.order.controller.dto.CreateOrderResponse;
+import com.ok.order.order.controller.dto.*;
 import com.ok.order.order.service.OrderFacade;
+import com.ok.order.order.service.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -17,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 public class OrderController implements OrderControllerSpec{
 
     private final OrderFacade orderFacade;
+    private final OrderService orderService;
 
     // 주문서 조회 ('선택 상품 주문하기' 누른 뒤 주문서 화면)
     @Override
@@ -35,5 +35,23 @@ public class OrderController implements OrderControllerSpec{
     ) {
         Long orderId = orderFacade.createOrder(request.toCommand(memberId));
         return ResponseEntity.status(HttpStatus.CREATED).body(new CreateOrderResponse(orderId));
+    }
+
+    @Override
+    @GetMapping
+    public ResponseEntity<OrderSummaryPageResponse> getOrders(
+            @CurrentMemberId Long memberId,
+            @Valid @ModelAttribute OrderPageRequest request
+    ) {
+        return ResponseEntity.ok(OrderSummaryPageResponse.from(orderService.getOrders(memberId, request.page(), request.size())));
+    }
+
+    @Override
+    @GetMapping("/{orderId}")
+    public ResponseEntity<OrderDetailResponse> getOrder(
+            @CurrentMemberId Long memberId,
+            @PathVariable Long orderId
+    ) {
+        return ResponseEntity.ok(OrderDetailResponse.from(orderService.getOrder(memberId, orderId)));
     }
 }
