@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -199,6 +200,73 @@ class WalletChargeApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status").value("FAILED"));
     }
 
+    // 상태 조회
+
+    @Test
+    void 토큰_없이_상태를_조회하면_401() throws Exception {
+        mockMvc.perform(get(CHARGES_URL + "/{chargeNo}", "CHG_any"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 결제_전_충전_건은_대기_상태로_조회된다() throws Exception {
+        String chargeNo = chargeNoOf(MEMBER_ID, 10_000);
+
+        getStatus(MEMBER_ID, chargeNo)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chargeNo").value(chargeNo))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.amount").value(10_000));
+    }
+
+    @Test
+    void 승인된_충전_건은_완료_상태로_조회된다() throws Exception {
+        // Given
+        String chargeNo = chargeNoOf(MEMBER_ID, 10_000);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willReturn(new TossConfirmResult.Approved(PAYMENT_KEY));
+        confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, 10_000).andExpect(status().isOk());
+
+        // When & Then: 승인 응답과 같은 형식으로 현재 상태를 돌려준다
+        getStatus(MEMBER_ID, chargeNo)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
+    void 결제창에서_실패한_충전_건은_실패_상태로_조회된다() throws Exception {
+        // Given
+        String chargeNo = chargeNoOf(MEMBER_ID, 10_000);
+        mockMvc.perform(post(CHARGES_URL + "/fail")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "BUYER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"chargeNo": "%s", "code": "PAY_PROCESS_CANCELED", "message": "사용자 취소"}
+                                """.formatted(chargeNo)))
+                .andExpect(status().isOk());
+
+        // When & Then
+        getStatus(MEMBER_ID, chargeNo)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"));
+    }
+
+    @Test
+    void 타인의_충전_건_상태를_조회하면_404() throws Exception {
+        String chargeNo = chargeNoOf(MEMBER_ID, 10_000);
+
+        getStatus(OTHER_MEMBER_ID, chargeNo)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", endsWith("wallet/charge-not-found")));
+    }
+
+    @Test
+    void 없는_충전_번호로_조회하면_404() throws Exception {
+        getStatus(MEMBER_ID, "CHG_not-exists")
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", endsWith("wallet/charge-not-found")));
+    }
+
     private ResultActions requestCharge(Long memberId, String body) throws Exception {
         return mockMvc.perform(post(CHARGES_URL)
                 .header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, "BUYER"))
@@ -213,6 +281,11 @@ class WalletChargeApiIntegrationTest extends AbstractIntegrationTest {
                 .content("""
                         {"chargeNo": "%s", "paymentKey": "%s", "amount": %d}
                         """.formatted(chargeNo, paymentKey, amount)));
+    }
+
+    private ResultActions getStatus(Long memberId, String chargeNo) throws Exception {
+        return mockMvc.perform(get(CHARGES_URL + "/{chargeNo}", chargeNo)
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, "BUYER")));
     }
 
     // 약관에 동의하고 충전을 요청해 받은 충전 번호

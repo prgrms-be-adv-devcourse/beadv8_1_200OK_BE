@@ -6,6 +6,7 @@ import com.ok.wallet.controller.dto.ChargeRequest;
 import com.ok.wallet.controller.dto.ChargeResponse;
 import com.ok.wallet.controller.dto.ChargeStatusResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -47,4 +48,15 @@ interface WalletChargeControllerSpec {
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
     })
     ResponseEntity<ChargeStatusResponse> fail(Long memberId, ChargeFailRequest request);
+
+    @Operation(summary = "충전 건 상태 조회",
+            description = "본인 충전 건의 현재 상태를 조회한다. 승인 응답이 IN_PROGRESS(확인 중)였을 때 "
+                    + "잠시 뒤 다시 조회해 COMPLETED·FAILED로 바뀌었는지 확인하는 데 쓴다. 상태를 바꾸지 않는다.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "현재 상태 (status 확인)"),
+            @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "404", description = "충전 건이 없거나 본인의 충전 건이 아님")
+    })
+    ResponseEntity<ChargeStatusResponse> getStatus(
+            Long memberId, @Parameter(description = "충전 번호", example = "CHG_3f2b1c9e-8a4d-4e6f-9b1a-2c3d4e5f6a7b") String chargeNo);
 }
