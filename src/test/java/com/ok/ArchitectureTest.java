@@ -105,6 +105,8 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule 모듈_간_이벤트는_DomainEvent를_구현한다 = freeze(classes()
             .that().resideInAPackage("com.ok.common.event..")
+            // 이벤트가 담는 값 레코드(판매자별 묶음, 배송지 등)는 payload 하위 패키지에 두고 검사에서 뺀다. 따로 발행하지 않는다
+            .and().resideOutsideOfPackage("com.ok.common.event.payload..")
             .and().areNotInterfaces()
             .should().implement(DomainEvent.class)
             .because("발행 구현체가 모듈 간 계약으로 정한 이벤트(DomainEvent)만 발행하게 한다 (컨벤션 2.1)"));
