@@ -48,6 +48,11 @@ public class BuyerWallet extends BaseTime {
         return increase(BuyerWalletLedgerType.CHARGE, amount, referenceKey);
     }
 
+    /** 이 금액을 결제할 만큼 잔액이 있는지 확인한다. */
+    public boolean hasEnoughBalance(long amount) {
+        return this.balance >= amount;
+    }
+
     /**
      * 잔액을 줄이고 결제 원장을 반환한다. 잔액이 부족하면 변경하지 않고 예외를 던진다.
      * referenceKey는 "PAYMENT:{주문 ID}" 형식이며, 모든 지갑을 통틀어 한 번만 쓰여야 한다.
