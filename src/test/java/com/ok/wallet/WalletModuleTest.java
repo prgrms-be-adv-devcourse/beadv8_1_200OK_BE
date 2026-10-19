@@ -1,8 +1,11 @@
 package com.ok.wallet;
 
 import com.ok.common.event.MemberRegisteredEvent;
+import com.ok.common.event.OrderCreatedEvent;
 import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.event.SellerPayoutCreatedEvent;
+import com.ok.common.event.WalletPaymentCompletedEvent;
+import com.ok.common.event.WalletPaymentFailedEvent;
 import com.ok.config.JpaConfig;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
@@ -228,5 +231,45 @@ class WalletModuleTest {
                 .filter(e -> e instanceof SellerPayoutCreatedEvent payout
                         && payoutId.equals(payout.payoutId()))
                 .count();
+    }
+
+    @Test
+    void 주문_생성_이벤트를_받으면_예치금을_차감하고_결제_완료_이벤트를_발행한다(Scenario scenario) {
+        // Given: 잔액 10,000원
+        Long buyerId = 50L;
+        Long orderId = 9_300_001L;
+        buyerWalletService.charge(buyerId, 10_000, "CHARGE:module-50");
+
+        // When & Then: 주문 생성 → 지갑 리스너가 차감 → 결제 완료 이벤트
+        scenario.publish(new OrderCreatedEvent(orderId, buyerId, 3_000L))
+                .andWaitForEventOfType(WalletPaymentCompletedEvent.class)
+                .matching(event -> event.orderId().equals(orderId))
+                .toArriveAndVerify(event -> {
+                    assertThat(event.buyerId()).isEqualTo(buyerId);
+                    assertThat(event.amount()).isEqualTo(3_000L);
+                    assertThat(balanceOf(buyerId)).isEqualTo(7_000);
+                });
+    }
+
+    @Test
+    void 잔액이_부족한_주문이면_차감하지_않고_결제_실패_이벤트를_발행한다(Scenario scenario) {
+        // Given: 잔액 10,000원
+        Long buyerId = 51L;
+        Long orderId = 9_300_002L;
+        buyerWalletService.charge(buyerId, 10_000, "CHARGE:module-51");
+
+        // When & Then
+        scenario.publish(new OrderCreatedEvent(orderId, buyerId, 20_000L))
+                .andWaitForEventOfType(WalletPaymentFailedEvent.class)
+                .matching(event -> event.orderId().equals(orderId))
+                .toArriveAndVerify(event -> {
+                    assertThat(event.reason()).isEqualTo("INSUFFICIENT_BALANCE");
+                    assertThat(balanceOf(buyerId)).isEqualTo(10_000);
+                });
+    }
+
+    private long balanceOf(Long memberId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT balance FROM buyer_wallet WHERE member_id = ?", Long.class, memberId);
     }
 }
