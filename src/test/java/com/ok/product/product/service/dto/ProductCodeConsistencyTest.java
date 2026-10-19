@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * API용 *Code enum과 도메인 enum의 상수가 같은지 확인한다.
+ * *Code enum은 컨트롤러가 도메인 enum을 알지 않도록 두고, 서비스 계층에서 도메인 enum과 바꾼다.
  * 두 enum은 상수 이름으로 서로 바꾸므로(valueOf), 한쪽에만 상수를 추가하면 그 값이 오갈 때 실행 중에 예외가 난다.
  */
 class ProductCodeConsistencyTest {
