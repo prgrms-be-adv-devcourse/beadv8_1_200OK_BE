@@ -108,11 +108,11 @@ class PayoutServiceTest {
         List<Long> sellerIds = List.of(10L, 20L);
         given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
         given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds)).willReturn(List.of(
-                withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L),
-                withId(PayoutCandidateItem.ofSaleFee(1001L, 10L, 300L), 2L),
-                withId(PayoutCandidateItem.ofSaleShippingFee(1001L, 10L, 3_000L), 3L),
-                withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L), 4L),
-                withId(PayoutCandidateItem.ofSaleFee(2001L, 20L, 600L), 5L)));
+                withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L),
+                withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 2L),
+                withId(PayoutCandidateItem.ofSaleShippingFee(1L, 10L, 3_000L), 3L),
+                withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L),
+                withId(PayoutCandidateItem.ofSaleFee(2L, 2001L, 20L, 600L), 5L)));
 
         // when
         int drafted = sut.draft(SNAPSHOT_ID, 100);
@@ -203,9 +203,9 @@ class PayoutServiceTest {
     void 조회한_판매자_몫_정산마다_지갑_이벤트를_1건씩_발행한다() {
         // given: 이번 스냅샷의 판매자 몫 정산 2건 (시스템 몫 제외는 조회 쿼리가 맡음 → 통합 테스트에서 확인)
         Payout seller10 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L))));
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))));
         Payout seller20 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 19_400L), 4L))));
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L))));
         given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID)).willReturn(List.of(seller10, seller20));
 
         // when
@@ -225,11 +225,11 @@ class PayoutServiceTest {
     void 금액이_0원_이하인_판매자_정산은_지갑_이벤트를_발행하지_않는다() {
         // given: 판매자 10은 9,700원, 판매자 20은 0원(0원 상품만 판매), 판매자 30은 -2,000원(차감 조정만 남음)
         Payout seller10 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L))));
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))));
         Payout zeroSeller20 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(2001L, 20L, 0L), 4L))));
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 0L), 4L))));
         Payout negativeSeller30 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 30L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(3001L, 30L, -2_000L), 7L))));
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(3L, 3001L, 30L, -2_000L), 7L))));
         given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID))
                 .willReturn(List.of(seller10, zeroSeller20, negativeSeller30));
 
@@ -610,7 +610,7 @@ class PayoutServiceTest {
     // 판매자 몫 정산 1건 (판매 대금 항목 1개). DB 없이 만들어서 ID는 직접 넣음
     private Payout sellerPayout(Long payoutId, Long sellerId, long amount) {
         Payout payout = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, sellerId,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(9_000L + payoutId, sellerId, amount), 100L + payoutId))));
+                List.of(withId(PayoutCandidateItem.ofSaleAmount(900L + payoutId, 9_000L + payoutId, sellerId, amount), 100L + payoutId))));
         ReflectionTestUtils.setField(payout, "id", payoutId);
         return payout;
     }
@@ -618,7 +618,7 @@ class PayoutServiceTest {
     // 시스템 몫 정산 1건 (판매자 7의 수수료 300원 항목 1개)
     private Payout systemPayout(Long payoutId) {
         Payout payout = Payout.forSystem(SNAPSHOT_ID, List.of(PayoutSystemDraftItem.create(SNAPSHOT_ID,
-                withId(PayoutCandidateItem.ofSaleFee(9_100L, 7L, 300L), 200L))));
+                withId(PayoutCandidateItem.ofSaleFee(910L, 9_100L, 7L, 300L), 200L))));
         ReflectionTestUtils.setField(payout, "id", payoutId);
         return payout;
     }

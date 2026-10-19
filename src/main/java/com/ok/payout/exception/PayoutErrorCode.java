@@ -9,6 +9,9 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum PayoutErrorCode implements ErrorCode {
 
+    // 구매확정 이벤트 값 검증용. 규칙(exception.md)상 이벤트로 받은 값의 오류는 표준 예외 대상이지만,
+    // 정산 이벤트·배치 경로는 #117 협의 전까지 기존처럼 PayoutErrorCode를 씀 (검증 위치 정리는 #90)
+    MISSING_ORDER_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing order id", "주문 ID는 필수입니다."),
     MISSING_ORDER_ITEM_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing order item id", "주문항목 ID는 필수입니다."),
     MISSING_SELLER_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing seller id", "판매자 ID는 필수입니다."),
     INVALID_TOTAL_ITEM_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid total item price", "상품 총액은 필수이며 0 이상이어야 합니다."),
