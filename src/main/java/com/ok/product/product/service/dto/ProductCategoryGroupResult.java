@@ -6,7 +6,7 @@ import com.ok.product.product.domain.ProductCategoryGroup;
 import java.util.List;
 
 public record ProductCategoryGroupResult(
-	ProductCategoryGroup group,
+	ProductCategoryGroupCode group,
 	String description,
 	List<ProductCategoryResult> categories
 ) {
@@ -15,6 +15,6 @@ public record ProductCategoryGroupResult(
 		List<ProductCategoryResult> categories = ProductCategory.findAllByGroup(group).stream()
 			.map(ProductCategoryResult::from)
 			.toList();
-		return new ProductCategoryGroupResult(group, group.getDescription(), categories);
+		return new ProductCategoryGroupResult(ProductCategoryGroupCode.from(group), group.getDescription(), categories);
 	}
 }

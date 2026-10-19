@@ -1,6 +1,6 @@
 package com.ok.product.product.controller.dto;
 
-import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.service.dto.ProductCategoryCode;
 import com.ok.product.product.service.dto.ProductCategoryResult;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -9,7 +9,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public record ProductCategoryResponse(
 
 	@Schema(description = "하위 카테고리 코드. 목록 조회의 category 값", example = "FRUIT")
-	ProductCategory code,
+	ProductCategoryCode code,
 
 	@Schema(description = "하위 카테고리 이름", example = "과일")
 	String description

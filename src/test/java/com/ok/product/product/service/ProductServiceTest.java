@@ -36,9 +36,13 @@ import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.service.dto.ProductCategoryCode;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductOptionCommand;
+import com.ok.product.product.service.dto.ProductRegionCode;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
+import com.ok.product.product.service.dto.ProductVisibilityCode;
 
 @ExtendWith(MockitoExtension.class)
 class ProductServiceTest {
@@ -79,8 +83,8 @@ class ProductServiceTest {
 
 	@Test
 	void 업로드하지_않은_이미지_URL이면_등록할_수_없다() {
-		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), options());
+		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), options());
 
 		assertErrorCode(() -> service.create(1L, command),
 			ProductErrorCode.INVALID_IMAGE_URL);
@@ -107,8 +111,8 @@ class ProductServiceTest {
 	@Test
 	void 판매_상태와_노출을_보내면_그대로_등록한다() {
 		givenSaveAssignsId(10L);
-		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, ProductStatus.ON_SALE, ProductVisibility.VISIBLE,
+		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE,
 			List.of(BUCKET_URL + "a.jpg"), options());
 
 		service.create(1L, command);
@@ -187,8 +191,8 @@ class ProductServiceTest {
 	@Test
 	void 수정할_때도_업로드하지_않은_이미지_URL이면_거부한다() {
 		givenProduct(1L);
-		ProductUpdateCommand command = new ProductUpdateCommand(0, "사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), sameOption(100));
+		ProductUpdateCommand command = new ProductUpdateCommand(0, "사과", "<p>설명</p>", ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), sameOption(100));
 
 		assertErrorCode(() -> service.update(1L, PRODUCT_ID, command), ProductErrorCode.INVALID_IMAGE_URL);
 	}
@@ -199,9 +203,9 @@ class ProductServiceTest {
 	void 다른_판매자의_상품은_상태를_바꾸거나_삭제할_수_없다() {
 		Product product = givenProduct(1L);
 
-		assertErrorCode(() -> service.changeStatus(2L, PRODUCT_ID, ProductStatus.ON_SALE),
+		assertErrorCode(() -> service.changeStatus(2L, PRODUCT_ID, ProductStatusCode.ON_SALE),
 			ProductErrorCode.PRODUCT_ACCESS_DENIED);
-		assertErrorCode(() -> service.changeVisibility(2L, PRODUCT_ID, ProductVisibility.VISIBLE),
+		assertErrorCode(() -> service.changeVisibility(2L, PRODUCT_ID, ProductVisibilityCode.VISIBLE),
 			ProductErrorCode.PRODUCT_ACCESS_DENIED);
 		assertErrorCode(() -> service.delete(2L, PRODUCT_ID), ProductErrorCode.PRODUCT_ACCESS_DENIED);
 		assertThat(product.getStatus()).isEqualTo(ProductStatus.READY);
@@ -222,8 +226,8 @@ class ProductServiceTest {
 
 	private ProductUpdateCommand updateCommand(int version, List<ProductOptionCommand> options) {
 		return new ProductUpdateCommand(version, "수정한 이름", "<p>수정</p><script>alert(1)</script>",
-			ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of(BUCKET_URL + "b.jpg"), options);
+			ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of(BUCKET_URL + "b.jpg"), options);
 	}
 
 	private List<ProductOptionCommand> sameOption(int totalStock) {
@@ -231,8 +235,8 @@ class ProductServiceTest {
 	}
 
 	private ProductCreateCommand command(String descriptionHtml) {
-		return new ProductCreateCommand("청송 꿀사과", descriptionHtml, ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of(BUCKET_URL + "a.jpg"), options());
+		return new ProductCreateCommand("청송 꿀사과", descriptionHtml, ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of(BUCKET_URL + "a.jpg"), options());
 	}
 
 	private List<ProductOptionCommand> options() {

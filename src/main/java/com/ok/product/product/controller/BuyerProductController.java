@@ -4,10 +4,10 @@ import com.ok.product.product.controller.dto.ProductCategoryGroupResponse;
 import com.ok.product.product.controller.dto.ProductDetailResponse;
 import com.ok.product.product.controller.dto.ProductPageResponse;
 import com.ok.product.product.controller.dto.ProductSummaryResponse;
-import com.ok.product.product.domain.ProductCategory;
-import com.ok.product.product.domain.ProductCategoryGroup;
-import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.service.ProductService;
+import com.ok.product.product.service.dto.ProductCategoryCode;
+import com.ok.product.product.service.dto.ProductCategoryGroupCode;
+import com.ok.product.product.service.dto.ProductRegionCode;
 import com.ok.product.product.service.dto.ProductSearchQuery;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -30,9 +30,9 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 	@Override
 	@GetMapping
 	public ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
-		@RequestParam(required = false) ProductCategoryGroup categoryGroup,
-		@RequestParam(required = false) ProductCategory category,
-		@RequestParam(required = false) ProductRegion region,
+		@RequestParam(required = false) ProductCategoryGroupCode categoryGroup,
+		@RequestParam(required = false) ProductCategoryCode category,
+		@RequestParam(required = false) ProductRegionCode region,
 		@RequestParam(defaultValue = "0") int page,
 		@RequestParam(defaultValue = "20") int size
 	) {

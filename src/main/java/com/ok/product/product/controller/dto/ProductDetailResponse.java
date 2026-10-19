@@ -3,11 +3,11 @@ package com.ok.product.product.controller.dto;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import com.ok.product.product.domain.ProductCategory;
-import com.ok.product.product.domain.ProductCategoryGroup;
-import com.ok.product.product.domain.ProductRegion;
-import com.ok.product.product.domain.ProductStatus;
+import com.ok.product.product.service.dto.ProductCategoryCode;
+import com.ok.product.product.service.dto.ProductCategoryGroupCode;
 import com.ok.product.product.service.dto.ProductDetailResult;
+import com.ok.product.product.service.dto.ProductRegionCode;
+import com.ok.product.product.service.dto.ProductStatusCode;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -24,16 +24,16 @@ public record ProductDetailResponse(
 	String descriptionHtml,
 
 	@Schema(description = "상위 카테고리", example = "AGRICULTURE")
-	ProductCategoryGroup categoryGroup,
+	ProductCategoryGroupCode categoryGroup,
 
 	@Schema(description = "하위 카테고리", example = "FRUIT")
-	ProductCategory category,
+	ProductCategoryCode category,
 
 	@Schema(description = "산지 (시·도)", example = "GYEONGBUK")
-	ProductRegion region,
+	ProductRegionCode region,
 
 	@Schema(description = "판매 상태. ON_SALE일 때만 구매할 수 있다", example = "ON_SALE")
-	ProductStatus status,
+	ProductStatusCode status,
 
 	@Schema(description = "옵션 중 최저 판매가 (원)", example = "32000")
 	Long minSalePrice,

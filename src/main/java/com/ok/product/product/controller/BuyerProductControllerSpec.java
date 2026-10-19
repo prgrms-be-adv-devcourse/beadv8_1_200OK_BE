@@ -9,9 +9,9 @@ import com.ok.product.product.controller.dto.ProductCategoryGroupResponse;
 import com.ok.product.product.controller.dto.ProductDetailResponse;
 import com.ok.product.product.controller.dto.ProductPageResponse;
 import com.ok.product.product.controller.dto.ProductSummaryResponse;
-import com.ok.product.product.domain.ProductCategory;
-import com.ok.product.product.domain.ProductCategoryGroup;
-import com.ok.product.product.domain.ProductRegion;
+import com.ok.product.product.service.dto.ProductCategoryCode;
+import com.ok.product.product.service.dto.ProductCategoryGroupCode;
+import com.ok.product.product.service.dto.ProductRegionCode;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -38,9 +38,9 @@ interface BuyerProductControllerSpec {
 		)
 	})
 	ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
-		@Parameter(description = "상위 카테고리", example = "AGRICULTURE") ProductCategoryGroup categoryGroup,
-		@Parameter(description = "하위 카테고리", example = "FRUIT") ProductCategory category,
-		@Parameter(description = "산지 (시·도)", example = "GYEONGBUK") ProductRegion region,
+		@Parameter(description = "상위 카테고리", example = "AGRICULTURE") ProductCategoryGroupCode categoryGroup,
+		@Parameter(description = "하위 카테고리", example = "FRUIT") ProductCategoryCode category,
+		@Parameter(description = "산지 (시·도)", example = "GYEONGBUK") ProductRegionCode region,
 		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
 		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size
 	);
