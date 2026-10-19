@@ -1,15 +1,20 @@
 package com.ok.member.seller;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
+import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.repository.SellerApplicationRepository;
+import com.ok.member.seller.service.SellerApplicationDuplicateValidator;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
@@ -51,6 +56,9 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     WebApplicationContext context;
+
+    @Autowired
+    SellerApplicationDuplicateValidator duplicateValidator;
 
     @Autowired
     TestAccessTokens tokens;
@@ -302,6 +310,65 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
                 .isEqualTo(SellerApplicationStatus.REJECTED);
     }
 
+    @ParameterizedTest
+    @EnumSource(SellerApplicationStatus.class)
+    void 유니크_제약이_막는_상태는_activeStatuses와_일치한다(SellerApplicationStatus existingStatus) {
+        // given: 이 회원에게 existingStatus 상태의 신청이 이미 있다
+        sellerApplicationRepository.saveAndFlush(applicationIn(existingStatus, memberId, BUSINESS_NUMBER));
+        SellerApplication another = pending(memberId, "123-45-67890");
+
+        // when
+        boolean blocked;
+        try {
+            sellerApplicationRepository.saveAndFlush(another);
+            blocked = false;
+        } catch (DataIntegrityViolationException e) {
+            blocked = true;
+        }
+
+        // then: DB 생성 컬럼 조건과 서비스의 사전 확인 기준이 어긋나지 않는다
+        assertThat(blocked).isEqualTo(SellerApplicationStatus.activeStatuses().contains(existingStatus));
+    }
+
+    @Test
+    void 실제_MySQL의_회원_유니크_제약_위반을_진행_중_신청_오류로_바꾼다() {
+        // given
+        sellerApplicationRepository.saveAndFlush(pending(memberId, BUSINESS_NUMBER));
+
+        // when
+        DataIntegrityViolationException violation = catchViolation(pending(memberId, "123-45-67890"));
+
+        // then: 메시지 형식이 바뀌어 제약 이름을 못 찾으면 이 테스트가 깨진다
+        assertThat(duplicateValidator.toDuplicateException(violation))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.SELLER_APPLICATION_IN_PROGRESS));
+    }
+
+    @Test
+    void 실제_MySQL의_사업자등록번호_유니크_제약_위반을_사업자등록번호_중복_오류로_바꾼다() {
+        // given
+        Long otherMemberId = saveMember("seller02", "seller02@example.com");
+        sellerApplicationRepository.saveAndFlush(pending(otherMemberId, BUSINESS_NUMBER));
+
+        // when
+        DataIntegrityViolationException violation = catchViolation(pending(memberId, BUSINESS_NUMBER));
+
+        // then
+        assertThat(duplicateValidator.toDuplicateException(violation))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.DUPLICATE_BUSINESS_NUMBER));
+    }
+
+    @Test
+    void 관리자_계정은_판매자_신청_내역을_조회할_수_없다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get(APPLICATIONS_URL)
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, "ADMIN")));
+
+        // then
+        result.andExpect(status().isForbidden());
+    }
+
     @Test
     void DB_unique_제약은_거절된_신청을_여러_건_허용한다() {
         // given
@@ -344,6 +411,31 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
         application.startReview(REVIEW_STARTED_AT);
         application.approve(reviewerId, DECIDED_AT);
         return sellerApplicationRepository.saveAndFlush(application).getId();
+    }
+
+    // 상태를 하나 추가하면 default가 없는 이 switch가 컴파일되지 않아, 유니크 제약 테스트에 새 상태를 넣도록 강제한다
+    private SellerApplication applicationIn(SellerApplicationStatus status, Long applicantId, String businessNumber) {
+        SellerApplication application = pending(applicantId, businessNumber);
+        switch (status) {
+            case PENDING -> {
+            }
+            case IN_REVIEW -> application.startReview(REVIEW_STARTED_AT);
+            case APPROVED -> {
+                application.startReview(REVIEW_STARTED_AT);
+                application.approve(reviewerId, DECIDED_AT);
+            }
+            case REJECTED -> application.reject(reviewerId, REJECT_REASON, DECIDED_AT);
+        }
+        return application;
+    }
+
+    private DataIntegrityViolationException catchViolation(SellerApplication application) {
+        try {
+            sellerApplicationRepository.saveAndFlush(application);
+        } catch (DataIntegrityViolationException e) {
+            return e;
+        }
+        throw new AssertionError("유니크 제약 위반이 발생해야 합니다.");
     }
 
     private Long saveRejected(Long applicantId, String businessNumber) {

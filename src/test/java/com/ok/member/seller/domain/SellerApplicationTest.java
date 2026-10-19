@@ -91,6 +91,69 @@ class SellerApplicationTest {
     }
 
     @Test
+    void 입력값의_앞뒤_공백을_지우고_저장한다() {
+        // when: 요청 DTO를 거치지 않아 공백이 그대로 들어왔다
+        SellerApplication sut = SellerApplication.apply(
+                1L, "  청송 햇살농원 ", " 김영수 ", "512-81-04273", " 제2026-경북청송-0031호 ", APPLIED_AT);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStoreName()).isEqualTo("청송 햇살농원");
+            softly.assertThat(sut.getRepresentativeName()).isEqualTo("김영수");
+            softly.assertThat(sut.getMailOrderNumber()).isEqualTo("제2026-경북청송-0031호");
+        });
+    }
+
+    @Test
+    void 거절_사유의_앞뒤_공백을_지우고_저장한다() {
+        // given
+        SellerApplication sut = apply();
+
+        // when
+        sut.reject(REVIEWER_ID, "  " + REJECT_REASON + " ", DECIDED_AT);
+
+        // then
+        assertThat(sut.getRejectReason()).isEqualTo(REJECT_REASON);
+    }
+
+    @Test
+    void 심사_시작_일시가_없으면_심사를_시작하지_않는다() {
+        // given
+        SellerApplication application = apply();
+
+        // when & then
+        assertThatThrownBy(() -> application.startReview(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("startedAt은 필수입니다.");
+        assertThat(application.getStatus()).isEqualTo(SellerApplicationStatus.PENDING);
+    }
+
+    @Test
+    void 승인_일시가_없으면_승인하지_않는다() {
+        // given
+        SellerApplication application = apply();
+        application.startReview(REVIEW_STARTED_AT);
+
+        // when & then
+        assertThatThrownBy(() -> application.approve(REVIEWER_ID, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("approvedAt은 필수입니다.");
+        assertThat(application.getStatus()).isEqualTo(SellerApplicationStatus.IN_REVIEW);
+    }
+
+    @Test
+    void 거절_일시가_없으면_거절하지_않는다() {
+        // given
+        SellerApplication application = apply();
+
+        // when & then
+        assertThatThrownBy(() -> application.reject(REVIEWER_ID, REJECT_REASON, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("rejectedAt은 필수입니다.");
+        assertThat(application.getStatus()).isEqualTo(SellerApplicationStatus.PENDING);
+    }
+
+    @Test
     void 심사를_시작한_신청을_승인하면_심사_시작일과_승인일과_심사자가_남는다() {
         // given
         SellerApplication sut = apply();
