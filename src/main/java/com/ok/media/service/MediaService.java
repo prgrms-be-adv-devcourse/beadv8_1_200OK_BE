@@ -40,6 +40,7 @@ public class MediaService {
 	private final S3Client s3Client;
 	private final MediaRepository mediaRepository;
 	private final Clock clock;
+	private final ImageDecodeLimiter imageDecodeLimiter;
 
 	// S3 업로드 완료 후 저장된 객체의 최종 정보 (objectKey, 최종 contentType, 최종 바이트 크기)
 	private record UploadResult(String objectKey, String contentType, long size) {
@@ -47,23 +48,26 @@ public class MediaService {
 
 	// jpg 로 변환 + 압축
 	public byte[] imageResizeAndCompress(MultipartFile file) throws IOException {
-		BufferedImage source = decodeWithinResolutionLimit(file);
+		// 디코딩한 원본은 압축이 끝날 때까지 메모리에 남으므로 압축까지 묶어 동시 실행 수를 제한한다
+		return imageDecodeLimiter.run(() -> {
+			BufferedImage source = decodeWithinResolutionLimit(file);
 
-		Thumbnails.Builder<BufferedImage> builder = Thumbnails.of(source);
-		if (source.getWidth() > MediaPolicy.MAX_IMAGE_WIDTH || source.getHeight() > MediaPolicy.MAX_IMAGE_HEIGHT) {
-			// 기준 width 혹은 height를 초과시 비율에 맞춰 리사이징
-			builder.size(MediaPolicy.MAX_IMAGE_WIDTH, MediaPolicy.MAX_IMAGE_HEIGHT);
-		} else {
-			// size or scale 중 하나는 필수라 원본 그대로 유지하도록 scale(1) 사용함
-			builder.scale(1.0);
-		}
+			Thumbnails.Builder<BufferedImage> builder = Thumbnails.of(source);
+			if (source.getWidth() > MediaPolicy.MAX_IMAGE_WIDTH || source.getHeight() > MediaPolicy.MAX_IMAGE_HEIGHT) {
+				// 기준 width 혹은 height를 초과시 비율에 맞춰 리사이징
+				builder.size(MediaPolicy.MAX_IMAGE_WIDTH, MediaPolicy.MAX_IMAGE_HEIGHT);
+			} else {
+				// size or scale 중 하나는 필수라 원본 그대로 유지하도록 scale(1) 사용함
+				builder.scale(1.0);
+			}
 
-		try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-			builder.outputQuality(0.75)
-					.outputFormat("jpg")
-					.toOutputStream(outputStream);
-			return outputStream.toByteArray();
-		}
+			try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+				builder.outputQuality(0.75)
+						.outputFormat("jpg")
+						.toOutputStream(outputStream);
+				return outputStream.toByteArray();
+			}
+		});
 	}
 
 	// ImageIO.read는 해상도와 상관없이 픽셀을 모두 디코딩하므로, 헤더의 가로·세로를 먼저 확인한 뒤에만 디코딩한다

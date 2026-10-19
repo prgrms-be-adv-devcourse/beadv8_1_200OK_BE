@@ -20,6 +20,12 @@ public class MediaPolicy {
 	public static final int MAX_DECODE_DIMENSION = 8000;
 	public static final long MAX_DECODE_PIXELS = 40_000_000L;
 
+	// 서버별 이미지 디코딩 동시 실행 정책
+	// 작은 서버에서도 버티도록 한 번에 하나만 디코딩한다
+	// 상품 이미지를 여러 장 동시에 올리면 곧바로 거절하지 않고 앞 요청이 끝날 때까지 기다린다
+	public static final int MAX_CONCURRENT_DECODES = 1;
+	public static final Duration DECODE_WAIT_TIMEOUT = Duration.ofSeconds(10);
+
 	// 회원별 업로드 횟수 정책
 	// 상품 하나에 이미지가 최대 10장이라, 상품 여러 개를 연달아 등록해도 걸리지 않을 만큼 둔다
 	public static final int MAX_UPLOADS_PER_WINDOW = 50;

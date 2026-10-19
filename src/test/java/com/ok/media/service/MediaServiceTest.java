@@ -68,7 +68,7 @@ class MediaServiceTest {
 
 	@BeforeEach
 	void setUp() {
-		mediaService = new MediaService(s3Client, mediaRepository, CLOCK);
+		mediaService = new MediaService(s3Client, mediaRepository, CLOCK, new ImageDecodeLimiter());
 		ReflectionTestUtils.setField(mediaService, "bucket", BUCKET);
 	}
 

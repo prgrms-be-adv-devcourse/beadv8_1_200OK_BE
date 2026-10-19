@@ -34,6 +34,7 @@ public interface MediaApiSpec {
 	@ApiResponse(responseCode = "403", description = "구매자·판매자가 아님 (관리자 계정)")
 	@ApiResponse(responseCode = "413", description = "용량 또는 해상도 초과")
 	@ApiResponse(responseCode = "429", description = "업로드 횟수 초과")
+	@ApiResponse(responseCode = "503", description = "이미지 처리 요청이 몰려 대기 시간 초과 (잠시 후 재시도)")
 	ResponseEntity<MediaInfo> upload(
 			Long memberId,
 

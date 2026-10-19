@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum MediaErrorCode implements ErrorCode {
 	UPLOAD_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "Upload limit exceeded", "업로드 횟수를 초과했습니다. 잠시 후 다시 시도해 주세요."),
+	IMAGE_PROCESSING_BUSY(HttpStatus.SERVICE_UNAVAILABLE, "Image processing busy", "이미지 처리 요청이 많습니다. 잠시 후 다시 시도해 주세요."),
 	;
 
 	private final HttpStatus httpStatus;
