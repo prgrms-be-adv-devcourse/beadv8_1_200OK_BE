@@ -135,6 +135,22 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
         assertThat(events.stream(WalletPaymentFailedEvent.class)).isEmpty();
     }
 
+    @Test
+    void 잔액_부족으로_실패한_주문이_충전_후_다시_와도_차감하지_않고_이벤트도_보내지_않는다() {
+        // given: 잔액 부족으로 실패한 뒤 충전함
+        orderPaymentService.pay(new OrderPaymentCommand(ORDER_ID, BUYER_ID, 3_000L));
+        buyerWalletService.charge(BUYER_ID, 10_000, "CHARGE:pay-40");
+        events.clear();
+
+        // when: 같은 주문이 재전달됨
+        orderPaymentService.pay(new OrderPaymentCommand(ORDER_ID, BUYER_ID, 3_000L));
+
+        // then
+        assertThat(balanceOf(BUYER_ID)).isEqualTo(10_000);
+        assertThat(events.stream(WalletPaymentCompletedEvent.class)).isEmpty();
+        assertThat(events.stream(WalletPaymentFailedEvent.class)).isEmpty();
+    }
+
     private long balanceOf(Long memberId) {
         return jdbcTemplate.queryForObject(
                 "SELECT balance FROM buyer_wallet WHERE member_id = ?", Long.class, memberId);
@@ -142,6 +158,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
 
     // FK 때문에 원장을 지갑보다 먼저 지운다. 이 클래스의 회원 데이터만 지운다.
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM wallet_order_payment WHERE buyer_id = ?", BUYER_ID);
         jdbcTemplate.update("""
                 DELETE l FROM buyer_wallet_ledger l
                 JOIN buyer_wallet w ON l.buyer_wallet_id = w.id

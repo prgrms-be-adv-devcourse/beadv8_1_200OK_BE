@@ -14,10 +14,11 @@ import java.time.LocalDateTime;
 
 /**
  * 주문 결제를 처리한다. 예치금을 차감하고 결과를 주문에 이벤트로 알린다.
- * 결과 이벤트는 차감과 같은 트랜잭션에서 발행해, 차감이 커밋될 때만 성공 이벤트가 나가게 한다.
+ * 결과 이벤트는 차감과 같은 트랜잭션에서 발행해, 차감이 커밋될 때만 완료 이벤트가 나가게 한다.
  */
 @Slf4j
 @Service
+@Transactional(readOnly = true)
 @RequiredArgsConstructor
 public class OrderPaymentService {
     private final BuyerWalletService buyerWalletService;
@@ -31,8 +32,9 @@ public class OrderPaymentService {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void pay(OrderPaymentCommand command) {
-        // 실패를 알릴 대상(주문·구매자)이 없으면 이벤트를 보낼 수 없다. 재처리해도 같으므로 기록만 하고 끝낸다
         if (command.orderId() == null || command.buyerId() == null) {
+            // 결과를 알릴 주문을 알 수 없어 사람이 확인해야 한다. 알림 대상이 되도록 ERROR로 남긴다
+            // (정산의 PAYOUT_DEPOSIT_SKIPPED와 같은 수준). 다시 처리해도 같으므로 정상 종료한다
             log.error("[ORDER_PAYMENT_SKIPPED] 주문 또는 구매자 ID가 없어 결제를 처리할 수 없습니다. command={}", command);
             return;
         }
@@ -51,8 +53,10 @@ public class OrderPaymentService {
                     command.orderId(), command.buyerId(), command.amount(), LocalDateTime.now(clock));
             case INSUFFICIENT_BALANCE -> walletEventPublisher.publishOrderPaymentFailed(
                     command.orderId(), command.buyerId(), OrderPaymentFailureReason.INSUFFICIENT_BALANCE);
-            // 이미 차감된 주문은 그때 성공 이벤트를 보냈으므로 다시 보내지 않는다
-            case ALREADY_PAID -> log.info("이미 결제된 주문이라 결과 이벤트를 다시 보내지 않습니다. orderId={}", command.orderId());
+            // 처음 처리할 때 결과 이벤트를 보냈으므로 다시 보내지 않는다
+            case ALREADY_PAID, ALREADY_FAILED -> log.info(
+                    "이미 처리된 주문이라 결과 이벤트를 다시 보내지 않습니다. orderId={}, result={}",
+                    command.orderId(), result);
         }
     }
 }

@@ -36,6 +36,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     @AfterEach
     void tearDown() {
         // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
+        jdbcTemplate.update("DELETE FROM wallet_order_payment");
         jdbcTemplate.update("DELETE FROM buyer_wallet_ledger");
         buyerWalletRepository.deleteAll();
     }
@@ -404,6 +405,21 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }
+    }
+
+    @Test
+    void 잔액_부족으로_실패한_주문은_충전_후_같은_주문이_다시_와도_차감하지_않는다() {
+        // Given: 잔액 부족으로 실패한 뒤 충전함
+        Long memberId = 36L;
+        buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
+        buyerWalletService.charge(memberId, 10_000, "CHARGE:pay-36");
+
+        // When: 같은 주문이 재전달됨
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
+
+        // Then: 주문은 이미 실패로 처리됐으므로 돈이 빠지면 안 된다
+        assertThat(result).isEqualTo(OrderPaymentResult.ALREADY_FAILED);
+        assertThat(balanceOf(memberId)).isEqualTo(10_000);
     }
 
     private String latestReferenceKey(Long memberId) {

@@ -54,6 +54,7 @@ class WalletModuleTest {
     void tearDown() {
         // @ApplicationModuleTest는 롤백되지 않으므로 테스트마다 데이터를 정리한다.
         // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
+        jdbcTemplate.update("DELETE FROM wallet_order_payment");
         jdbcTemplate.update("DELETE FROM buyer_wallet_ledger");
         jdbcTemplate.update("DELETE FROM seller_wallet_ledger");
         buyerWalletRepository.deleteAll();

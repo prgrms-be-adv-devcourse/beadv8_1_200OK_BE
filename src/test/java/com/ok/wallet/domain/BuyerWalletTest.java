@@ -150,18 +150,19 @@ class BuyerWalletTest {
         assertThat(wallet.getBalance()).isEqualTo(third.getBalanceAfter());
     }
 
+    @Test
+    void 잔액이_결제_금액_이상이면_결제할_수_있다() {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When & Then: 잔액과 같은 금액까지는 결제할 수 있다
+        assertThat(wallet.hasEnoughBalance(10_000)).isTrue();
+        assertThat(wallet.hasEnoughBalance(10_001)).isFalse();
+    }
+
     private BuyerWallet walletWithBalance(long balance) {
         BuyerWallet wallet = BuyerWallet.create(1L);
         wallet.charge(balance, "CHARGE:setup");
         return wallet;
-    }
-
-    @Test
-    void 잔액이_결제_금액_이상이면_결제할_수_있다() {
-        BuyerWallet wallet = BuyerWallet.create(1L);
-        wallet.charge(10_000, "CHARGE:pay-1");
-
-        assertThat(wallet.hasEnoughBalance(10_000)).isTrue();
-        assertThat(wallet.hasEnoughBalance(10_001)).isFalse();
     }
 }
