@@ -11,7 +11,7 @@ public enum ProductErrorCode implements ErrorCode {
 
 	// 상품
 	PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "Product not found", "상품을 찾을 수 없습니다."),
-	PRODUCT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Product access denied", "상품을 등록하거나 수정할 권한이 없습니다."),
+	PRODUCT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Product access denied", "본인 상품만 수정하거나 삭제할 수 있습니다."),
 	INVALID_IMAGE_URL(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid image url", "업로드한 상품 이미지 주소가 아닙니다."),
 	DESCRIPTION_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Description too long", "상세설명이 너무 깁니다."),
 	PRODUCT_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT,"Product concurrent modification", "다른 사용자가 이미 정보를 수정했습니다. 새로고침 후 다시 시도해주세요."),

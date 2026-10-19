@@ -1,6 +1,5 @@
 package com.ok.product.product.controller;
 
-import com.ok.member.MemberRole;
 import com.ok.product.product.controller.dto.ProductCreateRequest;
 import com.ok.product.product.controller.dto.ProductCreateResponse;
 import com.ok.product.product.controller.dto.ProductStatusChangeRequest;
@@ -26,7 +25,12 @@ interface ProductControllerSpec {
 				content = @Content(schema = @Schema(implementation = ProductCreateResponse.class))
 		),
 		@ApiResponse(
-			responseCode = "403", description = "상품을 등록할 수 없는 권한 (SELLER가 아님)",
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json",
+			schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아님",
 			content = @Content(mediaType = "application/problem+json",
 			schema = @Schema(implementation = ProblemDetail.class))
 		),
@@ -40,10 +44,8 @@ interface ProductControllerSpec {
 			content = @Content(schema = @Schema(implementation = ProblemDetail.class), mediaType = "application/problem+json")
 		)
 	})
-	// TODO: memberId, memberRole 회원 기능 완료 후 다시 체크 필요 현재 member 모듈 의존중
 	ResponseEntity<ProductCreateResponse> create(
-		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
-		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		Long memberId,
 		ProductCreateRequest request
 	);
 
@@ -54,6 +56,10 @@ interface ProductControllerSpec {
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "수정 성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
 		@ApiResponse(
 			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -72,8 +78,7 @@ interface ProductControllerSpec {
 		)
 	})
 	ResponseEntity<Void> update(
-		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
-		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		Long memberId,
 		@Parameter(description = "상품 ID", example = "1") Long productId,
 		ProductUpdateRequest request
 	);
@@ -84,6 +89,10 @@ interface ProductControllerSpec {
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
 		@ApiResponse(
 			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -102,8 +111,7 @@ interface ProductControllerSpec {
 		)
 	})
 	ResponseEntity<Void> changeStatus(
-		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
-		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		Long memberId,
 		@Parameter(description = "상품 ID", example = "1") Long productId,
 		ProductStatusChangeRequest request
 	);
@@ -114,6 +122,10 @@ interface ProductControllerSpec {
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
 		@ApiResponse(
 			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -132,8 +144,7 @@ interface ProductControllerSpec {
 		)
 	})
 	ResponseEntity<Void> changeVisibility(
-		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
-		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		Long memberId,
 		@Parameter(description = "상품 ID", example = "1") Long productId,
 		ProductVisibilityChangeRequest request
 	);
@@ -144,6 +155,10 @@ interface ProductControllerSpec {
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
 		@ApiResponse(
 			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -158,8 +173,7 @@ interface ProductControllerSpec {
 		)
 	})
 	ResponseEntity<Void> delete(
-		@Parameter(description = "요청 회원 ID (임시)", example = "1") Long memberId,
-		@Parameter(description = "요청 회원 권한 (임시)", example = "SELLER") MemberRole memberRole,
+		Long memberId,
 		@Parameter(description = "상품 ID", example = "1") Long productId
 	);
 }

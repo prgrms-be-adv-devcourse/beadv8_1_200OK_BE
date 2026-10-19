@@ -48,6 +48,9 @@ public class PayoutSellerDraftItem extends BaseTime {
     private PayoutEventType eventType;
 
     @Column(nullable = false)
+    private Long orderId;
+
+    // 배송비 행은 null (정산후보와 같은 규칙)
     private Long orderItemId;
 
     @Column(nullable = false)
@@ -70,6 +73,7 @@ public class PayoutSellerDraftItem extends BaseTime {
         this.sellerDraft = sellerDraft;
         this.candidateId = candidate.getId();
         this.eventType = candidate.getEventType();
+        this.orderId = candidate.getOrderId();
         this.orderItemId = candidate.getOrderItemId();
         this.sellerId = candidate.getSellerId();
         this.amount = candidate.getAmount();

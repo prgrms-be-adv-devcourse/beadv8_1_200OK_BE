@@ -18,6 +18,10 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class BuyerWallet extends BaseTime {
+    // 무기명식 선불전자지급수단 발행권면 최고한도 (전자금융거래법 시행령 제13조).
+    // 본인인증을 하지 않으므로 무기명식 기준을 적용한다.
+    public static final long MAX_BALANCE = 500_000;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -46,6 +50,11 @@ public class BuyerWallet extends BaseTime {
      */
     public BuyerWalletLedger charge(long amount, String referenceKey) {
         return increase(BuyerWalletLedgerType.CHARGE, amount, referenceKey);
+    }
+
+    /** 이 금액을 결제할 만큼 잔액이 있는지 확인한다. */
+    public boolean hasEnoughBalance(long amount) {
+        return this.balance >= amount;
     }
 
     /**
@@ -87,5 +96,11 @@ public class BuyerWallet extends BaseTime {
         if (amount <= 0) {
             throw new RestApiException(WalletErrorCode.INVALID_AMOUNT);
         }
+    }
+
+    /** 지금 잔액에 금액을 더했을 때 보유 한도를 넘는지 확인한다. */
+    public static boolean exceedsMaxBalance(long balance, long amount) {
+        // 잔액 + 금액은 아주 큰 금액에서 long 범위를 넘어 음수가 될 수 있어, 남은 한도와 비교한다
+        return amount > MAX_BALANCE - balance;
     }
 }

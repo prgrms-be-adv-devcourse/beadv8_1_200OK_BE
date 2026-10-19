@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 // order 모듈이 HTTP로 호출하는 내부 API
-// TODO: 인증 없이 열려 있으면 누구나 재고를 배정해 품절로 만들 수 있어 운영에는 등록하지 않는다.
+// TODO(#204): 서비스 간 인증을 적용하고 @Profile을 제거한다. 인증 없이 열려 있으면 누구나 재고를 배정해 품절로 만들 수 있어 그전까지 운영에는 등록하지 않는다.
 @Profile({"dev", "test"})
 @RestController
 @RequestMapping("/internal/v1/products")

@@ -18,8 +18,8 @@ class PayoutSellerDraftTest {
     void 판매자_몫_후보로_만들면_합계는_항목_금액의_합이다() {
         // given: 판매자 10의 판매 대금 9,700 + 배송비 3,000
         List<PayoutCandidateItem> candidates = List.of(
-                withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L),
-                withId(PayoutCandidateItem.ofSaleShippingFee(1001L, 10L, 3_000L), 2L));
+                withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L),
+                withId(PayoutCandidateItem.ofSaleShippingFee(1L, 10L, 3_000L), 2L));
 
         // when
         PayoutSellerDraft sut = PayoutSellerDraft.create(12L, 10L, candidates);
@@ -40,7 +40,7 @@ class PayoutSellerDraftTest {
     void 수수료_후보가_섞이면_예외가_난다() {
         // given: 판매자 몫 draft에 시스템 몫(수수료) 후보를 넣음
         List<PayoutCandidateItem> candidates = List.of(
-                withId(PayoutCandidateItem.ofSaleFee(1001L, 10L, 300L), 3L));
+                withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 3L));
 
         // when & then
         assertThatThrownBy(() -> PayoutSellerDraft.create(12L, 10L, candidates))
@@ -51,7 +51,7 @@ class PayoutSellerDraftTest {
     @Test
     void 저장되지_않은_후보로는_만들_수_없다() {
         // given: id가 없는 후보 (DB에 저장되지 않음)
-        List<PayoutCandidateItem> candidates = List.of(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L));
+        List<PayoutCandidateItem> candidates = List.of(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L));
 
         // when & then
         assertThatThrownBy(() -> PayoutSellerDraft.create(12L, 10L, candidates))
