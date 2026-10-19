@@ -138,7 +138,8 @@ class ProductStatusAndDeleteIntegrationTest extends AbstractIntegrationTest {
 	@Test
 	void 다른_판매자의_상품은_삭제할_수_없다() throws Exception {
 		delete(OTHER_SELLER_ID)
-			.andExpect(status().isForbidden());
+			.andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.type", endsWith("/product/product-access-denied")));
 
 		inTransaction(product -> assertThat(product.isDeleted()).isFalse());
 	}
