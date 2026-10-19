@@ -64,10 +64,12 @@ public class Product extends BaseTime {
 	@Column(name = "thumbnail_key", nullable = false)
 	private String thumbnailKey;
 
-	@Column(name = "review_count", nullable = false)
+	// 리뷰 집계 두 컬럼은 변경 감지로 쓰지 않는다. 생성 시 INSERT만 하고 이후엔 addReviewStats 쿼리로만 바꾼다.
+	// 변경 감지 대상이면 판매자가 먼저 읽어 둔 상품을 저장할 때 그사이 달린 리뷰 집계를 옛 값으로 덮어쓴다
+	@Column(name = "review_count", nullable = false, updatable = false)
 	private int reviewCount;
 
-	@Column(name = "rating_sum", nullable = false)
+	@Column(name = "rating_sum", nullable = false, updatable = false)
 	private int ratingSum;
 
 	@Version
@@ -225,12 +227,12 @@ public class Product extends BaseTime {
 		return ProductOption.discountRate(minPriceListPrice, minSalePrice);
 	}
 
-	// 소수 첫째 자리 반올림. 리뷰가 없으면 0
+	// 별점이 1~10(0.5점 단위)이라 2로 나눠 5점 만점, 소수 첫째 자리로 만든다. 리뷰가 없으면 0
 	public double averageRating() {
 		if (reviewCount == 0) {
 			return 0;
 		}
-		return Math.round(ratingSum * 10.0 / reviewCount) / 10.0;
+		return Math.round(ratingSum * 10.0 / (reviewCount * 2)) / 10.0;
 	}
 
 	public List<ProductOption> getOptions() {

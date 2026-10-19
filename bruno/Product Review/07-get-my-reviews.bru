@@ -1,0 +1,20 @@
+meta {
+  name: 내가 쓴 리뷰 목록
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reviews/me?page=0&size=20
+  body: none
+  auth: inherit
+}
+
+params:query {
+  page: 0
+  size: 20
+}
+
+assert {
+  res.status: eq 200
+}

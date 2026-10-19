@@ -3,7 +3,7 @@ resource "aws_vpc" "main" {
   enable_dns_hostnames = true
 
   tags = {
-    Name = "team01-200ok-vpc"
+    Name = "${local.name_prefix}-vpc"
   }
 }
 
@@ -11,7 +11,7 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "team01-200ok-igw"
+    Name = "${local.name_prefix}-igw"
   }
 }
 
@@ -24,7 +24,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = false
 
   tags = {
-    Name = "team01-200ok-public-a"
+    Name = "${local.name_prefix}-public-a"
   }
 }
 
@@ -37,7 +37,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "team01-200ok-public-rt"
+    Name = "${local.name_prefix}-public-rt"
   }
 }
 
@@ -51,6 +51,6 @@ resource "aws_eip" "app" {
   domain = "vpc"
 
   tags = {
-    Name = "team01-200ok-eip"
+    Name = "${local.name_prefix}-eip"
   }
 }
