@@ -1,6 +1,5 @@
 package com.ok.common.event.payload;
 
-
 /**
  * 결제된 주문 상품 항목을 담는다. {@link PaidSellerOrder}의 일부이며 상품명, 옵션명, 단가는 결제 시점 값이다.
  *

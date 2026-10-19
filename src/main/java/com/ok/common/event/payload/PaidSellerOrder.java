@@ -10,7 +10,7 @@ import java.util.List;
  * @param sellerId              판매자 회원 ID
  * @param baseShippingFee       판매자 설정의 기본 배송비(원). 무료배송이어도 설정 값을 담는다
  * @param freeShippingThreshold 판매자 설정의 무료배송 기준 금액(원)
- * @param regionSurcharge       도서산간 추가 운임(원). 일반 지역이면 0
+ * @param regionSurcharge       도서산간 추가 운임(원). 일반 지역이면 0. 판매자마다 따로 발송해 송장마다 붙으므로 판매자 묶음에 둔다
  * @param items                 이 판매자의 주문 상품 항목. 1개 이상
  */
 public record PaidSellerOrder(
