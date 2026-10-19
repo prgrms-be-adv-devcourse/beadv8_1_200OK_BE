@@ -76,4 +76,16 @@ public class Member extends BaseTime {
                 MemberType.USER, agreedAt);
     }
 
+    /**
+     * 관리자를 생성한다. 관리자는 운영 전용 계정이라 구매·판매를 하지 않고, 판매자 신청도 할 수 없다.
+     * 지금은 앱 시작 시 최초 관리자를 만들 때 쓰고, 관리자 생성 API가 생기면 그 API도 이 메서드를 쓴다.
+     *
+     * <p>관리자는 서비스 이용자가 아니라 약관 동의 대상이 아니지만, 동의 일시 컬럼이 필수라 계정을 만든 일시를 기록한다.
+     */
+    public static Member createAdmin(String loginId, String encodedPassword, String email,
+                                     String name, String nickname, LocalDateTime createdAt) {
+        return new Member(loginId, encodedPassword, email, name, nickname,
+                MemberType.ADMIN, createdAt);
+    }
+
 }
