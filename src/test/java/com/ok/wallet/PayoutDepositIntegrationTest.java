@@ -73,16 +73,18 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         assertThat(latestReferenceKey()).isEqualTo("PAYOUT:" + sellerPayoutId());
     }
 
+    // 주문 ID로 세는 이유: 배송비 후보는 판매자 묶음 단위라 order_item_id가 NULL (주문항목 ID로 세면 배송비가 빠짐)
     private long countCandidates() {
         return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM payout_candidate_items WHERE order_item_id = ?", Long.class, ORDER_ITEM_ID);
+                "SELECT COUNT(*) FROM payout_candidate_items WHERE order_id = ?", Long.class, ORDER_ID);
     }
 
     // 앱 시간대가 Asia/Seoul로 고정되어(#137), JdbcTemplate으로 넣은 시각과 Hibernate가 비교하는 시각의 기준이 같다
+    // 배송비 후보까지 함께 옮기도록 주문 ID로 찾음 (빠지면 배송비가 정산 대상에서 제외됨)
     private void backdateCandidates(LocalDateTime createdAt) {
         jdbcTemplate.update(
-                "UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_item_id = ?",
-                createdAt, createdAt, ORDER_ITEM_ID);
+                "UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_id = ?",
+                createdAt, createdAt, ORDER_ID);
     }
 
     // 지갑이 아직 없으면 0으로 본다 (리스너가 처리 중일 수 있음)
@@ -130,6 +132,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
-        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_item_id = ?", ORDER_ITEM_ID);
+        // 배송비 후보(order_item_id NULL)까지 지우도록 주문 ID로 지움
+        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id = ?", ORDER_ID);
     }
 }

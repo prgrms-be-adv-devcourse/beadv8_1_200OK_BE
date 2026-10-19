@@ -47,7 +47,8 @@ public class Payout extends BaseTime {
     public static Payout forSeller(Long snapshotId, PayoutSellerDraft draft) {
         Payout payout = create(snapshotId, draft.getSellerId(), false);
         for (PayoutSellerDraftItem item : draft.getItems()) {
-            payout.addItem(item.getCandidateId(), item.getEventType(), item.getOrderItemId(), item.getSellerId(), item.getAmount());
+            payout.addItem(item.getCandidateId(), item.getEventType(), item.getOrderId(), item.getOrderItemId(),
+                    item.getSellerId(), item.getAmount());
         }
         return payout;
     }
@@ -57,7 +58,8 @@ public class Payout extends BaseTime {
     public static Payout forSystem(Long snapshotId, List<PayoutSystemDraftItem> draftItems) {
         Payout payout = create(snapshotId, null, true);
         for (PayoutSystemDraftItem item : draftItems) {
-            payout.addItem(item.getCandidateId(), item.getEventType(), item.getOrderItemId(), item.getSellerId(), item.getAmount());
+            payout.addItem(item.getCandidateId(), item.getEventType(), item.getOrderId(), item.getOrderItemId(),
+                    item.getSellerId(), item.getAmount());
         }
         return payout;
     }
@@ -85,8 +87,9 @@ public class Payout extends BaseTime {
     //       payout 금액과 그 payout_item 합계가 어긋난 장부가 저장되고, @Immutable이라 고칠 수도 없음
     //   항목을 다시 더하면 누가 어떤 순서로 불러도 "payout 금액 = 자기 항목 합"이 항상 성립 (verify와 이중 방지)
     //   비용은 메모리 안의 덧셈뿐이라 거의 없음
-    private void addItem(Long candidateId, PayoutEventType eventType, Long orderItemId, Long sellerId, Long amount) {
-        items.add(new PayoutItem(this, candidateId, eventType, orderItemId, sellerId, amount));
+    private void addItem(Long candidateId, PayoutEventType eventType, Long orderId, Long orderItemId, Long sellerId,
+                         Long amount) {
+        items.add(new PayoutItem(this, candidateId, eventType, orderId, orderItemId, sellerId, amount));
         this.amount += amount;
     }
 }

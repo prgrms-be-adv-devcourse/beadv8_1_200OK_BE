@@ -56,12 +56,14 @@ class PayoutCandidateServiceTest {
         // then
         // saveAll이 불렸는지 확인하면서 넘어간 리스트를 꺼냄
         verify(repository).saveAll(itemsCaptor.capture());
+        // 배송비는 판매자 묶음 단위라 주문상품 ID 없이 (주문, 판매자)로만 만들어짐
         assertThat(itemsCaptor.getValue())
-                .extracting(PayoutCandidateItem::getEventType, PayoutCandidateItem::getAmount)
+                .extracting(PayoutCandidateItem::getEventType, PayoutCandidateItem::getOrderId,
+                        PayoutCandidateItem::getOrderItemId, PayoutCandidateItem::getAmount)
                 .containsExactlyInAnyOrder(
-                        tuple(PayoutEventType.SALE_FEE, 300L),
-                        tuple(PayoutEventType.SALE_AMOUNT, 9_700L),
-                        tuple(PayoutEventType.SALE_SHIPPING_FEE, 3_000L)
+                        tuple(PayoutEventType.SALE_FEE, ORDER_ID, ORDER_ITEM_ID, 300L),
+                        tuple(PayoutEventType.SALE_AMOUNT, ORDER_ID, ORDER_ITEM_ID, 9_700L),
+                        tuple(PayoutEventType.SALE_SHIPPING_FEE, ORDER_ID, null, 3_000L)
                 );
     }
 
@@ -75,6 +77,25 @@ class PayoutCandidateServiceTest {
         sut.createFromPurchaseConfirmed(command);
 
         // then
+        verify(repository).saveAll(itemsCaptor.capture());
+        assertThat(itemsCaptor.getValue())
+                .extracting(PayoutCandidateItem::getEventType)
+                .containsExactlyInAnyOrder(PayoutEventType.SALE_FEE, PayoutEventType.SALE_AMOUNT);
+    }
+
+    @Test
+    void 같은_묶음의_배송비가_이미_있으면_배송비만_건너뛰고_대금과_수수료는_저장한다() {
+        // given: 같은 (주문, 판매자) 묶음의 다른 상품이 먼저 구매 확정되어 배송비 후보가 이미 있음
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
+        givenNotProcessedYet();
+        given(repository.existsByOrderIdAndSellerIdAndEventTypeAndAdjustmentId(
+                ORDER_ID, SELLER_ID, PayoutEventType.SALE_SHIPPING_FEE, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
+                .willReturn(true);
+
+        // when
+        sut.createFromPurchaseConfirmed(command);
+
+        // then: 이 상품의 대금·수수료만 저장되고 배송비는 다시 만들지 않음
         verify(repository).saveAll(itemsCaptor.capture());
         assertThat(itemsCaptor.getValue())
                 .extracting(PayoutCandidateItem::getEventType)

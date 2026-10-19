@@ -12,7 +12,7 @@ class PayoutSystemDraftItemTest {
     @Test
     void 수수료_후보로_만들면_후보의_값을_그대로_옮긴다() {
         // given
-        PayoutCandidateItem fee = withId(PayoutCandidateItem.ofSaleFee(1001L, 10L, 300L), 3L);
+        PayoutCandidateItem fee = withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 3L);
 
         // when
         PayoutSystemDraftItem sut = PayoutSystemDraftItem.create(12L, fee);
@@ -32,7 +32,7 @@ class PayoutSystemDraftItemTest {
     @Test
     void 판매자_몫_후보로는_만들_수_없다() {
         // given: 판매 대금(판매자 몫) 후보
-        PayoutCandidateItem saleAmount = withId(PayoutCandidateItem.ofSaleAmount(1001L, 10L, 9_700L), 1L);
+        PayoutCandidateItem saleAmount = withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L);
 
         // when & then
         assertThatThrownBy(() -> PayoutSystemDraftItem.create(12L, saleAmount))
