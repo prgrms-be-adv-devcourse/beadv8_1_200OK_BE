@@ -55,4 +55,16 @@ public class ChargeService {
     public ChargeConfirmResult fail(Long memberId, String chargeNo, String failureCode, String failureMessage) {
         return chargeTransactionService.failPending(memberId, chargeNo, failureCode, failureMessage);
     }
+
+    /**
+     * 본인 충전 건의 현재 상태를 조회한다. 승인 응답이 처리 중이었을 때 프론트가 최종 결과를 다시 확인하는 데 쓴다.
+     * 다른 회원의 충전 건은 없는 것과 같게 404로 응답해, 충전 번호의 존재 여부를 드러내지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public ChargeConfirmResult getStatus(Long memberId, String chargeNo) {
+        Charge charge = chargeRepository.findByChargeNo(chargeNo)
+                .filter(found -> found.isOwnedBy(memberId))
+                .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
+        return ChargeConfirmResult.from(charge);
+    }
 }
