@@ -47,6 +47,7 @@ public class ShipmentService {
         }
         Address address = command.address().toAddress();
         RegionResult region = deliveryRegionService.resolve(address.getPostalCode());
+        warnIfSurchargeMismatched(command, address, region);
         List<Shipment> shipments = command.sellers().stream()
                 .map(seller -> toShipment(command, address, region, seller))
                 .toList();
@@ -54,12 +55,6 @@ public class ShipmentService {
     }
 
     private Shipment toShipment(ShipmentCreateCommand command, Address address, RegionResult region, SellerShipmentCommand seller) {
-        int regionSurcharge = Math.toIntExact(seller.regionSurcharge());
-        // 결제 금액과 맞추려고 이벤트 값을 저장한다. 다르면 주문 생성 뒤 우편번호 데이터가 바뀐 것이라 확인할 수 있게 남긴다
-        if (regionSurcharge != region.surcharge()) {
-            log.warn("결제된 추가 운임과 지역 판정 운임이 다름, 결제 값으로 저장. orderId={}, sellerId={}, postalCode={}, paid={}, resolved={}",
-                    command.orderId(), seller.sellerId(), address.getPostalCode(), regionSurcharge, region.surcharge());
-        }
         LocalDate shipDate = deliveryDatePolicy.shipDate(command.paidAt(), sellerCutoffTimeReader.cutoffTime(seller.sellerId()));
         DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
         return Shipment.builder()
@@ -68,12 +63,25 @@ public class ShipmentService {
                 .address(address)
                 .regionGroup(region.regionGroup())
                 .baseShippingFee(Math.toIntExact(seller.baseShippingFee()))
-                .regionSurcharge(regionSurcharge)
+                .regionSurcharge(Math.toIntExact(seller.regionSurcharge()))
                 .freeShippingThreshold(Math.toIntExact(seller.freeShippingThreshold()))
                 .estimatedDeliveryStart(arrival.start())
                 .estimatedDeliveryEnd(arrival.end())
                 .items(seller.items().stream().map(ShipmentService::toItem).toList())
                 .build();
+    }
+
+    // 추가 운임은 결제 금액과 맞추려고 이벤트 값을 저장한다. 판정 값과 다르면 주문 생성 뒤 우편번호 데이터가 바뀐 것이라 확인할 수 있게 남긴다.
+    // 배송지가 하나라 판정도 하나이므로 판매자마다 남기지 않고 주문당 한 번 남긴다
+    private static void warnIfSurchargeMismatched(ShipmentCreateCommand command, Address address, RegionResult region) {
+        List<Long> mismatchedSellerIds = command.sellers().stream()
+                .filter(seller -> seller.regionSurcharge() != region.surcharge())
+                .map(SellerShipmentCommand::sellerId)
+                .toList();
+        if (!mismatchedSellerIds.isEmpty()) {
+            log.warn("결제된 추가 운임과 지역 판정 운임이 다름, 결제 값으로 저장. orderId={}, postalCode={}, resolved={}, sellerIds={}",
+                    command.orderId(), address.getPostalCode(), region.surcharge(), mismatchedSellerIds);
+        }
     }
 
     private static ShipmentItem toItem(ShipmentItemCommand item) {
