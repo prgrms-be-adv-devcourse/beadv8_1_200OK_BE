@@ -27,9 +27,6 @@ import java.util.Set;
 @Transactional(readOnly = true)
 @RequiredArgsConstructor
 public class WalletLedgerService {
-    // 결제 원장의 근거 키 접두어. BuyerWalletService.payForOrder가 "PAYMENT:{orderId}"로 만든다.
-    private static final String PAYMENT_KEY_PREFIX = "PAYMENT:";
-
     // 이용 내역에 보여 주는 유형. 환불은 세미 범위 밖이라 아직 노출하지 않는다 (추가 시 여기와 API 문서를 함께 바꾼다)
     private static final Set<BuyerWalletLedgerType> VISIBLE_TYPES =
             EnumSet.of(BuyerWalletLedgerType.CHARGE, BuyerWalletLedgerType.PAYMENT);
@@ -96,6 +93,6 @@ public class WalletLedgerService {
         if (ledger.getType() != BuyerWalletLedgerType.PAYMENT) {
             return null;
         }
-        return Long.valueOf(ledger.getReferenceKey().substring(PAYMENT_KEY_PREFIX.length()));
+        return PaymentReferenceKey.orderIdOf(ledger.getReferenceKey());
     }
 }
