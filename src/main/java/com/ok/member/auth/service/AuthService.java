@@ -10,6 +10,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.service.SellerApplicationService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -28,6 +29,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AccessTokenProvider accessTokenProvider;
     private final RefreshTokenService refreshTokenService;
+    private final SellerApplicationService sellerApplicationService;
 
     /**
      * 존재하지 않는 아이디로 로그인할 때 비밀번호 비교에 쓰는 해시.
@@ -40,11 +42,13 @@ public class AuthService {
     public AuthService(MemberRepository memberRepository,
                        PasswordEncoder passwordEncoder,
                        AccessTokenProvider accessTokenProvider,
-                       RefreshTokenService refreshTokenService) {
+                       RefreshTokenService refreshTokenService,
+                       SellerApplicationService sellerApplicationService) {
         this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.accessTokenProvider = accessTokenProvider;
         this.refreshTokenService = refreshTokenService;
+        this.sellerApplicationService = sellerApplicationService;
         // 회원가입과 같은 인코더(DelegatingPasswordEncoder, 기본 bcrypt 강도 10)로 만들어야 비교 비용이 같아진다.
         // 인코더 알고리즘이나 강도를 바꾸면 기존 회원 해시와 비용이 달라지므로 이 부분도 함께 점검한다.
         this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-timing");
@@ -99,9 +103,11 @@ public class AuthService {
         return issueTokens(member);
     }
 
-    // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보로 계산한다
+    // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.
+    // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다
     private TokenResult issueTokens(Member member) {
-        List<String> roles = TokenRoleMapper.toTokenRoles(member.getType());
+        boolean approvedSeller = sellerApplicationService.isApprovedSeller(member.getId());
+        List<String> roles = TokenRoleMapper.toTokenRoles(member.getType(), approvedSeller);
         AccessToken accessToken = accessTokenProvider.issue(member.getId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
 

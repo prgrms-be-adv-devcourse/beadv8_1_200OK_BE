@@ -12,6 +12,8 @@ import com.ok.member.seller.service.dto.SellerApplyCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -131,6 +133,20 @@ class SellerApplicationServiceTest {
         assertThatThrownBy(() -> sellerApplicationService.getMyApplication(MEMBER_ID, 99L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.SELLER_APPLICATION_NOT_FOUND));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void 승인된_판매자인지는_승인_상태의_신청이_있는지로_판단한다(boolean exists) {
+        // given
+        given(sellerApplicationRepository.existsByMemberIdAndStatus(MEMBER_ID, SellerApplicationStatus.APPROVED))
+                .willReturn(exists);
+
+        // when
+        boolean sut = sellerApplicationService.isApprovedSeller(MEMBER_ID);
+
+        // then: 심사 대기·심사 중·거절 신청은 판매자로 보지 않는다
+        assertThat(sut).isEqualTo(exists);
     }
 
     @Test
