@@ -2,8 +2,8 @@ package com.ok.product.product.controller.dto;
 
 import java.util.List;
 
-import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductCategoryGroup;
+import com.ok.product.product.service.dto.ProductCategoryGroupResult;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -20,10 +20,10 @@ public record ProductCategoryGroupResponse(
 	List<ProductCategoryResponse> categories
 ) {
 
-	public static ProductCategoryGroupResponse from(ProductCategoryGroup group) {
-		List<ProductCategoryResponse> categories = ProductCategory.findAllByGroup(group).stream()
-			.map(category -> new ProductCategoryResponse(category, category.getDescription()))
+	public static ProductCategoryGroupResponse from(ProductCategoryGroupResult result) {
+		List<ProductCategoryResponse> categories = result.categories().stream()
+			.map(ProductCategoryResponse::from)
 			.toList();
-		return new ProductCategoryGroupResponse(group, group.getDescription(), categories);
+		return new ProductCategoryGroupResponse(result.group(), result.description(), categories);
 	}
 }

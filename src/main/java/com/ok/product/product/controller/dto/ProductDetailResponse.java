@@ -68,7 +68,7 @@ public record ProductDetailResponse(
 
 	public static ProductDetailResponse from(ProductDetailResult result) {
 		return new ProductDetailResponse(result.productId(), result.name(),
-			result.descriptionHtml(), result.category().getGroup(), result.category(), result.region(),
+			result.descriptionHtml(), result.categoryGroup(), result.category(), result.region(),
 			result.status(), result.minSalePrice(), result.minPriceListPrice(), result.discountRate(),
 			result.soldOut(), result.reviewCount(), result.averageRating(), result.imageUrls(),
 			result.options().stream().map(ProductOptionResponse::from).toList(), result.createdAt(),

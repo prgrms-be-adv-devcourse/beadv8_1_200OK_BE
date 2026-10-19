@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Arrays;
 import java.util.List;
 
 // 구매자용 조회
@@ -51,7 +50,7 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 	@Override
 	@GetMapping("/categories")
 	public ResponseEntity<List<ProductCategoryGroupResponse>> getCategories() {
-		return ResponseEntity.ok(Arrays.stream(ProductCategoryGroup.values())
+		return ResponseEntity.ok(productService.getCategories().stream()
 			.map(ProductCategoryGroupResponse::from)
 			.toList());
 	}

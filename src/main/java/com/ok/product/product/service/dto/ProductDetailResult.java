@@ -2,6 +2,7 @@ package com.ok.product.product.service.dto;
 
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.domain.ProductCategoryGroup;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 
@@ -12,6 +13,7 @@ public record ProductDetailResult(
 	Long productId,
 	String name,
 	String descriptionHtml,
+	ProductCategoryGroup categoryGroup,
 	ProductCategory category,
 	ProductRegion region,
 	ProductStatus status,
@@ -33,7 +35,7 @@ public record ProductDetailResult(
 			.map(ProductOptionResult::from)
 			.toList();
 		return new ProductDetailResult(product.getId(), product.getName(),
-			product.getDescriptionHtml(), product.getCategory(), product.getRegion(), product.getStatus(),
+			product.getDescriptionHtml(), product.getCategory().getGroup(), product.getCategory(), product.getRegion(), product.getStatus(),
 			product.getMinSalePrice(), product.getMinPriceListPrice(), product.discountRate(), product.isSoldOut(),
 			product.getReviewCount(), product.averageRating(), imageUrls, options, product.getCreatedAt(),
 			product.getUpdatedAt());

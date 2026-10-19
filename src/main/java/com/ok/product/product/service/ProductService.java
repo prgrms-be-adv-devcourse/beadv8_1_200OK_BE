@@ -3,6 +3,7 @@ package com.ok.product.product.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
+import com.ok.product.product.domain.ProductCategoryGroup;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
@@ -10,6 +11,7 @@ import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.service.dto.ProductCategoryGroupResult;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductDetailResult;
 import com.ok.product.product.service.dto.ProductOptionCommand;
@@ -25,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 
 @Service
@@ -132,6 +135,13 @@ public class ProductService {
 		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
 		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
+	}
+
+	// 목록 조회 필터에 쓰는 상위·하위 카테고리. DB를 거치지 않고 enum 정의에서 만든다
+	public List<ProductCategoryGroupResult> getCategories() {
+		return Arrays.stream(ProductCategoryGroup.values())
+			.map(ProductCategoryGroupResult::from)
+			.toList();
 	}
 
 	/**
