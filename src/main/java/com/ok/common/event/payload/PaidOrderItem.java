@@ -1,6 +1,5 @@
 package com.ok.common.event.payload;
 
-import java.util.Objects;
 
 /**
  * 결제된 주문 상품 항목을 담는다. {@link PaidSellerOrder}의 일부이며 상품명, 옵션명, 단가는 결제 시점 값이다.
@@ -20,17 +19,23 @@ public record PaidOrderItem(
 ) {
 
     public PaidOrderItem {
-        Objects.requireNonNull(orderItemId, "orderItemId는 필수입니다.");
+        requireNonNull(orderItemId, "orderItemId는 필수입니다.");
         if (productName == null || productName.isBlank()) {
             throw new IllegalArgumentException("productName은 필수입니다.");
         }
-        Objects.requireNonNull(quantity, "quantity는 필수입니다.");
+        requireNonNull(quantity, "quantity는 필수입니다.");
         if (quantity < 1) {
             throw new IllegalArgumentException("quantity는 1 이상이어야 합니다.");
         }
-        Objects.requireNonNull(unitPrice, "unitPrice는 필수입니다.");
+        requireNonNull(unitPrice, "unitPrice는 필수입니다.");
         if (unitPrice < 0) {
             throw new IllegalArgumentException("unitPrice는 0 이상이어야 합니다.");
+        }
+    }
+
+    private static void requireNonNull(Object value, String message) {
+        if (value == null) {
+            throw new IllegalArgumentException(message);
         }
     }
 }

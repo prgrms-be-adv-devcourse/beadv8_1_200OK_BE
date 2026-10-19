@@ -40,7 +40,7 @@ class OrderPaidEventTest {
     void 필수값이_없으면_예외가_발생한다(Long orderId, LocalDateTime paidAt, ShippingAddress address, String message) {
         // when & then
         assertThatThrownBy(() -> new OrderPaidEvent(orderId, paidAt, address, List.of(sellerOrder(10L, 100L))))
-                .isInstanceOf(NullPointerException.class)
+                .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
     }
 
@@ -80,6 +80,18 @@ class OrderPaidEventTest {
     void 다른_판매자_묶음에_같은_주문_항목이_있으면_예외가_발생한다() {
         // given
         List<PaidSellerOrder> sellerOrders = List.of(sellerOrder(10L, 100L), sellerOrder(20L, 100L));
+
+        // when & then
+        assertThatThrownBy(() -> new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("orderItemId가 중복되었습니다: 100");
+    }
+
+    @Test
+    void 같은_판매자_묶음_안에_같은_주문_항목이_있으면_예외가_발생한다() {
+        // given
+        PaidOrderItem item = new PaidOrderItem(100L, "사과", "1kg", 2, 10_000L);
+        List<PaidSellerOrder> sellerOrders = List.of(new PaidSellerOrder(10L, 3_000L, 50_000L, 0L, List.of(item, item)));
 
         // when & then
         assertThatThrownBy(() -> new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders))

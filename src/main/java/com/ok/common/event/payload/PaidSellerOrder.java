@@ -1,12 +1,9 @@
 package com.ok.common.event.payload;
 
-import com.ok.common.event.OrderPaidEvent;
-
 import java.util.List;
-import java.util.Objects;
 
 /**
- * 결제된 주문에서 한 판매자의 상품과 배송비를 담는다. {@link OrderPaidEvent}의 일부다.
+ * 결제된 주문에서 한 판매자의 상품과 배송비를 담는다. {@link com.ok.common.event.OrderPaidEvent}의 일부다.
  * 배송비 관련 값은 주문서에서 배송비를 계산할 때 쓴 값을 그대로 담는다. 배송이 판매자 설정을 따로 조회하면
  * 이벤트 처리 전에 판매자가 설정을 바꿨을 때 결제한 금액과 달라지기 때문이다. 배송비 계산은 배송이 한다.
  *
@@ -25,7 +22,9 @@ public record PaidSellerOrder(
 ) {
 
     public PaidSellerOrder {
-        Objects.requireNonNull(sellerId, "sellerId는 필수입니다.");
+        if (sellerId == null) {
+            throw new IllegalArgumentException("sellerId는 필수입니다.");
+        }
         requireNotNegative(baseShippingFee, "baseShippingFee");
         requireNotNegative(freeShippingThreshold, "freeShippingThreshold");
         requireNotNegative(regionSurcharge, "regionSurcharge");
@@ -37,7 +36,9 @@ public record PaidSellerOrder(
     }
 
     private static void requireNotNegative(Long amount, String name) {
-        Objects.requireNonNull(amount, name + "는 필수입니다.");
+        if (amount == null) {
+            throw new IllegalArgumentException(name + "는 필수입니다.");
+        }
         if (amount < 0) {
             throw new IllegalArgumentException(name + "는 0 이상이어야 합니다.");
         }

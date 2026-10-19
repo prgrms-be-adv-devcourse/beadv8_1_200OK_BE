@@ -1,11 +1,13 @@
 package com.ok.common.event.payload;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ShippingAddressTest {
@@ -28,5 +30,19 @@ class ShippingAddressTest {
                 Arguments.of("홍길동", "01012345678", "06236", "", "101호", "address는 필수입니다."),
                 Arguments.of("홍길동", "01012345678", "06236", "서울", " ", "addressDetail는 필수입니다.")
         );
+    }
+
+    @Test
+    void toString에_개인정보가_노출되지_않는다() {
+        // given
+        ShippingAddress address = new ShippingAddress("홍길동", "010-1234-5678", "06236", "서울 강남구 테헤란로 1", "101동 202호", "문 앞");
+
+        // when
+        String sut = address.toString();
+
+        // then
+        assertThat(sut)
+                .doesNotContain("홍길동", "010-1234-5678", "서울 강남구 테헤란로 1", "101동 202호", "문 앞")
+                .contains("postalCode=06236");
     }
 }
