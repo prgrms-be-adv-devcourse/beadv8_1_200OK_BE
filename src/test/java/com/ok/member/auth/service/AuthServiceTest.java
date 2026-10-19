@@ -187,6 +187,42 @@ class AuthServiceTest {
     }
 
     @Test
+    void 승인된_판매자가_로그인하면_구매자와_판매자_권한으로_Access_Token을_발급한다() {
+        // given
+        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(passwordEncoder.matches("password1!", ENCODED_PASSWORD)).willReturn(true);
+        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+                .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID))
+                .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
+
+        // when
+        TokenResult sut = authService.login(new LoginCommand("tester01", "password1!"));
+
+        // then
+        assertThat(sut.accessToken()).isEqualTo("seller-access-token");
+    }
+
+    @Test
+    void 재발급할_때_판매자_승인_여부를_다시_조회해_승인됐으면_판매자_권한을_함께_준다() {
+        // given: 승인 전에 로그인해 BUYER 토큰만 가진 회원이 승인 뒤 재발급한다
+        given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+                .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID))
+                .willReturn(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14))));
+
+        // when
+        TokenResult sut = authService.reissue(new TokenReissueCommand("old-refresh-token"));
+
+        // then
+        assertThat(sut.accessToken()).isEqualTo("seller-access-token");
+    }
+
+    @Test
     void 재발급할_때_회원이_없으면_INVALID_REFRESH_TOKEN이_발생하고_새_토큰을_발급하지_않는다() {
         // given
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
