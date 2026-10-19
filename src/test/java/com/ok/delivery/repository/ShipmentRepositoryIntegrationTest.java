@@ -59,6 +59,7 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getAddress()).isEqualTo(address());
             softly.assertThat(sut.getRegionGroup()).isEqualTo("GENERAL");
             softly.assertThat(sut.getBaseShippingFee()).isEqualTo(3_000);
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(3_000);
             softly.assertThat(sut.getFreeShippingThreshold()).isEqualTo(50_000);
             softly.assertThat(sut.isDelayed()).isFalse();
             softly.assertThat(sut.getItems())
@@ -77,6 +78,7 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
                 .address(address())
                 .regionGroup("GENERAL")
                 .baseShippingFee(3_000)
+                .chargedShippingFee(3_000)
                 .regionSurcharge(0)
                 .freeShippingThreshold(null)
                 .estimatedDeliveryStart(LocalDate.of(2026, 10, 13))
