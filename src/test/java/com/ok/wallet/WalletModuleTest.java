@@ -9,6 +9,7 @@ import com.ok.common.event.WalletPaymentFailedEvent;
 import com.ok.config.JpaConfig;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.wallet.repository.BuyerWalletLedgerQueryRepository;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.repository.SellerWalletRepository;
 import com.ok.wallet.service.BuyerWalletService;
@@ -21,6 +22,7 @@ import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -49,6 +51,11 @@ class WalletModuleTest {
 
     @Autowired
     BuyerWalletService buyerWalletService;
+
+    // 모듈 테스트는 지갑 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.
+    // 이 테스트는 주문 결제 이벤트 흐름만 확인하고 이용 내역 조회는 쓰지 않으므로 가짜로 둔다.
+    @MockitoBean
+    BuyerWalletLedgerQueryRepository buyerWalletLedgerQueryRepository;
 
     @AfterEach
     void tearDown() {

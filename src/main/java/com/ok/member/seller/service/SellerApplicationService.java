@@ -86,6 +86,14 @@ public class SellerApplicationService {
     }
 
     /**
+     * 승인된 판매자인지 확인한다. 토큰을 발급할 때 SELLER 권한을 줄지 정하는 데 쓴다.
+     * 판매자 여부를 판단하는 규칙을 판매자 쪽에 두어, 다른 하위 도메인(인증)이 신청 데이터를 직접 읽지 않게 한다.
+     */
+    public boolean isApprovedSeller(Long memberId) {
+        return sellerApplicationRepository.existsByMemberIdAndStatus(memberId, SellerApplicationStatus.APPROVED);
+    }
+
+    /**
      * 관리자용 신청 목록을 오래된 신청부터 한 페이지씩 반환한다.
      *
      * @param query 상태가 {@code null}이면 모든 상태를 조회한다

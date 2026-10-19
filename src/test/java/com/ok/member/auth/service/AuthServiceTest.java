@@ -11,6 +11,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.service.SellerApplicationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,13 +60,18 @@ class AuthServiceTest {
     @Mock
     RefreshTokenService refreshTokenService;
 
+    // 기본값 false라 별도 stub이 없는 테스트는 판매자가 아닌 회원(BUYER)으로 다룬다
+    @Mock
+    SellerApplicationService sellerApplicationService;
+
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         // 생성자에서 아이디가 없을 때 비교할 더미 해시를 만든다
         given(passwordEncoder.encode(anyString())).willReturn(DUMMY_HASH);
-        authService = new AuthService(memberRepository, passwordEncoder, accessTokenProvider, refreshTokenService);
+        authService = new AuthService(memberRepository, passwordEncoder, accessTokenProvider, refreshTokenService,
+                sellerApplicationService);
     }
 
     @Test
@@ -178,6 +184,42 @@ class AuthServiceTest {
             softly.assertThat(sut.refreshToken()).isEqualTo("new-refresh-token");
             softly.assertThat(sut.refreshTokenExpiresAt()).isEqualTo(refreshExpiresAt);
         });
+    }
+
+    @Test
+    void 승인된_판매자가_로그인하면_구매자와_판매자_권한으로_Access_Token을_발급한다() {
+        // given
+        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(passwordEncoder.matches("password1!", ENCODED_PASSWORD)).willReturn(true);
+        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+                .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID))
+                .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
+
+        // when
+        TokenResult sut = authService.login(new LoginCommand("tester01", "password1!"));
+
+        // then
+        assertThat(sut.accessToken()).isEqualTo("seller-access-token");
+    }
+
+    @Test
+    void 재발급할_때_판매자_승인_여부를_다시_조회해_승인됐으면_판매자_권한을_함께_준다() {
+        // given: 승인 전에 로그인해 BUYER 토큰만 가진 회원이 승인 뒤 재발급한다
+        given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+                .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID))
+                .willReturn(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14))));
+
+        // when
+        TokenResult sut = authService.reissue(new TokenReissueCommand("old-refresh-token"));
+
+        // then
+        assertThat(sut.accessToken()).isEqualTo("seller-access-token");
     }
 
     @Test

@@ -418,6 +418,7 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
         SellerApplication application = pending(applicantId, businessNumber);
         switch (status) {
             case PENDING -> {
+                // 신청하면 심사 대기 상태라 바꿀 것이 없다
             }
             case IN_REVIEW -> application.startReview(REVIEW_STARTED_AT);
             case APPROVED -> {

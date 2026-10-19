@@ -115,7 +115,8 @@ public class BuyerWalletService {
             return OrderPaymentResult.INSUFFICIENT_BALANCE;
         }
         // 원장 근거 키는 마지막 안전장치로 남긴다 (같은 주문이 두 번 기록되려 하면 유니크 제약이 막는다)
-        buyerWalletLedgerRepository.save(wallet.pay(amount, "PAYMENT:" + orderId));
+        // 키 규칙은 이용 내역 조회와 같은 곳(PaymentReferenceKey)에서 만든다
+        buyerWalletLedgerRepository.save(wallet.pay(amount, PaymentReferenceKey.of(orderId)));
         walletOrderPaymentRepository.save(WalletOrderPayment.paid(orderId, memberId, amount));
         return OrderPaymentResult.PAID;
     }
