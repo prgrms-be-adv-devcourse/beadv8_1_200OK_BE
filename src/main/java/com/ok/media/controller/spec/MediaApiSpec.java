@@ -19,7 +19,9 @@ public interface MediaApiSpec {
 					+ "요청당 파일 1개를 전달하며, 성공 시 미디어 ID와 접근 URL을 반환합니다.\n\n"
 					+ "- 이미지: image/jpeg, image/png, 최대 " + MediaPolicy.MAX_IMAGE_SIZE_MB + "MB. "
 					+ "서버에서 jpg 로 변환되며, " + MediaPolicy.MAX_IMAGE_WIDTH + "x" + MediaPolicy.MAX_IMAGE_HEIGHT
-					+ " 를 넘는 경우에만 비율을 유지한 채 그 안에 들어가도록 축소됩니다 (작은 이미지는 확대하지 않음).\n"
+					+ " 를 넘는 경우에만 비율을 유지한 채 그 안에 들어가도록 축소됩니다 (작은 이미지는 확대하지 않음). "
+					+ "원본 해상도는 가로·세로 각 " + MediaPolicy.MAX_DECODE_DIMENSION + "px, 총 "
+					+ (MediaPolicy.MAX_DECODE_PIXELS / 10_000) + "만 픽셀 이하여야 하며, 넘으면 413을 반환합니다.\n"
 					+ "- 영상: video/mp4, 최대 " + MediaPolicy.MAX_VIDEO_SIZE_MB + "MB. 원본 그대로 저장됩니다.\n"
 					+ "- 응답 url 은 S3 공개 주소이며 img, video 태그에 바로 사용할 수 있습니다."
 	)

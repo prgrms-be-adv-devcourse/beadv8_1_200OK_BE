@@ -30,6 +30,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.util.zip.CRC32;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -124,6 +126,20 @@ class MediaServiceTest {
 		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
 				.isInstanceOf(RestApiException.class)
 				.extracting("errorCode").isEqualTo(CommonErrorCode.BAD_REQUEST);
+		then(s3Client).shouldHaveNoInteractions();
+		then(mediaRepository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void 헤더의_해상도가_한도를_넘으면_디코딩하지_않고_CONTENT_TOO_LARGE_예외가_발생한다() throws IOException {
+		// given
+		// 실제 픽셀은 1x1이라 디코딩을 시도하면 IIOException(INTERNAL_ERROR)이 난다. CONTENT_TOO_LARGE면 디코딩 전에 거절된 것이다
+		MockMultipartFile file = pngWithHeaderResolution(50_000, 50_000);
+
+		// when & then
+		assertThatThrownBy(() -> mediaService.upload(MediaPurpose.PRODUCT, file))
+				.isInstanceOfSatisfying(RestApiException.class,
+						e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.CONTENT_TOO_LARGE));
 		then(s3Client).shouldHaveNoInteractions();
 		then(mediaRepository).shouldHaveNoInteractions();
 	}
@@ -259,6 +275,20 @@ class MediaServiceTest {
 			ImageIO.write(image, "png", out);
 			return new MockMultipartFile("file", "a.png", "image/png", out.toByteArray());
 		}
+	}
+
+	// 1x1 PNG의 IHDR 가로·세로만 바꿔, 작은 파일로 큰 해상도를 선언하는 이미지(decompression bomb)를 흉내 낸다
+	private static MockMultipartFile pngWithHeaderResolution(int width, int height) throws IOException {
+		byte[] png = pngFile(1, 1).getBytes();
+		// PNG 시그니처(8) + IHDR 길이(4) + 타입(4) 뒤에 가로(4)·세로(4)가 온다
+		ByteBuffer buffer = ByteBuffer.wrap(png);
+		buffer.putInt(16, width);
+		buffer.putInt(20, height);
+		// 리더가 CRC를 검사해도 통과하도록 IHDR 타입과 데이터(13바이트)로 CRC를 다시 계산한다
+		CRC32 crc = new CRC32();
+		crc.update(png, 12, 4 + 13);
+		buffer.putInt(29, (int) crc.getValue());
+		return new MockMultipartFile("file", "bomb.png", "image/png", png);
 	}
 
 	private static MockMultipartFile mp4File(int size) {

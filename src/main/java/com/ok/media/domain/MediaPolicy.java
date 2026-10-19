@@ -15,6 +15,10 @@ public class MediaPolicy {
 	public static final int MAX_IMAGE_WIDTH = 1600;
 	public static final int MAX_IMAGE_HEIGHT = 1600;
 
+	// 디코딩 허용 해상도
+	public static final int MAX_DECODE_DIMENSION = 8000;
+	public static final long MAX_DECODE_PIXELS = 40_000_000L;
+
 	// 허용 포멧 정책
 	private static final Set<String> IMAGE_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
 	private static final Set<String> VIDEO_CONTENT_TYPES = Set.of("video/mp4");
@@ -27,6 +31,12 @@ public class MediaPolicy {
 	public static boolean isAllowedVideoContentType(String contentType) {
 		if (contentType == null) return false;
 		return VIDEO_CONTENT_TYPES.contains(contentType.toLowerCase(Locale.ROOT));
+	}
+
+	public static boolean isDecodableResolution(int width, int height) {
+		if (width > MAX_DECODE_DIMENSION || height > MAX_DECODE_DIMENSION) return false;
+		// int 곱셈은 오버플로가 날 수 있어 long으로 계산
+		return (long) width * height <= MAX_DECODE_PIXELS;
 	}
 
 	private MediaPolicy() {

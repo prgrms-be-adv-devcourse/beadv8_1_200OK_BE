@@ -18,10 +18,13 @@ import software.amazon.awssdk.services.s3.model.GetUrlRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Iterator;
 import java.util.UUID;
 
 @Service
@@ -39,13 +42,7 @@ public class MediaService {
 
 	// jpg 로 변환 + 압축
 	public byte[] imageResizeAndCompress(MultipartFile file) throws IOException {
-		BufferedImage source;
-		try (InputStream inputStream = file.getInputStream()) {
-			source = ImageIO.read(inputStream);
-		}
-		if (source == null) {
-			throw new RestApiException(CommonErrorCode.BAD_REQUEST, "이미지 파일을 읽을 수 없습니다.");
-		}
+		BufferedImage source = decodeWithinResolutionLimit(file);
 
 		Thumbnails.Builder<BufferedImage> builder = Thumbnails.of(source);
 		if (source.getWidth() > MediaPolicy.MAX_IMAGE_WIDTH || source.getHeight() > MediaPolicy.MAX_IMAGE_HEIGHT) {
@@ -61,6 +58,32 @@ public class MediaService {
 					.outputFormat("jpg")
 					.toOutputStream(outputStream);
 			return outputStream.toByteArray();
+		}
+	}
+
+	// ImageIO.read는 해상도와 상관없이 픽셀을 모두 디코딩하므로, 헤더의 가로·세로를 먼저 확인한 뒤에만 디코딩한다
+	private BufferedImage decodeWithinResolutionLimit(MultipartFile file) throws IOException {
+		try (InputStream inputStream = file.getInputStream();
+			 ImageInputStream imageInputStream = ImageIO.createImageInputStream(inputStream)) {
+			Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInputStream);
+			if (!readers.hasNext()) {
+				throw new RestApiException(CommonErrorCode.BAD_REQUEST, "이미지 파일을 읽을 수 없습니다.");
+			}
+
+			ImageReader reader = readers.next();
+			try {
+				reader.setInput(imageInputStream, true, true);
+				if (!MediaPolicy.isDecodableResolution(reader.getWidth(0), reader.getHeight(0))) {
+					throw new RestApiException(
+							CommonErrorCode.CONTENT_TOO_LARGE,
+							"가로·세로 %dpx, 총 %d만 픽셀 이하의 이미지만 업로드할 수 있습니다."
+									.formatted(MediaPolicy.MAX_DECODE_DIMENSION, MediaPolicy.MAX_DECODE_PIXELS / 10_000)
+					);
+				}
+				return reader.read(0);
+			} finally {
+				reader.dispose();
+			}
 		}
 	}
 
