@@ -1,6 +1,6 @@
 package com.ok.product.product.controller.dto;
 
-import com.ok.product.product.domain.ProductStatus;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 
@@ -9,6 +9,6 @@ public record ProductStatusChangeRequest(
 
 	@Schema(description = "판매 상태", example = "ON_SALE")
 	@NotNull(message = "판매 상태는 필수입니다.")
-	ProductStatus status
+	ProductStatusCode status
 ) {
 }

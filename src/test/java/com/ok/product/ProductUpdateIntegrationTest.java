@@ -38,6 +38,7 @@ import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.ProductService;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 
@@ -220,7 +221,7 @@ class ProductUpdateIntegrationTest extends AbstractIntegrationTest {
 		other.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
 		assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status -> {
-			productService.changeStatus(SELLER_ID, productId, ProductStatus.ON_SALE); // version 0으로 읽음
+			productService.changeStatus(SELLER_ID, productId, ProductStatusCode.ON_SALE); // version 0으로 읽음
 			other.executeWithoutResult(s ->
 				productRepository.findById(productId).orElseThrow().changeVisibility(ProductVisibility.VISIBLE));
 		})).isInstanceOf(OptimisticLockingFailureException.class);

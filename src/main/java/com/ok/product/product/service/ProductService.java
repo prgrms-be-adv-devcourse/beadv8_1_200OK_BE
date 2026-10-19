@@ -3,18 +3,23 @@ package com.ok.product.product.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
-import com.ok.product.product.domain.ProductStatus;
+import com.ok.product.product.domain.ProductCategoryGroup;
+import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.service.dto.ProductCategoryGroupResult;
 import com.ok.product.product.service.dto.ProductCreateCommand;
 import com.ok.product.product.service.dto.ProductDetailResult;
+import com.ok.product.product.service.dto.ProductOptionCommand;
 import com.ok.product.product.service.dto.ProductOptionInfoResult;
 import com.ok.product.product.service.dto.ProductSearchQuery;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductSummaryResult;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
+import com.ok.product.product.service.dto.ProductVisibilityCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 
 @Service
@@ -49,13 +55,14 @@ public class ProductService {
 		validateImageUrls(command.imageUrls());
 		String descriptionHtml = sanitizeDescription(command.descriptionHtml());
 
-		Product product = Product.create(sellerId, command.name(), descriptionHtml, command.category(),
-			command.region(), command.options(), toObjectKeys(command.imageUrls()));
+		Product product = Product.create(sellerId, command.name(), descriptionHtml,
+			command.category().toDomain(), command.region().toDomain(), toOptionSpecs(command.options()),
+			toObjectKeys(command.imageUrls()));
 		if (command.status() != null) {
-			product.changeStatus(command.status());
+			product.changeStatus(command.status().toDomain());
 		}
 		if (command.visibility() != null) {
-			product.changeVisibility(command.visibility());
+			product.changeVisibility(command.visibility().toDomain());
 		}
 		return productRepository.save(product).getId();
 	}
@@ -73,19 +80,20 @@ public class ProductService {
 		String descriptionHtml = sanitizeDescription(command.descriptionHtml());
 
 		// 상품 정보 업데이트
-		product.updateInfo(command.name(), descriptionHtml, command.category(), command.region());
+		product.updateInfo(command.name(), descriptionHtml, command.category().toDomain(), command.region().toDomain());
 		product.replaceImages(toObjectKeys(command.imageUrls()));
-		product.mergeOptions(command.options(), now());
+		List<ProductOptionSpec> optionSpecs = toOptionSpecs(command.options());
+		product.mergeOptions(optionSpecs, now());
 		if (command.status() != null) {
-			product.changeStatus(command.status());
+			product.changeStatus(command.status().toDomain());
 		}
 		if (command.visibility() != null) {
-			product.changeVisibility(command.visibility());
+			product.changeVisibility(command.visibility().toDomain());
 		}
 
 		// TODO: 재고가 그대로인 옵션도 매번 UPDATE가 나가고 updated_at이 바뀐다. 로드한 totalStock과 요청값이 다를 때만 호출하도록 바꾸기
 		// 옵션 재고 업데이트
-		command.options().stream()
+		optionSpecs.stream()
 				.filter(spec -> !spec.isNew()) // isNew는 insert에 재고 등록됨
 				.forEach(spec -> {
 					int updated = productOptionRepository.updateTotalStock(spec.id(), spec.totalStock());
@@ -98,15 +106,15 @@ public class ProductService {
 	}
 
 	@Transactional
-	public void changeStatus(Long sellerId, Long productId, ProductStatus status) {
+	public void changeStatus(Long sellerId, Long productId, ProductStatusCode status) {
 		Product product = findOwnedProduct(sellerId, productId);
-		product.changeStatus(status);
+		product.changeStatus(status.toDomain());
 	}
 
 	@Transactional
-	public void changeVisibility(Long sellerId, Long productId, ProductVisibility visibility) {
+	public void changeVisibility(Long sellerId, Long productId, ProductVisibilityCode visibility) {
 		Product product = findOwnedProduct(sellerId, productId);
-		product.changeVisibility(visibility);
+		product.changeVisibility(visibility.toDomain());
 	}
 
 	@Transactional
@@ -117,8 +125,11 @@ public class ProductService {
 
 	// 구매자에게 보이는 상품 목록을 최신순으로 조회한다.
 	public Page<ProductSummaryResult> searchVisibleProducts(ProductSearchQuery query) {
-		Page<Product> products = productQueryRepository.findVisibleProducts(query.categoryGroup(), query.category(),
-			query.region(), PageRequest.of(query.page(), query.size()));
+		Page<Product> products = productQueryRepository.findVisibleProducts(
+			query.categoryGroup() == null ? null : query.categoryGroup().toDomain(),
+			query.category() == null ? null : query.category().toDomain(),
+			query.region() == null ? null : query.region().toDomain(),
+			PageRequest.of(query.page(), query.size()));
 		// 품절 판정은 상세와 같은 Product.isSoldOut()을 쓴다. 옵션은 지연 로딩이지만
 		// default_batch_fetch_size 덕분에 첫 접근 때 페이지 상품들의 옵션을 IN 쿼리 한 번으로 불러온다
 		return products.map(product -> ProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
@@ -129,6 +140,13 @@ public class ProductService {
 		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
 		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
+	}
+
+	// 목록 조회 필터에 쓰는 상위·하위 카테고리. DB를 거치지 않고 enum 정의에서 만든다
+	public List<ProductCategoryGroupResult> getCategories() {
+		return Arrays.stream(ProductCategoryGroup.values())
+			.map(ProductCategoryGroupResult::from)
+			.toList();
 	}
 
 	/**
@@ -152,6 +170,10 @@ public class ProductService {
 			.map(url -> mediaUrlResolver.toObjectKey(url)
 				.orElseThrow(() -> new RestApiException(ProductErrorCode.INVALID_IMAGE_URL)))
 			.toList();
+	}
+
+	private List<ProductOptionSpec> toOptionSpecs(List<ProductOptionCommand> options) {
+		return options.stream().map(ProductOptionCommand::toSpec).toList();
 	}
 
 	// 허용 태그만 남기고 본문에 있는 외부 이미지는 거절하지 않고 지운다

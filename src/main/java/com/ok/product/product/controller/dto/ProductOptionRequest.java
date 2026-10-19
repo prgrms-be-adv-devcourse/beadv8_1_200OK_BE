@@ -1,6 +1,6 @@
 package com.ok.product.product.controller.dto;
 
-import com.ok.product.product.domain.ProductOptionSpec;
+import com.ok.product.product.service.dto.ProductOptionCommand;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
@@ -34,7 +34,7 @@ public record ProductOptionRequest(
 	Integer totalStock
 ) {
 
-	ProductOptionSpec toSpec() {
-		return ProductOptionSpec.newOption(name, listPrice, salePrice, totalStock);
+	ProductOptionCommand toCommand() {
+		return new ProductOptionCommand(null, name, listPrice, salePrice, totalStock);
 	}
 }

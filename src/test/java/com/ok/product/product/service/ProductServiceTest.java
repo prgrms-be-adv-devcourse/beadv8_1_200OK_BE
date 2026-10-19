@@ -36,8 +36,13 @@ import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductQueryRepository;
 import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.service.dto.ProductCategoryCode;
 import com.ok.product.product.service.dto.ProductCreateCommand;
+import com.ok.product.product.service.dto.ProductOptionCommand;
+import com.ok.product.product.service.dto.ProductRegionCode;
+import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
+import com.ok.product.product.service.dto.ProductVisibilityCode;
 
 @ExtendWith(MockitoExtension.class)
 class ProductServiceTest {
@@ -78,8 +83,8 @@ class ProductServiceTest {
 
 	@Test
 	void 업로드하지_않은_이미지_URL이면_등록할_수_없다() {
-		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), options());
+		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), options());
 
 		assertErrorCode(() -> service.create(1L, command),
 			ProductErrorCode.INVALID_IMAGE_URL);
@@ -106,8 +111,8 @@ class ProductServiceTest {
 	@Test
 	void 판매_상태와_노출을_보내면_그대로_등록한다() {
 		givenSaveAssignsId(10L);
-		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, ProductStatus.ON_SALE, ProductVisibility.VISIBLE,
+		ProductCreateCommand command = new ProductCreateCommand("사과", "<p>설명</p>", ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE,
 			List.of(BUCKET_URL + "a.jpg"), options());
 
 		service.create(1L, command);
@@ -124,8 +129,8 @@ class ProductServiceTest {
 		given(productOptionRepository.updateTotalStock(OPTION_ID, 150)).willReturn(1);
 
 		service.update(1L, PRODUCT_ID, updateCommand(0, List.of(
-			new ProductOptionSpec(OPTION_ID, "3kg 특품", 40_000L, 30_000L, 150),
-			ProductOptionSpec.newOption("5kg", null, 49_000L, 20))));
+			new ProductOptionCommand(OPTION_ID, "3kg 특품", 40_000L, 30_000L, 150),
+			new ProductOptionCommand(null, "5kg", null, 49_000L, 20))));
 
 		assertThat(product.getName()).isEqualTo("수정한 이름");
 		assertThat(product.getDescriptionHtml()).isEqualTo("<p>수정</p>");
@@ -186,8 +191,8 @@ class ProductServiceTest {
 	@Test
 	void 수정할_때도_업로드하지_않은_이미지_URL이면_거부한다() {
 		givenProduct(1L);
-		ProductUpdateCommand command = new ProductUpdateCommand(0, "사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), sameOption(100));
+		ProductUpdateCommand command = new ProductUpdateCommand(0, "사과", "<p>설명</p>", ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of("https://evil.com/a.jpg"), sameOption(100));
 
 		assertErrorCode(() -> service.update(1L, PRODUCT_ID, command), ProductErrorCode.INVALID_IMAGE_URL);
 	}
@@ -198,9 +203,9 @@ class ProductServiceTest {
 	void 다른_판매자의_상품은_상태를_바꾸거나_삭제할_수_없다() {
 		Product product = givenProduct(1L);
 
-		assertErrorCode(() -> service.changeStatus(2L, PRODUCT_ID, ProductStatus.ON_SALE),
+		assertErrorCode(() -> service.changeStatus(2L, PRODUCT_ID, ProductStatusCode.ON_SALE),
 			ProductErrorCode.PRODUCT_ACCESS_DENIED);
-		assertErrorCode(() -> service.changeVisibility(2L, PRODUCT_ID, ProductVisibility.VISIBLE),
+		assertErrorCode(() -> service.changeVisibility(2L, PRODUCT_ID, ProductVisibilityCode.VISIBLE),
 			ProductErrorCode.PRODUCT_ACCESS_DENIED);
 		assertErrorCode(() -> service.delete(2L, PRODUCT_ID), ProductErrorCode.PRODUCT_ACCESS_DENIED);
 		assertThat(product.getStatus()).isEqualTo(ProductStatus.READY);
@@ -210,7 +215,8 @@ class ProductServiceTest {
 	// id·version이 채워진 저장된 상품처럼 만들어 수정용 조회가 돌려주게 한다
 	private Product givenProduct(Long sellerId) {
 		Product product = Product.create(sellerId, "청송 꿀사과", "<p>설명</p>", ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, options(), List.of(BUCKET_URL + "a.jpg"));
+			ProductRegion.GYEONGBUK, List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)),
+			List.of(BUCKET_URL + "a.jpg"));
 		ReflectionTestUtils.setField(product, "id", PRODUCT_ID);
 		ReflectionTestUtils.setField(product, "version", 0);
 		ReflectionTestUtils.setField(product.getOptions().getFirst(), "id", OPTION_ID);
@@ -218,23 +224,23 @@ class ProductServiceTest {
 		return product;
 	}
 
-	private ProductUpdateCommand updateCommand(int version, List<ProductOptionSpec> options) {
+	private ProductUpdateCommand updateCommand(int version, List<ProductOptionCommand> options) {
 		return new ProductUpdateCommand(version, "수정한 이름", "<p>수정</p><script>alert(1)</script>",
-			ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of(BUCKET_URL + "b.jpg"), options);
+			ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of(BUCKET_URL + "b.jpg"), options);
 	}
 
-	private List<ProductOptionSpec> sameOption(int totalStock) {
-		return List.of(new ProductOptionSpec(OPTION_ID, "3kg", 40_000L, 32_000L, totalStock));
+	private List<ProductOptionCommand> sameOption(int totalStock) {
+		return List.of(new ProductOptionCommand(OPTION_ID, "3kg", 40_000L, 32_000L, totalStock));
 	}
 
 	private ProductCreateCommand command(String descriptionHtml) {
-		return new ProductCreateCommand("청송 꿀사과", descriptionHtml, ProductCategory.FRUIT,
-			ProductRegion.GYEONGBUK, null, null, List.of(BUCKET_URL + "a.jpg"), options());
+		return new ProductCreateCommand("청송 꿀사과", descriptionHtml, ProductCategoryCode.FRUIT,
+			ProductRegionCode.GYEONGBUK, null, null, List.of(BUCKET_URL + "a.jpg"), options());
 	}
 
-	private List<ProductOptionSpec> options() {
-		return List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100));
+	private List<ProductOptionCommand> options() {
+		return List.of(new ProductOptionCommand(null, "3kg", 40_000L, 32_000L, 100));
 	}
 
 	private void givenSaveAssignsId(Long id) {
