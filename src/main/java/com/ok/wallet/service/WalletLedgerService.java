@@ -50,7 +50,8 @@ public class WalletLedgerService {
                 .orElseGet(() -> Page.empty(pageable));
     }
 
-    // 값이 없으면 보여 주는 유형 전체, 있으면 그 유형 하나. 보여 주지 않는 유형이나 모르는 값은 422
+    // 값이 없으면 보여 주는 유형 전체, 있으면 그 유형 하나.
+    // 모르는 값과 보여 주지 않는 유형(환불)은 모두 지원하지 않는 유형으로 422
     private static Set<BuyerWalletLedgerType> toTypes(String type) {
         if (type == null || type.isBlank()) {
             return VISIBLE_TYPES;
@@ -59,10 +60,10 @@ public class WalletLedgerService {
         try {
             parsed = BuyerWalletLedgerType.valueOf(type);
         } catch (IllegalArgumentException e) {
-            throw new RestApiException(WalletErrorCode.UNKNOWN_LEDGER_TYPE);
+            throw new RestApiException(WalletErrorCode.UNSUPPORTED_LEDGER_TYPE);
         }
         if (!VISIBLE_TYPES.contains(parsed)) {
-            throw new RestApiException(WalletErrorCode.UNKNOWN_LEDGER_TYPE);
+            throw new RestApiException(WalletErrorCode.UNSUPPORTED_LEDGER_TYPE);
         }
         return EnumSet.of(parsed);
     }

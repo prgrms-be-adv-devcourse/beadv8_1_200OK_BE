@@ -236,4 +236,18 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
             jdbcTemplate.update("DELETE FROM buyer_wallet WHERE member_id = ?", memberId);
         }
     }
+
+    @Test
+    void 날짜_형식이_틀리면_422() throws Exception {
+        mockMvc.perform(get(LEDGERS_URL).param("from", "abc")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isUnprocessableContent());
+    }
+
+    @Test
+    void 페이지_번호가_숫자가_아니면_422() throws Exception {
+        mockMvc.perform(get(LEDGERS_URL).param("page", "abc")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isUnprocessableContent());
+    }
 }
