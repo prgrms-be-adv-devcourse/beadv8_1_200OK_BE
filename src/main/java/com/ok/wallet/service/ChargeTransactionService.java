@@ -104,14 +104,11 @@ class ChargeTransactionService {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public ChargeConfirmResult failPending(Long memberId, String chargeNo, String failureCode, String failureMessage) {
+        // 소유자 확인을 위해 먼저 읽는다 (타인의 건이면 여기서 404)
         findOwnedCharge(memberId, chargeNo);
         chargeRepository.markFailedIfPending(chargeNo, failureCode, failureMessage, LocalDateTime.now(clock));
-        // 바꿨으면 실패 상태를, 0행이면 다른 요청이 커밋한 최신 상태를 돌려준다
-        return ChargeConfirmResult.from(findOwnedCharge(memberId, chargeNo));
-    }
-
-    @Transactional(readOnly = true)
-    public ChargeConfirmResult currentStatus(Long memberId, String chargeNo) {
+        // 조건부 UPDATE가 영속성 컨텍스트를 비우므로(clearAutomatically) 다시 읽어 결과 상태를 돌려준다.
+        // 바꿨으면 실패 상태를, 0행이면 다른 요청이 커밋한 최신 상태를 돌려준다 (READ COMMITTED)
         return ChargeConfirmResult.from(findOwnedCharge(memberId, chargeNo));
     }
 
