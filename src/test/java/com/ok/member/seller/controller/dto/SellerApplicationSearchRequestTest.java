@@ -1,11 +1,13 @@
 package com.ok.member.seller.controller.dto;
 
+import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.service.dto.SellerApplicationSearchQuery;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -46,12 +48,13 @@ class SellerApplicationSearchRequestTest {
         return Stream.of("", " ");
     }
 
+    // 요청 DTO는 도메인 enum을 쓸 수 없어 허용 값을 정규식으로 따로 적는다. 상태를 추가하고 정규식을 고치지 않으면 여기서 실패한다
     @ParameterizedTest
-    @ValueSource(strings = {"PENDING", "IN_REVIEW", "APPROVED", "REJECTED"})
-    void 신청_상태_이름은_허용한다(String status) {
+    @EnumSource(SellerApplicationStatus.class)
+    void 모든_신청_상태를_상태_필터로_허용한다(SellerApplicationStatus status) {
         // when
         Set<ConstraintViolation<SellerApplicationSearchRequest>> violations =
-                validator.validate(new SellerApplicationSearchRequest(status, 0, 20));
+                validator.validate(new SellerApplicationSearchRequest(status.name(), 0, 20));
 
         // then
         assertThat(violations).isEmpty();
