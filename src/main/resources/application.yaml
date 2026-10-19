@@ -52,3 +52,9 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: 30m
   refresh-token-expiration: 14d
+delivery:
+  # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
+  default-shipping:
+    base-shipping-fee: 3000
+    free-shipping-threshold: 50000
+    cutoff-time: "13:00"

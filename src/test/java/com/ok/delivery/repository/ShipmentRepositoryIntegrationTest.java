@@ -11,6 +11,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDate;
+import java.util.List;
+
 import static com.ok.delivery.fixture.ShipmentFixture.NOW;
 import static com.ok.delivery.fixture.ShipmentFixture.address;
 import static com.ok.delivery.fixture.ShipmentFixture.item;
@@ -63,6 +66,30 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
                     .containsExactlyInAnyOrder(1L, 2L);
             softly.assertThat(sut.getCreatedAt()).isNotNull();
         });
+    }
+
+    @Test
+    void 무료배송_기준이_없는_배송을_저장하고_조회한다() {
+        // given
+        Shipment shipment = Shipment.builder()
+                .orderId(1L)
+                .sellerId(10L)
+                .address(address())
+                .regionGroup("GENERAL")
+                .baseShippingFee(3_000)
+                .regionSurcharge(0)
+                .freeShippingThreshold(null)
+                .estimatedDeliveryStart(LocalDate.of(2026, 10, 13))
+                .estimatedDeliveryEnd(LocalDate.of(2026, 10, 14))
+                .items(List.of(item(1L)))
+                .build();
+        Long shipmentId = shipmentRepository.saveAndFlush(shipment).getId();
+
+        // when
+        Shipment sut = shipmentRepository.findById(shipmentId).orElseThrow();
+
+        // then
+        assertThat(sut.getFreeShippingThreshold()).isNull();
     }
 
     @Test

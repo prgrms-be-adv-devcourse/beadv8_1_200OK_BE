@@ -13,7 +13,7 @@ public final class ShippingFeePolicy {
     }
 
     /**
-     * 기본 배송비를 계산한다. 상품 금액 합계가 무료배송 기준 이상이면 0원이다.
+     * 기본 배송비를 계산한다. 상품 금액 합계가 무료배송 기준 이상이면 0원이고, 무료배송 기준이 없으면 항상 기본 배송비다.
      *
      * @param itemAmount 한 판매자의 상품 금액 합계
      * @throws IllegalArgumentException 상품 금액이 음수이거나 배송 설정이 없으면
@@ -25,8 +25,7 @@ public final class ShippingFeePolicy {
         if (setting == null) {
             throw new IllegalArgumentException("판매자 배송 설정은 필수입니다.");
         }
-        // TODO(#122): 무료배송 기준 0원은 지금 "항상 무료"로 동작한다. "무료배송 없음"을 표현하는 방법은 판매자 설정 형식과 함께 정한다.
-        return itemAmount >= setting.freeShippingThreshold() ? 0 : setting.baseShippingFee();
+        return setting.isFreeShipping(itemAmount) ? 0 : setting.baseShippingFee();
     }
 
     /**
