@@ -169,6 +169,7 @@ public class ProductService {
 	}
 
 	// 수정, 변경, 삭제 전에 상품을 가져오고 본인 상품인지 확인한다
+	// TODO(추후 고려): 필요시 ADMIN이 다른 판매자의 상품을 수정·삭제하는 기능
 	private Product findOwnedProduct(Long sellerId, Long productId) {
 		Product product = productRepository.findForUpdateByIdAndDeletedAtIsNull(productId)
 				.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.hamcrest.Matchers.endsWith;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -15,17 +16,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.context.annotation.Import;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.context.WebApplicationContext;
 
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
@@ -38,16 +38,11 @@ import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.product.service.ProductService;
-import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
 
 // 커밋 시점에 version이 오르는 것까지 보려고 테스트 메서드에 @Transactional을 붙이지 않는다
-@ActiveProfiles("test")
-@SpringBootTest(properties = {
-	"app.problem.base-uri=https://api.example.com/problems"
-})
-@AutoConfigureMockMvc
-@Import(TestcontainersConfiguration.class)
-class ProductUpdateIntegrationTest {
+class ProductUpdateIntegrationTest extends AbstractIntegrationTest {
 
 	// application-test.yml의 버킷(test-mock-bucket)과 리전으로 만든 업로드 URL
 	private static final String IMAGE = "https://test-mock-bucket.s3.ap-northeast-2.amazonaws.com/product/a.jpg";
@@ -56,9 +51,13 @@ class ProductUpdateIntegrationTest {
 	private static final String IMAGE_KEY = "product/a.jpg";
 	private static final String IMAGE_B_KEY = "product/b.jpg";
 	private static final Long SELLER_ID = 1L;
+	private static final Long OTHER_SELLER_ID = 2L;
 
 	@Autowired
-	MockMvc mockMvc;
+	WebApplicationContext context;
+
+	@Autowired
+	TestAccessTokens tokens;
 
 	@Autowired
 	ProductRepository productRepository;
@@ -75,11 +74,13 @@ class ProductUpdateIntegrationTest {
 	@Autowired
 	ProductService productService;
 
+	private MockMvc mockMvc;
 	Long productId;
 	Long optionId;
 
 	@BeforeEach
 	void setUp() {
+		mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
 		Product product = productRepository.save(Product.create(SELLER_ID, "청송 꿀사과", "<p>설명</p>",
 			ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
 			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)), List.of(IMAGE_KEY)));
@@ -160,7 +161,7 @@ class ProductUpdateIntegrationTest {
 
 	@Test
 	void 다른_판매자는_수정할_수_없다() throws Exception {
-		update(2L, body(0, sameOption(100)))
+		update(OTHER_SELLER_ID, body(0, sameOption(100)))
 			.andExpect(status().isForbidden())
 			.andExpect(jsonPath("$.type", endsWith("/product/product-access-denied")));
 	}
@@ -237,8 +238,7 @@ class ProductUpdateIntegrationTest {
 
 	private ResultActions update(Long memberId, String body) throws Exception {
 		return mockMvc.perform(put("/api/v1/products/{productId}", productId)
-			.header("X-Member-Id", memberId)
-			.header("X-Member-Role", "SELLER")
+			.header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, "SELLER"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(body));
 	}
