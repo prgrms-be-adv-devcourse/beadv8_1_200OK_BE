@@ -89,6 +89,14 @@ public class Member extends BaseTime {
     }
 
     /**
+     * 탈퇴한 회원인지 확인한다.
+     * 탈퇴 회원을 "없는 회원"으로 볼지 판단하는 기준을 로그인·재발급·내 정보 API가 함께 쓰도록 한곳에 둔다.
+     */
+    public boolean isWithdrawn() {
+        return status == MemberStatus.WITHDRAWN;
+    }
+
+    /**
      * 회원이 직접 바꿀 수 있는 이름과 닉네임을 수정한다.
      * 아이디와 이메일은 가입 후 바꿀 수 없다. 닉네임은 다른 회원과 같아도 된다.
      */

@@ -2,7 +2,6 @@ package com.ok.member.member.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.exception.MemberErrorCode;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.dto.MemberInfoResult;
@@ -45,7 +44,7 @@ public class MemberService {
     private Member findMember(Long memberId) {
         // 탈퇴한 뒤에도 만료 전 Access Token은 남아 있을 수 있다. 로그인·재발급(AuthService)과 같이 없는 회원으로 본다
         return memberRepository.findById(memberId)
-                .filter(member -> member.getStatus() != MemberStatus.WITHDRAWN)
+                .filter(member -> !member.isWithdrawn())
                 .orElseThrow(() -> new RestApiException(MemberErrorCode.MEMBER_NOT_FOUND));
     }
 
