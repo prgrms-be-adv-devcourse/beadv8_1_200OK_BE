@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 public enum MemberErrorCode implements ErrorCode {
     DUPLICATE_LOGIN_ID(HttpStatus.CONFLICT, "Duplicate login id", "이미 사용 중인 아이디입니다."),
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "Duplicate email", "이미 사용 중인 이메일입니다."),
+    MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "Member not found", "회원 정보를 찾을 수 없습니다."),
     ;
 
     private final HttpStatus httpStatus;
