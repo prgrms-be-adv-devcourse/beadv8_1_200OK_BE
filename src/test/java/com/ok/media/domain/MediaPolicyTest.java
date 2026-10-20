@@ -101,4 +101,25 @@ class MediaPolicyTest {
 				Arguments.of(7000, 7000)
 		);
 	}
+
+	@ParameterizedTest
+	@MethodSource("줄여_읽는_비율")
+	void 긴_변이_3200px_이하가_되는_가장_작은_비율로_줄여_읽는다(int width, int height, int expected) {
+		// when
+		int subsampling = MediaPolicy.decodeSubsampling(width, height);
+
+		// then
+		assertThat(subsampling).isEqualTo(expected);
+	}
+
+	static Stream<Arguments> 줄여_읽는_비율() {
+		return Stream.of(
+				Arguments.of(1600, 1600, 1),
+				Arguments.of(3200, 3200, 1),
+				Arguments.of(3201, 1, 2),
+				Arguments.of(1, 3201, 2),
+				Arguments.of(6324, 6324, 2),
+				Arguments.of(8000, 5000, 3)
+		);
+	}
 }

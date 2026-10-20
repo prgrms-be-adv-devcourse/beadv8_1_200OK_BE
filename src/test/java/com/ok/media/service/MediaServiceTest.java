@@ -326,6 +326,26 @@ class MediaServiceTest {
 	}
 
 	@Test
+	void 긴_변이_3200을_넘으면_줄여_읽은_뒤_비율을_유지하며_축소되어_S3에_저장된다() throws IOException {
+		// given
+		MockMultipartFile file = pngFile(6400, 3200);
+		stubSuccessfulUpload();
+
+		// when
+		mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file);
+
+		// then
+		ArgumentCaptor<RequestBody> bodyCaptor = ArgumentCaptor.forClass(RequestBody.class);
+		then(s3Client).should().putObject(any(PutObjectRequest.class), bodyCaptor.capture());
+		BufferedImage uploaded;
+		try (InputStream in = bodyCaptor.getValue().contentStreamProvider().newStream()) {
+			uploaded = ImageIO.read(in);
+		}
+		assertThat(uploaded.getWidth()).isEqualTo(MediaPolicy.MAX_STORED_IMAGE_WIDTH);
+		assertThat(uploaded.getHeight()).isEqualTo(800);
+	}
+
+	@Test
 	void S3_업로드가_실패하면_메타데이터를_저장하지_않는다() throws IOException {
 		// given
 		MockMultipartFile file = pngFile(10, 10);

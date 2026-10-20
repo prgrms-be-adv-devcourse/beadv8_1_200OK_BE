@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.s3.model.GetUrlRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.spi.ImageReaderSpi;
 import javax.imageio.stream.ImageInputStream;
@@ -79,14 +80,20 @@ public class MediaService {
 			ImageReader reader = findAllowedReader(imageInputStream);
 			try {
 				reader.setInput(imageInputStream, true, true);
-				if (!MediaPolicy.isDecodableResolution(reader.getWidth(0), reader.getHeight(0))) {
+				int width = reader.getWidth(0);
+				int height = reader.getHeight(0);
+				if (!MediaPolicy.isDecodableResolution(width, height)) {
 					throw new RestApiException(
 							MediaErrorCode.IMAGE_RESOLUTION_EXCEEDED,
 							"가로·세로 %dpx, 총 %d만 픽셀 이하의 이미지만 업로드할 수 있습니다."
 									.formatted(MediaPolicy.MAX_DECODE_DIMENSION, MediaPolicy.MAX_DECODE_PIXELS / 10_000)
 					);
 				}
-				return reader.read(0);
+				// 어차피 1600px 이하로 줄이므로, 메모리를 아끼려고 처음부터 줄여 읽는다
+				ImageReadParam param = reader.getDefaultReadParam();
+				int subsampling = MediaPolicy.decodeSubsampling(width, height);
+				param.setSourceSubsampling(subsampling, subsampling, 0, 0);
+				return reader.read(0, param);
 			} catch (IOException e) {
 				// 헤더나 픽셀 데이터가 깨진 파일, 사용자가 고칠 수 있는 입력 오류라 500이 아닌 400으로 응답한다
 				throw new RestApiException(MediaErrorCode.UNREADABLE_IMAGE);
