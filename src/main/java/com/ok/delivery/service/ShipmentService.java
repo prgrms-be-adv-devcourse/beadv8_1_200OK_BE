@@ -44,6 +44,7 @@ public class ShipmentService {
     private final DeliveryRegionService deliveryRegionService;
     private final DeliveryDatePolicy deliveryDatePolicy;
     private final SellerShippingSettingService sellerShippingSettingService;
+    private final DeliveryEventPublisher deliveryEventPublisher;
     private final Clock clock;
 
     /**
@@ -78,6 +79,7 @@ public class ShipmentService {
      * 판매자가 송장을 등록해 출고한다. {@code PREPARING → SHIPPING}
      * shipment 행 잠금 아래에서 처리하므로 환불의 취소 확정 예약과 동시에 실행돼도 한쪽만 성공한다.
      * 대기 중인 배송지 변경 요청은 송장 발행 후 바꿀 수 없으므로 고정 문구로 자동 거절한다.
+     * 출고가 확정되면 주문이 배송 중으로 바뀌도록 배송 시작 이벤트를 발행한다.
      *
      * @throws RestApiException 없거나 다른 판매자의 shipment면 {@code SHIPMENT_NOT_FOUND},
      *                          같은 택배사의 송장번호가 이미 쓰였으면 {@code TRACKING_NUMBER_DUPLICATED},
@@ -94,6 +96,9 @@ public class ShipmentService {
         flushDetectingDuplicatedTrackingNumber();
         addressChangeRequestRepository.findAllByShipmentIdAndStatus(shipment.getId(), AddressChangeStatus.PENDING)
                 .forEach(request -> request.reject(now));
+        // 송장번호 중복 확인(flush)을 통과한 뒤에 발행한다. 실패해 롤백되면 커밋 후 수신하는 주문에는 전달되지 않는다
+        deliveryEventPublisher.publishShipmentDispatched(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
+                shipment.getCarrier().name(), shipment.getTrackingNumber(), shipment.getShippedAt());
         return ShipmentDispatchResult.from(shipment);
     }
 
