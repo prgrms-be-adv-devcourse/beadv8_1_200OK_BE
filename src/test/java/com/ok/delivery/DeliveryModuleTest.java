@@ -8,12 +8,14 @@ import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
 import com.ok.config.JpaConfig;
 import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.event.CarrierDeliveredEvent;
 import com.ok.delivery.fixture.ShipmentFixture;
 import com.ok.delivery.repository.ShipmentQueryRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.ShipmentService;
 import com.ok.delivery.service.dto.ShipmentDispatchCommand;
 import com.ok.product.SellerShippingPolicyProvider;
+import com.ok.testsupport.FakeCarrierClient;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
@@ -25,6 +27,7 @@ import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
@@ -35,7 +38,9 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 @ApplicationModuleTest
 // 지역 판정 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
-@Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class})
+// 통합 테스트와 같이 test 프로필로 띄워 가짜 택배사(MockCarrierClient)를 빼고, 아무 일도 하지 않는 FakeCarrierClient를 쓴다
+@ActiveProfiles("test")
+@Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class, FakeCarrierClient.class})
 class DeliveryModuleTest {
 
     // 판매자 배송 설정은 상품 모듈 빈이라 모듈 테스트에 뜨지 않는다. Modulith는 다른 모듈 타입의 빈 정의를 @Import로 넣어도 걸러 내므로 mock으로 채운다.
@@ -116,12 +121,12 @@ class DeliveryModuleTest {
     }
 
     @Test
-    void 배송_완료를_반영하면_배송_완료_이벤트를_발행한다(Scenario scenario) {
+    void 택배사가_배송_완료를_알리면_배송_완료_이벤트를_발행한다(Scenario scenario) {
         // given
         Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.SHIPPING)).getId();
 
         // when & then
-        scenario.stimulate(() -> shipmentService.deliver(shipmentId))
+        scenario.publish(new CarrierDeliveredEvent(shipmentId))
                 .andWaitForEventOfType(ShipmentDeliveredEvent.class)
                 .matching(event -> event.shipmentId().equals(shipmentId))
                 .toArriveAndVerify(event -> {
