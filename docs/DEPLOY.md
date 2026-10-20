@@ -19,6 +19,10 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
 
 ## 2. 최초 설정 (서버당 1회)
 
+> **주의:** 이슈 #108(토큰 기반 인증 전환과 기본 거부)이 끝나기 전에는 `/api/v1`이 사실상 인증 없이 열려 있습니다. 헤더 `X-Member-Id`만 바꾸면 다른 회원을 사칭할 수 있습니다. 그래서 보안 그룹의 80 포트 인바운드를 내 IP로만 좁힌 상태에서 진행하고, 전체 공개는 #108이 머지된 뒤에 합니다.
+
+먼저 [3. 배포](#3-배포)의 로컬 이미지 빌드·push와 패키지 공개 전환을 끝내고 돌아옵니다. 이미지가 없거나 비공개이면 아래 마지막 `./deploy.sh`가 pull에 실패합니다.
+
 ```bash
 # 로컬: 배포 파일 복사
 scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/nginx deploy/.env.prod.example ubuntu@<EIP>:/tmp/
@@ -70,3 +74,20 @@ docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
 curl -s -o /dev/null -w '%{http_code}\n' localhost/api/v1/products/categories   # 200
 curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options # 404
 ```
+
+## 6. 배포 파일 갱신
+
+`deploy.sh`는 앱 이미지만 새로 받습니다. `compose.prod.yml`이나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
+
+```bash
+# 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
+scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
+scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
+
+# 서버
+cd /opt/paldo-gotgan
+./deploy.sh
+docker compose -f compose.prod.yml restart nginx
+```
+
+- nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
