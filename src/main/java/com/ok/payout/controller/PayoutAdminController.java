@@ -30,10 +30,10 @@ import org.springframework.web.bind.annotation.RestController;
 // 관리자 정산 API (조회, 수동 실행, 수동 조정). 판매자용은 PayoutController (#198에서 분리)
 // 개발 중 수동 실행용 API가 있어 prod에서는 등록하지 않음 (prod 정산은 스케줄러로만 실행)
 // 토큰 인증은 붙었지만 SecurityConfig가 아직 전환 기간(permitAll)이라 prod에는 열지 않음 (기본 거부 전환은 #108)
-// 관리자만 쓰는 API라 메서드마다 @PreAuthorize로 막음 (DEVELOPMENT.md "역할 제한"). 토큰 없음은 401, 관리자가 아니면 403
 @Profile("!prod")
 @RestController
 @RequestMapping("/api/v1/admin/payouts")
+@PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class PayoutAdminController implements PayoutAdminControllerSpec {
 
@@ -41,7 +41,6 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     private final PayoutService payoutService;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @GetMapping
     public ResponseEntity<PayoutPageResponse<PayoutSummaryResponse>> search(
@@ -53,7 +52,6 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     // 정산 상세 조회. 판매자 정산이면 그 판매자의 수수료 합계와 시스템 몫 정산 ID도 함께 보여 줌
     // 항목 목록은 /{payoutId}/items에서 따로 조회
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @GetMapping("/{payoutId}")
     public ResponseEntity<PayoutDetailResponse> getDetail(@PathVariable Long payoutId) {
@@ -61,7 +59,6 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     }
 
     // 정산 항목 조회. 항목마다 정산후보 생성 시각과, 조정 건이면 조정 정보(번호, 관리자 ID, 사유)를 함께 보여 줌
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @GetMapping("/{payoutId}/items")
     public ResponseEntity<PayoutPageResponse<PayoutItemResponse>> getItems(
@@ -73,7 +70,6 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     }
 
     // 정산 전체 수동 실행 (개발 중 수동 실행용. 실패 응답은 #67에서 처리)
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/run")
     public ResponseEntity<PayoutRunResponse> run() throws Exception {
@@ -90,7 +86,6 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     // 정산 1건 수동 실행. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.runOrderItem 참고)
     // (임시 헤더 X-Member-Role로 역할을 받던 방식은 헤더만 바꾸면 관리자인 척할 수 있어 토큰으로 전환함, #228)
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/run/order-items/{orderItemId}")
     public ResponseEntity<Void> runOrderItem(@PathVariable Long orderItemId) {
@@ -100,7 +95,6 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     // 정산 수동 조정. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.createAdjustment 참고)
     // 조정 기능을 열면 201과 생성된 정산후보 ID를 응답할 예정
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/adjustments")
     public ResponseEntity<Void> createAdjustment(

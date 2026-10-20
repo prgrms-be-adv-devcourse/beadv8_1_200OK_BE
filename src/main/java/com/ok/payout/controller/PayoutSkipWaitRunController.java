@@ -18,13 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 @Profile("!prod")
 @RestController
 @RequestMapping("/api/v1/admin/payouts")
+@PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class PayoutSkipWaitRunController implements PayoutSkipWaitRunControllerSpec {
 
     private final PayoutJobRunner payoutJobRunner;
 
-    // 관리자만 쓰는 운영 기능이라 /run과 같이 역할로 막음. 토큰 없음은 401, 관리자가 아니면 403
-    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/run/skip-wait")
     public ResponseEntity<PayoutRunResponse> runSkippingWait() throws Exception {
