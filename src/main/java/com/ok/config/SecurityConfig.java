@@ -5,6 +5,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authorization.AuthorizationDecision;
+import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -14,10 +16,12 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
+import java.net.InetAddress;
 import java.util.List;
 
 /**
@@ -66,7 +70,12 @@ public class SecurityConfig {
                 //  지금 바로 거부하면 아직 헤더로 회원을 받는 API와 그 테스트가 모두 401로 깨진다.
                 //  토큰이 있으면 permitAll이어도 검증하므로(위조·만료 토큰은 401), 전환 기간 동안 두 방식이 함께 동작한다.
                 //  전환 전까지 헤더(X-Member-Id)로 회원을 받는 API는 다른 회원을 사칭할 수 있으므로, 운영 배포 전에 반드시 닫는다.
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .authorizeHttpRequests(auth -> auth
+                        // 내부 API는 인증 없이 호출하므로 같은 컨테이너(loopback)에서 온 요청만 받는다.
+                        // 내부 호출은 localhost:8080으로 자기 자신을 부르고, nginx를 거친 요청은 docker 네트워크 주소에서 온다.
+                        // 그래서 app.internal-api.base-url을 nginx 주소로 바꾸면 내부 호출이 막힌다.
+                        .requestMatchers("/internal/**").access(loopbackOnly())
+                        .anyRequest().permitAll())
                 // 진입점·처리기를 두 곳에 지정하는 것은 중복이 아니다. 적용되는 실패가 다르다.
                 //  - oauth2ResourceServer: Bearer 토큰 검증 실패 (만료·위조 토큰)
                 //  - exceptionHandling: 토큰 없이 들어온 익명 요청의 접근 거부, 로그인한 회원의 권한 부족
@@ -126,6 +135,24 @@ public class SecurityConfig {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);
         return converter;
+    }
+
+    /**
+     * 같은 컨테이너(loopback)에서 온 요청만 허용한다.
+     * {@code getRemoteAddr()}는 실제 소켓 주소라서 {@code X-Forwarded-For} 헤더로 바꿀 수 없다.
+     * 이 판단이 위조되지 않도록 {@code server.forward-headers-strategy}를 켜지 않는다.
+     */
+    private static AuthorizationManager<RequestAuthorizationContext> loopbackOnly() {
+        return (authentication, context) -> new AuthorizationDecision(isLoopback(context.getRequest().getRemoteAddr()));
+    }
+
+    private static boolean isLoopback(String remoteAddr) {
+        try {
+            // IP 문자열만 해석해 DNS 조회가 일어나지 않게 한다
+            return InetAddress.ofLiteral(remoteAddr).isLoopbackAddress();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /** 요청 매칭에 쓰는 HTTP 메서드와 경로 패턴 한 쌍. */

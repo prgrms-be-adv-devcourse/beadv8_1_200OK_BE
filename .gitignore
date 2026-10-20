@@ -65,6 +65,7 @@ $RECYCLE.BIN/
 .env
 .env.*
 !.env.example
+!/deploy/.env.prod.example
 
 ### stored data
 ./data

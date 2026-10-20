@@ -8,6 +8,8 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -27,6 +29,7 @@ import org.springframework.web.context.WebApplicationContext;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
@@ -315,6 +318,89 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.type", endsWith("/invalid-token")));
     }
 
+    @ParameterizedTest
+    @MethodSource("loopback_주소")
+    void 같은_컨테이너에서_온_내부_API_요청은_토큰_없이_허용한다(String remoteAddr) throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/internal/test/security/ping")
+                .with(request -> {
+                    request.setRemoteAddr(remoteAddr);
+                    return request;
+                }));
+
+        // then
+        result.andExpect(status().isOk())
+                .andExpect(jsonPath("$.reached").value(true));
+    }
+
+    static Stream<String> loopback_주소() {
+        // Tomcat은 IPv6 loopback을 축약하지 않은 형태로 줄 수 있다
+        return Stream.of("127.0.0.1", "127.0.1.1", "::1", "0:0:0:0:0:0:0:1");
+    }
+
+    @ParameterizedTest
+    @MethodSource("외부_주소")
+    void 다른_주소에서_온_내부_API_요청은_토큰이_없으면_401로_거부한다(String remoteAddr) throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/internal/test/security/ping")
+                .with(request -> {
+                    request.setRemoteAddr(remoteAddr);
+                    return request;
+                }));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.reached").doesNotExist());
+    }
+
+    static Stream<String> 외부_주소() {
+        // nginx 컨테이너(docker 브리지), VPC 내부, 인터넷 주소
+        return Stream.of("172.18.0.5", "10.1.1.10", "203.0.113.7", "2001:db8::1");
+    }
+
+    @Test
+    void 다른_주소에서_온_내부_API_요청은_유효한_토큰이_있어도_403으로_거부한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/internal/test/security/ping")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "BUYER"))
+                .with(request -> {
+                    request.setRemoteAddr("172.18.0.5");
+                    return request;
+                }));
+
+        // then
+        result.andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.type", endsWith("/forbidden")));
+    }
+
+    @Test
+    void X_Forwarded_For를_loopback으로_위조해도_내부_API_요청을_거부한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/internal/test/security/ping")
+                .header("X-Forwarded-For", "127.0.0.1")
+                .header("X-Real-IP", "127.0.0.1")
+                .with(request -> {
+                    request.setRemoteAddr("172.18.0.5");
+                    return request;
+                }));
+
+        // then
+        result.andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 공개_API는_원격_주소와_상관없이_기존처럼_동작한다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/api/v1/products/categories")
+                .with(request -> {
+                    request.setRemoteAddr("203.0.113.7");
+                    return request;
+                }));
+
+        // then
+        result.andExpect(status().isOk());
+    }
+
     /**
      * exp만 빠진, 나머지는 실제 발급과 같은 토큰을 만든다. TestAccessTokens는 항상 exp를 넣으므로 직접 만든다.
      */
@@ -350,6 +436,20 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
         @GetMapping("/seller-only")
         public Map<String, Long> sellerOnly(@CurrentMemberId Long memberId) {
             return Map.of("memberId", memberId);
+        }
+
+    }
+
+    /**
+     * 내부 API 접근 제한 검증용 컨트롤러. 실제 내부 API는 서비스·DB에 의존하므로, 보안 판단만 보려고 따로 둔다.
+     */
+    @RestController
+    @RequestMapping("/internal/test/security")
+    public static class InternalSecurityTestController {
+
+        @GetMapping("/ping")
+        public Map<String, Boolean> ping() {
+            return Map.of("reached", true);
         }
 
     }
