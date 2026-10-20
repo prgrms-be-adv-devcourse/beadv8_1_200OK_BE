@@ -53,7 +53,7 @@ class ShipmentAddressChangeServiceConcurrencyIntegrationTest extends AbstractInt
         Callable<String> request = () -> {
             start.await();
             try {
-                sut.request(shipmentId, otherAddressCommand(), 0);
+                sut.request(shipmentId, otherAddressCommand());
                 return "SUCCESS";
             } catch (RestApiException e) {
                 return e.getErrorCode().name();
@@ -82,7 +82,7 @@ class ShipmentAddressChangeServiceConcurrencyIntegrationTest extends AbstractInt
     @Test
     void 없는_shipment에는_요청할_수_없다() {
         // when & then
-        assertThatThrownBy(() -> sut.request(Long.MAX_VALUE, otherAddressCommand(), 0))
+        assertThatThrownBy(() -> sut.request(Long.MAX_VALUE, otherAddressCommand()))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
     }

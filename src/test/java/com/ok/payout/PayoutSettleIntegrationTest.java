@@ -537,6 +537,58 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // ---------- 대기 건너뛰기 실행 (#224) ----------
+
+    @Test
+    void 대기_건너뛰기_실행은_15일이_안_지난_후보도_정산한다() throws Exception {
+        // given: 방금 생긴 후보 (평소 실행이면 15일 뒤에야 대상)
+        insertSaleAmount(10L, 1_000L, LocalDateTime.now());
+
+        // when
+        JobExecution execution = payoutJobRunner.runSkippingWait();
+
+        // then
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(execution)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(10L, 1_000L));
+    }
+
+    @Test
+    void 평소_실행은_15일이_안_지난_후보를_정산하지_않는다() throws Exception {
+        // given: 위 테스트와 같은 후보. 건너뛰기 실행만 차이를 만든다는 것을 보이기 위한 짝
+        insertSaleAmount(10L, 1_000L, LocalDateTime.now());
+
+        // when
+        JobExecution execution = payoutJobRunner.run();
+
+        // then
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(payoutRepository.count()).isZero();
+    }
+
+    @Test
+    void 대기_건너뛰기로_연속_실행해도_이중_정산되지_않는다() throws Exception {
+        // given: 판매자 10의 후보를 한 번 정산한 뒤, 판매자 20의 후보가 새로 생김
+        insertSaleAmount(10L, 1_000L, LocalDateTime.now());
+        JobExecution first = payoutJobRunner.runSkippingWait();
+        insertSaleAmount(20L, 2_000L, LocalDateTime.now());
+
+        // when: 같은 날 다시 실행 (두 번째 실행은 첫 정산이 있어 하한도 걸림)
+        JobExecution second = payoutJobRunner.runSkippingWait();
+
+        // then: 판매자 10은 첫 실행에서만, 판매자 20은 두 번째 실행에서만 정산됨
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertSoftly(softly -> {
+            softly.assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(first)))
+                    .extracting(Payout::getPayeeId, Payout::getAmount)
+                    .containsExactly(tuple(10L, 1_000L));
+            softly.assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(second)))
+                    .extracting(Payout::getPayeeId, Payout::getAmount)
+                    .containsExactly(tuple(20L, 2_000L));
+        });
+    }
+
     // ---------- 도우미: 단계 실행 ----------
 
     // 서비스 직접 호출용 스냅샷 생성 (Job 실행 ID는 테스트마다 새로 발급)
@@ -558,6 +610,16 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         payoutService.verify(snapshotId);
         payoutService.commit(snapshotId);
         return snapshotId;
+    }
+
+    // Job 실행 1회 = 스냅샷 1건이라, 실행 ID로 그 실행이 만든 스냅샷을 찾음 (JPA 조회)
+    private Long snapshotIdOf(JobExecution execution) {
+        for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
+            if (snapshot.getJobExecutionId().equals(execution.getId())) {
+                return snapshot.getId();
+            }
+        }
+        throw new IllegalStateException("실행에 해당하는 스냅샷이 없습니다. executionId=" + execution.getId());
     }
 
     // ---------- 도우미: 데이터 준비 (JDBC) ----------

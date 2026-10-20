@@ -101,7 +101,7 @@ class SellerShipmentApiIntegrationTest extends AbstractIntegrationTest {
     void 송장을_등록하면_대기_중인_배송지_변경_요청이_고정_문구로_거절된다() throws Exception {
         // given
         Long shipmentId = saveShipment(1L, SELLER_ID, 1L);
-        Long requestId = addressChangeService.request(shipmentId, otherAddressCommand(), 0).getId();
+        Long requestId = addressChangeService.request(shipmentId, otherAddressCommand()).getId();
 
         // when
         dispatch(SELLER_ID, shipmentId, DISPATCH_BODY).andExpect(status().isOk());

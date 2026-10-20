@@ -51,9 +51,13 @@ interface PayoutControllerSpec {
 
     @Operation(summary = "정산 1건 수동 실행 (막아 둠)", description = """
             관리자 전용 기능이지만 재처리 정책이 정해지지 않아 막아 두었습니다. 누가 요청해도 실행되지 않습니다.
-            관리자면 501, 관리자가 아니면 403입니다.
+            로그인하지 않았으면 401, 관리자가 아니면 403, 관리자면 501입니다.
             """)
     @ApiResponses({
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
             @ApiResponse(
                     responseCode = "403", description = "관리자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -63,12 +67,11 @@ interface PayoutControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
-                    responseCode = "400", description = "역할 헤더 누락, 주문 항목 ID가 숫자가 아님",
+                    responseCode = "400", description = "주문 항목 ID가 숫자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
     ResponseEntity<Void> runOrderItem(
-            @Parameter(description = "요청 회원 역할 (임시, #52). ADMIN, SELLER 외의 값은 권한 없음", example = "ADMIN") String memberRole,
             @Parameter(description = "주문 항목 ID", example = "900") Long orderItemId
     );
 
