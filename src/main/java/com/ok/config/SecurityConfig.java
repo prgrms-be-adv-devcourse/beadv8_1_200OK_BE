@@ -6,7 +6,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.authorization.AuthenticatedAuthorizationManager;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -72,12 +71,17 @@ public class SecurityConfig {
     };
 
     /**
-     * API 문서(Swagger) 경로. 운영 프로필이 아닐 때만 로그인 없이 허용한다.
+     * API 문서(Swagger) 경로. {@link #API_DOCS_PROFILES}에서만 로그인 없이 허용하고, 그 밖의 프로필(운영 등)에서는 로그인해도 막는다.
      * 운영에서는 springdoc도 꺼져 있지만, 설정이 실수로 켜져도 문서가 공개되지 않도록 여기서도 막는다.
      */
     private static final String[] API_DOCS_PATHS = {"/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**"};
 
-    private static final String PROD_PROFILE = "prod";
+    /**
+     * API 문서를 여는 프로필. 막을 프로필이 아니라 열 프로필을 적어, 운영 프로필 이름이 바뀌거나 새 프로필이 생겨도
+     * 문서가 열리지 않게 한다. 내부 컨트롤러의 {@code @Profile({"dev", "test"})}와 같은 기준이다.
+     * 로컬에서 프로필 없이 실행하면 기본 프로필(dev)이 적용되어 열린다.
+     */
+    private static final String[] API_DOCS_PROFILES = {"dev", "test"};
 
     private final ProblemDetailAuthenticationEntryPoint authenticationEntryPoint;
     private final ProblemDetailAccessDeniedHandler accessDeniedHandler;
@@ -156,13 +160,20 @@ public class SecurityConfig {
     }
 
     /**
-     * API 문서 경로의 접근 규칙. 운영 프로필이면 다른 API처럼 로그인을 요구하고, 그 밖의 프로필(개발·테스트)에서는 허용한다.
+     * API 문서 경로의 접근 규칙. 문서를 여는 프로필(개발·테스트)이면 로그인 없이 허용하고, 그 밖에서는 로그인 여부와 상관없이 막는다.
+     * 프로필은 앱이 뜰 때 정해지므로 한 번만 판단한다.
      */
     private AuthorizationManager<RequestAuthorizationContext> apiDocsAccess() {
-        if (environment.matchesProfiles(PROD_PROFILE)) {
-            return AuthenticatedAuthorizationManager.authenticated();
-        }
-        return (authentication, context) -> new AuthorizationDecision(true);
+        boolean open = isApiDocsOpen(environment);
+        return (authentication, context) -> new AuthorizationDecision(open);
+    }
+
+    /**
+     * API 문서를 여는 프로필로 실행 중인지 판단한다. 활성 프로필이 없으면 기본 프로필로 판단한다.
+     * 프로필마다 결과를 단위 테스트로 확인하려고 따로 둔다.
+     */
+    static boolean isApiDocsOpen(Environment environment) {
+        return environment.matchesProfiles(API_DOCS_PROFILES);
     }
 
     /**

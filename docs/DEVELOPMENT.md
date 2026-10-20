@@ -294,7 +294,7 @@ new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}", TokenUse.IGNO
 - 로그인 여부에 따라 응답이 달라지는 API(로그인했으면 찜 여부를 함께 보여 주는 식)는 `TokenUse.VERIFIED_IF_PRESENT`입니다. 토큰이 있으면 검증하므로 만료된 토큰이 붙으면 401입니다.
 - 하위 경로가 함께 열리지 않도록 경로를 하나씩 적습니다. 예를 들어 리뷰 목록(`/products/{productId}/reviews`)은 공개지만 내 리뷰(`/products/{productId}/reviews/me`)는 로그인이 필요합니다.
 - 내부 API(`/internal/**`)는 토큰 없이 호출하지만 같은 컨테이너(loopback)에서 온 요청만 받습니다. 외부 접근은 nginx도 막습니다.
-- API 문서(Swagger)는 개발·테스트 프로필에서만 로그인 없이 열립니다. 운영 프로필에서는 로그인이 필요하고, 외부 접근은 nginx도 막습니다.
+- API 문서(Swagger)는 개발·테스트 프로필(`dev`, `test`)에서만 열립니다. 그 밖의 프로필(운영 등)에서는 로그인해도 막히고, 외부 접근은 nginx도 막습니다.
 
 ### 역할 제한
 
