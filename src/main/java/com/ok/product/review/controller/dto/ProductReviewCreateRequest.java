@@ -15,17 +15,7 @@ import jakarta.validation.constraints.Size;
 @Schema(description = "상품 리뷰 작성 요청")
 public record ProductReviewCreateRequest(
 
-	@Schema(description = "구매한 옵션 ID", example = "12")
-	@NotNull(message = "옵션 ID는 필수입니다.")
-	@Positive(message = "옵션 ID는 양수여야 합니다.")
-	Long productOptionId,
-
-	@Schema(description = "주문 ID. 한 주문에서 같은 상품은 옵션이 달라도 리뷰 1개", example = "100")
-	@NotNull(message = "주문 ID는 필수입니다.")
-	@Positive(message = "주문 ID는 양수여야 합니다.")
-	Long orderId,
-
-	@Schema(description = "주문상품 ID", example = "345")
+	@Schema(description = "주문상품 ID (주문 상세 응답의 orderItemId). 본인이 구매확정한 이 상품의 주문상품이어야 하고, 주문 ID와 옵션 ID는 서버가 주문에서 가져온다", example = "345")
 	@NotNull(message = "주문상품 ID는 필수입니다.")
 	@Positive(message = "주문상품 ID는 양수여야 합니다.")
 	Long orderItemId,
@@ -52,6 +42,6 @@ public record ProductReviewCreateRequest(
 	}
 
 	public ProductReviewCreateCommand toCommand() {
-		return new ProductReviewCreateCommand(productOptionId, orderId, orderItemId, rating, content, mediaUrls);
+		return new ProductReviewCreateCommand(orderItemId, rating, content, mediaUrls);
 	}
 }

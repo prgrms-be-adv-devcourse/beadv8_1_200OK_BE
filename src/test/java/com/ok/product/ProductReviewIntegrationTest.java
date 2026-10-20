@@ -42,8 +42,11 @@ import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.repository.ProductReviewRepository;
+import com.ok.product.review.service.dto.ReviewablePurchase;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.FakeOrderApiClient;
 import com.ok.testsupport.TestAccessTokens;
 
 class ProductReviewIntegrationTest extends AbstractIntegrationTest {
@@ -52,6 +55,7 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	private static final Long BUYER_ID = 1L;
 	private static final Long OTHER_BUYER_ID = 2L;
 	private static final long ORDER_ID = 100L;
+	private static final long OTHER_BUYER_ORDER_ID = 200L;
 
 	@Autowired
 	WebApplicationContext context;
@@ -67,6 +71,9 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	TransactionTemplate transactionTemplate;
+
+	@Autowired
+	FakeOrderApiClient orderApiClient;
 
 	private MockMvc mockMvc;
 	private Long productId;
@@ -84,12 +91,19 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 		productId = productRepository.save(product).getId();
 		optionId = transactionTemplate.execute(
 			status -> productRepository.findById(productId).orElseThrow().getOptions().getFirst().getId());
+
+		// 주문 모듈 대신 Fake에 구매확정 건을 넣는다. 구매자는 재구매 2건, 다른 구매자는 1건
+		orderApiClient.clear();
+		orderApiClient.add(BUYER_ID, productId, purchase(ORDER_ID));
+		orderApiClient.add(BUYER_ID, productId, purchase(ORDER_ID + 1));
+		orderApiClient.add(OTHER_BUYER_ID, productId, purchase(OTHER_BUYER_ORDER_ID));
 	}
 
 	// 다른 상품 통합 테스트가 상품을 지울 때 리뷰의 외래 키에 걸리지 않게 리뷰를 남기지 않는다
 	@AfterEach
 	void tearDown() {
 		productReviewRepository.deleteAll();
+		orderApiClient.clear();
 	}
 
 	@Test
@@ -234,7 +248,7 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	void 상품별_목록과_내_리뷰에_옵션_이름과_첨부가_나온다() throws Exception {
 		// given
 		writeReview(BUYER_ID, ORDER_ID, BUCKET_URL + "product_review/a.jpg", BUCKET_URL + "product_review/b.mp4");
-		writeReview(OTHER_BUYER_ID, 200L);
+		writeReview(OTHER_BUYER_ID, OTHER_BUYER_ORDER_ID);
 
 		// when & then: 최신순
 		mockMvc.perform(get("/api/v1/products/{productId}/reviews", productId))
@@ -283,6 +297,40 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 				.contentType(MediaType.APPLICATION_JSON)
 				.content(createBody(ORDER_ID + 1, 9)))
 			.andExpect(status().isCreated());
+	}
+
+	@Test
+	void 구매확정한_내_주문_상품이_아니면_작성할_수_없다() throws Exception {
+		// given: 남의 주문 상품과 없는 주문 상품. 둘을 구분하지 않고 같은 403이다
+		List<Long> orderIds = List.of(OTHER_BUYER_ORDER_ID, 999L);
+
+		// when & then
+		for (Long orderId : orderIds) {
+			mockMvc.perform(post("/api/v1/products/{productId}/reviews", productId)
+					.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(createBody(orderId, 9)))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.type", endsWith("/product/purchase-not-reviewable")));
+		}
+		assertThat(productReviewRepository.count()).isZero();
+		assertThat(productRepository.findById(productId).orElseThrow().getReviewCount()).isZero();
+	}
+
+	@Test
+	void 작성한_리뷰의_주문_옵션_ID는_요청이_아니라_확인된_구매_건의_값이다() throws Exception {
+		// when
+		long reviewId = writeReview(BUYER_ID, ORDER_ID);
+
+		// then
+		ProductReview sut = productReviewRepository.findById(reviewId).orElseThrow();
+		assertThat(sut).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(sut.getOrderId()).isEqualTo(ORDER_ID);
+			softly.assertThat(sut.getOrderItemId()).isEqualTo(orderItemId(ORDER_ID));
+			softly.assertThat(sut.getProductOptionId()).isEqualTo(optionId);
+			softly.assertThat(sut.getMemberId()).isEqualTo(BUYER_ID);
+		});
 	}
 
 	@Test
@@ -351,17 +399,25 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 		return ((Number)JsonPath.read(body, "$.reviewId")).longValue();
 	}
 
+	// 요청에는 주문상품 ID만 담는다. 주문 ID와 옵션 ID는 서버가 주문 모듈(Fake)의 구매 건에서 가져온다
 	private String createBody(long orderId, int rating, String... mediaUrls) {
 		String urls = String.join(",", Arrays.stream(mediaUrls).map(url -> "\"" + url + "\"").toList());
 		return """
 			{
-			  "productOptionId": %d,
-			  "orderId": %d,
 			  "orderItemId": %d,
 			  "rating": %d,
 			  "content": "달고 맛있어요",
 			  "mediaUrls": [%s]
 			}
-			""".formatted(optionId, orderId, orderId * 10, rating, urls);
+			""".formatted(orderItemId(orderId), rating, urls);
+	}
+
+	private ReviewablePurchase purchase(long orderId) {
+		return new ReviewablePurchase(orderId, orderItemId(orderId), optionId);
+	}
+
+	// 테스트에서는 주문마다 주문상품이 하나라 주문 ID로 주문상품 ID를 정한다
+	private long orderItemId(long orderId) {
+		return orderId * 10;
 	}
 }

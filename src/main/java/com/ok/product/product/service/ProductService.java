@@ -20,6 +20,7 @@ import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductSummaryResult;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
 import com.ok.product.product.service.dto.ProductVisibilityCode;
+import com.ok.product.product.service.dto.SellerProductDetailResult;
 import com.ok.product.product.service.dto.SellerProductSearchQuery;
 import com.ok.product.product.service.dto.SellerProductSummaryResult;
 import lombok.RequiredArgsConstructor;
@@ -146,6 +147,16 @@ public class ProductService {
 			PageRequest.of(query.page(), query.size()));
 
 		return products.map(product -> SellerProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
+	}
+
+	// 판매자 수정 화면용 상세. findOwnedProduct는 version을 올리는 락을 걸어서 쓰지 않는다
+	public SellerProductDetailResult getMyProduct(Long sellerId, Long productId) {
+		Product product = productRepository.findByIdAndDeletedAtIsNull(productId)
+			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		if (!product.isOwnedBy(sellerId)) {
+			throw new RestApiException(ProductErrorCode.PRODUCT_ACCESS_DENIED);
+		}
+		return SellerProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
 	}
 
 	// 구매자에게 보이는 상품 상세를 조회한다.

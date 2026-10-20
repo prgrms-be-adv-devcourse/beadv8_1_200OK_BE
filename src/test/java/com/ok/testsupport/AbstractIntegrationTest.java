@@ -12,6 +12,6 @@ import org.springframework.test.context.ActiveProfiles;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @ComponentScan(basePackages = "com.ok")
-@Import({ TestcontainersConfiguration.class })
+@Import({ TestcontainersConfiguration.class, FakeCarrierClient.class })
 public class AbstractIntegrationTest {
 }
