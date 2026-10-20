@@ -15,6 +15,9 @@ public enum OrderErrorCode implements ErrorCode {
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order not found", "주문을 찾을 수 없습니다."),
     ORDER_AMOUNT_CHANGED(HttpStatus.CONFLICT, "Order amount changed", "주문 금액이 변경되었습니다. 금액을 다시 확인해 주세요."),
     CANNOT_ORDER_OWN_PRODUCT(HttpStatus.BAD_REQUEST, "Cannot order own product", "본인이 판매하는 상품은 주문할 수 없습니다."),
+    ORDER_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Order item not found", "주문 상품을 찾을 수 없습니다."),
+    ALREADY_PURCHASE_CONFIRMED(HttpStatus.CONFLICT, "Already purchase confirmed", "이미 구매확정된 상품입니다."),
+    PURCHASE_CONFIRM_NOT_ALLOWED(HttpStatus.CONFLICT, "Purchase confirm not allowed", "배송 완료된 상품만 구매확정할 수 있습니다."),
 
     // 상품
     PRODUCT_OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Product option not found", "상품 옵션을 찾을 수 없습니다."),

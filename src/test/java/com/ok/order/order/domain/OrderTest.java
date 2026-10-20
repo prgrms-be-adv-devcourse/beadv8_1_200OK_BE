@@ -3,6 +3,7 @@ package com.ok.order.order.domain;
 import com.ok.common.exception.RestApiException;
 import com.ok.order.order.exception.OrderErrorCode;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -279,5 +280,108 @@ class OrderTest {
             softly.assertThat(changed).isZero();
             softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
         });
+    }
+
+
+    // ---------- 구매확정 ----------
+
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 25, 9, 0);
+
+    // 결제 → 배송 완료까지 끝난 주문
+    private Order deliveredOrder(LocalDateTime deliveredAt) {
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        order.markPaid();
+        order.markDelivered(100L, deliveredAt);
+        return order;
+    }
+
+    @Test
+    void 배송_완료된_상품은_구매확정되고_확정_시각이_저장된다() {
+        OrderItem sut = deliveredOrder(NOW.minusDays(1)).getAllItems().get(0);
+
+        boolean confirmed = sut.confirmPurchase(NOW);
+
+        assertSoftly(softly -> {
+            softly.assertThat(confirmed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+            softly.assertThat(sut.getConfirmedAt()).isEqualTo(NOW);
+        });
+    }
+
+    @Test
+    void 배송_완료_전_상품은_구매확정되지_않는다() {
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        order.markPaid();
+        OrderItem sut = order.getAllItems().get(0);
+
+        boolean confirmed = sut.confirmPurchase(NOW);
+
+        assertSoftly(softly -> {
+            softly.assertThat(confirmed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+            softly.assertThat(sut.getConfirmedAt()).isNull();
+        });
+    }
+
+    @Test
+    void 환불_중인_상품은_구매확정되지_않는다() {
+        // 환불 요청 기능(#28)이 아직 없어서 상태를 직접 바꿈
+        OrderItem sut = deliveredOrder(NOW.minusDays(1)).getAllItems().get(0);
+        ReflectionTestUtils.setField(sut, "status", OrderItemStatus.CANCEL_REQUESTED);
+
+        boolean confirmed = sut.confirmPurchase(NOW);
+
+        assertSoftly(softly -> {
+            softly.assertThat(confirmed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderItemStatus.CANCEL_REQUESTED);
+        });
+    }
+
+    @Test
+    void 이미_구매확정된_상품은_다시_확정되지_않고_처음_시각이_유지된다() {
+        OrderItem sut = deliveredOrder(NOW.minusDays(1)).getAllItems().get(0);
+        sut.confirmPurchase(NOW);
+
+        boolean confirmedAgain = sut.confirmPurchase(NOW.plusDays(1));
+
+        assertSoftly(softly -> {
+            softly.assertThat(confirmedAgain).isFalse();
+            softly.assertThat(sut.getConfirmedAt()).isEqualTo(NOW);
+        });
+    }
+
+    @Test
+    void 자동_구매확정은_기준_시각_이전에_배송_완료된_상품만_확정한다() {
+        // 판매자 100은 4일 전, 판매자 200은 1일 전 배송 완료
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1), line(2L, 200L, 5_000L, 1)));
+        sut.markPaid();
+        sut.markDelivered(100L, NOW.minusDays(4));
+        sut.markDelivered(200L, NOW.minusDays(1));
+
+        List<OrderItem> confirmed = sut.confirmPurchasesDeliveredBefore(NOW.minusDays(3), NOW);
+
+        assertSoftly(softly -> {
+            softly.assertThat(confirmed).hasSize(1);
+            softly.assertThat(sut.getSellerGroups().get(0).getItems().get(0).getStatus())
+                    .isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+            softly.assertThat(sut.getSellerGroups().get(1).getItems().get(0).getStatus())
+                    .isEqualTo(OrderItemStatus.DELIVERED);
+        });
+    }
+
+    @Test
+    void 배송_완료가_정확히_기준_시각이면_자동_구매확정된다() {
+        Order sut = deliveredOrder(NOW.minusDays(3));
+
+        List<OrderItem> confirmed = sut.confirmPurchasesDeliveredBefore(NOW.minusDays(3), NOW);
+
+        assertThat(confirmed).hasSize(1);
+    }
+
+    @Test
+    void 주문에_없는_상품_ID로_찾으면_비어_있다() {
+        Order sut = deliveredOrder(NOW.minusDays(1));
+
+        assertThat(sut.findItem(999L)).isEmpty();
     }
 }

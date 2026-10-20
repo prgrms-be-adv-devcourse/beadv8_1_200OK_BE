@@ -1,6 +1,7 @@
 package com.ok.order.order.event;
 
 import com.ok.common.event.OrderCreatedEvent;
+import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -15,5 +16,10 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     @Override
     public void publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount) {
         applicationEventPublisher.publishEvent(new OrderCreatedEvent(orderId, buyerId, totalAmount));
+    }
+
+    @Override
+    public void publishOrderProductConfirmedEvent(Long orderId, Long orderItemId, Long sellerId, Long totalItemPrice, Long sellerShippingPrice) {
+        applicationEventPublisher.publishEvent(new OrderProductConfirmedEvent(orderId, orderItemId, sellerId, totalItemPrice, sellerShippingPrice));
     }
 }
