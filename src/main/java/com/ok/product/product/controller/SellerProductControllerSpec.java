@@ -1,6 +1,7 @@
 package com.ok.product.product.controller;
 
 import com.ok.product.product.controller.dto.ProductPageResponse;
+import com.ok.product.product.controller.dto.SellerProductDetailResponse;
 import com.ok.product.product.controller.dto.SellerProductSummaryResponse;
 import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductVisibilityCode;
@@ -44,5 +45,30 @@ interface SellerProductControllerSpec {
 		@Parameter(description = "노출 여부", example = "VISIBLE") ProductVisibilityCode visibility,
 		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
 		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size
+	);
+
+	@Operation(summary = "내 상품 상세 조회", description = """
+		상품 수정 화면용 상세입니다. 숨긴(HIDDEN) 상품도 조회되고, 삭제한 옵션은 빠집니다.
+		응답의 version을 상품 수정(PUT /api/v1/products/{productId}) 요청에 그대로 보냅니다.
+		조회만으로는 version이 바뀌지 않습니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<SellerProductDetailResponse> get(
+		Long memberId,
+		@Parameter(description = "상품 ID", example = "1") Long productId
 	);
 }

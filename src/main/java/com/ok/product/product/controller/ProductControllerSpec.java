@@ -52,7 +52,7 @@ interface ProductControllerSpec {
 	@Operation(summary = "상품 수정", description = """
 		상품 정보, 판매 상태·노출, 이미지, 옵션을 한 번에 수정합니다. 판매 상태·노출은 생략하면 그대로 둡니다.
 		옵션은 id가 있으면 수정, 없으면 추가, 요청에 없는 기존 옵션은 삭제됩니다.
-		수정 후 최신 version은 상품 상세 조회로 다시 받습니다.
+		version은 내 상품 상세 조회(GET /api/v1/sellers/me/products/{productId})로 받고, 수정 후에도 같은 API로 다시 받습니다.
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "204", description = "수정 성공"),
