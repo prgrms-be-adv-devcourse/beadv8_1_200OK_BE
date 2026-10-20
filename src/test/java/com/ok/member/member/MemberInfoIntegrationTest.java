@@ -8,6 +8,8 @@ import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -21,6 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -103,6 +106,21 @@ class MemberInfoIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 수정한_정보가_내_정보_조회에_반영된다() throws Exception {
+        // given
+        mockMvc.perform(withToken(put(ME_URL)).content(updateBody("이서현", "토요일장보기")))
+                .andExpect(status().isOk());
+
+        // when
+        ResultActions result = mockMvc.perform(withToken(get(ME_URL)));
+
+        // then
+        result.andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("이서현"))
+                .andExpect(jsonPath("$.nickname").value("토요일장보기"));
+    }
+
+    @Test
     void 다른_회원과_같은_닉네임으로_수정할_수_있다() throws Exception {
         // given
         memberRepository.saveAndFlush(createUser("minsu01", "minsu01@example.com", "농부의아들"));
@@ -129,6 +147,26 @@ class MemberInfoIntegrationTest extends AbstractIntegrationTest {
         Member sut = memberRepository.findById(memberId).orElse(null);
         assertThat(sut).isNotNull();
         assertThat(sut.getNickname()).isEqualTo("주말장보기");
+    }
+
+    @ParameterizedTest
+    @MethodSource("허용되지_않는_이름")
+    void 이름이_비었거나_50자를_넘으면_422를_반환하고_수정하지_않는다(String name) throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(withToken(put(ME_URL))
+                .content(updateBody(name, "토요일장보기")));
+
+        // then
+        result.andExpect(status().is(422))
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+
+        Member sut = memberRepository.findById(memberId).orElse(null);
+        assertThat(sut).isNotNull();
+        assertThat(sut.getNickname()).isEqualTo("주말장보기");
+    }
+
+    static Stream<String> 허용되지_않는_이름() {
+        return Stream.of("", "   ", "가".repeat(51));
     }
 
     @Test
