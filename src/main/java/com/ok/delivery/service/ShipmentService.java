@@ -116,7 +116,7 @@ public class ShipmentService {
     public Page<ShipmentSummaryResult> getBuyerShipments(Long buyerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findByBuyerId(buyerId, PageRequest.of(page, PAGE_SIZE));
         Map<Long, List<ShipmentItem>> itemsByShipmentId = shipmentQueryRepository
-                .findItemsByShipmentIds(shipments.map(Shipment::getId).getContent()).stream()
+                .findItemsByShipmentIds(shipments.getContent().stream().map(Shipment::getId).toList()).stream()
                 .collect(Collectors.groupingBy(item -> item.getShipment().getId()));
         return shipments.map(shipment -> ShipmentSummaryResult.of(shipment, itemsByShipmentId.get(shipment.getId())));
     }
@@ -137,7 +137,7 @@ public class ShipmentService {
     // 판매자 상세 조회(#202)도 같은 응답을 쓰므로 조립을 한 곳에 둔다
     private ShipmentDetailResult toDetail(Shipment shipment) {
         long additionalShippingFee = addressChangeRequestRepository.sumAdditionalFeeNotice(shipment.getId(), AddressChangeStatus.APPROVED);
-        LatestAddressChangeResult latestAddressChange = addressChangeRequestRepository.findFirstByShipmentIdOrderByIdDesc(shipment.getId())
+        LatestAddressChangeResult latestAddressChange = addressChangeRequestRepository.findFirstByShipmentIdOrderByRequestedAtDescIdDesc(shipment.getId())
                 .map(LatestAddressChangeResult::from)
                 .orElse(null);
         return ShipmentDetailResult.of(shipment, additionalShippingFee, latestAddressChange);
