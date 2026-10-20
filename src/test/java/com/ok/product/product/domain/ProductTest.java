@@ -189,6 +189,24 @@ class ProductTest {
 	}
 
 	@Test
+	void 판매_가능_수량은_삭제되지_않은_옵션의_남은_재고_합이다() {
+		// given
+		Product product = create(List.of(
+			ProductOptionSpec.newOption("A", null, 30_000L, 3),
+			ProductOptionSpec.newOption("B", null, 30_000L, 5),
+			ProductOptionSpec.newOption("C", null, 30_000L, 7)));
+		List<ProductOption> options = assignIds(product);
+		ReflectionTestUtils.setField(options.get(0), "allocatedQuantity", 1);
+		options.get(2).delete(NOW);
+
+		// when
+		int sut = product.availableStock();
+
+		// then
+		assertThat(sut).isEqualTo(7);
+	}
+
+	@Test
 	void 활성_옵션의_판매_가능_수량이_모두_0이면_품절이다() {
 		Product inStock = create(List.of(ProductOptionSpec.newOption("A", null, 30_000L, 1)));
 		Product soldOut = create(List.of(ProductOptionSpec.newOption("A", null, 30_000L, 0)));
