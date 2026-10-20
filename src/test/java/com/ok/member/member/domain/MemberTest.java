@@ -29,4 +29,24 @@ class MemberTest {
             softly.assertThat(sut.getPrivacyAgreedAt()).isEqualTo(createdAt);
         });
     }
+
+    @Test
+    void 이름과_닉네임을_수정하면_아이디와_이메일은_그대로다() {
+        // given
+        Member sut = Member.createUser("tester01", "{bcrypt}encoded", "tester@example.com",
+                "홍길동", "길동이", LocalDateTime.of(2026, 10, 19, 12, 0));
+
+        // when
+        sut.updateInfo("이서연", "주말장보기");
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getName()).isEqualTo("이서연");
+            softly.assertThat(sut.getNickname()).isEqualTo("주말장보기");
+            softly.assertThat(sut.getLoginId()).isEqualTo("tester01");
+            softly.assertThat(sut.getEmail()).isEqualTo("tester@example.com");
+        });
+    }
+
 }

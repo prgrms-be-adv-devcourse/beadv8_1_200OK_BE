@@ -88,4 +88,13 @@ public class Member extends BaseTime {
                 MemberType.ADMIN, createdAt);
     }
 
+    /**
+     * 회원이 직접 바꿀 수 있는 이름과 닉네임을 수정한다.
+     * 아이디와 이메일은 가입 후 바꿀 수 없다. 닉네임은 다른 회원과 같아도 된다.
+     */
+    public void updateInfo(String name, String nickname) {
+        this.name = name;
+        this.nickname = nickname;
+    }
+
 }
