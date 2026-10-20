@@ -37,6 +37,8 @@ import java.util.Map;
 @Transactional(readOnly = true)
 public class ShipmentService {
 
+    private static final String TRACKING_NUMBER_UNIQUE_CONSTRAINT = "uk_shipment_carrier_tracking_number";
+
     private final ShipmentRepository shipmentRepository;
     private final ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
     private final DeliveryRegionService deliveryRegionService;
@@ -88,7 +90,7 @@ public class ShipmentService {
                 .filter(found -> found.getSellerId().equals(command.sellerId()))
                 .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
         LocalDateTime now = LocalDateTime.now(clock);
-        shipment.dispatch(Carrier.valueOf(command.carrier()), command.trackingNumber(), now);
+        shipment.dispatch(Carrier.from(command.carrier()), command.trackingNumber(), now);
         flushDetectingDuplicatedTrackingNumber();
         addressChangeRequestRepository.findAllByShipmentIdAndStatus(shipment.getId(), AddressChangeStatus.PENDING)
                 .forEach(request -> request.reject(now));
@@ -96,12 +98,15 @@ public class ShipmentService {
     }
 
     // 송장번호 중복은 사전 조회 없이 UNIQUE 제약 하나로 막는다. 사전 조회해도 동시 등록은 제약이 막아야 하므로 확인 경로를 하나로 둔다.
-    // 출고 변경만 반영된 시점에 flush해서, 이때 나는 제약 위반은 송장번호 중복뿐이다
+    // 다른 제약 위반까지 중복으로 바꾸지 않도록 제약 이름을 확인하고, 아니면 원래 예외를 그대로 던진다
     private void flushDetectingDuplicatedTrackingNumber() {
         try {
             shipmentRepository.flush();
         } catch (DataIntegrityViolationException e) {
-            throw new RestApiException(DeliveryErrorCode.TRACKING_NUMBER_DUPLICATED);
+            if (String.valueOf(e.getMostSpecificCause().getMessage()).contains(TRACKING_NUMBER_UNIQUE_CONSTRAINT)) {
+                throw new RestApiException(DeliveryErrorCode.TRACKING_NUMBER_DUPLICATED);
+            }
+            throw e;
         }
     }
 
