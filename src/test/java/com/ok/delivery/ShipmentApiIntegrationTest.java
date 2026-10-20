@@ -158,6 +158,7 @@ class ShipmentApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.regionGroup", is("GENERAL")))
                 .andExpect(jsonPath("$.chargedShippingFee", is(3_000)))
                 .andExpect(jsonPath("$.additionalShippingFee", is(0)))
+                .andExpect(jsonPath("$.estimatedShipDate", is("2026-10-11")))
                 .andExpect(jsonPath("$.estimatedDeliveryStart", is("2026-10-13")))
                 .andExpect(jsonPath("$.estimatedDeliveryEnd", is("2026-10-14")))
                 .andExpect(jsonPath("$.delayed", is(false)))

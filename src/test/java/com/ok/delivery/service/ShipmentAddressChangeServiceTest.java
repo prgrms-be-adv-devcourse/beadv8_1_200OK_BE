@@ -91,6 +91,7 @@ class ShipmentAddressChangeServiceTest {
             softly.assertThat(shipment.getAddress()).isEqualTo(otherAddress());
             softly.assertThat(shipment.getRegionGroup()).isEqualTo("JEJU_MAIN");
             softly.assertThat(shipment.getRegionSurcharge()).isEqualTo(3_000);
+            softly.assertThat(shipment.getEstimatedShipDate()).isEqualTo(LocalDate.of(2026, 10, 21));
             softly.assertThat(shipment.getEstimatedDeliveryStart()).isEqualTo(LocalDate.of(2026, 10, 26));
             softly.assertThat(shipment.getEstimatedDeliveryEnd()).isEqualTo(LocalDate.of(2026, 10, 27));
         });

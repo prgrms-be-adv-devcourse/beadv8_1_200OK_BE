@@ -47,6 +47,7 @@ class ShipmentServiceTest {
 
     // 2026-10-16(금) 12:00 결제. 마감 13:00 판매자는 당일 출고, 마감 11:00 판매자는 다음 영업일(월) 출고
     private static final LocalDateTime FRIDAY_NOON = LocalDateTime.of(2026, 10, 16, 12, 0);
+    private static final LocalDate NEXT_MONDAY = LocalDate.of(2026, 10, 19);
     private static final LocalDate NEXT_TUESDAY = LocalDate.of(2026, 10, 20);
     private static final LocalDate NEXT_WEDNESDAY = LocalDate.of(2026, 10, 21);
     private static final LocalDate NEXT_THURSDAY = LocalDate.of(2026, 10, 22);
@@ -103,9 +104,11 @@ class ShipmentServiceTest {
         assertThat(sut).hasSize(2);
         assertSoftly(softly -> {
             softly.assertThat(sut.get(0).getSellerId()).isEqualTo(10L);
+            softly.assertThat(sut.get(0).getEstimatedShipDate()).isEqualTo(FRIDAY_NOON.toLocalDate());
             softly.assertThat(sut.get(0).getEstimatedDeliveryStart()).isEqualTo(NEXT_TUESDAY);
             softly.assertThat(sut.get(0).getEstimatedDeliveryEnd()).isEqualTo(NEXT_WEDNESDAY);
             softly.assertThat(sut.get(1).getSellerId()).isEqualTo(20L);
+            softly.assertThat(sut.get(1).getEstimatedShipDate()).isEqualTo(NEXT_MONDAY);
             softly.assertThat(sut.get(1).getEstimatedDeliveryStart()).isEqualTo(NEXT_WEDNESDAY);
             softly.assertThat(sut.get(1).getEstimatedDeliveryEnd()).isEqualTo(NEXT_THURSDAY);
         });

@@ -6,8 +6,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public interface ShipmentAddressChangeRequestRepository extends JpaRepository<ShipmentAddressChangeRequest, Long> {
 
@@ -16,6 +18,16 @@ public interface ShipmentAddressChangeRequestRepository extends JpaRepository<Sh
     List<ShipmentAddressChangeRequest> findAllByShipmentIdAndStatus(Long shipmentId, AddressChangeStatus status);
 
     Optional<ShipmentAddressChangeRequest> findByIdAndShipmentId(Long id, Long shipmentId);
+
+    /**
+     * 여러 shipment 중 해당 상태의 요청이 있는 shipment ID를 조회한다. 목록에서 shipment마다 따로 확인하지 않기 위해 쓴다.
+     */
+    @Query("""
+            select distinct r.shipmentId
+            from ShipmentAddressChangeRequest r
+            where r.shipmentId in :shipmentIds and r.status = :status
+            """)
+    Set<Long> findShipmentIdsWithStatus(@Param("shipmentIds") Collection<Long> shipmentIds, @Param("status") AddressChangeStatus status);
 
     // 요청 시각이 같으면 나중에 저장된 요청을 최근으로 본다
     Optional<ShipmentAddressChangeRequest> findFirstByShipmentIdOrderByRequestedAtDescIdDesc(Long shipmentId);
