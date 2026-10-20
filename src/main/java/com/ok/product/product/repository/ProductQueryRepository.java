@@ -4,6 +4,7 @@ import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductCategoryGroup;
 import com.ok.product.product.domain.ProductRegion;
+import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.jpa.impl.JPAQueryFactory;
@@ -31,7 +32,21 @@ public class ProductQueryRepository {
 			ProductRegion region,
 			Pageable pageable
 	) {
-		BooleanBuilder condition = visibleProductCondition(categoryGroup, category, region);
+		return fetchPage(visibleProductCondition(categoryGroup, category, region), pageable);
+	}
+
+	// 판매자 본인 목록. 숨긴 상품도 나오고 삭제한 상품은 나오지 않는다.
+	public Page<Product> findSellerProducts(
+			Long sellerId,
+			ProductStatus status,
+			ProductVisibility visibility,
+			Pageable pageable
+	) {
+		return fetchPage(sellerProductCondition(sellerId, status, visibility), pageable);
+	}
+
+	// 최신순(id 내림차순) offset 페이지. count 쿼리는 content가 한 페이지에 다 들어오면 생략된다
+	private Page<Product> fetchPage(BooleanBuilder condition, Pageable pageable) {
 		List<Product> content = queryFactory
 			.selectFrom(product)
 			.where(condition)
@@ -60,6 +75,20 @@ public class ProductQueryRepository {
 		}
 		if (region != null) {
 			condition.and(product.region.eq(region));
+		}
+		return condition;
+	}
+
+	private BooleanBuilder sellerProductCondition(Long sellerId, ProductStatus status, ProductVisibility visibility) {
+		BooleanBuilder condition = new BooleanBuilder()
+			.and(product.sellerId.eq(sellerId))
+			.and(product.deletedAt.isNull());
+
+		if (status != null) {
+			condition.and(product.status.eq(status));
+		}
+		if (visibility != null) {
+			condition.and(product.visibility.eq(visibility));
 		}
 		return condition;
 	}

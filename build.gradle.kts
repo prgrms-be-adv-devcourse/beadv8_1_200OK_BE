@@ -30,6 +30,7 @@ dependencies {
     // ---------- Web / API ----------
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:$springdocVersion") // Swagger UI
 
     // ---------- Spring Modulith (도메인 모듈, 이벤트) ----------

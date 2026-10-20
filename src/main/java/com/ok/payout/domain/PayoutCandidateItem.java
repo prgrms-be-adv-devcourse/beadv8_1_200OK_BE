@@ -114,6 +114,7 @@ public class PayoutCandidateItem extends BaseTime {
     }
 
     // 시스템(플랫폼) 몫 여부: SALE_FEE는 시스템, 나머지는 판매자. 이벤트 타입이 추가되면 함께 수정
+    // 같은 기준이 PayoutQueryRepository.candidateSearchCondition()에도 있음 (판매자 정산후보 조회에서 수수료 제외) → 함께 수정
     public boolean isSystemShare() {
         return eventType == PayoutEventType.SALE_FEE;
     }

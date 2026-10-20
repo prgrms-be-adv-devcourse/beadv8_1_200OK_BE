@@ -1,0 +1,67 @@
+# 운영 EC2(/opt/paldo-gotgan)에서 deploy.sh로 실행한다. 절차는 docs/DEPLOY.md
+# app·mysql은 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
+name: paldo-gotgan
+
+services:
+  mysql:
+    image: mysql:${MYSQL_VERSION:-9.4}
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE가 필요하다}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER가 필요하다}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD가 필요하다}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 필요하다}
+      # NOW(), CURRENT_TIMESTAMP 기본값이 앱(JVM)과 같은 시간대를 따르게 한다 (#93)
+      TZ: ${APP_TIME_ZONE:-Asia/Seoul}
+    volumes:
+      # EBS 데이터 볼륨(/data). 인스턴스를 교체해도 데이터가 남는다
+      - /data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  app:
+    image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # env_file을 쓰지 않고 앱이 쓰는 값만 넘긴다. MYSQL_ROOT_PASSWORD 같은 값이 앱 컨테이너에 들어가지 않게 하기 위함이다
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Seoul}
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
+      DB_USERNAME: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET이 필요하다}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY가 필요하다}
+      AWS_REGION: ${AWS_REGION:?AWS_REGION이 필요하다}
+      S3_BUCKET: ${S3_BUCKET:?S3_BUCKET이 필요하다}
+      PROBLEM_BASE_URI: ${PROBLEM_BASE_URI:-about:blank}
+      ADMIN_BOOTSTRAP_LOGIN_ID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL과 앱 추가 인스턴스 여유를 남긴다
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
+    mem_limit: 2560m
+    healthcheck:
+      # 런타임 이미지가 alpine이라 curl 대신 busybox wget을 쓴다
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/actuator/health | grep -q UP']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro

@@ -160,6 +160,60 @@ public class PayoutQueryRepository {
                 .fetchOne(), 0L));
     }
 
+    // 정산후보 한 줄 + 정산됐으면 그 정산 ID (정산후보 조회용)
+    // 서비스 쪽 타입(service/dto)을 리포지토리가 쓰면 레이어 규칙에 걸려서, 리포지토리 안에 조회 결과용 record를 둠 (PayoutItemRow와 같은 이유)
+    public record CandidateRow(
+            Long candidateId,
+            PayoutEventType eventType,
+            Long orderId,
+            Long orderItemId,                  // 배송비 후보는 null
+            Long sellerId,
+            Long amount,
+            LocalDateTime candidateCreatedAt,  // 평소 건은 구매확정 직후, 조정 건은 조정한 시각
+            // 0이면 평소 건, 1 이상이면 관리자 조정. Querydsl이 생성자를 타입으로 찾아서 엔티티 필드와 같은 Long으로 둠
+            Long adjustmentId,
+            Long adminId,                      // 조정 건일 때만 값
+            String reason,                     // 조정 건일 때만 값
+            Long payoutId                      // 정산된 후보면 그 정산 ID, 아직 정산 전이면 null
+    ) {
+    }
+
+    // 정산후보 목록 (관리자·판매자 조회). sellerId가 null이면 전체 판매자
+    // sellerShareOnly면 시스템 몫(수수료) 후보를 뺌 (판매자 조회용)
+    // 정렬은 후보 생성 시각 최신순 고정. 같은 시각에 생긴 후보가 여러 건(대금·수수료·배송비가 함께 생김)이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    // 정산 ID는 payout_item과 LEFT JOIN으로 가져옴 (payout_item.candidate_id가 유니크라 후보 한 건이 여러 줄로 늘지 않음)
+    public Page<CandidateRow> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
+                                               boolean unsettledOnly, boolean sellerShareOnly, Pageable pageable) {
+        BooleanBuilder condition = candidateSearchCondition(sellerId, from, to, unsettledOnly, sellerShareOnly);
+        List<CandidateRow> content = queryFactory
+                .select(Projections.constructor(CandidateRow.class,
+                        payoutCandidateItem.id,
+                        payoutCandidateItem.eventType,
+                        payoutCandidateItem.orderId,
+                        payoutCandidateItem.orderItemId,
+                        payoutCandidateItem.sellerId,
+                        payoutCandidateItem.amount,
+                        payoutCandidateItem.createdAt,
+                        payoutCandidateItem.adjustmentId,
+                        payoutCandidateItem.adminId,
+                        payoutCandidateItem.reason,
+                        payoutItem.payout.id))
+                .from(payoutCandidateItem)
+                .leftJoin(payoutItem).on(payoutItem.candidateId.eq(payoutCandidateItem.id))
+                .where(condition)
+                .orderBy(payoutCandidateItem.createdAt.desc(), payoutCandidateItem.id.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        // 개수는 조인 없이 셈: 조건(미정산 여부 포함)은 후보 테이블만으로 판단되고, 조인해도 줄 수가 같음
+        return PageableExecutionUtils.getPage(content, pageable, () -> Objects.requireNonNullElse(queryFactory
+                .select(payoutCandidateItem.count())
+                .from(payoutCandidateItem)
+                .where(condition)
+                .fetchOne(), 0L));
+    }
+
     // 정산 항목 한 줄 + 그 항목의 정산후보 정보 (항목 조회용)
     // 서비스 쪽 타입(service/dto)을 리포지토리가 쓰면 레이어 규칙에 걸려서, 리포지토리 안에 조회 결과용 record를 둠
     public record PayoutItemRow(
@@ -243,6 +297,29 @@ public class PayoutQueryRepository {
         }
         if (to != null) {
             condition.and(payout.createdAt.lt(to));
+        }
+        return condition;
+    }
+
+    // 정산후보 목록 조건. 기간은 정산 목록과 같은 규칙: from 포함, to 미포함
+    // 미정산 판단은 정산 배치(unsettledInPeriod)와 같은 기준: payout_item에 같은 candidate_id가 없으면 미정산
+    private BooleanBuilder candidateSearchCondition(Long sellerId, LocalDateTime from, LocalDateTime to,
+                                                    boolean unsettledOnly, boolean sellerShareOnly) {
+        BooleanBuilder condition = new BooleanBuilder();
+        if (sellerId != null) {
+            condition.and(payoutCandidateItem.sellerId.eq(sellerId));
+        }
+        condition.and(payoutCandidateItem.createdAt.goe(from));
+        condition.and(payoutCandidateItem.createdAt.lt(to));
+        if (unsettledOnly) {
+            condition.and(JPAExpressions.selectOne()
+                    .from(payoutItem)
+                    .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
+                    .notExists());
+        }
+        if (sellerShareOnly) {
+            // 시스템 몫 판단은 PayoutCandidateItem.isSystemShare()와 같은 기준 (SALE_FEE만 시스템 몫). 이벤트 타입이 추가되면 함께 수정
+            condition.and(payoutCandidateItem.eventType.ne(PayoutEventType.SALE_FEE));
         }
         return condition;
     }

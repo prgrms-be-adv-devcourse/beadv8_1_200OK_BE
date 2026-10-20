@@ -1,6 +1,8 @@
 package com.ok.payout.controller;
 
 import com.ok.payout.controller.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.controller.dto.PayoutCandidateResponse;
+import com.ok.payout.controller.dto.PayoutCandidateSearchRequest;
 import com.ok.payout.controller.dto.PayoutDetailResponse;
 import com.ok.payout.controller.dto.PayoutItemResponse;
 import com.ok.payout.controller.dto.PayoutItemSearchRequest;
@@ -111,6 +113,32 @@ interface PayoutAdminControllerSpec {
     ResponseEntity<PayoutPageResponse<PayoutItemResponse>> getItems(
             @Parameter(description = "정산 ID", example = "12") Long payoutId,
             @ParameterObject PayoutItemSearchRequest request
+    );
+
+    @Operation(summary = "정산후보 조회", description = """
+            정산후보(구매확정으로 생긴 정산 대상)를 후보 생성 시각 최신순으로 조회합니다(같은 시각이면 후보 ID 역순).
+            sellerId를 넣으면 그 판매자의 후보만, 생략하면 전체 판매자의 후보가 나옵니다.
+            정산 전인 후보와 정산이 끝난 후보가 함께 나오며, settled와 payoutId로 구분합니다. unsettledOnly=true면 정산 전인 후보만 나옵니다.
+            기간(from, to)은 필수이며 후보 생성 시각 기준으로 from은 포함, to는 포함하지 않습니다. 기간은 최대 1년입니다.
+            후보 생성 시각은 평소 건이면 구매확정 직후, 관리자 조정 건이면 조정한 시각입니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (기간 누락, 시작 시각이 종료 시각보다 같거나 늦음, 기간 1년 초과, sellerId·page·size 범위 등)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutCandidateResponse>> searchCandidates(
+            @ParameterObject PayoutCandidateSearchRequest request
     );
 
     @Operation(summary = "정산 전체 수동 실행", description = """

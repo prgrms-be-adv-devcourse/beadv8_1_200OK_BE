@@ -109,4 +109,24 @@ class SellerShippingSettingServiceTest {
     static Stream<Collection<Long>> 잘못된_판매자_ID_목록() {
         return Stream.of(null, Arrays.asList(10L, null));
     }
+
+    @Test
+    void 판매자_한_명의_설정이_없으면_기본값을_돌려준다() {
+        // given
+        given(sellerShippingPolicyProvider.findBySellerIds(Set.of(10L))).willReturn(Map.of());
+
+        // when
+        SellerShippingSetting sut = sellerShippingSettingService.getSetting(10L);
+
+        // then
+        assertThat(sut).isEqualTo(DEFAULT_PROPERTIES.toSetting());
+    }
+
+    @Test
+    void 판매자_한_명을_조회할_때_ID가_없으면_예외가_발생한다() {
+        // when & then
+        assertThatThrownBy(() -> sellerShippingSettingService.getSetting(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("판매자 ID는 필수입니다.");
+    }
 }

@@ -23,7 +23,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -80,21 +79,24 @@ public class ShipmentAddressChangeService {
         ShipmentAddressChangeRequest request = requestRepository.findByIdAndShipmentId(command.requestId(), shipment.getId())
                 .orElseThrow(() -> new RestApiException(DeliveryErrorCode.ADDRESS_CHANGE_REQUEST_NOT_FOUND));
         LocalDateTime now = LocalDateTime.now(clock);
-        if (command.decision() == AddressChangeDecision.REJECT) {
+        if (command.decision() == AddressChangeDecision.APPROVE) {
+            approve(shipment, request, now);
+        } else {
             request.reject(now);
-            return AddressChangeRequestResult.from(request);
         }
-        // 처리된 요청인지 먼저 확인해야 송장 발행으로 자동 거절된 요청에 상태 오류 대신 ALREADY_PROCESSED를 돌려준다.
-        // shipment 반영이 실패하면 트랜잭션이 롤백되어 승인도 남지 않는다
-        request.approve(now);
-        RegionResult region = deliveryRegionService.resolve(request.getRequestedAddress().getPostalCode());
-        shipment.applyAddressChange(request, region.regionGroup(), arrivalRange(shipment.getSellerId(), now, region));
         return AddressChangeRequestResult.from(request);
     }
 
-    private DeliveryDateRange arrivalRange(Long sellerId, LocalDateTime now, RegionResult region) {
-        LocalTime cutoffTime = sellerShippingSettingService.getSettings(List.of(sellerId)).get(sellerId).cutoffTime();
+    // 처리된 요청인지 먼저 확인해야 송장 발행으로 자동 거절된 요청에 상태 오류 대신 ALREADY_PROCESSED를 돌려준다.
+    // shipment 반영이 실패하면 트랜잭션이 롤백되어 승인도 남지 않는다.
+    // 지역 그룹과 추가 소요일은 승인 시점에 다시 판정한다. 실제 배송과 도착 예정일에 쓰는 값이라 최신 정책을 따라야 한다.
+    // 반면 추가 운임 기준에 더하는 안내 금액은 구매자에게 이미 알린 금액이라 요청 시점 값을 그대로 쓴다
+    private void approve(Shipment shipment, ShipmentAddressChangeRequest request, LocalDateTime now) {
+        request.approve(now);
+        RegionResult region = deliveryRegionService.resolve(request.getRequestedAddress().getPostalCode());
+        LocalTime cutoffTime = sellerShippingSettingService.getSetting(shipment.getSellerId()).cutoffTime();
         LocalDate shipDate = deliveryDatePolicy.shipDate(now, cutoffTime);
-        return deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
+        DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
+        shipment.applyAddressChange(request, region.regionGroup(), arrival);
     }
 }
