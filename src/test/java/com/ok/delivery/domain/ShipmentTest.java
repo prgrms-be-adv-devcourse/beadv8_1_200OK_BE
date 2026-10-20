@@ -32,6 +32,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class ShipmentTest {
 
+    private static final LocalDate NEW_SHIP_DATE = LocalDate.of(2026, 10, 12);
     private static final DeliveryDateRange NEW_ARRIVAL = new DeliveryDateRange(LocalDate.of(2026, 10, 14), LocalDate.of(2026, 10, 16));
 
     /**
@@ -176,6 +177,17 @@ class ShipmentTest {
                 .hasMessage("도착 예정일 시작은 끝보다 늦을 수 없습니다.");
     }
 
+    @Test
+    void 출고_예정일이_도착_예정일_시작보다_늦으면_생성할_수_없다() {
+        // given
+        var sut = validBuilder().estimatedShipDate(LocalDate.of(2026, 10, 14));
+
+        // when & then
+        assertThatThrownBy(sut::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("출고 예정일은 도착 예정일 시작보다 늦을 수 없습니다.");
+    }
+
     private static Shipment.ShipmentBuilder validBuilder() {
         return Shipment.builder()
                 .orderId(1L)
@@ -183,6 +195,7 @@ class ShipmentTest {
                 .sellerId(10L)
                 .address(address())
                 .regionGroup("GENERAL")
+                .estimatedShipDate(LocalDate.of(2026, 10, 11))
                 .estimatedDeliveryStart(LocalDate.of(2026, 10, 13))
                 .estimatedDeliveryEnd(LocalDate.of(2026, 10, 14))
                 .items(List.of(item(1L)));
@@ -443,7 +456,7 @@ class ShipmentTest {
         request.approve(NOW);
 
         // when
-        sut.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL);
+        sut.applyAddressChange(request, "JEJU_MAIN", NEW_SHIP_DATE, NEW_ARRIVAL);
 
         // then
         assertThat(sut).isNotNull();
@@ -452,6 +465,7 @@ class ShipmentTest {
             softly.assertThat(sut.getRegionGroup()).isEqualTo("JEJU_MAIN");
             softly.assertThat(sut.getRegionSurcharge()).isEqualTo(3_000);
             softly.assertThat(sut.getChargedShippingFee()).isEqualTo(3_000);
+            softly.assertThat(sut.getEstimatedShipDate()).isEqualTo(NEW_SHIP_DATE);
             softly.assertThat(sut.getEstimatedDeliveryStart()).isEqualTo(NEW_ARRIVAL.start());
             softly.assertThat(sut.getEstimatedDeliveryEnd()).isEqualTo(NEW_ARRIVAL.end());
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.PREPARING);
@@ -464,7 +478,7 @@ class ShipmentTest {
         Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
         ShipmentAddressChangeRequest first = shipment.requestAddressChange(otherAddress(), 3_000, NOW);
         first.approve(NOW);
-        shipment.applyAddressChange(first, "JEJU_MAIN", NEW_ARRIVAL);
+        shipment.applyAddressChange(first, "JEJU_MAIN", NEW_SHIP_DATE, NEW_ARRIVAL);
 
         // when
         ShipmentAddressChangeRequest sut = shipment.requestAddressChange(address(), 5_000, NOW);
@@ -480,7 +494,7 @@ class ShipmentTest {
         ShipmentAddressChangeRequest request = shipment.requestAddressChange(otherAddress(), 0, NOW);
 
         // when & then
-        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL))
+        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_SHIP_DATE, NEW_ARRIVAL))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("이 shipment의 승인된 배송지 변경 요청이 아닙니다. requestId=null");
     }
@@ -494,9 +508,22 @@ class ShipmentTest {
         shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
 
         // when & then
-        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL))
+        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_SHIP_DATE, NEW_ARRIVAL))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
+    }
+
+    @Test
+    void 출고_예정일이_도착_예정일_시작보다_늦으면_배송지_변경을_반영할_수_없다() {
+        // given
+        Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
+        ShipmentAddressChangeRequest request = shipment.requestAddressChange(otherAddress(), 0, NOW);
+        request.approve(NOW);
+
+        // when & then
+        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL.start().plusDays(1), NEW_ARRIVAL))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("출고 예정일은 도착 예정일 시작보다 늦을 수 없습니다.");
     }
 
     @Test

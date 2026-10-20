@@ -37,6 +37,9 @@ public record ShipmentDetailResponse(
         @Schema(description = "승인된 배송지 변경으로 판매자에게 따로 낼 추가 운임 합계(원). 시스템에서 결제하지 않는다. 없으면 0", example = "0")
         long additionalShippingFee,
 
+        @Schema(description = "출고 예정일. 배송지 변경이 승인되면 다시 계산된다", example = "2026-10-20")
+        LocalDate estimatedShipDate,
+
         @Schema(description = "도착 예정일 범위 시작", example = "2026-10-22")
         LocalDate estimatedDeliveryStart,
 
@@ -79,6 +82,7 @@ public record ShipmentDetailResponse(
                 result.regionGroup(),
                 result.chargedShippingFee(),
                 result.additionalShippingFee(),
+                result.estimatedShipDate(),
                 result.estimatedDeliveryStart(),
                 result.estimatedDeliveryEnd(),
                 result.delayed(),

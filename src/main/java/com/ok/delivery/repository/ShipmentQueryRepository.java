@@ -2,6 +2,7 @@ package com.ok.delivery.repository;
 
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -29,9 +30,20 @@ public class ShipmentQueryRepository {
      * 구매자의 shipment를 최신순으로 조회한다.
      */
     public Page<Shipment> findByBuyerId(Long buyerId, Pageable pageable) {
+        return findLatest(shipment.buyerId.eq(buyerId), pageable);
+    }
+
+    /**
+     * 판매자의 shipment를 최신순으로 조회한다.
+     */
+    public Page<Shipment> findBySellerId(Long sellerId, Pageable pageable) {
+        return findLatest(shipment.sellerId.eq(sellerId), pageable);
+    }
+
+    private Page<Shipment> findLatest(BooleanExpression condition, Pageable pageable) {
         List<Shipment> content = queryFactory
                 .selectFrom(shipment)
-                .where(shipment.buyerId.eq(buyerId))
+                .where(condition)
                 // 같은 결제로 함께 만들어진 shipment도 순서가 바뀌지 않도록 id로 한 번 더 정렬한다
                 .orderBy(shipment.createdAt.desc(), shipment.id.desc())
                 .offset(pageable.getOffset())
@@ -41,7 +53,7 @@ public class ShipmentQueryRepository {
         return PageableExecutionUtils.getPage(content, pageable, () -> Objects.requireNonNullElse(queryFactory
                 .select(shipment.count())
                 .from(shipment)
-                .where(shipment.buyerId.eq(buyerId))
+                .where(condition)
                 .fetchOne(), 0L));
     }
 

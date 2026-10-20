@@ -97,6 +97,6 @@ public class ShipmentAddressChangeService {
         LocalTime cutoffTime = sellerShippingSettingService.getSetting(shipment.getSellerId()).cutoffTime();
         LocalDate shipDate = deliveryDatePolicy.shipDate(now, cutoffTime);
         DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
-        shipment.applyAddressChange(request, region.regionGroup(), arrival);
+        shipment.applyAddressChange(request, region.regionGroup(), shipDate, arrival);
     }
 }

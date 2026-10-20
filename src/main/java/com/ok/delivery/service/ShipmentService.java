@@ -17,6 +17,7 @@ import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.LatestAddressChangeResult;
 import com.ok.delivery.service.dto.RegionResult;
 import com.ok.delivery.service.dto.SellerShipmentCommand;
+import com.ok.delivery.service.dto.SellerShipmentSummaryResult;
 import com.ok.delivery.service.dto.ShipmentDispatchCommand;
 import com.ok.delivery.service.dto.ShipmentDispatchResult;
 import com.ok.delivery.service.dto.ShipmentCreateCommand;
@@ -38,6 +39,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -147,10 +149,25 @@ public class ShipmentService {
      */
     public Page<ShipmentSummaryResult> getBuyerShipments(Long buyerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findByBuyerId(buyerId, PageRequest.of(page, PAGE_SIZE));
-        Map<Long, List<ShipmentItem>> itemsByShipmentId = shipmentQueryRepository
-                .findItemsByShipmentIds(shipments.getContent().stream().map(Shipment::getId).toList()).stream()
-                .collect(Collectors.groupingBy(item -> item.getShipment().getId()));
+        Map<Long, List<ShipmentItem>> itemsByShipmentId = itemsByShipmentId(idsOf(shipments));
         return shipments.map(shipment -> ShipmentSummaryResult.of(shipment, itemsByShipmentId.get(shipment.getId())));
+    }
+
+    /**
+     * 판매자의 출고 목록을 최신순으로 25건씩 조회한다.
+     * 대표 상품과 대기 중인 배송지 변경 요청 여부는 페이지에 담긴 shipment들에 대해 한 번에 읽어 채운다.
+     *
+     * @param page 0부터 시작하는 페이지 번호
+     */
+    public Page<SellerShipmentSummaryResult> getSellerShipments(Long sellerId, int page) {
+        Page<Shipment> shipments = shipmentQueryRepository.findBySellerId(sellerId, PageRequest.of(page, PAGE_SIZE));
+        List<Long> shipmentIds = idsOf(shipments);
+        Map<Long, List<ShipmentItem>> itemsByShipmentId = itemsByShipmentId(shipmentIds);
+        Set<Long> pendingShipmentIds = shipmentIds.isEmpty()
+                ? Set.of()
+                : addressChangeRequestRepository.findShipmentIdsWithStatus(shipmentIds, AddressChangeStatus.PENDING);
+        return shipments.map(shipment -> SellerShipmentSummaryResult.of(
+                shipment, itemsByShipmentId.get(shipment.getId()), pendingShipmentIds.contains(shipment.getId())));
     }
 
     /**
@@ -166,7 +183,29 @@ public class ShipmentService {
         return toDetail(shipment);
     }
 
-    // 판매자 상세 조회(#202)도 같은 응답을 쓰므로 조립을 한 곳에 둔다
+    /**
+     * 판매자의 출고 상세를 조회한다. 구매자 상세와 같은 형태이고, 대기 중인 배송지 변경 요청은 가장 최근 요청으로 담긴다.
+     *
+     * @throws RestApiException 없거나 다른 판매자의 shipment면 {@code SHIPMENT_NOT_FOUND}
+     */
+    public ShipmentDetailResult getSellerShipment(Long sellerId, Long shipmentId) {
+        // 다른 판매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
+        Shipment shipment = shipmentRepository.findById(shipmentId)
+                .filter(found -> found.getSellerId().equals(sellerId))
+                .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
+        return toDetail(shipment);
+    }
+
+    private static List<Long> idsOf(Page<Shipment> shipments) {
+        return shipments.getContent().stream().map(Shipment::getId).toList();
+    }
+
+    private Map<Long, List<ShipmentItem>> itemsByShipmentId(List<Long> shipmentIds) {
+        return shipmentQueryRepository.findItemsByShipmentIds(shipmentIds).stream()
+                .collect(Collectors.groupingBy(item -> item.getShipment().getId()));
+    }
+
+    // 구매자와 판매자 상세가 같은 응답을 쓰므로 조립을 한 곳에 둔다
     private ShipmentDetailResult toDetail(Shipment shipment) {
         long additionalShippingFee = addressChangeRequestRepository.sumAdditionalFeeNotice(shipment.getId(), AddressChangeStatus.APPROVED);
         LatestAddressChangeResult latestAddressChange = addressChangeRequestRepository.findFirstByShipmentIdOrderByRequestedAtDescIdDesc(shipment.getId())
@@ -201,6 +240,7 @@ public class ShipmentService {
                 .baseShippingFee(Math.toIntExact(seller.baseShippingFee()))
                 .regionSurcharge(Math.toIntExact(seller.regionSurcharge()))
                 .freeShippingThreshold(Math.toIntExact(seller.freeShippingThreshold()))
+                .estimatedShipDate(shipDate)
                 .estimatedDeliveryStart(arrival.start())
                 .estimatedDeliveryEnd(arrival.end())
                 .items(seller.items().stream().map(ShipmentService::toItem).toList())
