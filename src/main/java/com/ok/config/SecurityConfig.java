@@ -55,6 +55,37 @@ public class SecurityConfig {
             new Endpoint(HttpMethod.GET, "/api/v1/products/categories")
     );
 
+    /**
+     * 로그인 없이 허용하는 API (HTTP 메서드 + 경로 패턴). 여기 없는 API는 토큰이 없으면 401이다.
+     * 공개 API를 추가하면 여기에 넣는다. 신원이 전혀 필요 없는 API라면 {@link #TOKEN_IGNORED_ENDPOINTS}에도 넣어,
+     * 만료된 토큰이 붙어 와도 401로 막히지 않게 한다.
+     */
+    private static final List<Endpoint> PUBLIC_ENDPOINTS = List.of(
+            // 신원이 필요 없는 인증 요청
+            new Endpoint(HttpMethod.POST, "/api/v1/auth/login"),
+            new Endpoint(HttpMethod.POST, "/api/v1/members/signup"),
+            new Endpoint(HttpMethod.POST, "/api/v1/auth/reissue"),
+            // 누구나 볼 수 있는 상품·리뷰 조회
+            new Endpoint(HttpMethod.GET, "/api/v1/products"),
+            new Endpoint(HttpMethod.GET, "/api/v1/products/{productId}"),
+            new Endpoint(HttpMethod.GET, "/api/v1/products/categories"),
+            new Endpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews"),
+            // 저장하지 않는 배송비·도착 예정일 계산이라 로그인 전에도 쓴다
+            new Endpoint(HttpMethod.POST, "/api/v1/shipments/fee-quotes")
+    );
+
+    /**
+     * API가 아니지만 로그인 없이 허용하는 경로. 외부에는 nginx가 /api/v1만 공개하므로 이 경로들은 밖에서 닿지 않는다.
+     */
+    private static final String[] PUBLIC_PATHS = {
+            // 예외를 응답으로 바꾸는 오류 경로. 막으면 실제 오류(404 등) 대신 401이 나가 원인을 가린다
+            "/error",
+            // 컨테이너 헬스체크. compose와 deploy.sh가 토큰 없이 호출한다
+            "/actuator/health",
+            // 개발 환경 API 문서. 운영에서는 springdoc이 꺼져 있다
+            "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**"
+    };
+
     private final ProblemDetailAuthenticationEntryPoint authenticationEntryPoint;
     private final ProblemDetailAccessDeniedHandler accessDeniedHandler;
 
@@ -66,16 +97,16 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 // 토큰으로 매 요청을 인증하므로 서버에 세션을 만들지 않는다
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                // TODO(#108): 각 모듈이 토큰 기반으로 전환한 뒤, 공개 API만 열고 나머지는 authenticated()로 기본 거부한다.
-                //  지금 바로 거부하면 아직 헤더로 회원을 받는 API와 그 테스트가 모두 401로 깨진다.
-                //  토큰이 있으면 permitAll이어도 검증하므로(위조·만료 토큰은 401), 전환 기간 동안 두 방식이 함께 동작한다.
-                //  전환 전까지 헤더(X-Member-Id)로 회원을 받는 API는 다른 회원을 사칭할 수 있으므로, 운영 배포 전에 반드시 닫는다.
+                // 공개 API·공개 경로·내부 API만 따로 다루고 나머지는 로그인을 요구한다(기본 거부).
+                // 새 API는 따로 설정하지 않아도 로그인이 필요하다. 역할 제한은 여기서 하지 않고 각 모듈이 @PreAuthorize로 선언한다
                 .authorizeHttpRequests(auth -> auth
                         // 내부 API는 인증 없이 호출하므로 같은 컨테이너(loopback)에서 온 요청만 받는다.
                         // 내부 호출은 localhost:8080으로 자기 자신을 부르고, nginx를 거친 요청은 docker 네트워크 주소에서 온다.
                         // 그래서 app.internal-api.base-url을 nginx 주소로 바꾸면 내부 호출이 막힌다.
                         .requestMatchers("/internal/**").access(loopbackOnly())
-                        .anyRequest().permitAll())
+                        .requestMatchers(toMatcher(PUBLIC_ENDPOINTS)).permitAll()
+                        .requestMatchers(PUBLIC_PATHS).permitAll()
+                        .anyRequest().authenticated())
                 // 진입점·처리기를 두 곳에 지정하는 것은 중복이 아니다. 적용되는 실패가 다르다.
                 //  - oauth2ResourceServer: Bearer 토큰 검증 실패 (만료·위조 토큰)
                 //  - exceptionHandling: 토큰 없이 들어온 익명 요청의 접근 거부, 로그인한 회원의 권한 부족
@@ -104,7 +135,7 @@ public class SecurityConfig {
      * 로그인 여부에 따라 응답이 달라져야 하는 API는 이 목록에 넣지 않는다.
      *
      * <p>이 목록은 "토큰을 읽지 않는 요청"이지 "로그인 없이 허용하는 요청"이 아니다.
-     * 기본 거부로 바꿀 때 공개 API 목록은 {@code authorizeHttpRequests}에 따로 둔다.
+     * 로그인 없이 허용하는 API는 {@link #PUBLIC_ENDPOINTS}에 따로 둔다.
      */
     private BearerTokenResolver bearerTokenResolver() {
         DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
