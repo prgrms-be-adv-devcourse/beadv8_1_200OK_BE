@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.order.order.exception.OrderErrorCode;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -142,6 +143,141 @@ class OrderTest {
             softly.assertThat(sut.getAllItems())
                     .extracting(OrderItem::getStatus)
                     .containsOnly(OrderItemStatus.PAYMENT_FAILED);
+        });
+    }
+
+    // ---------- 배송 상태 반영 ----------
+
+    @Test
+    void 결제_완료된_상품은_배송이_시작되면_배송_중이_된다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.markPaid();
+
+        // when
+        int changed = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isEqualTo(1);
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+        });
+    }
+
+    @Test
+    void 배송_시작은_해당_판매자의_상품만_바꾼다() {
+        // given: 판매자 100, 200
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1), line(2L, 200L, 5_000L, 1)));
+        sut.markPaid();
+
+        // when
+        sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getSellerGroups().get(0).getItems().get(0).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+            softly.assertThat(sut.getSellerGroups().get(1).getItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+        });
+    }
+
+    @Test
+    void 결제_완료_전_상품은_배송이_시작돼도_바뀌지_않는다() {
+        // given: 결제 대기
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+
+        // when
+        int changed = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PAYMENT_PENDING);
+        });
+    }
+
+    @Test
+    void 결제_실패한_상품은_배송이_완료돼도_바뀌지_않는다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.markPaymentFailed();
+
+        // when
+        int changed = sut.markDelivered(100L, LocalDateTime.of(2026, 10, 20, 15, 0));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PAYMENT_FAILED);
+            softly.assertThat(sut.getAllItems().get(0).getDeliveredAt()).isNull();
+        });
+    }
+
+    @Test
+    void 배송이_완료되면_배송_완료가_되고_배송_완료_시각이_저장된다() {
+        // given
+        LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 20, 15, 0);
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.markPaid();
+        sut.markShipping(100L);
+
+        // when
+        sut.markDelivered(100L, deliveredAt);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.DELIVERED);
+            softly.assertThat(sut.getAllItems().get(0).getDeliveredAt()).isEqualTo(deliveredAt);
+        });
+    }
+
+    @Test
+    void 배송_시작보다_완료가_먼저_와도_배송_완료가_되고_늦게_온_시작은_무시된다() {
+        // given: 배송 준비
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.markPaid();
+
+        // when
+        sut.markDelivered(100L, LocalDateTime.of(2026, 10, 20, 15, 0));
+        int lateShipping = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(lateShipping).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.DELIVERED);
+        });
+    }
+
+    @Test
+    void 배송_완료가_두_번_와도_처음_시각이_유지된다() {
+        // given
+        LocalDateTime first = LocalDateTime.of(2026, 10, 20, 15, 0);
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.markPaid();
+        sut.markDelivered(100L, first);
+
+        // when
+        int changed = sut.markDelivered(100L, LocalDateTime.of(2026, 10, 21, 9, 0));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getDeliveredAt()).isEqualTo(first);
+        });
+    }
+
+    @Test
+    void 주문에_없는_판매자의_배송_이벤트는_아무것도_바꾸지_않는다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.markPaid();
+
+        // when
+        int changed = sut.markShipping(999L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
         });
     }
 }

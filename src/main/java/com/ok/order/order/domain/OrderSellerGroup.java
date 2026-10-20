@@ -6,6 +6,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -68,5 +69,27 @@ public class OrderSellerGroup extends BaseTime {
             sum += item.getItemAmount();
         }
         return sum;
+    }
+
+    // 이 판매자 묶음의 상품들을 '배송 중'으로 변경
+    int markShipping() {
+        int changed = 0;
+        for (OrderItem item : items) {
+            if (item.markShipping()) {
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    // 이 판매자 묶음의 상품들을 '배송 완료'으로 변경
+    int markDelivered(LocalDateTime deliveredAt) {
+        int changed = 0;
+        for (OrderItem item : items) {
+            if (item.markDelivered(deliveredAt)) {
+                changed++;
+            }
+        }
+        return changed;
     }
 }
