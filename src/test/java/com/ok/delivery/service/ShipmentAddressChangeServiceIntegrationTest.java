@@ -35,6 +35,7 @@ class ShipmentAddressChangeServiceIntegrationTest extends AbstractIntegrationTes
         jdbcTemplate.update("DELETE FROM shipment");
     }
 
+    // 63100(JEJU_MAIN, 3,000원)은 마이그레이션 시드 값이다. 시드가 바뀌면 기대값도 함께 바꾼다
     @Test
     void 일반_지역에서_제주로_바꾸면_제주_추가_운임을_안내_금액으로_저장한다() {
         // given

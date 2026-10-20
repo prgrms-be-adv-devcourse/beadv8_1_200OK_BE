@@ -289,6 +289,8 @@ public class Shipment extends BaseTime {
      *
      * <p>추가 운임 안내 금액은 요청 배송지의 추가 운임에서 결제 때 낸 추가 운임을 뺀 값이다. 결제 때 낸 운임은 이미 받았으므로 차액만 안내한다.
      * 추가 운임이 줄어도 돌려주지 않으므로 0원이다.
+     * 요청 배송지는 요청 시점의 지역 정책으로 판정하고, 빼는 값은 결제 때 실제로 낸 추가 운임이다.
+     * 결제 뒤 우편번호 설정이 바뀌어도 이미 받은 금액 기준으로 차액을 안내하기 위해서다.
      *
      * @param requestedRegionSurcharge 요청 배송지의 지역 판정 결과에 따른 추가 운임
      * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED}
