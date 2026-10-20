@@ -11,16 +11,22 @@ import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
+import com.ok.delivery.repository.ShipmentQueryRepository;
 import com.ok.delivery.repository.ShipmentRepository;
+import com.ok.delivery.service.dto.LatestAddressChangeResult;
 import com.ok.delivery.service.dto.RegionResult;
 import com.ok.delivery.service.dto.SellerShipmentCommand;
 import com.ok.delivery.service.dto.ShipmentDispatchCommand;
 import com.ok.delivery.service.dto.ShipmentDispatchResult;
 import com.ok.delivery.service.dto.ShipmentCreateCommand;
+import com.ok.delivery.service.dto.ShipmentDetailResult;
 import com.ok.delivery.service.dto.ShipmentItemCommand;
+import com.ok.delivery.service.dto.ShipmentSummaryResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +36,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -38,8 +45,11 @@ import java.util.Map;
 public class ShipmentService {
 
     private static final String TRACKING_NUMBER_UNIQUE_CONSTRAINT = "uk_shipment_carrier_tracking_number";
+    // 이슈 명세로 고정한 목록 페이지 크기. 클라이언트가 바꿀 수 없다
+    private static final int PAGE_SIZE = 25;
 
     private final ShipmentRepository shipmentRepository;
+    private final ShipmentQueryRepository shipmentQueryRepository;
     private final ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
     private final DeliveryRegionService deliveryRegionService;
     private final DeliveryDatePolicy deliveryDatePolicy;
@@ -95,6 +105,42 @@ public class ShipmentService {
         addressChangeRequestRepository.findAllByShipmentIdAndStatus(shipment.getId(), AddressChangeStatus.PENDING)
                 .forEach(request -> request.reject(now));
         return ShipmentDispatchResult.from(shipment);
+    }
+
+    /**
+     * 구매자의 배송 목록을 최신순으로 25건씩 조회한다.
+     * 목록의 대표 상품은 페이지에 담긴 shipment들의 상품 항목을 한 번에 읽어 채운다.
+     *
+     * @param page 0부터 시작하는 페이지 번호
+     */
+    public Page<ShipmentSummaryResult> getBuyerShipments(Long buyerId, int page) {
+        Page<Shipment> shipments = shipmentQueryRepository.findByBuyerId(buyerId, PageRequest.of(page, PAGE_SIZE));
+        Map<Long, List<ShipmentItem>> itemsByShipmentId = shipmentQueryRepository
+                .findItemsByShipmentIds(shipments.getContent().stream().map(Shipment::getId).toList()).stream()
+                .collect(Collectors.groupingBy(item -> item.getShipment().getId()));
+        return shipments.map(shipment -> ShipmentSummaryResult.of(shipment, itemsByShipmentId.get(shipment.getId())));
+    }
+
+    /**
+     * 구매자의 배송 상세를 조회한다.
+     *
+     * @throws RestApiException 없거나 다른 구매자의 shipment면 {@code SHIPMENT_NOT_FOUND}
+     */
+    public ShipmentDetailResult getBuyerShipment(Long buyerId, Long shipmentId) {
+        // 다른 구매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
+        Shipment shipment = shipmentRepository.findById(shipmentId)
+                .filter(found -> found.getBuyerId().equals(buyerId))
+                .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
+        return toDetail(shipment);
+    }
+
+    // 판매자 상세 조회(#202)도 같은 응답을 쓰므로 조립을 한 곳에 둔다
+    private ShipmentDetailResult toDetail(Shipment shipment) {
+        long additionalShippingFee = addressChangeRequestRepository.sumAdditionalFeeNotice(shipment.getId(), AddressChangeStatus.APPROVED);
+        LatestAddressChangeResult latestAddressChange = addressChangeRequestRepository.findFirstByShipmentIdOrderByRequestedAtDescIdDesc(shipment.getId())
+                .map(LatestAddressChangeResult::from)
+                .orElse(null);
+        return ShipmentDetailResult.of(shipment, additionalShippingFee, latestAddressChange);
     }
 
     // 송장번호 중복은 사전 조회 없이 UNIQUE 제약 하나로 막는다. 사전 조회해도 동시 등록은 제약이 막아야 하므로 확인 경로를 하나로 둔다.

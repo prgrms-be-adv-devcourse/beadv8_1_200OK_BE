@@ -7,6 +7,7 @@ import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.WeekendBusinessDayCalendar;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
+import com.ok.delivery.repository.ShipmentQueryRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.AddressCommand;
 import com.ok.delivery.service.dto.RegionResult;
@@ -60,6 +61,9 @@ class ShipmentServiceTest {
     ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
 
     @Mock
+    ShipmentQueryRepository shipmentQueryRepository;
+
+    @Mock
     DeliveryRegionService deliveryRegionService;
 
     @Mock
@@ -75,7 +79,7 @@ class ShipmentServiceTest {
         // 날짜 계산은 실제 정책으로 두고, 서비스가 판매자 설정의 마감 시간을 넘기는지 확인한다
         // 출고 예정일은 결제 시각 기준이라 Clock을 쓰지 않는다. Clock은 송장 등록(dispatch)에서만 쓴다
         Clock clock = Clock.fixed(FRIDAY_NOON.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
-        shipmentService = new ShipmentService(shipmentRepository, addressChangeRequestRepository, deliveryRegionService,
+        shipmentService = new ShipmentService(shipmentRepository, shipmentQueryRepository, addressChangeRequestRepository, deliveryRegionService,
                 new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService, clock);
     }
 
