@@ -20,7 +20,7 @@ class PayoutItemResultTest {
                 CANDIDATE_CREATED_AT, 0L, null, null);
 
         // when
-        PayoutItemResult sut = PayoutItemResult.from(row, true);
+        PayoutItemResult sut = PayoutItemResult.from(row);
 
         // then
         assertThat(sut).isNotNull();
@@ -42,42 +42,25 @@ class PayoutItemResultTest {
         PayoutItemRow row = row(0L, null, null);
 
         // when
-        PayoutItemResult sut = PayoutItemResult.from(row, true);
+        PayoutItemResult sut = PayoutItemResult.from(row);
 
         // then
         assertThat(sut.adjustment()).isNull();
     }
 
     @Test
-    void 관리자가_조회하면_조정_번호_관리자_ID_사유를_모두_준다() {
+    void 조정_건이면_조정_번호_관리자_ID_사유를_모두_담는다() {
         // given
         PayoutItemRow row = row(4L, 1L, "금액 오입력 정정");
 
         // when
-        PayoutItemResult sut = PayoutItemResult.from(row, true);
+        PayoutItemResult sut = PayoutItemResult.from(row);
 
         // then
         assertThat(sut.adjustment()).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.adjustment().adjustmentId()).isEqualTo(4L);
             softly.assertThat(sut.adjustment().adminId()).isEqualTo(1L);
-            softly.assertThat(sut.adjustment().reason()).isEqualTo("금액 오입력 정정");
-        });
-    }
-
-    @Test
-    void 판매자가_조회하면_조정_사유만_준다() {
-        // given
-        PayoutItemRow row = row(4L, 1L, "금액 오입력 정정");
-
-        // when
-        PayoutItemResult sut = PayoutItemResult.from(row, false);
-
-        // then
-        assertThat(sut.adjustment()).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(sut.adjustment().adjustmentId()).isNull();
-            softly.assertThat(sut.adjustment().adminId()).isNull();
             softly.assertThat(sut.adjustment().reason()).isEqualTo("금액 오입력 정정");
         });
     }

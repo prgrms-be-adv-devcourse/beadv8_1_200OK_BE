@@ -5,7 +5,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 
-@Schema(description = "정산 항목 1건 (정산후보 정보 포함)")
+@Schema(description = "관리자 정산 항목 1건 (정산후보 정보 포함)")
 public record PayoutItemResponse(
 
         @Schema(description = "정산 항목 ID", example = "101")
