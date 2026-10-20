@@ -9,6 +9,7 @@ import com.ok.delivery.domain.DeliveryDateRange;
 import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
+import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.repository.ShipmentQueryRepository;
@@ -22,6 +23,7 @@ import com.ok.delivery.service.dto.ShipmentCreateCommand;
 import com.ok.delivery.service.dto.ShipmentDetailResult;
 import com.ok.delivery.service.dto.ShipmentItemCommand;
 import com.ok.delivery.service.dto.ShipmentSummaryResult;
+import com.ok.delivery.service.dto.ShippingShipmentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -110,6 +112,15 @@ public class ShipmentService {
         deliveryEventPublisher.publishShipmentDispatched(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
                 shipment.getCarrier().name(), shipment.getTrackingNumber(), shipment.getShippedAt());
         return ShipmentDispatchResult.from(shipment);
+    }
+
+    /**
+     * 택배사에 추적을 다시 요청할 배송 중({@code SHIPPING}) shipment 목록을 조회한다.
+     */
+    public List<ShippingShipmentResult> getShippingShipments() {
+        return shipmentRepository.findAllByStatus(ShipmentStatus.SHIPPING).stream()
+                .map(ShippingShipmentResult::from)
+                .toList();
     }
 
     /**

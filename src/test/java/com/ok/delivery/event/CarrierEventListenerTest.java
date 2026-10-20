@@ -3,6 +3,7 @@ package com.ok.delivery.event;
 import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.delivery.service.CarrierClient;
 import com.ok.delivery.service.ShipmentService;
+import com.ok.delivery.service.dto.ShippingShipmentResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -10,7 +11,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
+import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 
 @ExtendWith(MockitoExtension.class)
@@ -45,5 +48,20 @@ class CarrierEventListenerTest {
 
         // then
         then(shipmentService).should().deliver(1L);
+    }
+
+    @Test
+    void 앱이_뜨면_배송_중인_shipment를_모두_다시_추적_요청한다() {
+        // given
+        given(shipmentService.getShippingShipments()).willReturn(List.of(
+                new ShippingShipmentResult(1L, "CJ_LOGISTICS", "1111111111"),
+                new ShippingShipmentResult(2L, "HANJIN", "2222222222")));
+
+        // when
+        sut.requestTrackingForShippingShipments();
+
+        // then
+        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1111111111");
+        then(carrierClient).should().requestTracking(2L, "HANJIN", "2222222222");
     }
 }

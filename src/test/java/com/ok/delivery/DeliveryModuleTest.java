@@ -27,6 +27,7 @@ import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
@@ -37,7 +38,8 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 @ApplicationModuleTest
 // 지역 판정 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
-// 가짜 택배사(MockCarrierClient)는 dev·prod에서만 등록되므로, 통합 테스트와 같이 아무 일도 하지 않는 FakeCarrierClient를 쓴다
+// 통합 테스트와 같이 test 프로필로 띄워 가짜 택배사(MockCarrierClient)를 빼고, 아무 일도 하지 않는 FakeCarrierClient를 쓴다
+@ActiveProfiles("test")
 @Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class, FakeCarrierClient.class})
 class DeliveryModuleTest {
 
