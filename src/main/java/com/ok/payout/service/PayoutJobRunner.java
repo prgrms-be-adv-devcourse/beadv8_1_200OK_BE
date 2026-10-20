@@ -37,18 +37,19 @@ public class PayoutJobRunner {
         return start(LocalDateTime.now(clock));
     }
 
+    // 대기 기간(15일)을 기다리지 않고 지금 있는 미정산 후보를 정산함 (발표·연동 테스트용, #224)
+    // 정산 Job은 requestedAt의 날짜를 "오늘"로 보고 상한을 계산하므로, 이 값만 미래로 넣어 대기를 건너뜀
+    // 서버 시계, 정산 결과의 생성 시각, 다음 정산의 하한(마지막 정산 생성 시각 기준)은 실제 시각을 그대로 씀
+    // 스냅샷의 조회 상한(periodTo)도 미래 날짜로 기록되며, 평소 실행과 구분하는 값은 따로 남기지 않음
+    // 이미 정산된 후보는 미정산 조건으로 걸러지므로 여러 번 실행해도 이중 정산되지 않음
+    public JobExecution runSkippingWait() throws Exception {
+        return start(LocalDateTime.now(clock).plusDays(SKIP_WAIT_SHIFT_DAYS));
+    }
+
     private JobExecution start(LocalDateTime requestedAt) throws Exception {
         JobParameters params = new JobParametersBuilder()
                 .addLocalDateTime("requestedAt", requestedAt)
                 .toJobParameters();
         return jobOperator.start(payoutJob, params);
-    }
-
-    // 대기 기간(15일)을 기다리지 않고 지금 있는 미정산 후보를 정산함 (발표·연동 테스트용, #224)
-    // 정산 Job은 requestedAt의 날짜를 "오늘"로 보고 상한을 계산하므로, 이 값만 미래로 넣어 대기를 건너뜀
-    // 서버 시계, 정산 결과의 생성 시각, 다음 정산의 하한(마지막 정산 생성 시각 기준)은 실제 시각을 그대로 씀
-    // 이미 정산된 후보는 미정산 조건으로 걸러지므로 여러 번 실행해도 이중 정산되지 않음
-    public JobExecution runSkippingWait() throws Exception {
-        return start(LocalDateTime.now(clock).plusDays(SKIP_WAIT_SHIFT_DAYS));
     }
 }
