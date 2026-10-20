@@ -1,5 +1,7 @@
 package com.ok.member.member.controller;
 
+import com.ok.member.member.controller.dto.MemberInfoResponse;
+import com.ok.member.member.controller.dto.MemberInfoUpdateRequest;
 import com.ok.member.member.controller.dto.SignupRequest;
 import com.ok.member.member.controller.dto.SignupResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -56,5 +58,25 @@ interface MemberControllerSpec {
                     }))
     @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
     ResponseEntity<SignupResponse> signup(SignupRequest request);
+
+    @Operation(summary = "내 정보 조회", description = "로그인한 회원 본인의 아이디, 이메일, 이름, 닉네임을 반환합니다.")
+    @ApiResponse(responseCode = "200", description = "조회 성공")
+    @ApiResponse(responseCode = "401", description = "로그인 필요")
+    @ApiResponse(responseCode = "404", description = "회원이 없거나 탈퇴함")
+    ResponseEntity<MemberInfoResponse> getMyInfo(Long memberId);
+
+    @Operation(
+            summary = "내 정보 수정",
+            description = """
+                    로그인한 회원 본인의 이름과 닉네임을 요청 값으로 바꿉니다. 두 값을 모두 보내야 합니다.
+                    아이디와 이메일은 바꿀 수 없습니다. 닉네임은 다른 회원과 같아도 됩니다.
+                    """
+    )
+    @ApiResponse(responseCode = "200", description = "수정 성공")
+    @ApiResponse(responseCode = "400", description = "요청 본문을 읽을 수 없음 (잘못된 JSON 형식)")
+    @ApiResponse(responseCode = "401", description = "로그인 필요")
+    @ApiResponse(responseCode = "404", description = "회원이 없거나 탈퇴함")
+    @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
+    ResponseEntity<MemberInfoResponse> updateMyInfo(Long memberId, MemberInfoUpdateRequest request);
 
 }
