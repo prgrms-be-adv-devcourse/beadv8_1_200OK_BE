@@ -20,6 +20,8 @@ import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.product.product.service.dto.ProductSummaryResult;
 import com.ok.product.product.service.dto.ProductUpdateCommand;
 import com.ok.product.product.service.dto.ProductVisibilityCode;
+import com.ok.product.product.service.dto.SellerProductSearchQuery;
+import com.ok.product.product.service.dto.SellerProductSummaryResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -133,6 +135,17 @@ public class ProductService {
 		// 품절 판정은 상세와 같은 Product.isSoldOut()을 쓴다. 옵션은 지연 로딩이지만
 		// default_batch_fetch_size 덕분에 첫 접근 때 페이지 상품들의 옵션을 IN 쿼리 한 번으로 불러온다
 		return products.map(product -> ProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
+	}
+
+	// 판매자 본인의 상품 목록을 최신순으로 조회한다. 관리 화면용이라 숨긴 상품도 나오고, 삭제한 상품만 빠진다
+	public Page<SellerProductSummaryResult> searchMyProducts(Long sellerId, SellerProductSearchQuery query) {
+		Page<Product> products = productQueryRepository.findSellerProducts(
+			sellerId,
+			query.status() == null ? null : query.status().toDomain(),
+			query.visibility() == null ? null : query.visibility().toDomain(),
+			PageRequest.of(query.page(), query.size()));
+
+		return products.map(product -> SellerProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
 	}
 
 	// 구매자에게 보이는 상품 상세를 조회한다.
