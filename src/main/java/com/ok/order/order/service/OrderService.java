@@ -4,10 +4,12 @@ import com.ok.common.exception.RestApiException;
 import com.ok.order.cart.service.CartService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
+import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.OrderDetailResult;
 import com.ok.order.order.service.dto.OrderSummaryResult;
+import com.ok.order.order.service.dto.ReviewCandidateResult;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -150,5 +152,17 @@ public class OrderService {
         if (changed == 0) {
             log.info("[ORDER_DELIVERY_IGNORED] 배송 완료로 바꿀 상품이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
         }
+    }
+
+    // 리뷰 작성 가능 구매 건 (상품 모듈 내부 API용)
+    // 구매확정된 상품만: 확정 후에는 환불이 없어서 리뷰가 항상 실제 구매 건에 붙음
+    public List<ReviewCandidateResult> getReviewCandidates(Long buyerId, Long productId) {
+        List<OrderItem> items = orderRepository.findReviewCandidates(buyerId, productId, OrderItemStatus.PURCHASE_CONFIRMED);
+
+        List<ReviewCandidateResult> results = new ArrayList<>();
+        for (OrderItem item : items) {
+            results.add(ReviewCandidateResult.from(item));
+        }
+        return results;
     }
 }

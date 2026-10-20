@@ -3,6 +3,7 @@ package com.ok.order.order.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.order.cart.service.CartService;
 import com.ok.order.order.domain.Order;
+import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.OrderStatus;
@@ -11,6 +12,7 @@ import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.OrderDetailItemResult;
 import com.ok.order.order.service.dto.OrderDetailResult;
 import com.ok.order.order.service.dto.OrderSummaryResult;
+import com.ok.order.order.service.dto.ReviewCandidateResult;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -289,5 +291,49 @@ class OrderServiceTest {
         assertThatCode(() -> sut.startShipping(10L, 100L)).doesNotThrowAnyException();
         assertThatCode(() -> sut.completeDelivery(10L, 100L, LocalDateTime.of(2026, 10, 20, 15, 0)))
                 .doesNotThrowAnyException();
+    }
+
+    // ---------- 리뷰 작성 가능 구매 건 ----------
+
+    @Test
+    void 리뷰_작성_가능_구매_건은_구매확정_상태만_조회한다() {
+        // given
+        given(orderRepository.findReviewCandidates(eq(1L), eq(10L), any())).willReturn(List.of());
+
+        // when
+        sut.getReviewCandidates(1L, 10L);
+
+        // then
+        then(orderRepository).should().findReviewCandidates(1L, 10L, OrderItemStatus.PURCHASE_CONFIRMED);
+    }
+
+    @Test
+    void 리뷰_작성_가능_구매_건에는_주문과_주문_상품_정보를_담는다() {
+        // given: savedOrder = 주문 10, 상품 1, 옵션 11
+        Order order = savedOrder(10L);
+        OrderItem item = order.getAllItems().get(0);
+        ReflectionTestUtils.setField(item, "id", 1L);
+        given(orderRepository.findReviewCandidates(eq(1L), eq(1L), any())).willReturn(List.of(item));
+
+        // when
+        List<ReviewCandidateResult> results = sut.getReviewCandidates(1L, 1L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(results).hasSize(1);
+            softly.assertThat(results.get(0).orderId()).isEqualTo(10L);
+            softly.assertThat(results.get(0).orderItemId()).isEqualTo(1L);
+            softly.assertThat(results.get(0).productId()).isEqualTo(1L);
+            softly.assertThat(results.get(0).productOptionId()).isEqualTo(11L);
+        });
+    }
+
+    @Test
+    void 리뷰_작성_가능_구매_건이_없으면_빈_목록이다() {
+        // given
+        given(orderRepository.findReviewCandidates(eq(1L), eq(10L), any())).willReturn(List.of());
+
+        // when & then
+        assertThat(sut.getReviewCandidates(1L, 10L)).isEmpty();
     }
 }
