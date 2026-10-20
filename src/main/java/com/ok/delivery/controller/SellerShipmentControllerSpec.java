@@ -29,7 +29,8 @@ interface SellerShipmentControllerSpec {
     ResponseEntity<SellerShipmentPageResponse> getMyShipments(Long sellerId, @ParameterObject ShipmentPageRequest request);
 
     @Operation(summary = "내 출고 상세",
-            description = "구매자 배송 상세와 같은 형태로 조회한다. 대기 중인 배송지 변경 요청은 latestAddressChange(status=PENDING)로 담긴다.")
+            description = "구매자 배송 상세와 같은 형태로 조회한다. latestAddressChange는 상태와 상관없이 가장 최근 배송지 변경 요청이고, "
+                    + "처리 대기 중인지는 status(PENDING)로 확인한다.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),

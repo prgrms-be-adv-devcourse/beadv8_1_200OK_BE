@@ -129,7 +129,8 @@ public class Shipment extends BaseTime {
      * <p>값은 모두 주문·결제와 운임 정책이 계산해 넘긴다. 사용자 입력이 아니므로 잘못된 값은 호출한 코드의 버그로 보고 표준 예외를 던진다.
      * 사용자가 입력하는 배송지는 {@link Address#of}가 먼저 검증한다.
      *
-     * @throws IllegalArgumentException 필수값이 없거나, 배송비가 음수거나, 도착 예정일 시작이 끝보다 늦거나, 출고 예정일이 도착 예정일 시작보다 늦거나, 상품 항목이 없으면
+     * @throws IllegalArgumentException 필수값이 없거나, 배송비가 음수거나, 도착 예정일 시작이 끝보다 늦거나,
+     *                                  출고 예정일이 도착 예정일 시작보다 늦거나, 상품 항목이 없으면
      */
     @Builder
     private Shipment(
