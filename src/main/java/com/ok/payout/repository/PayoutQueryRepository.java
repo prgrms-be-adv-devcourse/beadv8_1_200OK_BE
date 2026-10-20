@@ -179,11 +179,12 @@ public class PayoutQueryRepository {
     }
 
     // 정산후보 목록 (관리자·판매자 조회). sellerId가 null이면 전체 판매자
+    // sellerShareOnly면 시스템 몫(수수료) 후보를 뺌 (판매자 조회용)
     // 정렬은 후보 생성 시각 최신순 고정. 같은 시각에 생긴 후보가 여러 건(대금·수수료·배송비가 함께 생김)이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
     // 정산 ID는 payout_item과 LEFT JOIN으로 가져옴 (payout_item.candidate_id가 유니크라 후보 한 건이 여러 줄로 늘지 않음)
     public Page<CandidateRow> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
-                                               boolean unsettledOnly, Pageable pageable) {
-        BooleanBuilder condition = candidateSearchCondition(sellerId, from, to, unsettledOnly);
+                                               boolean unsettledOnly, boolean sellerShareOnly, Pageable pageable) {
+        BooleanBuilder condition = candidateSearchCondition(sellerId, from, to, unsettledOnly, sellerShareOnly);
         List<CandidateRow> content = queryFactory
                 .select(Projections.constructor(CandidateRow.class,
                         payoutCandidateItem.id,
@@ -303,7 +304,7 @@ public class PayoutQueryRepository {
     // 정산후보 목록 조건. 기간은 정산 목록과 같은 규칙: from 포함, to 미포함
     // 미정산 판단은 정산 배치(unsettledInPeriod)와 같은 기준: payout_item에 같은 candidate_id가 없으면 미정산
     private BooleanBuilder candidateSearchCondition(Long sellerId, LocalDateTime from, LocalDateTime to,
-                                                    boolean unsettledOnly) {
+                                                    boolean unsettledOnly, boolean sellerShareOnly) {
         BooleanBuilder condition = new BooleanBuilder();
         if (sellerId != null) {
             condition.and(payoutCandidateItem.sellerId.eq(sellerId));
@@ -315,6 +316,10 @@ public class PayoutQueryRepository {
                     .from(payoutItem)
                     .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
                     .notExists());
+        }
+        if (sellerShareOnly) {
+            // 시스템 몫 판단은 PayoutCandidateItem.isSystemShare()와 같은 기준 (SALE_FEE만 시스템 몫). 이벤트 타입이 추가되면 함께 수정
+            condition.and(payoutCandidateItem.eventType.ne(PayoutEventType.SALE_FEE));
         }
         return condition;
     }

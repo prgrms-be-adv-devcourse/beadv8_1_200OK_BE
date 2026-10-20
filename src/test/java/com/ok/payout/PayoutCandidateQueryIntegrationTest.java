@@ -43,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // [준비하는 데이터]
 //   20일 전 (배치를 돌려 정산됨)
 //     A 판매자 7 판매 대금 9,700   → 판매자 7 정산
-//     B 판매자 7 수수료 300        → 시스템 몫 정산 (판매자에게는 정산 ID를 숨김)
+//     B 판매자 7 수수료 300        → 시스템 몫 정산 (관리자 목록에만 나오고 판매자 목록에서는 빠짐)
 //     C 판매자 7 조정 -2,000       → 판매자 7 정산 (조정 번호 4, 관리자 1, 사유 "금액 오입력 정정")
 //     D 판매자 9 판매 대금 19,400  → 판매자 9 정산
 //   1일 전 (배치를 돌린 뒤에 넣어 정산 전으로 남음)
@@ -129,14 +129,14 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
 
     // API: GET /api/v1/payouts/me/candidates (판매자 본인 정산후보 조회)
     // 요청: 판매자 7, 기간 30일 전 ~ 내일
-    // 확인: 본인 후보 4건(A·B·C·E)만 나오고, 최신순이라 1일 전 E가 맨 앞이며 정산 전(settled=false, payoutId=null)인지
+    // 확인: 본인 후보 3건(A·C·E)만 나오고(수수료 B는 빠짐), 최신순이라 1일 전 E가 맨 앞이며 정산 전(settled=false, payoutId=null)인지
     @Test
     void 판매자는_본인_후보만_최신순으로_정산_대기와_완료가_함께_나온다() throws Exception {
         // when & then
         mockMvc.perform(sellerRequest(SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(4))
-                .andExpect(jsonPath("$.content[*].sellerId").value(contains(7, 7, 7, 7)))   // 판매자 9의 D는 없음
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.content[*].sellerId").value(contains(7, 7, 7)))      // 판매자 9의 D는 없음
                 .andExpect(jsonPath("$.content[0].amount").value(5_000))                    // 가장 최근(1일 전) E
                 .andExpect(jsonPath("$.content[0].settled").value(false))
                 .andExpect(jsonPath("$.content[0].payoutId").value(nullValue()))
@@ -157,15 +157,13 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
 
     // API: GET /api/v1/payouts/me/candidates (판매자 본인 정산후보 조회)
     // 요청: 판매자 7
-    // 확인: 수수료 후보 B는 정산이 끝나 settled=true지만 payoutId는 null인지
-    //       (수수료는 시스템 몫 정산에 들어가 그 ID가 시스템 몫 정산 ID라서 판매자에게는 숨김)
+    // 확인: 수수료 후보 B가 나오지 않는지 (수수료는 시스템 몫 정산에 들어가 판매자에게 줄 단위로 보여 주지 않음, 합계는 정산 상세에서 봄)
     @Test
-    void 판매자의_수수료_후보는_정산이_끝나도_정산_ID가_없다() throws Exception {
+    void 판매자_목록에는_수수료_후보가_나오지_않는다() throws Exception {
         // when & then
         mockMvc.perform(sellerRequest(SELLER_7, "BUYER", "SELLER"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[?(@.eventType == 'SALE_FEE')].settled").value(contains(true)))
-                .andExpect(jsonPath("$.content[?(@.eventType == 'SALE_FEE')].payoutId").value(contains(nullValue())));
+                .andExpect(jsonPath("$.content[?(@.eventType == 'SALE_FEE')]").isEmpty());
     }
 
     // API: GET /api/v1/payouts/me/candidates (판매자 본인 정산후보 조회)
@@ -203,8 +201,8 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
         // when & then
         mockMvc.perform(sellerRequest(SELLER_7, "BUYER", "SELLER").param("sellerId", String.valueOf(SELLER_9)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(4))
-                .andExpect(jsonPath("$.content[*].sellerId").value(contains(7, 7, 7, 7)));
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.content[*].sellerId").value(contains(7, 7, 7)));
     }
 
     // ---------- 관리자 ----------

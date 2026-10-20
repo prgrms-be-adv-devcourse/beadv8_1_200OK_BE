@@ -3,11 +3,8 @@ package com.ok.payout.service.dto;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.repository.PayoutQueryRepository.CandidateRow;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.LocalDateTime;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -61,35 +58,6 @@ class PayoutCandidateResultTest {
 
         // then
         assertThat(sut.settled()).isFalse();
-    }
-
-    @Test
-    void 수수료_후보는_시스템_몫이다() {
-        // given: 수수료는 판매자 정산이 아니라 시스템 몫 정산에 들어감
-        CandidateRow row = row(PayoutEventType.SALE_FEE, 14L);
-
-        // when
-        PayoutCandidateResult sut = PayoutCandidateResult.from(row);
-
-        // then
-        assertThat(sut.systemShare()).isTrue();
-    }
-
-    @ParameterizedTest
-    @MethodSource("판매자_몫_항목_종류")
-    void 판매_대금과_배송비_후보는_시스템_몫이_아니다(PayoutEventType eventType) {
-        // given
-        CandidateRow row = row(eventType, 12L);
-
-        // when
-        PayoutCandidateResult sut = PayoutCandidateResult.from(row);
-
-        // then
-        assertThat(sut.systemShare()).isFalse();
-    }
-
-    static Stream<PayoutEventType> 판매자_몫_항목_종류() {
-        return Stream.of(PayoutEventType.SALE_AMOUNT, PayoutEventType.SALE_SHIPPING_FEE);
     }
 
     @Test

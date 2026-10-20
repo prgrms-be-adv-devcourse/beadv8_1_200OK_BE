@@ -122,7 +122,8 @@ interface PayoutControllerSpec {
             정산 전인 후보(정산 대기)와 정산이 끝난 후보(정산 완료)가 함께 나오며, settled로 구분합니다. unsettledOnly=true면 정산 대기만 나옵니다.
             기간(from, to)은 필수이며 후보 생성 시각 기준으로 from은 포함, to는 포함하지 않습니다. 기간은 최대 1년입니다.
             후보 생성 시각은 평소 건이면 구매확정 직후, 관리자 조정 건이면 조정한 시각입니다.
-            수수료(SALE_FEE) 후보는 정산이 끝나도 payoutId가 null입니다. 조정 사유는 원문 그대로라 화면에 출력할 때 HTML 이스케이프가 필요합니다.
+            수수료(SALE_FEE) 후보는 나오지 않습니다. 판매자가 낸 수수료 합계는 정산 상세(GET /api/v1/payouts/me/{payoutId})의 sellerFeeAmount로 확인합니다.
+            조정 사유는 원문 그대로라 화면에 출력할 때 HTML 이스케이프가 필요합니다.
             """)
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),
