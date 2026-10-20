@@ -181,12 +181,12 @@ com.ok.wallet
 // 좋은 예: 다른 모듈에 공개하는 이벤트는 모듈 최상위 패키지에 둔다
 package com.ok.member;
 
-public record MemberRegisteredEvent(Long memberId, MemberRole memberRole) { }
+public record MemberRegisteredEvent(Long memberId) { }
 
 // 나쁜 예: 다른 모듈이 쓰는 클래스를 하위 패키지에 둔다 (다른 모듈에서 접근할 수 없다)
 package com.ok.member.internal;
 
-public record MemberRegisteredEvent(Long memberId, MemberRole memberRole) { }
+public record MemberRegisteredEvent(Long memberId) { }
 ```
 
 ### 2.3 DTO 위치
@@ -1361,7 +1361,7 @@ import jakarta.persistence.*;
 /**
  * 회원가입 완료 이벤트. 다른 모듈은 이 이벤트를 구독해 후속 처리를 한다.
  */
-public record MemberRegisteredEvent(Long memberId, MemberRole memberRole) { }
+public record MemberRegisteredEvent(Long memberId) { }
 
 // 좋은 예: 왜 이렇게 하는지를 쓴다 (PayoutService)
 // 판매자는 뽑혔는데 후보가 0건 = 두 조회 조건 불일치(버그). 그대로 두면 같은 판매자가 계속 뽑혀 무한 반복되므로 실패시킴
