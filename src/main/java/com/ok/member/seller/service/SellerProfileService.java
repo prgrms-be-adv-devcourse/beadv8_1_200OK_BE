@@ -21,9 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class SellerProfileService {
 
-    private static final String UNIQUE_MEMBER_ID = "uk_seller_profile_member_id";
-
     private final SellerProfileRepository sellerProfileRepository;
+    private final SellerProfileDuplicateValidator duplicateValidator;
     private final SellerProfileImageUrlValidator imageUrlValidator;
     private final MediaUrlResolver mediaUrlResolver;
 
@@ -44,9 +43,7 @@ public class SellerProfileService {
      */
     @Transactional
     public SellerProfileResult register(Long memberId, SellerProfileCommand command) {
-        if (sellerProfileRepository.existsByMemberId(memberId)) {
-            throw new RestApiException(SellerErrorCode.SELLER_PROFILE_ALREADY_EXISTS);
-        }
+        duplicateValidator.validate(memberId);
 
         SellerProfile profile = SellerProfile.register(
                 memberId,
@@ -91,10 +88,7 @@ public class SellerProfileService {
         try {
             return sellerProfileRepository.saveAndFlush(profile);
         } catch (DataIntegrityViolationException e) {
-            if (String.valueOf(e.getMostSpecificCause().getMessage()).contains(UNIQUE_MEMBER_ID)) {
-                throw new RestApiException(SellerErrorCode.SELLER_PROFILE_ALREADY_EXISTS);
-            }
-            throw e;
+            throw duplicateValidator.toDuplicateException(e);
         }
     }
 

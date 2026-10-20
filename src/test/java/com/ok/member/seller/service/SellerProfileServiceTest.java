@@ -42,7 +42,9 @@ class SellerProfileServiceTest {
     void setUp() {
         // URL 변환은 값 계산뿐이라 실제 객체를 쓴다
         MediaUrlResolver mediaUrlResolver = new MediaUrlResolver("bucket", "ap-northeast-2");
+        // 중복 검증기는 목 리포지토리를 그대로 쓰므로 실제 객체로 둔다 (변환 규칙 자체는 SellerProfileDuplicateValidatorTest가 확인)
         sellerProfileService = new SellerProfileService(sellerProfileRepository,
+                new SellerProfileDuplicateValidator(sellerProfileRepository),
                 new SellerProfileImageUrlValidator(mediaUrlResolver), mediaUrlResolver);
     }
 
