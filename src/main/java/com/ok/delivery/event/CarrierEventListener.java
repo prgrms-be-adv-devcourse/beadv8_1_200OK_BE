@@ -1,0 +1,33 @@
+package com.ok.delivery.event;
+
+import com.ok.common.event.ShipmentDispatchedEvent;
+import com.ok.delivery.service.CarrierClient;
+import com.ok.delivery.service.ShipmentService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.event.EventListener;
+import org.springframework.modulith.events.ApplicationModuleListener;
+import org.springframework.stereotype.Component;
+
+/**
+ * 택배사와 주고받는 흐름을 잇는다. 출고되면 택배사에 추적을 요청하고, 택배사가 배송 완료를 알리면 배송 완료를 반영한다.
+ */
+@Component
+@RequiredArgsConstructor
+public class CarrierEventListener {
+
+    private final CarrierClient carrierClient;
+    private final ShipmentService shipmentService;
+
+    // 출고가 커밋된 뒤에 요청한다. 출고가 롤백되면 이 이벤트도 전달되지 않는다
+    @ApplicationModuleListener
+    void on(ShipmentDispatchedEvent event) {
+        carrierClient.requestTracking(event.shipmentId(), event.carrier(), event.trackingNumber());
+    }
+
+    // 택배사 알림은 트랜잭션 밖(택배사 쪽 스레드)에서 오므로 커밋 후 리스너가 아닌 일반 리스너로 받는다.
+    // 배송 완료 반영은 서비스가 자기 트랜잭션으로 처리한다
+    @EventListener
+    void on(CarrierDeliveredEvent event) {
+        shipmentService.deliver(event.shipmentId());
+    }
+}
