@@ -28,6 +28,7 @@ import com.ok.product.review.service.dto.ProductReviewCreateCommand;
 import com.ok.product.review.service.dto.ProductReviewMediaResult;
 import com.ok.product.review.service.dto.ProductReviewResult;
 import com.ok.product.review.service.dto.ProductReviewUpdateCommand;
+import com.ok.product.review.service.dto.ReviewablePurchase;
 import lombok.RequiredArgsConstructor;
 
 @Service
@@ -42,23 +43,21 @@ public class ProductReviewService {
 	private final MediaUrlResolver mediaUrlResolver;
 	private final Clock clock;
 
-	// 구매한 상품의 리뷰를 작성하고 상품의 리뷰 집계에 더한다.
+	/**
+	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다.
+	 * 작성 자격 확인은 {@link ProductReviewFacade}가 하므로 여기서는 구매 건을 믿고 저장만 한다.
+	 */
 	@Transactional
-	public Long create(Long memberId, Long productId, ProductReviewCreateCommand command) {
+	public Long create(Long memberId, Long productId, ReviewablePurchase purchase, ProductReviewCreateCommand command) {
 		// 구매 후 상품이 숨겨질 수 있어 노출 여부는 보지 않는다
 		productRepository.findByIdAndDeletedAtIsNull(productId).orElseThrow(
 				() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND)
 		);
-		if (!productOptionRepository.existsByIdAndProductId(command.productOptionId(), productId)) {
-			throw new RestApiException(ProductErrorCode.OPTION_NOT_FOUND);
-		}
-		// TODO(논의 필요): 지금은 클라이언트가 보낸 주문 정보를 그대로 믿어 남의 주문이나 없는 주문으로도 리뷰를 쓸 수 있다.
-		//  order 모듈에 리뷰 가능한 내 구매 건 조회 API(memberId, productId)를 요청해 두었다.
-		//  API가 생기면 orderItemId가 그 목록에 있는지 확인하고, orderId와 productOptionId는 요청 대신 목록에서 꺼내 저장한다.
-		validateNotReviewed(command.orderId(), productId);
+		// 옵션이 이 상품의 것인지는 보지 않는다. 옵션 ID가 사용자 입력이 아니라 주문 기록에서 온 값이기 때문이다
+		validateNotReviewed(purchase.orderId(), productId);
 
 		ProductReview review = ProductReview.create(
-				productId, command.productOptionId(), command.orderId(), command.orderItemId(),
+				productId, purchase.productOptionId(), purchase.orderId(), purchase.orderItemId(),
 				memberId, command.rating(), command.content(), toMediaSpecs(command.mediaUrls())
 		);
 		// 집계를 INSERT보다 먼저 더해 상품 행에 배타 락을 먼저 잡는다.
