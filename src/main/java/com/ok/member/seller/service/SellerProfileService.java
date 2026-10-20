@@ -13,10 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 승인된 판매자의 상점 프로필 조회·등록·수정을 처리한다.
- *
- * <p>판매자 여부는 토큰 권한이 아니라 신청 승인 상태(DB)로 확인한다.
- * 토큰 권한은 발급 시점 값이라, 승인 직후의 기존 토큰에는 만료 전까지 SELLER 권한이 없을 수 있어서다.
+ * 판매자의 상점 프로필 조회·등록·수정을 처리한다.
+ * 판매자 여부는 컨트롤러가 토큰의 SELLER 권한으로 확인한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -26,7 +24,6 @@ public class SellerProfileService {
     private static final String UNIQUE_MEMBER_ID = "uk_seller_profile_member_id";
 
     private final SellerProfileRepository sellerProfileRepository;
-    private final SellerApplicationService sellerApplicationService;
     private final SellerProfileImageUrlValidator imageUrlValidator;
     private final MediaUrlResolver mediaUrlResolver;
 
@@ -42,13 +39,11 @@ public class SellerProfileService {
     /**
      * 판매자 프로필을 등록한다. 한 회원은 프로필(상점)을 하나만 가진다.
      *
-     * @throws RestApiException 승인된 판매자가 아니면 {@code SELLER_NOT_APPROVED},
-     *                          이미 등록했으면 {@code SELLER_PROFILE_ALREADY_EXISTS},
+     * @throws RestApiException 이미 등록했으면 {@code SELLER_PROFILE_ALREADY_EXISTS},
      *                          사진 주소가 판매자 프로필용이 아니면 {@code INVALID_PROFILE_IMAGE_URL}
      */
     @Transactional
     public SellerProfileResult register(Long memberId, SellerProfileCommand command) {
-        validateApprovedSeller(memberId);
         if (sellerProfileRepository.existsByMemberId(memberId)) {
             throw new RestApiException(SellerErrorCode.SELLER_PROFILE_ALREADY_EXISTS);
         }
@@ -67,13 +62,11 @@ public class SellerProfileService {
     /**
      * 판매자 프로필 전체를 새 값으로 바꾼다. 사진 URL이 없으면 사진을 지운다.
      *
-     * @throws RestApiException 승인된 판매자가 아니면 {@code SELLER_NOT_APPROVED},
-     *                          프로필을 등록하지 않았으면 {@code SELLER_PROFILE_NOT_FOUND},
+     * @throws RestApiException 프로필을 등록하지 않았으면 {@code SELLER_PROFILE_NOT_FOUND},
      *                          사진 주소가 판매자 프로필용이 아니면 {@code INVALID_PROFILE_IMAGE_URL}
      */
     @Transactional
     public SellerProfileResult update(Long memberId, SellerProfileCommand command) {
-        validateApprovedSeller(memberId);
         SellerProfile profile = findProfile(memberId);
 
         profile.update(
@@ -84,13 +77,6 @@ public class SellerProfileService {
                 imageUrlValidator.toObjectKey(command.profileImageUrl())
         );
         return toResult(profile);
-    }
-
-    // 판매자 여부는 판매자 신청 쪽의 규칙 하나로 판단한다 (토큰 발급의 SELLER 권한과 같은 기준)
-    private void validateApprovedSeller(Long memberId) {
-        if (!sellerApplicationService.isApprovedSeller(memberId)) {
-            throw new RestApiException(SellerErrorCode.SELLER_NOT_APPROVED);
-        }
     }
 
     private SellerProfile findProfile(Long memberId) {
