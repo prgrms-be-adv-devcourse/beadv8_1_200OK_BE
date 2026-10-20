@@ -12,10 +12,12 @@ import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
 
-@Schema(description = "정산 목록 조회 조건")
+// 관리자 정산 목록 조회 조건. 판매자용은 PayoutSellerSearchRequest
+// 기간·페이지 규칙은 판매자용과 같음. 한쪽을 바꾸면 함께 바꿈
+@Schema(description = "관리자 정산 목록 조회 조건")
 public record PayoutSearchRequest(
 
-        @Schema(description = "수취인(판매자) 회원 ID. 관리자는 생략하면 전체, 판매자는 반드시 본인 ID를 넣어야 함", example = "7")
+        @Schema(description = "수취인(판매자) 회원 ID. 생략하면 전체", example = "7")
         @Positive(message = "수취인 ID는 1 이상이어야 합니다.")
         Long payeeId,
 

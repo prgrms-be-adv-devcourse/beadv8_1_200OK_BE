@@ -19,7 +19,7 @@ public record PayoutItemSearchRequest(
         Integer size
 ) {
 
-    // 목록 조회(PayoutSearchRequest)와 같은 기본값·상한. 한쪽을 바꾸면 함께 바꿈
+    // 목록 조회(PayoutSearchRequest, PayoutSellerSearchRequest)와 같은 기본값·상한. 한쪽을 바꾸면 함께 바꿈
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 20;
 
