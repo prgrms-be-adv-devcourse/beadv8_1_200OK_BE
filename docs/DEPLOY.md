@@ -23,7 +23,7 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
 
 > **주의:** 이슈 #108(토큰 기반 인증 전환과 기본 거부)이 끝나기 전에는 `/api/v1`이 사실상 인증 없이 열려 있습니다. 헤더 `X-Member-Id`만 바꾸면 다른 회원을 사칭할 수 있습니다. 그래서 보안 그룹의 80 포트 인바운드를 내 IP로만 좁힌 상태에서 진행하고, 전체 공개는 #108이 머지된 뒤에 합니다.
 
-먼저 [3. 배포](#3-배포)의 로컬 이미지 빌드·push를 끝내고 돌아옵니다. 이미지가 없으면 아래 마지막 `./deploy.sh`가 pull에 실패합니다.
+먼저 [3. 배포](#3-배포)처럼 GHCR에 이미지가 올라가 있는지 확인합니다. 이미지가 없으면 아래 마지막 `./deploy.sh`가 pull에 실패합니다.
 
 서버가 비공개 패키지를 받으려면 pull 전용 토큰이 필요합니다. GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)에서 만듭니다.
 
@@ -50,19 +50,19 @@ mountpoint /data             # "/data is a mountpoint"가 나와야 한다
 
 ## 3. 배포
 
-```bash
-# 로컬: 이미지 빌드·push (EC2는 amd64라서 플랫폼을 꼭 지정한다)
-SHA=$(git rev-parse --short HEAD)
-IMAGE=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan
-docker login ghcr.io -u <GitHub 사용자>   # 처음 한 번. Password: 에 write:packages 권한 토큰
-docker buildx build --platform linux/amd64 -t "$IMAGE:latest" -t "$IMAGE:$SHA" --push .
+이미지는 dev에 머지되면 GitHub Actions(`.github/workflows/docker-image.yml`)가 빌드해 GHCR에 `latest`와 커밋 SHA 7자리 태그로 올립니다. 서버에는 dev에 머지된 코드만 배포합니다. 머지되지 않은 브랜치로 배포하면, 나중에 dev에 들어오는 더 이른 번호의 마이그레이션 때문에 Flyway 검증이 실패해 앱이 뜨지 않습니다.
 
-# 서버
+1. dev 머지 후 Actions 탭에서 `Docker Image` 실행이 성공했는지 확인합니다.
+2. 서버에서 배포합니다.
+
+```bash
 cd /opt/paldo-gotgan && ./deploy.sh
 ```
 
 - 패키지는 비공개로 둡니다. 서버는 [2. 최초 설정](#2-최초-설정-서버당-1회)에서 로그인한 pull 전용 토큰으로 받습니다.
-- `-t` 두 개를 모두 붙여 `latest`와 커밋 SHA 태그를 함께 올립니다. 서버는 `latest`를 받고, SHA 태그는 롤백에 씁니다. 하나를 빠뜨렸다면 다시 빌드하지 않고 태그만 붙입니다: `docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$SHA"`
+- 서버는 `latest`를 받고, SHA 태그는 롤백에 씁니다.
+- 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 dev를 선택해 실행합니다.
+- 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
 - `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
 
 ## 4. 롤백
