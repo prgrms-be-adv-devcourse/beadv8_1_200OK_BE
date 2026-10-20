@@ -59,7 +59,7 @@ com.ok.wallet
 ```java
 // O
 package com.ok.member;
-public record MemberRegisteredEvent(Long memberId, MemberRole memberRole) { }
+public record MemberRegisteredEvent(Long memberId) { }
 
 // X: 다른 모듈이 쓰는 클래스를 하위 패키지에 둔다
 package com.ok.member.internal;

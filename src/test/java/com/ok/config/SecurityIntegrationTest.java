@@ -9,9 +9,11 @@ import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.oauth2.jwt.JwsHeader;
@@ -19,7 +21,9 @@ import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,11 +35,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -294,6 +300,71 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 회원_id를_쓰지_않는_API도_공개_API가_아니면_토큰_없이_호출할_때_401을_반환한다() throws Exception {
+        // when: 기본 거부 전에는 회원 id(@CurrentMemberId)를 받지 않는 API가 토큰 없이 통과했다
+        ResultActions result = mockMvc.perform(get("/test/security/no-identity"));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/unauthorized")));
+    }
+
+    @Test
+    void 회원_id를_쓰지_않는_API도_토큰이_있으면_호출할_수_있다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/no-identity")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "BUYER")));
+
+        // then
+        result.andExpect(status().isOk());
+    }
+
+    // 결과(없는 상품, 빈 본문의 요청 값 검증 실패 등)와 상관없이 보안 필터를 통과했는지만 본다.
+    // POST는 빈 본문을 보내, 처리 결과로도 401이 날 수 있는 로그인·재발급이 요청 값 검증(422)에서 멈추게 한다
+    @ParameterizedTest
+    @MethodSource("공개_API")
+    void 공개_API는_토큰_없이_호출할_수_있다(HttpMethod method, String path) throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(publicApiRequest(method, path));
+
+        // then
+        result.andExpect(this::passedSecurity);
+    }
+
+    @ParameterizedTest
+    @MethodSource("공개_API")
+    void 공개_API는_만료된_토큰이_붙어도_토큰을_읽지_않고_처리한다(HttpMethod method, String path) throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(publicApiRequest(method, path)
+                .header(HttpHeaders.AUTHORIZATION, tokens.expiredBearer(MEMBER_ID, "BUYER")));
+
+        // then
+        result.andExpect(this::passedSecurity);
+    }
+
+    // SecurityConfig.PUBLIC_ENDPOINTS와 같은 목록. 컨트롤러 경로를 따로 적어 두어, 설정 쪽 경로 오타를 잡는다
+    static Stream<Arguments> 공개_API() {
+        return Stream.of(
+                Arguments.of(HttpMethod.POST, "/api/v1/auth/login"),
+                Arguments.of(HttpMethod.POST, "/api/v1/members/signup"),
+                Arguments.of(HttpMethod.POST, "/api/v1/auth/reissue"),
+                Arguments.of(HttpMethod.GET, "/api/v1/products"),
+                Arguments.of(HttpMethod.GET, "/api/v1/products/999999"),
+                Arguments.of(HttpMethod.GET, "/api/v1/products/categories"),
+                Arguments.of(HttpMethod.GET, "/api/v1/products/999999/reviews")
+        );
+    }
+
+    @Test
+    void 개발_테스트_프로필에서는_API_문서를_토큰_없이_볼_수_있다() throws Exception {
+        // when: 운영 프로필이 아니면 API 문서 경로를 로그인 없이 허용한다
+        ResultActions result = mockMvc.perform(get("/v3/api-docs"));
+
+        // then
+        result.andExpect(this::passedSecurity);
+    }
+
+    @Test
     void 토큰이_필요_없는_API는_토큰_없이_호출할_수_있다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/api/v1/products/categories"));
@@ -419,6 +490,19 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
         return jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }
 
+    private static MockHttpServletRequestBuilder publicApiRequest(HttpMethod method, String path) {
+        MockHttpServletRequestBuilder builder = request(method, path);
+        return method == HttpMethod.POST ? builder.contentType(MediaType.APPLICATION_JSON).content("{}") : builder;
+    }
+
+    // 보안 필터에서 막히면 401, 처리 중 예기치 못한 오류면 500이 난다. 둘 다 아니면 공개 API로서 통과한 것이다
+    private void passedSecurity(MvcResult result) {
+        assertThat(result.getResponse().getStatus())
+                .as("보안 필터를 통과해 처리되어야 한다")
+                .isNotEqualTo(401)
+                .isLessThan(500);
+    }
+
     /**
      * 보안 동작 검증용 컨트롤러. 테스트 소스에만 있어 실제 애플리케이션에는 등록되지 않는다.
      * {@code @PreAuthorize} 프록시가 적용되도록 public으로 둔다.
@@ -430,6 +514,12 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
         @GetMapping("/me")
         public Map<String, Long> me(@CurrentMemberId Long memberId) {
             return Map.of("memberId", memberId);
+        }
+
+        // 회원 id를 받지 않아도 공개 API가 아니면 로그인이 필요한지 확인하는 용도
+        @GetMapping("/no-identity")
+        public Map<String, String> noIdentity() {
+            return Map.of("result", "ok");
         }
 
         @PreAuthorize("hasRole('SELLER')")
