@@ -3,13 +3,18 @@ package com.ok.media.controller;
 import com.ok.common.exception.CommonErrorCode;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.dto.MediaInfo;
-import com.ok.media.domain.MediaPurpose;
 import com.ok.media.service.MediaService;
+import com.ok.media.service.dto.MediaPurposeCode;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -33,11 +38,23 @@ class MediaControllerTest {
 	@MockitoBean
 	MediaService mediaService;
 
+	// 보안 필터를 끈 슬라이스라 인가는 보지 않는다. @CurrentMemberId가 읽을 인증 정보만 직접 넣는다
+	@BeforeEach
+	void setUp() {
+		Jwt jwt = Jwt.withTokenValue("token").header("alg", "none").subject("1").build();
+		SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+	}
+
+	@AfterEach
+	void tearDown() {
+		SecurityContextHolder.clearContext();
+	}
+
 	@Test
 	void 업로드_성공시_201과_MediaInfo를_반환한다() throws Exception {
 		// given
 		MockMultipartFile file = pngPart();
-		given(mediaService.upload(eq(MediaPurpose.PRODUCT), any()))
+		given(mediaService.upload(eq(1L), eq(MediaPurposeCode.PRODUCT), any()))
 				.willReturn(new MediaInfo(1L, "https://test/x.jpg"));
 
 		// when & then
@@ -63,7 +80,7 @@ class MediaControllerTest {
 		// given
 		String detail = "최대 10MB의 이미지만 업로드할 수 있습니다.";
 		MockMultipartFile file = pngPart();
-		given(mediaService.upload(any(), any()))
+		given(mediaService.upload(any(), any(), any()))
 				.willThrow(new RestApiException(CommonErrorCode.CONTENT_TOO_LARGE, detail));
 
 		// when & then

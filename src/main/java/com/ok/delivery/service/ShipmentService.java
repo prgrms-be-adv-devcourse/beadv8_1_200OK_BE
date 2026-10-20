@@ -116,6 +116,7 @@ public class ShipmentService {
         DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
         return Shipment.builder()
                 .orderId(command.orderId())
+                .buyerId(command.buyerId())
                 .sellerId(seller.sellerId())
                 .address(address)
                 .regionGroup(region.regionGroup())

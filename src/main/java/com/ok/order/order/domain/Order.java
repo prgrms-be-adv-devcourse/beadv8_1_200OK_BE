@@ -8,6 +8,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -201,5 +202,25 @@ public class Order extends BaseTime {
         for (OrderItem item : getAllItems()) {
             item.markPaymentFailed();
         }
+    }
+
+    // 판매자 묶음의 상품들을 '배송 중'으로 변경
+    public int markShipping(Long sellerId) {
+        for (OrderSellerGroup group : sellerGroups) {
+            if (group.getSellerId().equals(sellerId)) {
+                return group.markShipping();
+            }
+        }
+        return 0;
+    }
+
+    // 판매자 묶음의 상품들을 '배송 완료'로 변경
+    public int markDelivered(Long sellerId, LocalDateTime deliveredAt) {
+        for (OrderSellerGroup group : sellerGroups) {
+            if (group.getSellerId().equals(sellerId)) {
+                return group.markDelivered(deliveredAt);
+            }
+        }
+        return 0;
     }
 }

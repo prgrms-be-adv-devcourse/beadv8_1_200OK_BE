@@ -18,7 +18,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 통합 테스트: 정산 대기 건너뛰기 실행(POST /api/v1/payouts/run/skip-wait)이 관리자만 실행되는지 실제 HTTP 요청으로 확인 (#224)
+// 통합 테스트: 정산 대기 건너뛰기 실행(POST /api/v1/admin/payouts/run/skip-wait)이 관리자만 실행되는지 실제 HTTP 요청으로 확인 (#224)
 //
 // [확인하는 것]
 //   - 관리자 토큰이면 배치가 끝까지 돌고(COMPLETED) 200
@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // PayoutRunIntegrationTest 위의 설명과 같음 (정산 Job 실행 횟수를 세고, 정산할 데이터는 넣지 않음)
 class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
 
-    private static final String SKIP_WAIT_RUN_URL = "/api/v1/payouts/run/skip-wait";
+    private static final String SKIP_WAIT_RUN_URL = "/api/v1/admin/payouts/run/skip-wait";
     // PayoutJobConfig에서 만든 정산 Job 이름
     private static final String PAYOUT_JOB_NAME = "payoutJob";
     // @PreAuthorize가 거절하면 공통 처리기가 CommonErrorCode.FORBIDDEN으로 응답 (type 앞부분은 설정마다 달라 끝부분만 비교)
@@ -55,7 +55,7 @@ class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
-    // API: POST /api/v1/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
+    // API: POST /api/v1/admin/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
     // 요청: 관리자 토큰
     // 확인: 200이고 배치 상태가 COMPLETED인지, 정산 Job이 1번 실행됐는지
     @Test
@@ -73,7 +73,7 @@ class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutJobRunCount()).isEqualTo(runCountBefore + 1);
     }
 
-    // API: POST /api/v1/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
+    // API: POST /api/v1/admin/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
     // 요청: 판매자 토큰(BUYER, SELLER)
     // 확인: 403이고 정산 Job이 실행되지 않았는지
     @Test
@@ -91,7 +91,7 @@ class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutJobRunCount()).isEqualTo(runCountBefore);
     }
 
-    // API: POST /api/v1/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
+    // API: POST /api/v1/admin/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
     // 요청: 구매자 토큰(BUYER)
     // 확인: 403이고 정산 Job이 실행되지 않았는지
     @Test
@@ -109,7 +109,7 @@ class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutJobRunCount()).isEqualTo(runCountBefore);
     }
 
-    // API: POST /api/v1/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
+    // API: POST /api/v1/admin/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
     // 요청: 로그인 토큰 없음
     // 확인: 401이고 정산 Job이 실행되지 않았는지
     @Test

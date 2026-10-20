@@ -6,6 +6,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "order_item")
 @Getter
@@ -53,6 +55,10 @@ public class OrderItem extends BaseTime {
     @Column(nullable = false, length = 30)
     private OrderItemStatus status;
 
+    // 배송 완료 시각
+    @Column
+    private LocalDateTime deliveredAt;
+
     static OrderItem create(OrderSellerGroup sellerGroup, OrderLine line) {
         OrderItem item = new OrderItem();
         item.sellerGroup = sellerGroup;
@@ -75,6 +81,25 @@ public class OrderItem extends BaseTime {
     // 결제 실패
     void markPaymentFailed() {
         this.status = OrderItemStatus.PAYMENT_FAILED;
+    }
+
+    // 배송 시작
+    boolean markShipping() {
+        if (status != OrderItemStatus.PREPARING) {
+            return false;
+        }
+        this.status = OrderItemStatus.SHIPPING;
+        return true;
+    }
+
+    // 배송 완료 (배송 준비, 배송 중 상태에서만 변경 가능)
+    boolean markDelivered(LocalDateTime deliveredAt) {
+        if (status != OrderItemStatus.PREPARING && status != OrderItemStatus.SHIPPING) {
+            return false;
+        }
+        this.status = OrderItemStatus.DELIVERED;
+        this.deliveredAt = deliveredAt;
+        return true;
     }
 
 }

@@ -86,7 +86,7 @@ class ShipmentServiceTest {
         given(sellerShippingSettingService.getSettings(List.of(10L, 20L))).willReturn(Map.of(
                 10L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0)),
                 20L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(11, 0))));
-        ShipmentCreateCommand command = new ShipmentCreateCommand(1L, FRIDAY_NOON,
+        ShipmentCreateCommand command = new ShipmentCreateCommand(1L, 100L, FRIDAY_NOON,
                 new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null),
                 List.of(seller(10L, 101L), seller(20L, 201L)));
 

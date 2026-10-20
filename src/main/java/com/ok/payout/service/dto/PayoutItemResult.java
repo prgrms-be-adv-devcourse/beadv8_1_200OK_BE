@@ -28,18 +28,13 @@ public record PayoutItemResult(
 ) {
 
     /**
-     * 조회 결과 한 줄을 항목 결과로 바꾼다.
-     *
-     * @param showInternalIds 조정 번호와 조정한 관리자 ID를 보여 줄지 (관리자 조회면 true, 판매자 조회면 false. 판매자는 사유만 봄)
+     * 조회 결과 한 줄을 항목 결과로 바꾼다. 조정 정보는 모두 담고, 판매자에게 보여 주지 않을 값은 판매자 응답 DTO에서 뺀다.
      */
-    public static PayoutItemResult from(PayoutItemRow row, boolean showInternalIds) {
+    public static PayoutItemResult from(PayoutItemRow row) {
         PayoutAdjustmentResult adjustment = null;
         // 평소 건은 adjustmentId가 0 (PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)
         if (row.adjustmentId() != PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID) {
-            adjustment = new PayoutAdjustmentResult(
-                    showInternalIds ? row.adjustmentId() : null,
-                    showInternalIds ? row.adminId() : null,
-                    row.reason());
+            adjustment = new PayoutAdjustmentResult(row.adjustmentId(), row.adminId(), row.reason());
         }
         return new PayoutItemResult(row.payoutItemId(), row.candidateId(), row.eventType().name(), row.orderId(),
                 row.orderItemId(), row.sellerId(), row.amount(), row.candidateCreatedAt(), adjustment);
