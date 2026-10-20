@@ -4,10 +4,12 @@ import com.ok.common.exception.RestApiException;
 import com.ok.order.cart.service.CartService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
+import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.OrderDetailResult;
 import com.ok.order.order.service.dto.OrderSummaryResult;
+import com.ok.order.order.service.dto.ReviewCandidateResult;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -112,6 +114,17 @@ public class OrderService {
             optionIds.add(item.getProductOptionId());
         }
         return optionIds;
+    }
+
+    // 리뷰 작성 가능 구매 건 (상품 모듈 내부 API용)
+    public List<ReviewCandidateResult> getReviewCandidates(Long buyerId, Long productId) {
+        List<OrderItem> items = orderRepository.findReviewCandidates(buyerId, productId, OrderItemStatus.PURCHASE_CONFIRMED);
+
+        List<ReviewCandidateResult> results = new ArrayList<>();
+        for (OrderItem item : items) {
+            results.add(ReviewCandidateResult.from(item));
+        }
+        return results;
     }
 }
 
