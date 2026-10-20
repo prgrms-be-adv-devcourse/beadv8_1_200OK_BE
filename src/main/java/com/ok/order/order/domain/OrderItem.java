@@ -59,6 +59,10 @@ public class OrderItem extends BaseTime {
     @Column
     private LocalDateTime deliveredAt;
 
+    // 구매 확정 시각
+    @Column
+    private LocalDateTime confirmedAt;
+
     static OrderItem create(OrderSellerGroup sellerGroup, OrderLine line) {
         OrderItem item = new OrderItem();
         item.sellerGroup = sellerGroup;
@@ -102,4 +106,18 @@ public class OrderItem extends BaseTime {
         return true;
     }
 
+    // 구매 확정
+    public boolean confirmPurchase(LocalDateTime now) {
+        if (status != OrderItemStatus.DELIVERED) {
+            return false;
+        }
+        this.status = OrderItemStatus.PURCHASE_CONFIRMED;
+        this.confirmedAt = now;
+        return true;
+    }
+
+    // 배송 완료 시각이 기준 시각 이전인지
+    boolean isDeliveredBefore(LocalDateTime deadline) {
+        return deliveredAt != null && !deliveredAt.isAfter(deadline);
+    }
 }

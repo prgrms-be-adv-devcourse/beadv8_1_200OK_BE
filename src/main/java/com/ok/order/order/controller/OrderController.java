@@ -54,4 +54,15 @@ public class OrderController implements OrderControllerSpec{
     ) {
         return ResponseEntity.ok(OrderDetailResponse.from(orderService.getOrder(memberId, orderId)));
     }
+
+    @Override
+    @PostMapping("/{orderId}/items/{orderItemId}/confirm")
+    public ResponseEntity<Void> confirmPurchase(
+            @CurrentMemberId Long memberId,
+            @PathVariable Long orderId,
+            @PathVariable Long orderItemId
+    ) {
+        orderService.confirmPurchase(memberId, orderId, orderItemId);
+        return ResponseEntity.noContent().build();
+    }
 }

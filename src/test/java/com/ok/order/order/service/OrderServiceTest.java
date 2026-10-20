@@ -14,9 +14,9 @@ import com.ok.order.order.service.dto.OrderDetailResult;
 import com.ok.order.order.service.dto.OrderSummaryResult;
 import com.ok.order.order.service.dto.ReviewCandidateResult;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -25,7 +25,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -48,13 +51,32 @@ class OrderServiceTest {
     @Mock OrderEventPublisher orderEventPublisher;
     @Mock CartService cartService;
 
-    @InjectMocks OrderService sut;
+    // 한국 시간 2026-10-25 09:00으로 고정
+    Clock clock = Clock.fixed(Instant.parse("2026-10-25T00:00:00Z"), ZoneId.of("Asia/Seoul"));
+    static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 25, 9, 0);
+
+    OrderService sut;
+
+    @BeforeEach
+    void setUp() {
+        sut = new OrderService(orderRepository, orderEventPublisher, cartService, clock);
+    }
 
     // 저장된 것처럼 ID가 있는 주문 (구매자 1, 판매자 100, 사과 1kg 10,000원 × 2개)
     private Order savedOrder(Long orderId) {
         Order order = Order.create(1L, List.of(
                 new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 2)));
         ReflectionTestUtils.setField(order, "id", orderId);
+        return order;
+    }
+
+
+    // 배송 완료된 저장 주문 (주문 10, 상품 1, 판매자 100, 상품 금액 20,000원)
+    private Order deliveredOrder(LocalDateTime deliveredAt) {
+        Order order = savedOrder(10L);
+        order.markPaid();
+        order.markDelivered(100L, deliveredAt);
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
         return order;
     }
 
@@ -335,5 +357,124 @@ class OrderServiceTest {
 
         // when & then
         assertThat(sut.getReviewCandidates(1L, 10L)).isEmpty();
+    }
+
+
+    // ---------- 구매확정 ----------
+
+    @Test
+    void 구매확정하면_상태가_바뀌고_정산용_이벤트를_발행한다() {
+        // given
+        Order order = deliveredOrder(NOW.minusDays(1));
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.confirmPurchase(1L, 10L, 1L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+            softly.assertThat(order.getAllItems().get(0).getConfirmedAt()).isEqualTo(NOW);
+        });
+        then(orderEventPublisher).should().publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 0L);
+    }
+
+    @Test
+    void 다른_회원의_주문은_구매확정할_수_없다() {
+        // given
+        given(orderRepository.findByIdAndBuyerId(10L, 2L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.confirmPurchase(2L, 10L, 1L))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_NOT_FOUND));
+    }
+
+    @Test
+    void 주문에_없는_상품은_구매확정할_수_없다() {
+        // given
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(deliveredOrder(NOW.minusDays(1))));
+
+        // when & then
+        assertThatThrownBy(() -> sut.confirmPurchase(1L, 10L, 999L))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+    }
+
+    @Test
+    void 배송_완료_전에는_구매확정할_수_없고_이벤트도_없다() {
+        // given: 배송 준비
+        Order order = savedOrder(10L);
+        order.markPaid();
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when & then
+        assertThatThrownBy(() -> sut.confirmPurchase(1L, 10L, 1L))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.PURCHASE_CONFIRM_NOT_ALLOWED));
+        then(orderEventPublisher).should(never())
+                .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void 이미_구매확정된_상품은_다시_확정할_수_없다() {
+        // given
+        Order order = deliveredOrder(NOW.minusDays(1));
+        order.getAllItems().get(0).confirmPurchase(NOW);
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when & then
+        assertThatThrownBy(() -> sut.confirmPurchase(1L, 10L, 1L))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ALREADY_PURCHASE_CONFIRMED));
+    }
+
+    // ---------- 자동 구매확정 ----------
+
+    @Test
+    void 자동_구매확정_대상은_지금부터_3일_전을_기준으로_찾는다() {
+        // given
+        given(orderRepository.findOrderIdsToAutoConfirm(OrderItemStatus.DELIVERED, NOW.minusDays(3)))
+                .willReturn(List.of(10L));
+
+        // when & then
+        assertThat(sut.findOrderIdsToAutoConfirm()).containsExactly(10L);
+    }
+
+    @Test
+    void 배송_완료_3일이_지난_상품은_자동_구매확정되고_이벤트를_발행한다() {
+        // given
+        given(orderRepository.findById(10L)).willReturn(Optional.of(deliveredOrder(NOW.minusDays(4))));
+
+        // when
+        int confirmed = sut.autoConfirmPurchases(10L);
+
+        // then
+        assertThat(confirmed).isEqualTo(1);
+        then(orderEventPublisher).should().publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 0L);
+    }
+
+    @Test
+    void 배송_완료_3일이_안_지난_상품은_자동_구매확정되지_않는다() {
+        // given
+        given(orderRepository.findById(10L)).willReturn(Optional.of(deliveredOrder(NOW.minusDays(2))));
+
+        // when
+        int confirmed = sut.autoConfirmPurchases(10L);
+
+        // then
+        assertThat(confirmed).isZero();
+        then(orderEventPublisher).should(never())
+                .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void 자동_구매확정_주문이_없으면_예외_없이_0을_돌려준다() {
+        // given
+        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThat(sut.autoConfirmPurchases(10L)).isZero();
     }
 }
