@@ -74,3 +74,13 @@ delivery:
     base-shipping-fee: 3000
     free-shipping-threshold: 50000
     cutoff-time: "13:00"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 컨테이너 헬스체크에만 쓴다. 외부 노출은 nginx가 막고, 다른 엔드포인트는 열지 않는다
+        include: health
+  endpoint:
+    health:
+      show-details: never
