@@ -7,7 +7,6 @@ import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.service.ProductService;
 import com.ok.product.product.service.ProductStockService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.annotation.Profile;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,8 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 // order 모듈이 HTTP로 호출하는 내부 API
-// TODO(#204): 서비스 간 인증을 적용하고 @Profile을 제거한다. 인증 없이 열려 있으면 누구나 재고를 배정해 품절로 만들 수 있어 그전까지 운영에는 등록하지 않는다.
-@Profile({"dev", "test"})
+// 외부에서 재고를 배정해 품절로 만들지 못하게 nginx가 /internal/**의 외부 접근을 막는다(#204).
 @RestController
 @RequestMapping("/internal/v1/products")
 @RequiredArgsConstructor
