@@ -5,6 +5,7 @@ import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.service.dto.AddressChangeRequestCommand;
 import com.ok.delivery.service.dto.AddressCommand;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -15,6 +16,7 @@ import java.util.List;
 public final class ShipmentFixture {
 
     public static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 11, 12, 0);
+    public static final long BUYER_ID = 100L;
 
     private ShipmentFixture() {
     }
@@ -31,6 +33,11 @@ public final class ShipmentFixture {
         return new AddressCommand("김철수", "0212345678", "63100", "제주특별자치도 제주시 첨단로 1", "2층", null);
     }
 
+    // 일반 지역 shipment(fixture)의 구매자가 제주(63100)로 바꾸는 요청
+    public static AddressChangeRequestCommand addressChangeCommand(Long shipmentId) {
+        return new AddressChangeRequestCommand(shipmentId, BUYER_ID, otherAddressCommand());
+    }
+
     public static ShipmentItem item(long orderItemId) {
         return ShipmentItem.create(orderItemId, "무선 키보드", "블랙", 2, 30_000);
     }
@@ -42,6 +49,7 @@ public final class ShipmentFixture {
     public static Shipment shipment(long orderId, long sellerId, ShipmentItem... items) {
         return Shipment.builder()
                 .orderId(orderId)
+                .buyerId(BUYER_ID)
                 .sellerId(sellerId)
                 .address(address())
                 .regionGroup("GENERAL")

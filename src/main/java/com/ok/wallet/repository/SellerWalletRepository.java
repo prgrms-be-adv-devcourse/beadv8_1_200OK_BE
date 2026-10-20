@@ -14,6 +14,9 @@ import java.util.Optional;
 public interface SellerWalletRepository extends JpaRepository<SellerWallet, Long> {
     boolean existsByMemberId(Long memberId);
 
+    // 잔액 조회용 일반 조회 - 잠그지 않는다. 잔액을 바꾸는 곳에서는 findForUpdateByMemberId를 쓴다.
+    Optional<SellerWallet> findByMemberId(Long memberId);
+
     // 지갑이 없으면 저장하고, 이미 있으면 아무것도 하지 않는다.
     // 중복일 때만 넘어가고 다른 오류(null 등)는 그대로 실패한다.
     // MySQL 전용 문법이라 네이티브 쿼리로 작성하며, BaseTime을 거치지 않으므로 생성 시각을 직접 받는다.

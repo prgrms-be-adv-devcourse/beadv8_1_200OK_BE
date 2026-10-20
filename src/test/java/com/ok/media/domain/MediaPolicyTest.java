@@ -2,7 +2,11 @@ package com.ok.media.domain;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,5 +63,63 @@ class MediaPolicyTest {
 		// then
 		assertThat(imageAllowed).isFalse();
 		assertThat(videoAllowed).isFalse();
+	}
+
+	@ParameterizedTest
+	@MethodSource("디코딩_허용_해상도")
+	void 가로_세로_8000px_이하이고_총_4천만_픽셀_이하면_디코딩을_허용한다(int width, int height) {
+		// when
+		boolean allowed = MediaPolicy.isDecodableResolution(width, height);
+
+		// then
+		assertThat(allowed).isTrue();
+	}
+
+	static Stream<Arguments> 디코딩_허용_해상도() {
+		return Stream.of(
+				Arguments.of(1, 1),
+				Arguments.of(8000, 5000),
+				Arguments.of(5000, 8000)
+		);
+	}
+
+	@ParameterizedTest
+	@MethodSource("디코딩_거부_해상도")
+	void 한_변이_8000px을_넘거나_총_픽셀이_4천만을_넘으면_디코딩을_거부한다(int width, int height) {
+		// when
+		boolean allowed = MediaPolicy.isDecodableResolution(width, height);
+
+		// then
+		assertThat(allowed).isFalse();
+	}
+
+	static Stream<Arguments> 디코딩_거부_해상도() {
+		return Stream.of(
+				Arguments.of(8001, 1),
+				Arguments.of(1, 8001),
+				Arguments.of(8000, 5001),
+				Arguments.of(7000, 7000)
+		);
+	}
+
+	@ParameterizedTest
+	@MethodSource("줄여_읽는_비율")
+	void 긴_변이_3200px_이하가_되는_가장_작은_비율로_줄여_읽는다(int width, int height, int expected) {
+		// when
+		int subsampling = MediaPolicy.decodeSubsampling(width, height);
+
+		// then
+		assertThat(subsampling).isEqualTo(expected);
+	}
+
+	static Stream<Arguments> 줄여_읽는_비율() {
+		return Stream.of(
+				Arguments.of(1600, 1600, 1),
+				Arguments.of(3200, 3200, 1),
+				Arguments.of(3201, 1, 2),
+				Arguments.of(1, 3201, 2),
+				Arguments.of(6324, 6324, 2),
+				Arguments.of(8000, 5000, 3)
+		);
 	}
 }

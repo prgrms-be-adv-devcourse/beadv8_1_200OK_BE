@@ -4,7 +4,6 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutPolicy;
-import com.ok.payout.domain.PayoutRequesterRole;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
@@ -22,6 +21,7 @@ import com.ok.payout.service.dto.PayoutDetailResult;
 import com.ok.payout.service.dto.PayoutItemResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
+import com.ok.payout.service.dto.PayoutSellerSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
 import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
 import com.ok.payout.service.publisher.PayoutEventPublisher;
@@ -254,16 +254,11 @@ public class PayoutService {
 
     /**
      * 정산 1건 수동 실행을 요청한다. 지금은 막아 둔 기능이라 항상 예외를 던진다(성공하는 경우 없음).
-     * 관리자 전용 기능이라 권한부터 확인하고, 기능을 열 때는 TODO 아래의 예외만 실제 실행 로직으로 바꾼다.
+     * 관리자 전용 기능이며 관리자 확인은 컨트롤러({@code @PreAuthorize})에서 한다. 기능을 열 때는 TODO 아래의 예외만 실제 실행 로직으로 바꾼다.
      *
-     * @param role 요청한 사람의 역할 문자열 (해석 규칙은 {@link PayoutRequesterRole#from})
-     * @throws RestApiException 관리자가 아니면 권한 없음({@code PAYOUT_ACCESS_DENIED}),
-     *                          관리자면 권한은 있지만 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
+     * @throws RestApiException 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
      */
-    public void runOrderItem(String role, Long orderItemId) {
-        if (PayoutRequesterRole.from(role) != PayoutRequesterRole.ADMIN) {
-            throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
-        }
+    public void runOrderItem(Long orderItemId) {
         // TODO(논의 필요): 1건 수동 실행은 재처리 정책(이미 정산된 건 처리, 실패 건 재시도 범위)이 정해지지 않아 막아 둠
         throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
                 "정산 1건 수동 실행은 아직 지원하지 않습니다. (orderItemId: " + orderItemId + ")");
@@ -283,70 +278,70 @@ public class PayoutService {
     }
 
     /**
-     * 정산 목록을 조회한다.
-     * 관리자는 보낸 조건을 그대로 쓰고({@code payeeId}를 생략하면 전체), 판매자는 본인 ID를 {@code payeeId}로 넣어야만 본인 정산을 조회할 수 있다.
-     *
-     * @param memberId   요청한 회원 ID. 판매자가 넣은 {@code payeeId}가 본인 것인지 확인하는 데 씀
-     * @param tokenRoles 토큰의 권한 목록 (해석 규칙은 {@link PayoutRequesterRole#fromTokenRoles})
-     * @throws RestApiException 판매자가 {@code payeeId}를 생략했거나 본인 ID가 아니거나 시스템 몫을 요청하면,
-     *                          또는 관리자·판매자가 아니면 {@code PAYOUT_ACCESS_DENIED}
+     * 관리자가 정산 목록을 조회한다. 보낸 조건을 그대로 쓴다({@code payeeId}를 생략하면 전체).
      */
     @Transactional(readOnly = true)
-    public Page<PayoutSummaryResult> search(Long memberId, List<String> tokenRoles, PayoutSearchQuery query) {
-        PayoutRequesterRole role = PayoutRequesterRole.fromTokenRoles(tokenRoles);
-        checkSearchPermission(memberId, role, query);
-        return payoutQueryRepository.searchPayouts(query.payeeId(), query.system(), query.from(), query.to(),
-                        PageRequest.of(query.page(), query.size()))
-                .map(PayoutSummaryResult::from);
-    }
-
-    // 역할별 조회 권한 확인
-    // 판매자는 payeeId를 반드시 본인 ID로 넣어야 함. 생략을 본인으로 채우지 않는 이유: 클라이언트가 누구의 정산을 요청했는지 항상 드러나게 하려고
-    // 판매자 몫은 항상 system = false라서 payeeId = 본인이면 시스템 몫은 섞이지 않지만, system = true를 명시하면 남의 몫 요청으로 보고 거절
-    private void checkSearchPermission(Long memberId, PayoutRequesterRole role, PayoutSearchQuery query) {
-        switch (role) {
-            case ADMIN -> {
-            }
-            case SELLER -> {
-                // TODO(논의 필요): 지금은 회원 ID(memberId)와 정산 수취인 ID(payeeId)가 같은 회원 번호라는 전제로 비교함
-                // 관리자·판매자 번호 체계(번호 발급 방식)가 따로 정해지면 이 비교 방식도 함께 수정해야 함
-                // 같은 비교가 checkPayoutAccess()(상세·항목 조회)에도 있음 → 함께 수정
-                boolean ownPayee = memberId.equals(query.payeeId());
-                if (!ownPayee || Boolean.TRUE.equals(query.system())) {
-                    throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
-                }
-            }
-            case OTHER -> throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
-        }
+    public Page<PayoutSummaryResult> searchForAdmin(PayoutSearchQuery query) {
+        return searchPayouts(query.payeeId(), query.system(), query.from(), query.to(), query.page(), query.size());
     }
 
     /**
-     * 정산 1건의 상세(정산 대상 기간, 항목 수 포함)를 조회한다.
-     * 관리자는 모든 정산을, 판매자는 본인이 수취인인 정산만 조회할 수 있다.
-     * 판매자 정산이면 같은 스냅샷의 시스템 몫 정산에 들어 있는 이 판매자의 수수료 합계·건수도 함께 돌려준다
-     * (판매자가 받은 금액을 확인할 수 있도록 관리자·판매자 모두에게 보여 주고, 시스템 몫 정산 ID는 관리자에게만 보여 준다).
+     * 판매자가 본인 정산 목록을 조회한다. 수취인은 본인, 대상은 판매자 몫(시스템 몫 제외)으로 고정한다.
      *
-     * @param memberId   요청한 회원 ID. 판매자면 이 정산의 수취인이 본인인지 확인하는 데 씀
-     * @param tokenRoles 토큰의 권한 목록 (해석 규칙은 {@link PayoutRequesterRole#fromTokenRoles})
-     * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND},
-     *                          판매자가 남의 정산이나 시스템 몫을 조회하거나 관리자·판매자가 아니면 {@code PAYOUT_ACCESS_DENIED}
+     * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값)
+     */
+    @Transactional(readOnly = true)
+    public Page<PayoutSummaryResult> searchForSeller(Long sellerId, PayoutSellerSearchQuery query) {
+        // 판매자 목록은 요청에 대상 ID가 없음: 토큰의 회원 ID로만 조회해서 URL·파라미터를 바꿔도 남의 정산을 요청할 수 없음
+        // TODO(논의 필요): 지금은 회원 ID(sellerId)와 정산 수취인 ID(payeeId)가 같은 회원 번호라는 전제로 조회함
+        // 관리자·판매자 번호 체계가 따로 정해지면 이 조회 조건도 함께 수정해야 함. 같은 전제가 checkOwnPayout()에도 있음 → 함께 수정
+        return searchPayouts(sellerId, false, query.from(), query.to(), query.page(), query.size());
+    }
+
+    // 관리자·판매자 목록 조회의 공통 부분. 둘은 조건만 다르고 조회 방식은 같음
+    private Page<PayoutSummaryResult> searchPayouts(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to,
+                                                    int page, int size) {
+        return payoutQueryRepository.searchPayouts(payeeId, system, from, to, PageRequest.of(page, size))
+                .map(PayoutSummaryResult::from);
+    }
+
+    /**
+     * 관리자가 정산 1건의 상세(정산 대상 기간, 항목 수 포함)를 조회한다.
+     *
+     * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}
      * @throws IllegalStateException 정산의 스냅샷이 없으면 (외래키라 정상이면 생길 수 없는 데이터 손상)
      */
     @Transactional(readOnly = true)
-    public PayoutDetailResult getDetail(Long memberId, List<String> tokenRoles, Long payoutId) {
-        PayoutRequesterRole role = PayoutRequesterRole.fromTokenRoles(tokenRoles);
-        Payout payout = payoutRepository.findById(payoutId)
-                .orElseThrow(() -> new RestApiException(PayoutErrorCode.PAYOUT_NOT_FOUND));
-        checkPayoutAccess(memberId, role, payout);
+    public PayoutDetailResult getDetailForAdmin(Long payoutId) {
+        return loadDetail(findPayout(payoutId));
+    }
 
+    /**
+     * 판매자가 본인 정산 1건의 상세를 조회한다.
+     * 결과는 관리자와 같고, 판매자에게 보여 주지 않을 값(시스템 몫 정산 ID)은 판매자 응답 DTO에서 뺀다.
+     *
+     * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값). 이 정산의 수취인이 본인인지 확인하는 데 씀
+     * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}, 본인 정산이 아니거나 시스템 몫이면 {@code PAYOUT_ACCESS_DENIED}
+     * @throws IllegalStateException 정산의 스냅샷이 없으면 (외래키라 정상이면 생길 수 없는 데이터 손상)
+     */
+    @Transactional(readOnly = true)
+    public PayoutDetailResult getDetailForSeller(Long sellerId, Long payoutId) {
+        Payout payout = findPayout(payoutId);
+        checkOwnPayout(sellerId, payout);
+        return loadDetail(payout);
+    }
+
+    // 관리자·판매자 상세 조회의 공통 부분
+    private PayoutDetailResult loadDetail(Payout payout) {
         // 정산의 snapshot_id는 외래키(fk_payout_snapshot_id)라 정상이면 스냅샷이 없을 수 없음
         // 데이터 손상은 사용자가 고칠 수 없는 시스템 오류라 표준 예외로 던져 500·ERROR 로그로 드러나게 함 (exception.md: 값의 출처 기준)
         PayoutSnapshot snapshot = payoutSnapshotRepository.findById(payout.getSnapshotId())
-                .orElseThrow(() -> new IllegalStateException("정산의 스냅샷이 없습니다. payoutId=" + payoutId));
-        long itemCount = payoutQueryRepository.countItemsByPayoutId(payoutId);
+                .orElseThrow(() -> new IllegalStateException("정산의 스냅샷이 없습니다. payoutId=" + payout.getId()));
+        long itemCount = payoutQueryRepository.countItemsByPayoutId(payout.getId());
 
-        // 판매자 정산이면 이 판매자의 수수료를 함께 조회 (수수료는 판매자 정산이 아니라 같은 스냅샷의 시스템 몫 정산에 있음)
-        // 시스템 몫 정산 ID는 관리자에게만 줌: 판매자는 그 정산을 열 수 없어(403) 알려 줘도 쓸 데가 없고 내부 장부 번호만 드러남
+        // 판매자 수수료는 판매자 정산이 아니라 같은 회차의 시스템 몫 정산에 항목으로 들어 있음
+        // payout.snapshot_id는 같은 실행 회차에 만들어진 정산끼리 같은 값이라, 이 값으로 짝이 되는 시스템 몫 정산을 찾고 (payout 테이블)
+        // 그 항목 중 이 판매자(seller_id) 몫만 더함 (payout_item 테이블). seller_id만으로 더하면 모든 회차의 수수료가 합쳐짐
         Long systemPayoutId = null;
         Long sellerFeeAmount = null;
         Long sellerFeeItemCount = null;
@@ -354,11 +349,9 @@ public class PayoutService {
             Optional<Payout> systemPayout = payoutRepository.findBySnapshotIdAndSystemTrue(payout.getSnapshotId());
             if (systemPayout.isPresent()) {
                 CountAndAmount fee = payoutQueryRepository.summarizeSellerFeeItems(systemPayout.get().getId(), payout.getPayeeId());
+                systemPayoutId = systemPayout.get().getId();
                 sellerFeeAmount = fee.amount();
                 sellerFeeItemCount = fee.count();
-                if (role == PayoutRequesterRole.ADMIN) {
-                    systemPayoutId = systemPayout.get().getId();
-                }
             }
         }
 
@@ -368,48 +361,54 @@ public class PayoutService {
     }
 
     /**
-     * 정산 1건에 묶인 정산 항목을 정산후보 정보와 함께 페이지 단위로 조회한다.
-     * 권한은 상세 조회와 같다. URL의 정산 ID는 아무 번호나 넣을 수 있으므로, 판매자가 남의 정산이나
-     * 시스템 몫 정산(모든 판매자의 수수료가 섞여 있음)을 열지 못하게 정산 단위로 확인한다.
-     * 조정 건이면 판매자에게는 조정 사유만 보여 준다.
+     * 관리자가 정산 1건에 묶인 정산 항목(payout_item)을 정산후보(payout_candidate_items)와 조인해 페이지 단위로 조회한다.
+     * 후보에서는 생성 시각과 조정 정보(조정 번호, 관리자 ID, 사유)를 함께 가져온다.
      *
-     * @param memberId   요청한 회원 ID. 판매자면 이 정산의 수취인이 본인인지 확인하는 데 씀
-     * @param tokenRoles 토큰의 권한 목록 (해석 규칙은 {@link PayoutRequesterRole#fromTokenRoles})
-     * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND},
-     *                          판매자가 남의 정산이나 시스템 몫을 조회하거나 관리자·판매자가 아니면 {@code PAYOUT_ACCESS_DENIED}
+     * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}
      */
     @Transactional(readOnly = true)
-    public Page<PayoutItemResult> getItems(Long memberId, List<String> tokenRoles, Long payoutId, PayoutItemSearchQuery query) {
-        PayoutRequesterRole role = PayoutRequesterRole.fromTokenRoles(tokenRoles);
-        Payout payout = payoutRepository.findById(payoutId)
-                .orElseThrow(() -> new RestApiException(PayoutErrorCode.PAYOUT_NOT_FOUND));
-        checkPayoutAccess(memberId, role, payout);
-
-        // 조정 번호·관리자 ID는 내부 정보라 판매자에게는 숨김 (판매자는 조정 사유만 봄)
-        boolean showInternalIds = role == PayoutRequesterRole.ADMIN;
-        return payoutQueryRepository.findItemsWithCandidate(payoutId, PageRequest.of(query.page(), query.size()))
-                .map(row -> PayoutItemResult.from(row, showInternalIds));
+    public Page<PayoutItemResult> getItemsForAdmin(Long payoutId, PayoutItemSearchQuery query) {
+        // 정산이 없으면 빈 목록이 아니라 404로 알려 주려고 먼저 조회
+        findPayout(payoutId);
+        return loadItems(payoutId, query);
     }
 
-    // 정산 1건 조회 권한 확인 (상세 조회, 항목 조회에서 함께 씀)
-    // 관리자는 모두, 판매자는 본인이 수취인인 정산만. 시스템 몫은 payeeId가 null이라 판매자는 볼 수 없음
-    // 판매자 정산 하나의 항목은 모두 그 판매자 것이라 항목이 섞이는 문제는 없음. 이 확인이 막는 것은 "어느 정산을 여는가":
+    /**
+     * 판매자가 본인 정산 1건에 묶인 정산 항목(payout_item)을 정산후보(payout_candidate_items)와 조인해 페이지 단위로 조회한다.
+     * 결과는 관리자와 같고, 판매자에게 보여 주지 않을 값(조정 번호, 조정한 관리자 ID)은 판매자 응답 DTO에서 뺀다.
+     *
+     * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값). 이 정산의 수취인이 본인인지 확인하는 데 씀
+     * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}, 본인 정산이 아니거나 시스템 몫이면 {@code PAYOUT_ACCESS_DENIED}
+     */
+    @Transactional(readOnly = true)
+    public Page<PayoutItemResult> getItemsForSeller(Long sellerId, Long payoutId, PayoutItemSearchQuery query) {
+        Payout payout = findPayout(payoutId);
+        checkOwnPayout(sellerId, payout);
+        return loadItems(payoutId, query);
+    }
+
+    // 관리자·판매자 항목 조회의 공통 부분
+    private Page<PayoutItemResult> loadItems(Long payoutId, PayoutItemSearchQuery query) {
+        return payoutQueryRepository.findItemsWithCandidate(payoutId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutItemResult::from);
+    }
+
+    private Payout findPayout(Long payoutId) {
+        return payoutRepository.findById(payoutId)
+                .orElseThrow(() -> new RestApiException(PayoutErrorCode.PAYOUT_NOT_FOUND));
+    }
+
+    // 판매자 상세·항목 조회에서 이 정산의 수취인이 본인인지 확인
+    // 역할 확인은 컨트롤러(@PreAuthorize)로 옮겼지만 이 확인은 서비스에 남김: 역할만으로는 "어느 정산을 여는가"를 막을 수 없음
     //   정산은 회원 ID가 아니라 URL의 정산 ID로 가져오고, 그 번호는 요청자가 아무 값이나 넣을 수 있음
-    //   예) 판매자 7이 /payouts/13(판매자 9의 정산)이나 /payouts/14(모든 판매자 수수료가 섞인 시스템 몫)를 요청 → 403
-    private void checkPayoutAccess(Long memberId, PayoutRequesterRole role, Payout payout) {
-        switch (role) {
-            case ADMIN -> {
-            }
-            case SELLER -> {
-                // TODO(논의 필요): 지금은 회원 ID(memberId)와 정산 수취인 ID(payeeId)가 같은 회원 번호라는 전제로 비교함
-                // 관리자·판매자 번호 체계(번호 발급 방식)가 따로 정해지면 이 비교 방식도 함께 수정해야 함
-                // 같은 비교가 checkSearchPermission()(목록 조회)에도 있음 → 함께 수정
-                boolean ownPayee = memberId.equals(payout.getPayeeId());
-                if (!ownPayee) {
-                    throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
-                }
-            }
-            case OTHER -> throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
+    //   예) 판매자 7이 /payouts/me/13(판매자 9의 정산)이나 /payouts/me/14(모든 판매자 수수료가 섞인 시스템 몫)를 요청 → 403
+    // 시스템 몫은 payeeId가 null이라 이 비교에서 함께 걸러짐
+    private void checkOwnPayout(Long sellerId, Payout payout) {
+        // TODO(논의 필요): 지금은 회원 ID(sellerId)와 정산 수취인 ID(payeeId)가 같은 회원 번호라는 전제로 비교함
+        // 관리자·판매자 번호 체계(번호 발급 방식)가 따로 정해지면 이 비교 방식도 함께 수정해야 함
+        // 같은 전제가 searchForSeller()(목록 조회)에도 있음 → 함께 수정
+        if (!sellerId.equals(payout.getPayeeId())) {
+            throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
         }
     }
 }

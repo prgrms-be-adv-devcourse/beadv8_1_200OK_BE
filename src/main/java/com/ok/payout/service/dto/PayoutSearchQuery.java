@@ -2,9 +2,9 @@ package com.ok.payout.service.dto;
 
 import java.time.LocalDateTime;
 
-// 정산 목록 조회 조건. 값이 null인 조건은 조회에 걸지 않음
+// 관리자 정산 목록 조회 조건. 값이 null인 조건은 조회에 걸지 않음. 판매자용은 PayoutSellerSearchQuery
 public record PayoutSearchQuery(
-        // 수취인(판매자) 회원 ID. 판매자 요청이면 본인 ID인지 서비스에서 확인함
+        // 수취인(판매자) 회원 ID. 생략하면 전체
         Long payeeId,
         // true: 시스템 몫만, false: 판매자 몫만, null: 둘 다
         Boolean system,

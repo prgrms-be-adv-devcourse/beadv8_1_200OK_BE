@@ -122,7 +122,7 @@ public class ShipmentAddressChangeRequest extends BaseTime {
     /**
      * 판매자가 요청을 승인한다. {@code PENDING → APPROVED}
      *
-     * <p>shipment 배송지 변경은 서비스가 같은 트랜잭션에서 {@link Shipment#changeAddress}로 한다.
+     * <p>shipment 배송지 변경은 서비스가 같은 트랜잭션에서 {@link Shipment#applyAddressChange}로 한다.
      *
      * @throws RestApiException 이미 처리된 요청이면 {@code ADDRESS_CHANGE_ALREADY_PROCESSED}
      */

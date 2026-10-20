@@ -66,4 +66,16 @@ public class SellerWalletService {
         SellerWalletLedger ledger = wallet.deposit(amount, referenceKey);
         sellerWalletLedgerRepository.save(ledger);
     }
+
+    /**
+     * 판매자 지갑의 현재 잔액을 잠그지 않고 조회한다. 지갑이 아직 없으면 0으로 본다.
+     * 판매자 지갑은 판매자 승인 이벤트로 비동기로 만들어져, 승인 직후에는 아직 없을 수 있다.
+     * 판매자 여부는 호출하는 쪽(컨트롤러의 역할 검사)이 보장한다.
+     */
+    @Transactional(readOnly = true)
+    public long getBalance(Long memberId) {
+        return sellerWalletRepository.findByMemberId(memberId)
+                .map(SellerWallet::getBalance)
+                .orElse(0L);
+    }
 }

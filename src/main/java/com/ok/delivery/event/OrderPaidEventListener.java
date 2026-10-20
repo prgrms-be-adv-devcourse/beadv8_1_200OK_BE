@@ -30,6 +30,7 @@ public class OrderPaidEventListener {
     void on(OrderPaidEvent event) {
         shipmentService.create(new ShipmentCreateCommand(
                 event.orderId(),
+                event.buyerId(),
                 event.paidAt(),
                 toAddress(event.shippingAddress()),
                 event.sellerOrders().stream().map(OrderPaidEventListener::toSeller).toList()));
