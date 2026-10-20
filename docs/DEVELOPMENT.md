@@ -280,6 +280,16 @@ public ResponseEntity<CartResponse> getMyCart(@CurrentMemberId Long memberId) {
 
 `@CurrentMemberId`가 있는 API는 토큰 없이 호출하면 401이 됩니다. 별도 설정 없이 로그인이 필요한 API가 됩니다.
 
+### 공개 API 추가하기
+
+공개 API를 뺀 모든 API는 로그인이 필요합니다(기본 거부). 새 API는 따로 설정하지 않아도 토큰 없이 호출하면 401입니다.
+
+로그인 없이 써야 하는 API(상품 조회처럼)를 만들면 `SecurityConfig`의 `PUBLIC_ENDPOINTS`에 HTTP 메서드와 경로를 추가합니다. 컨트롤러 경로와 문자열로 연결되어 있어, 경로를 바꾸면 여기도 함께 바꿉니다.
+
+- 신원이 전혀 필요 없는 API라면 `TOKEN_IGNORED_ENDPOINTS`에도 넣습니다. 그래야 만료된 토큰이 붙어 와도 401로 막히지 않습니다.
+- 로그인 여부에 따라 응답이 달라지는 API는 `TOKEN_IGNORED_ENDPOINTS`에 넣지 않습니다. 토큰을 아예 읽지 않아 `@CurrentMemberId`를 쓸 수 없습니다.
+- 내부 API(`/internal/**`)는 토큰 없이 호출하지만 같은 컨테이너(loopback)에서 온 요청만 받습니다. 외부 접근은 nginx도 막습니다.
+
 ### 역할 제한
 
 특정 역할만 쓸 수 있는 API는 컨트롤러 메서드에 `@PreAuthorize`를 붙입니다. 토큰의 권한 목록(`roles` claim)의 각 값이 `ROLE_{권한}` 권한으로 바뀌어 있습니다. 판매자 토큰에는 `BUYER`와 `SELLER`가 함께 들어 있어, 판매자도 구매 API를 쓸 수 있습니다.
