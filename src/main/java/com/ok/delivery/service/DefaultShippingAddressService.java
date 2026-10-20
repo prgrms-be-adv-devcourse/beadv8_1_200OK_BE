@@ -35,6 +35,7 @@ public class DefaultShippingAddressService {
 
     /**
      * 기본 배송지를 등록하거나, 이미 있으면 새 배송지로 바꾼다.
+     * 같은 회원의 최초 등록이 동시에 들어오면 늦은 쪽은 유니크 제약에 걸리므로, API는 {@link DefaultShippingAddressFacade}를 거쳐 호출한다.
      *
      * @throws IllegalArgumentException 회원 ID가 없으면
      * @throws com.ok.common.exception.RestApiException 배송지 검증 규칙은 {@link Address#of}를 따른다
@@ -43,11 +44,13 @@ public class DefaultShippingAddressService {
     public AddressResult saveDefaultAddress(Long memberId, AddressCommand command) {
         requireMemberId(memberId);
         Address address = command.toAddress();
-        defaultShippingAddressRepository.findByMemberId(memberId)
-                .ifPresentOrElse(
-                        defaultAddress -> defaultAddress.changeAddress(address),
-                        () -> defaultShippingAddressRepository.save(DefaultShippingAddress.create(memberId, address)));
-        return AddressResult.from(address);
+        DefaultShippingAddress defaultAddress = defaultShippingAddressRepository.findByMemberId(memberId)
+                .map(existing -> {
+                    existing.changeAddress(address);
+                    return existing;
+                })
+                .orElseGet(() -> defaultShippingAddressRepository.save(DefaultShippingAddress.create(memberId, address)));
+        return AddressResult.from(defaultAddress.getAddress());
     }
 
     private static void requireMemberId(Long memberId) {

@@ -54,6 +54,7 @@ class DefaultShippingAddressServiceTest {
     void 기본_배송지가_없으면_새로_저장한다() {
         // given
         given(defaultShippingAddressRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.empty());
+        given(defaultShippingAddressRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
         AddressResult sut = defaultShippingAddressService.saveDefaultAddress(MEMBER_ID, otherAddressCommand());

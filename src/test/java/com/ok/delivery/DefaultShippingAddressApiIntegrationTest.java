@@ -165,10 +165,21 @@ class DefaultShippingAddressApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 일반_회원_권한이_없으면_403() throws Exception {
+    void 일반_회원_권한이_없으면_조회는_403() throws Exception {
         // when & then
         mockMvc.perform(get(URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID)))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 일반_회원_권한이_없으면_등록도_403이고_저장하지_않는다() throws Exception {
+        // when & then
+        mockMvc.perform(put(URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(SEOUL_BODY))
+                .andExpect(status().isForbidden());
+        assertThat(countRows(BUYER_ID)).isZero();
     }
 
     @Test

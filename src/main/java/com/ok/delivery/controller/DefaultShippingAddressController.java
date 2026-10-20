@@ -3,6 +3,7 @@ package com.ok.delivery.controller;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.delivery.controller.dto.AddressRequest;
 import com.ok.delivery.controller.dto.AddressResponse;
+import com.ok.delivery.service.DefaultShippingAddressFacade;
 import com.ok.delivery.service.DefaultShippingAddressService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class DefaultShippingAddressController implements DefaultShippingAddressControllerSpec {
 
     private final DefaultShippingAddressService defaultShippingAddressService;
+    private final DefaultShippingAddressFacade defaultShippingAddressFacade;
 
     @Override
     @GetMapping
@@ -38,6 +40,6 @@ public class DefaultShippingAddressController implements DefaultShippingAddressC
             @Valid @RequestBody AddressRequest request
     ) {
         return ResponseEntity.ok(AddressResponse.from(
-                defaultShippingAddressService.saveDefaultAddress(memberId, request.toCommand())));
+                defaultShippingAddressFacade.saveDefaultAddress(memberId, request.toCommand())));
     }
 }
