@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -294,6 +295,39 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 회원_id를_쓰지_않는_API도_공개_API가_아니면_토큰_없이_호출할_때_401을_반환한다() throws Exception {
+        // when: 기본 거부 전에는 회원 id(@CurrentMemberId)를 받지 않는 API가 토큰 없이 통과했다
+        ResultActions result = mockMvc.perform(get("/test/security/no-identity"));
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/unauthorized")));
+    }
+
+    @Test
+    void 회원_id를_쓰지_않는_API도_토큰이_있으면_호출할_수_있다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/no-identity")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "BUYER")));
+
+        // then
+        result.andExpect(status().isOk());
+    }
+
+    @Test
+    void 상품_리뷰_목록과_배송비_견적은_토큰_없이_호출할_수_있다() throws Exception {
+        // when: 결과(없는 상품, 잘못된 견적 요청)와 상관없이 인가를 통과했는지만 본다
+        ResultActions reviews = mockMvc.perform(get("/api/v1/products/{productId}/reviews", 999_999L));
+        ResultActions feeQuote = mockMvc.perform(post("/api/v1/shipments/fee-quotes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"));
+
+        // then
+        reviews.andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
+        feeQuote.andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
+    }
+
+    @Test
     void 토큰이_필요_없는_API는_토큰_없이_호출할_수_있다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(get("/api/v1/products/categories"));
@@ -430,6 +464,12 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
         @GetMapping("/me")
         public Map<String, Long> me(@CurrentMemberId Long memberId) {
             return Map.of("memberId", memberId);
+        }
+
+        // 회원 id를 받지 않아도 공개 API가 아니면 로그인이 필요한지 확인하는 용도
+        @GetMapping("/no-identity")
+        public Map<String, String> noIdentity() {
+            return Map.of("result", "ok");
         }
 
         @PreAuthorize("hasRole('SELLER')")
