@@ -102,6 +102,22 @@ public class ShipmentService {
         return ShipmentDispatchResult.from(shipment);
     }
 
+    /**
+     * 택배사의 배송 완료 알림을 반영한다. {@code SHIPPING → DELIVERED}
+     * 같은 알림이 동시에 두 번 와도 배송 완료 이벤트가 한 번만 나가도록 shipment 행 잠금 아래에서 처리한다.
+     * 주문은 이 이벤트의 배송 완료 시각을 자동 구매확정 기준으로 쓴다.
+     *
+     * @throws RestApiException 없으면 {@code SHIPMENT_NOT_FOUND}, 상태 규칙은 {@link Shipment#deliver}를 따른다
+     */
+    @Transactional
+    public void deliver(Long shipmentId) {
+        Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
+                .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
+        shipment.deliver(LocalDateTime.now(clock));
+        deliveryEventPublisher.publishShipmentDelivered(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
+                shipment.getDeliveredAt());
+    }
+
     // 송장번호 중복은 사전 조회 없이 UNIQUE 제약 하나로 막는다. 사전 조회해도 동시 등록은 제약이 막아야 하므로 확인 경로를 하나로 둔다.
     // 다른 제약 위반까지 중복으로 바꾸지 않도록 제약 이름을 확인하고, 아니면 원래 예외를 그대로 던진다
     private void flushDetectingDuplicatedTrackingNumber() {

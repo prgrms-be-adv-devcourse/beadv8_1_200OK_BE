@@ -1,6 +1,7 @@
 package com.ok.delivery.event;
 
 import com.ok.common.event.DomainEvent;
+import com.ok.common.event.ShipmentDeliveredEvent;
 import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.delivery.service.DeliveryEventPublisher;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,11 @@ public class SpringDeliveryEventPublisher implements DeliveryEventPublisher {
     public void publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
                                   String carrier, String trackingNumber, LocalDateTime shippedAt) {
         publish(new ShipmentDispatchedEvent(shipmentId, orderId, sellerId, carrier, trackingNumber, shippedAt));
+    }
+
+    @Override
+    public void publishShipmentDelivered(Long shipmentId, Long orderId, Long sellerId, LocalDateTime deliveredAt) {
+        publish(new ShipmentDeliveredEvent(shipmentId, orderId, sellerId, deliveredAt));
     }
 
     // 모듈 간 계약으로 정한 이벤트만 나가도록 DomainEvent만 받는다

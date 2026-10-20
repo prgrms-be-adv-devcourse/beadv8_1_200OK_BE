@@ -1,5 +1,6 @@
 package com.ok.delivery.event;
 
+import com.ok.common.event.ShipmentDeliveredEvent;
 import com.ok.common.event.ShipmentDispatchedEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +43,19 @@ class SpringDeliveryEventPublisherTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("shippedAt은 필수입니다.");
         then(applicationEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 배송_완료를_알리면_받은_값으로_배송_완료_이벤트를_만들어_발행한다() {
+        // given
+        LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 23, 15, 0);
+
+        // when
+        sut.publishShipmentDelivered(1L, 2L, 10L, deliveredAt);
+
+        // then
+        then(applicationEventPublisher).should()
+                .publishEvent(new ShipmentDeliveredEvent(1L, 2L, 10L, deliveredAt));
     }
 
 }
