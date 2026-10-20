@@ -34,12 +34,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // [확인하는 것]
 //   - 관리자가 부르면 501(아직 지원하지 않는 기능)이고, 데이터가 바뀌지 않음
 //   - 관리자가 아니면 403(권한 없음)
-//   - 수동 조정은 로그인 토큰이 없으면 401
+//   - 로그인 토큰이 없으면 401
 //   - 조정 요청의 형식이 틀리면 422 (권한·501 확인보다 먼저 거절됨)
 //
-// [두 API의 회원 정보 받는 방식이 다름]
-//   - 1건 수동 실행: 아직 임시 헤더(X-Member-Role)로 역할을 받음. 거절은 서비스가 함 → 403 type이 payout-access-denied
-//   - 수동 조정: 로그인 토큰으로 받음. 거절은 컨트롤러 @PreAuthorize가 함 → 403 type이 공통 forbidden
+// [회원 정보 받는 방식]
+// 두 API 모두 로그인 토큰으로 받고, 관리자가 아니면 컨트롤러 @PreAuthorize가 거절함 → 403 type이 공통 forbidden
+// (1건 수동 실행은 임시 헤더 X-Member-Role로 받다가 토큰으로 바꿈, #228)
 //
 // [준비]
 // 정산 데이터를 미리 만들 필요가 없어 배치를 돌리지 않음 (조회 API 테스트는 PayoutQueryIntegrationTest)
@@ -50,10 +50,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // (객체로 만들면 생성자가 공백을 지워 버려서, "공백뿐인 사유" 같은 잘못된 입력을 그대로 보낼 수 없음)
 class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
 
-    // 1건 수동 실행만 쓰는 임시 역할 헤더 (수동 조정은 토큰으로 바뀜)
-    private static final String MEMBER_ROLE_HEADER = "X-Member-Role";
     private static final long ADMIN_ID = 1L;
     private static final long SELLER_7 = 7L;
+    private static final long BUYER_3 = 3L;
 
     // 요청에 쓰는 주문 항목 번호. 다른 테스트의 번호대(6_000_000 ~ 9_000_000대)와 겹치지 않게 정함
     // 주의: 아래 JSON 본문에도 5000001을 그대로 적었으므로, 이 값을 바꾸면 JSON 안의 번호도 함께 바꿀 것
@@ -62,9 +61,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
     // 오류 응답의 type 끝부분 (모듈 이름 + 에러 코드 이름을 소문자·하이픈으로 바꾼 값)
     // type 앞부분(주소)은 설정(PROBLEM_BASE_URI)마다 달라서 끝부분만 비교
     private static final String FEATURE_NOT_SUPPORTED_TYPE = "/payout/feature-not-supported";
-    // 1건 수동 실행의 403: 서비스가 PayoutErrorCode로 거절
-    private static final String ACCESS_DENIED_TYPE = "/payout/payout-access-denied";
-    // 수동 조정의 403: @PreAuthorize가 거절하고 공통 처리기(ApiControllerAdvice)가 CommonErrorCode.FORBIDDEN으로 응답
+    // 403: @PreAuthorize가 거절하고 공통 처리기(ApiControllerAdvice)가 CommonErrorCode.FORBIDDEN으로 응답
     private static final String FORBIDDEN_TYPE = "/forbidden";
 
     // 형식이 올바른 조정 요청 (주문 항목 5000001에서 2,000원 차감)
@@ -96,7 +93,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
     // ---------- 1건 수동 실행 ----------
 
     // API: POST /api/v1/payouts/run/order-items/{orderItemId} (정산 1건 수동 실행, 막아 둠)
-    // 요청: 관리자 (역할 헤더), 주문 항목 5000001
+    // 요청: 관리자 토큰, 주문 항목 5000001
     // 확인: 501(아직 지원하지 않는 기능)이고, 정산이 새로 생기지 않았는지
     @Test
     void 관리자가_1건_수동_실행을_요청하면_501이고_정산이_생기지_않는다() throws Exception {
@@ -104,7 +101,8 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
         long payoutCountBefore = payoutRepository.count();
 
         // when & then
-        mockMvc.perform(runOrderItemRequest("ADMIN"))
+        mockMvc.perform(runOrderItemRequest()
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isNotImplemented())                                  // 501
                 .andExpect(jsonPath("$.type").value(endsWith(FEATURE_NOT_SUPPORTED_TYPE)));
 
@@ -113,14 +111,37 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     // API: POST /api/v1/payouts/run/order-items/{orderItemId} (정산 1건 수동 실행, 막아 둠)
-    // 요청: 판매자 (역할 헤더), 주문 항목 5000001
-    // 확인: 403(권한 없음)인지 (관리자 전용 기능이라 막혀 있는지와 상관없이 판매자는 거절)
+    // 요청: 판매자 토큰(BUYER, SELLER), 주문 항목 5000001
+    // 확인: 403(권한 없음)이고 type이 공통 forbidden인지 (관리자 전용 기능, @PreAuthorize가 거절)
     @Test
     void 판매자가_1건_수동_실행을_요청하면_403이다() throws Exception {
         // when & then
-        mockMvc.perform(runOrderItemRequest("SELLER"))
+        mockMvc.perform(runOrderItemRequest()
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER_7, "BUYER", "SELLER")))
                 .andExpect(status().isForbidden())                                       // 403
-                .andExpect(jsonPath("$.type").value(endsWith(ACCESS_DENIED_TYPE)));
+                .andExpect(jsonPath("$.type").value(endsWith(FORBIDDEN_TYPE)));
+    }
+
+    // API: POST /api/v1/payouts/run/order-items/{orderItemId} (정산 1건 수동 실행, 막아 둠)
+    // 요청: 구매자 토큰(BUYER), 주문 항목 5000001
+    // 확인: 403(권한 없음)인지
+    @Test
+    void 구매자가_1건_수동_실행을_요청하면_403이다() throws Exception {
+        // when & then
+        mockMvc.perform(runOrderItemRequest()
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_3, "BUYER")))
+                .andExpect(status().isForbidden())                                       // 403
+                .andExpect(jsonPath("$.type").value(endsWith(FORBIDDEN_TYPE)));
+    }
+
+    // API: POST /api/v1/payouts/run/order-items/{orderItemId} (정산 1건 수동 실행, 막아 둠)
+    // 요청: 로그인 토큰 없음
+    // 확인: 401(로그인 필요)인지
+    @Test
+    void 토큰_없이_1건_수동_실행을_요청하면_401이다() throws Exception {
+        // when & then
+        mockMvc.perform(runOrderItemRequest())
+                .andExpect(status().isUnauthorized());                                  // 401
     }
 
     // ---------- 수동 조정 ----------
@@ -216,10 +237,9 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
 
     // ---------- 도우미: 요청 ----------
 
-    // 1건 수동 실행 요청 (아직 임시 역할 헤더로 받음. 회원 ID는 쓰지 않는 API)
-    private MockHttpServletRequestBuilder runOrderItemRequest(String role) {
-        return post("/api/v1/payouts/run/order-items/{orderItemId}", ORDER_ITEM_ID)
-                .header(MEMBER_ROLE_HEADER, role);
+    // 1건 수동 실행 요청. 토큰은 테스트마다 .header(...)로 붙임 (토큰 없는 요청도 확인하려고 여기서 붙이지 않음)
+    private MockHttpServletRequestBuilder runOrderItemRequest() {
+        return post("/api/v1/payouts/run/order-items/{orderItemId}", ORDER_ITEM_ID);
     }
 
     // 수동 조정 요청 (본문은 JSON). 토큰은 테스트마다 .header(...)로 붙임 (토큰 없는 요청도 확인하려고 여기서 붙이지 않음)

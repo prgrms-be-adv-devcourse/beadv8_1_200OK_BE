@@ -28,7 +28,6 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,10 +40,6 @@ import java.util.List;
 @RequestMapping("/api/v1/payouts")
 @RequiredArgsConstructor
 public class PayoutController implements PayoutControllerSpec {
-
-    // TODO(#52): 정산 1건 실행 API만 쓰는 임시 헤더. 이 API는 기능 없이 형태만 둔 상태(항상 501)라
-    // 토큰 전환은 기능을 열 때(재처리 정책 확정 후) 함께 함
-    static final String MEMBER_ROLE_HEADER = "X-Member-Role";
 
     private final PayoutJobRunner payoutJobRunner;
     private final PayoutService payoutService;
@@ -69,14 +64,13 @@ public class PayoutController implements PayoutControllerSpec {
     }
 
     // 정산 1건 수동 실행. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.runOrderItem 참고)
+    // 관리자 전용이라 /run과 같이 @PreAuthorize로 막음. 토큰 없음은 401, 관리자가 아니면 403
+    // (임시 헤더 X-Member-Role로 역할을 받던 방식은 헤더만 바꾸면 관리자인 척할 수 있어 토큰으로 전환함, #228)
+    @PreAuthorize("hasRole('ADMIN')")
     @Override
     @PostMapping("/run/order-items/{orderItemId}")
-    public ResponseEntity<Void> runOrderItem(
-            // TODO(#52): 임시 헤더로 회원 정보를 받음. 인증이 붙으면 principal로 교체
-            @RequestHeader(MEMBER_ROLE_HEADER) String memberRole,
-            @PathVariable Long orderItemId
-    ) {
-        payoutService.runOrderItem(memberRole, orderItemId);
+    public ResponseEntity<Void> runOrderItem(@PathVariable Long orderItemId) {
+        payoutService.runOrderItem(orderItemId);
         return ResponseEntity.noContent().build();
     }
 

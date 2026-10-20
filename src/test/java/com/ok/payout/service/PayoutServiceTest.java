@@ -23,8 +23,6 @@ import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
 import com.ok.payout.service.publisher.PayoutEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InjectMocks;
@@ -39,7 +37,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -282,23 +279,11 @@ class PayoutServiceTest {
 
     // ---------- 막아 둔 API: 1건 수동 실행, 수동 조정 ----------
 
-    @ParameterizedTest
-    @MethodSource("관리자가_아닌_역할")
-    void 관리자가_아니면_1건_수동_실행을_권한_없음으로_거절한다(String role) {
-        // when & then
-        assertThatThrownBy(() -> sut.runOrderItem(role, 900L))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.PAYOUT_ACCESS_DENIED));
-    }
-
-    static Stream<String> 관리자가_아닌_역할() {
-        return Stream.of("SELLER", "BUYER", "admin", null);
-    }
-
+    // 관리자가 아니면 거절하는 확인은 컨트롤러 @PreAuthorize로 옮겨서 서비스 테스트에는 없음 (PayoutBlockedApiIntegrationTest에서 확인)
     @Test
-    void 관리자여도_1건_수동_실행은_아직_지원하지_않는_기능으로_거절한다() {
+    void 정산_1건_수동_실행은_아직_지원하지_않는_기능으로_거절한다() {
         // when & then
-        assertThatThrownBy(() -> sut.runOrderItem("ADMIN", 900L))
+        assertThatThrownBy(() -> sut.runOrderItem(900L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.FEATURE_NOT_SUPPORTED));
     }

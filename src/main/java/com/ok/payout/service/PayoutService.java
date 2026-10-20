@@ -254,16 +254,11 @@ public class PayoutService {
 
     /**
      * 정산 1건 수동 실행을 요청한다. 지금은 막아 둔 기능이라 항상 예외를 던진다(성공하는 경우 없음).
-     * 관리자 전용 기능이라 권한부터 확인하고, 기능을 열 때는 TODO 아래의 예외만 실제 실행 로직으로 바꾼다.
+     * 관리자 전용 기능이며 관리자 확인은 컨트롤러({@code @PreAuthorize})에서 한다. 기능을 열 때는 TODO 아래의 예외만 실제 실행 로직으로 바꾼다.
      *
-     * @param role 요청한 사람의 역할 문자열 (해석 규칙은 {@link PayoutRequesterRole#from})
-     * @throws RestApiException 관리자가 아니면 권한 없음({@code PAYOUT_ACCESS_DENIED}),
-     *                          관리자면 권한은 있지만 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
+     * @throws RestApiException 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
      */
-    public void runOrderItem(String role, Long orderItemId) {
-        if (PayoutRequesterRole.from(role) != PayoutRequesterRole.ADMIN) {
-            throw new RestApiException(PayoutErrorCode.PAYOUT_ACCESS_DENIED);
-        }
+    public void runOrderItem(Long orderItemId) {
         // TODO(논의 필요): 1건 수동 실행은 재처리 정책(이미 정산된 건 처리, 실패 건 재시도 범위)이 정해지지 않아 막아 둠
         throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
                 "정산 1건 수동 실행은 아직 지원하지 않습니다. (orderItemId: " + orderItemId + ")");
