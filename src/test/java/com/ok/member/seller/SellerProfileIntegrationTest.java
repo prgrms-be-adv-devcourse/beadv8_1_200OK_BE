@@ -1,15 +1,19 @@
 package com.ok.member.seller;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.seller.domain.SellerProfile;
+import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.repository.SellerProfileRepository;
+import com.ok.member.seller.service.SellerProfileDuplicateValidator;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -57,6 +61,9 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     SellerProfileRepository sellerProfileRepository;
+
+    @Autowired
+    SellerProfileDuplicateValidator duplicateValidator;
 
     private MockMvc mockMvc;
 
@@ -142,6 +149,22 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 실제_MySQL의_유니크_제약_위반을_중복_등록_오류로_바꾼다() {
+        // given: 등록 버튼 중복 클릭처럼, 사전 확인을 함께 통과한 두 요청이 같은 회원의 프로필을 저장한다
+        sellerProfileRepository.saveAndFlush(SellerProfile.register(
+                memberId, "청송 햇살농원", "김영수", "054-873-2210", null, null));
+        DataIntegrityViolationException violation = catchViolation(SellerProfile.register(
+                memberId, "청송 사과농원", "김영수", "054-873-2210", null, null));
+
+        // when
+        RuntimeException sut = duplicateValidator.toDuplicateException(violation);
+
+        // then: 메시지 형식이 바뀌어 제약 이름을 못 찾으면 이 테스트가 깨진다 (500 대신 409가 나가는지 지킨다)
+        assertThat(sut).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.SELLER_PROFILE_ALREADY_EXISTS));
+    }
+
+    @Test
     void 프로필을_수정하면_전체_값을_바꾸고_사진_URL을_비우면_사진을_지운다() throws Exception {
         // given
         sellerProfileRepository.saveAndFlush(SellerProfile.register(
@@ -214,6 +237,15 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 판매자 승인을 받은 회원이 로그인하면 받는 토큰 (#212). 판매자 여부는 토큰 권한으로만 판단한다
+    private DataIntegrityViolationException catchViolation(SellerProfile profile) {
+        try {
+            sellerProfileRepository.saveAndFlush(profile);
+        } catch (DataIntegrityViolationException e) {
+            return e;
+        }
+        throw new AssertionError("유니크 제약 위반이 발생해야 합니다.");
+    }
+
     private MockHttpServletRequestBuilder withToken(MockHttpServletRequestBuilder request) {
         return request.header(HttpHeaders.AUTHORIZATION, tokens.bearer(memberId, "BUYER", "SELLER"))
                 .contentType(MediaType.APPLICATION_JSON);
