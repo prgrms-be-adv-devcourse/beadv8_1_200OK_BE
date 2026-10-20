@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -48,6 +49,18 @@ public class SellerShippingSettingService {
             settings.put(sellerId, policy == null ? defaultSetting : toSetting(policy));
         }
         return settings;
+    }
+
+    /**
+     * 판매자 한 명의 배송 설정을 조회한다. 설정을 등록하지 않았으면 기본값이다.
+     *
+     * @throws IllegalArgumentException 판매자 ID가 없거나, 조회한 설정 값이 잘못되었으면
+     */
+    public SellerShippingSetting getSetting(Long sellerId) {
+        if (sellerId == null) {
+            throw new IllegalArgumentException("판매자 ID는 필수입니다.");
+        }
+        return getSettings(List.of(sellerId)).get(sellerId);
     }
 
     private SellerShippingSetting toSetting(SellerShippingPolicy policy) {
