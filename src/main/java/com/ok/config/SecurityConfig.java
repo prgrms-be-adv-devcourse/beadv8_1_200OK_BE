@@ -55,9 +55,7 @@ public class SecurityConfig {
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/categories", TokenUse.IGNORED),
-            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews", TokenUse.IGNORED),
-            // 저장하지 않는 배송비·도착 예정일 계산이라 로그인 전에도 쓴다
-            new PublicEndpoint(HttpMethod.POST, "/api/v1/shipments/fee-quotes", TokenUse.IGNORED)
+            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews", TokenUse.IGNORED)
     );
 
     /**
