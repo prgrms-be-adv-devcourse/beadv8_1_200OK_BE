@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import static com.ok.delivery.fixture.ShipmentFixture.BUYER_ID;
 import static com.ok.delivery.fixture.ShipmentFixture.NOW;
 import static com.ok.delivery.fixture.ShipmentFixture.address;
 import static com.ok.delivery.fixture.ShipmentFixture.item;
@@ -30,6 +31,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class ShipmentTest {
+
+    private static final DeliveryDateRange NEW_ARRIVAL = new DeliveryDateRange(LocalDate.of(2026, 10, 14), LocalDate.of(2026, 10, 16));
 
     /**
      * 상태별로 허용된 전이. 상태 전이 다이어그램의 화살표와 1:1로 대응한다.
@@ -102,6 +105,17 @@ class ShipmentTest {
     }
 
     @Test
+    void 구매자_ID가_없으면_생성할_수_없다() {
+        // given
+        var sut = validBuilder().buyerId(null);
+
+        // when & then
+        assertThatThrownBy(sut::build)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("buyerId는 필수입니다.");
+    }
+
+    @Test
     void 상품_항목이_없으면_생성할_수_없다() {
         // when & then
         assertThatThrownBy(ShipmentFixture::shipment)
@@ -165,6 +179,7 @@ class ShipmentTest {
     private static Shipment.ShipmentBuilder validBuilder() {
         return Shipment.builder()
                 .orderId(1L)
+                .buyerId(BUYER_ID)
                 .sellerId(10L)
                 .address(address())
                 .regionGroup("GENERAL")
@@ -421,27 +436,67 @@ class ShipmentTest {
     }
 
     @Test
-    void 상품_준비_중에는_배송지를_변경할_수_있다() {
+    void 승인된_배송지_변경을_반영하면_배송지_지역_도착_예정일이_바뀌고_추가_운임_기준에_안내_금액이_더해진다() {
         // given
-        Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
+        Shipment sut = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
+        ShipmentAddressChangeRequest request = sut.requestAddressChange(otherAddress(), 3_000, NOW);
+        request.approve(NOW);
 
         // when
-        sut.changeAddress(otherAddress());
+        sut.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL);
 
         // then
-        assertThat(sut.getAddress()).isEqualTo(otherAddress());
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getAddress()).isEqualTo(otherAddress());
+            softly.assertThat(sut.getRegionGroup()).isEqualTo("JEJU_MAIN");
+            softly.assertThat(sut.getRegionSurcharge()).isEqualTo(3_000);
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(3_000);
+            softly.assertThat(sut.getEstimatedDeliveryStart()).isEqualTo(NEW_ARRIVAL.start());
+            softly.assertThat(sut.getEstimatedDeliveryEnd()).isEqualTo(NEW_ARRIVAL.end());
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.PREPARING);
+        });
     }
 
-    @ParameterizedTest
-    @MethodSource("statusesExceptPreparing")
-    void 상품_준비가_아니면_배송지를_변경할_수_없다(ShipmentStatus status) {
+    @Test
+    void 승인된_변경_뒤에_다시_요청하면_이미_안내한_금액을_뺀_차액만_안내한다() {
         // given
-        Shipment sut = shipmentIn(status);
+        Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
+        ShipmentAddressChangeRequest first = shipment.requestAddressChange(otherAddress(), 3_000, NOW);
+        first.approve(NOW);
+        shipment.applyAddressChange(first, "JEJU_MAIN", NEW_ARRIVAL);
+
+        // when
+        ShipmentAddressChangeRequest sut = shipment.requestAddressChange(address(), 5_000, NOW);
+
+        // then
+        assertThat(sut.getAdditionalFeeNotice()).isEqualTo(2_000);
+    }
+
+    @Test
+    void 승인되지_않은_요청은_반영할_수_없다() {
+        // given
+        Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
+        ShipmentAddressChangeRequest request = shipment.requestAddressChange(otherAddress(), 0, NOW);
 
         // when & then
-        assertThatThrownBy(() -> sut.changeAddress(otherAddress()))
+        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("이 shipment의 승인된 배송지 변경 요청이 아닙니다. requestId=null");
+    }
+
+    @Test
+    void 출고된_뒤에는_배송지_변경을_반영할_수_없다() {
+        // given
+        Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
+        ShipmentAddressChangeRequest request = shipment.requestAddressChange(otherAddress(), 0, NOW);
+        request.approve(NOW);
+        shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
+
+        // when & then
+        assertThatThrownBy(() -> shipment.applyAddressChange(request, "JEJU_MAIN", NEW_ARRIVAL))
                 .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.ADDRESS_CHANGE_NOT_ALLOWED));
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
     }
 
     @Test

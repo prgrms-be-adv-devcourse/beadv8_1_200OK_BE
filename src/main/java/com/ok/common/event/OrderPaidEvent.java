@@ -14,12 +14,14 @@ import java.util.Set;
  * 배송은 주문을 따로 조회하지 않으므로 shipment에 필요한 결제 시점 값을 모두 담는다.
  *
  * @param orderId         주문 ID
+ * @param buyerId         구매자 회원 ID. 배송이 배송지 변경 요청의 본인 확인에 쓴다
  * @param paidAt          결제 완료 시각(앱 시간대 Asia/Seoul 기준, {@code Clock}으로 얻은 값). 배송의 출고·도착 예정일 계산 기준
  * @param shippingAddress 결제 시점에 확정된 배송지
  * @param sellerOrders    판매자별 상품과 배송비. 판매자 하나가 shipment(송장) 하나가 된다
  */
 public record OrderPaidEvent(
         Long orderId,
+        Long buyerId,
         LocalDateTime paidAt,
         ShippingAddress shippingAddress,
         List<PaidSellerOrder> sellerOrders
@@ -27,6 +29,7 @@ public record OrderPaidEvent(
 
     public OrderPaidEvent {
         requireNonNull(orderId, "orderId는 필수입니다.");
+        requireNonNull(buyerId, "buyerId는 필수입니다.");
         requireNonNull(paidAt, "paidAt은 필수입니다.");
         requireNonNull(shippingAddress, "shippingAddress는 필수입니다.");
         if (sellerOrders == null || sellerOrders.isEmpty()) {

@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
  * PREPARING → CANCELLED
  * </pre>
  *
- * <p>배송비와 도착 예정일은 결제 시점 값으로 고정한다. {@code address}는 현재 배송지라
+ * <p>배송비는 결제 시점 값으로 고정한다. {@code address}, 지역 그룹, 도착 예정일은 현재 배송지 기준이라
  * 배송지 변경이 승인되면 바뀌고, 주문에 확정된 배송지는 바뀌지 않는다.
  */
 @Entity
@@ -53,6 +53,9 @@ public class Shipment extends BaseTime {
 
     @Column(name = "order_id", nullable = false)
     private Long orderId;
+
+    @Column(name = "buyer_id", nullable = false)
+    private Long buyerId;
 
     @Column(name = "seller_id", nullable = false)
     private Long sellerId;
@@ -82,6 +85,8 @@ public class Shipment extends BaseTime {
     @Column(name = "charged_shipping_fee", nullable = false)
     private int chargedShippingFee;
 
+    // 결제 때 낸 추가 운임에 승인된 배송지 변경의 안내 금액을 더한 값이다. 다음 변경 요청은 이 값과의 차액만 안내한다.
+    // 안내 금액은 판매자가 직접 받으므로 chargedShippingFee(시스템이 받은 금액)에는 더하지 않는다
     @Column(name = "region_surcharge", nullable = false)
     private int regionSurcharge;
 
@@ -125,6 +130,7 @@ public class Shipment extends BaseTime {
     @Builder
     private Shipment(
             Long orderId,
+            Long buyerId,
             Long sellerId,
             Address address,
             String regionGroup,
@@ -137,6 +143,7 @@ public class Shipment extends BaseTime {
             List<ShipmentItem> items
     ) {
         requireNonNull(orderId, "orderId는 필수입니다.");
+        requireNonNull(buyerId, "buyerId는 필수입니다.");
         requireNonNull(sellerId, "sellerId는 필수입니다.");
         requireNonNull(address, "배송지는 필수입니다.");
         requireText(regionGroup, "지역 그룹은 필수입니다.");
@@ -153,6 +160,7 @@ public class Shipment extends BaseTime {
             throw new IllegalArgumentException("상품 항목은 1개 이상이어야 합니다.");
         }
         this.orderId = orderId;
+        this.buyerId = buyerId;
         this.sellerId = sellerId;
         this.status = ShipmentStatus.PREPARING;
         this.address = address;
@@ -269,16 +277,29 @@ public class Shipment extends BaseTime {
     }
 
     /**
-     * 배송지 변경 요청이 승인되면 현재 배송지를 바꾼다. 상태는 그대로다.
+     * 승인된 배송지 변경 요청을 반영해 현재 배송지, 지역 그룹, 도착 예정일을 바꾼다. 상태는 그대로다.
+     * 추가 운임 기준에는 요청의 안내 금액을 더한다. 다음 변경 요청이 이미 안내한 금액을 다시 안내하지 않게 하기 위해서다.
      *
-     * <p>지역 그룹과 도착 예정일 갱신은 승인 이슈에서 추가한다.
+     * <p>요청 승인({@link ShipmentAddressChangeRequest#approve})은 별도 애그리거트라 서비스가 같은 트랜잭션에서 먼저 한다.
      *
-     * @throws RestApiException {@code PREPARING}이 아니면(송장 발행 후, 취소) {@code ADDRESS_CHANGE_NOT_ALLOWED}
+     * @param regionGroup 요청 배송지의 지역 그룹 코드
+     * @param arrival     요청 배송지 기준으로 다시 계산한 도착 예정일 범위
+     * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE}
+     * @throws IllegalArgumentException 이 shipment의 승인된 요청이 아니거나, 지역 그룹이나 도착 예정일이 없으면
      */
-    public void changeAddress(Address newAddress) {
-        requireAddressChangeable();
-        requireNonNull(newAddress, "배송지는 필수입니다.");
-        this.address = newAddress;
+    public void applyAddressChange(ShipmentAddressChangeRequest request, String regionGroup, DeliveryDateRange arrival) {
+        requireStatus(ShipmentStatus.PREPARING);
+        requireNonNull(request, "배송지 변경 요청은 필수입니다.");
+        if (!request.getShipmentId().equals(getId()) || request.getStatus() != AddressChangeStatus.APPROVED) {
+            throw new IllegalArgumentException("이 shipment의 승인된 배송지 변경 요청이 아닙니다. requestId=" + request.getId());
+        }
+        requireText(regionGroup, "지역 그룹은 필수입니다.");
+        requireNonNull(arrival, "도착 예정일은 필수입니다.");
+        this.address = request.getRequestedAddress();
+        this.regionGroup = regionGroup;
+        this.regionSurcharge = Math.addExact(this.regionSurcharge, request.getAdditionalFeeNotice());
+        this.estimatedDeliveryStart = arrival.start();
+        this.estimatedDeliveryEnd = arrival.end();
     }
 
     /**
@@ -287,10 +308,9 @@ public class Shipment extends BaseTime {
      * <p>shipment당 {@code PENDING} 1건 확인은 다른 행을 봐야 해서 이 메서드가 하지 않는다.
      * 서비스가 shipment 행 잠금 아래에서 확인한다.
      *
-     * <p>추가 운임 안내 금액은 요청 배송지의 추가 운임에서 결제 때 낸 추가 운임을 뺀 값이다. 결제 때 낸 운임은 이미 받았으므로 차액만 안내한다.
-     * 추가 운임이 줄어도 돌려주지 않으므로 0원이다.
-     * 요청 배송지는 요청 시점의 지역 정책으로 판정하고, 빼는 값은 결제 때 실제로 낸 추가 운임이다.
-     * 결제 뒤 우편번호 설정이 바뀌어도 이미 받은 금액 기준으로 차액을 안내하기 위해서다.
+     * <p>추가 운임 안내 금액은 요청 배송지의 추가 운임에서 {@code regionSurcharge}(결제 때 낸 금액과 승인된 변경의 안내 금액 합)를 뺀 값이다.
+     * 이미 받았거나 안내한 운임은 다시 받지 않으므로 차액만 안내한다. 추가 운임이 줄어도 돌려주지 않으므로 0원이다.
+     * 요청 배송지는 요청 시점의 지역 정책으로 판정한다. 결제 뒤 우편번호 설정이 바뀌어도 이미 받은 금액 기준으로 차액을 안내하기 위해서다.
      *
      * @param requestedRegionSurcharge 요청 배송지의 지역 판정 결과에 따른 추가 운임
      * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED}
