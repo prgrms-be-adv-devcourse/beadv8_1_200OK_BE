@@ -5,6 +5,7 @@ import com.ok.common.event.payload.PaidOrderItem;
 import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
 import com.ok.config.JpaConfig;
+import com.ok.delivery.repository.ShipmentQueryRepository;
 import com.ok.product.SellerShippingPolicyProvider;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
@@ -33,6 +34,11 @@ class DeliveryModuleTest {
     // mock은 빈 Map을 돌려줘 모든 판매자가 기본값으로 계산된다. 상품 쪽 실제 구현도 저장소가 생기기 전까지 같은 동작이다
     @MockitoBean
     SellerShippingPolicyProvider sellerShippingPolicyProvider;
+
+    // 모듈 테스트는 배송 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.
+    // 이 테스트는 결제 완료 이벤트 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다
+    @MockitoBean
+    ShipmentQueryRepository shipmentQueryRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
