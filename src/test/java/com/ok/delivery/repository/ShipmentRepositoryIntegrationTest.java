@@ -75,6 +75,7 @@ class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
         // given
         Shipment shipment = Shipment.builder()
                 .orderId(1L)
+                .buyerId(100L)
                 .sellerId(10L)
                 .address(address())
                 .regionGroup("GENERAL")

@@ -4,6 +4,9 @@ public enum MediaPurpose {
 	// NOTE
 	// 모듈 담당 하시는분 필요한 enum 만들어서 쓰세요.
 	// 값으로 버킷의 매칭되는 디렉토리에 미디어 리소스 저장함
+	// ******************************************
+	// !!! 중요: 상수를 추가하면 API용 service/dto/MediaPurposeCode에도 같은 이름으로 추가해야 함
+	// ******************************************
 	PRODUCT("product"),
 	PRODUCT_REVIEW("product_review"),
 	MEMBER_PROFILE("member_profile"),

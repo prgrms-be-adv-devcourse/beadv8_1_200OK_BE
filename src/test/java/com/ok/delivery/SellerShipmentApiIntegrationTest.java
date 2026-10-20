@@ -19,8 +19,8 @@ import org.springframework.web.context.WebApplicationContext;
 
 import java.util.Map;
 
+import static com.ok.delivery.fixture.ShipmentFixture.addressChangeCommand;
 import static com.ok.delivery.fixture.ShipmentFixture.item;
-import static com.ok.delivery.fixture.ShipmentFixture.otherAddressCommand;
 import static com.ok.delivery.fixture.ShipmentFixture.shipment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -101,7 +101,7 @@ class SellerShipmentApiIntegrationTest extends AbstractIntegrationTest {
     void 송장을_등록하면_대기_중인_배송지_변경_요청이_고정_문구로_거절된다() throws Exception {
         // given
         Long shipmentId = saveShipment(1L, SELLER_ID, 1L);
-        Long requestId = addressChangeService.request(shipmentId, otherAddressCommand()).getId();
+        Long requestId = addressChangeService.request(addressChangeCommand(shipmentId)).requestId();
 
         // when
         dispatch(SELLER_ID, shipmentId, DISPATCH_BODY).andExpect(status().isOk());

@@ -18,8 +18,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static com.ok.delivery.fixture.ShipmentFixture.addressChangeCommand;
 import static com.ok.delivery.fixture.ShipmentFixture.item;
-import static com.ok.delivery.fixture.ShipmentFixture.otherAddressCommand;
 import static com.ok.delivery.fixture.ShipmentFixture.shipment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -53,7 +53,7 @@ class ShipmentAddressChangeServiceConcurrencyIntegrationTest extends AbstractInt
         Callable<String> request = () -> {
             start.await();
             try {
-                sut.request(shipmentId, otherAddressCommand());
+                sut.request(addressChangeCommand(shipmentId));
                 return "SUCCESS";
             } catch (RestApiException e) {
                 return e.getErrorCode().name();
@@ -82,7 +82,7 @@ class ShipmentAddressChangeServiceConcurrencyIntegrationTest extends AbstractInt
     @Test
     void 없는_shipment에는_요청할_수_없다() {
         // when & then
-        assertThatThrownBy(() -> sut.request(Long.MAX_VALUE, otherAddressCommand()))
+        assertThatThrownBy(() -> sut.request(addressChangeCommand(Long.MAX_VALUE)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
     }

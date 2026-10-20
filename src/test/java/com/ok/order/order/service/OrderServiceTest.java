@@ -22,10 +22,13 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
+
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
@@ -228,5 +231,63 @@ class OrderServiceTest {
         // then
         assertThat(shouldReleaseStock).isFalse();
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+    }
+
+    // ---------- 결제 이벤트의 주문이 없을 때 ----------
+
+    @Test
+    void 결제_이벤트의_주문이_없으면_예외_없이_넘어가고_재고를_풀지_않는다() {
+        // given
+        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+
+        // when & then (예외를 던지면 이벤트가 계속 재처리됨)
+        assertThatCode(() -> sut.completePayment(10L)).doesNotThrowAnyException();
+        assertThat(sut.failPayment(10L)).isFalse();
+        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+    }
+
+    // ---------- 배송 상태 반영 ----------
+
+    @Test
+    void 배송이_시작되면_해당_판매자의_상품이_배송_중이_된다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.startShipping(10L, 100L);
+
+        // then
+        assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+    }
+
+    @Test
+    void 배송이_완료되면_이벤트의_배송_완료_시각을_저장한다() {
+        // given
+        LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 20, 15, 0);
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completeDelivery(10L, 100L, deliveredAt);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.DELIVERED);
+            softly.assertThat(order.getAllItems().get(0).getDeliveredAt()).isEqualTo(deliveredAt);
+        });
+    }
+
+    @Test
+    void 배송_이벤트의_주문이_없으면_예외_없이_넘어간다() {
+        // given
+        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatCode(() -> sut.startShipping(10L, 100L)).doesNotThrowAnyException();
+        assertThatCode(() -> sut.completeDelivery(10L, 100L, LocalDateTime.of(2026, 10, 20, 15, 0)))
+                .doesNotThrowAnyException();
     }
 }

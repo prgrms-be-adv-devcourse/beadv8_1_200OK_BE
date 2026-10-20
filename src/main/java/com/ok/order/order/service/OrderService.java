@@ -16,8 +16,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -66,7 +68,12 @@ public class OrderService {
     // 결제 완료
     @Transactional
     public void completePayment(Long orderId) {
-        Order order = findOrder(orderId);
+        Optional<Order> found = orderRepository.findById(orderId);
+        if (found.isEmpty()) {
+            log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 완료 대상 주문이 없습니다. orderId={}", orderId);
+            return;
+        }
+        Order order = found.get();
 
         if (!order.isPaymentPending()) {
             if (order.isPaymentFailed()) {
@@ -84,7 +91,12 @@ public class OrderService {
 
     @Transactional
     public boolean failPayment(Long orderId) {
-        Order order = findOrder(orderId);
+        Optional<Order> found = orderRepository.findById(orderId);
+        if (found.isEmpty()) {
+            log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 실패 대상 주문이 없습니다. orderId={}", orderId);
+            return false;
+        }
+        Order order = found.get();
 
         if (order.isPaymentPending()) {
             order.markPaymentFailed();
@@ -101,11 +113,6 @@ public class OrderService {
         return false;
     }
 
-    private Order findOrder(Long orderId) {
-        return orderRepository.findById(orderId)
-                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
-    }
-
     private List<Long> orderedOptionIds(Order order) {
         List<Long> optionIds = new ArrayList<>();
         for (OrderItem item : order.getAllItems()) {
@@ -113,5 +120,35 @@ public class OrderService {
         }
         return optionIds;
     }
-}
 
+    // 배송 시작: 해당 판매자 묶음의 배송 준비 상품을 배송 중으로
+    @Transactional
+    public void startShipping(Long orderId, Long sellerId) {
+        Optional<Order> order = orderRepository.findById(orderId);
+        if (order.isEmpty()) {
+            // 예외를 던지면 이벤트가 계속 재처리되므로 로그만 남김
+            log.warn("[ORDER_SHIPPING_ORDER_NOT_FOUND] 배송 시작 대상 주문이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
+            return;
+        }
+
+        int changed = order.get().markShipping(sellerId);
+        if (changed == 0) {
+            log.info("[ORDER_SHIPPING_IGNORED] 배송 중으로 바꿀 상품이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
+        }
+    }
+
+    // 배송 완료: 해당 판매자 묶음의 상품을 배송 완료로 + 배송 완료 시각 기록
+    @Transactional
+    public void completeDelivery(Long orderId, Long sellerId, LocalDateTime deliveredAt) {
+        Optional<Order> order = orderRepository.findById(orderId);
+        if (order.isEmpty()) {
+            log.warn("[ORDER_DELIVERY_ORDER_NOT_FOUND] 배송 완료 대상 주문이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
+            return;
+        }
+
+        int changed = order.get().markDelivered(sellerId, deliveredAt);
+        if (changed == 0) {
+            log.info("[ORDER_DELIVERY_IGNORED] 배송 완료로 바꿀 상품이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
+        }
+    }
+}

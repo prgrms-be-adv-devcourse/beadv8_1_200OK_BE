@@ -69,6 +69,7 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
         Shipment sut = shipments.get(0);
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
+            softly.assertThat(sut.getBuyerId()).isEqualTo(100L);
             softly.assertThat(sut.getSellerId()).isEqualTo(10L);
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.PREPARING);
             softly.assertThat(sut.getAddress().getRecipientPhone()).isEqualTo("01012345678");
@@ -196,7 +197,7 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
     void 배송지_검증에_실패하면_shipment를_만들지_않는다() {
         // given: 연락처가 숫자 10~11자리가 아니다
         AddressCommand address = new AddressCommand("홍길동", "12345", GENERAL_POSTAL_CODE, "주소", "상세 주소", null);
-        ShipmentCreateCommand command = new ShipmentCreateCommand(8L, PAID_AT, address, List.of(seller(10L, 0L, 801L)));
+        ShipmentCreateCommand command = new ShipmentCreateCommand(8L, 100L, PAID_AT, address, List.of(seller(10L, 0L, 801L)));
 
         // when & then
         assertThatThrownBy(() -> shipmentService.create(command))
@@ -221,7 +222,7 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
 
     private static ShipmentCreateCommand command(Long orderId, LocalDateTime paidAt, String postalCode, SellerShipmentCommand... sellers) {
         AddressCommand address = new AddressCommand("홍길동", "010-1234-5678", postalCode, "주소", "상세 주소", null);
-        return new ShipmentCreateCommand(orderId, paidAt, address, List.of(sellers));
+        return new ShipmentCreateCommand(orderId, 100L, paidAt, address, List.of(sellers));
     }
 
     private static SellerShipmentCommand seller(Long sellerId, Long regionSurcharge, Long... orderItemIds) {

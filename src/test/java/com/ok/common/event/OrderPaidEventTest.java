@@ -28,7 +28,7 @@ class OrderPaidEventTest {
         List<PaidSellerOrder> sellerOrders = new ArrayList<>(List.of(sellerOrder(10L, 100L)));
 
         // when
-        OrderPaidEvent sut = new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders);
+        OrderPaidEvent sut = new OrderPaidEvent(1L, 2L, PAID_AT, ADDRESS, sellerOrders);
         sellerOrders.add(sellerOrder(20L, 200L));
 
         // then
@@ -37,18 +37,19 @@ class OrderPaidEventTest {
 
     @ParameterizedTest
     @MethodSource("필수값이_빠진_이벤트")
-    void 필수값이_없으면_예외가_발생한다(Long orderId, LocalDateTime paidAt, ShippingAddress address, String message) {
+    void 필수값이_없으면_예외가_발생한다(Long orderId, Long buyerId, LocalDateTime paidAt, ShippingAddress address, String message) {
         // when & then
-        assertThatThrownBy(() -> new OrderPaidEvent(orderId, paidAt, address, List.of(sellerOrder(10L, 100L))))
+        assertThatThrownBy(() -> new OrderPaidEvent(orderId, buyerId, paidAt, address, List.of(sellerOrder(10L, 100L))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
     }
 
     static Stream<Arguments> 필수값이_빠진_이벤트() {
         return Stream.of(
-                Arguments.of(null, PAID_AT, ADDRESS, "orderId는 필수입니다."),
-                Arguments.of(1L, null, ADDRESS, "paidAt은 필수입니다."),
-                Arguments.of(1L, PAID_AT, null, "shippingAddress는 필수입니다.")
+                Arguments.of(null, 2L, PAID_AT, ADDRESS, "orderId는 필수입니다."),
+                Arguments.of(1L, null, PAID_AT, ADDRESS, "buyerId는 필수입니다."),
+                Arguments.of(1L, 2L, null, ADDRESS, "paidAt은 필수입니다."),
+                Arguments.of(1L, 2L, PAID_AT, null, "shippingAddress는 필수입니다.")
         );
     }
 
@@ -56,7 +57,7 @@ class OrderPaidEventTest {
     @MethodSource("비어_있는_판매자_묶음")
     void 판매자_묶음이_없으면_예외가_발생한다(List<PaidSellerOrder> sellerOrders) {
         // when & then
-        assertThatThrownBy(() -> new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders))
+        assertThatThrownBy(() -> new OrderPaidEvent(1L, 2L, PAID_AT, ADDRESS, sellerOrders))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("sellerOrders는 1개 이상이어야 합니다.");
     }
@@ -71,7 +72,7 @@ class OrderPaidEventTest {
         List<PaidSellerOrder> sellerOrders = List.of(sellerOrder(10L, 100L), sellerOrder(10L, 200L));
 
         // when & then
-        assertThatThrownBy(() -> new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders))
+        assertThatThrownBy(() -> new OrderPaidEvent(1L, 2L, PAID_AT, ADDRESS, sellerOrders))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("sellerId가 중복되었습니다: 10");
     }
@@ -82,7 +83,7 @@ class OrderPaidEventTest {
         List<PaidSellerOrder> sellerOrders = List.of(sellerOrder(10L, 100L), sellerOrder(20L, 100L));
 
         // when & then
-        assertThatThrownBy(() -> new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders))
+        assertThatThrownBy(() -> new OrderPaidEvent(1L, 2L, PAID_AT, ADDRESS, sellerOrders))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("orderItemId가 중복되었습니다: 100");
     }
@@ -94,7 +95,7 @@ class OrderPaidEventTest {
         List<PaidSellerOrder> sellerOrders = List.of(new PaidSellerOrder(10L, 3_000L, 50_000L, 0L, List.of(item, item)));
 
         // when & then
-        assertThatThrownBy(() -> new OrderPaidEvent(1L, PAID_AT, ADDRESS, sellerOrders))
+        assertThatThrownBy(() -> new OrderPaidEvent(1L, 2L, PAID_AT, ADDRESS, sellerOrders))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("orderItemId가 중복되었습니다: 100");
     }

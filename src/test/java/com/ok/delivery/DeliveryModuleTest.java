@@ -76,7 +76,7 @@ class DeliveryModuleTest {
 
     private static OrderPaidEvent orderPaidEvent(Long orderId, Long firstOrderItemId, Long secondOrderItemId) {
         ShippingAddress address = new ShippingAddress("홍길동", "010-1234-5678", "06236", "주소", "상세 주소", null);
-        return new OrderPaidEvent(orderId, LocalDateTime.of(2026, 10, 19, 10, 0), address, List.of(
+        return new OrderPaidEvent(orderId, 1L, LocalDateTime.of(2026, 10, 19, 10, 0), address, List.of(
                 new PaidSellerOrder(10L, 3_000L, 50_000L, 0L,
                         List.of(new PaidOrderItem(orderId * 10 + firstOrderItemId, "상품", null, 1, 10_000L))),
                 new PaidSellerOrder(20L, 3_000L, 50_000L, 0L,
