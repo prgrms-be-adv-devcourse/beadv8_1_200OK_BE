@@ -18,7 +18,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 주문 모듈이 호출하는 내부 잔액 API를 확인한다. test 프로필이라 @Profile({"dev", "test"}) 컨트롤러가 등록된다.
+// 주문 모듈이 호출하는 내부 잔액 API를 확인한다. MockMvc 요청은 127.0.0.1에서 오므로 loopback 검사(#204)를 통과한다.
 // 응답 필드 이름은 주문 WalletApiClient가 받는 형식(memberId, balance)과 같아야 한다.
 class WalletInternalApiIntegrationTest extends AbstractIntegrationTest {
     private static final Long MEMBER_ID = 9_201L;
