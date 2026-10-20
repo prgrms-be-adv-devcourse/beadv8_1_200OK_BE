@@ -172,13 +172,14 @@ class ShipmentServiceTest {
     @Test
     void 배송_완료를_반영하면_완료_시각으로_배송_완료_이벤트를_발행한다() {
         // given
-        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.SHIPPING), 1L)));
+        // shipment·주문·판매자 id를 서로 다르게 두어 인자 순서가 바뀌면 잡히게 한다 (fixture는 주문 1, 판매자 10)
+        given(shipmentRepository.findByIdForUpdate(5L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.SHIPPING), 5L)));
 
         // when
-        shipmentService.deliver(1L);
+        shipmentService.deliver(5L);
 
         // then
-        then(deliveryEventPublisher).should().publishShipmentDelivered(1L, 1L, 10L, FRIDAY_NOON);
+        then(deliveryEventPublisher).should().publishShipmentDelivered(5L, 1L, 10L, FRIDAY_NOON);
     }
 
     @Test

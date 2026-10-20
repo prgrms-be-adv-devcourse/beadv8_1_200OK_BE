@@ -24,7 +24,7 @@ public class SpringDeliveryEventPublisher implements DeliveryEventPublisher {
 
     @Override
     public void publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
-                                  String carrier, String trackingNumber, LocalDateTime shippedAt) {
+                                          String carrier, String trackingNumber, LocalDateTime shippedAt) {
         publish(new ShipmentDispatchedEvent(shipmentId, orderId, sellerId, carrier, trackingNumber, shippedAt));
     }
 

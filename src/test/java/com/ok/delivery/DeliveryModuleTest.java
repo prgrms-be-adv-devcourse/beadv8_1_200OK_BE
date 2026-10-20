@@ -1,11 +1,18 @@
 package com.ok.delivery;
 
 import com.ok.common.event.OrderPaidEvent;
+import com.ok.common.event.ShipmentDeliveredEvent;
+import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.common.event.payload.PaidOrderItem;
 import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
 import com.ok.config.JpaConfig;
+import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.fixture.ShipmentFixture;
 import com.ok.delivery.repository.ShipmentQueryRepository;
+import com.ok.delivery.repository.ShipmentRepository;
+import com.ok.delivery.service.ShipmentService;
+import com.ok.delivery.service.dto.ShipmentDispatchCommand;
 import com.ok.product.SellerShippingPolicyProvider;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
@@ -24,6 +31,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 @ApplicationModuleTest
 // 지역 판정 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
@@ -36,9 +44,15 @@ class DeliveryModuleTest {
     SellerShippingPolicyProvider sellerShippingPolicyProvider;
 
     // 모듈 테스트는 배송 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.
-    // 이 테스트는 결제 완료 이벤트 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다
+    // 이 테스트는 이벤트 수신·발행 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다
     @MockitoBean
     ShipmentQueryRepository shipmentQueryRepository;
+
+    @Autowired
+    ShipmentService shipmentService;
+
+    @Autowired
+    ShipmentRepository shipmentRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -78,6 +92,46 @@ class DeliveryModuleTest {
 
         // then
         assertThat(countShipments(orderId)).isEqualTo(2);
+    }
+
+    @Test
+    void 출고하면_송장_정보를_담은_배송_시작_이벤트를_발행한다(Scenario scenario) {
+        // given
+        Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.PREPARING)).getId();
+
+        // when & then
+        scenario.stimulate(() -> shipmentService.dispatch(new ShipmentDispatchCommand(shipmentId, 10L, "CJ_LOGISTICS", "1234567890")))
+                .andWaitForEventOfType(ShipmentDispatchedEvent.class)
+                .matching(event -> event.shipmentId().equals(shipmentId))
+                .toArriveAndVerify(event -> {
+                    assertThat(event).isNotNull();
+                    assertSoftly(softly -> {
+                        softly.assertThat(event.orderId()).isEqualTo(1L);
+                        softly.assertThat(event.sellerId()).isEqualTo(10L);
+                        softly.assertThat(event.carrier()).isEqualTo("CJ_LOGISTICS");
+                        softly.assertThat(event.trackingNumber()).isEqualTo("1234567890");
+                        softly.assertThat(event.shippedAt()).isNotNull();
+                    });
+                });
+    }
+
+    @Test
+    void 배송_완료를_반영하면_배송_완료_이벤트를_발행한다(Scenario scenario) {
+        // given
+        Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.SHIPPING)).getId();
+
+        // when & then
+        scenario.stimulate(() -> shipmentService.deliver(shipmentId))
+                .andWaitForEventOfType(ShipmentDeliveredEvent.class)
+                .matching(event -> event.shipmentId().equals(shipmentId))
+                .toArriveAndVerify(event -> {
+                    assertThat(event).isNotNull();
+                    assertSoftly(softly -> {
+                        softly.assertThat(event.orderId()).isEqualTo(1L);
+                        softly.assertThat(event.sellerId()).isEqualTo(10L);
+                        softly.assertThat(event.deliveredAt()).isNotNull();
+                    });
+                });
     }
 
     private static OrderPaidEvent orderPaidEvent(Long orderId, Long firstOrderItemId, Long secondOrderItemId) {

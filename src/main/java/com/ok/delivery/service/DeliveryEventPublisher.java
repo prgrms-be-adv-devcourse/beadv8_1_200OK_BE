@@ -16,7 +16,7 @@ public interface DeliveryEventPublisher {
      * @param shippedAt 송장 등록(배송 시작) 시각
      */
     void publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
-                           String carrier, String trackingNumber, LocalDateTime shippedAt);
+                                   String carrier, String trackingNumber, LocalDateTime shippedAt);
 
     /**
      * 배송 완료를 알린다. 주문은 이 이벤트로 판매자 묶음을 배송 완료로 바꾸고, 완료 시각을 자동 구매확정 기준으로 쓴다.
