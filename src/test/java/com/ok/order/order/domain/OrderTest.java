@@ -110,4 +110,38 @@ class OrderTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.THIRD_PARTY_CONSENT_REQUIRED));
     }
+
+    @Test
+    void 결제가_완료되면_주문은_결제_완료_상품은_배송_준비가_된다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1), line(2L, 200L, 5_000L, 1)));
+
+        // when
+        sut.markPaid();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderStatus.PAID);
+            softly.assertThat(sut.getAllItems())
+                    .extracting(OrderItem::getStatus)
+                    .containsOnly(OrderItemStatus.PREPARING);
+        });
+    }
+
+    @Test
+    void 결제가_실패하면_주문과_상품_모두_결제_실패가_된다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+
+        // when
+        sut.markPaymentFailed();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            softly.assertThat(sut.getAllItems())
+                    .extracting(OrderItem::getStatus)
+                    .containsOnly(OrderItemStatus.PAYMENT_FAILED);
+        });
+    }
 }
