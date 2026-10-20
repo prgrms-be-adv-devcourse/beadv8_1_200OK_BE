@@ -2,6 +2,7 @@ package com.ok.member;
 
 import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
+import com.ok.common.media.MediaUrlResolver;
 import com.ok.config.JpaConfig;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
@@ -19,6 +20,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 
@@ -44,6 +46,11 @@ public class MemberModuleTest {
 
     @Autowired
     SellerApplicationRepository sellerApplicationRepository;
+
+    // 모듈 테스트는 member 밖(common 모듈)의 MediaUrlResolver를 걸러 내, 판매자 프로필 서비스를 만들 수 없다.
+    // 이 테스트는 이벤트 발행만 확인하고 프로필 사진 URL 변환은 쓰지 않으므로 가짜로 둔다
+    @MockitoBean
+    MediaUrlResolver mediaUrlResolver;
 
     // 판매자 신청이 member를 외래키로 참조하므로 신청을 먼저 지운다
     @AfterEach
