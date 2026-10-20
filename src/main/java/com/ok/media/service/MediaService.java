@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
+import javax.imageio.spi.ImageReaderSpi;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -28,6 +29,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.UUID;
 
@@ -74,26 +76,40 @@ public class MediaService {
 	private BufferedImage decodeWithinResolutionLimit(MultipartFile file) throws IOException {
 		try (InputStream inputStream = file.getInputStream();
 			 ImageInputStream imageInputStream = ImageIO.createImageInputStream(inputStream)) {
-			Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInputStream);
-			if (!readers.hasNext()) {
-				throw new RestApiException(CommonErrorCode.BAD_REQUEST, "이미지 파일을 읽을 수 없습니다.");
-			}
-
-			ImageReader reader = readers.next();
+			ImageReader reader = findAllowedReader(imageInputStream);
 			try {
 				reader.setInput(imageInputStream, true, true);
 				if (!MediaPolicy.isDecodableResolution(reader.getWidth(0), reader.getHeight(0))) {
 					throw new RestApiException(
-							CommonErrorCode.CONTENT_TOO_LARGE,
+							MediaErrorCode.IMAGE_RESOLUTION_EXCEEDED,
 							"가로·세로 %dpx, 총 %d만 픽셀 이하의 이미지만 업로드할 수 있습니다."
 									.formatted(MediaPolicy.MAX_DECODE_DIMENSION, MediaPolicy.MAX_DECODE_PIXELS / 10_000)
 					);
 				}
 				return reader.read(0);
+			} catch (IOException e) {
+				// 헤더나 픽셀 데이터가 깨진 파일, 사용자가 고칠 수 있는 입력 오류라 500이 아닌 400으로 응답한다
+				throw new RestApiException(MediaErrorCode.UNREADABLE_IMAGE);
 			} finally {
 				reader.dispose();
 			}
 		}
+	}
+
+	// ImageIO는 Content-Type이 아니라 바이트로 리더를 고름
+	// 허용된 형식의 리더만 써서 사용자 파일을 읽는 디코더를 둘로 줄인다
+	private ImageReader findAllowedReader(ImageInputStream imageInputStream) {
+		Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInputStream);
+		while (readers.hasNext()) {
+			ImageReader reader = readers.next();
+			ImageReaderSpi provider = reader.getOriginatingProvider();
+			if (provider != null && provider.getMIMETypes() != null
+					&& Arrays.stream(provider.getMIMETypes()).anyMatch(MediaPolicy::isAllowedImageContentType)) {
+				return reader;
+			}
+			reader.dispose();
+		}
+		throw new RestApiException(MediaErrorCode.UNREADABLE_IMAGE);
 	}
 
 	public MediaInfo upload(Long memberId, MediaPurposeCode purposeCode, MultipartFile file) {

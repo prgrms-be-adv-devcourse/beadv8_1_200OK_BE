@@ -36,6 +36,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.zip.CRC32;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,28 +128,54 @@ class MediaServiceTest {
 	}
 
 	@Test
-	void 이미지_타입이지만_실제_이미지가_아니면_BAD_REQUEST_예외가_발생한다() {
+	void 이미지_타입이지만_실제_이미지가_아니면_UNREADABLE_IMAGE_예외가_발생한다() {
 		// given
 		MockMultipartFile file = new MockMultipartFile("file", "fake.png", "image/png", "not an image".getBytes());
 
 		// when & then
 		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
-				.isInstanceOf(RestApiException.class)
-				.extracting("errorCode").isEqualTo(CommonErrorCode.BAD_REQUEST);
+				.isInstanceOfSatisfying(RestApiException.class,
+						e -> assertThat(e.getErrorCode()).isEqualTo(MediaErrorCode.UNREADABLE_IMAGE));
 		then(s3Client).shouldHaveNoInteractions();
 		then(mediaRepository).should(never()).save(any());
 	}
 
 	@Test
-	void 헤더의_해상도가_한도를_넘으면_디코딩하지_않고_CONTENT_TOO_LARGE_예외가_발생한다() throws IOException {
+	void 이미지_데이터가_손상되었으면_UNREADABLE_IMAGE_예외가_발생한다() throws IOException {
 		// given
-		// 실제 픽셀은 1x1이라 디코딩을 시도하면 IIOException(INTERNAL_ERROR)이 난다. CONTENT_TOO_LARGE면 디코딩 전에 거절된 것이다
+		MockMultipartFile file = truncatedPng();
+
+		// when & then
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
+				.isInstanceOfSatisfying(RestApiException.class,
+						e -> assertThat(e.getErrorCode()).isEqualTo(MediaErrorCode.UNREADABLE_IMAGE));
+		then(s3Client).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
+	}
+
+	@Test
+	void PNG로_선언했지만_내용이_GIF이면_UNREADABLE_IMAGE_예외가_발생한다() throws IOException {
+		// given
+		MockMultipartFile file = imageFile("gif", "image/png");
+
+		// when & then
+		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
+				.isInstanceOfSatisfying(RestApiException.class,
+						e -> assertThat(e.getErrorCode()).isEqualTo(MediaErrorCode.UNREADABLE_IMAGE));
+		then(s3Client).shouldHaveNoInteractions();
+		then(mediaRepository).should(never()).save(any());
+	}
+
+	@Test
+	void 헤더의_해상도가_한도를_넘으면_디코딩하지_않고_IMAGE_RESOLUTION_EXCEEDED_예외가_발생한다() throws IOException {
+		// given
+		// 실제 픽셀은 1x1이라 디코딩을 시도하면 UNREADABLE_IMAGE가 난다. IMAGE_RESOLUTION_EXCEEDED면 디코딩 전에 거절된 것이다
 		MockMultipartFile file = pngWithHeaderResolution(50_000, 50_000);
 
 		// when & then
 		assertThatThrownBy(() -> mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file))
 				.isInstanceOfSatisfying(RestApiException.class,
-						e -> assertThat(e.getErrorCode()).isEqualTo(CommonErrorCode.CONTENT_TOO_LARGE));
+						e -> assertThat(e.getErrorCode()).isEqualTo(MediaErrorCode.IMAGE_RESOLUTION_EXCEEDED));
 		then(s3Client).shouldHaveNoInteractions();
 		then(mediaRepository).should(never()).save(any());
 	}
@@ -236,6 +263,21 @@ class MediaServiceTest {
 	}
 
 	@Test
+	void PNG로_선언했지만_내용이_JPEG이면_허용_형식이라_jpg로_저장된다() throws IOException {
+		// given
+		MockMultipartFile file = imageFile("jpg", "image/png");
+		stubSuccessfulUpload();
+
+		// when
+		mediaService.upload(MEMBER_ID, MediaPurposeCode.PRODUCT, file);
+
+		// then
+		ArgumentCaptor<PutObjectRequest> requestCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
+		then(s3Client).should().putObject(requestCaptor.capture(), any(RequestBody.class));
+		assertThat(requestCaptor.getValue().contentType()).isEqualTo("image/jpeg");
+	}
+
+	@Test
 	void mp4_영상을_업로드하면_원본_그대로_S3에_저장된다() {
 		// given
 		int size = 1024;
@@ -320,6 +362,15 @@ class MediaServiceTest {
 		}
 	}
 
+	// 실제 형식(format)과 선언한 Content-Type을 따로 정해, 형식을 속인 파일을 만든다
+	private static MockMultipartFile imageFile(String format, String contentType) throws IOException {
+		BufferedImage image = new BufferedImage(10, 10, BufferedImage.TYPE_INT_RGB);
+		try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+			ImageIO.write(image, format, out);
+			return new MockMultipartFile("file", "a.png", contentType, out.toByteArray());
+		}
+	}
+
 	// 1x1 PNG의 IHDR 가로·세로만 바꿔, 작은 파일로 큰 해상도를 선언하는 이미지(decompression bomb)를 흉내 낸다
 	private static MockMultipartFile pngWithHeaderResolution(int width, int height) throws IOException {
 		byte[] png = pngFile(1, 1).getBytes();
@@ -332,6 +383,14 @@ class MediaServiceTest {
 		crc.update(png, 12, 4 + 13);
 		buffer.putInt(29, (int) crc.getValue());
 		return new MockMultipartFile("file", "bomb.png", "image/png", png);
+	}
+
+	// 헤더는 온전해 리더가 PNG로 알아보지만, 픽셀 데이터(IDAT)가 중간에 끊긴 파일
+	private static MockMultipartFile truncatedPng() throws IOException {
+		byte[] png = pngFile(100, 100).getBytes();
+		// PNG 시그니처(8) + IHDR 청크(25) + IDAT 길이·타입(8) 뒤의 데이터를 4바이트만 남긴다
+		byte[] truncated = Arrays.copyOf(png, 8 + 25 + 8 + 4);
+		return new MockMultipartFile("file", "broken.png", "image/png", truncated);
 	}
 
 	private static MockMultipartFile mp4File(int size) {

@@ -8,6 +8,8 @@ import org.springframework.http.HttpStatus;
 @Getter
 @RequiredArgsConstructor
 public enum MediaErrorCode implements ErrorCode {
+	UNREADABLE_IMAGE(HttpStatus.BAD_REQUEST, "Unreadable image", "이미지 파일을 읽을 수 없습니다."),
+	IMAGE_RESOLUTION_EXCEEDED(HttpStatus.CONTENT_TOO_LARGE, "Image resolution exceeded", "이미지 해상도가 허용 한도를 초과했습니다."),
 	UPLOAD_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "Upload limit exceeded", "업로드 횟수를 초과했습니다. 잠시 후 다시 시도해 주세요."),
 	IMAGE_PROCESSING_BUSY(HttpStatus.SERVICE_UNAVAILABLE, "Image processing busy", "이미지 처리 요청이 많습니다. 잠시 후 다시 시도해 주세요."),
 	;
