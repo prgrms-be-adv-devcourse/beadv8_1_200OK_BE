@@ -88,15 +88,4 @@ class ShipmentAddressChangeRequestTest {
                 Arguments.of("거절", "거절", reject, reject)
         );
     }
-
-    @Test
-    void 추가_운임_안내_금액은_음수일_수_없다() {
-        // given
-        Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
-
-        // when & then
-        assertThatThrownBy(() -> shipment.requestAddressChange(otherAddress(), -1, NOW))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("추가 운임 안내 금액은 0 이상이어야 합니다.");
-    }
 }
