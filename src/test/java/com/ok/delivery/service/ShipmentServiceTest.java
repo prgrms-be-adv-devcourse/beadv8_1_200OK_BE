@@ -1,14 +1,18 @@
 package com.ok.delivery.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.delivery.domain.DeliveryDatePolicy;
 import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.WeekendBusinessDayCalendar;
+import com.ok.delivery.exception.DeliveryErrorCode;
+import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.AddressCommand;
 import com.ok.delivery.service.dto.RegionResult;
 import com.ok.delivery.service.dto.SellerShipmentCommand;
 import com.ok.delivery.service.dto.ShipmentCreateCommand;
+import com.ok.delivery.service.dto.ShipmentDispatchCommand;
 import com.ok.delivery.service.dto.ShipmentItemCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,17 +21,25 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import static com.ok.delivery.fixture.ShipmentFixture.item;
+import static com.ok.delivery.fixture.ShipmentFixture.shipment;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 
 @ExtendWith(MockitoExtension.class)
 class ShipmentServiceTest {
@@ -39,9 +51,13 @@ class ShipmentServiceTest {
     private static final LocalDate NEXT_THURSDAY = LocalDate.of(2026, 10, 22);
 
     private static final String POSTAL_CODE = "06236";
+    private static final ShipmentDispatchCommand DISPATCH_COMMAND = new ShipmentDispatchCommand(1L, 10L, "CJ_LOGISTICS", "1234567890");
 
     @Mock
     ShipmentRepository shipmentRepository;
+
+    @Mock
+    ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
 
     @Mock
     DeliveryRegionService deliveryRegionService;
@@ -57,8 +73,10 @@ class ShipmentServiceTest {
     @BeforeEach
     void setUp() {
         // 날짜 계산은 실제 정책으로 두고, 서비스가 판매자 설정의 마감 시간을 넘기는지 확인한다
-        shipmentService = new ShipmentService(shipmentRepository, deliveryRegionService,
-                new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService);
+        // 출고 예정일은 결제 시각 기준이라 Clock을 쓰지 않는다. Clock은 송장 등록(dispatch)에서만 쓴다
+        Clock clock = Clock.fixed(FRIDAY_NOON.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        shipmentService = new ShipmentService(shipmentRepository, addressChangeRequestRepository, deliveryRegionService,
+                new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService, clock);
     }
 
     @Test
@@ -87,6 +105,31 @@ class ShipmentServiceTest {
             softly.assertThat(sut.get(1).getEstimatedDeliveryStart()).isEqualTo(NEXT_WEDNESDAY);
             softly.assertThat(sut.get(1).getEstimatedDeliveryEnd()).isEqualTo(NEXT_THURSDAY);
         });
+    }
+
+    @Test
+    void 송장번호_UNIQUE_제약_위반이면_TRACKING_NUMBER_DUPLICATED로_바꾼다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
+        willThrow(new DataIntegrityViolationException("Duplicate entry for key 'shipment.uk_shipment_carrier_tracking_number'"))
+                .given(shipmentRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.TRACKING_NUMBER_DUPLICATED));
+    }
+
+    @Test
+    void 송장번호가_아닌_제약_위반은_원래_예외를_그대로_던진다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
+        DataIntegrityViolationException violation = new DataIntegrityViolationException("Check constraint 'ck_shipment_fee' is violated.");
+        willThrow(violation).given(shipmentRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
+                .isSameAs(violation);
     }
 
     private static SellerShipmentCommand seller(Long sellerId, Long orderItemId) {

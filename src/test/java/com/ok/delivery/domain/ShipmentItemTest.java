@@ -30,6 +30,7 @@ class ShipmentItemTest {
             softly.assertThat(sut.getQuantity()).isEqualTo(2);
             softly.assertThat(sut.getUnitPrice()).isEqualTo(30_000);
             softly.assertThat(sut.getCanceledQuantity()).isZero();
+            softly.assertThat(sut.getReservedCancelQuantity()).isZero();
             softly.assertThat(sut.isConfirmed()).isFalse();
         });
     }
@@ -108,6 +109,49 @@ class ShipmentItemTest {
                 Arguments.of(0, DeliveryErrorCode.INVALID_CANCEL_QUANTITY),
                 Arguments.of(-1, DeliveryErrorCode.INVALID_CANCEL_QUANTITY),
                 Arguments.of(3, DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED)
+        );
+    }
+
+    @Test
+    void 취소_확정_예약_수량은_누적된다() {
+        // given
+        ShipmentItem sut = item(1L);
+
+        // when
+        sut.reserveCancel(1);
+        sut.reserveCancel(1);
+
+        // then
+        assertThat(sut.getReservedCancelQuantity()).isEqualTo(2);
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidReserveQuantities")
+    void 예약_수량은_1_이상이고_취소_수량과_예약_수량의_합이_주문_수량을_넘을_수_없다(
+            int canceled, int reserved, int reserveQuantity, DeliveryErrorCode errorCode) {
+        // given
+        ShipmentItem sut = item(1L);
+        if (canceled > 0) {
+            sut.cancel(canceled);
+        }
+        if (reserved > 0) {
+            sut.reserveCancel(reserved);
+        }
+
+        // when & then
+        assertThatThrownBy(() -> sut.reserveCancel(reserveQuantity))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(errorCode));
+    }
+
+    // 픽스처 항목의 주문 수량은 2다
+    static Stream<Arguments> invalidReserveQuantities() {
+        return Stream.of(
+                Arguments.of(0, 0, 0, DeliveryErrorCode.INVALID_CANCEL_QUANTITY),
+                Arguments.of(0, 0, -1, DeliveryErrorCode.INVALID_CANCEL_QUANTITY),
+                Arguments.of(0, 0, 3, DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED),
+                Arguments.of(1, 0, 2, DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED),
+                Arguments.of(0, 1, 2, DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED)
         );
     }
 

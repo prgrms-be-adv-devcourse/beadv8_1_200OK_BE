@@ -53,7 +53,7 @@ class ShipmentTest {
     );
 
     enum Transition {
-        DISPATCH(shipment -> shipment.dispatch("HANJIN", "9876543210", NOW)),
+        DISPATCH(shipment -> shipment.dispatch(Carrier.HANJIN, "9876543210", NOW)),
         DELIVER(shipment -> shipment.deliver(NOW)),
         COMPLETE(shipment -> shipment.complete(NOW)),
         CANCEL(shipment -> shipment.cancel(NOW));
@@ -179,13 +179,13 @@ class ShipmentTest {
         Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
 
         // when
-        sut.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+        sut.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
 
         // then
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.SHIPPING);
-            softly.assertThat(sut.getCarrier()).isEqualTo("CJ_LOGISTICS");
+            softly.assertThat(sut.getCarrier()).isEqualTo(Carrier.CJ_LOGISTICS);
             softly.assertThat(sut.getTrackingNumber()).isEqualTo("1234567890");
             softly.assertThat(sut.getShippedAt()).isEqualTo(NOW);
         });
@@ -193,7 +193,7 @@ class ShipmentTest {
 
     @ParameterizedTest
     @MethodSource("missingDispatchValues")
-    void 택배사나_송장번호가_없으면_송장을_등록할_수_없다(String carrier, String trackingNumber, DeliveryErrorCode errorCode) {
+    void 택배사나_송장번호가_없으면_송장을_등록할_수_없다(Carrier carrier, String trackingNumber, DeliveryErrorCode errorCode) {
         // given
         Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
 
@@ -206,10 +206,108 @@ class ShipmentTest {
     static Stream<Arguments> missingDispatchValues() {
         return Stream.of(
                 Arguments.of(null, "1234567890", DeliveryErrorCode.MISSING_CARRIER),
-                Arguments.of(" ", "1234567890", DeliveryErrorCode.MISSING_CARRIER),
-                Arguments.of("CJ_LOGISTICS", null, DeliveryErrorCode.MISSING_TRACKING_NUMBER),
-                Arguments.of("CJ_LOGISTICS", " ", DeliveryErrorCode.MISSING_TRACKING_NUMBER)
+                Arguments.of(Carrier.CJ_LOGISTICS, null, DeliveryErrorCode.MISSING_TRACKING_NUMBER),
+                Arguments.of(Carrier.CJ_LOGISTICS, "", DeliveryErrorCode.MISSING_TRACKING_NUMBER),
+                Arguments.of(Carrier.CJ_LOGISTICS, " ", DeliveryErrorCode.MISSING_TRACKING_NUMBER)
         );
+    }
+
+    @ParameterizedTest
+    @MethodSource("validTrackingNumbers")
+    void 송장번호가_숫자_10자리에서_13자리면_송장을_등록할_수_있다(String trackingNumber) {
+        // given
+        Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
+
+        // when
+        sut.dispatch(Carrier.CJ_LOGISTICS, trackingNumber, NOW);
+
+        // then
+        assertThat(sut.getTrackingNumber()).isEqualTo(trackingNumber);
+    }
+
+    static Stream<String> validTrackingNumbers() {
+        return Stream.of("1234567890", "1234567890123");
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidTrackingNumbers")
+    void 송장번호가_숫자_10자리에서_13자리가_아니면_송장을_등록할_수_없다(String trackingNumber) {
+        // given
+        Shipment sut = shipmentIn(ShipmentStatus.PREPARING);
+
+        // when & then
+        assertThatThrownBy(() -> sut.dispatch(Carrier.CJ_LOGISTICS, trackingNumber, NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_TRACKING_NUMBER));
+    }
+
+    static Stream<String> invalidTrackingNumbers() {
+        return Stream.of(
+                "123456789",        // 9자리
+                "12345678901234",   // 14자리
+                "12345-67890",      // 하이픈
+                "12345678ab",       // 영문
+                " 1234567890",      // 앞 공백
+                "１２３４５６７８９０"   // 전각 숫자
+        );
+    }
+
+    @Test
+    void 취소_확정_예약된_항목이_있으면_송장을_등록할_수_없다() {
+        // given
+        Shipment sut = shipment(item(1L), item(2L));
+        sut.reserveCancel(2L, 1);
+
+        // when & then
+        assertThatThrownBy(() -> sut.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.CANCELLATION_RESERVED));
+        assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.PREPARING);
+    }
+
+    @Test
+    void 송장_발행_전이면_항목의_취소_확정을_예약할_수_있다() {
+        // given
+        Shipment shipment = shipment(item(1L), item(2L));
+
+        // when
+        shipment.reserveCancel(2L, 1);
+
+        // then
+        ShipmentItem sut = shipment.getItems().get(1);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getReservedCancelQuantity()).isEqualTo(1);
+            softly.assertThat(sut.hasReservedCancel()).isTrue();
+            softly.assertThat(shipment.getItems().get(0).hasReservedCancel()).isFalse();
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("statesExceptPreparing")
+    void 송장_발행_전이_아니면_취소_확정을_예약할_수_없다(ShipmentStatus status) {
+        // given
+        Shipment sut = shipmentIn(status);
+
+        // when & then
+        assertThatThrownBy(() -> sut.reserveCancel(1L, 1))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
+    }
+
+    static Stream<ShipmentStatus> statesExceptPreparing() {
+        return Stream.of(ShipmentStatus.SHIPPING, ShipmentStatus.DELIVERED, ShipmentStatus.COMPLETED, ShipmentStatus.CANCELLED);
+    }
+
+    @Test
+    void shipment에_없는_주문_상품은_예약할_수_없다() {
+        // given
+        Shipment sut = shipment(item(1L));
+
+        // when & then
+        assertThatThrownBy(() -> sut.reserveCancel(99L, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("shipment에 없는 주문 상품입니다. orderItemId=99");
     }
 
     @Test
@@ -391,7 +489,7 @@ class ShipmentTest {
         LocalDateTime shippedAt = NOW.plusHours(3);
 
         // when
-        sut.dispatch("CJ_LOGISTICS", "1234567890", shippedAt);
+        sut.dispatch(Carrier.CJ_LOGISTICS, "1234567890", shippedAt);
 
         // then
         assertThat(sut.getShippedAt()).isEqualTo(shippedAt);
