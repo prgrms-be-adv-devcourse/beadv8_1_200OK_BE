@@ -15,13 +15,21 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
 - app·mysql은 호스트 포트를 열지 않습니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
+- 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
+- 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
 - 앱은 1개만 띄웁니다. 배포 중 수십 초간 요청이 실패합니다. 여러 개를 띄우려면 정산 스케줄러 중복 실행 문제를 먼저 해결해야 합니다.
 
 ## 2. 최초 설정 (서버당 1회)
 
 > **주의:** 이슈 #108(토큰 기반 인증 전환과 기본 거부)이 끝나기 전에는 `/api/v1`이 사실상 인증 없이 열려 있습니다. 헤더 `X-Member-Id`만 바꾸면 다른 회원을 사칭할 수 있습니다. 그래서 보안 그룹의 80 포트 인바운드를 내 IP로만 좁힌 상태에서 진행하고, 전체 공개는 #108이 머지된 뒤에 합니다.
 
-먼저 [3. 배포](#3-배포)의 로컬 이미지 빌드·push와 패키지 공개 전환을 끝내고 돌아옵니다. 이미지가 없거나 비공개이면 아래 마지막 `./deploy.sh`가 pull에 실패합니다.
+먼저 [3. 배포](#3-배포)의 로컬 이미지 빌드·push를 끝내고 돌아옵니다. 이미지가 없으면 아래 마지막 `./deploy.sh`가 pull에 실패합니다.
+
+서버가 비공개 패키지를 받으려면 pull 전용 토큰이 필요합니다. GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)에서 만듭니다.
+
+- 권한은 `read:packages`만 줍니다. push용 토큰을 재사용하지 않습니다. classic 토큰은 계정이 접근할 수 있는 모든 패키지를 읽을 수 있어서 권한을 최소로 둡니다.
+- 만료일을 지정하고 따로 적어 둡니다. 만료되면 `./deploy.sh`가 pull 단계에서 실패합니다.
+- 조직이 SSO를 쓰면 발급 후 Configure SSO에서 조직을 승인합니다.
 
 ```bash
 # 로컬: 배포 파일 복사
@@ -29,6 +37,8 @@ scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/nginx dep
 
 # 서버
 ssh -i <키 파일> ubuntu@<EIP>
+docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
+chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
 mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/nginx /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
@@ -44,14 +54,15 @@ mountpoint /data             # "/data is a mountpoint"가 나와야 한다
 # 로컬: 이미지 빌드·push (EC2는 amd64라서 플랫폼을 꼭 지정한다)
 SHA=$(git rev-parse --short HEAD)
 IMAGE=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan
-echo "$GHCR_PAT" | docker login ghcr.io -u <GitHub 사용자> --password-stdin   # write:packages 권한 토큰
+docker login ghcr.io -u <GitHub 사용자>   # 처음 한 번. Password: 에 write:packages 권한 토큰
 docker buildx build --platform linux/amd64 -t "$IMAGE:latest" -t "$IMAGE:$SHA" --push .
 
 # 서버
 cd /opt/paldo-gotgan && ./deploy.sh
 ```
 
-- 처음 push한 뒤 GitHub 패키지 설정에서 `paldo-gotgan` 패키지를 공개로 바꿉니다. 서버는 로그인 없이 pull합니다.
+- 패키지는 비공개로 둡니다. 서버는 [2. 최초 설정](#2-최초-설정-서버당-1회)에서 로그인한 pull 전용 토큰으로 받습니다.
+- `-t` 두 개를 모두 붙여 `latest`와 커밋 SHA 태그를 함께 올립니다. 서버는 `latest`를 받고, SHA 태그는 롤백에 씁니다. 하나를 빠뜨렸다면 다시 빌드하지 않고 태그만 붙입니다: `docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$SHA"`
 - `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
 
 ## 4. 롤백
@@ -91,3 +102,15 @@ docker compose -f compose.prod.yml restart nginx
 ```
 
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
+
+## 7. pull 토큰 교체
+
+서버의 pull 전용 토큰이 만료되기 전에 새 토큰(`read:packages`)을 만들어 다시 로그인합니다. 같은 사용자로 로그인하면 기존 값을 덮어씁니다.
+
+```bash
+# 서버
+docker login ghcr.io -u <GitHub 사용자>
+docker pull ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest   # 새 토큰으로 받아지는지 확인
+```
+
+이전 토큰은 GitHub에서 삭제합니다.
