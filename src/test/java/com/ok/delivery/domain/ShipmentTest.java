@@ -467,6 +467,39 @@ class ShipmentTest {
     }
 
     @ParameterizedTest
+    @MethodSource("추가_운임_안내_금액")
+    void 추가_운임_안내_금액은_결제_때_낸_추가_운임과의_차액이다(int paidSurcharge, int requestedSurcharge, int expected) {
+        // given
+        Shipment shipment = withId(validBuilder().regionSurcharge(paidSurcharge).build(), 1L);
+
+        // when
+        ShipmentAddressChangeRequest sut = shipment.requestAddressChange(otherAddress(), requestedSurcharge, NOW);
+
+        // then
+        assertThat(sut.getAdditionalFeeNotice()).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> 추가_운임_안내_금액() {
+        return Stream.of(
+                Arguments.of(0, 3_000, 3_000),
+                Arguments.of(3_000, 5_000, 2_000),
+                Arguments.of(3_000, 3_000, 0),
+                Arguments.of(5_000, 0, 0)
+        );
+    }
+
+    @Test
+    void 요청_배송지의_추가_운임은_음수일_수_없다() {
+        // given
+        Shipment shipment = withId(shipmentIn(ShipmentStatus.PREPARING), 1L);
+
+        // when & then
+        assertThatThrownBy(() -> shipment.requestAddressChange(otherAddress(), -1, NOW))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("추가 운임은 0 이상이어야 합니다.");
+    }
+
+    @ParameterizedTest
     @MethodSource("statusesExceptPreparing")
     void 상품_준비가_아니면_배송지_변경을_요청할_수_없다(ShipmentStatus status) {
         // given

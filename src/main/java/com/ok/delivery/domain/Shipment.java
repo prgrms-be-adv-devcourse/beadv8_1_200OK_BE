@@ -287,12 +287,19 @@ public class Shipment extends BaseTime {
      * <p>shipment당 {@code PENDING} 1건 확인은 다른 행을 봐야 해서 이 메서드가 하지 않는다.
      * 서비스가 shipment 행 잠금 아래에서 확인한다.
      *
-     * @param additionalFeeNotice 변경으로 늘어나는 추가 운임 안내 금액. 시스템이 계산하고, 결제하지 않고 판매자가 직접 받는다
+     * <p>추가 운임 안내 금액은 요청 배송지의 추가 운임에서 결제 때 낸 추가 운임을 뺀 값이다. 결제 때 낸 운임은 이미 받았으므로 차액만 안내한다.
+     * 추가 운임이 줄어도 돌려주지 않으므로 0원이다.
+     *
+     * @param requestedRegionSurcharge 요청 배송지의 지역 판정 결과에 따른 추가 운임
      * @throws RestApiException {@code PREPARING}이 아니면 {@code ADDRESS_CHANGE_NOT_ALLOWED}
-     * @throws IllegalArgumentException 추가 운임 안내 금액이 음수면
+     * @throws IllegalArgumentException 요청 배송지의 추가 운임이 음수면
      */
-    public ShipmentAddressChangeRequest requestAddressChange(Address requestedAddress, int additionalFeeNotice, LocalDateTime now) {
+    public ShipmentAddressChangeRequest requestAddressChange(Address requestedAddress, int requestedRegionSurcharge, LocalDateTime now) {
         requireAddressChangeable();
+        if (requestedRegionSurcharge < 0) {
+            throw new IllegalArgumentException("추가 운임은 0 이상이어야 합니다.");
+        }
+        int additionalFeeNotice = Math.max(0, requestedRegionSurcharge - this.regionSurcharge);
         return ShipmentAddressChangeRequest.create(getId(), requestedAddress, this.address, additionalFeeNotice, now);
     }
 
