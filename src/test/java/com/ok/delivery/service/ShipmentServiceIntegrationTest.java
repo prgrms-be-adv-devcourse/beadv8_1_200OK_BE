@@ -5,6 +5,7 @@ import com.ok.delivery.domain.RemoteAreaPostalCode;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.exception.DeliveryErrorCode;
+import com.ok.delivery.fixture.ShipmentFixture;
 import com.ok.delivery.repository.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.AddressCommand;
@@ -204,6 +205,23 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_RECIPIENT_PHONE));
         assertThat(shipmentsOf(8L)).isEmpty();
+    }
+
+    @Test
+    void 배송_완료를_반영하면_배송_완료_상태와_완료_시각을_저장한다() {
+        // given
+        Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.SHIPPING)).getId();
+
+        // when
+        shipmentService.deliver(shipmentId);
+
+        // then
+        Shipment sut = shipmentRepository.findById(shipmentId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
+            softly.assertThat(sut.getDeliveredAt()).isNotNull();
+        });
     }
 
     @Test

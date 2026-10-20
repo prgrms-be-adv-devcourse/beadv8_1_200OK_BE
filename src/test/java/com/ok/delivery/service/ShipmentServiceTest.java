@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.delivery.domain.DeliveryDatePolicy;
 import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;
+import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.domain.WeekendBusinessDayCalendar;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.repository.ShipmentAddressChangeRequestRepository;
@@ -35,6 +36,8 @@ import java.util.Optional;
 
 import static com.ok.delivery.fixture.ShipmentFixture.item;
 import static com.ok.delivery.fixture.ShipmentFixture.shipment;
+import static com.ok.delivery.fixture.ShipmentFixture.shipmentIn;
+import static com.ok.delivery.fixture.ShipmentFixture.withId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -69,6 +72,9 @@ class ShipmentServiceTest {
     @Mock
     SellerShippingSettingService sellerShippingSettingService;
 
+    @Mock
+    DeliveryEventPublisher deliveryEventPublisher;
+
     @Captor
     ArgumentCaptor<List<Shipment>> shipmentsCaptor;
 
@@ -80,7 +86,8 @@ class ShipmentServiceTest {
         // 출고 예정일은 결제 시각 기준이라 Clock을 쓰지 않는다. Clock은 송장 등록(dispatch)에서만 쓴다
         Clock clock = Clock.fixed(FRIDAY_NOON.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
         shipmentService = new ShipmentService(shipmentRepository, shipmentQueryRepository, addressChangeRequestRepository, deliveryRegionService,
-                new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService, clock);
+                new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService,
+                deliveryEventPublisher, clock);
     }
 
     @Test
@@ -112,6 +119,32 @@ class ShipmentServiceTest {
     }
 
     @Test
+    void 출고하면_송장_정보와_출고_시각으로_배송_시작_이벤트를_발행한다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipment(2L, 10L, item(1L)), 1L)));
+
+        // when
+        shipmentService.dispatch(DISPATCH_COMMAND);
+
+        // then
+        then(deliveryEventPublisher).should()
+                .publishShipmentDispatched(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", FRIDAY_NOON);
+    }
+
+    @Test
+    void 송장번호가_중복되어_출고에_실패하면_배송_시작_이벤트를_발행하지_않는다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
+        willThrow(new DataIntegrityViolationException("Duplicate entry for key 'shipment.uk_shipment_carrier_tracking_number'"))
+                .given(shipmentRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
+                .isInstanceOf(RestApiException.class);
+        then(deliveryEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
     void 송장번호_UNIQUE_제약_위반이면_TRACKING_NUMBER_DUPLICATED로_바꾼다() {
         // given
         given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
@@ -134,6 +167,42 @@ class ShipmentServiceTest {
         // when & then
         assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
                 .isSameAs(violation);
+    }
+
+    @Test
+    void 배송_완료를_반영하면_완료_시각으로_배송_완료_이벤트를_발행한다() {
+        // given
+        // shipment·주문·판매자 id를 서로 다르게 두어 인자 순서가 바뀌면 잡히게 한다 (fixture는 주문 1, 판매자 10)
+        given(shipmentRepository.findByIdForUpdate(5L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.SHIPPING), 5L)));
+
+        // when
+        shipmentService.deliver(5L);
+
+        // then
+        then(deliveryEventPublisher).should().publishShipmentDelivered(5L, 1L, 10L, FRIDAY_NOON);
+    }
+
+    @Test
+    void 배송_완료를_반영할_shipment가_없으면_SHIPMENT_NOT_FOUND다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.deliver(1L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
+    }
+
+    @Test
+    void 이미_배송_완료된_shipment면_INVALID_SHIPMENT_STATE이고_이벤트를_다시_발행하지_않는다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.DELIVERED), 1L)));
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.deliver(1L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
+        then(deliveryEventPublisher).shouldHaveNoInteractions();
     }
 
     private static SellerShipmentCommand seller(Long sellerId, Long orderItemId) {
