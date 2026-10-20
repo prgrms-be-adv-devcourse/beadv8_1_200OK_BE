@@ -2,6 +2,8 @@ package com.ok.payout.controller;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.payout.controller.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.controller.dto.PayoutCandidateResponse;
+import com.ok.payout.controller.dto.PayoutCandidateSearchRequest;
 import com.ok.payout.controller.dto.PayoutDetailResponse;
 import com.ok.payout.controller.dto.PayoutItemResponse;
 import com.ok.payout.controller.dto.PayoutItemSearchRequest;
@@ -70,6 +72,18 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutService.getItemsForAdmin(payoutId, request.toQuery()).map(PayoutItemResponse::from)));
+    }
+
+    // 정산후보 조회 (정산 대기·완료, 전체 또는 sellerId로 특정 판매자)
+    // 경로 /candidates는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음
+    @PreAuthorize("hasRole('ADMIN')")
+    @Override
+    @GetMapping("/candidates")
+    public ResponseEntity<PayoutPageResponse<PayoutCandidateResponse>> searchCandidates(
+            @Valid @ModelAttribute PayoutCandidateSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutService.searchCandidatesForAdmin(request.toQuery()).map(PayoutCandidateResponse::from)));
     }
 
     // 정산 전체 수동 실행 (개발 중 수동 실행용. 실패 응답은 #67에서 처리)

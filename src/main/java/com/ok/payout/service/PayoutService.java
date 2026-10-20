@@ -17,10 +17,13 @@ import com.ok.payout.repository.PayoutSnapshotItemRepository;
 import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.repository.PayoutSystemDraftItemRepository;
 import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
+import com.ok.payout.service.dto.PayoutCandidateResult;
+import com.ok.payout.service.dto.PayoutCandidateSearchQuery;
 import com.ok.payout.service.dto.PayoutDetailResult;
 import com.ok.payout.service.dto.PayoutItemResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
+import com.ok.payout.service.dto.PayoutSellerCandidateSearchQuery;
 import com.ok.payout.service.dto.PayoutSellerSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
 import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
@@ -391,6 +394,34 @@ public class PayoutService {
     private Page<PayoutItemResult> loadItems(Long payoutId, PayoutItemSearchQuery query) {
         return payoutQueryRepository.findItemsWithCandidate(payoutId, PageRequest.of(query.page(), query.size()))
                 .map(PayoutItemResult::from);
+    }
+
+    /**
+     * 관리자가 정산후보 목록을 조회한다. {@code sellerId}를 생략하면 전체 판매자, {@code unsettledOnly}면 아직 정산 전인 후보만 조회한다.
+     */
+    @Transactional(readOnly = true)
+    public Page<PayoutCandidateResult> searchCandidatesForAdmin(PayoutCandidateSearchQuery query) {
+        return searchCandidates(query.sellerId(), query.from(), query.to(), query.unsettledOnly(), query.page(), query.size());
+    }
+
+    /**
+     * 판매자가 본인 정산후보 목록을 조회한다. 판매자는 본인으로 고정한다.
+     * 결과는 관리자와 같고, 판매자에게 보여 주지 않을 값(조정 번호·관리자 ID, 수수료 후보의 정산 ID)은 판매자 응답 DTO에서 뺀다.
+     *
+     * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값)
+     */
+    @Transactional(readOnly = true)
+    public Page<PayoutCandidateResult> searchCandidatesForSeller(Long sellerId, PayoutSellerCandidateSearchQuery query) {
+        // 판매자 목록은 요청에 대상 ID가 없음: 토큰의 회원 ID로만 조회해서 URL·파라미터를 바꿔도 남의 후보를 요청할 수 없음
+        // 후보의 seller_id는 판매한 판매자 회원 ID라서, 정산 목록(payeeId)과 달리 번호 체계 전제(TODO)가 필요 없음
+        return searchCandidates(sellerId, query.from(), query.to(), query.unsettledOnly(), query.page(), query.size());
+    }
+
+    // 관리자·판매자 정산후보 조회의 공통 부분. 둘은 조건만 다르고 조회 방식은 같음
+    private Page<PayoutCandidateResult> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
+                                                         boolean unsettledOnly, int page, int size) {
+        return payoutQueryRepository.searchCandidates(sellerId, from, to, unsettledOnly, PageRequest.of(page, size))
+                .map(PayoutCandidateResult::from);
     }
 
     private Payout findPayout(Long payoutId) {

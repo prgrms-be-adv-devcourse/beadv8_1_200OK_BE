@@ -3,6 +3,8 @@ package com.ok.payout.controller;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.payout.controller.dto.PayoutItemSearchRequest;
 import com.ok.payout.controller.dto.PayoutPageResponse;
+import com.ok.payout.controller.dto.PayoutSellerCandidateResponse;
+import com.ok.payout.controller.dto.PayoutSellerCandidateSearchRequest;
 import com.ok.payout.controller.dto.PayoutSellerDetailResponse;
 import com.ok.payout.controller.dto.PayoutSellerItemResponse;
 import com.ok.payout.controller.dto.PayoutSellerSearchRequest;
@@ -66,5 +68,18 @@ public class PayoutController implements PayoutControllerSpec {
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutService.getItemsForSeller(memberId, payoutId, request.toQuery()).map(PayoutSellerItemResponse::from)));
+    }
+
+    // 본인 정산후보 조회 (정산 대기·완료). 수수료 후보의 정산 ID와 조정 번호·관리자 ID는 판매자 응답에서 뺌
+    // 경로 /candidates는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음
+    @PreAuthorize("hasRole('SELLER')")
+    @Override
+    @GetMapping("/candidates")
+    public ResponseEntity<PayoutPageResponse<PayoutSellerCandidateResponse>> searchCandidates(
+            @CurrentMemberId Long memberId,
+            @Valid @ModelAttribute PayoutSellerCandidateSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutService.searchCandidatesForSeller(memberId, request.toQuery()).map(PayoutSellerCandidateResponse::from)));
     }
 }
