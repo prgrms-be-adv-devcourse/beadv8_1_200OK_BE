@@ -6,14 +6,23 @@ on:
     branches: [dev]
   workflow_dispatch:
 
-# 연속 머지 때 늦게 시작한 빌드가 먼저 끝나 latest가 이전 커밋 이미지로 덮이지 않도록 한 번에 하나씩 순서대로 실행한다
+# 한 번에 하나만 실행해 늦게 시작한 빌드가 먼저 끝나 latest가 이전 커밋 이미지로 덮이지 않게 한다.
+# 대기 중인 실행은 하나만 남고 새 실행이 오면 대기 중이던 것은 취소되므로, 연속 머지 때 중간 커밋의 SHA 태그는 생기지 않을 수 있다
 concurrency:
   group: docker-image
   cancel-in-progress: false
 
+env:
+  # deploy/compose.prod.yml의 이미지 이름과 같아야 한다
+  IMAGE: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan
+
 jobs:
   build:
+    # 수동 실행에서 다른 브랜치를 고르면 머지되지 않은 코드가 latest가 되므로 dev만 빌드한다
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    # 빌드가 멈추면 concurrency 대기열 전체가 막히므로 시간을 제한한다
+    timeout-minutes: 30
     # 패키지 쓰기 권한은 이 워크플로에만 준다. PR 워크플로에는 주지 않는다
     permissions:
       contents: read
@@ -39,9 +48,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          # 이미지 이름은 deploy/compose.prod.yml과 같아야 한다
           tags: |
-            ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest
-            ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${{ steps.sha.outputs.short }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.sha.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
