@@ -239,4 +239,31 @@ class OrderFacadeTest {
         assertThat(stockItemsCaptor.getValue()).containsExactly(new StockAllocationItemRequest(11L, 1));
         then(orderService).should().publishCreated(10L);
     }
+
+    // ---------- 결제 실패 ----------
+
+    @Test
+    void 결제가_실패하면_선점한_재고를_해제하고_장바구니는_건드리지_않는다() {
+        // given
+        given(orderService.failPayment(10L)).willReturn(true);
+
+        // when
+        sut.failPayment(10L, "INSUFFICIENT_BALANCE");
+
+        // then
+        then(productApiClient).should().releaseStock(10L);
+        then(cartService).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 재고를_풀_필요가_없는_주문이면_해제하지_않는다() {
+        // given
+        given(orderService.failPayment(10L)).willReturn(false);
+
+        // when
+        sut.failPayment(10L, "INSUFFICIENT_BALANCE");
+
+        // then
+        then(productApiClient).should(never()).releaseStock(anyLong());
+    }
 }

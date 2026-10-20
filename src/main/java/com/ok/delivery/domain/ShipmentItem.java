@@ -54,6 +54,10 @@ public class ShipmentItem extends BaseTime {
     @Column(name = "canceled_quantity", nullable = false)
     private int canceledQuantity;
 
+    // 환불이 취소를 승인하면서 걸어 둔 수량. 남아 있으면 송장 등록을 막아, 취소 승인과 출고가 함께 성공하지 않게 한다
+    @Column(name = "reserved_cancel_quantity", nullable = false)
+    private int reservedCancelQuantity;
+
     @Column(name = "confirmed", nullable = false)
     private boolean confirmed;
 
@@ -76,6 +80,7 @@ public class ShipmentItem extends BaseTime {
         this.quantity = quantity;
         this.unitPrice = unitPrice;
         this.canceledQuantity = 0;
+        this.reservedCancelQuantity = 0;
         this.confirmed = false;
     }
 
@@ -119,6 +124,30 @@ public class ShipmentItem extends BaseTime {
             throw new RestApiException(DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED);
         }
         this.canceledQuantity += cancelQuantity;
+    }
+
+    /**
+     * 취소 확정을 예약한다. 예약 수량은 취소 확정 이벤트를 받을 때 취소 수량으로 옮겨진다.
+     *
+     * <p>shipment 상태 확인은 {@link Shipment#reserveCancel}이 한다.
+     * 예약 가능한 수량은 주문 수량에서 취소된 수량과 이미 예약된 수량을 뺀 값이다.
+     *
+     * @throws RestApiException 수량이 1 미만이면 {@code INVALID_CANCEL_QUANTITY},
+     *                          예약 가능한 수량을 넘으면 {@code CANCEL_QUANTITY_EXCEEDED}
+     */
+    void reserveCancel(int reserveQuantity) {
+        if (reserveQuantity <= 0) {
+            throw new RestApiException(DeliveryErrorCode.INVALID_CANCEL_QUANTITY);
+        }
+        if (canceledQuantity + reservedCancelQuantity + reserveQuantity > quantity) {
+            throw new RestApiException(DeliveryErrorCode.CANCEL_QUANTITY_EXCEEDED);
+        }
+        this.reservedCancelQuantity += reserveQuantity;
+    }
+
+    /** 취소 확정 예약이 걸려 있는지 여부. 예약이 있으면 송장을 등록할 수 없다. */
+    public boolean hasReservedCancel() {
+        return reservedCancelQuantity > 0;
     }
 
     /** 주문 수량이 모두 취소되었는지 여부. 전량 취소된 항목은 거래완료 조건에서 빠진다. */

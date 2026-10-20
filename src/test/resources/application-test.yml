@@ -30,6 +30,8 @@ app:
     # 에러 응답의 type(slug)을 통합 테스트에서 검증할 수 있도록 실제 URI 형태로 둔다 (about:blank이면 slug가 응답에 나오지 않음)
   problem:
     base-uri: https://api.example.com/problems
+admin-bootstrap:
+  login-id: ""
 jwt:
   # 테스트 전용 키. 개발·운영 환경의 JWT_SECRET으로 절대 사용하지 않는다.
   secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl

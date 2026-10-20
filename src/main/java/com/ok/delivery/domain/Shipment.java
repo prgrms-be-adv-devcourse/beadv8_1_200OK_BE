@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * 판매자별 배송(송장) 단위. 같은 주문의 같은 판매자 상품은 한 shipment로 배송한다.
@@ -43,6 +44,9 @@ import java.util.List;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Shipment extends BaseTime {
 
+    // 송장번호 형식 규칙은 여기 한 곳에서 관리한다. 택배사 공통 규칙(숫자 10~13자리)이라 택배사별로 나누지 않았다
+    private static final Pattern TRACKING_NUMBER_PATTERN = Pattern.compile("\\d{10,13}");
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -57,8 +61,9 @@ public class Shipment extends BaseTime {
     @Column(name = "status", nullable = false, length = 20)
     private ShipmentStatus status;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "carrier", length = 30)
-    private String carrier;
+    private Carrier carrier;
 
     @Column(name = "tracking_number", length = 13)
     private String trackingNumber;
@@ -175,22 +180,49 @@ public class Shipment extends BaseTime {
      *
      * <p>송장번호 중복은 DB UNIQUE 제약({@code carrier, tracking_number})이 막는다. 송장번호는 택배사마다 따로 발급하므로
      * 택배사가 다르면 같은 번호도 허용한다. 대기 중인 배송지 변경 요청의 자동 거절은 호출하는 서비스가 한다.
+     * 취소 확정 예약과 경합하지 않도록 서비스는 shipment 행 잠금 아래에서 호출해야 한다.
      *
      * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE},
-     *                          택배사나 송장번호가 비어 있으면 {@code MISSING_CARRIER}, {@code MISSING_TRACKING_NUMBER}
+     *                          택배사나 송장번호가 비어 있으면 {@code MISSING_CARRIER}, {@code MISSING_TRACKING_NUMBER},
+     *                          송장번호가 숫자 10~13자리가 아니면 {@code INVALID_TRACKING_NUMBER},
+     *                          취소 확정 예약된 항목이 있으면 {@code CANCELLATION_RESERVED}
      */
-    public void dispatch(String carrier, String trackingNumber, LocalDateTime now) {
+    public void dispatch(Carrier carrier, String trackingNumber, LocalDateTime now) {
         requireStatus(ShipmentStatus.PREPARING);
-        if (isBlank(carrier)) {
+        if (carrier == null) {
             throw new RestApiException(DeliveryErrorCode.MISSING_CARRIER);
         }
         if (isBlank(trackingNumber)) {
             throw new RestApiException(DeliveryErrorCode.MISSING_TRACKING_NUMBER);
         }
+        if (!TRACKING_NUMBER_PATTERN.matcher(trackingNumber).matches()) {
+            throw new RestApiException(DeliveryErrorCode.INVALID_TRACKING_NUMBER);
+        }
+        if (items.stream().anyMatch(ShipmentItem::hasReservedCancel)) {
+            throw new RestApiException(DeliveryErrorCode.CANCELLATION_RESERVED);
+        }
         this.carrier = carrier;
         this.trackingNumber = trackingNumber;
         this.status = ShipmentStatus.SHIPPING;
         this.shippedAt = now;
+    }
+
+    /**
+     * 항목의 취소 확정을 예약한다. 송장 발행 전({@code PREPARING})에만 가능하다.
+     * 예약이 남아 있는 동안에는 {@link #dispatch}가 거절되므로, 서비스는 shipment 행 잠금 아래에서 호출해야 한다.
+     *
+     * @param orderItemId 환불이 넘기는 주문 상품 ID. 이 shipment의 항목이어야 한다
+     * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE},
+     *                          수량 오류는 {@link ShipmentItem#reserveCancel}을 따른다
+     * @throws IllegalArgumentException 이 shipment의 항목이 아니면
+     */
+    public void reserveCancel(Long orderItemId, int quantity) {
+        requireStatus(ShipmentStatus.PREPARING);
+        ShipmentItem item = items.stream()
+                .filter(it -> it.getOrderItemId().equals(orderItemId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("shipment에 없는 주문 상품입니다. orderItemId=" + orderItemId));
+        item.reserveCancel(quantity);
     }
 
     /**

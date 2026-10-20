@@ -1,8 +1,11 @@
 package com.ok.order.order.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.order.cart.service.CartService;
 import com.ok.order.order.domain.Order;
+import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderLine;
+import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.OrderDetailItemResult;
@@ -26,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -37,6 +41,7 @@ class OrderServiceTest {
 
     @Mock OrderRepository orderRepository;
     @Mock OrderEventPublisher orderEventPublisher;
+    @Mock CartService cartService;
 
     @InjectMocks OrderService sut;
 
@@ -127,5 +132,101 @@ class OrderServiceTest {
         assertThatThrownBy(() -> sut.getOrder(2L, 10L))
                 .isInstanceOfSatisfying(RestApiException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_NOT_FOUND));
+    }
+
+    // ---------- 결제 결과 반영 ----------
+
+    @Test
+    void 결제_대기_주문에_결제_완료가_오면_결제_완료되고_장바구니에서_빠진다() {
+        // given
+        Order order = savedOrder(10L);
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+            softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+        });
+        then(cartService).should().removeOrderItems(1L, List.of(11L));
+    }
+
+    @Test
+    void 이미_결제_완료된_주문에_결제_완료가_다시_오면_아무것도_바꾸지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+    }
+
+    @Test
+    void 결제_실패한_주문에_결제_완료가_와도_상태를_바꾸지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentFailed();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+    }
+
+    @Test
+    void 결제_대기_주문에_결제_실패가_오면_결제_실패가_되고_재고를_풀어야_한다() {
+        // given
+        Order order = savedOrder(10L);
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.failPayment(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PAYMENT_FAILED);
+        });
+        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+    }
+
+    @Test
+    void 이미_결제_실패한_주문에_실패가_다시_오면_상태는_그대로이고_재고_해제만_다시_시도한다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentFailed();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.failPayment(10L);
+
+        // then
+        assertThat(shouldReleaseStock).isTrue();
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+    }
+
+    @Test
+    void 결제_완료된_주문에_결제_실패가_오면_무시하고_재고를_풀지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.failPayment(10L);
+
+        // then
+        assertThat(shouldReleaseStock).isFalse();
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
     }
 }

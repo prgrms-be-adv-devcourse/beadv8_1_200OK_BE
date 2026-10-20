@@ -32,4 +32,16 @@ class DeliveryEnumTest {
         // then
         assertThat(names).containsExactlyElementsOf(expected);
     }
+
+    @Test
+    void Carrier는_명세의_5개_택배사를_가진다() {
+        // given
+        List<String> expected = List.of("CJ_LOGISTICS", "POST_OFFICE", "HANJIN", "LOTTE", "LOGEN");
+
+        // when
+        List<String> names = Arrays.stream(Carrier.values()).map(Enum::name).toList();
+
+        // then
+        assertThat(names).containsExactlyElementsOf(expected);
+    }
 }

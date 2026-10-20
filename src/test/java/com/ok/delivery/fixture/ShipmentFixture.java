@@ -1,6 +1,7 @@
 package com.ok.delivery.fixture;
 
 import com.ok.delivery.domain.Address;
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
@@ -60,13 +61,13 @@ public final class ShipmentFixture {
         switch (status) {
             case PREPARING -> {
             }
-            case SHIPPING -> shipment.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+            case SHIPPING -> shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
             case DELIVERED -> {
-                shipment.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+                shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
                 shipment.deliver(NOW);
             }
             case COMPLETED -> {
-                shipment.dispatch("CJ_LOGISTICS", "1234567890", NOW);
+                shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", NOW);
                 shipment.deliver(NOW);
                 shipment.getItems().forEach(ShipmentItem::confirm);
                 shipment.complete(NOW);
