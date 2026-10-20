@@ -321,7 +321,7 @@ class MediaServiceTest {
 		try (InputStream in = bodyCaptor.getValue().contentStreamProvider().newStream()) {
 			uploaded = ImageIO.read(in);
 		}
-		assertThat(uploaded.getWidth()).isEqualTo(MediaPolicy.MAX_IMAGE_WIDTH);
+		assertThat(uploaded.getWidth()).isEqualTo(MediaPolicy.MAX_STORED_IMAGE_WIDTH);
 		assertThat(uploaded.getHeight()).isEqualTo(800);
 	}
 

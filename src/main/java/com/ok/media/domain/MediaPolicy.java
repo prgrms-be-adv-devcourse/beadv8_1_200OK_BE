@@ -12,9 +12,9 @@ public class MediaPolicy {
 	public static final long MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024L * 1024L;
 	public static final long MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024L * 1024L;
 
-	// 이미지 최대 사이즈
-	public static final int MAX_IMAGE_WIDTH = 1600;
-	public static final int MAX_IMAGE_HEIGHT = 1600;
+	// 저장하는 이미지의 최대 크기, 넘으면 비율을 유지해 축소한다
+	public static final int MAX_STORED_IMAGE_WIDTH = 1600;
+	public static final int MAX_STORED_IMAGE_HEIGHT = 1600;
 
 	// 디코딩 허용 해상도
 	public static final int MAX_DECODE_DIMENSION = 8000;

@@ -21,7 +21,7 @@ public interface MediaApiSpec {
 					+ "회원당 최근 " + MediaPolicy.UPLOAD_LIMIT_WINDOW_MINUTES + "분 동안 "
 					+ MediaPolicy.MAX_UPLOADS_PER_WINDOW + "회까지 업로드할 수 있습니다.\n\n"
 					+ "- 이미지: image/jpeg, image/png, 최대 " + MediaPolicy.MAX_IMAGE_SIZE_MB + "MB. "
-					+ "서버에서 jpg 로 변환되며, " + MediaPolicy.MAX_IMAGE_WIDTH + "x" + MediaPolicy.MAX_IMAGE_HEIGHT
+					+ "서버에서 jpg 로 변환되며, " + MediaPolicy.MAX_STORED_IMAGE_WIDTH + "x" + MediaPolicy.MAX_STORED_IMAGE_HEIGHT
 					+ " 를 넘는 경우에만 비율을 유지한 채 그 안에 들어가도록 축소됩니다 (작은 이미지는 확대하지 않음). "
 					+ "원본 해상도는 가로·세로 각 " + MediaPolicy.MAX_DECODE_DIMENSION + "px, 총 "
 					+ (MediaPolicy.MAX_DECODE_PIXELS / 10_000) + "만 픽셀 이하여야 하며, 넘으면 413을 반환합니다.\n"

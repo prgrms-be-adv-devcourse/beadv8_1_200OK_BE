@@ -55,9 +55,9 @@ public class MediaService {
 			BufferedImage source = decodeWithinResolutionLimit(file);
 
 			Thumbnails.Builder<BufferedImage> builder = Thumbnails.of(source);
-			if (source.getWidth() > MediaPolicy.MAX_IMAGE_WIDTH || source.getHeight() > MediaPolicy.MAX_IMAGE_HEIGHT) {
+			if (source.getWidth() > MediaPolicy.MAX_STORED_IMAGE_WIDTH || source.getHeight() > MediaPolicy.MAX_STORED_IMAGE_HEIGHT) {
 				// 기준 width 혹은 height를 초과시 비율에 맞춰 리사이징
-				builder.size(MediaPolicy.MAX_IMAGE_WIDTH, MediaPolicy.MAX_IMAGE_HEIGHT);
+				builder.size(MediaPolicy.MAX_STORED_IMAGE_WIDTH, MediaPolicy.MAX_STORED_IMAGE_HEIGHT);
 			} else {
 				// size or scale 중 하나는 필수라 원본 그대로 유지하도록 scale(1) 사용함
 				builder.scale(1.0);
