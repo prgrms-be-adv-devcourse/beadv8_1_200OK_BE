@@ -12,7 +12,6 @@ import com.ok.payout.controller.dto.PayoutSummaryResponse;
 import com.ok.payout.service.PayoutService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,10 +21,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 // 판매자 본인 정산 조회 API. 관리자용은 PayoutAdminController (#198에서 분리)
-// 토큰 인증은 붙었지만 SecurityConfig가 아직 전환 기간(permitAll)이라 prod에는 열지 않음 (기본 거부 전환은 #108)
 // 회원 ID는 토큰에서 받음(@CurrentMemberId). 요청에 대상 ID를 받지 않아서 목록은 본인 것만 나오고,
 // URL에 정산 ID가 들어가는 상세·항목은 서비스가 본인 정산인지 다시 확인함 (PayoutService.checkOwnPayout)
-@Profile("!prod")
 @RestController
 @RequestMapping("/api/v1/payouts/me")
 @PreAuthorize("hasRole('SELLER')")

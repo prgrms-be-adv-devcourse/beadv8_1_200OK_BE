@@ -13,7 +13,7 @@ import org.springframework.http.ResponseEntity;
 /**
  * PayoutSkipWaitRunController의 Swagger 문서. 컨트롤러 코드와 문서 어노테이션을 분리하기 위해 인터페이스로 둔다.
  */
-@Tag(name = "Payout (Admin)", description = "관리자 정산 API (개발용, prod 미등록)")
+@Tag(name = "Payout (Admin)", description = "관리자 정산 API")
 interface PayoutSkipWaitRunControllerSpec {
 
     @Operation(summary = "정산 대기 건너뛰기 실행 (임시)", description = """

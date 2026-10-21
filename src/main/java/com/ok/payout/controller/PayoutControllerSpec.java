@@ -22,7 +22,7 @@ import org.springframework.http.ResponseEntity;
 /**
  * PayoutController의 Swagger 문서. 컨트롤러 코드와 문서 어노테이션을 분리하기 위해 인터페이스로 둔다.
  */
-@Tag(name = "Payout (Seller)", description = "판매자 본인 정산 조회 API (개발용, prod 미등록)")
+@Tag(name = "Payout (Seller)", description = "판매자 본인 정산 조회 API")
 interface PayoutControllerSpec {
 
     @Operation(summary = "본인 정산 목록 조회", description = """
