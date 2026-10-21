@@ -17,7 +17,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -30,9 +29,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 // 관리자 정산 API (조회, 수동 실행, 수동 조정). 판매자용은 PayoutController (#198에서 분리)
-// 개발 중 수동 실행용 API가 있어 prod에서는 등록하지 않음 (prod 정산은 스케줄러로만 실행)
-// 토큰 인증은 붙었지만 SecurityConfig가 아직 전환 기간(permitAll)이라 prod에는 열지 않음 (기본 거부 전환은 #108)
-@Profile("!prod")
+// 배포 서버에서 정산 결과를 확인·시연할 수 있도록 prod에도 등록함 (#269). 관리자 권한은 @PreAuthorize가 막음
 @RestController
 @RequestMapping("/api/v1/admin/payouts")
 @PreAuthorize("hasRole('ADMIN')")
