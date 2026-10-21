@@ -7,7 +7,7 @@ interface AddressRequestSpec {
     @Schema(description = "수령인 이름", example = "홍길동")
     String recipientName();
 
-    @Schema(description = "연락처 (하이픈 허용, 제거 후 숫자 10~11자리). 숫자만 저장됩니다.", example = "010-1234-5678")
+    @Schema(description = "연락처 (하이픈 허용, 제거 후 숫자 9~11자리). 숫자만 저장됩니다.", example = "010-1234-5678")
     String recipientPhone();
 
     @Schema(description = "우편번호 (숫자 5자리)", example = "06236")
