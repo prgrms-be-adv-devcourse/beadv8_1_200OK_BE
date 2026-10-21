@@ -197,7 +197,7 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 배송지_검증에_실패하면_shipment를_만들지_않는다() {
-        // given: 연락처가 숫자 10~11자리가 아니다
+        // given: 연락처가 숫자 9~11자리가 아니다
         AddressCommand address = new AddressCommand("홍길동", "12345", GENERAL_POSTAL_CODE, "주소", "상세 주소", null);
         ShipmentCreateCommand command = new ShipmentCreateCommand(8L, 100L, PAID_AT, address, List.of(seller(10L, 0L, 801L)));
 

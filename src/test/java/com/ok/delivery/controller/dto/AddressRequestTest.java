@@ -77,7 +77,7 @@ class AddressRequestTest {
 
     @ParameterizedTest
     @MethodSource("validPhones")
-    void 연락처_숫자_10_11자리는_통과한다(String phone) {
+    void 연락처_숫자_9자리에서_11자리는_통과한다(String phone) {
         // given
         AddressRequest sut = request(phone, "06236");
 
@@ -89,12 +89,12 @@ class AddressRequestTest {
     }
 
     static Stream<String> validPhones() {
-        return Stream.of("0101234567", "01012345678", "010-123-4567", "010-1234-5678");
+        return Stream.of("021234567", "02-123-4567", "0101234567", "01012345678", "010-123-4567", "010-1234-5678");
     }
 
     @ParameterizedTest
     @MethodSource("invalidPhones")
-    void 연락처_9자리_12자리_또는_허용되지_않는_문자는_거부한다(String phone) {
+    void 연락처_8자리_12자리_또는_허용되지_않는_문자는_거부한다(String phone) {
         // given
         AddressRequest sut = request(phone, "06236");
 
@@ -107,7 +107,7 @@ class AddressRequestTest {
 
     static Stream<String> invalidPhones() {
         return Stream.of(
-                "010123456", "010123456789", "010-abcd-5678", "-01012345678",
+                "01012345", "010123456789", "010-abcd-5678", "-01012345678",
                 "010.1234.5678", "010_1234_5678", "(010)1234-5678", "010#1234#5678", "010!12345678"
         );
     }
