@@ -24,7 +24,7 @@ import org.springframework.http.ResponseEntity;
 /**
  * PayoutAdminController의 Swagger 문서. 컨트롤러 코드와 문서 어노테이션을 분리하기 위해 인터페이스로 둔다.
  */
-@Tag(name = "Payout (Admin)", description = "관리자 정산 API (개발용, prod 미등록)")
+@Tag(name = "Payout (Admin)", description = "관리자 정산 API")
 interface PayoutAdminControllerSpec {
 
     @Operation(summary = "정산 목록 조회", description = """
@@ -142,7 +142,7 @@ interface PayoutAdminControllerSpec {
     );
 
     @Operation(summary = "정산 전체 수동 실행", description = """
-            정산 배치를 지금 1회 실행합니다. 개발 중 수동 실행용이며 prod 정산은 스케줄러로만 실행합니다.
+            정산 배치를 지금 1회 실행합니다. 평소 정산은 스케줄러가 실행하며, 이 API는 관리자가 바로 1회 실행할 때 씁니다.
             관리자만 실행할 수 있습니다.
             배치가 COMPLETED가 아니면 서버 오류(500)로 응답합니다. 실행 ID와 배치 상태는 서버 로그에 남습니다.
             실패 기록과 연결한 정식 응답은 #67에서 바뀝니다.

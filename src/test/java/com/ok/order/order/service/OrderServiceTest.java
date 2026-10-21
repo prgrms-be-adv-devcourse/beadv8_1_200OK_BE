@@ -9,14 +9,12 @@ import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
-import com.ok.order.order.service.dto.OrderDetailItemResult;
-import com.ok.order.order.service.dto.OrderDetailResult;
-import com.ok.order.order.service.dto.OrderSummaryResult;
-import com.ok.order.order.service.dto.ReviewCandidateResult;
+import com.ok.order.order.service.dto.*;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -476,5 +474,53 @@ class OrderServiceTest {
 
         // when & then
         assertThat(sut.autoConfirmPurchases(10L)).isZero();
+    }
+
+
+    // ---------- 결제 완료 이벤트 ----------
+
+    @Test
+    void 결제가_완료되면_배송이_받을_결제_완료_이벤트를_발행한다() {
+        // given: 배송지가 등록된 결제 대기 주문 (판매자 100, 사과 1kg 10,000원 × 2)
+        Order order = savedOrder(10L);
+        order.registerShippingAddress("홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호");
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        ArgumentCaptor<PaidOrderMessage> captor = ArgumentCaptor.forClass(PaidOrderMessage.class);
+        then(orderEventPublisher).should().publishOrderPaidEvent(captor.capture());
+        PaidOrderMessage message = captor.getValue();
+        assertSoftly(softly -> {
+            softly.assertThat(message.orderId()).isEqualTo(10L);
+            softly.assertThat(message.buyerId()).isEqualTo(1L);
+            softly.assertThat(message.paidAt()).isEqualTo(NOW);
+            softly.assertThat(message.addressDetail()).isEqualTo("101호");
+            softly.assertThat(message.sellerGroups()).hasSize(1);
+            softly.assertThat(message.sellerGroups().get(0).sellerId()).isEqualTo(100L);
+            softly.assertThat(message.sellerGroups().get(0).regionSurcharge()).isZero();
+            softly.assertThat(message.sellerGroups().get(0).items().get(0).orderItemId()).isEqualTo(1L);
+            softly.assertThat(message.sellerGroups().get(0).items().get(0).productName()).isEqualTo("사과");
+            softly.assertThat(message.sellerGroups().get(0).items().get(0).optionName()).isEqualTo("1kg");
+            softly.assertThat(message.sellerGroups().get(0).items().get(0).quantity()).isEqualTo(2);
+            softly.assertThat(message.sellerGroups().get(0).items().get(0).unitPrice()).isEqualTo(10_000L);
+        });
+    }
+
+    @Test
+    void 이미_결제_완료된_주문에는_결제_완료_이벤트를_다시_발행하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        then(orderEventPublisher).should(never()).publishOrderPaidEvent(any());
     }
 }

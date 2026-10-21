@@ -10,6 +10,7 @@ import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.OrderDetailResult;
 import com.ok.order.order.service.dto.OrderSummaryResult;
+import com.ok.order.order.service.dto.PaidOrderMessage;
 import com.ok.order.order.service.dto.ReviewCandidateResult;
 import com.ok.order.order.service.publisher.OrderEventPublisher;
 import lombok.RequiredArgsConstructor;
@@ -94,6 +95,9 @@ public class OrderService {
 
         order.markPaid();
         cartService.removeOrderItems(order.getBuyerId(), orderedOptionIds(order));
+
+        // 배송이 판매자별 배송을 만들도록 결제 완료를 알림 (같은 트랜잭션이라 결제 완료 저장과 함께 기록됨)
+        orderEventPublisher.publishOrderPaidEvent(PaidOrderMessage.from(order, LocalDateTime.now(clock)));
     }
 
     @Transactional
