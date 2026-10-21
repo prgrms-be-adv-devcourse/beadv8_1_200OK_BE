@@ -24,4 +24,10 @@ interface OrderControllerSpec {
     @ApiResponse(responseCode = "200", description = "조회 성공")
     @ApiResponse(responseCode = "404", description = "주문이 없거나 다른 회원의 주문")
     ResponseEntity<OrderDetailResponse> getOrder(Long memberId, Long orderId);
+
+    @Operation(summary = "구매확정", description = "배송 완료된 내 주문 상품을 구매확정합니다. 확정되면 정산 대상이 됩니다. 배송 완료 3일 후에는 자동으로 확정됩니다.")
+    @ApiResponse(responseCode = "204", description = "구매확정 성공")
+    @ApiResponse(responseCode = "404", description = "주문 또는 주문 상품이 없거나 다른 회원의 주문")
+    @ApiResponse(responseCode = "409", description = "배송 완료 상태가 아니거나(환불 중 포함) 이미 구매확정된 상품")
+    ResponseEntity<Void> confirmPurchase(Long memberId, Long orderId, Long orderItemId);
 }

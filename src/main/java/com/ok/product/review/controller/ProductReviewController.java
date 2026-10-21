@@ -21,6 +21,7 @@ import com.ok.product.review.controller.dto.ProductReviewCreateRequest;
 import com.ok.product.review.controller.dto.ProductReviewCreateResponse;
 import com.ok.product.review.controller.dto.ProductReviewResponse;
 import com.ok.product.review.controller.dto.ProductReviewUpdateRequest;
+import com.ok.product.review.service.ProductReviewFacade;
 import com.ok.product.review.service.ProductReviewService;
 
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductReviewController implements ProductReviewControllerSpec {
 
+	private final ProductReviewFacade productReviewFacade;
 	private final ProductReviewService productReviewService;
 
 	@Override
@@ -39,7 +41,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@PathVariable Long productId,
 		@RequestBody ProductReviewCreateRequest request
 	) {
-		Long reviewId = productReviewService.create(memberId, productId, request.toCommand());
+		Long reviewId = productReviewFacade.create(memberId, productId, request.toCommand());
 		return ResponseEntity.status(HttpStatus.CREATED).body(new ProductReviewCreateResponse(reviewId));
 	}
 

@@ -5,12 +5,14 @@ import com.ok.delivery.domain.RemoteAreaPostalCode;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.exception.DeliveryErrorCode;
+import com.ok.delivery.fixture.ShipmentFixture;
 import com.ok.delivery.repository.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.dto.AddressCommand;
 import com.ok.delivery.service.dto.SellerShipmentCommand;
 import com.ok.delivery.service.dto.ShipmentCreateCommand;
 import com.ok.delivery.service.dto.ShipmentItemCommand;
+import com.ok.delivery.service.dto.ShippingShipmentResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -204,6 +206,37 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_RECIPIENT_PHONE));
         assertThat(shipmentsOf(8L)).isEmpty();
+    }
+
+    @Test
+    void 추적을_다시_요청할_대상으로_배송_중인_shipment만_조회한다() {
+        // given
+        // 유니크 제약((주문, 판매자), 주문 상품) 때문에 준비 중 shipment는 다른 주문·주문 상품으로 만든다 (fixture 기본은 주문 1, 주문 상품 1·2)
+        shipmentRepository.save(ShipmentFixture.shipment(2L, 10L, ShipmentFixture.item(3L)));
+        Long shippingId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.SHIPPING)).getId();
+
+        // when
+        List<ShippingShipmentResult> sut = shipmentService.getShippingShipments();
+
+        // then
+        assertThat(sut).extracting(ShippingShipmentResult::shipmentId).containsExactly(shippingId);
+    }
+
+    @Test
+    void 배송_완료를_반영하면_배송_완료_상태와_완료_시각을_저장한다() {
+        // given
+        Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.SHIPPING)).getId();
+
+        // when
+        shipmentService.deliver(shipmentId);
+
+        // then
+        Shipment sut = shipmentRepository.findById(shipmentId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
+            softly.assertThat(sut.getDeliveredAt()).isNotNull();
+        });
     }
 
     @Test

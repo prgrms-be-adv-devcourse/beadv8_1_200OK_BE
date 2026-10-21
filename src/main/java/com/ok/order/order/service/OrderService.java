@@ -5,6 +5,7 @@ import com.ok.order.cart.service.CartService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
+import com.ok.order.order.domain.OrderSellerGroup;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.OrderDetailResult;
@@ -18,6 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,9 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
     private final CartService cartService;
+    private final Clock clock;
+
+    private static final int AUTO_CONFIRM_DAYS = 3;
 
     // 주문 저장
     @Transactional
@@ -164,5 +169,64 @@ public class OrderService {
             results.add(ReviewCandidateResult.from(item));
         }
         return results;
+    }
+
+    // 구매자 구매확정
+    @Transactional
+    public void confirmPurchase(Long buyerId, Long orderId, Long orderItemId) {
+        // 내 주문이 아니면
+        Order order = orderRepository.findByIdAndBuyerId(orderId, buyerId)
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
+
+        OrderItem item = order.findItem(orderItemId)
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+
+        if (item.getStatus() == OrderItemStatus.PURCHASE_CONFIRMED) {
+            throw new RestApiException(OrderErrorCode.ALREADY_PURCHASE_CONFIRMED);
+        }
+        if (!item.confirmPurchase(LocalDateTime.now(clock))) {
+            throw new RestApiException(OrderErrorCode.PURCHASE_CONFIRM_NOT_ALLOWED);
+        }
+
+        publishConfirmed(order, item);
+    }
+
+    // 구매확정 이벤트 발행
+    private void publishConfirmed(Order order, OrderItem item) {
+        OrderSellerGroup group = item.getSellerGroup();
+        orderEventPublisher.publishOrderProductConfirmedEvent(
+                order.getId(),
+                item.getId(),
+                group.getSellerId(),
+                item.getItemAmount(),     // TODO 부분 환불 정책이 정해지면 환불 수량 제외 (#28)
+                group.getShippingFee()
+        );
+    }
+
+    // 자동 구매확정 대상 주문 ID
+    public List<Long> findOrderIdsToAutoConfirm() {
+        return orderRepository.findOrderIdsToAutoConfirm(OrderItemStatus.DELIVERED, autoConfirmDeadline());
+    }
+
+    // 주문 하나의 자동 구매확정 (주문마다 트랜잭션을 나눠, 한 주문이 실패해도 다른 주문은 진행)
+    @Transactional
+    public int autoConfirmPurchases(Long orderId) {
+        Optional<Order> found = orderRepository.findById(orderId);
+        if (found.isEmpty()) {
+            log.warn("[ORDER_AUTO_CONFIRM_ORDER_NOT_FOUND] 자동 구매확정 대상 주문이 없습니다. orderId={}", orderId);
+            return 0;
+        }
+        Order order = found.get();
+
+        List<OrderItem> confirmed = order.confirmPurchasesDeliveredBefore(autoConfirmDeadline(), LocalDateTime.now(clock));
+        for (OrderItem item : confirmed) {
+            publishConfirmed(order, item);
+        }
+        return confirmed.size();
+    }
+
+    // 지금으로부터 3일 전
+    private LocalDateTime autoConfirmDeadline() {
+        return LocalDateTime.now(clock).minusDays(AUTO_CONFIRM_DAYS);
     }
 }

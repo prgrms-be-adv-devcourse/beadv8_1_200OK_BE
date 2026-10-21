@@ -2,8 +2,10 @@ package com.ok.product;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -19,12 +21,15 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
+import com.jayway.jsonpath.JsonPath;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
@@ -169,6 +174,101 @@ class SellerProductIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 상세_조회는_수정_화면에_필요한_값을_주고_숨긴_상품도_조회된다() throws Exception {
+		// given
+		Long productId = save(product(SELLER_ID, "청송 꿀사과",
+			List.of(ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 10),
+				ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 20))));
+		Long allocatedOptionId = transactionTemplate.execute(
+			status -> productRepository.findById(productId).orElseThrow().activeOptions().getLast().getId());
+		transactionTemplate.executeWithoutResult(status -> productOptionRepository.allocate(allocatedOptionId, 3));
+
+		// when & then
+		mockMvc.perform(asSeller(get(URL + "/{productId}", productId)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.productId").value(productId))
+			.andExpect(jsonPath("$.version").value(0))
+			.andExpect(jsonPath("$.name").value("청송 꿀사과"))
+			.andExpect(jsonPath("$.descriptionHtml").value("<p>설명</p>"))
+			.andExpect(jsonPath("$.categoryGroup").value("AGRICULTURE"))
+			.andExpect(jsonPath("$.category").value("FRUIT"))
+			.andExpect(jsonPath("$.region").value("GYEONGBUK"))
+			.andExpect(jsonPath("$.status").value("READY"))
+			.andExpect(jsonPath("$.visibility").value("HIDDEN"))
+			.andExpect(jsonPath("$.imageUrls").value(contains(BUCKET_URL + "a.jpg", BUCKET_URL + "b.jpg")))
+			.andExpect(jsonPath("$.options[*].name").value(contains("5kg", "3kg")))
+			.andExpect(jsonPath("$.options[1].optionId").value(allocatedOptionId))
+			.andExpect(jsonPath("$.options[1].listPrice").value(40_000))
+			.andExpect(jsonPath("$.options[1].salePrice").value(32_000))
+			.andExpect(jsonPath("$.options[1].totalStock").value(20))
+			.andExpect(jsonPath("$.options[1].allocatedQuantity").value(3))
+			.andExpect(jsonPath("$.options[1].availableStock").value(17))
+			.andExpect(jsonPath("$.createdAt").exists())
+			.andExpect(jsonPath("$.updatedAt").exists());
+	}
+
+	@Test
+	void 상세_조회만으로는_version이_바뀌지_않는다() throws Exception {
+		// given
+		Long productId = save(product(SELLER_ID, "청송 꿀사과", option(10)));
+		mockMvc.perform(asSeller(get(URL + "/{productId}", productId)));
+
+		// when & then
+		mockMvc.perform(asSeller(get(URL + "/{productId}", productId)))
+			.andExpect(jsonPath("$.version").value(0));
+	}
+
+	// 409가 계속 나던 원인(수정 요청에 넣을 version을 받을 곳이 없음)이 다시 생기지 않는지 확인한다.
+	// 첫 수정으로 version이 오른 뒤에도 다시 조회한 version으로 또 수정할 수 있어야 한다
+	@Test
+	void 상세_조회로_받은_version으로_거듭_수정할_수_있고_빠진_옵션은_조회에서_빠진다() throws Exception {
+		// given
+		Long productId = save(product(SELLER_ID, "청송 꿀사과",
+			List.of(ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 10),
+				ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 20))));
+		String before = getMyProduct(productId);
+		int keptOptionId = JsonPath.read(before, "$.options[0].optionId");
+		update(productId, JsonPath.read(before, "$.version"), "첫 수정", keptOptionId)
+			.andExpect(status().isNoContent());
+
+		// when
+		int version = JsonPath.read(getMyProduct(productId), "$.version");
+		update(productId, version, "두 번째 수정", keptOptionId)
+			.andExpect(status().isNoContent());
+
+		// then
+		mockMvc.perform(asSeller(get(URL + "/{productId}", productId)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.version", greaterThan(version)))
+			.andExpect(jsonPath("$.name").value("두 번째 수정"))
+			.andExpect(jsonPath("$.options[*].optionId").value(contains(keptOptionId)));
+	}
+
+	@Test
+	void 다른_판매자의_상품을_상세_조회하면_403이다() throws Exception {
+		// given
+		Long productId = save(product(OTHER_SELLER_ID, "다른 판매자 상품", option(10)));
+
+		// when & then
+		mockMvc.perform(asSeller(get(URL + "/{productId}", productId)))
+			.andExpect(status().isForbidden())
+			.andExpect(jsonPath("$.type", endsWith("/product/product-access-denied")));
+	}
+
+	@Test
+	void 삭제한_상품을_상세_조회하면_404다() throws Exception {
+		// given
+		Product deleted = product(SELLER_ID, "삭제한 상품", option(10));
+		deleted.delete(LocalDateTime.now());
+		Long productId = save(deleted);
+
+		// when & then
+		mockMvc.perform(asSeller(get(URL + "/{productId}", productId)))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.type", endsWith("/product/product-not-found")));
+	}
+
+	@Test
 	void 토큰_없이_호출하면_401이다() throws Exception {
 		mockMvc.perform(get(URL))
 			.andExpect(status().isUnauthorized())
@@ -185,6 +285,29 @@ class SellerProductIntegrationTest extends AbstractIntegrationTest {
 
 	private MockHttpServletRequestBuilder asSeller(MockHttpServletRequestBuilder request) {
 		return request.header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER_ID, "SELLER"));
+	}
+
+	private String getMyProduct(Long productId) throws Exception {
+		return mockMvc.perform(asSeller(get(URL + "/{productId}", productId)))
+			.andExpect(status().isOk())
+			.andReturn().getResponse().getContentAsString();
+	}
+
+	// 요청에 없는 기존 옵션은 삭제되므로 keptOptionId 하나만 남는다
+	private ResultActions update(Long productId, int version, String name, int keptOptionId) throws Exception {
+		return mockMvc.perform(asSeller(put("/api/v1/products/{productId}", productId))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("""
+				{
+				  "version": %d,
+				  "name": "%s",
+				  "descriptionHtml": "<p>설명</p>",
+				  "category": "FRUIT",
+				  "region": "GYEONGBUK",
+				  "imageUrls": ["%sa.jpg"],
+				  "options": [{ "id": %d, "name": "5kg", "listPrice": 49000, "salePrice": 49000, "totalStock": 10 }]
+				}
+				""".formatted(version, name, BUCKET_URL, keptOptionId)));
 	}
 
 	private Long save(Product product) {

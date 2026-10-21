@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
  * PREPARING → CANCELLED
  * </pre>
  *
- * <p>배송비는 결제 시점 값으로 고정한다. {@code address}, 지역 그룹, 도착 예정일은 현재 배송지 기준이라
+ * <p>배송비는 결제 시점 값으로 고정한다. {@code address}, 지역 그룹, 출고·도착 예정일은 현재 배송지 기준이라
  * 배송지 변경이 승인되면 바뀌고, 주문에 확정된 배송지는 바뀌지 않는다.
  */
 @Entity
@@ -94,6 +94,10 @@ public class Shipment extends BaseTime {
     @Column(name = "free_shipping_threshold")
     private Integer freeShippingThreshold;
 
+    // 도착 예정일 계산의 기준이다. 판매자는 이 날짜를 보고 출고를 준비한다
+    @Column(name = "estimated_ship_date", nullable = false)
+    private LocalDate estimatedShipDate;
+
     @Column(name = "estimated_delivery_start", nullable = false)
     private LocalDate estimatedDeliveryStart;
 
@@ -125,7 +129,8 @@ public class Shipment extends BaseTime {
      * <p>값은 모두 주문·결제와 운임 정책이 계산해 넘긴다. 사용자 입력이 아니므로 잘못된 값은 호출한 코드의 버그로 보고 표준 예외를 던진다.
      * 사용자가 입력하는 배송지는 {@link Address#of}가 먼저 검증한다.
      *
-     * @throws IllegalArgumentException 필수값이 없거나, 배송비가 음수거나, 도착 예정일 시작이 끝보다 늦거나, 상품 항목이 없으면
+     * @throws IllegalArgumentException 필수값이 없거나, 배송비가 음수거나, 도착 예정일 시작이 끝보다 늦거나,
+     *                                  출고 예정일이 도착 예정일 시작보다 늦거나, 상품 항목이 없으면
      */
     @Builder
     private Shipment(
@@ -138,6 +143,7 @@ public class Shipment extends BaseTime {
             int chargedShippingFee,
             int regionSurcharge,
             Integer freeShippingThreshold,
+            LocalDate estimatedShipDate,
             LocalDate estimatedDeliveryStart,
             LocalDate estimatedDeliveryEnd,
             List<ShipmentItem> items
@@ -147,6 +153,7 @@ public class Shipment extends BaseTime {
         requireNonNull(sellerId, "sellerId는 필수입니다.");
         requireNonNull(address, "배송지는 필수입니다.");
         requireText(regionGroup, "지역 그룹은 필수입니다.");
+        requireNonNull(estimatedShipDate, "출고 예정일은 필수입니다.");
         requireNonNull(estimatedDeliveryStart, "도착 예정일 시작은 필수입니다.");
         requireNonNull(estimatedDeliveryEnd, "도착 예정일 끝은 필수입니다.");
         if (baseShippingFee < 0 || chargedShippingFee < 0 || regionSurcharge < 0
@@ -155,6 +162,9 @@ public class Shipment extends BaseTime {
         }
         if (estimatedDeliveryStart.isAfter(estimatedDeliveryEnd)) {
             throw new IllegalArgumentException("도착 예정일 시작은 끝보다 늦을 수 없습니다.");
+        }
+        if (estimatedShipDate.isAfter(estimatedDeliveryStart)) {
+            throw new IllegalArgumentException("출고 예정일은 도착 예정일 시작보다 늦을 수 없습니다.");
         }
         if (items == null || items.isEmpty()) {
             throw new IllegalArgumentException("상품 항목은 1개 이상이어야 합니다.");
@@ -169,6 +179,7 @@ public class Shipment extends BaseTime {
         this.chargedShippingFee = chargedShippingFee;
         this.regionSurcharge = regionSurcharge;
         this.freeShippingThreshold = freeShippingThreshold;
+        this.estimatedShipDate = estimatedShipDate;
         this.estimatedDeliveryStart = estimatedDeliveryStart;
         this.estimatedDeliveryEnd = estimatedDeliveryEnd;
         this.delayed = false;
@@ -277,27 +288,34 @@ public class Shipment extends BaseTime {
     }
 
     /**
-     * 승인된 배송지 변경 요청을 반영해 현재 배송지, 지역 그룹, 도착 예정일을 바꾼다. 상태는 그대로다.
+     * 승인된 배송지 변경 요청을 반영해 현재 배송지, 지역 그룹, 출고·도착 예정일을 바꾼다. 상태는 그대로다.
      * 추가 운임 기준에는 요청의 안내 금액을 더한다. 다음 변경 요청이 이미 안내한 금액을 다시 안내하지 않게 하기 위해서다.
      *
      * <p>요청 승인({@link ShipmentAddressChangeRequest#approve})은 별도 애그리거트라 서비스가 같은 트랜잭션에서 먼저 한다.
      *
      * @param regionGroup 요청 배송지의 지역 그룹 코드
-     * @param arrival     요청 배송지 기준으로 다시 계산한 도착 예정일 범위
+     * @param shipDate    승인 시각 기준으로 다시 계산한 출고 예정일
+     * @param arrival     다시 계산한 출고 예정일 기준 도착 예정일 범위
      * @throws RestApiException {@code PREPARING}이 아니면 {@code INVALID_SHIPMENT_STATE}
-     * @throws IllegalArgumentException 이 shipment의 승인된 요청이 아니거나, 지역 그룹이나 도착 예정일이 없으면
+     * @throws IllegalArgumentException 이 shipment의 승인된 요청이 아니거나, 지역 그룹이나 예정일이 없거나,
+     *                                  출고 예정일이 도착 예정일 시작보다 늦으면
      */
-    public void applyAddressChange(ShipmentAddressChangeRequest request, String regionGroup, DeliveryDateRange arrival) {
+    public void applyAddressChange(ShipmentAddressChangeRequest request, String regionGroup, LocalDate shipDate, DeliveryDateRange arrival) {
         requireStatus(ShipmentStatus.PREPARING);
         requireNonNull(request, "배송지 변경 요청은 필수입니다.");
         if (!request.getShipmentId().equals(getId()) || request.getStatus() != AddressChangeStatus.APPROVED) {
             throw new IllegalArgumentException("이 shipment의 승인된 배송지 변경 요청이 아닙니다. requestId=" + request.getId());
         }
         requireText(regionGroup, "지역 그룹은 필수입니다.");
+        requireNonNull(shipDate, "출고 예정일은 필수입니다.");
         requireNonNull(arrival, "도착 예정일은 필수입니다.");
+        if (shipDate.isAfter(arrival.start())) {
+            throw new IllegalArgumentException("출고 예정일은 도착 예정일 시작보다 늦을 수 없습니다.");
+        }
         this.address = request.getRequestedAddress();
         this.regionGroup = regionGroup;
         this.regionSurcharge = Math.addExact(this.regionSurcharge, request.getAdditionalFeeNotice());
+        this.estimatedShipDate = shipDate;
         this.estimatedDeliveryStart = arrival.start();
         this.estimatedDeliveryEnd = arrival.end();
     }

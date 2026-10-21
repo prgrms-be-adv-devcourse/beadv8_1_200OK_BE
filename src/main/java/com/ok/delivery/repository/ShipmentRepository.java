@@ -2,12 +2,14 @@ package com.ok.delivery.repository;
 
 import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
+import com.ok.delivery.domain.ShipmentStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
@@ -15,6 +17,8 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
     boolean existsByOrderId(Long orderId);
 
     boolean existsByCarrierAndTrackingNumber(Carrier carrier, String trackingNumber);
+
+    List<Shipment> findAllByStatus(ShipmentStatus status);
 
     /**
      * shipment 행을 쓰기 잠금({@code SELECT ... FOR UPDATE})으로 조회한다.

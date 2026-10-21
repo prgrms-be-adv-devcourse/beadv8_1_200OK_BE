@@ -24,8 +24,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static com.ok.delivery.fixture.ShipmentFixture.address;
@@ -44,6 +42,7 @@ class ShipmentAddressChangeServiceTest {
     private static final Long SHIPMENT_ID = 1L;
     private static final Long REQUEST_ID = 5L;
     private static final Long SELLER_ID = 10L;
+    private static final SellerShippingSetting SELLER_SETTING = new SellerShippingSetting(3_000, 50_000, LocalTime.of(11, 0));
 
     @Mock
     ShipmentRepository shipmentRepository;
@@ -79,8 +78,7 @@ class ShipmentAddressChangeServiceTest {
     void 승인하면_승인_시각과_판매자_마감_시간으로_도착_예정일을_다시_계산한다() {
         // given
         given(deliveryRegionService.resolve("63100")).willReturn(new RegionResult("JEJU_MAIN", 3_000, 1));
-        given(sellerShippingSettingService.getSettings(List.of(SELLER_ID))).willReturn(Map.of(
-                SELLER_ID, new SellerShippingSetting(3_000, 50_000, LocalTime.of(11, 0))));
+        given(sellerShippingSettingService.getSetting(SELLER_ID)).willReturn(SELLER_SETTING);
 
         // when
         AddressChangeRequestResult sut = shipmentAddressChangeService.decide(command(AddressChangeDecision.APPROVE));
@@ -93,8 +91,28 @@ class ShipmentAddressChangeServiceTest {
             softly.assertThat(shipment.getAddress()).isEqualTo(otherAddress());
             softly.assertThat(shipment.getRegionGroup()).isEqualTo("JEJU_MAIN");
             softly.assertThat(shipment.getRegionSurcharge()).isEqualTo(3_000);
+            softly.assertThat(shipment.getEstimatedShipDate()).isEqualTo(LocalDate.of(2026, 10, 21));
             softly.assertThat(shipment.getEstimatedDeliveryStart()).isEqualTo(LocalDate.of(2026, 10, 26));
             softly.assertThat(shipment.getEstimatedDeliveryEnd()).isEqualTo(LocalDate.of(2026, 10, 27));
+        });
+    }
+
+    @Test
+    void 요청_뒤에_지역_정책이_바뀌면_지역과_도착_예정일은_승인_시점_값을_쓰고_추가_운임은_안내한_금액만_더한다() {
+        // given: 요청 때는 제주 본섬(3,000원, 1일)으로 안내했는데 승인 전에 부속 도서(5,000원, 2일)로 재지정되었다
+        given(deliveryRegionService.resolve("63100")).willReturn(new RegionResult("JEJU_ISLANDS", 5_000, 2));
+        given(sellerShippingSettingService.getSetting(SELLER_ID)).willReturn(SELLER_SETTING);
+
+        // when
+        shipmentAddressChangeService.decide(command(AddressChangeDecision.APPROVE));
+
+        // then: 수요일 출고 + (최소 2 + 부속 도서 2)영업일 = 다음 주 화요일 도착 시작
+        assertThat(shipment).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(shipment.getRegionGroup()).isEqualTo("JEJU_ISLANDS");
+            softly.assertThat(shipment.getRegionSurcharge()).isEqualTo(3_000);
+            softly.assertThat(shipment.getEstimatedDeliveryStart()).isEqualTo(LocalDate.of(2026, 10, 27));
+            softly.assertThat(shipment.getEstimatedDeliveryEnd()).isEqualTo(LocalDate.of(2026, 10, 28));
         });
     }
 

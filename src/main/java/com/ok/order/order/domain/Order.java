@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Entity
 @Table(name = "orders")
@@ -222,5 +223,27 @@ public class Order extends BaseTime {
             }
         }
         return 0;
+    }
+
+    // 주문 안에서 주문 상품 하나 찾기
+    public Optional<OrderItem> findItem(Long orderItemId) {
+        for (OrderItem item : getAllItems()) {
+            if (orderItemId.equals(item.getId())) {
+                return Optional.of(item);
+            }
+        }
+        return Optional.empty();
+    }
+
+
+    // 자동 구매확정: 기준 시각 이전에 배송 완료된 상품을 확정하고, 확정된 상품을 돌려줌
+    public List<OrderItem> confirmPurchasesDeliveredBefore(LocalDateTime deadline, LocalDateTime now) {
+        List<OrderItem> confirmed = new ArrayList<>();
+        for (OrderItem item : getAllItems()) {
+            if (item.isDeliveredBefore(deadline) && item.confirmPurchase(now)) {
+                confirmed.add(item);
+            }
+        }
+        return confirmed;
     }
 }

@@ -95,7 +95,7 @@ public class AuthService {
 
         // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다
         Member member = memberRepository.findById(memberId)
-                .filter(found -> found.getStatus() != MemberStatus.WITHDRAWN)
+                .filter(found -> !found.isWithdrawn())
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
         if (member.getStatus() == MemberStatus.SUSPENDED) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
@@ -131,7 +131,7 @@ public class AuthService {
     private void validateLoginable(Member member) {
         // 탈퇴 회원은 아이디가 익명화될 예정이라 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다.
         // 정지 회원은 비밀번호까지 맞은 본인이므로, 왜 로그인이 안 되는지 알 수 있게 별도 코드로 알린다.
-        if (member.getStatus() == MemberStatus.WITHDRAWN) {
+        if (member.isWithdrawn()) {
             throw new RestApiException(AuthErrorCode.INVALID_CREDENTIALS);
         }
         if (member.getStatus() == MemberStatus.SUSPENDED) {

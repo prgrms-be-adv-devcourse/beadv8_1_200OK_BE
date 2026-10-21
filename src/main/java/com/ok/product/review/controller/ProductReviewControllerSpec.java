@@ -30,6 +30,7 @@ interface ProductReviewControllerSpec {
 
 	@Operation(summary = "리뷰 작성", description = """
 		구매한 상품의 리뷰를 작성합니다. 별점은 0.5점 단위를 정수 1~10으로 보냅니다(7 = 3.5점).
+		본인이 구매확정한 이 상품의 주문상품(orderItemId)에만 쓸 수 있고, 주문 ID와 옵션 ID는 서버가 주문에서 가져옵니다.
 		한 주문에서 같은 상품은 옵션을 여러 개 샀어도 리뷰 1개이고, 다른 주문(재구매)이면 다시 쓸 수 있습니다.
 		리뷰를 삭제해도 같은 주문의 같은 상품으로는 다시 쓸 수 없습니다.
 		""")
@@ -40,7 +41,19 @@ interface ProductReviewControllerSpec {
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
 		),
 		@ApiResponse(
-			responseCode = "404", description = "상품이 없거나 삭제됨, 그 상품의 옵션이 아님",
+			responseCode = "403", description = "본인이 구매확정한 이 상품의 주문상품이 아님 (남의 주문, 없는 주문상품, 구매확정 전을 구분하지 않음)",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class),
+				examples = @ExampleObject(value = """
+					{
+					  "type": "product/purchase-not-reviewable",
+					  "title": "Purchase not reviewable",
+					  "status": 403,
+					  "detail": "본인이 구매확정한 주문 상품에만 리뷰를 쓸 수 있습니다."
+					}
+					"""))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
 		),
 		@ApiResponse(
@@ -57,6 +70,10 @@ interface ProductReviewControllerSpec {
 		),
 		@ApiResponse(
 			responseCode = "422", description = "요청 값 검증 실패, 업로드하지 않은 첨부 URL, 영상 2개 이상",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "503", description = "주문 모듈에서 구매 내역을 확인하지 못함",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
 		)
 	})

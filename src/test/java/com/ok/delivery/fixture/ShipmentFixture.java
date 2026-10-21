@@ -57,6 +57,7 @@ public final class ShipmentFixture {
                 .chargedShippingFee(3_000)
                 .regionSurcharge(0)
                 .freeShippingThreshold(50_000)
+                .estimatedShipDate(LocalDate.of(2026, 10, 11))
                 .estimatedDeliveryStart(LocalDate.of(2026, 10, 13))
                 .estimatedDeliveryEnd(LocalDate.of(2026, 10, 14))
                 .items(List.of(items))

@@ -26,6 +26,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.ok.common.exception.RestApiException;
@@ -44,6 +45,7 @@ import com.ok.product.review.repository.ProductReviewRepository;
 import com.ok.product.review.service.dto.ProductReviewCreateCommand;
 import com.ok.product.review.service.dto.ProductReviewResult;
 import com.ok.product.review.service.dto.ProductReviewUpdateCommand;
+import com.ok.product.review.service.dto.ReviewablePurchase;
 
 @ExtendWith(MockitoExtension.class)
 class ProductReviewServiceTest {
@@ -79,7 +81,7 @@ class ProductReviewServiceTest {
 	@Test
 	void 작성하면_리뷰_개수_1과_별점이_집계에_더해진다() {
 		// given
-		givenProductAndOption();
+		givenProduct();
 		given(productReviewRepository.saveAndFlush(any())).willAnswer(invocation -> {
 			ProductReview review = invocation.getArgument(0);
 			ReflectionTestUtils.setField(review, "id", REVIEW_ID);
@@ -87,7 +89,7 @@ class ProductReviewServiceTest {
 		});
 
 		// when
-		Long reviewId = sut.create(MEMBER_ID, PRODUCT_ID, createCommand(4));
+		Long reviewId = sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4));
 
 		// then
 		assertThat(reviewId).isEqualTo(REVIEW_ID);
@@ -95,25 +97,48 @@ class ProductReviewServiceTest {
 	}
 
 	@Test
-	void 다른_상품의_옵션으로는_작성할_수_없다() {
+	void 작성하면_주문_모듈이_확인해_준_구매_건의_주문_옵션_ID로_저장한다() {
 		// given
-		given(productRepository.findByIdAndDeletedAtIsNull(PRODUCT_ID)).willReturn(Optional.of(mock(Product.class)));
-		given(productOptionRepository.existsByIdAndProductId(OPTION_ID, PRODUCT_ID)).willReturn(false);
+		givenProduct();
+		given(productReviewRepository.saveAndFlush(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+		// when
+		sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4));
+
+		// then
+		ArgumentCaptor<ProductReview> captor = ArgumentCaptor.forClass(ProductReview.class);
+		then(productReviewRepository).should().saveAndFlush(captor.capture());
+		ProductReview saved = captor.getValue();
+		assertThat(saved).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(saved.getOrderId()).isEqualTo(ORDER_ID);
+			softly.assertThat(saved.getOrderItemId()).isEqualTo(ORDER_ITEM_ID);
+			softly.assertThat(saved.getProductOptionId()).isEqualTo(OPTION_ID);
+			softly.assertThat(saved.getMemberId()).isEqualTo(MEMBER_ID);
+			softly.assertThat(saved.getProductId()).isEqualTo(PRODUCT_ID);
+		});
+	}
+
+	@Test
+	void 삭제된_상품에는_작성할_수_없다() {
+		// given
+		given(productRepository.findByIdAndDeletedAtIsNull(PRODUCT_ID)).willReturn(Optional.empty());
 
 		// when & then
-		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, createCommand(4)))
+		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4)))
 			.isInstanceOfSatisfying(RestApiException.class,
-				e -> assertThat(e.getErrorCode()).isEqualTo(ProductErrorCode.OPTION_NOT_FOUND));
+				e -> assertThat(e.getErrorCode()).isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND));
+		then(productRepository).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
 	}
 
 	@Test
 	void 같은_주문의_같은_상품은_다시_작성할_수_없다() {
 		// given
-		givenProductAndOption();
+		givenProduct();
 		given(productReviewRepository.existsByOrderIdAndProductId(ORDER_ID, PRODUCT_ID)).willReturn(true);
 
 		// when & then
-		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, createCommand(4)))
+		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4)))
 			.isInstanceOfSatisfying(RestApiException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(ProductReviewErrorCode.DUPLICATE_REVIEW));
 		then(productRepository).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
@@ -122,11 +147,11 @@ class ProductReviewServiceTest {
 	@Test
 	void 동시에_작성해_UNIQUE_위반이_나면_중복_리뷰로_바꾼다() {
 		// given
-		givenProductAndOption();
+		givenProduct();
 		given(productReviewRepository.saveAndFlush(any())).willThrow(new DataIntegrityViolationException("uk"));
 
 		// when & then
-		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, createCommand(4)))
+		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4)))
 			.isInstanceOfSatisfying(RestApiException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(ProductReviewErrorCode.DUPLICATE_REVIEW));
 	}
@@ -229,9 +254,12 @@ class ProductReviewServiceTest {
 		});
 	}
 
-	private void givenProductAndOption() {
+	private void givenProduct() {
 		given(productRepository.findByIdAndDeletedAtIsNull(PRODUCT_ID)).willReturn(Optional.of(mock(Product.class)));
-		given(productOptionRepository.existsByIdAndProductId(OPTION_ID, PRODUCT_ID)).willReturn(true);
+	}
+
+	private ReviewablePurchase purchase() {
+		return new ReviewablePurchase(ORDER_ID, ORDER_ITEM_ID, OPTION_ID);
 	}
 
 	private ProductReview givenReview(Long memberId, int rating) {
@@ -245,7 +273,6 @@ class ProductReviewServiceTest {
 	}
 
 	private ProductReviewCreateCommand createCommand(int rating) {
-		return new ProductReviewCreateCommand(OPTION_ID, ORDER_ID, ORDER_ITEM_ID, rating, "맛있어요",
-			List.of(BASE_URL + "product_review/a.jpg"));
+		return new ProductReviewCreateCommand(ORDER_ITEM_ID, rating, "맛있어요", List.of(BASE_URL + "product_review/a.jpg"));
 	}
 }

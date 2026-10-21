@@ -1,0 +1,1 @@
+ALTER TABLE order_item ADD COLUMN confirmed_at DATETIME(6) NULL COMMENT '구매확정 시각' AFTER delivered_at;
