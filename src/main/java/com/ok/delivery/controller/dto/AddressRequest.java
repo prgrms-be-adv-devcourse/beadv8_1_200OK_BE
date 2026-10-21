@@ -10,7 +10,7 @@ public record AddressRequest(
         String recipientName,
 
         @NotBlank(message = "연락처는 필수입니다.")
-        @Pattern(regexp = "^\\d(?:-?\\d){9,10}$", message = "연락처는 숫자 10~11자리여야 합니다.")
+        @Pattern(regexp = "^\\d(?:-?\\d){8,10}$", message = "연락처는 숫자 9~11자리여야 합니다.")
         String recipientPhone,
 
         @NotBlank(message = "우편번호는 필수입니다.")

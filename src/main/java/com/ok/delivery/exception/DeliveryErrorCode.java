@@ -25,7 +25,7 @@ public enum DeliveryErrorCode implements ErrorCode {
 
     // 배송지
     MISSING_ADDRESS_FIELD(HttpStatus.UNPROCESSABLE_ENTITY, "Missing address field", "배송지 필수 항목이 비어 있습니다."),
-    INVALID_RECIPIENT_PHONE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid recipient phone", "연락처는 숫자 10~11자리여야 합니다."),
+    INVALID_RECIPIENT_PHONE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid recipient phone", "연락처는 숫자 9~11자리여야 합니다."),
     INVALID_POSTAL_CODE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid postal code", "우편번호는 숫자 5자리여야 합니다."),
 
     // 배송지 변경

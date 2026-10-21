@@ -23,8 +23,8 @@ import java.util.regex.Pattern;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Address {
 
-    /** 숫자로 시작하고 숫자 사이에만 하이픈을 1개까지 허용, 숫자는 10~11자리 */
-    private static final Pattern PHONE_INPUT = Pattern.compile("^\\d(?:-?\\d){9,10}$");
+    /** 숫자로 시작하고 숫자 사이에만 하이픈을 1개까지 허용, 숫자는 9~11자리(02-123-4567 같은 서울 유선번호가 9자리) */
+    private static final Pattern PHONE_INPUT = Pattern.compile("^\\d(?:-?\\d){8,10}$");
     private static final Pattern POSTAL_CODE = Pattern.compile("^\\d{5}$");
 
     @Column(name = "recipient_name", nullable = false, length = 50)
@@ -66,7 +66,7 @@ public class Address {
      *
      * <ul>
      *   <li>수령인, 연락처, 우편번호, 주소, 상세 주소는 필수다. 배송 요청사항({@code deliveryNote})만 선택이다.</li>
-     *   <li>연락처는 하이픈을 허용해 입력받고, 하이픈을 뺀 숫자 10~11자리만 저장한다.</li>
+     *   <li>연락처는 하이픈을 허용해 입력받고, 하이픈을 뺀 숫자 9~11자리만 저장한다.</li>
      *   <li>우편번호는 숫자 5자리다.</li>
      * </ul>
      *
