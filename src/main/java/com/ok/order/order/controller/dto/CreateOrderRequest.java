@@ -25,8 +25,9 @@ public record CreateOrderRequest(
         @Size(max = 200, message = "주소는 200자 이하여야 합니다.")
         String address,
 
+        @NotBlank(message = "상세 주소는 필수입니다.")
         @Size(max = 100, message = "상세 주소는 100자 이하여야 합니다.")
-        String addressDetail, // 선택
+        String addressDetail,
 
         @AssertTrue(message = "판매자 정보 제공에 동의해야 주문할 수 있습니다.")
         boolean thirdPartyProvisionAgreed,
