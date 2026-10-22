@@ -1,5 +1,6 @@
 package com.ok.config;
 
+import com.ok.common.trace.TraceAwareEventSerializer;
 import com.ok.common.trace.TraceFilter;
 import com.ok.common.trace.TraceIdGenerator;
 import com.ok.common.trace.TraceTaskDecorator;
@@ -9,9 +10,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.task.TaskDecorator;
+import org.springframework.modulith.events.core.EventSerializer;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
- * TraceID 생성기, HTTP 필터, 비동기 작업용 {@link TaskDecorator}를 등록한다.
+ * TraceID 생성기, HTTP 필터, 비동기 작업용 {@link TaskDecorator}, 이벤트 직렬화기를 등록한다.
  */
 @Configuration(proxyBeanMethods = false)
 public class TraceConfig {
@@ -35,5 +38,11 @@ public class TraceConfig {
     @Bean
     public TaskDecorator traceTaskDecorator() {
         return new TraceTaskDecorator();
+    }
+
+    // Modulith 기본 직렬화기(@ConditionalOnMissingBean(EventSerializer))를 대체한다
+    @Bean
+    public EventSerializer traceAwareEventSerializer(JsonMapper jsonMapper) {
+        return new TraceAwareEventSerializer(jsonMapper);
     }
 }

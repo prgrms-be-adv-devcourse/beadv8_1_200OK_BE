@@ -21,6 +21,7 @@ class TraceTaskDecoratorTest {
     void tearDown() {
         executor.shutdownNow();
         MDC.clear();
+        TraceContext.clearPending();
     }
 
     @Test
@@ -89,5 +90,21 @@ class TraceTaskDecoratorTest {
             softly.assertThat(values[0]).isEqualTo("worker-own");
             softly.assertThat(values[1]).isNull();
         });
+    }
+
+    @Test
+    void 재처리용_임시_traceId가_있으면_제출_스레드의_traceId보다_우선한다() throws Exception {
+        // given
+        MDC.put(TraceContext.MDC_KEY, "resubmitter-trace");
+        TraceContext.setPending("original-trace");
+        String[] observed = new String[1];
+
+        // when
+        Runnable decorated = sut.decorate(() -> observed[0] = MDC.get(TraceContext.MDC_KEY));
+        executor.submit(decorated).get();
+
+        // then
+        assertThat(observed[0]).isEqualTo("original-trace");
+        assertThat(TraceContext.takePending()).isNull();
     }
 }

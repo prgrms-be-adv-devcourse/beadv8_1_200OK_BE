@@ -11,6 +11,7 @@ class TraceContextTest {
     @AfterEach
     void tearDown() {
         MDC.clear();
+        TraceContext.clearPending();
     }
 
     @Test
@@ -38,5 +39,31 @@ class TraceContextTest {
             // then
             assertThat(TraceContext.current()).contains("outer");
         }
+    }
+
+    @Test
+    void 임시_보관한_값은_한_번만_꺼낼_수_있다() {
+        // given
+        TraceContext.setPending("pending-1");
+
+        // when
+        String first = TraceContext.takePending();
+        String second = TraceContext.takePending();
+
+        // then
+        assertThat(first).isEqualTo("pending-1");
+        assertThat(second).isNull();
+    }
+
+    @Test
+    void null을_보관하면_이전에_남은_값이_지워진다() {
+        // given
+        TraceContext.setPending("stale");
+
+        // when
+        TraceContext.setPending(null);
+
+        // then
+        assertThat(TraceContext.takePending()).isNull();
     }
 }
