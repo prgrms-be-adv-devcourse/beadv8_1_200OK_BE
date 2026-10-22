@@ -106,6 +106,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `JPA_DDL_AUTO` | Hibernate `ddl-auto` (dev, 운영은 `validate` 고정) | `validate` |
 | `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `Asia/Seoul` |
 | `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
+| `TRACE_NODE_ID` | TraceID(Snowflake)의 노드 번호. 범위 0~1023, 인스턴스마다 다르게 지정 | `0` |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 
 ### 새 설정값을 환경변수로 추가하는 방법
@@ -115,6 +116,14 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 3. 이 문서의 표에 반영
 
 > `.env` 값을 바꿔도 Gradle은 테스트를 다시 실행하지 않습니다(up-to-date). `./gradlew cleanTest test`로 실행하세요.
+
+### TraceID
+
+HTTP 요청마다 TraceID(Snowflake)가 붙습니다. 로그의 `[...]`와 응답 헤더 `X-Trace-Id`로 확인할 수 있습니다.
+
+- ID에서 생성 시각(epoch ms)은 `(id >> 22) + 1767225600000`, 노드 번호는 `(id >> 12) & 1023`으로 구합니다.
+- 요청 헤더로 `X-Trace-Id`(영숫자·`-`·`_`, 64자 이하)를 보내면 그 값을 씁니다. 형식이 맞지 않으면 새로 만듭니다.
+- 다중 인스턴스 배포는 #101 완료 후에 합니다.
 
 ### 타임존
 
