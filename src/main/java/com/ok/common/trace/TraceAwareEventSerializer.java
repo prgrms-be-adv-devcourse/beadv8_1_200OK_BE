@@ -37,6 +37,8 @@ public class TraceAwareEventSerializer implements EventSerializer {
 
     @Override
     public <T> T deserialize(Object serialized, Class<T> type) {
+        // 읽기에 실패해도 앞 행이 남긴 값이 이 이벤트의 제출에 붙지 않도록 먼저 비운다
+        TraceContext.clearPending();
         String json = serialized.toString();
 
         // 이벤트 객체는 원래 문자열을 그대로 읽는다. readTree를 거쳐 treeToValue로 바꾸면 소수가 double을 거쳐

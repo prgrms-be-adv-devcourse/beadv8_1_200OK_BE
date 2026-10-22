@@ -1,13 +1,13 @@
 package com.ok.common.trace;
 
 import com.ok.testsupport.AbstractIntegrationTest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.modulith.events.IncompleteEventPublications;
-import org.springframework.modulith.events.core.TargetEventPublication;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -35,6 +35,13 @@ class TraceEventIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private TraceProbeListener probe;
+
+    @AfterEach
+    void tearDown() {
+        // 재처리 필터가 다른 행을 역직렬화하면서 이 스레드에 남긴 임시 traceId가 다음 테스트에 붙지 않도록 비운다
+        TraceContext.clearPending();
+        MDC.clear();
+    }
 
     @Test
     void 발행_스레드의_traceId가_리스너_스레드로_전파된다() {
@@ -83,12 +90,7 @@ class TraceEventIntegrationTest extends AbstractIntegrationTest {
 
         // when: 재처리는 요청과 무관한 스레드(traceId 없음)에서 일어난다
         assertThat(MDC.get(TraceContext.MDC_KEY)).isNull();
-        // 리스너 식별자로 먼저 걸러, 다른 테스트가 남긴 미완료 행까지 역직렬화하지 않는다
-        incompleteEventPublications.resubmitIncompletePublications(publication ->
-                publication instanceof TargetEventPublication target
-                        && target.getTargetIdentifier().getValue().contains("TraceProbeListener")
-                        && publication.getEvent() instanceof TraceProbeEvent event
-                        && event.key().equals(key));
+        resubmit(key);
 
         // then
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -108,17 +110,20 @@ class TraceEventIntegrationTest extends AbstractIntegrationTest {
 
         // when: 재처리하는 스레드에는 다른 traceId가 있다
         try (TraceContext.Scope ignored = TraceContext.open("resubmitter")) {
-            incompleteEventPublications.resubmitIncompletePublications(publication ->
-                    publication instanceof TargetEventPublication target
-                            && target.getTargetIdentifier().getValue().contains("TraceProbeListener")
-                            && publication.getEvent() instanceof TraceProbeEvent event
-                            && event.key().equals(key));
+            resubmit(key);
         }
 
         // then: 리스너는 제출 스레드의 traceId를 물려받지 않고, 완료 표시도 된다
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(probe.observed(key)).containsExactly("null", "null"));
         await().atMost(TIMEOUT).until(() -> countPublications(key, "COMPLETED") == 1);
+    }
+
+    // 필터 안의 getEvent()가 행을 역직렬화하며 pending을 남기고, Modulith가 행마다 필터 직후에 처리를 제출한다.
+    // getEvent() 결과는 캐시되므로 일치한 행의 pending이 그 행의 제출에 그대로 쓰인다
+    private void resubmit(String key) {
+        incompleteEventPublications.resubmitIncompletePublications(publication ->
+                publication.getEvent() instanceof TraceProbeEvent event && event.key().equals(key));
     }
 
     private void publishInTransaction(Object event) {
