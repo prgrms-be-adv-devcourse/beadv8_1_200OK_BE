@@ -35,6 +35,13 @@ spring:
           # Hibernate가 LocalDateTime을 DB에 저장·조회할 때 변환하는 기준 시간대 (기본값 Asia/Seoul, #93)
           # JVM 시간대(Dockerfile, build.gradle.kts의 -Duser.timezone)와 같아야 저장한 시각이 그대로 들어간다
           time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+trace:
+  # Snowflake TraceID의 노드 번호(0~1023). 인스턴스마다 다르게 지정한다
+  node-id: ${TRACE_NODE_ID:0}
+logging:
+  pattern:
+    # Boot 기본 패턴의 상관 ID 자리(스레드 이름 뒤, 로거 이름 앞)에 traceId를 찍는다
+    correlation: "[%X{traceId:-}] "
 app:
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
