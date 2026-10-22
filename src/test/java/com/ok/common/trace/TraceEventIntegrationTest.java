@@ -43,6 +43,7 @@ class TraceEventIntegrationTest extends AbstractIntegrationTest {
         // then
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(probe.observed(key)).containsExactly("trace-propagate"));
+        // 리스너 완료 처리(발행 기록 COMPLETED)까지 끝난 뒤 마쳐, 미완료 기록이 다른 테스트에 남지 않고 직렬화기 교체 때의 완료 처리 회귀도 잡는다
         await().atMost(TIMEOUT).until(() -> countCompletedPublications(key) == 1);
     }
 
@@ -57,6 +58,7 @@ class TraceEventIntegrationTest extends AbstractIntegrationTest {
         // then
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(probe.observed(key)).containsExactly("null"));
+        // 리스너 완료 처리(발행 기록 COMPLETED)까지 끝난 뒤 마쳐, 미완료 기록이 다른 테스트에 남지 않고 직렬화기 교체 때의 완료 처리 회귀도 잡는다
         await().atMost(TIMEOUT).until(() -> countCompletedPublications(key) == 1);
     }
 

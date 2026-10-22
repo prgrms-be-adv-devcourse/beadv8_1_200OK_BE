@@ -10,6 +10,7 @@ import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class TraceTaskDecoratorTest {
 
@@ -83,7 +84,10 @@ class TraceTaskDecoratorTest {
 
         // then
         String[] values = after.get();
-        assertThat(values[0]).isEqualTo("worker-own");
-        assertThat(values[1]).isNull();
+        assertThat(values).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(values[0]).isEqualTo("worker-own");
+            softly.assertThat(values[1]).isNull();
+        });
     }
 }
