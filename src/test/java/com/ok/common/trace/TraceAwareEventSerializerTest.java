@@ -7,6 +7,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -20,6 +23,7 @@ class TraceAwareEventSerializerTest {
     }
 
     private final JsonMapper mapper = JsonMapper.builder().build();
+    private final AtomicReference<Object> reserialized = new AtomicReference<>();
     private final TraceAwareEventSerializer sut = new TraceAwareEventSerializer(mapper);
 
     @AfterEach
@@ -71,7 +75,7 @@ class TraceAwareEventSerializerTest {
         assertThat(restored).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(restored).isEqualTo(event);
-            softly.assertThat(TraceContext.takePending()).isEqualTo("trace-1");
+            softly.assertThat(TraceContext.takePending()).isEqualTo(new TraceContext.PendingTrace("trace-1"));
         });
     }
 
@@ -87,7 +91,7 @@ class TraceAwareEventSerializerTest {
         assertThat(restored).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(restored.id()).isEqualTo(7L);
-            softly.assertThat(TraceContext.takePending()).isNull();
+            softly.assertThat(TraceContext.takePending()).isEqualTo(new TraceContext.PendingTrace(null));
         });
     }
 
@@ -101,7 +105,7 @@ class TraceAwareEventSerializerTest {
         sut.deserialize(legacyJson, SampleEvent.class);
 
         // then
-        assertThat(TraceContext.takePending()).isNull();
+        assertThat(TraceContext.takePending()).isEqualTo(new TraceContext.PendingTrace(null));
     }
 
     @Test
@@ -133,7 +137,51 @@ class TraceAwareEventSerializerTest {
         assertThat(restored).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(restored.id()).isEqualTo(7L);
-            softly.assertThat(TraceContext.takePending()).isNull();
+            softly.assertThat(TraceContext.takePending()).isEqualTo(new TraceContext.PendingTrace(null));
         });
+    }
+
+    // Modulith는 완료 표시를 serialized_event 문자열 일치로 찾기도 한다. 리스너 스레드의 재직렬화 결과가 저장값과 같아야 한다
+    @Test
+    void 재처리_리스너_스레드의_재직렬화_결과는_저장된_문자열과_같다() throws Exception {
+        // given
+        SampleEvent event = new SampleEvent(1L, "가입", LocalDateTime.of(2026, 10, 14, 9, 30));
+        Object stored;
+        try (TraceContext.Scope ignored = TraceContext.open("T")) {
+            stored = sut.serialize(event);
+        }
+
+        // when
+        Object reserialized = reserializeInListenerThread(stored, event);
+
+        // then
+        assertThat(reserialized).isEqualTo(stored);
+    }
+
+    @Test
+    void trace_없이_저장된_이벤트도_제출_스레드_traceId와_무관하게_저장된_문자열과_같다() throws Exception {
+        // given
+        SampleEvent event = new SampleEvent(1L, "가입", LocalDateTime.of(2026, 10, 14, 9, 30));
+        Object stored = sut.serialize(event);
+
+        // when
+        Object reserialized = reserializeInListenerThread(stored, event);
+
+        // then
+        assertThat(reserialized).isEqualTo(stored);
+    }
+
+    // 제출 스레드 MDC를 "S"로 둔 채 역직렬화하고 데코레이트한 작업을 제출해, 작업 안에서 다시 직렬화한 결과를 돌려준다
+    private Object reserializeInListenerThread(Object stored, SampleEvent event) throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            MDC.put(TraceContext.MDC_KEY, "S");
+            sut.deserialize(stored, SampleEvent.class);
+            Runnable decorated = new TraceTaskDecorator().decorate(() -> reserialized.set(sut.serialize(event)));
+            executor.submit(decorated).get();
+            return reserialized.get();
+        } finally {
+            executor.shutdownNow();
+        }
     }
 }

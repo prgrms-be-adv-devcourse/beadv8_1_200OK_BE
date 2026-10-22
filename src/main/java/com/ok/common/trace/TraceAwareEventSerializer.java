@@ -45,7 +45,7 @@ public class TraceAwareEventSerializer implements EventSerializer {
                 .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .readValue(json);
 
-        // 값이 없으면(배포 전에 저장된 행) 앞선 이벤트가 남긴 값을 지워, 다른 이벤트의 traceId를 물려받지 않게 한다
+        // 값이 없으면(배포 전에 저장된 행) null을 "traceId 없음" 표시로 보관한다. 앞선 이벤트의 값도 물려받지 않는다
         TraceContext.setPending(readTraceId(json));
         return event;
     }

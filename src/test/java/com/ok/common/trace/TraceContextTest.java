@@ -47,23 +47,35 @@ class TraceContextTest {
         TraceContext.setPending("pending-1");
 
         // when
-        String first = TraceContext.takePending();
-        String second = TraceContext.takePending();
+        TraceContext.PendingTrace first = TraceContext.takePending();
+        TraceContext.PendingTrace second = TraceContext.takePending();
 
         // then
-        assertThat(first).isEqualTo("pending-1");
+        assertThat(first).isNotNull();
+        assertThat(first.traceId()).isEqualTo("pending-1");
         assertThat(second).isNull();
     }
 
     @Test
-    void null을_보관하면_이전에_남은_값이_지워진다() {
+    void null을_보관하면_traceId_없음_표시로_꺼내진다() {
         // given
         TraceContext.setPending("stale");
 
         // when
         TraceContext.setPending(null);
+        TraceContext.PendingTrace taken = TraceContext.takePending();
 
         // then
-        assertThat(TraceContext.takePending()).isNull();
+        assertThat(taken).isNotNull();
+        assertThat(taken.traceId()).isNull();
+    }
+
+    @Test
+    void 보관한_값이_없으면_null이다() {
+        // when
+        TraceContext.PendingTrace taken = TraceContext.takePending();
+
+        // then
+        assertThat(taken).isNull();
     }
 }

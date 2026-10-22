@@ -32,10 +32,16 @@ public class TraceTaskDecorator implements TaskDecorator {
         Map<String, String> copy = MDC.getCopyOfContextMap();
         Map<String, String> context = copy == null ? new HashMap<>() : new HashMap<>(copy);
 
-        // 재처리 경로에서는 역직렬화가 원래 traceId를 남겨 두므로, 제출하는 스레드의 traceId보다 우선한다
-        String pending = TraceContext.takePending();
+        // 재처리 리스너의 traceId를 저장된 _trace와 같게 맞춘다. Modulith가 완료 표시를 serialized_event 문자열 일치로
+        // 찾는 경로에서, 리스너 스레드의 재직렬화 결과가 저장값과 다르면 완료되지 않고 다시 처리되기 때문이다.
+        // _trace 없이 저장된 이벤트(traceId null)는 제출 스레드의 traceId도 쓰지 않는다
+        TraceContext.PendingTrace pending = TraceContext.takePending();
         if (pending != null) {
-            context.put(TraceContext.MDC_KEY, pending);
+            if (pending.traceId() == null) {
+                context.remove(TraceContext.MDC_KEY);
+            } else {
+                context.put(TraceContext.MDC_KEY, pending.traceId());
+            }
         }
         return context;
     }

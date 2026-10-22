@@ -96,6 +96,31 @@ class TraceEventIntegrationTest extends AbstractIntegrationTest {
         await().atMost(TIMEOUT).until(() -> countPublications(key, "COMPLETED") == 1);
     }
 
+    @Test
+    void traceId_없이_저장된_이벤트를_traceId가_있는_스레드에서_재처리해도_저장값과_같게_처리되고_완료된다() {
+        // given: traceId 없이 발행해 첫 시도를 실패시킨다
+        String key = "resubmit-no-trace-" + UUID.randomUUID();
+        probe.failOnceFor(key);
+        publishInTransaction(new TraceProbeEvent(key));
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(probe.observed(key)).containsExactly("null"));
+        await().atMost(TIMEOUT).until(() -> countPublications(key, "FAILED") == 1);
+
+        // when: 재처리하는 스레드에는 다른 traceId가 있다
+        try (TraceContext.Scope ignored = TraceContext.open("resubmitter")) {
+            incompleteEventPublications.resubmitIncompletePublications(publication ->
+                    publication instanceof TargetEventPublication target
+                            && target.getTargetIdentifier().getValue().contains("TraceProbeListener")
+                            && publication.getEvent() instanceof TraceProbeEvent event
+                            && event.key().equals(key));
+        }
+
+        // then: 리스너는 제출 스레드의 traceId를 물려받지 않고, 완료 표시도 된다
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(probe.observed(key)).containsExactly("null", "null"));
+        await().atMost(TIMEOUT).until(() -> countPublications(key, "COMPLETED") == 1);
+    }
+
     private void publishInTransaction(Object event) {
         // 커밋되어야 @ApplicationModuleListener가 실행된다
         transactionTemplate.executeWithoutResult(status -> eventPublisher.publishEvent(event));
