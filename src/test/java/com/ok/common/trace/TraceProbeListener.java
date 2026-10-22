@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -19,6 +20,7 @@ class TraceProbeListener {
     private static final Logger log = LoggerFactory.getLogger(TraceProbeListener.class);
 
     private final Map<String, List<String>> observed = new ConcurrentHashMap<>();
+    private final Set<String> failOnce = ConcurrentHashMap.newKeySet();
 
     @ApplicationModuleListener
     void on(TraceProbeEvent event) {
@@ -26,6 +28,13 @@ class TraceProbeListener {
         log.info("프로브 리스너 실행 key={}", event.key());
         observed.computeIfAbsent(event.key(), key -> new CopyOnWriteArrayList<>())
                 .add(String.valueOf(MDC.get(TraceContext.MDC_KEY)));
+        if (failOnce.remove(event.key())) {
+            throw new IllegalStateException("재처리 검증을 위한 의도된 실패");
+        }
+    }
+
+    void failOnceFor(String key) {
+        failOnce.add(key);
     }
 
     List<String> observed(String key) {

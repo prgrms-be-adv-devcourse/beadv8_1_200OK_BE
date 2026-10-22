@@ -36,6 +36,7 @@ dependencies {
     // ---------- Spring Modulith (도메인 모듈, 이벤트) ----------
     implementation("org.springframework.modulith:spring-modulith-starter-core")
     implementation("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
+    implementation("org.springframework.modulith:spring-modulith-events-core") // EventSerializer 직접 구현(TraceAwareEventSerializer)
     runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
 
     // ---------- Batch ----------
