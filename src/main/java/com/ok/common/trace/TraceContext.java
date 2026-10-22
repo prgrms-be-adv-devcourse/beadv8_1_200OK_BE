@@ -5,7 +5,7 @@ import org.slf4j.MDC;
 import java.util.Optional;
 
 /**
- * 현재 스레드의 TraceID(MDC) 접근 지점.
+ * 현재 스레드의 TraceID를 MDC에서 읽고, 범위를 정해 설정·복원한다.
  */
 public final class TraceContext {
 

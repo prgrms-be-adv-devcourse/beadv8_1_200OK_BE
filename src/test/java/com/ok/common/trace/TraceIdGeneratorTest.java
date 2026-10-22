@@ -16,10 +16,6 @@ class TraceIdGeneratorTest {
 
     private static final long BASE_MILLIS = 1_800_000_000_000L;
 
-    static Stream<Long> 범위_밖_노드_ID() {
-        return Stream.of(-1L, 1024L, Long.MAX_VALUE);
-    }
-
     @Test
     void 설정한_노드_ID가_ID에_담긴다() {
         // given
@@ -51,6 +47,10 @@ class TraceIdGeneratorTest {
         // when & then
         assertThatThrownBy(() -> new TraceIdGenerator(nodeId))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    static Stream<Long> 범위_밖_노드_ID() {
+        return Stream.of(-1L, 1024L, Long.MAX_VALUE);
     }
 
     @Test
