@@ -14,7 +14,6 @@ import com.ok.delivery.repository.ShipmentQueryRepository;
 import com.ok.delivery.repository.ShipmentRepository;
 import com.ok.delivery.service.ShipmentService;
 import com.ok.delivery.service.dto.ShipmentDispatchCommand;
-import com.ok.product.SellerShippingPolicyProvider;
 import com.ok.testsupport.FakeCarrierClient;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
@@ -42,11 +41,6 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 @ActiveProfiles("test")
 @Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class, FakeCarrierClient.class})
 class DeliveryModuleTest {
-
-    // 판매자 배송 설정은 상품 모듈 빈이라 모듈 테스트에 뜨지 않는다. Modulith는 다른 모듈 타입의 빈 정의를 @Import로 넣어도 걸러 내므로 mock으로 채운다.
-    // mock은 빈 Map을 돌려줘 모든 판매자가 기본값으로 계산된다. 상품 쪽 실제 구현도 저장소가 생기기 전까지 같은 동작이다
-    @MockitoBean
-    SellerShippingPolicyProvider sellerShippingPolicyProvider;
 
     // 모듈 테스트는 배송 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.
     // 이 테스트는 이벤트 수신·발행 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다
