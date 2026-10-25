@@ -187,7 +187,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ### 새 모듈 만들기
 
 ```bash
-./gradlew createModule -PmoduleName=refund -PdisplayName=환불
+./gradlew createModule -PmoduleName=notice -PdisplayName=공지
 ```
 
 모듈 폴더, `build.gradle.kts`, 기본 패키지(`package-info`), 앱 클래스, `ArchitectureTest` 틀을 만듭니다. 이어서 직접 할 일은 실행 끝에 안내됩니다: `settings.gradle.kts`의 `include`에 추가, 운영에 포함하려면 `monolith/build.gradle.kts`에 `implementation(project(":모듈"))` 추가. 스키마를 쓰는 모듈이면 `<모듈>Schema`, `<모듈>FlywayConfig`를 만들고(`media`를 참고), `deploy/initdb/10-create-module-schemas.sh`와 `TestcontainersConfiguration`의 스키마 목록에 추가합니다.

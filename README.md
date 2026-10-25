@@ -83,7 +83,7 @@ set -a; source .env; set +a     # JWT_SECRET 등을 셸 환경변수로 내보�
 ## 새 모듈 만들기
 
 ```bash
-./gradlew createModule -PmoduleName=refund -PdisplayName=환불
+./gradlew createModule -PmoduleName=notice -PdisplayName=공지
 ```
 
 모듈 폴더, `build.gradle.kts`, 기본 패키지, 앱 클래스, `ArchitectureTest` 틀을 만듭니다. 만든 뒤 직접 할 일은 작업 출력에 안내됩니다.
