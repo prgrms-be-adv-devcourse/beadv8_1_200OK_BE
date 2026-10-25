@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":media"))
     implementation(project(":member"))
     implementation(project(":refund"))
+    implementation(project(":wallet"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
     // ---------- Web / API ----------
