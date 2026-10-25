@@ -10,6 +10,7 @@ description = "paldo-gotgan"
 dependencies {
     implementation(project(":common"))
     implementation(project(":media"))
+    implementation(project(":member"))
     implementation(project(":refund"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
