@@ -3,12 +3,15 @@ package com.ok.payout.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutFailure;
+import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.repository.PayoutFailureRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutQueryRepository.CountAndAmount;
 import com.ok.payout.repository.PayoutRepository;
@@ -50,7 +53,7 @@ import java.util.Optional;
 public class PayoutService {
 
     // 검증 실패 시 원인 확인용으로 예외 메시지에 담는 누락 후보 ID 최대 개수 (메시지가 너무 길어지지 않게)
-    // TODO(#67): 임시 처리. 정산 실패 기록이 생기면 누락 후보 전체를 실패 기록으로 남기고 이 제한은 정리
+    // TODO(#67): 임시 처리. verify가 찾은 누락 후보를 실패 기록(NOT_IN_DRAFT)으로 남기게 되면 이 제한은 정리 (후속 "정산 실패 해결 및 재처리" 이슈)
     private static final int MISSING_CANDIDATE_LOG_LIMIT = 100;
 
     private final PayoutQueryRepository payoutQueryRepository;
@@ -59,6 +62,7 @@ public class PayoutService {
     private final PayoutSnapshotItemRepository payoutSnapshotItemRepository;
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
+    private final PayoutFailureRepository payoutFailureRepository;
     // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
@@ -104,6 +108,23 @@ public class PayoutService {
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(검증 실패 시 누락 목록 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
         return snapshot.getId();
+    }
+
+    // 입력 검증(validateStep): 이번 스냅샷 후보 중 지갑 차감 기록이 없는 주문의 후보를 실패로 기록하고, 기록한 건수를 반환
+    // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외, 3단계)
+    // 예외를 던지지 않고 기록만 함 → 틀린 주문만 빠지고 나머지는 계속 정산됨
+    @Transactional
+    public int validate(Long snapshotId) {
+        List<PayoutCandidateItem> missing = payoutQueryRepository.findCandidatesWithoutDeduction(snapshotId);
+        List<PayoutFailure> failures = new ArrayList<>();
+        for (PayoutCandidateItem candidate : missing) {
+            failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.DEDUCTION_MISSING));
+        }
+        payoutFailureRepository.saveAll(failures);
+
+        // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
+        log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}", snapshotId, failures.size());
+        return failures.size();
     }
 
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
@@ -178,7 +199,7 @@ public class PayoutService {
     // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
     // 수신은 커밋 후 → 이 트랜잭션이 롤백되면 전달 안 됨. 같은 정산이 두 번 전달돼도 지갑은 payoutId로 중복 반영을 막음
     //
-    // TODO(#67): 발행 누락 위험. commitStep은 성공했는데 publishStep이 실패하면 확정된 정산의 이벤트가 영원히 발행되지 않음
+    // TODO(#52): 발행 누락 위험. commitStep은 성공했는데 publishStep이 실패하면 확정된 정산의 이벤트가 영원히 발행되지 않음
     //   예) commitStep ✅ payout 커밋 → publishStep ❌ (DB 연결 끊김 등) → Job FAILED
     //       → 다음 배치의 스냅샷은 "payout_item에 없는 후보"만 대상이라 이미 확정된 이 정산은 다시 다뤄지지 않음
     //       → 판매자는 정산이 확정됐는데 지갑에 돈이 들어오지 않음
@@ -190,6 +211,7 @@ public class PayoutService {
     //     - 이벤트 발행을 commitStep 트랜잭션 안으로 옮김 (Spring Modulith가 발행 기록(event_publication)을 같은 트랜잭션에 저장하므로
     //       payout과 발행 기록이 함께 커밋·롤백되어 누락이 생기지 않음. 대신 publishStep이 없어짐)
     //   현재는 이슈 #69 설계(확정과 발행을 Step으로 분리)를 따름
+    //   Kafka 전환 때 발행 방식(아웃박스 등)이 바뀌므로 그때 함께 처리 (#52에 기록)
     @Transactional
     public int publish(Long snapshotId) {
         List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
@@ -234,21 +256,23 @@ public class PayoutService {
                 payoutQueryRepository.summarizeSnapshotItems(snapshotId),
                 payoutQueryRepository.summarizeSellerDraftItems(snapshotId),
                 payoutQueryRepository.summarizeSystemDraftItems(snapshotId),
-                payoutQueryRepository.sumSellerDraftAmount(snapshotId));
+                payoutQueryRepository.sumSellerDraftAmount(snapshotId),
+                payoutQueryRepository.summarizeFailures(snapshotId),
+                payoutQueryRepository.countDraftedFailures(snapshotId));
 
         // 2) 규칙 검사
         //    ↳ 검사 추가 시: 규칙은 여기가 아니라 PayoutDraftValidator에 추가
         List<String> failures = PayoutDraftValidator.validate(input);
         if (failures.isEmpty()) {
-            log.info("정산 draft 검증 통과. snapshotId={}, 건수={}, 금액={}",
-                    snapshotId, input.snapshotItems().count(), input.snapshotItems().amount());
+            log.info("정산 draft 검증 통과. snapshotId={}, 건수={}, 금액={}, 실패로 제외={}건",
+                    snapshotId, input.snapshotItems().count(), input.snapshotItems().amount(), input.failures().count());
             return;
         }
 
         // 3) 실패 처리
         // 팀 규칙(service.md "로그"): 예외를 던질 때 로그를 따로 남기지 않음
         // → 원인(실패 사유·누락 후보)을 예외 메시지에 담아, 배치 실패 기록(BATCH_STEP_EXECUTION)과 로그에 한 번만 남게 함
-        // TODO(#67): 임시 처리. 지금은 누락 후보를 최대 100건만 메시지로 남김. 정산 실패 기록이 생기면 그쪽에 저장하도록 변경
+        // TODO(#67): 임시 처리. 지금은 누락 후보를 최대 100건만 메시지로 남김. NOT_IN_DRAFT로 실패 기록에 저장하는 것은 후속 이슈
         List<Long> missingIds = payoutQueryRepository.findUndraftedCandidateIds(snapshotId, MISSING_CANDIDATE_LOG_LIMIT);
         throw new RestApiException(PayoutErrorCode.DRAFT_VERIFICATION_FAILED, String.format(
                 "정산 draft 검증 실패. snapshotId=%d, 실패 사유=%s, 누락 후보(최대 %d건)=%s",

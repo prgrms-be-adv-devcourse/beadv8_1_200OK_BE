@@ -29,9 +29,10 @@ public class PayoutJobConfig {
 
     private final PayoutService payoutService;
 
-    // 정산 배치 (Write-Audit-Publish): 스냅샷 → 임시 정산 → 검증 → 확정 → 발행
+    // 정산 배치 (Write-Audit-Publish): 스냅샷 → 입력 검증 → 임시 정산 → 검증 → 확정 → 발행
     //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션)
-    //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성
+    //   validate : 지갑 차감 기록이 없는 주문의 후보를 실패로 기록 (이번 정산에서 빠짐, Job은 계속 진행)
+    //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
     //   verify   : 스냅샷 목록과 임시 정산 비교 (불일치면 여기서 멈춤 → payout 미생성, 이벤트 미발행)
     //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지)
     //   publish  : 이번에 확정된 판매자 몫 정산만 지갑 이벤트 발행
@@ -39,10 +40,11 @@ public class PayoutJobConfig {
     // 실패한 Job은 재시작하지 않고 새 스냅샷으로 처음부터 재실행 (PayoutJobRunner 주석 참고)
     @Bean
     public Job payoutJob(JobRepository jobRepository,
-                         Step payoutSnapshotStep, Step payoutDraftStep, Step payoutVerifyStep,
-                         Step payoutCommitStep, Step payoutPublishStep) {
+                         Step payoutSnapshotStep, Step payoutValidateStep, Step payoutDraftStep,
+                         Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep) {
         return new JobBuilder("payoutJob", jobRepository)
                 .start(payoutSnapshotStep)
+                .next(payoutValidateStep)
                 .next(payoutDraftStep)
                 .next(payoutVerifyStep)
                 .next(payoutCommitStep)
@@ -73,6 +75,26 @@ public class PayoutJobConfig {
             Long snapshotId = payoutService.createSnapshot(jobExecution.getId(), from, to);
             // Step 사이에 값을 넘기는 통로: 다음 Step은 #{jobExecutionContext['snapshotId']}로 꺼냄
             jobExecution.getExecutionContext().put(SNAPSHOT_ID_KEY, snapshotId);
+            return RepeatStatus.FINISHED;
+        };
+    }
+
+    // 입력 검증: 틀린 후보는 실패로 기록만 하고 예외를 던지지 않음 → 나머지 후보는 draftStep으로 넘어감
+    // 결과 검증(verifyStep)과 다름: 그쪽은 우리가 만든 결과를 의심하고, 틀리면 Job 전체를 멈춤
+    @Bean
+    public Step payoutValidateStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
+                                   Tasklet payoutValidateTasklet) {
+        return new StepBuilder("payoutValidateStep", jobRepository)
+                .tasklet(payoutValidateTasklet, transactionManager)
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public Tasklet payoutValidateTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
+        return (contribution, chunkContext) -> {
+            int failed = payoutService.validate(snapshotId);
+            contribution.incrementWriteCount(failed); // write count = 실패로 기록한 후보 수
             return RepeatStatus.FINISHED;
         };
     }
@@ -140,7 +162,7 @@ public class PayoutJobConfig {
     }
 
     // 확정(commitStep)과 발행을 Step으로 분리: 검증·확정이 끝난 정산만 지갑으로 전달
-    // 이 Step만 실패하면 확정된 정산의 이벤트가 누락될 수 있음 → TODO(#67), PayoutService.publish 주석 참고
+    // 이 Step만 실패하면 확정된 정산의 이벤트가 누락될 수 있음 → TODO(#52), PayoutService.publish 주석 참고
     @Bean
     public Step payoutPublishStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                   Tasklet payoutPublishTasklet) {

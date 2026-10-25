@@ -6,6 +6,7 @@ import com.ok.payout.domain.PayoutEventType;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
@@ -20,11 +21,13 @@ import java.util.Objects;
 
 import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
+import static com.ok.payout.domain.QPayoutFailure.payoutFailure;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
 import static com.ok.payout.domain.QPayoutSellerDraftItem.payoutSellerDraftItem;
 import static com.ok.payout.domain.QPayoutSnapshotItem.payoutSnapshotItem;
 import static com.ok.payout.domain.QPayoutSystemDraftItem.payoutSystemDraftItem;
+import static com.ok.payout.domain.QPayoutWalletDeduction.payoutWalletDeduction;
 
 @Repository
 @RequiredArgsConstructor
@@ -127,6 +130,42 @@ public class PayoutQueryRepository {
         return sum;
     }
 
+    // 실패 기록 집계 = "처리하지 않고 뺀 양" (verifyStep에서 스냅샷 = draft + 실패 비교용)
+    // payout_failure에는 금액이 없어 스냅샷 항목과 조인해 스냅샷 시점 금액을 씀 (금액을 두 곳에 저장하면 어긋날 수 있어서)
+    //   예) 실패 2건, 13,000원
+    public CountAndAmount summarizeFailures(Long snapshotId) {
+        Tuple row = queryFactory
+                .select(payoutFailure.count(), payoutSnapshotItem.amount.sumLong().coalesce(0L))
+                .from(payoutFailure)
+                .join(payoutSnapshotItem).on(
+                        payoutSnapshotItem.snapshotId.eq(payoutFailure.snapshotId),
+                        payoutSnapshotItem.candidateId.eq(payoutFailure.candidateId))
+                .where(payoutFailure.snapshotId.eq(snapshotId))
+                .fetchOne();
+        return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
+    }
+
+    // draft에도 들어가고 실패로도 기록된 후보 수 (정상이면 0)
+    // 0이 아니면 실패한 후보가 정산에 섞인 것 → draft 제외 조건(④) 버그
+    public long countDraftedFailures(Long snapshotId) {
+        Long count = queryFactory
+                .select(payoutFailure.count())
+                .from(payoutFailure)
+                .where(payoutFailure.snapshotId.eq(snapshotId),
+                        JPAExpressions.selectOne()
+                                .from(payoutSellerDraftItem)
+                                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId),
+                                        payoutSellerDraftItem.candidateId.eq(payoutFailure.candidateId))
+                                .exists()
+                                .or(JPAExpressions.selectOne()
+                                        .from(payoutSystemDraftItem)
+                                        .where(payoutSystemDraftItem.snapshotId.eq(snapshotId),
+                                                payoutSystemDraftItem.candidateId.eq(payoutFailure.candidateId))
+                                        .exists()))
+                .fetchOne();
+        return count;
+    }
+
     // 스냅샷에 있는데 draft로 옮겨지지 않은 후보 ID (검증 실패 시 원인 확인용, limit개까지)
     // draft 조회와 같은 조건(undraftedInSnapshot)을 써서 "draftStep이 놓친 것"과 정확히 같은 대상을 봄
     //   예) 스냅샷 250건 중 draft 230건 → 누락 20건의 ID [101, 207, 233, ...]
@@ -137,6 +176,23 @@ public class PayoutQueryRepository {
                 .where(undraftedInSnapshot(snapshotId))
                 .orderBy(payoutCandidateItem.id.asc())
                 .limit(limit)
+                .fetch();
+    }
+
+    // validateStep 차감 기록 검사: 이번 스냅샷 후보 중 그 주문의 지갑 차감 기록이 없는 후보 (→ 실패로 기록되어 이번 정산에서 빠짐)
+    // 이미 이번 스냅샷에 실패로 기록된 후보는 뺌 → 같은 스냅샷에 validate를 다시 실행해도 새로 저장할 게 없어 중복되지 않음
+    // 주문 단위 검사라 배송비 후보(order_item_id NULL)도 order_id로 함께 걸림
+    public List<PayoutCandidateItem> findCandidatesWithoutDeduction(Long snapshotId) {
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(
+                        inSnapshot(snapshotId),
+                        JPAExpressions.selectOne()
+                                .from(payoutWalletDeduction)
+                                .where(payoutWalletDeduction.orderId.eq(payoutCandidateItem.orderId))
+                                .notExists(),
+                        notFailedInSnapshot(snapshotId))
+                .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
     }
 
@@ -340,7 +396,7 @@ public class PayoutQueryRepository {
         return condition;
     }
 
-    // 두 draft 조회가 공유하는 조건: 이번 스냅샷 목록에 있고, 아직 draft로 옮기지 않은 후보
+    // 두 draft 조회가 공유하는 조건: 이번 스냅샷 목록에 있고, 아직 draft로 옮기지 않았고, 실패로 기록되지 않은 후보
     // 처리한 후보는 draft 항목에 들어가 다음 회차에서 자동으로 빠지므로, 언젠가 0명이 되어 Step이 끝남
     // 한 곳에서만 정의해서 두 쿼리의 조건이 어긋나지 않게 강제함
     // (어긋나면 판매자는 뽑히는데 후보가 0건 → draft()가 계속 0보다 큰 값 반환 → tasklet 무한 반복)
@@ -348,11 +404,7 @@ public class PayoutQueryRepository {
     private BooleanBuilder undraftedInSnapshot(Long snapshotId) {
         BooleanBuilder condition = new BooleanBuilder();
         // ① 이번 스냅샷 목록에 있는 후보만 (배치 도중 새로 생긴 후보는 제외)
-        condition.and(JPAExpressions.selectOne()
-                .from(payoutSnapshotItem)
-                .where(payoutSnapshotItem.snapshotId.eq(snapshotId),
-                        payoutSnapshotItem.candidateId.eq(payoutCandidateItem.id))
-                .exists());
+        condition.and(inSnapshot(snapshotId));
         // ② 아직 판매자 draft 항목으로 옮기지 않은 것
         condition.and(JPAExpressions.selectOne()
                 .from(payoutSellerDraftItem)
@@ -365,6 +417,27 @@ public class PayoutQueryRepository {
                 .where(payoutSystemDraftItem.snapshotId.eq(snapshotId),
                         payoutSystemDraftItem.candidateId.eq(payoutCandidateItem.id))
                 .notExists());
+        // ④ 이번 스냅샷에서 실패로 기록되지 않은 것 (실패 = 이번 정산에서 빠짐. 실패 정보는 payout_failure에만 둠)
+        //    validate 실패뿐 아니라 이후 생길 실패(#90 draft 예외)도 모두 여기서 빠져, 같은 후보를 다시 잡는 무한 반복이 생기지 않음
+        condition.and(notFailedInSnapshot(snapshotId));
         return condition;
+    }
+
+    // 이번 스냅샷 목록에 있는 후보
+    private BooleanExpression inSnapshot(Long snapshotId) {
+        return JPAExpressions.selectOne()
+                .from(payoutSnapshotItem)
+                .where(payoutSnapshotItem.snapshotId.eq(snapshotId),
+                        payoutSnapshotItem.candidateId.eq(payoutCandidateItem.id))
+                .exists();
+    }
+
+    // 이번 스냅샷에서 실패로 기록되지 않은 후보 (validate 중복 방지, draft 대상 조건 ④)
+    private BooleanExpression notFailedInSnapshot(Long snapshotId) {
+        return JPAExpressions.selectOne()
+                .from(payoutFailure)
+                .where(payoutFailure.snapshotId.eq(snapshotId),
+                        payoutFailure.candidateId.eq(payoutCandidateItem.id))
+                .notExists();
     }
 }

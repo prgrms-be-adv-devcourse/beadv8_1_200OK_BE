@@ -490,12 +490,14 @@ class PayoutServiceTest {
     // ---------- 도우미 ----------
 
     // verify가 비교할 집계값을 한 번에 준비 (스냅샷, 판매자 항목, 시스템 항목, 판매자 헤더 금액 합계)
+    // 실패 기록은 0건으로 둠: 실패가 섞인 경우의 판정은 PayoutDraftValidatorTest, 실제 흐름은 통합 테스트에서 확인
     private void givenSummaries(CountAndAmount snapshot, CountAndAmount sellerItems,
                                 CountAndAmount systemItems, long sellerHeaderAmount) {
         given(payoutQueryRepository.summarizeSnapshotItems(SNAPSHOT_ID)).willReturn(snapshot);
         given(payoutQueryRepository.summarizeSellerDraftItems(SNAPSHOT_ID)).willReturn(sellerItems);
         given(payoutQueryRepository.summarizeSystemDraftItems(SNAPSHOT_ID)).willReturn(systemItems);
         given(payoutQueryRepository.sumSellerDraftAmount(SNAPSHOT_ID)).willReturn(sellerHeaderAmount);
+        given(payoutQueryRepository.summarizeFailures(SNAPSHOT_ID)).willReturn(new CountAndAmount(0, 0));
     }
 
     // 저장된 후보처럼 id를 채움 (setId가 없고 id는 DB 저장 시 채워지므로 단위 테스트에서 직접 넣음)

@@ -17,7 +17,9 @@ final class PayoutDraftValidator {
             CountAndAmount snapshotItems,   // 스냅샷 목록 = 원래 처리해야 할 양
             CountAndAmount sellerItems,     // 판매자 몫 draft 항목
             CountAndAmount systemItems,     // 시스템 몫 draft 항목
-            long sellerHeaderAmount         // 판매자 draft 헤더(판매자별 합계)의 금액 합
+            long sellerHeaderAmount,        // 판매자 draft 헤더(판매자별 합계)의 금액 합
+            CountAndAmount failures,        // 실패 기록 = 처리하지 않고 뺀 양
+            long draftedFailureCount        // draft에도 들어가고 실패로도 기록된 후보 수 (정상이면 0)
     ) {
     }
 
@@ -29,16 +31,17 @@ final class PayoutDraftValidator {
         List<String> failures = new ArrayList<>();
         checkDraftItemsMatchSnapshot(input, failures);
         checkSellerHeaderMatchesItems(input, failures);
+        checkNoFailureInDraft(input, failures);
         return failures;
     }
 
-    // 검사 1: 스냅샷 목록과 draft 항목(판매자 + 시스템)의 건수·금액이 같아야 함
-    //   예) 스냅샷 4건 30,400원 = 판매자 3건 30,100원 + 시스템 1건 300원 → 통과
-    //   잡는 것: draft에서 빠진 후보, 금액이 다르게 옮겨진 항목
+    // 검사 1: 스냅샷 목록 = draft 항목(판매자 + 시스템) + 실패 기록, 건수·금액 모두
+    //   예) 스냅샷 4건 43,400원 = 판매자 2건 30,100원 + 시스템 1건 300원 + 실패 1건 13,000원 → 통과
+    //   잡는 것: draft에서도 빠지고 실패 기록도 없는 후보, 금액이 다르게 옮겨진 항목
     private static void checkDraftItemsMatchSnapshot(Input input, List<String> failures) {
-        CountAndAmount drafted = input.sellerItems().plus(input.systemItems());
-        if (!input.snapshotItems().equals(drafted)) {
-            failures.add("스냅샷=" + input.snapshotItems() + ", draft=" + drafted);
+        CountAndAmount handled = input.sellerItems().plus(input.systemItems()).plus(input.failures());
+        if (!input.snapshotItems().equals(handled)) {
+            failures.add("스냅샷=" + input.snapshotItems() + ", draft+실패=" + handled);
         }
     }
 
@@ -51,6 +54,14 @@ final class PayoutDraftValidator {
         long sellerItemAmount = input.sellerItems().amount();
         if (input.sellerHeaderAmount() != sellerItemAmount) {
             failures.add("판매자 헤더 금액=" + input.sellerHeaderAmount() + ", 판매자 항목 금액=" + sellerItemAmount);
+        }
+    }
+
+    // 검사 3: 실패로 기록된 후보는 draft에 없어야 함
+    //   잡는 것: 실패한 후보가 정산에 섞임 (draft 제외 조건 ④ 버그). 검사 1은 건수가 우연히 맞으면 못 잡을 수 있어 따로 확인
+    private static void checkNoFailureInDraft(Input input, List<String> failures) {
+        if (input.draftedFailureCount() != 0) {
+            failures.add("실패로 기록됐는데 draft에 들어간 후보 수=" + input.draftedFailureCount());
         }
     }
 }

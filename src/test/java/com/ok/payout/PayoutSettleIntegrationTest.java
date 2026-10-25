@@ -4,6 +4,8 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailure;
+import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutItem;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
@@ -11,14 +13,17 @@ import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
+import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.repository.PayoutFailureRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutRepository;
 import com.ok.payout.repository.PayoutSellerDraftRepository;
 import com.ok.payout.repository.PayoutSnapshotItemRepository;
 import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.repository.PayoutSystemDraftItemRepository;
+import com.ok.payout.repository.PayoutWalletDeductionRepository;
 import com.ok.payout.service.PayoutJobRunner;
 import com.ok.payout.service.PayoutService;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -98,6 +103,12 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutRepository payoutRepository;
+
+    @Autowired
+    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
+
+    @Autowired
+    private PayoutFailureRepository failureRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -480,6 +491,103 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 지갑_차감_기록이_없는_주문의_후보만_실패로_기록되어_빠지고_나머지는_정산된다() throws Exception {
+        // given: 주문 A(판매자 10)는 차감 기록 있음, 주문 B(판매자 20)는 차감 기록 없음. 둘 다 생성 20일 전
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderA = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderA, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderA, 10L, 300L, createdAt);
+        long orderB = nextOrderItemId();
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_FEE, orderB, 20L, 600L, createdAt);
+
+        // when
+        JobExecution execution = payoutJobRunner.run();
+
+        // then: Job은 끝까지 성공하고(실패가 있어도 verify 통과), 주문 B의 후보 2건만 실패로 남음
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long snapshotId = snapshotRepository.findAll().get(0).getId();
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getCandidateId, PayoutFailure::getOrderId, PayoutFailure::getSellerId,
+                        PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactlyInAnyOrder(
+                        tuple(candidateIdsOf(orderB).get(0), orderB, 20L, PayoutFailureReason.DEDUCTION_MISSING, "결제 기록 없음"),
+                        tuple(candidateIdsOf(orderB).get(1), orderB, 20L, PayoutFailureReason.DEDUCTION_MISSING, "결제 기록 없음"));
+
+        // then: 정산은 주문 A만 (판매자 10 몫 9,700원 + 시스템 몫 300원). 판매자 20 정산은 없음
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::isSystem, Payout::getAmount)
+                .containsExactlyInAnyOrder(
+                        tuple(10L, false, 9_700L),
+                        tuple(null, true, 300L));
+    }
+
+    @Test
+    void 지갑_차감_기록이_없는_주문의_배송비_후보도_주문상품_ID_없이_실패로_기록되어_빠진다() throws Exception {
+        // given: 차감 기록이 없는 주문 B에 판매 대금과 배송비(order_item_id NULL)가 함께 있음
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderB = nextOrderItemId();
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
+        insertShippingFeeWithoutDeduction(orderB, 20L, 3_000L, createdAt);
+
+        // when
+        JobExecution execution = payoutJobRunner.run();
+
+        // then: 주문 단위 검사라 배송비도 같은 주문으로 걸리고, 실패 기록의 주문상품 ID는 비어 있음
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long snapshotId = snapshotRepository.findAll().get(0).getId();
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getOrderItemId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(orderB, orderB, PayoutFailureReason.DEDUCTION_MISSING),   // 판매 대금
+                        tuple(orderB, null, PayoutFailureReason.DEDUCTION_MISSING));    // 배송비
+        assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    @Test
+    void 같은_스냅샷에_입력_검증을_두_번_실행해도_실패_기록은_중복되지_않는다() {
+        // given: 차감 기록이 없는 후보 1건이 든 스냅샷
+        long orderItemId = nextOrderItemId();
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderItemId, 20L, 19_400L, FROM.plusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+
+        // when: 같은 스냅샷을 두 번 검증
+        int first = payoutService.validate(snapshotId);
+        int second = payoutService.validate(snapshotId);
+
+        // then: 두 번째는 이미 기록된 후보를 다시 조회하지 않아 새로 저장할 게 없음
+        assertThat(first).isEqualTo(1);
+        assertThat(second).isZero();
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).hasSize(1);
+    }
+
+    @Test
+    void 차감_기록이_없어_빠진_후보는_다음_배치_전에_차감_기록이_들어오면_그때_정산된다() throws Exception {
+        // given: 차감 기록이 없는 주문 B (판매자 20)
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderB = nextOrderItemId();
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
+
+        // when: 1차 배치 → 빠짐, 그 뒤 지갑 차감 기록이 늦게 들어옴 → 2차 배치
+        JobExecution first = payoutJobRunner.run();
+        givenDeduction(orderB);
+        JobExecution second = payoutJobRunner.run();
+
+        // then: 1차는 실패 기록만 있고 정산 없음 (잠그지 않아 미정산 후보로 남음)
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(failureRepository.findBySnapshotId(firstSnapshotId)).hasSize(1);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isEmpty();
+
+        // then: 2차에서 다시 검사해 통과하고 정산됨
+        Long secondSnapshotId = snapshotIdOf(second);
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(failureRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(20L, 19_400L));
+    }
+
+    @Test
     void requestedAt_없이_실행하면_Job이_FAILED로_끝나고_스냅샷도_만들지_않는다() throws Exception {
         // given: 정산 대상이 있어도 (앱 시작 시 자동 실행 등 의도치 않은 실행 방지)
         insertSaleAmount(10L, 1_000L, LocalDateTime.now().minusDays(20));
@@ -624,23 +732,48 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // ---------- 도우미: 데이터 준비 (JDBC) ----------
 
+    // 후보의 주문에 지갑 차감 기록을 넣음 (없으면 validateStep이 DEDUCTION_MISSING으로 빼서 정산되지 않음, #194)
+    // 같은 주문에 후보가 여러 건(대금·수수료·배송비·조정)이라 주문당 1건만 넣음 (UK order_id)
+    // 금액은 지금 검사하지 않아(#194는 기록 유무만 봄) 넉넉한 고정값. 금액 검사(#195)가 생기면 실제 합계로 바꿔야 함
+    private void givenDeduction(long orderId) {
+        if (payoutWalletDeductionRepository.existsByOrderId(orderId)) {
+            return;
+        }
+        payoutWalletDeductionRepository.save(
+                PayoutWalletDeduction.create(orderId, 1L, 1_000_000L, LocalDateTime.now()));
+    }
+
     // 판매 대금 후보 1건 (주문항목 ID는 자동 발급)
     private void insertSaleAmount(Long sellerId, Long amount, LocalDateTime createdAt) {
         insertCandidate(PayoutEventType.SALE_AMOUNT, nextOrderItemId(), sellerId, amount, createdAt);
     }
 
-    // 정산 후보를 원하는 created_at으로 직접 저장
+    // 정산 후보를 원하는 created_at으로 직접 저장 (+ 그 주문의 지갑 차감 기록)
     // 이 테스트는 상품 하나 = 주문 하나로 단순화해서 주문 ID에 주문항목 ID와 같은 값을 씀
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
                                  LocalDateTime createdAt) {
+        insertCandidateWithoutDeduction(eventType, orderItemId, sellerId, amount, createdAt);
+        givenDeduction(orderItemId);
+    }
+
+    // 지갑 차감 기록 없이 후보만 저장 (차감 기록이 없는 주문을 만들 때, #194)
+    private void insertCandidateWithoutDeduction(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
+                                                 LocalDateTime createdAt) {
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 eventType.name(), orderItemId, orderItemId, sellerId, amount, createdAt, createdAt);
     }
 
-    // 배송비 후보를 원하는 created_at으로 직접 저장 (배송비는 판매자 묶음 단위라 order_item_id가 NULL)
+    // 배송비 후보를 원하는 created_at으로 직접 저장 (+ 그 주문의 지갑 차감 기록)
+    // 배송비는 판매자 묶음 단위라 order_item_id가 NULL
     private void insertShippingFee(long orderId, Long sellerId, Long amount, LocalDateTime createdAt) {
+        insertShippingFeeWithoutDeduction(orderId, sellerId, amount, createdAt);
+        givenDeduction(orderId);
+    }
+
+    // 지갑 차감 기록 없이 배송비 후보만 저장 (#194)
+    private void insertShippingFeeWithoutDeduction(long orderId, Long sellerId, Long amount, LocalDateTime createdAt) {
         jdbcTemplate.update(
                 "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, NULL, ?, ?, ?, ?)",
@@ -657,6 +790,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 eventType.name(), orderItemId, orderItemId, sellerId, amount, adjustmentId, 99L, "테스트 조정",
                 createdAt, createdAt);
+        givenDeduction(orderItemId);
     }
 
     // 검증 실패 상황 만들기: draft가 끝난 스냅샷 목록에, draft되지 않은 후보 1건을 끼워 넣음
@@ -694,11 +828,16 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
         jdbcTemplate.update("DELETE FROM payout_seller_draft");
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
+        // 실패 기록은 스냅샷·후보를 가리키는 FK가 있어 둘보다 먼저 지움
+        jdbcTemplate.update("DELETE FROM payout_failure");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
         // 주문 ID로 지우는 이유: 배송비 행은 order_item_id가 NULL이라 주문항목 범위로는 지워지지 않음
         // (이 클래스는 주문 ID에 주문항목 번호를 그대로 쓰므로 같은 범위로 지울 수 있음)
         jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id > ? AND order_id <= ?",
+                ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
+        // 지갑 차감 기록도 이 클래스 번호대만 지움 (후보를 넣을 때 같은 주문 ID로 함께 넣음)
+        jdbcTemplate.update("DELETE FROM payout_wallet_deduction WHERE order_id > ? AND order_id <= ?",
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
     }
 }

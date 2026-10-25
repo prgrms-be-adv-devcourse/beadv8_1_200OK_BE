@@ -2,8 +2,10 @@ package com.ok.payout;
 
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.repository.PayoutRepository;
 import com.ok.payout.repository.PayoutSnapshotRepository;
+import com.ok.payout.repository.PayoutWalletDeductionRepository;
 import com.ok.payout.service.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
@@ -78,6 +80,9 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutSnapshotRepository snapshotRepository;
+
+    @Autowired
+    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -411,6 +416,17 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     // ---------- 도우미: 데이터 준비·정리 (JDBC) ----------
     // PayoutQueryIntegrationTest와 같은 방식 (그쪽은 private이라 복사). 차이는 생성 시각을 인자로 받는 것과 주문항목 번호대
 
+    // 후보의 주문에 지갑 차감 기록을 넣음 (없으면 validateStep이 DEDUCTION_MISSING으로 빼서 정산되지 않음, #194)
+    // 같은 주문에 후보가 여러 건(대금·수수료·조정)이라 주문당 1건만 넣음 (UK order_id)
+    // 금액은 지금 검사하지 않아(#194는 기록 유무만 봄) 넉넉한 고정값. 금액 검사(#195)가 생기면 실제 합계로 바꿔야 함
+    private void givenDeduction(long orderId) {
+        if (payoutWalletDeductionRepository.existsByOrderId(orderId)) {
+            return;
+        }
+        payoutWalletDeductionRepository.save(
+                PayoutWalletDeduction.create(orderId, 1L, 1_000_000L, LocalDateTime.now()));
+    }
+
     // 정산후보를 원하는 created_at으로 직접 저장
     // 이 테스트는 상품 하나 = 주문 하나로 단순화해서 주문 ID에 주문항목 ID와 같은 값을 씀
     private void insertCandidate(PayoutEventType eventType, long orderItemId, Long sellerId, Long amount,
@@ -419,6 +435,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
                 "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 eventType.name(), orderItemId, orderItemId, sellerId, amount, createdAt, createdAt);
+        givenDeduction(orderItemId);
     }
 
     // 관리자 수동 조정 후보를 원하는 created_at으로 직접 저장
@@ -431,6 +448,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 eventType.name(), orderItemId, orderItemId, sellerId, amount, adjustmentId, adminId, reason,
                 createdAt, createdAt);
+        givenDeduction(orderItemId);
     }
 
     private long nextOrderItemId() {
@@ -445,9 +463,14 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
         jdbcTemplate.update("DELETE FROM payout_seller_draft");
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
+        // 실패 기록은 스냅샷·후보를 가리키는 FK가 있어 둘보다 먼저 지움
+        jdbcTemplate.update("DELETE FROM payout_failure");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
         jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id > ? AND order_id <= ?",
+                ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
+        // 지갑 차감 기록도 이 클래스 번호대만 지움 (후보를 넣을 때 같은 주문 ID로 함께 넣음)
+        jdbcTemplate.update("DELETE FROM payout_wallet_deduction WHERE order_id > ? AND order_id <= ?",
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
     }
 }
