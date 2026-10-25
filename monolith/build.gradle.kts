@@ -15,6 +15,7 @@ dependencies {
     implementation(project(":wallet"))
     implementation(project(":delivery"))
     implementation(project(":product"))
+    implementation(project(":order"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
     // ---------- Web / API ----------
