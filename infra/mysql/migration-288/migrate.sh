@@ -157,14 +157,14 @@ case "$COMMAND" in
   preflight)
     check_scripts_cover_tables
     warn_if_known_scripts_differ
-    run_checks 00_preflight.sql "$OUT/preflight.log" "아무것도 이전하지 않았다."
+    run_checks 00_preflight.sql "$OUT/preflight.log" "아무것도 이전하지 않았다. 이력이 정확히 55건(성공)인 DB에서만 이전한다. 로컬 DB가 일부만 적용됐으면 초기화(방법 B, docs/DEVELOPMENT.md)하라."
     echo "사전 점검 통과"
     ;;
 
   all)
     check_scripts_cover_tables
     warn_if_known_scripts_differ
-    run_checks 00_preflight.sql "$OUT/preflight.log" "아무것도 이전하지 않았다."
+    run_checks 00_preflight.sql "$OUT/preflight.log" "아무것도 이전하지 않았다. 이력이 정확히 55건(성공)인 DB에서만 이전한다. 로컬 DB가 일부만 적용됐으면 초기화(방법 B, docs/DEVELOPMENT.md)하라."
     echo "사전 점검 통과. 이전 전 행 수·체크섬 기록(SNAPSHOT_MODE=$SNAPSHOT_MODE)"
     snapshot before > "$OUT/before.txt"
     echo "이전 실행(10_forward.sql)"
@@ -189,8 +189,8 @@ case "$COMMAND" in
       exit 1
     fi
     # 기본 스키마 이력에 실패한 마이그레이션 행(success = 0)이 없어야 한다. 이전 전 이미지를 이전된 DB에서 띄우면 남는 흔적이고,
-    # 순번이 겹쳐 복원할 이력 행이 건너뛰어질 수 있으므로 지우고 다시 실행하게 한다. (이전 직후 이력은 1행이지만,
-    # 이전 중 기본 이력 정리만 실패해 55행이 남은 상태는 복원이 중복을 건너뛰므로 허용한다)
+    # 순번이 겹쳐 복원할 이력 행이 건너뛰어질 수 있으므로 지우고 다시 실행하게 한다. 행 수는 보지 않는다:
+    # 이전 직후 이력은 1행이지만, 이전 중 기본 이력 정리만 실패해 성공 행 55개가 남은 상태는 복원이 중복을 건너뛰므로 허용한다
     base_failed=$(query "SELECT COUNT(*) FROM \`$DB\`.flyway_schema_history WHERE success = 0;")
     if [ "$base_failed" != "0" ]; then
       echo "기본 스키마 이력에 실패한 마이그레이션 행이 $base_failed 개 있다(이전 전 이미지를 이전된 DB에서 띄운 흔적). 확인해 지우고(DELETE FROM $DB.flyway_schema_history WHERE success = 0) 다시 실행하라." >&2
@@ -233,7 +233,8 @@ case "$COMMAND" in
     # 권한이 없는 스키마가 있어도 계속하도록 --force. 지워졌는지는 아래에서 확인한다
     run_sql 91_rollback_drop.sql --force | tee -a "$OUT/rollback.log" || true
     remaining=$(query "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'paldogotgan\\_%';")
-    grants=$(query "SELECT COUNT(*) FROM mysql.db WHERE User = '$APP_USER' AND Db LIKE 'paldogotgan\\\\_%';")
+    # 이스케이프한 이름(paldogotgan\_x)과 이스케이프 없이 준 이전 방식(paldogotgan_x)을 모두 센다
+    grants=$(query "SELECT COUNT(*) FROM mysql.db WHERE User = '$APP_USER' AND REPLACE(Db, '\\\\', '') LIKE 'paldogotgan\\\\_%';")
     if [ "$remaining" != "0" ] || [ "$grants" != "0" ]; then
       echo "모듈 스키마 $remaining 개 또는 앱 계정 권한 $grants 개가 남았다. $OUT/rollback.log 를 확인하라." >&2
       exit 1

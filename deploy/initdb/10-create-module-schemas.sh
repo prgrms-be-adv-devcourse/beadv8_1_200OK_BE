@@ -3,6 +3,7 @@
 # MySQL 컨테이너가 빈 데이터 디렉터리로 처음 뜰 때만 실행된다(/docker-entrypoint-initdb.d).
 # 이미 데이터가 있는 DB는 이 스크립트가 돌지 않으므로 infra/mysql/migration-288의 이전 절차를 쓴다. 로컬(infra/mysql/compose.yml)과 운영(deploy/compose.prod.yml)이 이 파일을 함께 쓴다.
 # 스키마 이름은 각 모듈의 XxxSchema.NAME과 같아야 한다.
+# GRANT의 DB 이름에서 `_`는 한 글자 와일드카드이므로 `\_`로 이스케이프한다(안 하면 paldogotganXmember 같은 다른 DB에도 권한이 간다).
 set -euo pipefail
 
 # 사용자 이름을 SQL에 그대로 끼워 넣으므로 식별자 모양이 아니면 멈춘다
@@ -17,5 +18,5 @@ export MYSQL_PWD="${MYSQL_ROOT_PASSWORD}"
 for module in member wallet order product delivery payout media refund; do
   mysql -uroot -e "
     CREATE DATABASE IF NOT EXISTS \`paldogotgan_${module}\` DEFAULT CHARACTER SET utf8mb4;
-    GRANT ALL PRIVILEGES ON \`paldogotgan_${module}\`.* TO '${MYSQL_USER}'@'%';"
+    GRANT ALL PRIVILEGES ON \`paldogotgan\\_${module}\`.* TO '${MYSQL_USER}'@'%';"
 done

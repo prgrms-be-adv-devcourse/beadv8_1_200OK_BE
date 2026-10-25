@@ -148,7 +148,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 이 구조로 바뀌기 전에 만든 로컬 DB(`data/mysql`)를 그대로 두고 앱을 띄우면 Flyway 검증(`Detected applied migration not resolved locally`)에서 멈춥니다. 둘 중 하나로 맞춥니다.
 
-- **방법 A: 데이터 유지.** 앱을 멈추고(`docker compose stop app`) 이전 스크립트를 실행합니다. 점검이 실패하면(예: 병합되지 않은 브랜치의 마이그레이션 이력) 방법 B를 씁니다. root 비밀번호는 컨테이너의 환경변수(`MYSQL_ROOT_PASSWORD`)를 쓰므로 명령행에 쓰지 않습니다.
+- **방법 A: 데이터 유지.** 앱을 멈추고(`docker compose stop app`) 이전 스크립트를 실행합니다. Flyway 이력이 알려진 55건(전부 성공)과 정확히 같은 DB만 이전합니다. 점검이 실패하면(병합되지 않은 브랜치의 마이그레이션이 있거나, 로컬 DB가 일부만 적용돼 이력이 모자란 경우) 방법 B로 초기화합니다. root 비밀번호는 컨테이너의 환경변수(`MYSQL_ROOT_PASSWORD`)를 쓰므로 명령행에 쓰지 않습니다.
   ```bash
   MYSQL_EXEC='docker compose -f infra/mysql/compose.yml exec -T mysql' \
     infra/mysql/migration-288/migrate.sh all paldogotgan myuser
@@ -167,7 +167,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `monolith` | 모든 모듈을 의존하는 통합 앱(`PaldoGotganApplication`). 운영 이미지가 이것이고, 모듈 간 이벤트 연동은 이 앱에서만 동작한다. 여러 모듈을 가로지르는 테스트를 둔다 | 8080 |
 
 - 공통 빌드 설정은 `build-logic`(컨벤션 플러그인 `ok.java-conventions`, 도메인 모듈용 `ok.spring-module-conventions`)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다.
-- 도메인 모듈끼리는 `project(...)` 의존을 걸지 않습니다. 다른 모듈의 클래스를 import하면 컴파일이 실패합니다. 모듈 간 연동은 `common.event`의 이벤트로 합니다.
+- 도메인 모듈끼리는 `project(...)` 의존을 걸지 않습니다. 다른 도메인 모듈은 `build.gradle.kts`에 `project(...)`로 선언하지 않으면 컴파일할 수 없고, 선언은 PR diff에서 바로 보이므로 리뷰에서 확인합니다. 모듈 간 연동은 `common.event`의 이벤트로 합니다.
 - 모듈 안의 패키지 구조와 모듈 간 규칙(공개 위치, 순환 의존 금지 등)은 [`CONVENTION.md`의 패키지·모듈 구조](CONVENTION.md#2-패키지모듈-구조)를 참고하세요.
 
 ### 모듈 하나만 실행·테스트하기

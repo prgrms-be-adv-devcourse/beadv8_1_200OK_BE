@@ -1,7 +1,7 @@
 import org.gradle.api.artifacts.VersionCatalogsExtension
 
 // 도메인 모듈(서브프로젝트)용 컨벤션: 공통 의존(common)과 모듈이 단독으로 기동하는 데 필요한 스타터를 준다
-// 도메인 모듈끼리는 project(...) 의존을 걸지 않는다(Gradle이 컴파일 단계에서 모듈 간 의존을 막는다)
+// 도메인 모듈끼리는 project(...) 의존을 걸지 않는다(선언하지 않은 모듈은 컴파일할 수 없고, 선언은 PR diff에서 보이므로 리뷰에서 확인한다)
 plugins {
     id("ok.java-conventions")
     `java-library`

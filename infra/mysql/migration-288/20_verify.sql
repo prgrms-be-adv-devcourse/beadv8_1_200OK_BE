@@ -17,6 +17,6 @@ SELECT 'delivery_history_rows', IF(COUNT(*) = 15, 'PASS', 'FAIL'), COUNT(*) FROM
 SELECT 'payout_history_rows', IF(COUNT(*) = 12, 'PASS', 'FAIL'), COUNT(*) FROM `paldogotgan_payout`.flyway_schema_history;
 SELECT 'media_history_rows', IF(COUNT(*) = 2, 'PASS', 'FAIL'), COUNT(*) FROM `paldogotgan_media`.flyway_schema_history;
 
--- 앱 계정에 모듈 스키마 8개의 권한이 정확히 있다
+-- 앱 계정에 모듈 스키마 8개의 권한이 정확히 있다(mysql.db에는 GRANT에서 이스케이프한 `\_` 그대로 저장된다)
 SELECT 'app_user_grants', IF(COUNT(*) = 8, 'PASS', 'FAIL'), IFNULL(GROUP_CONCAT(Db), '')
-FROM mysql.db WHERE User = '__APP_USER__' AND Db IN ('paldogotgan_member', 'paldogotgan_wallet', 'paldogotgan_order', 'paldogotgan_product', 'paldogotgan_delivery', 'paldogotgan_payout', 'paldogotgan_media', 'paldogotgan_refund');
+FROM mysql.db WHERE User = '__APP_USER__' AND Db IN ('paldogotgan\\_member', 'paldogotgan\\_wallet', 'paldogotgan\\_order', 'paldogotgan\\_product', 'paldogotgan\\_delivery', 'paldogotgan\\_payout', 'paldogotgan\\_media', 'paldogotgan\\_refund');

@@ -15,15 +15,16 @@ CREATE DATABASE IF NOT EXISTS `paldogotgan_payout` DEFAULT CHARACTER SET utf8mb4
 CREATE DATABASE IF NOT EXISTS `paldogotgan_media` DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS `paldogotgan_refund` DEFAULT CHARACTER SET utf8mb4;
 
--- 와일드카드(paldogotgan\_%) 대신 모듈 스키마를 하나씩 명시한다. 나중에 만든 백업 DB 같은 것에 권한이 따라 붙지 않게 한다
-GRANT ALL PRIVILEGES ON `paldogotgan_member`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_wallet`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_order`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_product`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_delivery`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_payout`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_media`.* TO '__APP_USER__'@'%';
-GRANT ALL PRIVILEGES ON `paldogotgan_refund`.* TO '__APP_USER__'@'%';
+-- 와일드카드(paldogotgan\_%) 대신 모듈 스키마를 하나씩 명시한다. 나중에 만든 백업 DB 같은 것에 권한이 따라 붙지 않게 한다.
+-- GRANT/REVOKE의 DB 이름에서 `_`는 한 글자 와일드카드이므로 `\_`로 이스케이프한다(안 하면 paldogotganXmember 같은 다른 DB에도 권한이 간다)
+GRANT ALL PRIVILEGES ON `paldogotgan\_member`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_wallet`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_order`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_product`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_delivery`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_payout`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_media`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan\_refund`.* TO '__APP_USER__'@'%';
 
 -- Flyway 이력: 적용된 행을 값 그대로(버전, 설명, 체크섬, 순번) 모듈 스키마 이력으로 복사한다. 기본 스키마 이력은 RENAME이 끝난 뒤에 정리한다
 CREATE TABLE `paldogotgan_member`.flyway_schema_history LIKE __DB__.flyway_schema_history;
