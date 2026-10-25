@@ -16,6 +16,7 @@ dependencies {
     implementation(project(":delivery"))
     implementation(project(":product"))
     implementation(project(":order"))
+    implementation(project(":payout"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
     // ---------- Web / API ----------
@@ -28,9 +29,6 @@ dependencies {
     implementation("org.springframework.modulith:spring-modulith-starter-core")
     implementation("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
     runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
-
-    // ---------- Batch ----------
-    implementation("org.springframework.boot:spring-boot-starter-batch-jdbc") // 배치 실행 기록 DB 저장(BATCH_* 테이블)
 
     // ---------- Security ----------
     implementation("org.springframework.boot:spring-boot-starter-security")
