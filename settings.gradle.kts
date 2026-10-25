@@ -5,4 +5,4 @@ pluginManagement {
 
 rootProject.name = "ok"
 
-include("monolith")
+include("common", "monolith")

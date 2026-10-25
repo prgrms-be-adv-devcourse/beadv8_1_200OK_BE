@@ -8,6 +8,8 @@ version = "0.0.1-SNAPSHOT"
 description = "paldo-gotgan"
 
 dependencies {
+    implementation(project(":common"))
+
     // ---------- Web / API ----------
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-validation")
