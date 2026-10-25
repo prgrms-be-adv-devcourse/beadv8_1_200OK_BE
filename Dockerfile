@@ -2,14 +2,8 @@
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /workspace
 
-# 의존성 캐시를 위해 빌드 스크립트를 먼저 복사
-COPY gradlew settings.gradle.kts ./
-COPY gradle ./gradle
-COPY build-logic ./build-logic
-COPY monolith/build.gradle.kts ./monolith/
-RUN ./gradlew --no-daemon dependencies > /dev/null
-
-COPY monolith/src ./monolith/src
+# 서브프로젝트가 늘어도 Dockerfile을 고치지 않도록 소스를 통째로 복사한다 (.dockerignore가 build 산출물 등을 뺀다)
+COPY . .
 # 테스트는 이미지 빌드에서 제외
 RUN ./gradlew --no-daemon :monolith:bootJar -x test \
     && rm -f monolith/build/libs/*-plain.jar
