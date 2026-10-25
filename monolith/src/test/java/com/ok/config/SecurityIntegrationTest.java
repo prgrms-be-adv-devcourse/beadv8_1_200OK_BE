@@ -2,8 +2,8 @@ package com.ok.common.config;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.common.security.TokenClaims;
-import com.ok.member.auth.config.JwtConfig;
-import com.ok.member.auth.config.JwtProperties;
+import com.ok.common.config.JwtConfig;
+import com.ok.common.config.JwtProperties;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;

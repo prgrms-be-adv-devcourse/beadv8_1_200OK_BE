@@ -1,4 +1,4 @@
-package com.ok.member.auth.config;
+package com.ok.common.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 

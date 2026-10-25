@@ -1,7 +1,7 @@
 package com.ok.member.auth.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.member.auth.config.JwtProperties;
+import com.ok.common.config.JwtProperties;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;

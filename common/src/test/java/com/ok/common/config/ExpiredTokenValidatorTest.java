@@ -1,4 +1,4 @@
-package com.ok.member.auth.config;
+package com.ok.common.config;
 
 import com.ok.common.security.TokenValidationErrors;
 import org.junit.jupiter.api.Test;

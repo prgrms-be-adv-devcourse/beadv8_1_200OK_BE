@@ -4,6 +4,7 @@ import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.common.config.JpaConfig;
+import com.ok.common.config.JwtProperties;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.MemberSignupService;
@@ -19,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -51,6 +53,14 @@ public class MemberModuleTest {
     // 이 테스트는 이벤트 발행만 확인하고 프로필 사진 URL 변환은 쓰지 않으므로 가짜로 둔다
     @MockitoBean
     MediaUrlResolver mediaUrlResolver;
+
+    // JwtProperties도 common 모듈의 타입이라 같은 이유로 걸러진다. 토큰 발급(JwtEncoder, AccessTokenProvider 등)은
+    // 이 테스트에서 쓰지 않고 컨텍스트가 뜨는 데만 필요하므로 가짜로 둔다. (JwtEncoder는 진짜 키가 있어야 만들 수 있어 함께 가짜로 둔다)
+    @MockitoBean
+    JwtProperties jwtProperties;
+
+    @MockitoBean
+    JwtEncoder jwtEncoder;
 
     // 판매자 신청이 member를 외래키로 참조하므로 신청을 먼저 지운다
     @AfterEach

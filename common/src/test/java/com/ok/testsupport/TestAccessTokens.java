@@ -1,8 +1,8 @@
 package com.ok.testsupport;
 
 import com.ok.common.security.TokenClaims;
-import com.ok.member.auth.config.JwtConfig;
-import com.ok.member.auth.config.JwtProperties;
+import com.ok.common.config.JwtConfig;
+import com.ok.common.config.JwtProperties;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;

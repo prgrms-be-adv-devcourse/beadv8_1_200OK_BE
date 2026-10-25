@@ -1,4 +1,4 @@
-package com.ok.member.auth.config;
+package com.ok.common.config;
 
 import com.ok.common.security.TokenValidationErrors;
 import org.springframework.security.oauth2.core.OAuth2Error;

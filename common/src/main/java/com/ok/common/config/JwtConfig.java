@@ -1,4 +1,4 @@
-package com.ok.member.auth.config;
+package com.ok.common.config;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -10,10 +10,6 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
 import com.nimbusds.jose.JOSEObjectType;
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.OctetSequenceKey;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -25,20 +21,21 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimNames;
 import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
 /**
- * JWT 서명(발급)과 검증에 사용하는 빈을 등록한다.
+ * JWT 검증에 사용하는 빈과 발급·검증이 함께 쓰는 값(알고리즘, 토큰 타입, 비밀키)을 둔다.
+ *
+ * <p>검증({@link JwtDecoder})은 모든 모듈 앱이 보안 필터를 쓰기 위해 필요하므로 common에 둔다.
+ * 발급({@code JwtEncoder})은 토큰을 만드는 member 모듈의 {@code JwtEncoderConfig}가 맡는다.
  *
  * <p>JWT를 직접 파싱하거나 서명하는 코드를 만들지 않고, Spring Security가 제공하는
- * {@link JwtEncoder} / {@link JwtDecoder}(내부 구현: Nimbus JOSE + JWT)를 사용한다.
+ * {@code JwtEncoder} / {@link JwtDecoder}(내부 구현: Nimbus JOSE + JWT)를 사용한다.
  *
  * <p>대칭키 방식(HS256)을 사용한다. 발급과 검증을 같은 애플리케이션에서 하므로 비대칭키의 장점
  * (검증하는 쪽은 위조할 수 없음)이 쓰이지 않고, 키 관리가 단순하다. 토큰을 검증하는 곳이 둘 이상이 되면
- * 개인키를 공유하지 않아도 되는 비대칭키(RS256 등)로 바꾼다. 서명 알고리즘과 키는 이 클래스에서만 관리하므로
+ * 개인키를 공유하지 않아도 되는 비대칭키(RS256 등)로 바꾼다. 서명 알고리즘과 키는 이 클래스와 {@code JwtEncoderConfig}에서만 관리하므로
  * 전환할 때 각 모듈의 인가 코드는 바뀌지 않는다.
  *
  * <p>토큰 헤더의 {@code kid}로 서명 키를 구분한다. 지금은 키가 하나지만, 키를 교체할 때 옛 키와 새 키를
@@ -71,22 +68,6 @@ public class JwtConfig {
      * 만료는 {@link ExpiredTokenValidator} 하나가 이 값으로 판단한다.
      */
     private static final Duration CLOCK_SKEW = Duration.ZERO;
-
-    /**
-     * 토큰에 서명하는 인코더.
-     *
-     * <p>인코더는 토큰 헤더의 알고리즘과 {@code kid}에 맞는 키를 골라 서명한다. 그래서 비밀키에도 같은 {@code kid}를 붙여 둔다.
-     * (헤더에만 {@code kid}를 넣고 키에 없으면 "서명할 키를 찾을 수 없다"며 실패한다)
-     * 토큰을 발급할 때 JwsHeader에 {@link #SIGNING_ALGORITHM}과 {@code kid}를 반드시 지정해야 한다. → {@code AccessTokenProvider} 참고
-     */
-    @Bean
-    public JwtEncoder jwtEncoder(JwtProperties properties) {
-        OctetSequenceKey signingKey = new OctetSequenceKey.Builder(secretKey(properties))
-                .keyID(properties.keyId())
-                .algorithm(JWSAlgorithm.parse(SIGNING_ALGORITHM.getName()))
-                .build();
-        return new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(signingKey)));
-    }
 
     /**
      * 토큰을 검증하는 디코더. 보안 필터({@code SecurityConfig}의 oauth2ResourceServer)가 요청마다 이 빈으로 토큰을 검증한다.
@@ -132,9 +113,9 @@ public class JwtConfig {
 
     /**
      * 설정의 비밀키(Base64 문자열)를 디코딩해 HMAC-SHA256용 SecretKey로 변환한다.
-     * 인코더와 디코더가 반드시 같은 키를 쓰도록 한 곳에서 만든다.
+     * 인코더(member)와 디코더가 반드시 같은 키를 쓰도록 한 곳에서 만든다.
      */
-    private static SecretKey secretKey(JwtProperties properties) {
+    public static SecretKey secretKey(JwtProperties properties) {
         return new SecretKeySpec(properties.secretKeyBytes(), JCA_ALGORITHM);
     }
 

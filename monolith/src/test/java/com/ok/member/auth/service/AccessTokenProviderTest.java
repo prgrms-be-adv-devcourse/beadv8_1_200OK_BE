@@ -2,8 +2,9 @@ package com.ok.member.auth.service;
 
 import com.ok.common.security.TokenClaims;
 import com.ok.common.security.TokenRoles;
-import com.ok.member.auth.config.JwtConfig;
-import com.ok.member.auth.config.JwtProperties;
+import com.ok.common.config.JwtConfig;
+import com.ok.common.config.JwtProperties;
+import com.ok.member.auth.config.JwtEncoderConfig;
 import com.ok.member.auth.domain.AccessToken;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class AccessTokenProviderTest {
     private static final List<String> BUYER = List.of(TokenRoles.BUYER);
 
     private final JwtConfig jwtConfig = new JwtConfig();
+    private final JwtEncoderConfig jwtEncoderConfig = new JwtEncoderConfig();
     private final JwtProperties properties = properties(ISSUER, AUDIENCE, SECRET);
 
     private Instant now;
@@ -61,7 +63,7 @@ class AccessTokenProviderTest {
     void setUp() {
         now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         fixedClock = Clock.fixed(now, ZoneId.of("Asia/Seoul"));
-        jwtEncoder = jwtConfig.jwtEncoder(properties);
+        jwtEncoder = jwtEncoderConfig.jwtEncoder(properties);
         jwtDecoder = jwtConfig.jwtDecoder(properties, fixedClock);
         accessTokenProvider = new AccessTokenProvider(jwtEncoder, properties, fixedClock);
     }
@@ -216,7 +218,7 @@ class AccessTokenProviderTest {
         // given
         JwtProperties otherProperties = properties(ISSUER, AUDIENCE, OTHER_SECRET);
         AccessTokenProvider otherProvider =
-                new AccessTokenProvider(jwtConfig.jwtEncoder(otherProperties), otherProperties, fixedClock);
+                new AccessTokenProvider(jwtEncoderConfig.jwtEncoder(otherProperties), otherProperties, fixedClock);
         String forged = otherProvider.issue(1L, List.of(TokenRoles.ADMIN)).value();
 
         // when & then
@@ -249,7 +251,7 @@ class AccessTokenProviderTest {
         // given
         JwtProperties otherIssuer = properties("other-service", AUDIENCE, SECRET);
         AccessTokenProvider otherProvider =
-                new AccessTokenProvider(jwtConfig.jwtEncoder(otherIssuer), otherIssuer, fixedClock);
+                new AccessTokenProvider(jwtEncoderConfig.jwtEncoder(otherIssuer), otherIssuer, fixedClock);
         String token = otherProvider.issue(1L, BUYER).value();
 
         // when & then
