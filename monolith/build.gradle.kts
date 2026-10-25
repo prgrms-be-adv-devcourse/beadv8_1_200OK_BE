@@ -9,7 +9,8 @@ description = "paldo-gotgan"
 
 dependencies {
     implementation(project(":common"))
-    testImplementation(project(path = ":common", configuration = "testSupport"))
+    implementation(project(":media"))
+    testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
     // ---------- Web / API ----------
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
@@ -45,9 +46,6 @@ dependencies {
 
     // ---------- AWS ----------
     implementation("software.amazon.awssdk:s3")
-
-    // ---------- Image ----------
-    implementation(libs.thumbnailator)
 
     // ---------- HTML ----------
     implementation(libs.owasp.html.sanitizer) // 상품 상세설명 HTML 정제 (XSS 방지)

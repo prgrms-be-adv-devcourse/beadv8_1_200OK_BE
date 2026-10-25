@@ -71,3 +71,21 @@ tasks.jacocoTestReport {
         html.required = true
     }
 }
+
+// 이 프로젝트의 테스트 지원 코드(com.ok.testsupport)와 테스트 설정 파일을 다른 서브프로젝트의 테스트가 가져다 쓰는 통로
+// java-test-fixtures(jar)를 쓰지 않는 이유: Spring Modulith는 jar 안의 com.ok.testsupport를 도메인 모듈로 인식해
+// 구조 테스트와 모듈 테스트(@ApplicationModuleTest)가 깨진다. test 소스셋의 classes 디렉터리로 노출하면
+// 지금처럼 테스트 클래스로 인식되어 모듈 분석에서 제외된다
+// 사용: testImplementation(project(path = ":common", configuration = "testSupportElements"))
+val testSupportElements = configurations.consumable("testSupportElements") {
+    extendsFrom(configurations.testImplementation.get())
+}
+
+artifacts {
+    add(testSupportElements.name, sourceSets.test.get().output.classesDirs.singleFile) {
+        builtBy(tasks.compileTestJava)
+    }
+    add(testSupportElements.name, sourceSets.test.get().output.resourcesDir!!) {
+        builtBy(tasks.processTestResources)
+    }
+}

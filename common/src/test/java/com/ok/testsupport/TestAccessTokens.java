@@ -1,5 +1,9 @@
 package com.ok.testsupport;
 
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.OctetSequenceKey;
+import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.config.JwtConfig;
 import com.ok.common.config.JwtProperties;
@@ -7,6 +11,7 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -40,9 +45,14 @@ public class TestAccessTokens {
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
 
-    public TestAccessTokens(JwtEncoder jwtEncoder, JwtProperties jwtProperties) {
-        this.jwtEncoder = jwtEncoder;
+    // member의 JwtEncoder 빈을 주입받지 않고 같은 키·알고리즘으로 직접 만든다. 그래야 member가 없는 모듈의 테스트에서도 쓸 수 있다
+    public TestAccessTokens(JwtProperties jwtProperties) {
         this.jwtProperties = jwtProperties;
+        OctetSequenceKey signingKey = new OctetSequenceKey.Builder(JwtConfig.secretKey(jwtProperties))
+                .keyID(jwtProperties.keyId())
+                .algorithm(JWSAlgorithm.parse(JwtConfig.SIGNING_ALGORITHM.getName()))
+                .build();
+        this.jwtEncoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(signingKey)));
     }
 
     /**

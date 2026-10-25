@@ -33,6 +33,12 @@ app:
 admin-bootstrap:
   login-id: ""
 jwt:
+  # 아래 4개 값은 monolith의 application.yaml과 같게 둔다. 모듈 서브프로젝트의 테스트에는 application.yaml이 없어서 여기서 채운다
+  issuer: paldo-gotgan
+  audience: paldo-gotgan-api
+  key-id: hs256-v1
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
   # 테스트 전용 키. 개발·운영 환경의 JWT_SECRET으로 절대 사용하지 않는다.
   secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl
 
