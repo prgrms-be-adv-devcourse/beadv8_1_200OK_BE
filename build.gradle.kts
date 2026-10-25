@@ -1,5 +1,5 @@
 // 새 도메인 모듈의 뼈대를 만든다.
-//   ./gradlew createModule -PmoduleName=refund -PdisplayName=환불
+//   ./gradlew createModule -PmoduleName=notification -PdisplayName=알림
 // 만드는 것: <모듈>/build.gradle.kts, 기본 패키지(package-info), 단독 기동 앱 클래스, ArchitectureTest 틀
 // settings.gradle.kts와 monolith 의존은 직접 추가해야 한다(실행 끝에 안내를 출력한다)
 tasks.register("createModule") {
