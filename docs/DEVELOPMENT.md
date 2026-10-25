@@ -130,6 +130,31 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - `ddl-auto`는 `validate`입니다. 엔티티를 추가하거나 수정하면 대응하는 마이그레이션이 반드시 필요하고, 없으면 앱이 기동하지 않습니다 (테스트에서도 같은 검증이 돕니다).
 - 개발 환경(dev 프로파일)은 `flyway.out-of-order: true`로 순서가 뒤바뀐 마이그레이션도 적용합니다. 운영은 순서대로 적용됩니다.
 
+### 모듈별 스키마
+
+모듈은 자기 테이블을 자기 MySQL 스키마에 둡니다. 접속 DB(`DB_URL`)는 기본 스키마(`paldogotgan`) 하나이고, 엔티티가 `@Table(catalog = <모듈>Schema.NAME)`으로 자기 스키마를 지정합니다.
+
+| 스키마 | 소유 |
+|---|---|
+| `paldogotgan` (기본) | common: `event_publication`, Flyway 이력 |
+| `paldogotgan_member`, `_wallet`, `_order`, `_product`, `_delivery`, `_payout`, `_media`, `_refund` | 각 모듈의 테이블과 Flyway 이력 (payout은 Spring Batch의 `BATCH_*` 테이블도 가짐) |
+
+- 스키마마다 Flyway가 따로 돕니다. 기본 스키마(common)가 먼저 실행되고, 모듈 스키마는 `createSchemas=false`라서 스키마가 없으면 새로 만들지 않고 실패합니다.
+- 네이티브 SQL은 엔티티의 `catalog`가 적용되지 않으므로 테이블 이름을 스키마로 직접 한정합니다(`WalletSchema.NAME + ".buyer_wallet"`). JPQL, Spring Data, QueryDSL은 그대로 쓰면 됩니다.
+- 새 데이터 볼륨으로 처음 뜨는 MySQL 컨테이너가 스키마를 만들고 앱 계정에 권한을 줍니다(`deploy/initdb`).
+
+### 로컬 DB를 이전하기
+
+이 구조로 바뀌기 전에 만든 로컬 DB(`data/mysql`)를 그대로 두고 앱을 띄우면 Flyway 검증(`Detected applied migration not resolved locally`)에서 멈춥니다. 둘 중 하나로 맞춥니다.
+
+- **방법 A: 데이터 유지.** 앱을 멈추고(`docker compose stop app`) 이전 스크립트를 실행합니다. 점검이 실패하면(예: 병합되지 않은 브랜치의 마이그레이션 이력) 방법 B를 씁니다.
+  ```bash
+  MYSQL_CMD='docker compose exec -T mysql mysql -uroot -p<MYSQL_ROOT_PASSWORD>' \
+    infra/mysql/migration-288/migrate.sh all paldogotgan myuser
+  ```
+  결과(행 수·체크섬 비교)는 `infra/mysql/migration-288/out/<시각>/`에 남습니다. 이 폴더는 커밋하지 않습니다.
+- **방법 B: 초기화.** `docker compose down` 후 `data/mysql`을 지우고 다시 `docker compose up -d`합니다. 새 볼륨이라 MySQL이 스키마를 만들고, 앱을 띄우면 Flyway가 테이블을 만듭니다.
+
 ## 6. 모듈 구조 (Gradle 서브프로젝트 + Spring Modulith)
 
 서브프로젝트는 `common`, `monolith`입니다. 도메인 모듈은 아직 `monolith` 안에 있고, 서브프로젝트로 하나씩 분리하는 중입니다. 분리된 모듈은 이 표에 추가됩니다. 공통 빌드 설정은 `build-logic`(컨벤션 플러그인)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다.
