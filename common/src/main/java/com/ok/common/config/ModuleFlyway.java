@@ -22,14 +22,25 @@ import org.springframework.core.env.Environment;
  * <ul>
  *   <li>monolith(기본): 접속 기본 DB는 기본 스키마다. common 인스턴스가 기본 스키마에 common 마이그레이션을 적용하고,
  *       모듈 인스턴스는 자기 스키마에 자기 마이그레이션만 적용한다.</li>
- *   <li>모듈 단독(standalone): 접속 기본 DB가 모듈 자기 스키마다. common 인스턴스를 만들지 않고, 모듈 인스턴스가
- *       common 마이그레이션까지 함께 적용한다(이력 테이블이 겹치지 않게 인스턴스 하나로 합친다).</li>
+ *   <li>모듈 단독(standalone): 접속 기본 DB가 모듈 자기 스키마다. 모듈 인스턴스는 monolith와 똑같이 자기 마이그레이션만
+ *       적용하고, common 마이그레이션은 같은 스키마에 별도 이력 테이블({@link #STANDALONE_COMMON_TABLE})을 쓰는 인스턴스가 따로 적용한다.
+ *       이력이 섞이지 않아야 같은 DB를 monolith로 띄워도 모듈 인스턴스의 검증이 통과한다.</li>
  * </ul>
  */
 public final class ModuleFlyway {
 
     /** true면 모듈 단독 앱(또는 모듈 테스트)이다. 모듈 앱 {@code main}과 모듈 테스트 설정이 지정한다. */
     public static final String STANDALONE_PROPERTY = "ok.flyway.standalone";
+
+    /** 모듈 단독 앱에서 common 마이그레이션의 이력을 모듈 이력과 따로 두는 테이블 이름 */
+    public static final String STANDALONE_COMMON_TABLE = "flyway_schema_history_common";
+
+    /**
+     * true면 모듈 Flyway 하나가 common 마이그레이션까지 한 이력 테이블에 적용한다. 모듈 서브프로젝트의 테스트 전용이다.
+     * {@code @DataJpaTest} 같은 슬라이스 테스트는 모듈별 Flyway 설정을 읽지 않고 Boot의 Flyway 하나(모듈과 common 위치 전부)만 쓰는데,
+     * 같은 테스트 DB를 쓰는 전체 컨텍스트 테스트와 이력이 갈리면 검증이 실패하기 때문이다. 앱 실행에서는 쓰지 않는다.
+     */
+    public static final String SINGLE_HISTORY_PROPERTY = "ok.flyway.single-history";
 
     static final String COMMON_LOCATION = "classpath:db/migration/common";
 
@@ -41,20 +52,35 @@ public final class ModuleFlyway {
     }
 
     /**
-     * 모듈 스키마용 Flyway.
+     * 모듈 스키마용 Flyway. monolith와 모듈 단독 앱이 같다(자기 마이그레이션 폴더만 읽는다).
      *
      * <p>{@code createSchemas=false}: 스키마가 없으면 새로 만들지 않고 실패한다. 이전하지 않은 옛 구조 DB에서
      * 빈 모듈 테이블이 새로 만들어지는 사고를 막는다. 스키마는 DB 준비 스크립트가 만든다.
      */
     public static Flyway create(DataSource dataSource, Environment environment, String schema, String module) {
-        String[] locations = isStandalone(environment)
-                ? new String[] {"classpath:db/migration/" + module, COMMON_LOCATION}
-                : new String[] {"classpath:db/migration/" + module};
         return configure(dataSource, environment)
                 .defaultSchema(schema)
                 .schemas(schema)
                 .createSchemas(false)
-                .locations(locations)
+                .locations(environment.getProperty(SINGLE_HISTORY_PROPERTY, Boolean.class, false)
+                        ? new String[] {"classpath:db/migration/" + module, COMMON_LOCATION}
+                        : new String[] {"classpath:db/migration/" + module})
+                .load();
+    }
+
+    /**
+     * 모듈 단독 앱에서 접속 기본 DB(모듈 스키마)에 common 마이그레이션을 적용하는 Flyway. 이력은 별도 테이블을 쓴다.
+     *
+     * <p>모듈 Flyway가 먼저 실행되어 스키마가 비어 있지 않고 이 이력 테이블은 아직 없으므로, Flyway는 기본적으로
+     * "비어 있지 않은 스키마인데 이력이 없다"며 실패한다. 버전 0으로 기준선을 잡고 시작하면 common 마이그레이션이 그 뒤로 적용된다.
+     */
+    public static Flyway createStandaloneCommon(DataSource dataSource, Environment environment) {
+        return configure(dataSource, environment)
+                .table(STANDALONE_COMMON_TABLE)
+                .baselineOnMigrate(true)
+                .baselineVersion("0")
+                .createSchemas(false)
+                .locations(COMMON_LOCATION)
                 .load();
     }
 
@@ -74,14 +100,18 @@ public final class ModuleFlyway {
     }
 
     /**
-     * Flyway를 기동 시점에 실행하는 initializer. common initializer가 있으면 그것이 먼저 만들어져(실행되어) 끝난 뒤에 실행된다.
+     * Flyway를 기동 시점에 실행하는 initializer. 먼저 실행해야 하는 initializer(common, 단독 모드의 common)가 있으면 그것이
+     * 먼저 만들어져(실행되어) 끝난 뒤에 실행된다. 없는 것은 건너뛴다.
      *
      * <p>옛 구조 DB에서는 common 이력에 모듈 마이그레이션 행이 남아 있어 common 인스턴스의 validate가 실패하고 앱이 멈춘다.
      * 모듈 인스턴스보다 common이 먼저 실행되어야 그 실패가 빈 모듈 테이블 생성보다 앞선다.
      */
+    @SafeVarargs
     public static FlywayMigrationInitializer initializer(Flyway flyway,
-                                                         ObjectProvider<FlywayMigrationInitializer> commonInitializer) {
-        commonInitializer.getIfAvailable();
+                                                         ObjectProvider<FlywayMigrationInitializer>... prerequisites) {
+        for (ObjectProvider<FlywayMigrationInitializer> prerequisite : prerequisites) {
+            prerequisite.getIfAvailable();
+        }
         return new FlywayMigrationInitializer(flyway);
     }
 

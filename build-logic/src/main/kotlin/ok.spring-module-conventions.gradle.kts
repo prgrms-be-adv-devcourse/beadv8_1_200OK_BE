@@ -40,4 +40,6 @@ dependencies {
 tasks.withType<Test> {
     systemProperty("spring.profiles.include", "standalone,${project.name}")
     systemProperty("ok.schema", "paldogotgan_${project.name}")
+    // 슬라이스 테스트(@DataJpaTest)의 Boot Flyway와 전체 컨텍스트 테스트의 모듈 Flyway가 한 이력을 쓰게 한다(ModuleFlyway.SINGLE_HISTORY_PROPERTY)
+    systemProperty("ok.flyway.single-history", "true")
 }

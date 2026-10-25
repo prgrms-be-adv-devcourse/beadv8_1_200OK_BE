@@ -35,8 +35,8 @@ spring:
           batch_size: 100
           time_zone: ${APP_TIME_ZONE:Asia/Seoul}
   flyway:
-    # monolith의 dev 프로파일과 같이 개발 환경에서 순서 무시를 허용한다
-    out-of-order: ${FLYWAY_OUT_OF_ORDER:true}
+    # 순서가 뒤바뀐 마이그레이션 허용 여부. 기본은 운영과 같게 막고, 개발 환경에서 필요하면 FLYWAY_OUT_OF_ORDER=true로 연다
+    out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
   modulith:
     events:
       republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
@@ -63,4 +63,4 @@ management:
       show-details: never
 logging:
   level:
-    com.ok: DEBUG
+    com.ok: ${LOG_LEVEL_OK:INFO}

@@ -180,6 +180,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 - 단독 실행은 `standalone` 프로파일과 모듈 프로파일(`application-<모듈>.yaml`)을 켜고, 접속 DB를 모듈 스키마로 둡니다. 접속 정보는 `DB_HOST`(기본 localhost), `DB_PORT`(기본 3306), `DB_USERNAME`, `DB_PASSWORD`, 서명 키는 `JWT_SECRET`, 모듈이 쓰는 값(wallet은 `TOSS_SECRET_KEY`)은 환경변수로 넘깁니다. monolith용 `DB_URL`은 읽지 않습니다.
 - 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
+- 단독 실행한 모듈 스키마와 monolith는 같은 DB를 번갈아 써도 됩니다. 단독 실행은 `common` 마이그레이션(`event_publication`)을 같은 스키마의 별도 이력 테이블(`flyway_schema_history_common`)에 적용하므로 모듈 이력에는 섞이지 않습니다. 단독 실행이 common 행을 모듈 이력(`flyway_schema_history`)에 함께 기록하던 초기 개발 빌드로 만든 로컬 DB는 monolith가 `Detected applied migration not resolved locally: 202610081120`으로 멈춥니다. 모듈 스키마마다 `DELETE FROM paldogotgan_<모듈>.flyway_schema_history WHERE version = '202610081120';`로 그 행을 지우거나 볼륨을 초기화하세요(운영에는 해당 없음).
 - 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다.
 
 ### 새 모듈 만들기
