@@ -1,5 +1,7 @@
 package com.ok.member.auth;
 
+import com.ok.PaldoGotganApplication;
+import org.springframework.boot.test.context.SpringBootTest;
 import com.jayway.jsonpath.JsonPath;
 import com.ok.common.security.TokenClaims;
 import com.ok.member.auth.repository.RefreshTokenRepository;
@@ -37,6 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // 실제 로그인·재발급 API로 토큰을 받아, 판매자 승인 상태가 토큰 권한과 판매자 API 인가에 반영되는지 확인한다.
+@SpringBootTest(classes = PaldoGotganApplication.class)
 class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
 
     private static final String LOGIN_ID = "seller01";

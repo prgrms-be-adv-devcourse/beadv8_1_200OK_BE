@@ -1,5 +1,7 @@
 package com.ok.wallet;
 
+import com.ok.PaldoGotganApplication;
+import org.springframework.boot.test.context.SpringBootTest;
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.service.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -23,6 +25,7 @@ import static org.awaitility.Awaitility.await;
 // 구매확정 이벤트 → 정산 후보 → 정산 배치 → 정산 생성 이벤트 → 판매자 지갑 입금까지 실제로 이어지는지 확인한다.
 // - 정산은 구매확정 15일 뒤가 대상이라, 후보가 만들어진 뒤 생성 시각을 과거로 옮긴다 (PayoutSettleIntegrationTest와 같은 방식)
 // - 정산 범위의 하한이 마지막 정산일이므로 정산 데이터는 테스트 전후로 전부 비운다
+@SpringBootTest(classes = PaldoGotganApplication.class)
 class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     // 이 클래스 전용 번호 (정산 테스트는 주문항목 8_000_000~, 9_000_000~ 사용)
     private static final long ORDER_ID = 600_001L;

@@ -33,8 +33,3 @@ dependencies {
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")
 }
-
-// 앱 클래스가 아직 테스트 소스에 있어 실행 가능한 jar를 만들 main class가 없다. 앱 클래스를 main으로 옮기는 커밋에서 켠다
-tasks.bootJar {
-    enabled = false
-}

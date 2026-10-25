@@ -1,5 +1,7 @@
 package com.ok.common.config;
 
+import com.ok.PaldoGotganApplication;
+import org.springframework.boot.test.context.SpringBootTest;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -18,6 +20,7 @@ import com.ok.testsupport.TestAccessTokens;
  * 컨테이너 헬스체크용 actuator가 health만, 상세 없이 노출하는지 검증한다.
  */
 @AutoConfigureMockMvc
+@SpringBootTest(classes = PaldoGotganApplication.class)
 class ActuatorIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired

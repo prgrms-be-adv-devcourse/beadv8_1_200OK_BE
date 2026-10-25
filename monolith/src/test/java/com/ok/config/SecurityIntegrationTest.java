@@ -1,5 +1,7 @@
 package com.ok.common.config;
 
+import com.ok.PaldoGotganApplication;
+import org.springframework.boot.test.context.SpringBootTest;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.config.JwtConfig;
@@ -50,6 +52,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 보안 필터의 토큰 검증, {@code @CurrentMemberId}, 401·403 응답 형식을 검증한다.
  * 실제 모듈 API는 아직 토큰 방식으로 전환되지 않았으므로, 테스트 전용 컨트롤러({@link SecurityTestController})로 확인한다.
  */
+@SpringBootTest(classes = PaldoGotganApplication.class)
 class SecurityIntegrationTest extends AbstractIntegrationTest {
 
     private static final Long MEMBER_ID = 1L;

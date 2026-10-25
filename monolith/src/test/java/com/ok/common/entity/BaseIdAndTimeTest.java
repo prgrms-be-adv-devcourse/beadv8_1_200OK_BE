@@ -1,5 +1,7 @@
 package com.ok.common.entity;
 
+import com.ok.PaldoGotganApplication;
+import org.springframework.test.context.ContextConfiguration;
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @DataJpaTest
+@ContextConfiguration(classes = PaldoGotganApplication.class)
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({JpaConfig.class, TestcontainersConfiguration.class})
 class BaseIdAndTimeTest {
