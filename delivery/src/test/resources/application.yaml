@@ -1,0 +1,8 @@
+# delivery 서브프로젝트 테스트용 기본 설정. monolith의 application.yaml 중 delivery가 쓰는 값만 같게 둔다
+# (테스트 클래스패스에만 있어 monolith와 경쟁하지 않는다)
+delivery:
+  # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
+  default-shipping:
+    base-shipping-fee: 3000
+    free-shipping-threshold: 50000
+    cutoff-time: "13:00"

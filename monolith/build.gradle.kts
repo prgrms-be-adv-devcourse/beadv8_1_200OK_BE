@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":member"))
     implementation(project(":refund"))
     implementation(project(":wallet"))
+    implementation(project(":delivery"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
     // ---------- Web / API ----------
