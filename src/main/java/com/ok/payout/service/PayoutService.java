@@ -255,14 +255,16 @@ public class PayoutService {
                 payoutQueryRepository.summarizeSnapshotItems(snapshotId),
                 payoutQueryRepository.summarizeSellerDraftItems(snapshotId),
                 payoutQueryRepository.summarizeSystemDraftItems(snapshotId),
-                payoutQueryRepository.sumSellerDraftAmount(snapshotId));
+                payoutQueryRepository.sumSellerDraftAmount(snapshotId),
+                payoutQueryRepository.summarizeFailures(snapshotId),
+                payoutQueryRepository.countDraftedFailures(snapshotId));
 
         // 2) 규칙 검사
         //    ↳ 검사 추가 시: 규칙은 여기가 아니라 PayoutDraftValidator에 추가
         List<String> failures = PayoutDraftValidator.validate(input);
         if (failures.isEmpty()) {
-            log.info("정산 draft 검증 통과. snapshotId={}, 건수={}, 금액={}",
-                    snapshotId, input.snapshotItems().count(), input.snapshotItems().amount());
+            log.info("정산 draft 검증 통과. snapshotId={}, 건수={}, 금액={}, 실패로 제외={}건",
+                    snapshotId, input.snapshotItems().count(), input.snapshotItems().amount(), input.failures().count());
             return;
         }
 
