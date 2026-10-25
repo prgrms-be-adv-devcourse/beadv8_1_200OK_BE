@@ -114,7 +114,7 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 하위 도메인이 없는 모듈은 모듈 바로 아래에 레이어 패키지(`controller`, `service`, `domain`, `repository`)를 둔다.
 - 도메인이 커서 성격이 다른 하위 도메인으로 나뉘는 모듈은 `모듈/하위 도메인/레이어` 구조로 둔다.
 - 하위 도메인이 하나뿐인 모듈은 패키지를 한 단계 더 만들지 않는다. 의미 없는 패키지를 두지 않는다.
-- 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `com.ok.config` 모듈에 둔다.
+- 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `common` 서브프로젝트의 `com.ok.common.config`에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
 - 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다.
 - 서비스는 `service` 패키지에 둔 발행 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받는다. 구현체는 `event` 패키지에 둔다.
@@ -723,7 +723,7 @@ public MediaInfo upload(MediaPurpose purpose, MultipartFile file) {
 **규칙**
 - 현재 시각은 `Clock`을 주입받아 `LocalDateTime.now(clock)`처럼 얻는다. `LocalDateTime.now()`를 직접 호출하지 않는다.
 - 테스트에서는 고정된 시각의 `Clock`을 사용한다.
-- `Clock` 빈은 `com.ok.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
+- `Clock` 빈은 `com.ok.common.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
 - 모듈 테스트(`@ApplicationModuleTest`)에서는 `testsupport/TestClockConfiguration`을 `@Import`한다.
 
 **이유**: 시각에 의존하는 로직을 현재 시각과 상관없이 같은 결과로 테스트할 수 있다. 또한 `LocalDateTime.now()`는 JVM의 기본 타임존을 사용하므로, 앱의 타임존 설정(`APP_TIME_ZONE`)과 어긋날 수 있다. `Clock` 빈을 한 곳(`ClockConfig`)에 두고, JVM 시간대와 `APP_TIME_ZONE`을 모두 Asia/Seoul로 고정해 이를 막는다.
@@ -809,7 +809,7 @@ class WalletQueryService { ... }
 ### 8.1 파일 작성
 
 **규칙**
-- 스키마 변경은 항상 `src/main/resources/db/migration`에 SQL 파일로 추가한다.
+- 스키마 변경은 항상 서브프로젝트의 `src/main/resources/db/migration`에 SQL 파일로 추가한다.
 - 파일명은 `V{yyyyMMddHHmm}__{도메인}__{설명}.sql`로 한다. 구분자는 밑줄 두 개, 설명 안의 단어 구분은 밑줄 한 개다.
   - 버전은 파일을 만드는 시점의 시각(12자리)이다.
   - 도메인은 모듈 이름(`member`, `order`, `common` 등)이다.
@@ -1078,7 +1078,7 @@ class OrderServiceIntegrationTest { ... }
 | 컨트롤러 클래스·메서드에 `@Transactional`을 붙이지 않는다 | 7.1 |
 | `System.out`, `System.err`를 쓰지 않는다 | 일반 |
 
-규칙을 넣을 때 이미 있던 위반은 freeze로 `src/test/resources/archunit_store/`에 기준선으로 저장한다. 기준선에 있는 위반은 통과하고, 새로 생긴 위반만 실패한다. 위반을 고치면 기준선에서 자동으로 빠지므로, 바뀐 `archunit_store` 파일도 같이 커밋한다.
+규칙을 넣을 때 이미 있던 위반은 freeze로 서브프로젝트의 `src/test/resources/archunit_store/`에 기준선으로 저장한다. 기준선에 있는 위반은 통과하고, 새로 생긴 위반만 실패한다. 위반을 고치면 기준선에서 자동으로 빠지므로, 바뀐 `archunit_store` 파일도 같이 커밋한다.
 
 freeze 규칙을 추가하거나 문구(`because` 포함)를 바꾸면 기준선을 다시 만든다. 기준선은 규칙 설명 문장으로 찾으므로 문구만 바뀌어도 다른 규칙으로 본다.
 
@@ -1191,7 +1191,7 @@ assertThatThrownBy(() -> CartItem.create(cart, 1L, 1L, 0))
 ### 9.9 테스트 클래스
 
 **규칙**
-- 테스트 클래스는 `src/test/java`에서 테스트 대상과 같은 패키지에 둔다.
+- 테스트 클래스는 서브프로젝트의 `src/test/java`에서 테스트 대상과 같은 패키지에 둔다.
 - 테스트 클래스는 package-private(`class`)로 선언한다. `public`을 붙이지 않는다.
 - 클래스 이름은 테스트 종류에 따라 접미사를 붙인다.
   - 도메인·서비스 단위 테스트: `*Test`

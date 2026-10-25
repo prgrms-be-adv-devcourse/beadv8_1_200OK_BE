@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/test/**/*.java"
+  - "**/src/test/**/*.java"
 ---
 
 # 테스트 작성 스타일

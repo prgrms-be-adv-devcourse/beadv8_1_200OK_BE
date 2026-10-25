@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/main/java/**/*.java"
+  - "**/src/main/java/**/*.java"
 ---
 
 # 패키지·네이밍
@@ -16,7 +16,7 @@ paths:
 - 성격이 다른 하위 도메인으로 나뉘는 모듈: `모듈/하위 도메인/레이어` 구조로 둔다.
 - 하위 도메인이 하나뿐이면 패키지를 한 단계 더 만들지 않는다(`core` 같은 의미 없는 패키지 금지).
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정)를 추가한다. 하위 도메인이 있으면 그 아래에 둔다.
-- 전역 설정(`SecurityConfig` 등)은 `com.ok.config`에 둔다.
+- 전역 설정(`SecurityConfig` 등)은 `common` 서브프로젝트의 `com.ok.common.config`에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
 - 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다(`ArchitectureTest`가 검사).
 - 서비스는 `service` 패키지에 둔 발행 인터페이스로만 이벤트를 발행한다. 인터페이스는 값이나 `*Command`를 받고(이벤트 클래스 금지), 구현체는 `event`에 둔다(`ArchitectureTest`가 검사).

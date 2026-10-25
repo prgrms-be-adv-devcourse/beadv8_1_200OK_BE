@@ -21,7 +21,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 | 언어 / 빌드 | Java 25, Gradle (Kotlin DSL) |
 | 프레임워크 | Spring Boot 4.1.1 (Web MVC, Security, Validation) |
 | 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway |
-| 구조 | Spring Modulith (도메인 모듈 분리) |
+| 구조 | Gradle 멀티 모듈 + Spring Modulith (도메인 모듈 분리) |
 | 배치 / 문서 / 외부 | Spring Batch, springdoc-openapi (Swagger), AWS SDK v2 (S3) |
 | 테스트 | JUnit 5, AssertJ, Testcontainers, ArchUnit, JaCoCo |
 
@@ -50,7 +50,7 @@ cp .env.example .env
 docker compose up -d
 
 # 2) 앱 실행 (기본 프로파일 dev)
-./gradlew bootRun
+./gradlew :monolith:bootRun
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
@@ -73,7 +73,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - DB가 healthy 상태가 된 뒤에 앱이 시작됩니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
-- 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
+- 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
 - 프로파일을 지정하지 않으면 `dev`로 실행됩니다.
 
 ## 4. 설정 구조
@@ -84,7 +84,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 |---|---|---|
 | `dev` | 기본값 (지정하지 않으면 dev) | `application.yaml` + `application-dev.yml` |
 | `prod` | 운영. `SPRING_PROFILES_ACTIVE=prod` 로 지정 | `application.yaml` + `application-prod.yml` |
-| `test` | 테스트. Gradle이 자동 지정 | `application.yaml` + `src/test/resources/application-test.yml` |
+| `test` | 테스트. Gradle이 자동 지정 | `application.yaml` + `application-test.yml` |
 
 - 운영 배포 설정에는 `SPRING_PROFILES_ACTIVE=prod`를 반드시 넣으세요. 빠뜨리면 조용히 dev로 실행됩니다.
 - 공통 설정은 `application.yaml`, 환경별 차이만 프로파일 파일에 둡니다.
@@ -118,7 +118,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 ### 타임존
 
-기본은 Asia/Seoul입니다. `.env`가 없어도 JDBC·Hibernate·Jackson이 Asia/Seoul을 쓰고, 서버(Dockerfile)·CI 테스트(build.gradle.kts)의 JVM과 MySQL 컨테이너도 Asia/Seoul로 고정되어 있습니다.
+기본은 Asia/Seoul입니다. `.env`가 없어도 JDBC·Hibernate·Jackson이 Asia/Seoul을 쓰고, 서버(Dockerfile)·CI 테스트(`build-logic`의 `ok.java-conventions` 플러그인)의 JVM과 MySQL 컨테이너도 Asia/Seoul로 고정되어 있습니다.
 `.env`에 `APP_TIME_ZONE=UTC`처럼 다른 값을 넣으면 기본값을 덮어쓰므로, 팀 기준과 다르게 두지 마세요.
 `DATETIME` 컬럼은 타임존 없이 값만 저장하므로, 데이터가 쌓인 뒤에 바꾸면 기존 값이 어긋나 보일 수 있습니다.
 
@@ -126,19 +126,20 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 스키마는 Flyway로 관리합니다. 마이그레이션 파일 작성 규칙(파일명, 수정 금지, 병합 순서 등)은 [`CONVENTION.md`의 DB 마이그레이션](CONVENTION.md#8-db-마이그레이션-flyway)을 참고하세요.
 
-- 마이그레이션 파일 위치: `src/main/resources/db/migration`
+- 마이그레이션 파일 위치: 서브프로젝트의 `src/main/resources/db/migration` (현재는 `monolith`)
 - `ddl-auto`는 `validate`입니다. 엔티티를 추가하거나 수정하면 대응하는 마이그레이션이 반드시 필요하고, 없으면 앱이 기동하지 않습니다 (테스트에서도 같은 검증이 돕니다).
 - 개발 환경(dev 프로파일)은 `flyway.out-of-order: true`로 순서가 뒤바뀐 마이그레이션도 적용합니다. 운영은 순서대로 적용됩니다.
 
-## 6. 모듈 구조 (Spring Modulith)
+## 6. 모듈 구조 (Gradle 서브프로젝트 + Spring Modulith)
+
+서브프로젝트는 `common`, `monolith`입니다. 도메인 모듈은 아직 `monolith` 안에 있고, 서브프로젝트로 하나씩 분리하는 중입니다. 분리된 모듈은 이 표에 추가됩니다. 공통 빌드 설정은 `build-logic`(컨벤션 플러그인)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다.
 
 `com.ok` 바로 아래 패키지가 하나의 모듈입니다.
 
 | 모듈 | 설명 |
 |---|---|
 | `member`, `wallet`, `order`, `product`, `delivery`, `refund`, `payout` | 도메인 모듈 |
-| `common` | 공통 코드. 도메인을 참조하지 않는 코드만 둡니다 |
-| `config` | 설정 클래스 (`SecurityConfig` 등). 도메인 모듈을 참조해도 됩니다 |
+| `common` | 공통 코드와 전역 설정(`com.ok.common.config`의 `SecurityConfig` 등). `common` 서브프로젝트이며 도메인을 참조하지 않는 코드만 둡니다 |
 
 모듈 안의 패키지 구조와 모듈 간 규칙(공개 위치, 순환 의존 금지 등)은 [`CONVENTION.md`의 패키지·모듈 구조](CONVENTION.md#2-패키지모듈-구조)를 참고하세요.
 
@@ -377,8 +378,8 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
 
 ### 테스트 환경 설정
 
-- `src/test/resources/application-test.yml`에 테스트 전용 설정을 둡니다 (compose 비활성, 배치 Job 비활성, `ddl-auto: validate`).
-- `build.gradle.kts`의 `systemProperty("spring.profiles.active", "test")` 덕분에 Gradle로 실행하면 test 프로파일이 적용됩니다.
+- 테스트 리소스의 `application-test.yml`(현재 `monolith/src/test/resources`)에 테스트 전용 설정을 둡니다 (compose 비활성, 배치 Job 비활성, `ddl-auto: validate`).
+- `build-logic`의 `ok.java-conventions` 플러그인이 `systemProperty("spring.profiles.active", "test")`를 지정하므로 Gradle로 실행하면 test 프로파일이 적용됩니다.
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
 - MySQL 컨테이너는 테스트 실행(JVM) 한 번에 하나만 뜨고 모든 테스트 컨텍스트가 같은 DB를 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
@@ -387,7 +388,8 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
 ### 실행 명령
 
 ```bash
-./gradlew test                                   # 전체 테스트
+./gradlew test                                   # 전체 테스트(모든 서브프로젝트)
+./gradlew :monolith:test                         # 서브프로젝트 하나만
 ./gradlew test --tests 'com.ok.SomeTest'         # 특정 클래스만
 ./gradlew test --tests 'com.ok.SomeTest.메서드'    # 특정 메서드만
 ./gradlew cleanTest test                         # 캐시 무시하고 다시 실행
@@ -395,8 +397,8 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
 
 커버리지 리포트는 테스트 실행 후 자동 생성됩니다.
 
-- HTML: `build/reports/jacoco/test/html/index.html`
-- XML: `build/reports/jacoco/test/jacocoTestReport.xml`
+- HTML: `<서브프로젝트>/build/reports/jacoco/test/html/index.html`
+- XML: `<서브프로젝트>/build/reports/jacoco/test/jacocoTestReport.xml`
 
 ## 10. Docker 이미지
 

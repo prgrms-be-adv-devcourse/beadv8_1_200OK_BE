@@ -1,11 +1,11 @@
 ---
 paths:
-  - "src/main/resources/db/migration/*.sql"
+  - "**/src/main/resources/db/migration/**/*.sql"
 ---
 
 # DB 마이그레이션 (Flyway)
 
-`src/main/resources/db/migration`의 SQL 파일을 작성할 때 따르는 규칙이다.
+서브프로젝트의 `src/main/resources/db/migration` 아래 SQL 파일을 작성할 때 따르는 규칙이다.
 사람용 원문: `docs/CONVENTION.md` 8절.
 
 ## 파일 작성

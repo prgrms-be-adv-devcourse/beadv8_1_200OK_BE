@@ -13,8 +13,8 @@ description: Flyway 마이그레이션 SQL 파일을 이 프로젝트 컨벤션�
 2. **기존 파일을 수정하지 않는다.** 이미 커밋된 마이그레이션은 건드리지 않고 항상 새 파일을 추가한다.
 3. **버전을 정한다.** `date +%Y%m%d%H%M`으로 현재 시각 12자리를 얻는다. `git fetch` 후 `main`과 현재 브랜치의 마이그레이션 중 가장 큰 버전보다 뒤인지 확인한다.
    ```bash
-   ls src/main/resources/db/migration | sort | tail -3
-   git ls-tree --name-only origin/main src/main/resources/db/migration/ | sort | tail -3
+   git ls-files '*/src/main/resources/db/migration/*.sql' | sed 's#.*/##' | sort | tail -3
+   git ls-tree -r --name-only origin/main | grep 'src/main/resources/db/migration/.*\.sql$' | sed 's#.*/##' | sort | tail -3
    ```
 4. **파일명을 짓는다.** `V{버전}__{모듈}__{동작_설명}.sql`. 구분자는 밑줄 두 개이고 설명은 `create_*_table`, `add_*_to_*`, `add_index_*`처럼 동작으로 시작한다.
 5. **SQL을 작성한다.** 아래 템플릿을 따른다.

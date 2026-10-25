@@ -1,7 +1,7 @@
 ---
 paths:
-  - "src/main/java/**/domain/**/*.java"
-  - "src/main/java/**/entity/**/*.java"
+  - "**/src/main/java/**/domain/**/*.java"
+  - "**/src/main/java/**/entity/**/*.java"
 ---
 
 # 엔티티

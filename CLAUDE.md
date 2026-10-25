@@ -9,13 +9,13 @@ Spring Boot 4 / Java 25 / Spring Modulith 기반 모놀리스 백엔드. 프로�
 
 | 규칙 파일 | 적용 대상 |
 |---|---|
-| `structure.md` | `src/main/java` 전체: 패키지·모듈 구조, 역할별 접미사 |
+| `structure.md` | 각 서브프로젝트의 `src/main/java` 전체: 패키지·모듈 구조, 역할별 접미사 |
 | `entity.md` | `domain`, `entity`: 엔티티 공통 부모, soft delete |
 | `api.md` | `controller`: URL, 요청·응답 DTO, Swagger, `*Spec`, 검증 위치 |
 | `exception.md` | `exception`: 예외, `*ErrorCode` |
 | `service.md` | `service`: 트랜잭션, Facade, `Clock`, 로그, `*Command`/`*Query` |
 | `migration.md` | `db/migration/*.sql`: Flyway 작성 규칙 |
-| `testing.md`, `testing-strategy.md` | `src/test`: 테스트 스타일, 종류, 외부 시스템 Fake |
+| `testing.md`, `testing-strategy.md` | 각 서브프로젝트의 `src/test`: 테스트 스타일, 종류, 외부 시스템 Fake |
 | `code-style.md` | 모든 `*.java`: import, 주석, TODO, Javadoc |
 
 새 파일을 만들기 전에 위 표에서 해당하는 규칙을 먼저 읽는다. 규칙이 로드되지 않았다면 직접 읽는다.

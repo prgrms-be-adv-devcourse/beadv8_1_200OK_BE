@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/test/**/*.java"
+  - "**/src/test/**/*.java"
 ---
 
 # 테스트 종류와 경계
@@ -37,7 +37,7 @@ class OrderServiceIntegrationTest { ... }
 
 ## 테스트 클래스
 
-- `src/test/java`에서 테스트 대상과 같은 패키지에 둔다.
+- 서브프로젝트의 `src/test/java`에서 테스트 대상과 같은 패키지에 둔다.
 - package-private(`class`)로 선언한다. `public`을 붙이지 않는다.
 - 이름 접미사는 종류별로 정한다.
   - 도메인·서비스 단위: `*Test`
