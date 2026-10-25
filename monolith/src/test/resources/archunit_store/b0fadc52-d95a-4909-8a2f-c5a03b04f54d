@@ -1,4 +1,0 @@
-Class <com.ok.media.controller.spec.MediaApiSpec> does not reside outside of package '..spec..' in (MediaApiSpec.java:0)
-Class <com.ok.media.controller.spec.MediaApiSpec> has modifier PUBLIC in (MediaApiSpec.java:0)
-Class <com.ok.order.cart.controller.CartControllerDocs> does not have simple name ending with 'Spec' in (CartControllerDocs.java:0)
-Class <com.ok.order.cart.controller.CartControllerDocs> has modifier PUBLIC in (CartControllerDocs.java:0)
