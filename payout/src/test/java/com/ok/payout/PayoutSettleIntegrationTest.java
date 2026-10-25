@@ -51,7 +51,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 // 통합 테스트: 실제 Spring 컨텍스트 + MySQL 컨테이너에서 정산 배치(스냅샷 → draft → 검증 → 확정 → 발행) 확인
 // - 정산후보는 created_at을 과거로 넣어야 하므로 리포지토리 대신 SQL로 직접 넣는다 (저장 시 Auditing이 현재 시각으로 덮어쓰기 때문)
-// - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build.gradle.kts)과 Hibernate 시간대(application-test.yml)가
+// - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build-logic의 ok.java-conventions)과 Hibernate 시간대(application-test.yml)가
 //   모두 Asia/Seoul로 고정되어(#93), JPA가 저장·조회하는 시각과 기준이 같기 때문이다
 // - 결과 확인은 JPA 리포지토리로 한다 (팀 규칙). JDBC는 데이터 준비·정리에만 쓴다
 // - 정산·스냅샷·draft는 이 클래스만 만들고 "마지막 정산일"이 범위 계산에 쓰이므로, 테스트 전후로 전부 비운다

@@ -378,7 +378,7 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
 
 ### 테스트 환경 설정
 
-- 테스트 리소스의 `application-test.yml`(현재 `monolith/src/test/resources`)에 테스트 전용 설정을 둡니다 (compose 비활성, 배치 Job 비활성, `ddl-auto: validate`).
+- 테스트 리소스의 `application-test.yml`(`common/src/test/resources`, 모든 서브프로젝트의 테스트가 공유)에 테스트 전용 설정을 둡니다 (compose 비활성, 배치 Job 비활성, `ddl-auto: validate`).
 - `build-logic`의 `ok.java-conventions` 플러그인이 `systemProperty("spring.profiles.active", "test")`를 지정하므로 Gradle로 실행하면 test 프로파일이 적용됩니다.
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.

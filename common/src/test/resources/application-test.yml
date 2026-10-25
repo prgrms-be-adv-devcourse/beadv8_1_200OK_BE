@@ -9,7 +9,7 @@ spring:
       initialize-schema: never
   jackson:
     # 테스트는 .env 와 상관없이 팀 기준 시간대를 쓴다 (#93, .env 영향 없음)
-    # 테스트 JVM(build.gradle.kts -Duser.timezone)과 같아야 jdbcTemplate 으로 넣은 시각과 JPA 로 읽은 시각이 맞는다
+    # 테스트 JVM(build-logic의 ok.java-conventions -Duser.timezone)과 같아야 jdbcTemplate 으로 넣은 시각과 JPA 로 읽은 시각이 맞는다
     time-zone: Asia/Seoul
   jpa:
     hibernate:

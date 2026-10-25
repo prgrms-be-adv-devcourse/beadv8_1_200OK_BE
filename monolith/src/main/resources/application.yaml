@@ -33,7 +33,7 @@ spring:
         jdbc:
           batch_size: 100
           # Hibernate가 LocalDateTime을 DB에 저장·조회할 때 변환하는 기준 시간대 (기본값 Asia/Seoul, #93)
-          # JVM 시간대(Dockerfile, build.gradle.kts의 -Duser.timezone)와 같아야 저장한 시각이 그대로 들어간다
+          # JVM 시간대(Dockerfile, build-logic의 ok.java-conventions 플러그인의 -Duser.timezone)와 같아야 저장한 시각이 그대로 들어간다
           time_zone: ${APP_TIME_ZONE:Asia/Seoul}
 app:
   problem:

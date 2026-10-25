@@ -20,7 +20,7 @@ import java.time.Clock;
  * <ul>
  *   <li>엔티티의 생성·수정 일시(JPA Auditing, {@code createdAt})도 JVM 기본 시간대로 저장된다.
  *       Clock도 같은 기준을 써야 직접 넣은 시각과 자동으로 기록된 시각이 서로 맞는다.</li>
- *   <li>JVM 기본 시간대는 실행 옵션 {@code -Duser.timezone=Asia/Seoul}로 고정한다(서버는 Dockerfile, CI 테스트는 build.gradle.kts).
+ *   <li>JVM 기본 시간대는 실행 옵션 {@code -Duser.timezone=Asia/Seoul}로 고정한다(서버는 Dockerfile, CI 테스트는 build-logic의 ok.java-conventions 플러그인).
  *       그래서 결과적으로 이 Clock은 Asia/Seoul 기준이 된다.</li>
  *   <li>{@code APP_TIME_ZONE}을 직접 읽지 않는 이유: JVM 시간대와 따로 놀면 Auditing 시각과 Clock 시각이 어긋날 수 있어서다.</li>
  * </ul>

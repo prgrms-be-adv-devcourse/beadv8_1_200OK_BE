@@ -43,7 +43,7 @@ import java.time.Clock;
  */
 public class TestClockConfiguration {
 
-    // 운영 ClockConfig#clock()과 같은 방식: JVM 기본 시간대를 따른다 (테스트 JVM은 build.gradle.kts에서 Asia/Seoul로 고정)
+    // 운영 ClockConfig#clock()과 같은 방식: JVM 기본 시간대를 따른다 (테스트 JVM은 build-logic의 ok.java-conventions 플러그인에서 Asia/Seoul로 고정)
     @Bean
     public Clock clock() {
         return Clock.systemDefaultZone();
