@@ -6,6 +6,7 @@ import com.ok.payout.domain.PayoutEventType;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
@@ -20,11 +21,13 @@ import java.util.Objects;
 
 import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
+import static com.ok.payout.domain.QPayoutFailure.payoutFailure;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
 import static com.ok.payout.domain.QPayoutSellerDraftItem.payoutSellerDraftItem;
 import static com.ok.payout.domain.QPayoutSnapshotItem.payoutSnapshotItem;
 import static com.ok.payout.domain.QPayoutSystemDraftItem.payoutSystemDraftItem;
+import static com.ok.payout.domain.QPayoutWalletDeduction.payoutWalletDeduction;
 
 @Repository
 @RequiredArgsConstructor
@@ -137,6 +140,23 @@ public class PayoutQueryRepository {
                 .where(undraftedInSnapshot(snapshotId))
                 .orderBy(payoutCandidateItem.id.asc())
                 .limit(limit)
+                .fetch();
+    }
+
+    // validateStep 차감 기록 검사: 이번 스냅샷 후보 중 그 주문의 지갑 차감 기록이 없는 후보 (→ 실패로 기록되어 이번 정산에서 빠짐)
+    // 이미 이번 스냅샷에 실패로 기록된 후보는 뺌 → 같은 스냅샷에 validate를 다시 실행해도 새로 저장할 게 없어 중복되지 않음
+    // 주문 단위 검사라 배송비 후보(order_item_id NULL)도 order_id로 함께 걸림
+    public List<PayoutCandidateItem> findCandidatesWithoutDeduction(Long snapshotId) {
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(
+                        inSnapshot(snapshotId),
+                        JPAExpressions.selectOne()
+                                .from(payoutWalletDeduction)
+                                .where(payoutWalletDeduction.orderId.eq(payoutCandidateItem.orderId))
+                                .notExists(),
+                        notFailedInSnapshot(snapshotId))
+                .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
     }
 
@@ -366,5 +386,23 @@ public class PayoutQueryRepository {
                         payoutSystemDraftItem.candidateId.eq(payoutCandidateItem.id))
                 .notExists());
         return condition;
+    }
+
+    // 이번 스냅샷 목록에 있는 후보
+    private BooleanExpression inSnapshot(Long snapshotId) {
+        return JPAExpressions.selectOne()
+                .from(payoutSnapshotItem)
+                .where(payoutSnapshotItem.snapshotId.eq(snapshotId),
+                        payoutSnapshotItem.candidateId.eq(payoutCandidateItem.id))
+                .exists();
+    }
+
+    // 이번 스냅샷에서 실패로 기록되지 않은 후보 (validate 중복 방지, 3단계에서 draft 제외 조건으로도 씀)
+    private BooleanExpression notFailedInSnapshot(Long snapshotId) {
+        return JPAExpressions.selectOne()
+                .from(payoutFailure)
+                .where(payoutFailure.snapshotId.eq(snapshotId),
+                        payoutFailure.candidateId.eq(payoutCandidateItem.id))
+                .notExists();
     }
 }

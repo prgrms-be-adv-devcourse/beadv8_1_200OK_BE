@@ -3,12 +3,15 @@ package com.ok.payout.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutFailure;
+import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.repository.PayoutFailureRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutQueryRepository.CountAndAmount;
 import com.ok.payout.repository.PayoutRepository;
@@ -59,6 +62,7 @@ public class PayoutService {
     private final PayoutSnapshotItemRepository payoutSnapshotItemRepository;
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
+    private final PayoutFailureRepository payoutFailureRepository;
     // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
@@ -104,6 +108,23 @@ public class PayoutService {
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(검증 실패 시 누락 목록 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
         return snapshot.getId();
+    }
+
+    // 입력 검증(validateStep): 이번 스냅샷 후보 중 지갑 차감 기록이 없는 주문의 후보를 실패로 기록하고, 기록한 건수를 반환
+    // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외, 3단계)
+    // 예외를 던지지 않고 기록만 함 → 틀린 주문만 빠지고 나머지는 계속 정산됨
+    @Transactional
+    public int validate(Long snapshotId) {
+        List<PayoutCandidateItem> missing = payoutQueryRepository.findCandidatesWithoutDeduction(snapshotId);
+        List<PayoutFailure> failures = new ArrayList<>();
+        for (PayoutCandidateItem candidate : missing) {
+            failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.DEDUCTION_MISSING));
+        }
+        payoutFailureRepository.saveAll(failures);
+
+        // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
+        log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}", snapshotId, failures.size());
+        return failures.size();
     }
 
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
