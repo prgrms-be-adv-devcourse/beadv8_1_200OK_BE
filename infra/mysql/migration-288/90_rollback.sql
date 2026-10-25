@@ -2,8 +2,10 @@
 -- 모듈 스키마를 지우는 2단계(91_rollback_drop.sql)는 이 단계 뒤 모듈 스키마가 비었는지 확인하고 migrate.sh가 실행한다.
 SET SESSION lock_wait_timeout = 10;
 
--- 먼저 한 문장(원자적)으로 테이블을 되돌린다. 실패하면 아무것도 바뀌지 않고, 이력은 모듈 스키마에 그대로 남는다
+-- 먼저 한 문장(원자적)으로 테이블을 되돌린다. 실패하면 아무것도 바뀌지 않고, 이력은 모듈 스키마에 그대로 남는다.
+-- 자리표시 테이블(media)은 같은 문장 맨 앞에서 모듈 스키마로 옮긴다(진짜 media가 돌아올 자리를 비우면서도 실패 시 자리표시가 남도록). 자리표시가 없으면 migrate.sh가 이 줄(-- STUB)을 뺀다
 RENAME TABLE
+    __DB__.media TO `paldogotgan_media`.media_placeholder, -- STUB
     `paldogotgan_member`.`member` TO __DB__.`member`,
     `paldogotgan_member`.`refresh_token` TO __DB__.`refresh_token`,
     `paldogotgan_member`.`seller_application` TO __DB__.`seller_application`,

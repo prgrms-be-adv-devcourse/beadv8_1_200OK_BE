@@ -112,7 +112,7 @@ run_checks() {
 
 # 모듈 스키마 안에 flyway_schema_history 말고 테이블이 몇 개 있는지
 moved_table_count() {
-  query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema LIKE 'paldogotgan\\_%' AND table_name <> 'flyway_schema_history';"
+  query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema LIKE 'paldogotgan\\_%' AND table_name NOT IN ('flyway_schema_history', 'media_placeholder');"
 }
 
 # 이전 도중 실패했을 때 지금 상태와 다음 할 일을 알려 준다
@@ -188,11 +188,12 @@ case "$COMMAND" in
       echo "모듈 스키마에 옮겨진 테이블이 없다. 이전하지 않았거나 이미 되돌렸다. 빈 스키마가 남았으면 cleanup을 실행하라." >&2
       exit 1
     fi
-    # 기본 스키마 이력은 event_publication 한 행뿐이어야 한다. 이전 전 이미지를 이전된 DB에서 띄웠다면 실패한 마이그레이션 행이
-    # 남아 있을 수 있고, 순번이 겹쳐 복원할 이력 행이 건너뛰어질 수 있으므로 지우고 다시 실행하게 한다
-    base_history=$(query "SELECT COUNT(*) FROM \`$DB\`.flyway_schema_history;")
-    if [ "$base_history" != "1" ]; then
-      echo "기본 스키마 이력이 $base_history 행이다(이전 직후 1행). 이전 전 이미지를 띄운 흔적일 수 있다: 실패 행(success = 0)을 확인해 지우고(DELETE FROM $DB.flyway_schema_history WHERE success = 0) 다시 실행하라." >&2
+    # 기본 스키마 이력에 실패한 마이그레이션 행(success = 0)이 없어야 한다. 이전 전 이미지를 이전된 DB에서 띄우면 남는 흔적이고,
+    # 순번이 겹쳐 복원할 이력 행이 건너뛰어질 수 있으므로 지우고 다시 실행하게 한다. (이전 직후 이력은 1행이지만,
+    # 이전 중 기본 이력 정리만 실패해 55행이 남은 상태는 복원이 중복을 건너뛰므로 허용한다)
+    base_failed=$(query "SELECT COUNT(*) FROM \`$DB\`.flyway_schema_history WHERE success = 0;")
+    if [ "$base_failed" != "0" ]; then
+      echo "기본 스키마 이력에 실패한 마이그레이션 행이 $base_failed 개 있다(이전 전 이미지를 이전된 DB에서 띄운 흔적). 확인해 지우고(DELETE FROM $DB.flyway_schema_history WHERE success = 0) 다시 실행하라." >&2
       exit 1
     fi
     # 이전 후 새 마이그레이션이 모듈 이력에 쌓였으면(행 수가 달라짐) 단순 되돌리기로는 맞지 않는다
@@ -211,13 +212,17 @@ case "$COMMAND" in
     # 되돌리기 전(모듈 스키마) 행 수·체크섬을 기록해 두고, 되돌린 뒤(기본 스키마) 값과 비교한다.
     # 이전 후 앱이 쓴 데이터도 함께 돌아가므로 비교 기준은 이전 전이 아니라 되돌리기 직전이다
     snapshot after > "$OUT/before-rollback.txt"
-    # 자리표시 테이블(media)이 기본 스키마에 있으면 진짜 media 테이블이 돌아올 자리를 위해 지운다. 자리표시가 아닌 media는 건드리지 않는다
+    # 자리표시 테이블(media)이 기본 스키마에 있으면 90_rollback.sql의 RENAME 맨 앞에서 모듈 스키마로 함께 옮겨진다(실패하면 함께 남는다).
+    # 자리표시가 아닌 media나 아예 없는 경우에는 그 줄을 뺀다. 자리표시가 아닌 media는 건드리지 않는다
     stub=$(query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$DB' AND table_name = 'media' AND table_comment = '$STUB_COMMENT';")
+    rollback_sql="$OUT/90_rollback.run.sql"
     if [ "$stub" = "1" ]; then
-      echo "DROP TABLE \`$DB\`.media;" | mysql_cli --batch --skip-column-names
+      cp "$DIR/90_rollback.sql" "$rollback_sql"
+    else
+      sed '/-- STUB$/d' "$DIR/90_rollback.sql" > "$rollback_sql"
     fi
-    if ! run_sql 90_rollback.sql | tee "$OUT/rollback.log"; then
-      echo "되돌리기 실패. 테이블 되돌리기(RENAME)가 먼저 실행되므로 실패하면 아무것도 바뀌지 않았을 가능성이 크다. 상태를 확인하고 같은 명령을 다시 실행해도 된다(이력 복원은 중복을 건너뛴다)." >&2
+    if ! sed -e "s/__DB__/$DB/g" -e "s/__APP_USER__/$APP_USER/g" "$rollback_sql" | mysql_cli --batch --skip-column-names | tee "$OUT/rollback.log"; then
+      echo "되돌리기 실패. 테이블 되돌리기(RENAME)가 먼저 실행되므로 실패하면 아무것도 바뀌지 않았다(자리표시 테이블도 그대로 남아 있다). 원인을 확인하고 같은 명령을 다시 실행해도 된다(이력 복원은 중복을 건너뛴다). 성공하기 전에 이전 전 이미지를 띄우지 않는다." >&2
       exit 1
     fi
     leftover=$(moved_table_count)
@@ -231,6 +236,11 @@ case "$COMMAND" in
     grants=$(query "SELECT COUNT(*) FROM mysql.db WHERE User = '$APP_USER' AND Db LIKE 'paldogotgan\\\\_%';")
     if [ "$remaining" != "0" ] || [ "$grants" != "0" ]; then
       echo "모듈 스키마 $remaining 개 또는 앱 계정 권한 $grants 개가 남았다. $OUT/rollback.log 를 확인하라." >&2
+      exit 1
+    fi
+    restored=$(query "SELECT COUNT(*) FROM \`$DB\`.flyway_schema_history WHERE success = 1;")
+    if [ "$restored" != "55" ]; then
+      echo "복원된 기본 스키마 이력이 $restored 행이다(기대 55). 순번이 겹친 행이 건너뛰어졌을 수 있다. 이전 전 이미지를 띄우지 말고 백업과 대조하라." >&2
       exit 1
     fi
     snapshot before > "$OUT/after-rollback.txt"
