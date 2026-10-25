@@ -1,5 +1,6 @@
 package com.ok.order.order.domain;
 
+import com.ok.order.OrderSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -9,7 +10,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "order_item")
+@Table(name = "order_item", catalog = OrderSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class OrderItem extends BaseTime {

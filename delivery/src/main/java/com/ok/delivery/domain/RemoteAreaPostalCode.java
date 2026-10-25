@@ -1,5 +1,6 @@
 package com.ok.delivery.domain;
 
+import com.ok.delivery.DeliverySchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.delivery.exception.DeliveryErrorCode;
@@ -25,7 +26,7 @@ import java.util.regex.Pattern;
  */
 @Entity
 @Getter
-@Table(name = "remote_area_postal_code")
+@Table(name = "remote_area_postal_code", catalog = DeliverySchema.NAME)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RemoteAreaPostalCode extends BaseTime implements Persistable<String> {
 

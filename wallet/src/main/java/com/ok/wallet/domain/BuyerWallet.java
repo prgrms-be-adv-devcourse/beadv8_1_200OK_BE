@@ -1,5 +1,6 @@
 package com.ok.wallet.domain;
 
+import com.ok.wallet.WalletSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.wallet.exception.WalletErrorCode;
@@ -14,7 +15,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "buyer_wallet")
+@Table(name = "buyer_wallet", catalog = WalletSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class BuyerWallet extends BaseTime {

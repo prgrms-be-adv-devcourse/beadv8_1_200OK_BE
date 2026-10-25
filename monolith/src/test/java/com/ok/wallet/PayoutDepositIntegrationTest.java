@@ -1,6 +1,8 @@
 package com.ok.wallet;
 
 import com.ok.PaldoGotganApplication;
+import com.ok.payout.PayoutSchema;
+import com.ok.wallet.WalletSchema;
 import org.springframework.boot.test.context.SpringBootTest;
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.service.PayoutJobRunner;
@@ -79,63 +81,70 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     // 주문 ID로 세는 이유: 배송비 후보는 판매자 묶음 단위라 order_item_id가 NULL (주문항목 ID로 세면 배송비가 빠짐)
     private long countCandidates() {
         return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM payout_candidate_items WHERE order_id = ?", Long.class, ORDER_ID);
+                q("SELECT COUNT(*) FROM payout_candidate_items WHERE order_id = ?"), Long.class, ORDER_ID);
     }
 
     // 앱 시간대가 Asia/Seoul로 고정되어(#137), JdbcTemplate으로 넣은 시각과 Hibernate가 비교하는 시각의 기준이 같다
     // 배송비 후보까지 함께 옮기도록 주문 ID로 찾음 (빠지면 배송비가 정산 대상에서 제외됨)
     private void backdateCandidates(LocalDateTime createdAt) {
         jdbcTemplate.update(
-                "UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_id = ?",
+                q("UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_id = ?"),
                 createdAt, createdAt, ORDER_ID);
     }
 
     // 지갑이 아직 없으면 0으로 본다 (리스너가 처리 중일 수 있음)
     private long sellerBalance() {
         List<Long> balances = jdbcTemplate.queryForList(
-                "SELECT balance FROM seller_wallet WHERE member_id = ?", Long.class, SELLER_ID);
+                q("SELECT balance FROM seller_wallet WHERE member_id = ?"), Long.class, SELLER_ID);
         return balances.isEmpty() ? 0 : balances.get(0);
     }
 
     private long countSellerLedgers() {
-        return jdbcTemplate.queryForObject("""
+        return jdbcTemplate.queryForObject(q("""
                 SELECT COUNT(*) FROM seller_wallet_ledger l
                 JOIN seller_wallet w ON l.seller_wallet_id = w.id
                 WHERE w.member_id = ?
-                """, Long.class, SELLER_ID);
+                """), Long.class, SELLER_ID);
     }
 
     private String latestReferenceKey() {
-        return jdbcTemplate.queryForObject("""
+        return jdbcTemplate.queryForObject(q("""
                 SELECT l.reference_key FROM seller_wallet_ledger l
                 JOIN seller_wallet w ON l.seller_wallet_id = w.id
                 WHERE w.member_id = ?
                 ORDER BY l.id DESC LIMIT 1
-                """, String.class, SELLER_ID);
+                """), String.class, SELLER_ID);
     }
 
     // 판매자 몫 정산 ID (시스템 몫은 payee_id가 없음)
     private long sellerPayoutId() {
         return jdbcTemplate.queryForObject(
-                "SELECT id FROM payout WHERE payee_id = ?", Long.class, SELLER_ID);
+                q("SELECT id FROM payout WHERE payee_id = ?"), Long.class, SELLER_ID);
     }
 
     // FK 때문에 자식 테이블 먼저. 정산 데이터는 전부, 후보와 지갑은 이 클래스 번호만 지운다
     private void cleanUp() {
-        jdbcTemplate.update("""
+        jdbcTemplate.update(q("""
                 DELETE l FROM seller_wallet_ledger l
                 JOIN seller_wallet w ON l.seller_wallet_id = w.id
                 WHERE w.member_id = ?
-                """, SELLER_ID);
-        jdbcTemplate.update("DELETE FROM seller_wallet WHERE member_id = ?", SELLER_ID);
-        jdbcTemplate.update("DELETE FROM payout_item");
-        jdbcTemplate.update("DELETE FROM payout");
-        jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
-        jdbcTemplate.update("DELETE FROM payout_seller_draft");
-        jdbcTemplate.update("DELETE FROM payout_system_draft_item");
-        jdbcTemplate.update("DELETE FROM payout_snapshot_item");
-        jdbcTemplate.update("DELETE FROM payout_snapshot");
+                """), SELLER_ID);
+        jdbcTemplate.update(q("DELETE FROM seller_wallet WHERE member_id = ?"), SELLER_ID);
+        jdbcTemplate.update(q("DELETE FROM payout_item"));
+        jdbcTemplate.update(q("DELETE FROM payout"));
+        jdbcTemplate.update(q("DELETE FROM payout_seller_draft_item"));
+        jdbcTemplate.update(q("DELETE FROM payout_seller_draft"));
+        jdbcTemplate.update(q("DELETE FROM payout_system_draft_item"));
+        jdbcTemplate.update(q("DELETE FROM payout_snapshot_item"));
+        jdbcTemplate.update(q("DELETE FROM payout_snapshot"));
         // 배송비 후보(order_item_id NULL)까지 지우도록 주문 ID로 지움
-        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id = ?", ORDER_ID);
+        jdbcTemplate.update(q("DELETE FROM payout_candidate_items WHERE order_id = ?"), ORDER_ID);
+    }
+
+    // 이 테스트는 wallet·payout 두 스키마의 테이블을 함께 쓰고 접속 기본 DB는 기본 스키마라서, 테이블 이름을 스키마로 한정한다
+    private static String q(String sql) {
+        return sql
+                .replaceAll("\\b(seller_wallet(?:_ledger)?)\\b", WalletSchema.NAME + ".$1")
+                .replaceAll("\\b(payout(?:_[a-z]+)*)\\b", PayoutSchema.NAME + ".$1");
     }
 }

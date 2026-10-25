@@ -1,5 +1,6 @@
 package com.ok.member.seller.domain;
 
+import com.ok.member.MemberSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.member.seller.exception.SellerErrorCode;
@@ -26,7 +27,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
  * 거절되지 않은 신청(진행 중·승인)은 회원당·사업자등록번호당 하나만 있다(DB 유니크 제약으로 보장).
  */
 @Entity
-@Table(name = "seller_application")
+@Table(name = "seller_application", catalog = MemberSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class SellerApplication extends BaseTime {

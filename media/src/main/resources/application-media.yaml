@@ -1,0 +1,7 @@
+# media 모듈을 단독으로 띄울 때(와 media 테스트) 쓰는 설정. media 프로파일에서만 읽는다
+# monolith의 application.yaml과 같은 값이다 (두 벌을 한 파일로 합치는 일은 후속으로 다룬다)
+spring:
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 30MB

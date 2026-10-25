@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.payout.exception.PayoutErrorCode;
@@ -23,7 +24,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 판매자 몫 임시 정산 항목 (판매 대금, 배송비). 정산후보 1건 = 항목 1건
 @Entity
 @Immutable
-@Table(name = "payout_seller_draft_item")
+@Table(name = "payout_seller_draft_item", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutSellerDraftItem extends BaseTime {

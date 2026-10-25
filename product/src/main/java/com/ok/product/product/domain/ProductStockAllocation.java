@@ -1,5 +1,6 @@
 package com.ok.product.product.domain;
 
+import com.ok.product.ProductSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -8,7 +9,7 @@ import lombok.NoArgsConstructor;
 
 // 주문별 재고 배정 기록. 같은 주문의 배정·해제가 여러 번 와도 한 번만 반영하기 위한 기준
 @Entity
-@Table(name = "product_stock_allocation")
+@Table(name = "product_stock_allocation", catalog = ProductSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProductStockAllocation extends BaseTime {

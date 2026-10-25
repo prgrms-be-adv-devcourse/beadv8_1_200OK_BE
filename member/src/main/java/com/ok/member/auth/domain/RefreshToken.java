@@ -1,5 +1,6 @@
 package com.ok.member.auth.domain;
 
+import com.ok.member.MemberSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -29,7 +30,7 @@ import java.util.Objects;
  * (로그아웃·회원 탈퇴 이슈에서 member의 이벤트를 구독해 해당 회원의 토큰을 삭제)
  */
 @Entity
-@Table(name = "refresh_token")
+@Table(name = "refresh_token", catalog = MemberSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RefreshToken extends BaseTime {

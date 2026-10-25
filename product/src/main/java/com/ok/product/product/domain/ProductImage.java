@@ -1,5 +1,6 @@
 package com.ok.product.product.domain;
 
+import com.ok.product.ProductSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -8,7 +9,7 @@ import lombok.NoArgsConstructor;
 
 // 소프트 삭제 없음. Product의 images 컬렉션에서 빠지면 orphanRemoval로 물리 삭제
 @Entity
-@Table(name = "product_image")
+@Table(name = "product_image", catalog = ProductSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProductImage extends BaseTime {

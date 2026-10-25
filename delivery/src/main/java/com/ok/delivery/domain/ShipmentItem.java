@@ -1,5 +1,6 @@
 package com.ok.delivery.domain;
 
+import com.ok.delivery.DeliverySchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.delivery.exception.DeliveryErrorCode;
@@ -24,7 +25,7 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Getter
-@Table(name = "shipment_item")
+@Table(name = "shipment_item", catalog = DeliverySchema.NAME)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ShipmentItem extends BaseTime {
 

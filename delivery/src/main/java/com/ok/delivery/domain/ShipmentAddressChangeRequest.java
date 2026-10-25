@@ -1,5 +1,6 @@
 package com.ok.delivery.domain;
 
+import com.ok.delivery.DeliverySchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.delivery.exception.DeliveryErrorCode;
@@ -28,7 +29,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Getter
-@Table(name = "shipment_address_change_request")
+@Table(name = "shipment_address_change_request", catalog = DeliverySchema.NAME)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ShipmentAddressChangeRequest extends BaseTime {
 

@@ -1,5 +1,6 @@
 package com.ok.product.review.domain;
 
+import com.ok.product.ProductSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,7 +19,7 @@ import lombok.NoArgsConstructor;
 
 // 소프트 삭제 없음. ProductReview의 media 컬렉션에서 빠지면 orphanRemoval로 물리 삭제
 @Entity
-@Table(name = "product_review_media")
+@Table(name = "product_review_media", catalog = ProductSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProductReviewMedia extends BaseTime {

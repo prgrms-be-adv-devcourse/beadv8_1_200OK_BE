@@ -1,5 +1,6 @@
 package com.ok.member.seller.domain;
 
+import com.ok.member.MemberSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.member.seller.exception.SellerErrorCode;
@@ -21,7 +22,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
  * 상점·상품 상세 화면에 보이는 정보라 신청 정보와 따로 두고, 판매자가 직접 고친다.
  */
 @Entity
-@Table(name = "seller_profile")
+@Table(name = "seller_profile", catalog = MemberSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class SellerProfile extends BaseTime {

@@ -20,6 +20,10 @@ spring:
     multipart:
       max-file-size: 30MB
       max-request-size: 30MB
+  batch:
+    jdbc:
+      # 배치 메타데이터 테이블(BATCH_*)은 payout 스키마에 있다. 접속 기본 DB는 기본 스키마라서 스키마를 붙여 지정한다 (PayoutSchema.NAME)
+      table-prefix: paldogotgan_payout.BATCH_
   datasource:
     # serverTimezone: JDBC 드라이버가 DB와 시각을 주고받을 때 기준 시간대 (기본값 Asia/Seoul, #93)
     url: ${DB_URL:jdbc:mysql://localhost:3306/paldogotgan?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8}

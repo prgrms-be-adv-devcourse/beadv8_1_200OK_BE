@@ -1,5 +1,6 @@
 package com.ok.order.order.domain;
 
+import com.ok.order.OrderSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -11,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "order_seller_group")
+@Table(name = "order_seller_group", catalog = OrderSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class OrderSellerGroup extends BaseTime {

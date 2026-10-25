@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.payout.exception.PayoutErrorCode;
@@ -19,7 +20,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 
 @Entity
 @Immutable
-@Table(name = "payout_candidate_items")
+@Table(name = "payout_candidate_items", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutCandidateItem extends BaseTime {

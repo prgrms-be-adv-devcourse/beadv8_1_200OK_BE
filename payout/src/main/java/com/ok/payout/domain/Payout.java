@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -14,7 +15,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 
 @Entity
 @Immutable
-@Table(name = "payout")
+@Table(name = "payout", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Payout extends BaseTime {

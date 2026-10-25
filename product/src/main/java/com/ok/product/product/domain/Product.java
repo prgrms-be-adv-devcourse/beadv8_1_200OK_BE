@@ -1,5 +1,6 @@
 package com.ok.product.product.domain;
 
+import com.ok.product.ProductSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.product.product.exception.ProductErrorCode;
@@ -19,7 +20,7 @@ import java.util.Map;
 import java.util.Set;
 
 @Entity
-@Table(name = "product")
+@Table(name = "product", catalog = ProductSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Product extends BaseTime {

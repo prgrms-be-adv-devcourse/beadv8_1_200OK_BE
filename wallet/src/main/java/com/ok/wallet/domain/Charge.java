@@ -1,5 +1,6 @@
 package com.ok.wallet.domain;
 
+import com.ok.wallet.WalletSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.wallet.exception.WalletErrorCode;
@@ -23,7 +24,7 @@ import java.util.UUID;
  * 처리 중(IN_PROGRESS)으로의 전이는 동시 승인 요청 중 하나만 성공해야 해서 저장소의 조건부 UPDATE로 한다.
  */
 @Entity
-@Table(name = "wallet_charge")
+@Table(name = "wallet_charge", catalog = WalletSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Charge extends BaseTime {

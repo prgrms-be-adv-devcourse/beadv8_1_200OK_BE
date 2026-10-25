@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -19,7 +20,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 대상 목록은 payout_snapshot_item에 기록하고, draft·검증·확정은 모두 이 스냅샷 기준으로 처리
 @Entity
 @Immutable
-@Table(name = "payout_snapshot")
+@Table(name = "payout_snapshot", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutSnapshot extends BaseTime {

@@ -1,5 +1,6 @@
 package com.ok.wallet.domain;
 
+import com.ok.wallet.WalletSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -20,7 +21,7 @@ import org.hibernate.annotations.Immutable;
  */
 @Entity
 @Immutable // 변경해도 UPDATE가 발생하지 않음
-@Table(name = "seller_wallet_ledger")
+@Table(name = "seller_wallet_ledger", catalog = WalletSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class SellerWalletLedger extends BaseTime {

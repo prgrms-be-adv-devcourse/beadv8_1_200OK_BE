@@ -1,7 +1,9 @@
 package com.ok;
 
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import com.ok.common.StandaloneApplication;
+import com.ok.wallet.WalletSchema;
 
 /**
  * 지갑 모듈을 단독으로 띄우는 앱 클래스.
@@ -14,6 +16,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class WalletApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(WalletApplication.class, args);
+        StandaloneApplication.run(WalletApplication.class, "wallet", WalletSchema.NAME, 8083, args);
     }
 }

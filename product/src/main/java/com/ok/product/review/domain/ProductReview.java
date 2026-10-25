@@ -1,5 +1,6 @@
 package com.ok.product.review.domain;
 
+import com.ok.product.ProductSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.product.review.exception.ProductReviewErrorCode;
@@ -22,7 +23,7 @@ import java.util.Collections;
 import java.util.List;
 
 @Entity
-@Table(name = "product_review")
+@Table(name = "product_review", catalog = ProductSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProductReview extends BaseTime {

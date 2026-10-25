@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.payout.exception.PayoutErrorCode;
@@ -18,7 +19,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 스냅샷 대상 목록 1건 = 정산후보 1건. 정산후보를 복사하지 않고 ID와 금액만 기록 (verifyStep의 비교 기준)
 @Entity
 @Immutable
-@Table(name = "payout_snapshot_item")
+@Table(name = "payout_snapshot_item", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutSnapshotItem extends BaseTime {

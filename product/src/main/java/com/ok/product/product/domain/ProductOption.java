@@ -1,5 +1,6 @@
 package com.ok.product.product.domain;
 
+import com.ok.product.ProductSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.product.product.exception.ProductErrorCode;
@@ -11,7 +12,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "product_option")
+@Table(name = "product_option", catalog = ProductSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProductOption extends BaseTime {

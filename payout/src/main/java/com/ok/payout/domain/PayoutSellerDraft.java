@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -22,7 +23,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 시스템 몫(수수료)은 여러 판매자분을 합치므로 여기 두지 않고 PayoutSystemDraftItem에 항목만 저장
 @Entity
 @Immutable
-@Table(name = "payout_seller_draft")
+@Table(name = "payout_seller_draft", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutSellerDraft extends BaseTime {

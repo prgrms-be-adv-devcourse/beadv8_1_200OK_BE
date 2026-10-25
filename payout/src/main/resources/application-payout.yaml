@@ -1,0 +1,9 @@
+# payout 모듈을 단독으로 띄울 때(와 payout 테스트) 쓰는 설정. payout 프로파일에서만 읽는다
+spring:
+  batch:
+    job:
+      # 앱 시작 시 Job 자동 실행 여부 (monolith의 dev 프로파일과 같게 기본은 끈다)
+      enabled: ${BATCH_JOB_ENABLED:false}
+    jdbc:
+      # 배치 메타데이터 테이블은 Flyway 마이그레이션으로 관리하므로 자동 생성 안 함
+      initialize-schema: never

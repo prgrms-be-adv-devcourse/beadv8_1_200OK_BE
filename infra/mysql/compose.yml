@@ -11,6 +11,8 @@ services:
       - 'TZ=${APP_TIME_ZONE:-Asia/Seoul}'
     volumes:
       - '../../data/mysql:/var/lib/mysql'
+      # 새 데이터 디렉터리로 처음 뜰 때만 모듈별 스키마를 만든다
+      - '../../deploy/initdb:/docker-entrypoint-initdb.d:ro'
     healthcheck:
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
       interval: 5s

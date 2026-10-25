@@ -1,5 +1,6 @@
 package com.ok.order.order.domain;
 
+import com.ok.order.OrderSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -8,7 +9,7 @@ import lombok.NoArgsConstructor;
 
 // 구매자가 판매자에게 주문 정보(수령인, 연락처, 배송지)를 제공하는 데 동의한 기록
 @Entity
-@Table(name = "order_third_party_consent")
+@Table(name = "order_third_party_consent", catalog = OrderSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class OrderThirdPartyConsent extends BaseTime {

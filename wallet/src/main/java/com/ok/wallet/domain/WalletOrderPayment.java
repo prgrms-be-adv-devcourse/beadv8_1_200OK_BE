@@ -1,5 +1,6 @@
 package com.ok.wallet.domain;
 
+import com.ok.wallet.WalletSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -20,7 +21,7 @@ import lombok.NoArgsConstructor;
  * 처리 시각은 생성 시각(createdAt)으로 본다.
  */
 @Entity
-@Table(name = "wallet_order_payment")
+@Table(name = "wallet_order_payment", catalog = WalletSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class WalletOrderPayment extends BaseTime {

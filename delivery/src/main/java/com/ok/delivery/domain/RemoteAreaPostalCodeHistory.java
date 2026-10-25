@@ -1,5 +1,6 @@
 package com.ok.delivery.domain;
 
+import com.ok.delivery.DeliverySchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -21,7 +22,7 @@ import org.hibernate.annotations.Immutable;
 @Entity
 @Immutable
 @Getter
-@Table(name = "remote_area_postal_code_history")
+@Table(name = "remote_area_postal_code_history", catalog = DeliverySchema.NAME)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RemoteAreaPostalCodeHistory extends BaseTime {
 

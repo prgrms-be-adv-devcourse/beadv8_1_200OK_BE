@@ -1,5 +1,6 @@
 package com.ok.delivery.domain;
 
+import com.ok.delivery.DeliverySchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -29,7 +30,7 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Getter
-@Table(name = "region_group")
+@Table(name = "region_group", catalog = DeliverySchema.NAME)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RegionGroup extends BaseTime {
 

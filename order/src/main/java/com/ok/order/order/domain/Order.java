@@ -1,5 +1,6 @@
 package com.ok.order.order.domain;
 
+import com.ok.order.OrderSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.order.order.exception.OrderErrorCode;
@@ -16,7 +17,7 @@ import java.util.Map;
 import java.util.Optional;
 
 @Entity
-@Table(name = "orders")
+@Table(name = "orders", catalog = OrderSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order extends BaseTime {

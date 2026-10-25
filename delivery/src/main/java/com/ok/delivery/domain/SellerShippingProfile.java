@@ -1,5 +1,6 @@
 package com.ok.delivery.domain;
 
+import com.ok.delivery.DeliverySchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -21,7 +22,7 @@ import java.time.LocalTime;
  */
 @Entity
 @Getter
-@Table(name = "seller_shipping_profile")
+@Table(name = "seller_shipping_profile", catalog = DeliverySchema.NAME)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class SellerShippingProfile extends BaseTime {
 

@@ -1,5 +1,5 @@
-# delivery 서브프로젝트 테스트용 기본 설정. monolith의 application.yaml 중 delivery가 쓰는 값만 같게 둔다
-# (테스트 클래스패스에만 있어 monolith와 경쟁하지 않는다)
+# delivery 모듈을 단독으로 띄울 때(와 delivery 테스트) 쓰는 설정. delivery 프로파일에서만 읽는다
+# monolith의 application.yaml과 같은 값이다 (두 벌을 한 파일로 합치는 일은 후속으로 다룬다)
 delivery:
   # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
   default-shipping:

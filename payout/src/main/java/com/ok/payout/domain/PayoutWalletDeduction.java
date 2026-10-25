@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -19,7 +20,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 정산 교차 검증(#67)에서 정산후보와 비교할 원천 데이터라 수정·삭제하지 않음 (주문당 1건, UK(order_id))
 @Entity
 @Immutable
-@Table(name = "payout_wallet_deduction")
+@Table(name = "payout_wallet_deduction", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutWalletDeduction extends BaseTime {

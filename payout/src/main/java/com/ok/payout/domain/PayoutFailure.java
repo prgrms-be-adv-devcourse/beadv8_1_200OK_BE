@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.payout.exception.PayoutErrorCode;
@@ -21,7 +22,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 주문·판매자 정보를 후보에서 복사해 둠: 주문 잠금(#195)·판매자별 확인을 정산후보 조인 없이 조회하려고
 @Entity
 @Immutable
-@Table(name = "payout_failure")
+@Table(name = "payout_failure", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutFailure extends BaseTime {

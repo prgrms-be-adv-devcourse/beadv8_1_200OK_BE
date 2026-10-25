@@ -1,5 +1,6 @@
 package com.ok.payout.domain;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.payout.exception.PayoutErrorCode;
@@ -21,7 +22,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 합계(부모)가 없음: 여러 판매자·여러 회차의 수수료를 합쳐야 해서, commitStep에서 스냅샷 전체를 합쳐 payout 1건으로 만듦
 @Entity
 @Immutable
-@Table(name = "payout_system_draft_item")
+@Table(name = "payout_system_draft_item", catalog = PayoutSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PayoutSystemDraftItem extends BaseTime {

@@ -10,6 +10,8 @@ dependencies {
     api("org.springframework.boot:spring-boot-starter-security")
     api("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
     api("org.springframework.boot:spring-boot-starter-data-jpa")
+    api("org.springframework.boot:spring-boot-starter-flyway")
+    api("org.flywaydb:flyway-mysql")
     api(libs.querydsl.jpa)
     api(libs.springdoc.webmvc.ui)
     api("org.springframework.modulith:spring-modulith-starter-core")

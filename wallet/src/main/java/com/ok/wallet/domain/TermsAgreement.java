@@ -1,5 +1,6 @@
 package com.ok.wallet.domain;
 
+import com.ok.wallet.WalletSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -21,7 +22,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Immutable // 동의 기록이라 UPDATE가 발생하지 않음
-@Table(name = "wallet_terms_agreement")
+@Table(name = "wallet_terms_agreement", catalog = WalletSchema.NAME)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class TermsAgreement extends BaseTime {

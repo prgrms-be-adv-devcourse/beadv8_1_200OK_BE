@@ -1,0 +1,33 @@
+package com.ok.delivery.config;
+
+import javax.sql.DataSource;
+
+import org.flywaydb.core.Flyway;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.flyway.autoconfigure.FlywayMigrationInitializer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+
+import com.ok.common.config.ModuleFlyway;
+import com.ok.delivery.DeliverySchema;
+
+/**
+ * delivery 스키마의 Flyway. 스키마마다 Flyway와 이력 테이블을 따로 둔다({@link ModuleFlyway} 참고).
+ */
+@Configuration(proxyBeanMethods = false)
+public class DeliveryFlywayConfig {
+
+    @Bean
+    public Flyway deliveryFlyway(DataSource dataSource, Environment environment) {
+        return ModuleFlyway.create(dataSource, environment, DeliverySchema.NAME, "delivery");
+    }
+
+    @Bean
+    public FlywayMigrationInitializer deliveryFlywayInitializer(
+            @Qualifier("deliveryFlyway") Flyway deliveryFlyway,
+            @Qualifier("commonFlywayInitializer") ObjectProvider<FlywayMigrationInitializer> commonInitializer) {
+        return ModuleFlyway.initializer(deliveryFlyway, commonInitializer);
+    }
+}
