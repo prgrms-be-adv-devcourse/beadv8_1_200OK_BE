@@ -162,7 +162,7 @@ public class PayoutJobConfig {
     }
 
     // 확정(commitStep)과 발행을 Step으로 분리: 검증·확정이 끝난 정산만 지갑으로 전달
-    // 이 Step만 실패하면 확정된 정산의 이벤트가 누락될 수 있음 → TODO(#67), PayoutService.publish 주석 참고
+    // 이 Step만 실패하면 확정된 정산의 이벤트가 누락될 수 있음 → TODO(#52), PayoutService.publish 주석 참고
     @Bean
     public Step payoutPublishStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                   Tasklet payoutPublishTasklet) {
