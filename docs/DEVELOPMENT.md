@@ -50,7 +50,8 @@ cp .env.example .env
 docker compose up -d
 
 # 2) 앱 실행 (기본 프로파일 dev)
-./gradlew :monolith:bootRun
+./gradlew :monolith:bootRun            # 모든 모듈을 함께 (포트 8080)
+./gradlew :wallet:bootRun              # 또는 모듈 하나만 단독으로 (6절 참고)
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
@@ -126,7 +127,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 스키마는 Flyway로 관리합니다. 마이그레이션 파일 작성 규칙(파일명, 수정 금지, 병합 순서 등)은 [`CONVENTION.md`의 DB 마이그레이션](CONVENTION.md#8-db-마이그레이션-flyway)을 참고하세요.
 
-- 마이그레이션 파일 위치: 서브프로젝트의 `src/main/resources/db/migration` (현재는 `monolith`)
+- 마이그레이션 파일 위치: 모듈 서브프로젝트의 `src/main/resources/db/migration/<모듈>/` (`common`의 `event_publication`은 `common/src/main/resources/db/migration/common/`)
 - `ddl-auto`는 `validate`입니다. 엔티티를 추가하거나 수정하면 대응하는 마이그레이션이 반드시 필요하고, 없으면 앱이 기동하지 않습니다 (테스트에서도 같은 검증이 돕니다).
 - 개발 환경(dev 프로파일)은 `flyway.out-of-order: true`로 순서가 뒤바뀐 마이그레이션도 적용합니다. 운영은 순서대로 적용됩니다.
 
@@ -157,16 +158,37 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 ## 6. 모듈 구조 (Gradle 서브프로젝트 + Spring Modulith)
 
-서브프로젝트는 `common`, `monolith`입니다. 도메인 모듈은 아직 `monolith` 안에 있고, 서브프로젝트로 하나씩 분리하는 중입니다. 분리된 모듈은 이 표에 추가됩니다. 공통 빌드 설정은 `build-logic`(컨벤션 플러그인)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다.
+도메인 모듈마다 Gradle 서브프로젝트이고, 모든 모듈을 함께 올리는 `monolith`가 운영 배포 단위입니다. `com.ok` 바로 아래 패키지가 하나의 모듈이고, 서브프로젝트 이름과 같습니다.
 
-`com.ok` 바로 아래 패키지가 하나의 모듈입니다.
+| 서브프로젝트 | 설명 | 단독 실행 포트 |
+|---|---|---|
+| `common` | 공통 코드와 전역 설정(`com.ok.common.config`의 `SecurityConfig`, JWT 검증, Flyway 도우미 등). 도메인을 참조하지 않는 코드만 둔다. 앱이 아니라 라이브러리 | - |
+| `media`, `member`, `wallet`, `order`, `product`, `delivery`, `payout`, `refund` | 도메인 모듈. 각자 단독으로 기동하는 앱 클래스(`com.ok.<모듈 이름>Application`)를 가진다 | 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088 (이 순서) |
+| `monolith` | 모든 모듈을 의존하는 통합 앱(`PaldoGotganApplication`). 운영 이미지가 이것이고, 모듈 간 이벤트 연동은 이 앱에서만 동작한다. 여러 모듈을 가로지르는 테스트를 둔다 | 8080 |
 
-| 모듈 | 설명 |
-|---|---|
-| `member`, `wallet`, `order`, `product`, `delivery`, `refund`, `payout` | 도메인 모듈 |
-| `common` | 공통 코드와 전역 설정(`com.ok.common.config`의 `SecurityConfig` 등). `common` 서브프로젝트이며 도메인을 참조하지 않는 코드만 둡니다 |
+- 공통 빌드 설정은 `build-logic`(컨벤션 플러그인 `ok.java-conventions`, 도메인 모듈용 `ok.spring-module-conventions`)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다.
+- 도메인 모듈끼리는 `project(...)` 의존을 걸지 않습니다. 다른 모듈의 클래스를 import하면 컴파일이 실패합니다. 모듈 간 연동은 `common.event`의 이벤트로 합니다.
+- 모듈 안의 패키지 구조와 모듈 간 규칙(공개 위치, 순환 의존 금지 등)은 [`CONVENTION.md`의 패키지·모듈 구조](CONVENTION.md#2-패키지모듈-구조)를 참고하세요.
 
-모듈 안의 패키지 구조와 모듈 간 규칙(공개 위치, 순환 의존 금지 등)은 [`CONVENTION.md`의 패키지·모듈 구조](CONVENTION.md#2-패키지모듈-구조)를 참고하세요.
+### 모듈 하나만 실행·테스트하기
+
+```bash
+./gradlew :wallet:bootRun        # wallet만 단독 실행 (포트 8083, 접속 DB는 paldogotgan_wallet)
+./gradlew :wallet:test           # wallet 테스트만
+./gradlew :wallet:build          # wallet 컴파일·테스트·jar
+```
+
+- 단독 실행은 `standalone` 프로파일과 모듈 프로파일(`application-<모듈>.yaml`)을 켜고, 접속 DB를 모듈 스키마로 둡니다. 접속 정보는 `DB_HOST`(기본 localhost), `DB_PORT`(기본 3306), `DB_USERNAME`, `DB_PASSWORD`, 서명 키는 `JWT_SECRET`, 모듈이 쓰는 값(wallet은 `TOSS_SECRET_KEY`)은 환경변수로 넘깁니다. monolith용 `DB_URL`은 읽지 않습니다.
+- 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
+- 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다.
+
+### 새 모듈 만들기
+
+```bash
+./gradlew createModule -PmoduleName=refund -PdisplayName=환불
+```
+
+모듈 폴더, `build.gradle.kts`, 기본 패키지(`package-info`), 앱 클래스, `ArchitectureTest` 틀을 만듭니다. 이어서 직접 할 일은 실행 끝에 안내됩니다: `settings.gradle.kts`의 `include`에 추가, 운영에 포함하려면 `monolith/build.gradle.kts`에 `implementation(project(":모듈"))` 추가. 스키마를 쓰는 모듈이면 `<모듈>Schema`, `<모듈>FlywayConfig`를 만들고(`media`를 참고), `deploy/initdb/10-create-module-schemas.sh`와 `TestcontainersConfiguration`의 스키마 목록에 추가합니다.
 
 ## 7. 예외 처리 (ProblemDetail)
 
@@ -407,14 +429,15 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
 - `build-logic`의 `ok.java-conventions` 플러그인이 `systemProperty("spring.profiles.active", "test")`를 지정하므로 Gradle로 실행하면 test 프로파일이 적용됩니다.
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
-- MySQL 컨테이너는 테스트 실행(JVM) 한 번에 하나만 뜨고 모든 테스트 컨텍스트가 같은 DB를 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
+- MySQL 컨테이너는 서브프로젝트의 테스트 실행(JVM) 한 번에 하나만 뜨고 그 안의 모든 테스트 컨텍스트가 같은 DB를 씁니다. 컨테이너가 모듈 스키마를 모두 만들며, 모듈 테스트는 자기 모듈 스키마를, `monolith` 테스트는 기본 스키마를 접속 DB로 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.
 
 ### 실행 명령
 
 ```bash
 ./gradlew test                                   # 전체 테스트(모든 서브프로젝트)
-./gradlew :monolith:test                         # 서브프로젝트 하나만
+./gradlew :member:test                           # 서브프로젝트 하나만 (:monolith:test 등)
+./gradlew :member:test --tests '*ArchitectureTest'  # 모듈의 구조 테스트만
 ./gradlew test --tests 'com.ok.SomeTest'         # 특정 클래스만
 ./gradlew test --tests 'com.ok.SomeTest.메서드'    # 특정 메서드만
 ./gradlew cleanTest test                         # 캐시 무시하고 다시 실행

@@ -1,6 +1,6 @@
 # paldo-gotgan
 
-Spring Boot 4 / Java 25 / Spring Modulith 기반 모놀리스 백엔드. 프로젝트 실행 방법과 기술 스택은 `docs/DEVELOPMENT.md`를 본다.
+Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modulith 기반 백엔드. 모든 모듈을 함께 올리는 `monolith`가 운영 배포 단위다. 프로젝트 실행 방법과 기술 스택은 `docs/DEVELOPMENT.md`를 본다.
 
 ## 컨벤션 규칙
 
@@ -14,7 +14,7 @@ Spring Boot 4 / Java 25 / Spring Modulith 기반 모놀리스 백엔드. 프로�
 | `api.md` | `controller`: URL, 요청·응답 DTO, Swagger, `*Spec`, 검증 위치 |
 | `exception.md` | `exception`: 예외, `*ErrorCode` |
 | `service.md` | `service`: 트랜잭션, Facade, `Clock`, 로그, `*Command`/`*Query` |
-| `migration.md` | `db/migration/*.sql`: Flyway 작성 규칙 |
+| `migration.md` | `<모듈>/src/main/resources/db/migration/<모듈>/*.sql`: Flyway 작성 규칙 |
 | `testing.md`, `testing-strategy.md` | 각 서브프로젝트의 `src/test`: 테스트 스타일, 종류, 외부 시스템 Fake |
 | `code-style.md` | 모든 `*.java`: import, 주석, TODO, Javadoc |
 

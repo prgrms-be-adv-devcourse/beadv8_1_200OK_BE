@@ -18,7 +18,7 @@ paths:
 | 서비스 단위 | 분기, 예외, 이벤트 발행, 외부 경계 호출, 실패 경로 | Mockito |
 | 통합 | Controller → Service → Repository 전체 흐름, 영속성·쿼리·제약·트랜잭션 | `AbstractIntegrationTest` 상속 |
 | 모듈 | 한 모듈 안의 이벤트 연동 (이벤트 계약이 있는 모듈마다 둔다) | `@ApplicationModuleTest` |
-| 구조 | 모듈 간 의존(Modulith), 모듈 안 레이어 의존 방향과 클래스 이름·위치(ArchUnit) | `ModulithStructureTest`, `ArchitectureTest` |
+| 구조 | 모듈 안 레이어 의존 방향, 클래스 이름·위치, 엔티티 스키마(ArchUnit). 모듈 간 의존은 Gradle이 막는다 | 모듈마다 `ArchitectureTest` |
 
 - Controller는 통합 테스트로만 검증한다. `@WebMvcTest`, `@DataJpaTest`는 쓰지 않는다.
 - 통합 테스트는 `AbstractIntegrationTest`를 상속한다. `@SpringBootTest(properties=...)`나 `@Import`로 직접 설정하지 않는다(컨텍스트가 새로 떠서 느려진다).

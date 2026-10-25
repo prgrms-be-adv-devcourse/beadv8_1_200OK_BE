@@ -16,7 +16,7 @@ description: Flyway 마이그레이션 SQL 파일을 이 프로젝트 컨벤션�
    git ls-files '*/src/main/resources/db/migration/*.sql' | sed 's#.*/##' | sort | tail -3
    git ls-tree -r --name-only origin/main | grep 'src/main/resources/db/migration/.*\.sql$' | sed 's#.*/##' | sort | tail -3
    ```
-4. **파일명을 짓는다.** `V{버전}__{모듈}__{동작_설명}.sql`. 구분자는 밑줄 두 개이고 설명은 `create_*_table`, `add_*_to_*`, `add_index_*`처럼 동작으로 시작한다.
+4. **파일명을 짓는다.** `V{버전}__{모듈}__{동작_설명}.sql`. 구분자는 밑줄 두 개이고 설명은 `create_*_table`, `add_*_to_*`, `add_index_*`처럼 동작으로 시작한다. 파일은 그 모듈 서브프로젝트의 `<모듈>/src/main/resources/db/migration/<모듈>/`에 둔다(`common`은 `common/src/main/resources/db/migration/common/`). 새 폴더를 만들 일은 새 모듈뿐이다.
 5. **SQL을 작성한다.** 아래 템플릿을 따른다.
 6. **엔티티와 맞춘다.** `ddl-auto`가 `validate`이므로 엔티티의 컬럼명·타입·nullable이 SQL과 일치해야 한다.
 7. **검증한다.** 통합 테스트가 Testcontainers로 마이그레이션을 적용하므로 실행해 확인한다.
