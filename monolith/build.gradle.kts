@@ -53,3 +53,9 @@ dependencies {
     developmentOnly("org.springframework.boot:spring-boot-devtools")
     developmentOnly("org.springframework.boot:spring-boot-docker-compose") // 앱 실행 시 docker compose 자동 기동 (DOCKER_COMPOSE_ENABLED)
 }
+
+// .env 와 docker-compose.yml 은 저장소 루트에 있고 둘 다 실행 디렉터리 기준으로 찾는다
+// 서브프로젝트로 옮겨도 bootRun이 지금처럼 동작하도록 실행 디렉터리를 루트로 둔다
+tasks.bootRun {
+    workingDir = rootProject.projectDir
+}
