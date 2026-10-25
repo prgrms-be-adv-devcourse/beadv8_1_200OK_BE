@@ -1,5 +1,7 @@
 -- 모듈별 스키마 이전(#288). 파일 안의 __DB__, __APP_USER__는 migrate.sh가 값으로 바꿔 실행한다.
 -- 앱을 멈춘 상태에서 한 번만 실행한다. 다시 실행하면 사전 점검(e)이 막는다.
+-- 단계 순서: 스키마·권한 -> 이력 복사(기본 이력은 그대로) -> RENAME(원자적) -> 기본 이력 정리와 자리표시 테이블.
+-- RENAME 전에 실패하면 테이블은 그대로이고(migrate.sh cleanup), RENAME 뒤에 실패하면 migrate.sh rollback으로 되돌린다.
 
 -- 열린 트랜잭션이 있으면 RENAME이 메타데이터 락을 기다리므로 오래 기다리지 않고 실패시킨다
 SET SESSION lock_wait_timeout = 10;
@@ -12,7 +14,42 @@ CREATE DATABASE IF NOT EXISTS `paldogotgan_delivery` DEFAULT CHARACTER SET utf8m
 CREATE DATABASE IF NOT EXISTS `paldogotgan_payout` DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS `paldogotgan_media` DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS `paldogotgan_refund` DEFAULT CHARACTER SET utf8mb4;
-GRANT ALL PRIVILEGES ON `paldogotgan\_%`.* TO '__APP_USER__'@'%';
+
+-- 와일드카드(paldogotgan\_%) 대신 모듈 스키마를 하나씩 명시한다. 나중에 만든 백업 DB 같은 것에 권한이 따라 붙지 않게 한다
+GRANT ALL PRIVILEGES ON `paldogotgan_member`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_wallet`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_order`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_product`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_delivery`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_payout`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_media`.* TO '__APP_USER__'@'%';
+GRANT ALL PRIVILEGES ON `paldogotgan_refund`.* TO '__APP_USER__'@'%';
+
+-- Flyway 이력: 적용된 행을 값 그대로(버전, 설명, 체크섬, 순번) 모듈 스키마 이력으로 복사한다. 기본 스키마 이력은 RENAME이 끝난 뒤에 정리한다
+CREATE TABLE `paldogotgan_member`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+CREATE TABLE `paldogotgan_wallet`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+CREATE TABLE `paldogotgan_order`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+CREATE TABLE `paldogotgan_product`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+CREATE TABLE `paldogotgan_delivery`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+CREATE TABLE `paldogotgan_payout`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+CREATE TABLE `paldogotgan_media`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+
+START TRANSACTION;
+INSERT INTO `paldogotgan_member`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_member\_\_%';
+INSERT INTO `paldogotgan_wallet`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_wallet\_\_%';
+INSERT INTO `paldogotgan_order`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_order\_\_%';
+INSERT INTO `paldogotgan_product`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_product\_\_%';
+INSERT INTO `paldogotgan_delivery`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_delivery\_\_%';
+INSERT INTO `paldogotgan_payout`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE (SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_payout\_\_%' OR SUBSTRING_INDEX(script, '/', -1) = 'V202610092032__common__create_batch_metadata_tables.sql');
+INSERT INTO `paldogotgan_media`.flyway_schema_history
+    SELECT * FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) LIKE 'V%\_\_media\_\_%';
+COMMIT;
 
 -- 한 문장이라 전부 성공하거나 전부 실패한다. 데이터를 복사하지 않고 메타데이터만 옮긴다(인덱스, AUTO_INCREMENT, 외래키 유지)
 RENAME TABLE
@@ -69,29 +106,9 @@ RENAME TABLE
     __DB__.`payout_wallet_deduction` TO `paldogotgan_payout`.`payout_wallet_deduction`,
     __DB__.`media` TO `paldogotgan_media`.`media`;
 
--- Flyway 이력: 적용된 행을 값 그대로(버전, 설명, 체크섬, 순번) 모듈 스키마 이력으로 복사하고 기본 스키마 이력에서 지운다
-CREATE TABLE `paldogotgan_member`.flyway_schema_history LIKE __DB__.flyway_schema_history;
-CREATE TABLE `paldogotgan_wallet`.flyway_schema_history LIKE __DB__.flyway_schema_history;
-CREATE TABLE `paldogotgan_order`.flyway_schema_history LIKE __DB__.flyway_schema_history;
-CREATE TABLE `paldogotgan_product`.flyway_schema_history LIKE __DB__.flyway_schema_history;
-CREATE TABLE `paldogotgan_delivery`.flyway_schema_history LIKE __DB__.flyway_schema_history;
-CREATE TABLE `paldogotgan_payout`.flyway_schema_history LIKE __DB__.flyway_schema_history;
-CREATE TABLE `paldogotgan_media`.flyway_schema_history LIKE __DB__.flyway_schema_history;
+-- 기본 스키마 이력에는 event_publication 한 행만 남긴다
+DELETE FROM __DB__.flyway_schema_history WHERE SUBSTRING_INDEX(script, '/', -1) <> 'V202610081120__common__create_event_publication_table.sql';
 
-START TRANSACTION;
-INSERT INTO `paldogotgan_member`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE script LIKE 'V%\_\_member\_\_%';
-INSERT INTO `paldogotgan_wallet`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE script LIKE 'V%\_\_wallet\_\_%';
-INSERT INTO `paldogotgan_order`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE script LIKE 'V%\_\_order\_\_%';
-INSERT INTO `paldogotgan_product`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE script LIKE 'V%\_\_product\_\_%';
-INSERT INTO `paldogotgan_delivery`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE script LIKE 'V%\_\_delivery\_\_%';
-INSERT INTO `paldogotgan_payout`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE (script LIKE 'V%\_\_payout\_\_%' OR script = 'V202610092032__common__create_batch_metadata_tables.sql');
-INSERT INTO `paldogotgan_media`.flyway_schema_history
-    SELECT * FROM __DB__.flyway_schema_history WHERE script LIKE 'V%\_\_media\_\_%';
-DELETE FROM __DB__.flyway_schema_history WHERE script <> 'V202610081120__common__create_event_publication_table.sql';
-COMMIT;
+-- 자리표시 테이블: 이전 전 이미지는 마이그레이션 첫 단계에서 media 테이블을 만들려다 "already exists"로 멈춘다.
+-- 이것이 없으면 이전 전 이미지가 기본 스키마에 빈 테이블을 새로 만들고 기동해 데이터가 갈라진다
+CREATE TABLE __DB__.media (id BIGINT NOT NULL) COMMENT 'migration-288 placeholder: 이전 전 이미지가 이전된 DB에서 기동하지 않게 하는 자리표시 테이블';

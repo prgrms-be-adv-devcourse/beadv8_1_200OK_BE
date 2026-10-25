@@ -1,17 +1,8 @@
--- 모듈별 스키마 이전 되돌리기 1단계(#288): 이력 복원과 테이블 되돌리기. 앱을 멈춘 상태에서, 이전 후 새 마이그레이션이 적용되지 않았을 때만 쓴다.
+-- 모듈별 스키마 이전 되돌리기 1단계(#288): 테이블 되돌리기와 이력 복원. migrate.sh가 앱 정지, 자리표시 테이블 제거, 상태를 확인한 뒤 실행한다.
 -- 모듈 스키마를 지우는 2단계(91_rollback_drop.sql)는 이 단계 뒤 모듈 스키마가 비었는지 확인하고 migrate.sh가 실행한다.
 SET SESSION lock_wait_timeout = 10;
 
-START TRANSACTION;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_member`.flyway_schema_history;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_wallet`.flyway_schema_history;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_order`.flyway_schema_history;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_product`.flyway_schema_history;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_delivery`.flyway_schema_history;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_payout`.flyway_schema_history;
-INSERT INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_media`.flyway_schema_history;
-COMMIT;
-
+-- 먼저 한 문장(원자적)으로 테이블을 되돌린다. 실패하면 아무것도 바뀌지 않고, 이력은 모듈 스키마에 그대로 남는다
 RENAME TABLE
     `paldogotgan_member`.`member` TO __DB__.`member`,
     `paldogotgan_member`.`refresh_token` TO __DB__.`refresh_token`,
@@ -65,6 +56,15 @@ RENAME TABLE
     `paldogotgan_payout`.`payout_system_draft_item` TO __DB__.`payout_system_draft_item`,
     `paldogotgan_payout`.`payout_wallet_deduction` TO __DB__.`payout_wallet_deduction`,
     `paldogotgan_media`.`media` TO __DB__.`media`;
+
+-- 이력을 기본 스키마로 복원한다. 이미 있는 행은 건너뛰므로 다시 실행해도 안전하다
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_member`.flyway_schema_history;
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_wallet`.flyway_schema_history;
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_order`.flyway_schema_history;
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_product`.flyway_schema_history;
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_delivery`.flyway_schema_history;
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_payout`.flyway_schema_history;
+INSERT IGNORE INTO __DB__.flyway_schema_history SELECT * FROM `paldogotgan_media`.flyway_schema_history;
 
 DROP TABLE IF EXISTS `paldogotgan_member`.flyway_schema_history;
 DROP TABLE IF EXISTS `paldogotgan_wallet`.flyway_schema_history;

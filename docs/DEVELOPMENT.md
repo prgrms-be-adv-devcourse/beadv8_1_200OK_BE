@@ -148,12 +148,12 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 이 구조로 바뀌기 전에 만든 로컬 DB(`data/mysql`)를 그대로 두고 앱을 띄우면 Flyway 검증(`Detected applied migration not resolved locally`)에서 멈춥니다. 둘 중 하나로 맞춥니다.
 
-- **방법 A: 데이터 유지.** 앱을 멈추고(`docker compose stop app`) 이전 스크립트를 실행합니다. 점검이 실패하면(예: 병합되지 않은 브랜치의 마이그레이션 이력) 방법 B를 씁니다.
+- **방법 A: 데이터 유지.** 앱을 멈추고(`docker compose stop app`) 이전 스크립트를 실행합니다. 점검이 실패하면(예: 병합되지 않은 브랜치의 마이그레이션 이력) 방법 B를 씁니다. root 비밀번호는 컨테이너의 환경변수(`MYSQL_ROOT_PASSWORD`)를 쓰므로 명령행에 쓰지 않습니다.
   ```bash
-  MYSQL_CMD='docker compose exec -T mysql mysql -uroot -p<MYSQL_ROOT_PASSWORD>' \
+  MYSQL_EXEC='docker compose -f infra/mysql/compose.yml exec -T mysql' \
     infra/mysql/migration-288/migrate.sh all paldogotgan myuser
   ```
-  결과(행 수·체크섬 비교)는 `infra/mysql/migration-288/out/<시각>/`에 남습니다. 이 폴더는 커밋하지 않습니다.
+  결과(행 수·체크섬 비교)는 `infra/mysql/migration-288/out/<시각>/`에 남습니다. 이 폴더는 커밋하지 않습니다. 이전 후 이전 버전 코드(브랜치)로 돌아가려면 `rollback`을 먼저 실행하세요.
 - **방법 B: 초기화.** `docker compose down` 후 `data/mysql`을 지우고 다시 `docker compose up -d`합니다. 새 볼륨이라 MySQL이 스키마를 만들고, 앱을 띄우면 Flyway가 테이블을 만듭니다.
 
 ## 6. 모듈 구조 (Gradle 서브프로젝트 + Spring Modulith)
