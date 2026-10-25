@@ -18,6 +18,7 @@ dependencies {
     implementation(project(":order"))
     implementation(project(":payout"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
+    testImplementation(project(path = ":delivery", configuration = "testSupportElements")) // 택배사 Fake(FakeCarrierClient)
 
     // ---------- Web / API ----------
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
