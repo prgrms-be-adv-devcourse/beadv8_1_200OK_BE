@@ -72,8 +72,8 @@ set -a; source .env; set +a     # JWT_SECRET 등을 셸 환경변수로 내보�
 ## 빌드와 테스트
 
 ```bash
-./gradlew build                 # 전체 컴파일·테스트·jar (테스트 약 1975건, 이 저장소에서 약 3~4분)
-./gradlew :wallet:test          # 모듈 하나의 테스트 (wallet은 255건, 약 35초)
+./gradlew build                 # 전체 컴파일·테스트·jar (테스트 약 2천 건, 수 분 걸림)
+./gradlew :wallet:test          # 모듈 하나의 테스트 (wallet은 수백 건, 1분 안팎)
 ./gradlew :wallet:build         # 모듈 하나의 컴파일·테스트·jar
 ```
 
