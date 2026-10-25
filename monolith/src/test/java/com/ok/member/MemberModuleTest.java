@@ -3,7 +3,7 @@ package com.ok.member;
 import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.media.MediaUrlResolver;
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.MemberSignupService;
@@ -29,7 +29,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 @ApplicationModuleTest
 // auth의 토큰 발급·재발급 서비스가 Clock을 주입받으므로 Clock 빈이 필요하다.
-// 운영 ClockConfig(com.ok.config)는 다른 모듈이라 모듈 테스트에서 걸러지므로, 테스트용 복사본 TestClockConfiguration을 불러온다.
+// 운영 ClockConfig(com.ok.common.config)는 다른 모듈이라 모듈 테스트에서 걸러지므로, 테스트용 복사본 TestClockConfiguration을 불러온다.
 // (#93에서 Clock 빈을 member → config로 옮기면서 생긴 처리, 자세한 이유는 TestClockConfiguration 참고)
 @Import({TestcontainersConfiguration.class, JpaConfig.class, TestClockConfiguration.class})
 @TestPropertySource(properties = "app.problem.base-uri=https://api.example.com/problems")

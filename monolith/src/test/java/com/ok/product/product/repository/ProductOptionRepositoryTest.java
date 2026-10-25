@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOption;

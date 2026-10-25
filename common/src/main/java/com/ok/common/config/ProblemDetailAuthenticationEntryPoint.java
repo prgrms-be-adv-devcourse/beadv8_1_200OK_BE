@@ -1,4 +1,4 @@
-package com.ok.config;
+package com.ok.common.config;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;

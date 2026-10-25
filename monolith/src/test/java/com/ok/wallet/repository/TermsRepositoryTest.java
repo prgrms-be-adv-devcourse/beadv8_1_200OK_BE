@@ -1,6 +1,6 @@
 package com.ok.wallet.repository;
 
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.domain.Terms;
 import com.ok.wallet.domain.TermsType;

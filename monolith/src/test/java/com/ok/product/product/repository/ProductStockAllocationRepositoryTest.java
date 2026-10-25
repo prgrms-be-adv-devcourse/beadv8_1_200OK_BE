@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.dao.DataIntegrityViolationException;
 
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.product.product.domain.ProductStockAllocation;
 import com.ok.product.product.domain.StockAllocationStatus;
 import com.ok.testsupport.TestcontainersConfiguration;

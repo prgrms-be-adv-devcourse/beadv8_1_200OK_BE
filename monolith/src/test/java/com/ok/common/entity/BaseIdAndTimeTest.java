@@ -1,6 +1,6 @@
 package com.ok.common.entity;
 
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

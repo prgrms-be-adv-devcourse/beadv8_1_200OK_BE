@@ -1,4 +1,4 @@
-package com.ok.config;
+package com.ok.common.config;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;

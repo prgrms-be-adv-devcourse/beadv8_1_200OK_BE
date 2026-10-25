@@ -6,7 +6,7 @@ import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.common.event.payload.PaidOrderItem;
 import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.event.CarrierDeliveredEvent;
 import com.ok.delivery.fixture.ShipmentFixture;

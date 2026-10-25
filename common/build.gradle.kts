@@ -11,6 +11,7 @@ dependencies {
     api("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
     api("org.springframework.boot:spring-boot-starter-data-jpa")
     api(libs.querydsl.jpa)
+    api(libs.springdoc.webmvc.ui)
     api("org.springframework.modulith:spring-modulith-starter-core")
     api("software.amazon.awssdk:s3")
     api(libs.owasp.html.sanitizer)

@@ -1,7 +1,7 @@
 package com.ok.wallet.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.config.JpaConfig;
+import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.domain.Terms;
 import com.ok.wallet.domain.TermsAgreement;

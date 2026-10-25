@@ -1,4 +1,4 @@
-package com.ok.config;
+package com.ok.common.config;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.common.security.TokenClaims;

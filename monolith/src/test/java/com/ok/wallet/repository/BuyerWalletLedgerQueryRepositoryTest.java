@@ -1,7 +1,7 @@
 package com.ok.wallet.repository;
 
-import com.ok.config.JpaConfig;
-import com.ok.config.QueryDslConfig;
+import com.ok.common.config.JpaConfig;
+import com.ok.common.config.QueryDslConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.BuyerWalletLedger;

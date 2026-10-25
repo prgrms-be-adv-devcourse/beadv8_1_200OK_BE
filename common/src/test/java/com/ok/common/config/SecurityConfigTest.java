@@ -1,4 +1,4 @@
-package com.ok.config;
+package com.ok.common.config;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
