@@ -9,6 +9,7 @@ description = "paldo-gotgan"
 
 dependencies {
     implementation(project(":common"))
+    testImplementation(project(path = ":common", configuration = "testSupport"))
 
     // ---------- Web / API ----------
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
