@@ -14,6 +14,7 @@ dependencies {
     implementation(project(":refund"))
     implementation(project(":wallet"))
     implementation(project(":delivery"))
+    implementation(project(":product"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
 
     // ---------- Web / API ----------

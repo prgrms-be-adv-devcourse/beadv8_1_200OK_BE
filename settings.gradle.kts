@@ -5,4 +5,4 @@ pluginManagement {
 
 rootProject.name = "ok"
 
-include("common", "delivery", "media", "member", "monolith", "refund", "wallet")
+include("common", "delivery", "media", "member", "monolith", "product", "refund", "wallet")
