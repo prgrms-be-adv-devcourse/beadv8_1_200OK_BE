@@ -44,9 +44,10 @@ public class Payout extends BaseTime {
     private List<PayoutItem> items = new ArrayList<>();
 
     // 판매자 몫 정산 (판매 대금·배송비). 판매자 draft 1건 → payout 1건
-    public static Payout forSeller(Long snapshotId, PayoutSellerDraft draft) {
-        Payout payout = create(snapshotId, draft.getSellerId(), false);
-        for (PayoutSellerDraftItem item : draft.getItems()) {
+    // draft 전체가 아니라 항목 목록을 받음: 결과 검증에 걸린 주문의 항목을 commitStep이 거른 뒤 남은 것만 넘김 (#290)
+    public static Payout forSeller(Long snapshotId, Long sellerId, List<PayoutSellerDraftItem> draftItems) {
+        Payout payout = create(snapshotId, sellerId, false);
+        for (PayoutSellerDraftItem item : draftItems) {
             payout.addItem(item.getCandidateId(), item.getEventType(), item.getOrderId(), item.getOrderItemId(),
                     item.getSellerId(), item.getAmount());
         }
@@ -87,6 +88,7 @@ public class Payout extends BaseTime {
     //       payout 금액과 그 payout_item 합계가 어긋난 장부가 저장되고, @Immutable이라 고칠 수도 없음
     //   항목을 다시 더하면 누가 어떤 순서로 불러도 "payout 금액 = 자기 항목 합"이 항상 성립 (verify와 이중 방지)
     //   비용은 메모리 안의 덧셈뿐이라 거의 없음
+    //   결과 검증에 걸린 주문의 항목을 거르면(#290) 헤더 금액과 정산 금액이 원래 달라지므로, 지금은 항목을 더하는 것이 필수
     private void addItem(Long candidateId, PayoutEventType eventType, Long orderId, Long orderItemId, Long sellerId,
                          Long amount) {
         items.add(new PayoutItem(this, candidateId, eventType, orderId, orderItemId, sellerId, amount));

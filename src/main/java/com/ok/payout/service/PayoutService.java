@@ -7,13 +7,18 @@ import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
+import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.repository.PayoutCandidateItemRepository;
 import com.ok.payout.repository.PayoutFailureRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutQueryRepository.CountAndAmount;
+import com.ok.payout.repository.PayoutQueryRepository.DraftItemRow;
+import com.ok.payout.repository.PayoutQueryRepository.FailureRow;
+import com.ok.payout.repository.PayoutQueryRepository.SnapshotItemRow;
 import com.ok.payout.repository.PayoutRepository;
 import com.ok.payout.repository.PayoutSellerDraftRepository;
 import com.ok.payout.repository.PayoutSnapshotItemRepository;
@@ -30,6 +35,7 @@ import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSellerCandidateSearchQuery;
 import com.ok.payout.service.dto.PayoutSellerSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
+import com.ok.payout.service.dto.PayoutVerifyResult;
 import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
 import com.ok.payout.service.publisher.PayoutEventPublisher;
 import lombok.RequiredArgsConstructor;
@@ -55,11 +61,11 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class PayoutService {
 
-    // 검증 실패 시 원인 확인용으로 예외 메시지에 담는 누락 후보 ID 최대 개수 (메시지가 너무 길어지지 않게)
-    // TODO(#67): 임시 처리. verify가 찾은 누락 후보를 실패 기록(NOT_IN_DRAFT)으로 남기게 되면 이 제한은 정리 (후속 "정산 실패 해결 및 재처리" 이슈)
-    private static final int MISSING_CANDIDATE_LOG_LIMIT = 100;
+    // 코드 고장으로 전체를 멈출 때 예외 메시지에 담는 후보 ID 최대 개수 (메시지가 너무 길어지지 않게, 나머지는 건수로만 남김)
+    private static final int CANDIDATE_ID_MESSAGE_LIMIT = 20;
 
     private final PayoutQueryRepository payoutQueryRepository;
+    private final PayoutCandidateItemRepository payoutCandidateItemRepository;
     private final PayoutRepository payoutRepository;
     private final PayoutSnapshotRepository payoutSnapshotRepository;
     private final PayoutSnapshotItemRepository payoutSnapshotItemRepository;
@@ -68,6 +74,8 @@ public class PayoutService {
     private final PayoutFailureRepository payoutFailureRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
+    // verifyStep의 결과 검증 실패 기록 저장 (별도 트랜잭션, #290)
+    private final PayoutVerifyFailureService payoutVerifyFailureService;
     // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
@@ -250,7 +258,8 @@ public class PayoutService {
                 log.warn("정산 draft 판매자 처리 실패, 이 판매자만 제외하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
                         snapshotId, sellerId, sellerCandidates.size(), e);
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
-                // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job 전체가 멈추므로, 여기서 멈추는 편이 원인이 분명함
+                // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify가 "draft 누락"으로 그 주문들을 잠금 (#290)
+                //   → 일시적 오류였어도 관리자가 풀어야 하므로, 여기서 멈추는 편이 원인이 분명하고 뒷수습도 적음
                 // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중 (지금은 위 이유로 Job을 멈춤)
                 //   다른 방법 후보: 실패 기록 저장 재시도, 기록 없이 그 판매자만 건너뛰고 verify 규칙에서 따로 허용 등 → 어떻게 할지 #52에서 정함
                 payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
@@ -263,6 +272,11 @@ public class PayoutService {
     // 검증을 통과한 draft를 payout·payout_item으로 확정
     // 판매자 draft 1건 → 판매자 몫 payout 1건, 시스템 draft 항목 전체 → 시스템 몫 payout 1건 (항목이 없으면 만들지 않음)
     //
+    // 결과 검증에 걸린 주문의 항목은 빼고 확정 (#290, 기준은 PayoutVerifyExclusion)
+    //   판매자 몫·시스템 몫(수수료) 모두 같은 기준으로 거름 → 걸린 주문의 수수료도 시스템 몫에 들어가지 않음
+    //   항목이 모두 빠진 판매자는 정산을 만들지 않음 (0원 정산이 장부에 남지 않게)
+    //   빠진 항목은 실패 기록(VERIFY_MISMATCH)으로 주문이 잠겨, 관리자가 확인하기 전까지 다음 배치에서도 정산되지 않음
+    //
     // 반드시 단일 트랜잭션 (분리 금지)
     // 시스템 몫(payee_id = NULL)은 payout UK(snapshot_id, payee_id)로 중복을 막지 못함 (MySQL은 NULL끼리 같은 값으로 보지 않음)
     //   예) 같은 스냅샷을 실수로 다시 commit → 시스템 몫 (12, NULL)이 또 저장되는 것은 UK가 못 막음
@@ -270,12 +284,32 @@ public class PayoutService {
     // 트랜잭션을 나누면 시스템 몫이 먼저 커밋되어 중복이 조용히 남음
     @Transactional
     public void commit(Long snapshotId) {
+        PayoutVerifyExclusion exclusion = PayoutVerifyExclusion.from(payoutQueryRepository.findFailureRows(snapshotId));
+        int excludedItemCount = 0;
+
         List<Payout> payouts = new ArrayList<>();
         for (PayoutSellerDraft draft : payoutSellerDraftRepository.findBySnapshotId(snapshotId)) {
-            payouts.add(Payout.forSeller(snapshotId, draft));
+            List<PayoutSellerDraftItem> items = new ArrayList<>();
+            for (PayoutSellerDraftItem item : draft.getItems()) {
+                if (exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
+                    excludedItemCount++;
+                } else {
+                    items.add(item);
+                }
+            }
+            if (!items.isEmpty()) {
+                payouts.add(Payout.forSeller(snapshotId, draft.getSellerId(), items));
+            }
         }
 
-        List<PayoutSystemDraftItem> systemItems = payoutSystemDraftItemRepository.findBySnapshotId(snapshotId);
+        List<PayoutSystemDraftItem> systemItems = new ArrayList<>();
+        for (PayoutSystemDraftItem item : payoutSystemDraftItemRepository.findBySnapshotId(snapshotId)) {
+            if (exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
+                excludedItemCount++;
+            } else {
+                systemItems.add(item);
+            }
+        }
         if (!systemItems.isEmpty()) {
             payouts.add(Payout.forSystem(snapshotId, systemItems));
         }
@@ -284,7 +318,8 @@ public class PayoutService {
 
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 정산 확정은 돈이 장부에 기록되는 시점이라 INFO로 남김
-        log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건)", snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1);
+        log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건), 결과 검증 실패로 뺀 draft 항목 수={}",
+                snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1, excludedItemCount);
     }
 
     // 이번 스냅샷에서 확정된 판매자 몫 정산만 지갑 이벤트로 발행하고(0원 이하 제외), 발행 건수를 반환
@@ -332,43 +367,150 @@ public class PayoutService {
         return published;
     }
 
-    // 스냅샷 목록과 draft 결과를 비교해, 어긋나면 예외로 Job을 멈춤 (payout 확정·이벤트 발행으로 넘어가지 않음)
-    // 검증 실패한 draft는 지우지 않고 기록으로 남김. 다음 실행은 새 스냅샷으로 처음부터 처리
+    // 결과 검증(verifyStep): 스냅샷과 draft를 후보 단위로 비교해, 어긋난 후보의 주문을 이번 정산에서 빼고 잠금 (#290)
+    // 나머지 주문은 commitStep으로 넘어가 정산됨 (전에는 하나라도 어긋나면 그날 정산 전체가 멈춤)
+    // 판정 규칙은 PayoutDraftValidator, 빼는 기준은 PayoutVerifyExclusion 참고
     //
-    // 검증 규칙을 추가할 때 고치는 곳 (검증 규칙은 앞으로 늘어날 예정)
-    //   1) 새 검사에 필요한 숫자가 있으면 → 아래 1단계 Input에 값 추가 (+ PayoutQueryRepository에 집계 쿼리 추가)
-    //   2) 비교 규칙 자체 → PayoutDraftValidator에 check...() 메서드 추가 후 validate()에 한 줄 추가
-    //   3) 이 메서드의 2·3단계는 보통 고치지 않음 (실패 사유는 Validator가 모아서 돌려줌)
-    // readOnly 트랜잭션: 1단계 집계 쿼리들이 같은 시점의 데이터를 보도록 함 (읽기만 하므로 readOnly)
+    // 순서
+    //   1) 코드 고장 검사 → 걸리면 아무것도 기록하지 않고 전용 에러 코드로 Job 전체 중단
+    //      판매자 합계 불일치, 실패 후보가 draft에 섞임: 모든 판매자가 같이 쓰는 코드가 망가진 것이라 일부만 빼도 나머지를 믿기 어려움
+    //      기록·잠금을 먼저 남기지 않는 이유: 망가진 코드로 판정한 결과라 대량으로 잘못 잠글 수 있고, 고친 뒤 재실행하면 깨끗하게 다시 처리됨
+    //   2) 후보 단위 검사 → 걸린 주문의 이번 스냅샷 후보(모든 판매자)를 VERIFY_MISMATCH로 기록 (주문 잠금)
+    //      이미 이번 스냅샷에 실패 기록이 있는 후보는 건너뜀 (실패 기록 UK, 그 후보는 원래 draft에도 없음)
+    //   3) 정산할 항목 수를 돌려줌 → 걸린 주문이 있는데 0건이면 tasklet이 Job을 FAILED로 끝냄 (PayoutJobConfig)
+    //
+    // 실패 기록은 별도 트랜잭션으로 저장 (PayoutVerifyFailureService): Job이 FAILED로 끝나도 기록·잠금이 남게
+    //   그래서 이 메서드의 트랜잭션에서는 방금 저장한 기록이 다시 조회되지 않음 → 남은 항목 수는 저장한 목록으로 직접 계산
+    // 이 메서드 자체는 조회만 함 (readOnly). verifyStep에서는 Step 트랜잭션(읽기·쓰기)에 참여해 그 설정을 따르지만 동작은 같음
+    //   1)·2)의 조회가 같은 시점의 데이터를 봄: MySQL 기본 격리 수준(REPEATABLE READ)에서 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
     @Transactional(readOnly = true)
-    public void verify(Long snapshotId) {
-        // 1) 비교할 숫자 모으기 (DB 집계)
-        //    ↳ 검사 추가 시: 새로 필요한 숫자는 여기에 넣음 (PayoutDraftValidator.Input 필드도 함께 추가)
-        PayoutDraftValidator.Input input = new PayoutDraftValidator.Input(
-                payoutQueryRepository.summarizeSnapshotItems(snapshotId),
-                payoutQueryRepository.summarizeSellerDraftItems(snapshotId),
-                payoutQueryRepository.summarizeSystemDraftItems(snapshotId),
-                payoutQueryRepository.sumSellerDraftAmount(snapshotId),
-                payoutQueryRepository.summarizeFailures(snapshotId),
-                payoutQueryRepository.countDraftedFailures(snapshotId));
-
-        // 2) 규칙 검사
-        //    ↳ 검사 추가 시: 규칙은 여기가 아니라 PayoutDraftValidator에 추가
-        List<String> failures = PayoutDraftValidator.validate(input);
-        if (failures.isEmpty()) {
-            log.info("정산 draft 검증 통과. snapshotId={}, 건수={}, 금액={}, 실패로 제외={}건",
-                    snapshotId, input.snapshotItems().count(), input.snapshotItems().amount(), input.failures().count());
-            return;
+    public PayoutVerifyResult verify(Long snapshotId) {
+        // 1) 코드 고장 검사
+        // 팀 규칙(service.md "로그"): 예외를 던질 때 로그를 따로 남기지 않음 → 원인을 예외 메시지에 담아 배치 실패 기록(EXIT_MESSAGE)·로그에 한 번만 남김
+        List<String> totalMismatches = PayoutDraftValidator.checkSellerTotals(payoutQueryRepository.findSellerTotalRows(snapshotId));
+        if (!totalMismatches.isEmpty()) {
+            // TODO(#52): 코드가 망가졌다는 것을 빨리 알리는 처리(슬랙 등 즉시 알림)가 필요. 지금은 전용 에러 코드로 Job만 멈춤
+            throw new RestApiException(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH, String.format(
+                    "판매자 임시 정산 합계 불일치(코드 오류). snapshotId=%d, 불일치 판매자 수=%d, 내용(최대 %d건)=%s",
+                    snapshotId, totalMismatches.size(), CANDIDATE_ID_MESSAGE_LIMIT, limit(totalMismatches)));
         }
 
-        // 3) 실패 처리
-        // 팀 규칙(service.md "로그"): 예외를 던질 때 로그를 따로 남기지 않음
-        // → 원인(실패 사유·누락 후보)을 예외 메시지에 담아, 배치 실패 기록(BATCH_STEP_EXECUTION)과 로그에 한 번만 남게 함
-        // TODO(#67): 임시 처리. 지금은 누락 후보를 최대 100건만 메시지로 남김. NOT_IN_DRAFT로 실패 기록에 저장하는 것은 후속 이슈
-        List<Long> missingIds = payoutQueryRepository.findUndraftedCandidateIds(snapshotId, MISSING_CANDIDATE_LOG_LIMIT);
-        throw new RestApiException(PayoutErrorCode.DRAFT_VERIFICATION_FAILED, String.format(
-                "정산 draft 검증 실패. snapshotId=%d, 실패 사유=%s, 누락 후보(최대 %d건)=%s",
-                snapshotId, failures, MISSING_CANDIDATE_LOG_LIMIT, missingIds));
+        List<SnapshotItemRow> snapshotItems = payoutQueryRepository.findSnapshotItemRows(snapshotId);
+        List<DraftItemRow> draftItems = new ArrayList<>(payoutQueryRepository.findSellerDraftItemRows(snapshotId));
+        draftItems.addAll(payoutQueryRepository.findSystemDraftItemRows(snapshotId));
+        List<FailureRow> failures = payoutQueryRepository.findFailureRows(snapshotId);
+
+        PayoutDraftValidator.Result result = PayoutDraftValidator.validate(
+                new PayoutDraftValidator.Input(snapshotItems, draftItems, failures));
+        if (!result.failedCandidatesInDraft().isEmpty()) {
+            // TODO(#52): 위와 같은 코드 고장 알림 필요
+            throw new RestApiException(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE, String.format(
+                    "실패 후보가 임시 정산에 들어감(코드 오류). snapshotId=%d, 후보 수=%d, 후보 ID(최대 %d건)=%s",
+                    snapshotId, result.failedCandidatesInDraft().size(), CANDIDATE_ID_MESSAGE_LIMIT,
+                    limit(result.failedCandidatesInDraft())));
+        }
+
+        // 2) 걸린 주문의 후보를 실패로 기록 (주문 잠금)
+        List<PayoutFailure> verifyFailures = toVerifyFailures(snapshotId, result.orderMismatches(), snapshotItems,
+                draftItems, failures);
+        if (!verifyFailures.isEmpty()) {
+            payoutVerifyFailureService.saveAll(verifyFailures);
+        }
+        logExcludedOrders(snapshotId, verifyFailures);
+
+        // 3) commitStep이 정산할 항목 수 (commitStep과 같은 기준으로 셈)
+        PayoutVerifyExclusion exclusion = PayoutVerifyExclusion.from(failures);
+        exclusion.addAll(verifyFailures);
+        int remainingItemCount = 0;
+        for (DraftItemRow draftItem : draftItems) {
+            if (!exclusion.excludes(draftItem.orderId(), draftItem.candidateId())) {
+                remainingItemCount++;
+            }
+        }
+
+        // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO
+        log.info("정산 결과 검증. snapshotId={}, 스냅샷 후보 수={}, 정산할 draft 항목 수={}, 결과 검증 실패로 뺀 주문 수={}, 새로 기록한 실패 수={}",
+                snapshotId, snapshotItems.size(), remainingItemCount, exclusion.orderCount(), verifyFailures.size());
+        return new PayoutVerifyResult(remainingItemCount, exclusion.orderCount(), verifyFailures.size());
+    }
+
+    // 걸린 주문마다 이번 스냅샷 후보 전체(모든 판매자)의 VERIFY_MISMATCH 실패 기록을 만듦
+    //   대상: 그 주문의 스냅샷 후보 + 그 주문으로 draft에 들어간 항목의 후보(스냅샷에 없는 항목 포함) + 원인 후보
+    //   상세: 원인 후보는 "[원인] 어긋난 내용", 나머지는 "[함께 보류] … (원인 후보 ID)"
+    //   이미 이번 스냅샷에 실패 기록이 있는 후보는 뺌 (실패 기록 UK. validate에서 빠진 후보라 draft에도 없음)
+    // 같은 후보가 두 주문에 걸리면(주문 ID가 어긋난 경우) 처음 정한 상세로 1건만 만듦
+    private List<PayoutFailure> toVerifyFailures(Long snapshotId, List<PayoutDraftValidator.OrderMismatch> mismatches,
+                                                 List<SnapshotItemRow> snapshotItems, List<DraftItemRow> draftItems,
+                                                 List<FailureRow> failures) {
+        if (mismatches.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, String> details = new LinkedHashMap<>();
+        for (PayoutDraftValidator.OrderMismatch mismatch : mismatches) {
+            for (Map.Entry<Long, String> cause : mismatch.causes().entrySet()) {
+                if (!details.containsKey(cause.getKey())) {
+                    details.put(cause.getKey(), PayoutDraftValidator.CAUSE_PREFIX + cause.getValue());
+                }
+            }
+        }
+        for (PayoutDraftValidator.OrderMismatch mismatch : mismatches) {
+            String heldDetail = String.format(PayoutDraftValidator.HELD_DETAIL, mismatch.causes().keySet());
+            for (SnapshotItemRow snapshotItem : snapshotItems) {
+                if (snapshotItem.orderId().equals(mismatch.orderId()) && !details.containsKey(snapshotItem.candidateId())) {
+                    details.put(snapshotItem.candidateId(), heldDetail);
+                }
+            }
+            for (DraftItemRow draftItem : draftItems) {
+                if (draftItem.orderId().equals(mismatch.orderId()) && !details.containsKey(draftItem.candidateId())) {
+                    details.put(draftItem.candidateId(), heldDetail);
+                }
+            }
+        }
+        for (FailureRow failure : failures) {
+            details.remove(failure.candidateId());
+        }
+        if (details.isEmpty()) {
+            return List.of();
+        }
+
+        List<PayoutFailure> verifyFailures = new ArrayList<>();
+        for (PayoutCandidateItem candidate : payoutCandidateItemRepository.findAllByIdInOrderByIdAsc(details.keySet())) {
+            // 원인 내용이 길거나 원인 후보가 많으면 255자를 넘을 수 있어 잘라서 기록함
+            String detail = PayoutFailure.fitDetail(details.get(candidate.getId()));
+            verifyFailures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.VERIFY_MISMATCH, detail));
+        }
+        return verifyFailures;
+    }
+
+    // 결과 검증으로 주문이 새로 빠질 때마다 WARN: 코드 버그 신호이고, 주문이 잠겨 사람이 원인을 확인해야 함
+    // 일부 주문만 빠지면 Job은 COMPLETED라 이 로그(와 실패 기록, WRITE_SKIP_COUNT)로 알아차려야 함 (즉시 알림은 #52)
+    // 판매자 수를 남기는 이유: 같은 주문의 다른 판매자 후보도 함께 빠져, 영향받은 판매자를 바로 알 수 있게
+    private void logExcludedOrders(Long snapshotId, List<PayoutFailure> verifyFailures) {
+        Map<Long, List<PayoutFailure>> failuresByOrder = new LinkedHashMap<>();
+        for (PayoutFailure failure : verifyFailures) {
+            if (!failuresByOrder.containsKey(failure.getOrderId())) {
+                failuresByOrder.put(failure.getOrderId(), new ArrayList<>());
+            }
+            failuresByOrder.get(failure.getOrderId()).add(failure);
+        }
+
+        for (Map.Entry<Long, List<PayoutFailure>> entry : failuresByOrder.entrySet()) {
+            Set<Long> sellerIds = new HashSet<>();
+            String cause = null;
+            for (PayoutFailure failure : entry.getValue()) {
+                sellerIds.add(failure.getSellerId());
+                if (cause == null && failure.getDetail().startsWith(PayoutDraftValidator.CAUSE_PREFIX)) {
+                    cause = failure.getDetail();
+                }
+            }
+            log.warn("정산 결과 검증 불일치로 주문 제외·잠금(코드 버그 확인 필요). snapshotId={}, orderId={}, 원인={}, 판매자 수={}, 후보 수={}",
+                    snapshotId, entry.getKey(), cause, sellerIds.size(), entry.getValue().size());
+        }
+    }
+
+    // 예외 메시지용으로 앞 CANDIDATE_ID_MESSAGE_LIMIT개만 남김
+    private static <T> List<T> limit(List<T> values) {
+        return values.subList(0, Math.min(values.size(), CANDIDATE_ID_MESSAGE_LIMIT));
     }
 
     /**

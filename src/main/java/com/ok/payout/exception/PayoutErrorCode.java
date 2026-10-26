@@ -24,7 +24,12 @@ public enum PayoutErrorCode implements ErrorCode {
     MISSING_PAYOUT_REQUESTED_AT(HttpStatus.INTERNAL_SERVER_ERROR, "Missing payout requested at", "정산 Job 실행에는 requestedAt 파라미터가 필요합니다."),
     MISSING_CANDIDATE_ID(HttpStatus.INTERNAL_SERVER_ERROR, "Missing candidate id", "정산 항목은 저장된 정산후보로만 만들 수 있습니다."),
     UNSETTLED_CANDIDATES_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "Unsettled candidates not found", "정산 대상 판매자의 미정산 후보가 없습니다. 조회 조건 불일치를 확인하세요."),
-    DRAFT_VERIFICATION_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "Draft verification failed", "임시 정산이 스냅샷 대상과 일치하지 않습니다. 정산을 확정하지 않습니다."),
+    // 판매자 draft 합계(헤더)가 항목 합계와 다름 (#290). 같은 코드가 같은 순간에 만드는 값이라, 다르면 draft를 만드는 코드 자체가 망가진 상태
+    // 데이터 문제가 아니라 누군가 코드를 고치다 생긴 사고라는 것을 실패 기록(EXIT_MESSAGE)·로그에서 바로 알 수 있게 전용 코드로 둠
+    DRAFT_SELLER_TOTAL_MISMATCH(HttpStatus.INTERNAL_SERVER_ERROR, "Draft seller total mismatch", "판매자 임시 정산 합계가 항목 합계와 다릅니다. 임시 정산을 만드는 코드 오류이므로 최근 변경을 확인하세요."),
+    // 이번 스냅샷에서 실패로 기록된 후보가 draft에 들어감 (#290). draft 대상 조회 조건(실패 후보 제외)이 망가진 상태라 위와 같은 코드 고장
+    // 주문 단위로 빼지 않고 전체를 멈추는 이유: 이 후보에는 실패 기록이 이미 있어 결과 검증 실패를 따로 남길 수 없고(UK), 공통 조회 조건의 버그라 다른 주문도 믿기 어려움
+    DRAFT_INCLUDES_FAILED_CANDIDATE(HttpStatus.INTERNAL_SERVER_ERROR, "Draft includes failed candidate", "실패로 기록된 정산후보가 임시 정산에 들어갔습니다. draft 대상 조회 조건 오류이므로 최근 변경을 확인하세요."),
     PAYOUT_NOT_FOUND(HttpStatus.NOT_FOUND, "Payout not found", "정산을 찾을 수 없습니다."),
     PAYOUT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Payout access denied", "정산을 조회할 권한이 없습니다."),
     // 형태만 공개하고 실제 동작은 막아 둔 API(1건 수동 실행, 수동 조정)를 표시하는 임시 코드
