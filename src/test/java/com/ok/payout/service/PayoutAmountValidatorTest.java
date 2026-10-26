@@ -55,7 +55,7 @@ class PayoutAmountValidatorTest {
 
     @Test
     void 주문_후보_합계가_차감액보다_작으면_통과한다() {
-        // given: 후보 합계 10,000 < 차감액 12,500 (추가 운임처럼 정산후보로 오지 않는 금액이 있는 경우)
+        // given: 후보 합계 10,000 < 차감액 12,500 (차감액에는 있지만 정산후보로 오지 않는 금액이 있는 경우)
         givenNormalOrderItem(ORDER_ID, 1001L, 10L, 9_700L, 300L);
         givenOrder(ORDER_ID, 10_000L, 12_500L);
 
