@@ -102,9 +102,11 @@ public class PayoutJobConfig {
         };
     }
 
-    // tasklet 1회 호출 = 1 트랜잭션. 부하를 고려해 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 단위로 끊어 반복 처리
-    // 저장은 판매자마다 별도 트랜잭션(PayoutService.draft 참고): 한 판매자 예외는 그 판매자만 롤백하고 UNEXPECTED_ERROR로 기록, Job은 계속 진행
-    // 실패 기록 저장마저 실패하는 등 그 밖의 예외는 그 회차가 실패하고 Job은 FAILED로 멈춤 (이전 회차 draft는 남지만 payout은 만들어지지 않음)
+    // tasklet 1회 호출 = 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 1회차. 부하를 고려해 판매자 단위로 끊어 반복 처리
+    // 트랜잭션: tasklet 트랜잭션 1개는 조회만 하고, 저장은 판매자마다 별도 트랜잭션에서 커밋 (PayoutService.draft 참고, #90)
+    //   한 판매자 예외는 그 판매자만 롤백하고 UNEXPECTED_ERROR로 기록, Job은 계속 진행
+    //   실패 기록 저장마저 실패하는 등 그 밖의 예외는 그 회차가 실패하고 Job은 FAILED로 멈춤
+    //   (이미 커밋된 판매자 draft는 같은 회차·이전 회차 모두 남지만 payout은 만들어지지 않음. 재실행은 새 스냅샷으로 처음부터)
     @Bean
     public Step payoutDraftStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                 Tasklet payoutDraftTasklet) {
@@ -124,10 +126,11 @@ public class PayoutJobConfig {
                 return RepeatStatus.FINISHED;
             }
             // 배치 실행 기록(BATCH_STEP_EXECUTION)에 판매자 수를 남김
-            //   write count  = draft에 성공한 판매자 수
-            //   filter count = 저장에 실패해 UNEXPECTED_ERROR로 기록하고 뺀 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            //   WRITE_COUNT      = draft에 성공한 판매자 수
+            //   WRITE_SKIP_COUNT = 저장 중 예외로 건너뛰고 UNEXPECTED_ERROR로 기록한 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            //   filter count가 아니라 write skip count에 두는 이유: filter는 "처리기가 일부러 걸러낸 것", skip은 "예외로 쓰지 못하고 건너뛴 것"이라 뒤쪽이 맞음
             contribution.incrementWriteCount(result.draftedSellerCount());
-            contribution.incrementFilterCount(result.failedSellerCount());
+            contribution.incrementWriteSkipCount(result.failedSellerCount());
             return RepeatStatus.CONTINUABLE;
         };
     }

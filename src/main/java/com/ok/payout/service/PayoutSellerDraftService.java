@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 // draftStep에서 판매자 1명 단위로 저장하는 일만 맡음 (#90)
 // PayoutService.draft가 판매자마다 이 빈을 호출해, 판매자마다 트랜잭션을 따로 둔다
@@ -29,6 +30,7 @@ public class PayoutSellerDraftService {
 
     // UNEXPECTED_ERROR 상세 형식: 예외 종류와 메시지 (원인 후보를 특정할 수 없어 무엇이 터졌는지라도 남김)
     private static final String UNEXPECTED_ERROR_DETAIL = "draft 처리 중 예외: %s: %s";
+    private static final String NO_MESSAGE = "메시지 없음";
 
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
@@ -63,9 +65,11 @@ public class PayoutSellerDraftService {
     // 기록된 후보는 이번 스냅샷의 draft 대상에서 빠져(PayoutQueryRepository 조건 ④) 같은 판매자를 다시 잡지 않음
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordUnexpectedError(Long snapshotId, List<PayoutCandidateItem> candidates, RuntimeException cause) {
-        // 예외 메시지는 길이를 예측할 수 없어(SQL 문장이 들어가기도 함) 255자로 잘라 둠, 메시지가 없는 예외도 있음
+        // 예외 메시지는 길이를 예측할 수 없어(SQL 문장이 들어가기도 함) 255자로 잘라 둠
+        // 메시지가 없는 예외(NullPointerException 등)는 "null" 대신 대체 문구를 남김
+        String message = Objects.toString(cause.getMessage(), NO_MESSAGE);
         String detail = PayoutFailure.fitDetail(
-                String.format(UNEXPECTED_ERROR_DETAIL, cause.getClass().getSimpleName(), cause.getMessage()));
+                String.format(UNEXPECTED_ERROR_DETAIL, cause.getClass().getSimpleName(), message));
         List<PayoutFailure> failures = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
             failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.UNEXPECTED_ERROR, detail));
