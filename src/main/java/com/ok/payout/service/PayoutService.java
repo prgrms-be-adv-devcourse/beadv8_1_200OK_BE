@@ -392,7 +392,9 @@ public class PayoutService {
         // 팀 규칙(service.md "로그"): 예외를 던질 때 로그를 따로 남기지 않음 → 원인을 예외 메시지에 담아 배치 실패 기록(EXIT_MESSAGE)·로그에 한 번만 남김
         List<String> totalMismatches = PayoutDraftValidator.checkSellerTotals(payoutQueryRepository.findSellerTotalRows(snapshotId));
         if (!totalMismatches.isEmpty()) {
-            // TODO(#52): 코드가 망가졌다는 것을 빨리 알리는 처리(슬랙 등 즉시 알림)가 필요. 지금은 전용 에러 코드로 Job만 멈춤
+            // TODO(#52): 코드 고장 즉시 알림 필요(슬랙 등). 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   멈췄을 때 할 일: 판매자 합계 계산(PayoutSellerDraft.create) 최근 변경 확인·수정 → 재실행
+            //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH, String.format(
                     "판매자 임시 정산 합계 불일치(코드 오류). snapshotId=%d, 불일치 판매자 수=%d, 내용(최대 %d건)=%s",
                     snapshotId, totalMismatches.size(), MESSAGE_ITEM_LIMIT, limit(totalMismatches)));
@@ -406,7 +408,9 @@ public class PayoutService {
         PayoutDraftValidator.Result result = PayoutDraftValidator.validate(
                 new PayoutDraftValidator.Input(snapshotItems, draftItems, failures));
         if (!result.failedCandidatesInDraft().isEmpty()) {
-            // TODO(#52): 위와 같은 코드 고장 알림 필요
+            // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   멈췄을 때 할 일: draft 대상 조회 조건(PayoutQueryRepository.undraftedInSnapshot ④) 확인·수정 → 재실행
+            //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE, String.format(
                     "실패 후보가 임시 정산에 들어감(코드 오류). snapshotId=%d, 후보 수=%d, 후보 ID(최대 %d건)=%s",
                     snapshotId, result.failedCandidatesInDraft().size(), MESSAGE_ITEM_LIMIT,
