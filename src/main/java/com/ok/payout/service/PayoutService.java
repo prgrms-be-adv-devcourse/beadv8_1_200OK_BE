@@ -111,7 +111,9 @@ public class PayoutService {
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(검증 실패 시 누락 목록 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
 
-        // 잠긴 주문(#195) 때문에 빠진 후보가 있는 날만 남김: 잠금이 풀리지 않고 쌓이는지 로그로 확인하려고 (0건이면 매일 같은 로그가 남아 생략)
+        // 이번 조회 기간에서 잠긴 주문(#195) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
+        // (0건이면 매일 같은 로그가 남아 생략)
+        // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
         long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
         if (lockedCount > 0) {
             log.info("잠긴 주문이라 스냅샷에서 제외. snapshotId={}, 제외 후보 수={}", snapshot.getId(), lockedCount);
@@ -139,6 +141,8 @@ public class PayoutService {
 
         // 2) 금액 검사: 차감 기록이 있는 주문만 대상 (판정은 PayoutAmountValidator, 여기는 조회·저장만)
         // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (createSnapshot 주석 참고)
+        // 1)과 2)의 조회가 같은 시점의 데이터를 본다는 전제: MySQL 기본 격리 수준(REPEATABLE READ)이라 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
+        //   READ COMMITTED로 바꾸면 두 조회 사이에 들어온 차감 기록 때문에 같은 후보가 두 번 실패로 잡혀 UK 위반 → 매 배치 실패할 수 있음
         List<PayoutFailure> amountFailures = PayoutAmountValidator.validate(snapshotId, new PayoutAmountValidator.Input(
                 payoutQueryRepository.findCandidatesWithDeduction(snapshotId),
                 payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId),
