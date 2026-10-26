@@ -114,6 +114,20 @@ class PayoutSellerDraftServiceTest {
     }
 
     @Test
+    void 예외_메시지가_없으면_대체_문구로_기록한다() {
+        // given: 메시지 없이 던져지는 예외 (NullPointerException 등)
+        List<PayoutCandidateItem> candidates = List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L));
+
+        // when
+        sut.recordUnexpectedError(SNAPSHOT_ID, candidates, new NullPointerException());
+
+        // then
+        then(payoutFailureRepository).should().saveAll(failuresCaptor.capture());
+        assertThat(failuresCaptor.getValue().get(0).getDetail())
+                .isEqualTo("draft 처리 중 예외: NullPointerException: 메시지 없음");
+    }
+
+    @Test
     void 예외_메시지가_길면_255자로_잘라_기록한다() {
         // given: SQL 문장이 들어간 DB 예외처럼 메시지가 아주 긴 경우
         List<PayoutCandidateItem> candidates = List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L));

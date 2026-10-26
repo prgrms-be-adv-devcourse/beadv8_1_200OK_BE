@@ -29,7 +29,7 @@ class PayoutJobConfigTest {
     private PayoutService payoutService;
 
     @Test
-    void draft_회차에서_성공한_판매자는_write_count_실패한_판매자는_filter_count로_남기고_다음_회차를_부른다() throws Exception {
+    void draft_회차에서_성공한_판매자는_write_count_실패한_판매자는_write_skip_count로_남기고_다음_회차를_부른다() throws Exception {
         // given: 이번 회차 판매자 3명 중 1명 실패
         given(payoutService.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(3, 1));
         StepContribution contribution = contribution();
@@ -39,9 +39,10 @@ class PayoutJobConfigTest {
 
         // then
         assertThat(sut).isEqualTo(RepeatStatus.CONTINUABLE);
+        assertThat(contribution).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(contribution.getWriteCount()).isEqualTo(2L);
-            softly.assertThat(contribution.getFilterCount()).isEqualTo(1L);
+            softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(1L);
         });
     }
 
