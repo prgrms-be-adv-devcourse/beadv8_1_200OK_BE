@@ -108,6 +108,9 @@ final class PayoutAmountValidator {
     //   지금은 현재 수수료율 하나로 계산해서, 예전 수수료율로 만든 후보나 수수료 면제 이벤트로 0원이 된 후보(판매 금액이 있는데 수수료 0원)를 틀렸다고 봄
     //   (소액이라 버림으로 0원이 된 수수료는 계산과 같아 통과함)
     // TODO(논의 필요): 조정 후보는 수수료 검사에서 뺌 (원래 후보끼리만 비교). 조정은 환불 작업 때 다른 방향으로 처리 예정
+    //   이번 스냅샷에 조정 후보만 들어와도 그 주문상품의 원래 대금·수수료 짝(이미 정산된 것 포함)을 다시 검사함
+    //   예) 3%로 정산된 원래 짝(9,700 / 300)에 조정이 들어왔는데 그사이 수수료율이 바뀌었으면 → 불일치로 주문이 잠김
+    //   지금은 조정 API가 막혀 있고(501) 수수료율 변경 계획도 없어 생기지 않음. 환불·조정 작업에서 조정 처리 방식이 정해지면 이 부분도 함께 수정
     private static Map<Long, String> findFeeMismatches(List<PayoutCandidateItem> orderTargets,
                                                        Map<Long, SalePair> pairsByOrderItem) {
         Map<Long, String> mismatches = new LinkedHashMap<>();
