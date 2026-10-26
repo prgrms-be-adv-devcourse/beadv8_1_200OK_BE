@@ -56,6 +56,15 @@ public class PayoutFailure extends BaseTime {
     @Column(nullable = false, length = MAX_DETAIL_LENGTH)
     private String detail;
 
+    // 상세가 DB 길이(255자)를 넘으면 뒤를 잘라 "..."를 붙임
+    // 길이를 넘긴 채 of()에 넘기면 예외 → 실패 기록 저장이 롤백되어 같은 데이터로 매 배치 실패하므로, 길이를 예측할 수 없는 상세(원인 목록, 예외 메시지)는 이걸 거쳐 넘김
+    public static String fitDetail(String detail) {
+        if (detail.length() <= MAX_DETAIL_LENGTH) {
+            return detail;
+        }
+        return detail.substring(0, MAX_DETAIL_LENGTH - 3) + "...";
+    }
+
     // 상세에 남길 값이 없는 실패: 사유의 기본 문구를 상세로 씀
     public static PayoutFailure of(Long snapshotId, PayoutCandidateItem candidate, PayoutFailureReason reason) {
         return of(snapshotId, candidate, reason, reason.getDefaultDetail());

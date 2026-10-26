@@ -35,7 +35,12 @@ public enum PayoutFailureReason {
 
     // 같은 주문의 다른 주문상품이 수수료 검사에 걸려 함께 보류됨 (이 후보 자체의 금액은 문제없음)
     // 잠그지 않음: 주문 잠금은 원인 후보의 AMOUNT_MISMATCH가 맡음. 이 사유까지 잠그면 원인이 풀려도 이 기록 때문에 계속 잠김
-    ORDER_LOCKED(PayoutFailureStep.VALIDATE, false, "같은 주문의 금액 불일치로 보류");
+    ORDER_LOCKED(PayoutFailureStep.VALIDATE, false, "같은 주문의 금액 불일치로 보류"),
+
+    // draftStep에서 판매자 1명을 처리하다 예상하지 못한 예외가 남 (코드 버그, 일시적 DB 오류 등) → 그 판매자의 이번 스냅샷 후보 전체가 빠짐 (#90)
+    // 원인 후보를 특정할 수 없어 판매자 단위로 기록하고, 상세에 예외 종류·메시지를 남김
+    // 잠그지 않음 = 다음 배치에서 다시 시도함 (일시적 오류면 그때 정산, 같은 입력으로 계속 실패하면 매 배치 기록됨 → 반복 알림은 #52)
+    UNEXPECTED_ERROR(PayoutFailureStep.DRAFT, false, "예상하지 못한 오류");
 
     private final PayoutFailureStep step;
     private final boolean locksOrder;

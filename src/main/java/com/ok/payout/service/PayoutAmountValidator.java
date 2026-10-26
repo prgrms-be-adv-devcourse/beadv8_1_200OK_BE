@@ -87,7 +87,8 @@ final class PayoutAmountValidator {
             if (feeMismatches.isEmpty()) {
                 continue;
             }
-            String lockedDetail = fitDetail(String.format(ORDER_LOCKED_DETAIL, feeMismatches.keySet()));
+            // 원인 주문상품이 아주 많으면 255자를 넘을 수 있어 잘라서 기록함
+            String lockedDetail = PayoutFailure.fitDetail(String.format(ORDER_LOCKED_DETAIL, feeMismatches.keySet()));
             for (PayoutCandidateItem candidate : orderTargets) {
                 String mismatchDetail = candidate.getOrderItemId() == null ? null : feeMismatches.get(candidate.getOrderItemId());
                 if (mismatchDetail != null) {
@@ -134,15 +135,6 @@ final class PayoutAmountValidator {
             }
         }
         return mismatches;
-    }
-
-    // 상세가 DB 길이(255자)를 넘으면 뒤를 자름
-    // 원인 주문상품이 아주 많으면 넘을 수 있는데, 그대로 저장하면 예외 → validate 롤백 → 같은 데이터라 매 배치 실패하므로 잘라서라도 기록함
-    private static String fitDetail(String detail) {
-        if (detail.length() <= PayoutFailure.MAX_DETAIL_LENGTH) {
-            return detail;
-        }
-        return detail.substring(0, PayoutFailure.MAX_DETAIL_LENGTH - 3) + "...";
     }
 
     // 주문상품 하나의 원래 판매 대금·수수료 금액 (없는 쪽은 null)
