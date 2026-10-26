@@ -645,6 +645,306 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // ---------- validateStep 금액 검사 (#195) ----------
+
+    @Test
+    void 주문_후보_합계가_차감액을_넘으면_금액_불일치로_빠지고_다른_주문은_정산된다() {
+        // given: 주문 X(판매자 10)는 후보 합계 10,000 > 차감액 9,999, 주문 Y(판매자 20)는 정상
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 9_999L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 300L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 20L, 19_400L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 주문 X 후보 2건이 초과 청구로 빠지고, 정산은 주문 Y만
+        String detail = "주문 합계 초과: 차감액 9999, 후보 합계 10000 (어느 주문상품이 틀렸는지 판별 불가)";
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(
+                        tuple(orderX, PayoutFailureReason.AMOUNT_MISMATCH, detail),
+                        tuple(orderX, PayoutFailureReason.AMOUNT_MISMATCH, detail));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(20L, 19_400L));
+    }
+
+    @Test
+    void 금액_불일치로_잠긴_주문은_다음_스냅샷에서_빠진다() {
+        // given: 1차 배치에서 주문 X가 초과 청구로 잠김
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 9_000L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
+        settleAll(FROM, TO);
+
+        // when: 2차 배치 (주문 X 후보는 아직 미정산)
+        Long secondSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 잠긴 주문이라 스냅샷에 들어가지 않음 (차감 기록 없음과 달리 다시 검사하지 않음)
+        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+    }
+
+    @Test
+    void 잠긴_주문에_나중에_생긴_후보도_다음_스냅샷에서_빠진다() {
+        // given: 주문 X가 잠긴 뒤, 같은 주문의 다른 주문상품과 조정 후보가 새로 들어옴
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 9_000L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        settleAll(FROM, TO);
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, nextOrderItemId(), 20L, 1_000L, createdAt);
+        insertAdjustment(PayoutEventType.SALE_AMOUNT, orderX, 10L, -700L, 1L, createdAt);
+
+        // when
+        Long secondSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 스냅샷 번호와 상관없이 주문 단위로 잠겨, 새 후보도 들어가지 않음
+        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+    }
+
+    @Test
+    void 결과_검증에_실패한_Job이_남긴_잠금도_다음_스냅샷에서_작동한다() {
+        // given: 입력 검증에서 주문 X를 잠근 뒤 결과 검증(verify)이 실패해 정산 없이 끝남
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 9_000L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
+        Long failedSnapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(failedSnapshotId);
+        draftAll(failedSnapshotId, LIMIT);
+        insertMissedSnapshotItem(failedSnapshotId, 20L, 2_000L);
+        assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
+
+        // when: 다음 배치
+        Long nextSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 주문 X는 정산되지 않았지만(미정산 후보) 실패한 Job이 남긴 잠금 때문에 들어가지 않음
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+    }
+
+    @Test
+    void 초과_청구_합계에는_이미_정산된_같은_주문의_후보도_들어간다() {
+        // given: 주문 X(차감액 15,000)의 주문상품 1(10,000)은 지난 배치에 정산됨
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 15_000L);
+        long firstItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, firstItem, 10L, 9_700L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, firstItem, 10L, 300L, createdAt);
+        settleAll(FROM, TO);
+        // 그 뒤 주문상품 2(6,000)가 구매확정됨 → 주문 합계 16,000 > 15,000
+        long secondItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, secondItem, 10L, 5_820L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 10L, 180L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 이번 스냅샷 후보(주문상품 2)만으로는 6,000이라 통과하지만, 정산된 후보까지 더해 초과로 잡힘
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getReason)
+                .containsExactly(
+                        tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH),
+                        tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    @Test
+    void 주문_후보_합계가_차감액보다_작으면_정상_정산된다() {
+        // given: 후보 합계 13,000 < 차감액 13,500 (차감액에는 있지만 정산후보로 오지 않는 금액이 있는 경우)
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 13_500L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 300L, createdAt);
+        insertShippingFee(orderX, 10L, 3_000L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(10L, 12_700L), tuple(null, 300L));
+    }
+
+    @Test
+    void 수수료가_틀리면_원인은_금액_불일치_같은_주문의_다른_판매자_후보는_보류되고_Job은_완료된다() throws Exception {
+        // given: 주문 X에 판매자 10(수수료 500, 계산은 309)과 판매자 20(정상 + 배송비), 주문 Y(판매자 30)는 정상
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 40_000L);
+        long wrongItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, wrongItem, 10L, 9_800L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, wrongItem, 10L, 500L, createdAt);
+        long rightItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, rightItem, 20L, 19_400L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, rightItem, 20L, 600L, createdAt);
+        insertShippingFee(orderX, 20L, 3_000L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 30L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderY, 30L, 300L, createdAt);
+
+        // when
+        JobExecution execution = payoutJobRunner.run();
+
+        // then: Job은 끝까지 성공, 주문 X의 후보 5건은 1건씩 실패로 기록
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long snapshotId = snapshotIdOf(execution);
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getSellerId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
+                        tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
+                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_LOCKED),
+                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_LOCKED),
+                        tuple(null, 20L, PayoutFailureReason.ORDER_LOCKED));   // 배송비
+
+        // then: 정산은 주문 Y만
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(30L, 9_700L), tuple(null, 300L));
+    }
+
+    @Test
+    void 한_주문에_수수료가_틀린_주문상품이_2개여도_후보마다_실패_기록이_1건이고_Job은_완료된다() throws Exception {
+        // given: 주문 X에 판매자 10, 20의 주문상품 둘 다 수수료가 틀림
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 40_000L);
+        long firstItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, firstItem, 10L, 9_800L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, firstItem, 10L, 500L, createdAt);
+        long secondItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, secondItem, 20L, 19_000L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 1_000L, createdAt);
+
+        // when
+        JobExecution execution = payoutJobRunner.run();
+
+        // then: 실패 기록 UK에 걸려 롤백되지 않고 4건이 1건씩 남음
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(failureRepository.findBySnapshotId(snapshotIdOf(execution)))
+                .extracting(PayoutFailure::getCandidateId)
+                .containsExactlyInAnyOrderElementsOf(candidateIdsOf(orderX));
+    }
+
+    @Test
+    void 차감_기록이_없는_주문은_금액_검사를_하지_않고_차감_기록_없음만_기록된다() {
+        // given: 차감 기록이 없고 수수료도 틀린 주문
+        long orderX = nextOrderItemId();
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_800L, TO.minusDays(1));
+        insertCandidateWithoutDeduction(PayoutEventType.SALE_FEE, orderX, 10L, 500L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+
+        // when
+        payoutService.validate(snapshotId);
+
+        // then: 잠그지 않는 사유만 남아, 차감 기록이 들어오면 다음 배치에서 다시 검사됨
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.DEDUCTION_MISSING, PayoutFailureReason.DEDUCTION_MISSING);
+    }
+
+    @Test
+    void 같은_스냅샷에_입력_검증을_두_번_실행해도_금액_불일치_기록은_중복되지_않는다() {
+        // given: 초과 청구 주문 1건이 든 스냅샷
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 9_000L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+
+        // when
+        int first = payoutService.validate(snapshotId);
+        int second = payoutService.validate(snapshotId);
+
+        // then
+        assertThat(first).isEqualTo(1);
+        assertThat(second).isZero();
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).hasSize(1);
+    }
+
+    @Test
+    void 조정_후보가_있어도_수수료_검사에서_잘못_잡지_않는다() {
+        // given: 원래 대금 9,700·수수료 300(정상)에 수수료 조정 -100
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 300L, createdAt);
+        insertAdjustment(PayoutEventType.SALE_FEE, orderX, 10L, -100L, 1L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 조정까지 포함해 정산됨 (시스템 몫 300 - 100)
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(null, 200L));
+    }
+
+    @Test
+    void 대금_수수료_짝이_없는_주문상품은_수수료_검사로_잠기지_않는다() {
+        // given: 수수료 후보만 있음 (계산식으로 맞출 판매 대금이 없음)
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 999L, TO.minusDays(1));
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(null, 999L));
+    }
+
+    @Test
+    void 같은_주문상품의_대금이_이미_정산됐어도_나중에_온_수수료를_잘못_잠그지_않는다() {
+        // given: 판매 대금만 먼저 정산됨
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        settleAll(FROM, TO);
+        // 그 뒤 같은 주문상품의 수수료 후보가 들어옴 (정산된 대금과 짝이 맞음)
+        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 300L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(null, 300L));
+    }
+
+    @Test
+    void 같은_주문의_상품이_다른_날_구매확정돼도_먼저_들어온_상품은_기다리지_않고_정산된다() {
+        // given: 주문 X(차감액 30,000)의 주문상품 1은 기간 안, 주문상품 2는 기간 뒤(아직 대기 중)에 구매확정
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 30_000L);
+        long firstItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, firstItem, 10L, 9_700L, TO.minusDays(1));
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, firstItem, 10L, 300L, TO.minusDays(1));
+        long secondItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, secondItem, 10L, 19_400L, TO.plusDays(1));
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 10L, 600L, TO.plusDays(1));
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 주문상품 1만 정산됨 (주문상품 2는 대기 기간이 지나면 다음 배치에서)
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(null, 300L));
+    }
+
     // ---------- 대기 건너뛰기 실행 (#224) ----------
 
     @Test
@@ -711,9 +1011,11 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
-    // 스냅샷 → draft → 검증 → 확정까지 실행하고 스냅샷 ID 반환 (발행은 확인 대상이 아니라 생략)
+    // 스냅샷 → 입력 검증 → draft → 검증 → 확정까지 실행하고 스냅샷 ID 반환 (발행은 확인 대상이 아니라 생략)
+    // 입력 검증도 실제 Job처럼 실행해, 금액 검사(#195)와 주문 잠금이 다음 배치에 이어지는 흐름을 확인할 수 있게 함
     private Long settleAll(LocalDateTime from, LocalDateTime to) {
         Long snapshotId = createSnapshot(from, to);
+        payoutService.validate(snapshotId);
         draftAll(snapshotId, LIMIT);
         payoutService.verify(snapshotId);
         payoutService.commit(snapshotId);
@@ -734,13 +1036,18 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 후보의 주문에 지갑 차감 기록을 넣음 (없으면 validateStep이 DEDUCTION_MISSING으로 빼서 정산되지 않음, #194)
     // 같은 주문에 후보가 여러 건(대금·수수료·배송비·조정)이라 주문당 1건만 넣음 (UK order_id)
-    // 금액은 지금 검사하지 않아(#194는 기록 유무만 봄) 넉넉한 고정값. 금액 검사(#195)가 생기면 실제 합계로 바꿔야 함
+    // 금액은 넉넉한 고정값: 초과 청구 검사(#195)는 "후보 합계 ≤ 차감액"이라 실제 합계로 맞추지 않아도 통과함
     private void givenDeduction(long orderId) {
+        givenDeduction(orderId, 1_000_000L);
+    }
+
+    // 차감액을 정해서 넣음 (금액 검사 테스트용). 후보보다 먼저 불러야 함: 이미 있으면 위 고정값 도우미가 덮어쓰지 않고 건너뜀
+    private void givenDeduction(long orderId, long amount) {
         if (payoutWalletDeductionRepository.existsByOrderId(orderId)) {
             return;
         }
         payoutWalletDeductionRepository.save(
-                PayoutWalletDeduction.create(orderId, 1L, 1_000_000L, LocalDateTime.now()));
+                PayoutWalletDeduction.create(orderId, 1L, amount, LocalDateTime.now()));
     }
 
     // 판매 대금 후보 1건 (주문항목 ID는 자동 발급)
@@ -763,6 +1070,16 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 eventType.name(), orderItemId, orderItemId, sellerId, amount, createdAt, createdAt);
+    }
+
+    // 주문 하나에 주문상품이 여럿인 경우의 후보 (주문 ID와 주문상품 ID를 따로 받음, 지갑 차감 기록은 넣지 않음)
+    // 주문 ID도 nextOrderItemId()로 받아야 cleanUp의 order_id 범위로 지워짐
+    private void insertOrderCandidate(PayoutEventType eventType, long orderId, long orderItemId, Long sellerId, Long amount,
+                                      LocalDateTime createdAt) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderId, orderItemId, sellerId, amount, createdAt, createdAt);
     }
 
     // 배송비 후보를 원하는 created_at으로 직접 저장 (+ 그 주문의 지갑 차감 기록)
