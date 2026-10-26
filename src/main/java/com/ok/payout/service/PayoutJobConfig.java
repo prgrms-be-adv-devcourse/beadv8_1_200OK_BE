@@ -30,8 +30,9 @@ public class PayoutJobConfig {
     private final PayoutService payoutService;
 
     // 정산 배치 (Write-Audit-Publish): 스냅샷 → 입력 검증 → 임시 정산 → 검증 → 확정 → 발행
-    //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션)
-    //   validate : 지갑 차감 기록이 없는 주문의 후보를 실패로 기록 (이번 정산에서 빠짐, Job은 계속 진행)
+    //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션, 잠긴 주문의 후보 제외)
+    //   validate : 지갑 차감 기록이 없거나 금액이 맞지 않는 주문의 후보를 실패로 기록 (이번 정산에서 빠짐, Job은 계속 진행)
+    //              금액이 맞지 않는 주문은 잠겨 다음 배치부터 snapshot에서 빠짐
     //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
     //   verify   : 스냅샷 목록과 임시 정산 비교 (불일치면 여기서 멈춤 → payout 미생성, 이벤트 미발행)
     //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지)

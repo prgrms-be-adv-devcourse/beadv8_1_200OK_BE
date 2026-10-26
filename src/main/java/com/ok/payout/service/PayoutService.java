@@ -41,10 +41,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 
 @Slf4j
@@ -88,6 +90,7 @@ public class PayoutService {
     // 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환
     // 헤더와 목록을 한 트랜잭션에서 만들어, 중간에 실패하면 둘 다 남지 않음 (반쪽짜리 스냅샷 방지)
     // 이후 Step은 이 목록만 보고 처리하므로, 배치 도중 새로 생긴 정산후보는 다음 배치로 넘어감
+    // 금액 검사로 잠긴 주문(#195)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
     //
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
@@ -107,24 +110,80 @@ public class PayoutService {
         // 스냅샷 생성은 배치가 맡은 대상이 정해지는 시점이라 INFO로 남김
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(검증 실패 시 누락 목록 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
+
+        // 이번 조회 기간에서 잠긴 주문(#195) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
+        // (0건이면 매일 같은 로그가 남아 생략)
+        // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
+        long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
+        if (lockedCount > 0) {
+            log.info("잠긴 주문이라 스냅샷에서 제외. snapshotId={}, 제외 후보 수={}", snapshot.getId(), lockedCount);
+        }
         return snapshot.getId();
     }
 
-    // 입력 검증(validateStep): 이번 스냅샷 후보 중 지갑 차감 기록이 없는 주문의 후보를 실패로 기록하고, 기록한 건수를 반환
-    // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외, 3단계)
+    // 입력 검증(validateStep): 이번 스냅샷 후보 중 입력이 틀린 후보를 실패로 기록하고, 기록한 건수를 반환
+    // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외)
     // 예외를 던지지 않고 기록만 함 → 틀린 주문만 빠지고 나머지는 계속 정산됨
+    // 검사 순서: 차감 기록 없음(#194) → 금액 검사(초과 청구 → 수수료, #195). 앞 검사에 걸린 후보는 뒤 검사 대상에서 빠짐 (후보당 실패 1건)
+    // 모든 검사 결과를 모아 한 번에 저장: 같은 트랜잭션이라 중간에 실패하면 이번 검증의 기록이 하나도 남지 않음
+    //
+    // 금액 검사에 걸린 주문은 잠김(AMOUNT_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
+    // 잠금은 이후 Step이 실패해 Job이 FAILED로 끝나도 유지됨 (입력 금액에 대한 판정이라 재실행해도 다시 잠김)
     @Transactional
     public int validate(Long snapshotId) {
-        List<PayoutCandidateItem> missing = payoutQueryRepository.findCandidatesWithoutDeduction(snapshotId);
         List<PayoutFailure> failures = new ArrayList<>();
+
+        // 1) 차감 기록 없음 (잠그지 않음, 다음 배치에서 다시 검사)
+        List<PayoutCandidateItem> missing = payoutQueryRepository.findCandidatesWithoutDeduction(snapshotId);
         for (PayoutCandidateItem candidate : missing) {
             failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.DEDUCTION_MISSING));
         }
+
+        // 2) 금액 검사: 차감 기록이 있는 주문만 대상 (판정은 PayoutAmountValidator, 여기는 조회·저장만)
+        // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (createSnapshot 주석 참고)
+        // 1)과 2)의 조회가 같은 시점의 데이터를 본다는 전제: MySQL 기본 격리 수준(REPEATABLE READ)이라 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
+        //   READ COMMITTED로 바꾸면 1)과 2) 사이에 들어온 차감 기록 때문에 같은 후보가 두 번 실패로 잡혀 UK 위반 → 매 배치 실패할 수 있음
+        List<PayoutFailure> amountFailures = PayoutAmountValidator.validate(snapshotId, new PayoutAmountValidator.Input(
+                payoutQueryRepository.findCandidatesWithDeduction(snapshotId),
+                payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId),
+                payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId),
+                payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId)));
+        failures.addAll(amountFailures);
+
         payoutFailureRepository.saveAll(failures);
 
+        logLockedOrders(snapshotId, amountFailures);
         // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
-        log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}", snapshotId, failures.size());
+        log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}, 금액 검사로 제외한 후보 수={}",
+                snapshotId, missing.size(), amountFailures.size());
         return failures.size();
+    }
+
+    // 주문이 새로 잠길 때마다 WARN: 잠긴 주문은 저절로 풀리지 않아(TODO(#52)) 사람이 원인을 확인해야 함
+    // 판매자 수를 남기는 이유: 한 판매자의 금액이 틀려도 같은 주문의 다른 판매자 후보까지 함께 보류되어, 영향받은 판매자를 바로 알 수 있게
+    // 금액 검사 실패 목록은 주문별로 이어서 들어옴 (PayoutAmountValidator가 주문 단위로 만듦)
+    private void logLockedOrders(Long snapshotId, List<PayoutFailure> amountFailures) {
+        Map<Long, List<PayoutFailure>> failuresByOrder = new LinkedHashMap<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (!failuresByOrder.containsKey(failure.getOrderId())) {
+                failuresByOrder.put(failure.getOrderId(), new ArrayList<>());
+            }
+            failuresByOrder.get(failure.getOrderId()).add(failure);
+        }
+
+        for (Map.Entry<Long, List<PayoutFailure>> entry : failuresByOrder.entrySet()) {
+            Set<Long> sellerIds = new HashSet<>();
+            String cause = null;
+            for (PayoutFailure failure : entry.getValue()) {
+                sellerIds.add(failure.getSellerId());
+                // 사유는 원인 후보(AMOUNT_MISMATCH)의 상세로 남김 (함께 보류된 ORDER_LOCKED 상세는 원인이 아님)
+                if (cause == null && failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                    cause = failure.getDetail();
+                }
+            }
+            log.warn("정산 주문 잠금. snapshotId={}, orderId={}, 사유={}, 판매자 수={}, 후보 수={}",
+                    snapshotId, entry.getKey(), cause, sellerIds.size(), entry.getValue().size());
+        }
     }
 
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)

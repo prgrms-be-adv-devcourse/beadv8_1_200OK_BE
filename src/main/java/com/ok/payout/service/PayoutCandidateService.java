@@ -46,6 +46,10 @@ public class PayoutCandidateService {
         // 묶음에서 처음 구매 확정된 상품이 만들고, 이후 상품의 배송비는 무시
         // 같은 묶음이 동시에 처리되면 둘 다 "없음"으로 볼 수 있는데, 이때는 DB UK(order_id, ship_seller_id, adjustment_id)가
         // 두 번째 저장을 막고, 실패한 이벤트는 재처리 때 이 확인에서 "이미 있음"으로 건너뜀
+        // TODO(#52): 재처리 전까지 두 번째 상품은 대금·수수료 후보까지 함께 롤백되어 정산후보가 없음
+        //   예) 같은 묶음 상품 2개가 자동 구매확정으로 한꺼번에 확정 → 리스너가 동시에 처리 → 상품2 후보 없음
+        //   지금은 실패한 이벤트를 앱 재시작 때만 다시 발행해서(운영 republish-outstanding-events-on-restart), 그때까지 상품2가 정산되지 않음
+        //   Kafka 전환 때 이벤트 재처리 방식이 바뀌므로 그때 함께 처리 (#52에 기록)
         if (shippingPrice > 0 && !shippingFeeExists(command)) {
             items.add(PayoutCandidateItem.ofSaleShippingFee(
                     command.orderId(), command.sellerId(), shippingPrice));
