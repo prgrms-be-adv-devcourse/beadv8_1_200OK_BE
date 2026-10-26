@@ -14,6 +14,7 @@ import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
 
@@ -60,21 +61,64 @@ class PayoutJobConfigTest {
     }
 
     @Test
-    void 남은_판매자가_없으면_draft_Step을_끝낸다() throws Exception {
-        // given
+    void draft_대상_판매자가_처음부터_없으면_draft_Step을_끝낸다() throws Exception {
+        // given: 정산 대상이 없는 날 (validate 실패만 있는 날도 draft 대상은 0명)
         given(payoutService.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0));
         StepContribution contribution = contribution();
 
         // when
         RepeatStatus sut = new PayoutJobConfig(payoutService).payoutDraftTasklet(SNAPSHOT_ID).execute(contribution, null);
 
-        // then
+        // then: 실패한 판매자가 없으니 전원 실패가 아님 → 정상 종료
         assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+    }
+
+    @Test
+    void 일부_판매자라도_성공했으면_실패가_있어도_draft_Step을_끝낸다() throws Exception {
+        // given: 1회차 2명 중 1명 실패 → 2회차 남은 판매자 없음
+        given(payoutService.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE))
+                .willReturn(new PayoutDraftResult(2, 1), new PayoutDraftResult(0, 0));
+        StepExecution stepExecution = stepExecution();
+
+        // when
+        RepeatStatus sut = runRounds(stepExecution, 2);
+
+        // then: 정상 판매자 정산을 위해 COMPLETED 유지
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+    }
+
+    @Test
+    void 모든_판매자가_실패했으면_마지막_회차에서_draft_Step을_실패시킨다() {
+        // given: 1회차 2명, 2회차 1명 모두 실패 → 3회차 남은 판매자 없음
+        given(payoutService.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE))
+                .willReturn(new PayoutDraftResult(2, 2), new PayoutDraftResult(1, 1), new PayoutDraftResult(0, 0));
+        StepExecution stepExecution = stepExecution();
+
+        // when & then: 지킬 정산이 없는 전원 실패라 Job을 FAILED로 드러냄 (앞 회차들의 실패 수가 Step에 누적된 것으로 판단)
+        assertThatThrownBy(() -> runRounds(stepExecution, 3))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("draft 대상 판매자가 모두 실패해 정산할 판매자가 없습니다. snapshotId=12, 실패 판매자 수=3");
+    }
+
+    // 실제 Step처럼 tasklet을 회차마다 새 contribution으로 부르고, 끝난 회차의 수를 Step 실행 기록에 합산(apply)함
+    // 마지막 회차의 결과를 반환 (예외가 나면 그대로 던짐)
+    private RepeatStatus runRounds(StepExecution stepExecution, int rounds) throws Exception {
+        RepeatStatus status = null;
+        for (int round = 0; round < rounds; round++) {
+            StepContribution contribution = new StepContribution(stepExecution);
+            status = new PayoutJobConfig(payoutService).payoutDraftTasklet(SNAPSHOT_ID).execute(contribution, null);
+            stepExecution.apply(contribution);
+        }
+        return status;
     }
 
     // tasklet에 넘길 실행 기록 (Spring 없이 직접 만듦)
     private StepContribution contribution() {
+        return new StepContribution(stepExecution());
+    }
+
+    private StepExecution stepExecution() {
         JobExecution jobExecution = new JobExecution(1L, new JobInstance(1L, "payoutJob"), new JobParameters());
-        return new StepContribution(new StepExecution("payoutDraftStep", jobExecution));
+        return new StepExecution("payoutDraftStep", jobExecution);
     }
 }
