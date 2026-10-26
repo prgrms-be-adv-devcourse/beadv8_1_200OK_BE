@@ -204,7 +204,9 @@ public class PayoutService {
     //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
     //   전원 실패(성공 0명)면 draft Step이 끝날 때 Job을 FAILED로 만듦 (PayoutJobConfig.failIfEverySellerFailed)
     //
-    // 이 메서드의 트랜잭션은 조회용: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 여기서 쓰는 것이 없음
+    // 이 메서드에서 쓰는 것이 없음: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 이 메서드 자체는 조회만 함
+    // readOnly는 단독으로 불릴 때(서비스 테스트 등)만 적용됨. draftStep에서는 Step 트랜잭션(읽기·쓰기)에 참여해 그 설정을 따름
+    //   어느 쪽이든 판매자 저장은 REQUIRES_NEW라 바깥 트랜잭션 설정과 상관없이 동작이 같음
     @Transactional(readOnly = true)
     public PayoutDraftResult draft(Long snapshotId, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);

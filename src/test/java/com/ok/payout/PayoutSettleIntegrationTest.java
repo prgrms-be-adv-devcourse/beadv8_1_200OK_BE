@@ -983,13 +983,14 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 한_판매자_draft_저장이_실패해도_같은_회차의_다른_판매자와_이후_회차는_정산된다() {
-        // given: 판매자 10, 20, 30 각각 대금·수수료. 생성 순서로 1회차 [10, 20], 2회차 [30]
-        long orderItem10 = nextOrderItemId();
-        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem10, 10L, 9_700L, TO.minusDays(3));
-        insertCandidate(PayoutEventType.SALE_FEE, orderItem10, 10L, 300L, TO.minusDays(3));
+        // given: 판매자 20, 10, 30 각각 대금·수수료. 생성 순서로 1회차 [20, 10], 2회차 [30]
+        // 실패할 판매자 20을 회차 맨 앞에 둠: 실패 직후 같은 회차의 다음 판매자(10)가 이어서 저장되는지까지 확인하려고
         long orderItem20 = nextOrderItemId();
-        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem20, 20L, 19_400L, TO.minusDays(2));
-        insertCandidate(PayoutEventType.SALE_FEE, orderItem20, 20L, 600L, TO.minusDays(2));
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem20, 20L, 19_400L, TO.minusDays(3));
+        insertCandidate(PayoutEventType.SALE_FEE, orderItem20, 20L, 600L, TO.minusDays(3));
+        long orderItem10 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem10, 10L, 9_700L, TO.minusDays(2));
+        insertCandidate(PayoutEventType.SALE_FEE, orderItem10, 10L, 300L, TO.minusDays(2));
         long orderItem30 = nextOrderItemId();
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem30, 30L, 970L, TO.minusDays(1));
         insertCandidate(PayoutEventType.SALE_FEE, orderItem30, 30L, 30L, TO.minusDays(1));
