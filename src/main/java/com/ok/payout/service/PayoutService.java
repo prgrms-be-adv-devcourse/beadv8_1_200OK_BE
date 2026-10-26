@@ -247,6 +247,8 @@ public class PayoutService {
                         snapshotId, sellerId, sellerCandidates.size(), e);
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
                 // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job 전체가 멈추므로, 여기서 멈추는 편이 원인이 분명함
+                // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중. 지금은 Job을 멈춤 (원인이 분명하고 잘못된 정산이 나가지 않는 쪽)
+                //   다른 방법 후보: 실패 기록 저장 재시도, 기록 없이 그 판매자만 건너뛰고 verify 규칙에서 따로 허용 등 → 어떻게 할지 #52에서 정함
                 payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
                 failedSellerCount++;
             }
