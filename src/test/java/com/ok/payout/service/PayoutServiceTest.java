@@ -16,6 +16,7 @@ import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.repository.PayoutSystemDraftItemRepository;
 import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
 import com.ok.payout.service.dto.PayoutDetailResult;
+import com.ok.payout.service.dto.PayoutDraftResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSellerSearchQuery;
@@ -108,11 +109,11 @@ class PayoutServiceTest {
                 .willReturn(List.of(amount10, fee10, shipping10, amount20, fee20));
 
         // when
-        int drafted = sut.draft(SNAPSHOT_ID, 100);
+        PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
 
         // then: 판매자마다 한 번씩, 수수료까지 그 판매자 후보를 모두 넘김 (판매자 몫·수수료 분류는 PayoutSellerDraftService가 함)
         // 호출 단위가 곧 트랜잭션 단위라 판매자별로 나눠 부르는 것 자체가 요구사항 (testing-strategy.md "호출 횟수는 요구사항일 때만")
-        assertThat(drafted).isEqualTo(2);
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(2, 0));
         then(payoutSellerDraftService).should().saveDraft(SNAPSHOT_ID, 10L, List.of(amount10, fee10, shipping10));
         then(payoutSellerDraftService).should().saveDraft(SNAPSHOT_ID, 20L, List.of(amount20, fee20));
         then(payoutSellerDraftService).should(never()).recordUnexpectedError(any(), any(), any());
@@ -132,11 +133,11 @@ class PayoutServiceTest {
         willThrow(failure).given(payoutSellerDraftService).saveDraft(SNAPSHOT_ID, 10L, List.of(amount10, fee10));
 
         // when
-        int drafted = sut.draft(SNAPSHOT_ID, 100);
+        PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
 
         // then: 예외를 밖으로 던지지 않고, 판매자 10 후보만 실패로 기록하고, 판매자 20은 저장함
-        // 실패한 판매자도 처리한 수에 셈 (0이 아니어야 tasklet이 다음 회차를 부름)
-        assertThat(drafted).isEqualTo(2);
+        // 실패한 판매자도 판매자 수에 셈 (0이 아니어야 tasklet이 다음 회차를 부름), 실패 수는 따로 1
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(2, 1));
         then(payoutSellerDraftService).should().recordUnexpectedError(SNAPSHOT_ID, List.of(amount10, fee10), failure);
         then(payoutSellerDraftService).should().saveDraft(SNAPSHOT_ID, 20L, List.of(amount20));
     }
@@ -165,11 +166,11 @@ class PayoutServiceTest {
         given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(List.of());
 
         // when
-        int drafted = sut.draft(SNAPSHOT_ID, 100);
+        PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
 
         // then: 0을 반환하면 tasklet이 FINISHED로 끝남
         // 처리할 판매자가 없으면 저장하지 않도록 일단 정해 두어, 저장 호출이 없는지 확인
-        assertThat(drafted).isZero();
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(0, 0));
         then(payoutSellerDraftService).should(never()).saveDraft(any(), any(), any());
     }
 

@@ -213,9 +213,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = createSnapshot(FROM, TO);
 
         // when & then: 1회차 2명 → 2회차 1명 → 3회차 없음(FINISHED 신호)
-        assertThat(payoutService.draft(snapshotId, 2)).isEqualTo(2);
-        assertThat(payoutService.draft(snapshotId, 2)).isEqualTo(1);
-        assertThat(payoutService.draft(snapshotId, 2)).isZero();
+        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isEqualTo(2);
+        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isEqualTo(1);
+        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isZero();
         // 각 판매자는 draft에 한 번씩만
         assertThat(sellerDraftRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutSellerDraft::getSellerId)
@@ -1113,7 +1113,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // draftStep처럼 0이 나올 때까지 회차 반복
     private void draftAll(Long snapshotId, int limit) {
-        while (payoutService.draft(snapshotId, limit) > 0) {
+        while (payoutService.draft(snapshotId, limit).sellerCount() > 0) {
             // 회차 반복
         }
     }
