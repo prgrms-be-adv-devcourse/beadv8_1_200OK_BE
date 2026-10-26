@@ -924,6 +924,29 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 이미_정산된_대금과_짝을_맞춰_나중에_온_수수료가_틀리면_잠기고_다음_스냅샷에서_빠진다() {
+        // given: 판매 대금 9,700이 먼저 정산된 뒤 같은 주문상품의 수수료 500이 들어옴 (판매 금액 10,200의 수수료는 306)
+        // 위 테스트의 반대 경우: 스냅샷 밖(정산된) 대금을 가져오지 못하면 짝이 없어 검사를 건너뛰므로 이 테스트가 실패함
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        settleAll(FROM, TO);
+        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 500L, createdAt);
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+        Long nextSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 수수료 후보가 금액 불일치로 빠지고, 수수료 검사로 잠긴 주문도 다음 스냅샷에 들어가지 않음
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(tuple(PayoutFailureReason.AMOUNT_MISMATCH,
+                        "수수료 불일치: 기대값 306, 실제값 500 (판매 금액 10200 기준)"));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+    }
+
+    @Test
     void 같은_주문의_상품이_다른_날_구매확정돼도_먼저_들어온_상품은_기다리지_않고_정산된다() {
         // given: 주문 X(차감액 30,000)의 주문상품 1은 기간 안, 주문상품 2는 기간 뒤(아직 대기 중)에 구매확정
         long orderX = nextOrderItemId();

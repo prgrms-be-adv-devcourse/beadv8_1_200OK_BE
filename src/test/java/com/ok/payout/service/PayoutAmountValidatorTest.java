@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 // 금액 검사 판정만 확인하는 단위 테스트 (DB·Spring 없음)
 // 조회 조건(스냅샷 밖 후보 포함, 조정 후보 제외 등)은 쿼리가 맡으므로 PayoutSettleIntegrationTest에서 확인
@@ -240,8 +241,11 @@ class PayoutAmountValidatorTest {
 
         // then: 배송비 후보의 보류 상세는 DB 길이에 맞게 잘리고 끝에 "..."
         PayoutFailure locked = sut.get(sut.size() - 1);
-        assertThat(locked.getReason()).isEqualTo(PayoutFailureReason.ORDER_LOCKED);
-        assertThat(locked.getDetail()).hasSize(PayoutFailure.MAX_DETAIL_LENGTH).endsWith("...");
+        assertThat(locked).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(locked.getReason()).isEqualTo(PayoutFailureReason.ORDER_LOCKED);
+            softly.assertThat(locked.getDetail()).hasSize(PayoutFailure.MAX_DETAIL_LENGTH).endsWith("...");
+        });
     }
 
     // ---------- 도우미 ----------
