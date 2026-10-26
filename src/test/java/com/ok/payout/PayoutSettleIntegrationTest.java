@@ -439,6 +439,35 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 주문이_다르게_들어간_draft_항목은_그_주문에_실패_기록이_없어도_정산에서_빠진다() {
+        // given: 판매자 10(주문 X), 20(주문 Y)을 draft한 뒤, 주문 X 대금 항목의 주문 ID가 스냅샷에 없는 주문으로 들어간 상황
+        // 실패 기록의 주문은 후보에서 복사(X)하므로 draft 항목의 주문으로는 거를 수 없음 → 후보 기준 제외가 막아야 함
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 20L, 19_400L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        long wrongOrderId = nextOrderItemId();
+        Long candidateX = candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT);
+        jdbcTemplate.update("UPDATE payout_seller_draft_item SET order_id = ? WHERE snapshot_id = ? AND candidate_id = ?",
+                wrongOrderId, snapshotId, candidateX);
+
+        // when
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 판매자 10의 돈은 나가지 않고, 판매자 20만 정산
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getDetail)
+                .containsExactly(tuple(orderX, "[원인] 주문 다름(스냅샷 " + orderX + ", draft " + wrongOrderId + ")"));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(20L, 19_400L));
+    }
+
+    @Test
     void 판매자_합계가_항목_합계와_다르면_전용_에러로_멈추고_실패를_기록하지_않는다() {
         // given: draft 뒤 판매자 10의 헤더 금액만 바뀜 (draft를 만드는 코드가 망가진 상황), 놓친 후보도 함께 있음
         insertSaleAmount(10L, 1_000L, TO.minusDays(1));

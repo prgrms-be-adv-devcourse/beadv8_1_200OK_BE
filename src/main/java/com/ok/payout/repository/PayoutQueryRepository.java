@@ -145,7 +145,10 @@ public class PayoutQueryRepository {
                         payoutSellerDraftItem.amount)
                 .from(payoutSellerDraftItem)
                 .join(payoutSellerDraftItem.sellerDraft, payoutSellerDraft)
-                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId))
+                // 헤더의 스냅샷도 같아야 함: commitStep은 헤더(스냅샷 기준) 아래 항목을 정산하므로, 헤더가 다른 스냅샷인 항목은 이번에 정산되지 않음
+                //   → 여기서도 빼서 "draft 누락"으로 잡히게 함 (verify가 통과시킨 항목이 commit에서 조용히 빠지는 일이 없게)
+                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId),
+                        payoutSellerDraft.snapshotId.eq(snapshotId))
                 .orderBy(payoutSellerDraftItem.candidateId.asc())
                 .fetch();
         List<DraftItemRow> items = new ArrayList<>();

@@ -183,7 +183,7 @@ class PayoutServiceTest {
         willThrow(new IllegalStateException("실패 기록 저장 실패"))
                 .given(payoutSellerDraftService).recordUnexpectedError(SNAPSHOT_ID, List.of(amount10), failure);
 
-        // when & then: 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job이 멈추므로, 여기서 바로 멈춤
+        // when & then: 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify가 "draft 누락"으로 주문을 잠그므로, 여기서 바로 멈춤
         assertThatThrownBy(() -> sut.draft(SNAPSHOT_ID, 100))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("실패 기록 저장 실패");

@@ -61,8 +61,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class PayoutService {
 
-    // 코드 고장으로 전체를 멈출 때 예외 메시지에 담는 후보 ID 최대 개수 (메시지가 너무 길어지지 않게, 나머지는 건수로만 남김)
-    private static final int CANDIDATE_ID_MESSAGE_LIMIT = 20;
+    // 코드 고장으로 전체를 멈출 때 예외 메시지에 담는 항목(판매자 합계 불일치 내용, 후보 ID) 최대 개수 (메시지가 너무 길어지지 않게, 나머지는 건수로만 남김)
+    private static final int MESSAGE_ITEM_LIMIT = 20;
 
     private final PayoutQueryRepository payoutQueryRepository;
     private final PayoutCandidateItemRepository payoutCandidateItemRepository;
@@ -119,7 +119,7 @@ public class PayoutService {
 
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건(예: 배치 종료)에 남기고, 식별자는 key={} 형태로 넣음
         // 스냅샷 생성은 배치가 맡은 대상이 정해지는 시점이라 INFO로 남김
-        // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(검증 실패 시 누락 목록 등)와 이어서 볼 수 있음
+        // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(결과 검증으로 뺀 주문 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
 
         // 이번 조회 기간에서 잠긴 주문(#195) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
@@ -392,7 +392,7 @@ public class PayoutService {
             // TODO(#52): 코드가 망가졌다는 것을 빨리 알리는 처리(슬랙 등 즉시 알림)가 필요. 지금은 전용 에러 코드로 Job만 멈춤
             throw new RestApiException(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH, String.format(
                     "판매자 임시 정산 합계 불일치(코드 오류). snapshotId=%d, 불일치 판매자 수=%d, 내용(최대 %d건)=%s",
-                    snapshotId, totalMismatches.size(), CANDIDATE_ID_MESSAGE_LIMIT, limit(totalMismatches)));
+                    snapshotId, totalMismatches.size(), MESSAGE_ITEM_LIMIT, limit(totalMismatches)));
         }
 
         List<SnapshotItemRow> snapshotItems = payoutQueryRepository.findSnapshotItemRows(snapshotId);
@@ -406,13 +406,12 @@ public class PayoutService {
             // TODO(#52): 위와 같은 코드 고장 알림 필요
             throw new RestApiException(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE, String.format(
                     "실패 후보가 임시 정산에 들어감(코드 오류). snapshotId=%d, 후보 수=%d, 후보 ID(최대 %d건)=%s",
-                    snapshotId, result.failedCandidatesInDraft().size(), CANDIDATE_ID_MESSAGE_LIMIT,
+                    snapshotId, result.failedCandidatesInDraft().size(), MESSAGE_ITEM_LIMIT,
                     limit(result.failedCandidatesInDraft())));
         }
 
         // 2) 걸린 주문의 후보를 실패로 기록 (주문 잠금)
-        List<PayoutFailure> verifyFailures = toVerifyFailures(snapshotId, result.orderMismatches(), snapshotItems,
-                draftItems, failures);
+        List<PayoutFailure> verifyFailures = toVerifyFailures(snapshotId, result.orderMismatches(), snapshotItems, failures);
         if (!verifyFailures.isEmpty()) {
             payoutVerifyFailureService.saveAll(verifyFailures);
         }
@@ -435,13 +434,14 @@ public class PayoutService {
     }
 
     // 걸린 주문마다 이번 스냅샷 후보 전체(모든 판매자)의 VERIFY_MISMATCH 실패 기록을 만듦
-    //   대상: 그 주문의 스냅샷 후보 + 그 주문으로 draft에 들어간 항목의 후보(스냅샷에 없는 항목 포함) + 원인 후보
+    //   대상: 원인 후보 + 그 주문의 스냅샷 후보
+    //   draft 항목 쪽을 따로 보지 않는 이유: 스냅샷에 없는 항목이나 주문이 다르게 들어간 항목은 이미 원인 후보로 들어가 있고,
+    //   주문이 같은 항목은 스냅샷 후보와 같음
     //   상세: 원인 후보는 "[원인] 어긋난 내용", 나머지는 "[함께 보류] … (원인 후보 ID)"
     //   이미 이번 스냅샷에 실패 기록이 있는 후보는 뺌 (실패 기록 UK. validate에서 빠진 후보라 draft에도 없음)
     // 같은 후보가 두 주문에 걸리면(주문 ID가 어긋난 경우) 처음 정한 상세로 1건만 만듦
     private List<PayoutFailure> toVerifyFailures(Long snapshotId, List<PayoutDraftValidator.OrderMismatch> mismatches,
-                                                 List<SnapshotItemRow> snapshotItems, List<DraftItemRow> draftItems,
-                                                 List<FailureRow> failures) {
+                                                 List<SnapshotItemRow> snapshotItems, List<FailureRow> failures) {
         if (mismatches.isEmpty()) {
             return List.of();
         }
@@ -458,11 +458,6 @@ public class PayoutService {
             for (SnapshotItemRow snapshotItem : snapshotItems) {
                 if (snapshotItem.orderId().equals(mismatch.orderId()) && !details.containsKey(snapshotItem.candidateId())) {
                     details.put(snapshotItem.candidateId(), heldDetail);
-                }
-            }
-            for (DraftItemRow draftItem : draftItems) {
-                if (draftItem.orderId().equals(mismatch.orderId()) && !details.containsKey(draftItem.candidateId())) {
-                    details.put(draftItem.candidateId(), heldDetail);
                 }
             }
         }
@@ -508,9 +503,9 @@ public class PayoutService {
         }
     }
 
-    // 예외 메시지용으로 앞 CANDIDATE_ID_MESSAGE_LIMIT개만 남김
+    // 예외 메시지용으로 앞 MESSAGE_ITEM_LIMIT개만 남김
     private static <T> List<T> limit(List<T> values) {
-        return values.subList(0, Math.min(values.size(), CANDIDATE_ID_MESSAGE_LIMIT));
+        return values.subList(0, Math.min(values.size(), MESSAGE_ITEM_LIMIT));
     }
 
     /**

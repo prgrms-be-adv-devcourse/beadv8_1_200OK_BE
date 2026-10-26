@@ -29,6 +29,8 @@ public enum PayoutErrorCode implements ErrorCode {
     DRAFT_SELLER_TOTAL_MISMATCH(HttpStatus.INTERNAL_SERVER_ERROR, "Draft seller total mismatch", "판매자 임시 정산 합계가 항목 합계와 다릅니다. 임시 정산을 만드는 코드 오류이므로 최근 변경을 확인하세요."),
     // 이번 스냅샷에서 실패로 기록된 후보가 draft에 들어감 (#290). draft 대상 조회 조건(실패 후보 제외)이 망가진 상태라 위와 같은 코드 고장
     // 주문 단위로 빼지 않고 전체를 멈추는 이유: 이 후보에는 실패 기록이 이미 있어 결과 검증 실패를 따로 남길 수 없고(UK), 공통 조회 조건의 버그라 다른 주문도 믿기 어려움
+    // 코드 버그가 아닌 경로도 하나 있음: 판매자 draft 저장이 DB에는 커밋됐는데 호출 쪽에 예외로 돌아오면(커밋 응답 유실 등) 그 판매자 후보가 UNEXPECTED_ERROR로도 기록됨
+    //   이때도 멈추는 편이 안전함 (UNEXPECTED_ERROR는 잠그지 않아, 원인을 확인하고 재실행하면 새 스냅샷에서 다시 처리됨)
     DRAFT_INCLUDES_FAILED_CANDIDATE(HttpStatus.INTERNAL_SERVER_ERROR, "Draft includes failed candidate", "실패로 기록된 정산후보가 임시 정산에 들어갔습니다. draft 대상 조회 조건 오류이므로 최근 변경을 확인하세요."),
     PAYOUT_NOT_FOUND(HttpStatus.NOT_FOUND, "Payout not found", "정산을 찾을 수 없습니다."),
     PAYOUT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Payout access denied", "정산을 조회할 권한이 없습니다."),

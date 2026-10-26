@@ -82,13 +82,12 @@ public class Payout extends BaseTime {
     //   예) 0 → addItem(10,000) → 10,000 → addItem(3,000) → 13,000 → saveAll 시 amount = 13,000으로 INSERT
     //
     // 판매자 draft 헤더 금액(PayoutSellerDraft.amount)을 복사하지 않고 항목을 다시 더하는 이유
-    //   정상 흐름에서는 verifyStep이 "헤더 = 항목 합계"를 확인하므로 어느 쪽이든 결과가 같음
-    //   하지만 헤더를 복사하면 장부의 정확성이 "앞에서 verify가 돌았다"는 가정에 의존함
+    //   결과 검증에 걸린 주문의 항목을 거르면(#290) 헤더 금액과 정산 금액이 원래 달라지므로 헤더를 쓸 수 없음
+    //   거른 항목이 없어도 헤더를 복사하면 장부의 정확성이 "앞에서 verify가 돌았다"는 가정에 의존함
     //     → verify 없이 commit이 불리거나(테스트, #67의 수동 재확정 경로 등) Step 순서·검증 규칙이 바뀌면
     //       payout 금액과 그 payout_item 합계가 어긋난 장부가 저장되고, @Immutable이라 고칠 수도 없음
     //   항목을 다시 더하면 누가 어떤 순서로 불러도 "payout 금액 = 자기 항목 합"이 항상 성립 (verify와 이중 방지)
     //   비용은 메모리 안의 덧셈뿐이라 거의 없음
-    //   결과 검증에 걸린 주문의 항목을 거르면(#290) 헤더 금액과 정산 금액이 원래 달라지므로, 지금은 항목을 더하는 것이 필수
     private void addItem(Long candidateId, PayoutEventType eventType, Long orderId, Long orderItemId, Long sellerId,
                          Long amount) {
         items.add(new PayoutItem(this, candidateId, eventType, orderId, orderItemId, sellerId, amount));

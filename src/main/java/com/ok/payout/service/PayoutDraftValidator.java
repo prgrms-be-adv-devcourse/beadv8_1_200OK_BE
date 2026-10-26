@@ -147,6 +147,8 @@ final class PayoutDraftValidator {
     // 스냅샷 후보와 그 후보의 draft 항목 1건 비교. 금액뿐 아니라 판매자·주문·몫까지 봄
     //   금액만 보면 다른 판매자 헤더 아래로 들어간 항목(돈이 다른 판매자에게 감)이나 수수료가 판매자 몫에 들어간 경우를 못 잡음
     // 주문이 다르면 두 주문 모두 뺌: commitStep은 draft 항목의 주문으로 거르므로 draft 쪽 주문도 빠져야 함
+    //   단 draft 쪽 주문은 이번 스냅샷에 그 주문의 다른 후보가 있을 때만 실패 기록(= 잠금)이 생김 (실패 기록의 주문은 후보에서 복사하므로)
+    //   다른 후보가 없으면 잠기지 않지만 정산할 것도 없고, 잘못 묶인 항목 자체는 후보 기준으로 빠짐 (PayoutVerifyExclusion)
     private static void checkDraftMatchesSnapshot(SnapshotItemRow snapshot, DraftItemRow draft,
                                                   Map<Long, Map<Long, String>> causesByOrder) {
         Long orderId = snapshot.orderId();

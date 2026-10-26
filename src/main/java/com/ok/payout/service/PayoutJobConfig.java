@@ -175,9 +175,10 @@ public class PayoutJobConfig {
     public Tasklet payoutVerifyTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         return (contribution, chunkContext) -> {
             PayoutVerifyResult result = payoutService.verify(snapshotId);
-            failIfEveryOrderExcluded(result, snapshotId);
+            // 수를 먼저 남긴 뒤 실패 판정: 예외로 끝나도 이번 호출의 수는 Step 실행 기록에 반영됨 (아래 메서드 주석)
             contribution.incrementWriteCount(result.remainingItemCount());
             contribution.incrementWriteSkipCount(result.recordedFailureCount());
+            failIfEveryOrderExcluded(result, snapshotId);
             return RepeatStatus.FINISHED;
         };
     }
@@ -186,8 +187,9 @@ public class PayoutJobConfig {
     // 기준은 draft 전원 실패(failIfEverySellerFailed)와 같음: 지켜 낼 정산이 없는 전부 실패는 대부분 공통 원인(코드 버그)이라
     //   COMPLETED로 두면 정산 0건인데 정상 종료로 보여 놓치기 쉬움. 일부만 걸리면 정상 주문 정산을 위해 COMPLETED 유지
     // 실패 기록·잠금은 verify가 별도 트랜잭션으로 이미 저장해 이 예외로 롤백되지 않음
-    // 수는 예외 메시지에 담음: tasklet이 예외로 끝나면 이번 호출의 WRITE_COUNT·WRITE_SKIP_COUNT는 Step 실행 기록에 반영되지 않음
-    //   (draft와 달리 verify는 1회 호출이라 앞 회차에 쌓인 수도 없음)
+    // 수(WRITE_SKIP_COUNT = 걸린 후보 수)는 FAILED여도 Step 실행 기록에 남음
+    //   Spring Batch(6.0.5 TaskletStep)는 tasklet이 예외로 끝나도 finally에서 이번 호출의 수를 Step 실행 기록에 더함 → 그래서 판정 전에 수를 올림
+    //   예외 메시지에도 수를 담아 EXIT_MESSAGE만 봐도 알 수 있게 함
     private void failIfEveryOrderExcluded(PayoutVerifyResult result, Long snapshotId) {
         if (result.everyOrderExcluded()) {
             // 사용자 입력이 아닌 배치 내부 상태라 표준 예외 (exception.md: 값의 출처 기준). 메시지는 Step 실행 기록(EXIT_MESSAGE)에 남음

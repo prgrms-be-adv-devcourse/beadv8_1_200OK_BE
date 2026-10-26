@@ -137,12 +137,15 @@ class PayoutJobConfigTest {
     void 걸린_주문을_빼고_나니_정산할_항목이_0건이면_verify_Step을_실패시킨다() {
         // given: 주문 2개가 모두 걸려 후보 4건을 기록하고 남은 항목 없음
         given(payoutService.verify(SNAPSHOT_ID)).willReturn(new PayoutVerifyResult(0, 2, 4));
+        StepContribution contribution = contribution();
 
-        // when & then: 수는 예외 메시지에 남음 (예외로 끝나면 이번 호출의 write count는 Step 실행 기록에 반영되지 않음)
+        // when & then: 수는 예외 메시지에도 남음
         assertThatThrownBy(() -> new PayoutJobConfig(payoutService).payoutVerifyTasklet(SNAPSHOT_ID)
-                .execute(contribution(), null))
+                .execute(contribution, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("결과 검증에 걸린 주문을 빼고 나니 정산할 항목이 없습니다. snapshotId=12, 뺀 주문 수=2, 새로 기록한 실패 수=4");
+        // then: 예외 전에 수를 올려 둠 (Spring Batch가 예외로 끝난 호출의 수도 Step 실행 기록에 더하므로 FAILED Step에 걸린 후보 수가 남음)
+        assertThat(contribution.getWriteSkipCount()).isEqualTo(4L);
     }
 
     // 실제 Step처럼 tasklet을 회차마다 새 contribution으로 부르고, 끝난 회차의 수를 Step 실행 기록에 합산(apply)함
