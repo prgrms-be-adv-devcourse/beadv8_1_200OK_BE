@@ -70,6 +70,8 @@ final class PayoutAmountValidator {
             // TODO(#52): 부분 환불이 생기면 기준값을 "차감액 − 환불액"으로 바꿔야 함 (주문 #28 구매확정 금액에 환불 수량 미반영)
             // TODO(#52): 할인 도입 예정. 할인이 생기면 이 검사 기준도 함께 다시 정해야 함 (지금은 정해진 것 없음)
             // 조회 조건상 대상 주문에는 항상 합계·차감액이 있음 (대상 = 스냅샷 후보 중 차감 기록이 있는 것)
+            //   차감 기록·정산후보는 INSERT만 하고 지우지 않아서, 대상 조회 뒤에 한 합계·차감액 조회에도 그 주문이 반드시 있음 (격리 수준과 무관)
+            //   없는 주문을 건너뛰게 만들지 않는 이유: 건너뛴 주문은 실패 기록이 없어 금액 검사 없이 정산·지급되기 때문
             long deducted = input.deductionsByOrder().get(orderId);
             long total = input.candidateTotalsByOrder().get(orderId);
             if (total > deducted) {

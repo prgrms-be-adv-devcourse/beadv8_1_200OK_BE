@@ -142,8 +142,7 @@ public class PayoutService {
         // 2) 금액 검사: 차감 기록이 있는 주문만 대상 (판정은 PayoutAmountValidator, 여기는 조회·저장만)
         // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (createSnapshot 주석 참고)
         // 1)과 2)의 조회가 같은 시점의 데이터를 본다는 전제: MySQL 기본 격리 수준(REPEATABLE READ)이라 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
-        //   READ COMMITTED로 바꾸면 조회 사이에 들어온 차감 기록 때문에 매 배치 실패할 수 있음
-        //   (같은 후보가 두 번 실패로 잡혀 UK 위반, 또는 금액 검사 대상인데 차감액 조회 결과에 그 주문이 없어 NPE)
+        //   READ COMMITTED로 바꾸면 1)과 2) 사이에 들어온 차감 기록 때문에 같은 후보가 두 번 실패로 잡혀 UK 위반 → 매 배치 실패할 수 있음
         List<PayoutFailure> amountFailures = PayoutAmountValidator.validate(snapshotId, new PayoutAmountValidator.Input(
                 payoutQueryRepository.findCandidatesWithDeduction(snapshotId),
                 payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId),
