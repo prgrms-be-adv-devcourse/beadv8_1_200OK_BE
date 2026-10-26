@@ -213,9 +213,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = createSnapshot(FROM, TO);
 
         // when & then: 1회차 2명 → 2회차 1명 → 3회차 없음(FINISHED 신호)
-        assertThat(payoutService.draft(snapshotId, 2)).isEqualTo(2);
-        assertThat(payoutService.draft(snapshotId, 2)).isEqualTo(1);
-        assertThat(payoutService.draft(snapshotId, 2)).isZero();
+        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isEqualTo(2);
+        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isEqualTo(1);
+        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isZero();
         // 각 판매자는 draft에 한 번씩만
         assertThat(sellerDraftRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutSellerDraft::getSellerId)
@@ -979,6 +979,80 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(null, 300L));
     }
 
+    // ---------- draftStep 판매자 단위 격리 (#90) ----------
+
+    @Test
+    void 한_판매자_draft_저장이_실패해도_같은_회차의_다른_판매자와_이후_회차는_정산된다() {
+        // given: 판매자 20, 10, 30 각각 대금·수수료. 생성 순서로 1회차 [20, 10], 2회차 [30]
+        // 실패할 판매자 20을 회차 맨 앞에 둠: 실패 직후 같은 회차의 다음 판매자(10)가 이어서 저장되는지까지 확인하려고
+        long orderItem20 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem20, 20L, 19_400L, TO.minusDays(3));
+        insertCandidate(PayoutEventType.SALE_FEE, orderItem20, 20L, 600L, TO.minusDays(3));
+        long orderItem10 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem10, 10L, 9_700L, TO.minusDays(2));
+        insertCandidate(PayoutEventType.SALE_FEE, orderItem10, 10L, 300L, TO.minusDays(2));
+        long orderItem30 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem30, 30L, 970L, TO.minusDays(1));
+        insertCandidate(PayoutEventType.SALE_FEE, orderItem30, 30L, 30L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(snapshotId);
+        // 판매자 20 저장에서 DB 오류가 나게 막아 둠
+        blockSellerDraft(snapshotId, 20L);
+
+        // when: 한 회차 2명씩 draft (1회차에서 판매자 20이 실패)
+        draftAll(snapshotId, 2);
+        // 오류가 사라진 뒤 검증·확정
+        unblockSellerDraft(snapshotId, 20L);
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 판매자 20의 후보 2건만 UNEXPECTED_ERROR (예외 종류가 상세에 남음)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getSellerId, PayoutFailure::getReason)
+                .containsExactly(
+                        tuple(20L, PayoutFailureReason.UNEXPECTED_ERROR),
+                        tuple(20L, PayoutFailureReason.UNEXPECTED_ERROR));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .allSatisfy(failure -> assertThat(failure.getDetail()).startsWith("draft 처리 중 예외: "));
+
+        // then: 같은 회차의 판매자 10, 다음 회차의 판매자 30은 정산되고, 결과 검증도 통과함
+        // 시스템 몫에는 판매자 20의 수수료(600)가 들어가지 않음 (판매자 몫과 함께 롤백됨)
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(
+                        tuple(10L, 9_700L),
+                        tuple(30L, 970L),
+                        tuple(null, 330L));
+    }
+
+    @Test
+    void draft에서_실패한_판매자는_다음_배치에서_다시_처리되어_정산된다() {
+        // given: 1차 배치에서 판매자 20의 draft 저장이 실패함 (UNEXPECTED_ERROR는 잠그지 않음)
+        long orderItem20 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItem20, 20L, 19_400L, TO.minusDays(1));
+        insertCandidate(PayoutEventType.SALE_FEE, orderItem20, 20L, 600L, TO.minusDays(1));
+        Long firstSnapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(firstSnapshotId);
+        blockSellerDraft(firstSnapshotId, 20L);
+        draftAll(firstSnapshotId, LIMIT);
+        unblockSellerDraft(firstSnapshotId, 20L);
+        payoutService.verify(firstSnapshotId);
+        payoutService.commit(firstSnapshotId);
+
+        // when: 오류가 사라진 뒤 2차 배치
+        Long secondSnapshotId = settleAll(FROM, TO);
+
+        // then: 1차는 실패 기록만 있고 정산 없음, 2차에서 다시 처리되어 정산됨
+        assertThat(failureRepository.findBySnapshotId(firstSnapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsOnly(PayoutFailureReason.UNEXPECTED_ERROR);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isEmpty();
+        assertThat(failureRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(20L, 19_400L), tuple(null, 600L));
+    }
+
     // ---------- 대기 건너뛰기 실행 (#224) ----------
 
     @Test
@@ -1040,7 +1114,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // draftStep처럼 0이 나올 때까지 회차 반복
     private void draftAll(Long snapshotId, int limit) {
-        while (payoutService.draft(snapshotId, limit) > 0) {
+        while (payoutService.draft(snapshotId, limit).sellerCount() > 0) {
             // 회차 반복
         }
     }
@@ -1160,6 +1234,21 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update(
                 "INSERT INTO payout_snapshot_item (snapshot_id, candidate_id, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 snapshotId, candidateId, amount, now, now);
+    }
+
+    // draft 저장 중 DB 오류 재현 (#90): 그 스냅샷·판매자의 빈 draft를 미리 넣어 두면, draft 저장 때 UK(snapshot_id, seller_id) 위반이 남
+    // 목(mock) 없이 실제 트랜잭션·DB 예외로 "한 판매자만 실패"를 만들려고 씀 (정상 흐름에서는 생기지 않는 상태라 SQL로 넣음)
+    private void blockSellerDraft(Long snapshotId, Long sellerId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_seller_draft (snapshot_id, seller_id, amount, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
+                snapshotId, sellerId, now, now);
+    }
+
+    // 오류가 사라진 상황 재현: 막아 둔 빈 draft를 지움
+    // 남겨 두면 commit이 이 빈 draft로 0원 판매자 정산을 만들어, 실제 오류 상황(롤백되어 아무것도 안 남음)과 달라짐
+    private void unblockSellerDraft(Long snapshotId, Long sellerId) {
+        jdbcTemplate.update("DELETE FROM payout_seller_draft WHERE snapshot_id = ? AND seller_id = ?", snapshotId, sellerId);
     }
 
     private long nextOrderItemId() {

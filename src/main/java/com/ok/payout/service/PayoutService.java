@@ -23,6 +23,7 @@ import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
 import com.ok.payout.service.dto.PayoutCandidateResult;
 import com.ok.payout.service.dto.PayoutCandidateSearchQuery;
 import com.ok.payout.service.dto.PayoutDetailResult;
+import com.ok.payout.service.dto.PayoutDraftResult;
 import com.ok.payout.service.dto.PayoutItemResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
@@ -65,6 +66,8 @@ public class PayoutService {
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
     private final PayoutFailureRepository payoutFailureRepository;
+    // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
+    private final PayoutSellerDraftService payoutSellerDraftService;
     // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
@@ -186,14 +189,37 @@ public class PayoutService {
         }
     }
 
-    // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
+    // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환
+    // 판매자 수가 0이면 더 없음 → tasklet 종료
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
     // payout 생성(commitStep)과 이벤트 발행(publishStep)은 검증 이후 단계에서 함
-    @Transactional
-    public int draft(Long snapshotId, int limit) {
+    //
+    // 판매자 단위 격리(#90): 판매자마다 저장 트랜잭션을 따로 둠 (PayoutSellerDraftService, REQUIRES_NEW)
+    //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 후보 전체를 UNEXPECTED_ERROR로 기록한 뒤 다음 판매자로 넘어감
+    //   → 같은 회차의 다른 판매자와 이후 회차는 계속 처리되고, 일부만 실패하면 Job도 멈추지 않음 (전에는 회차 전체가 롤백되고 Job이 FAILED)
+    //   실패로 기록된 후보는 다음 회차의 조회 조건(조건 ④)에서 빠지므로, 실패한 판매자를 다시 뽑는 무한 반복은 없음
+    //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
+    // 판매자 수에는 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
+    // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 일부 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
+    //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
+    //   전원 실패(성공 0명)면 draft Step이 끝날 때 Job을 FAILED로 만듦 (PayoutJobConfig.failIfEverySellerFailed)
+    //
+    // 이 메서드에서 쓰는 것이 없음: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 이 메서드 자체는 조회만 함
+    // readOnly는 단독으로 불릴 때(서비스 테스트 등)만 적용됨. draftStep에서는 Step 트랜잭션(읽기·쓰기)에 참여해 그 설정을 따름
+    //   어느 쪽이든 판매자 저장은 REQUIRES_NEW라 바깥 트랜잭션 설정과 상관없이 동작이 같음
+    // 커넥션: Step 트랜잭션 1개 + 판매자 저장 1개 = Job 하나당 최대 2개 (판매자를 한 명씩 차례로 처리하므로 판매자 수와 상관없음)
+    //   정산 Job은 수동·자동 상관없이 한 번에 하나만 도는 전제라 기본 풀(10개, 배치·API 공유)에서 고갈되지 않음. 판매자마다 커밋해 느려지는 건 감수
+    //   지금은 동시 실행을 막는 장치가 없음 → 수동·자동 실행이 겹치지 않게 막는 처리는 #52
+    //
+    // TODO(#52): 판매자 수가 크게 늘면 처리 방식 수정 필요. 판매자마다 커밋하므로 커밋 수가 판매자 수만큼 늘어남
+    //   (INSERT 수는 예전과 같음: IDENTITY라 원래도 행마다 INSERT. 늘어나는 건 커밋할 때의 디스크 로그 확정 시간)
+    //   예) 판매자 10만 명이면 커밋 1,000번 → 100,000번, 커밋 1번 1~5ms로 어림하면 약 2~8분 늘어남 (실측 아님)
+    //   수정안 후보: 판매자 N명을 한 트랜잭션으로 묶어 저장해 보고, 실패한 묶음만 판매자 한 명씩 다시 저장 (평소 커밋 수는 예전 수준, 실패 때만 판매자 단위 격리)
+    @Transactional(readOnly = true)
+    public PayoutDraftResult draft(Long snapshotId, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);
         if (sellerIds.isEmpty()) {
-            return 0;
+            return new PayoutDraftResult(0, 0);
         }
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUndraftedCandidates(snapshotId, sellerIds);
@@ -202,14 +228,9 @@ public class PayoutService {
             throw new RestApiException(PayoutErrorCode.UNSETTLED_CANDIDATES_NOT_FOUND);
         }
 
-        // 정산후보 하나는 판매자 몫·시스템 몫 중 한 곳에만 들어감 (isSystemShare 기준)
+        // 판매자별로 묶음 (판매자 몫·수수료 모두 그 판매자 트랜잭션에서 함께 저장)
         Map<Long, List<PayoutCandidateItem>> candidatesBySeller = new LinkedHashMap<>();
-        List<PayoutSystemDraftItem> systemItems = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
-            if (candidate.isSystemShare()) {
-                systemItems.add(PayoutSystemDraftItem.create(snapshotId, candidate));
-                continue;
-            }
             Long sellerId = candidate.getSellerId();
             if (!candidatesBySeller.containsKey(sellerId)) {
                 candidatesBySeller.put(sellerId, new ArrayList<>());
@@ -217,14 +238,26 @@ public class PayoutService {
             candidatesBySeller.get(sellerId).add(candidate);
         }
 
-        List<PayoutSellerDraft> sellerDrafts = new ArrayList<>();
+        int failedSellerCount = 0;
         for (Map.Entry<Long, List<PayoutCandidateItem>> entry : candidatesBySeller.entrySet()) {
-            sellerDrafts.add(PayoutSellerDraft.create(snapshotId, entry.getKey(), entry.getValue()));
+            Long sellerId = entry.getKey();
+            List<PayoutCandidateItem> sellerCandidates = entry.getValue();
+            try {
+                payoutSellerDraftService.saveDraft(snapshotId, sellerId, sellerCandidates);
+            } catch (RuntimeException e) {
+                // 예외를 다시 던지지 않고 기록으로 남기므로 팀 로그 규칙의 "던질 때 로그 금지"에 해당하지 않음
+                // 그대로 묻히지 않게 스택 트레이스까지 WARN으로 남김 (계속 진행하지만 원인 확인이 필요한 이상)
+                log.warn("정산 draft 판매자 처리 실패, 이 판매자만 제외하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
+                        snapshotId, sellerId, sellerCandidates.size(), e);
+                // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
+                // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job 전체가 멈추므로, 여기서 멈추는 편이 원인이 분명함
+                // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중 (지금은 위 이유로 Job을 멈춤)
+                //   다른 방법 후보: 실패 기록 저장 재시도, 기록 없이 그 판매자만 건너뛰고 verify 규칙에서 따로 허용 등 → 어떻게 할지 #52에서 정함
+                payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
+                failedSellerCount++;
+            }
         }
-
-        payoutSellerDraftRepository.saveAll(sellerDrafts);
-        payoutSystemDraftItemRepository.saveAll(systemItems);
-        return sellerIds.size();
+        return new PayoutDraftResult(sellerIds.size(), failedSellerCount);
     }
 
     // 검증을 통과한 draft를 payout·payout_item으로 확정

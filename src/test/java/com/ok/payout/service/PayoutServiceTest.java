@@ -16,6 +16,7 @@ import com.ok.payout.repository.PayoutSnapshotRepository;
 import com.ok.payout.repository.PayoutSystemDraftItemRepository;
 import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
 import com.ok.payout.service.dto.PayoutDetailResult;
+import com.ok.payout.service.dto.PayoutDraftResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSellerSearchQuery;
@@ -47,6 +48,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -80,16 +82,13 @@ class PayoutServiceTest {
     private PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
 
     @Mock
+    private PayoutSellerDraftService payoutSellerDraftService;
+
+    @Mock
     private PayoutEventPublisher payoutEventPublisher;
 
     @InjectMocks
     private PayoutService sut;
-
-    @Captor
-    private ArgumentCaptor<List<PayoutSellerDraft>> sellerDraftsCaptor;
-
-    @Captor
-    private ArgumentCaptor<List<PayoutSystemDraftItem>> systemItemsCaptor;
 
     @Captor
     private ArgumentCaptor<SellerPayoutCreatedCommand> commandCaptor;
@@ -97,36 +96,68 @@ class PayoutServiceTest {
     // ---------- draft ----------
 
     @Test
-    void 판매자_몫은_판매자별_draft로_수수료는_시스템_draft_항목으로_나눠_저장한다() {
+    void 판매자마다_그_판매자의_후보_전체를_따로_저장한다() {
         // given: 판매자 10(대금·수수료·배송비), 판매자 20(대금·수수료)
         List<Long> sellerIds = List.of(10L, 20L);
+        PayoutCandidateItem amount10 = withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L);
+        PayoutCandidateItem fee10 = withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 2L);
+        PayoutCandidateItem shipping10 = withId(PayoutCandidateItem.ofSaleShippingFee(1L, 10L, 3_000L), 3L);
+        PayoutCandidateItem amount20 = withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L);
+        PayoutCandidateItem fee20 = withId(PayoutCandidateItem.ofSaleFee(2L, 2001L, 20L, 600L), 5L);
         given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
-        given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds)).willReturn(List.of(
-                withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L),
-                withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 2L),
-                withId(PayoutCandidateItem.ofSaleShippingFee(1L, 10L, 3_000L), 3L),
-                withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L),
-                withId(PayoutCandidateItem.ofSaleFee(2L, 2001L, 20L, 600L), 5L)));
+        given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds))
+                .willReturn(List.of(amount10, fee10, shipping10, amount20, fee20));
 
         // when
-        int drafted = sut.draft(SNAPSHOT_ID, 100);
+        PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
 
-        // then: 처리한 판매자 수 (시스템 몫은 판매자 수에 안 셈)
-        assertThat(drafted).isEqualTo(2);
+        // then: 판매자마다 한 번씩, 수수료까지 그 판매자 후보를 모두 넘김 (판매자 몫·수수료 분류는 PayoutSellerDraftService가 함)
+        // 호출 단위가 곧 트랜잭션 단위라 판매자별로 나눠 부르는 것 자체가 요구사항 (testing-strategy.md "호출 횟수는 요구사항일 때만")
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(2, 0));
+        then(payoutSellerDraftService).should().saveDraft(SNAPSHOT_ID, 10L, List.of(amount10, fee10, shipping10));
+        then(payoutSellerDraftService).should().saveDraft(SNAPSHOT_ID, 20L, List.of(amount20, fee20));
+        then(payoutSellerDraftService).should(never()).recordUnexpectedError(any(), any(), any());
+    }
 
-        then(payoutSellerDraftRepository).should().saveAll(sellerDraftsCaptor.capture());
-        assertThat(sellerDraftsCaptor.getValue())
-                .extracting(PayoutSellerDraft::getSellerId, PayoutSellerDraft::getAmount)
-                .containsExactlyInAnyOrder(
-                        tuple(10L, 12_700L),    // 대금 9,700 + 배송비 3,000
-                        tuple(20L, 19_400L));   // 대금만
+    @Test
+    void 한_판매자_저장이_실패하면_그_판매자만_실패로_기록하고_다른_판매자는_계속_저장한다() {
+        // given: 판매자 10 저장에서 예외, 판매자 20은 정상
+        List<Long> sellerIds = List.of(10L, 20L);
+        PayoutCandidateItem amount10 = withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L);
+        PayoutCandidateItem fee10 = withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 2L);
+        PayoutCandidateItem amount20 = withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L);
+        given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
+        given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds))
+                .willReturn(List.of(amount10, fee10, amount20));
+        IllegalStateException failure = new IllegalStateException("판매자 10 저장 실패");
+        willThrow(failure).given(payoutSellerDraftService).saveDraft(SNAPSHOT_ID, 10L, List.of(amount10, fee10));
 
-        then(payoutSystemDraftItemRepository).should().saveAll(systemItemsCaptor.capture());
-        assertThat(systemItemsCaptor.getValue())
-                .extracting(PayoutSystemDraftItem::getCandidateId, PayoutSystemDraftItem::getAmount)
-                .containsExactlyInAnyOrder(
-                        tuple(2L, 300L),
-                        tuple(5L, 600L));
+        // when
+        PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
+
+        // then: 예외를 밖으로 던지지 않고, 판매자 10 후보만 실패로 기록하고, 판매자 20은 저장함
+        // 실패한 판매자도 판매자 수에 셈 (0이 아니어야 tasklet이 다음 회차를 부름), 실패 수는 따로 1
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(2, 1));
+        then(payoutSellerDraftService).should().recordUnexpectedError(SNAPSHOT_ID, List.of(amount10, fee10), failure);
+        then(payoutSellerDraftService).should().saveDraft(SNAPSHOT_ID, 20L, List.of(amount20));
+    }
+
+    @Test
+    void 실패_기록_저장마저_실패하면_예외가_그대로_나간다() {
+        // given: 판매자 10 저장도, 그 실패 기록 저장도 실패
+        List<Long> sellerIds = List.of(10L);
+        PayoutCandidateItem amount10 = withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L);
+        given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
+        given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds)).willReturn(List.of(amount10));
+        IllegalStateException failure = new IllegalStateException("판매자 10 저장 실패");
+        willThrow(failure).given(payoutSellerDraftService).saveDraft(SNAPSHOT_ID, 10L, List.of(amount10));
+        willThrow(new IllegalStateException("실패 기록 저장 실패"))
+                .given(payoutSellerDraftService).recordUnexpectedError(SNAPSHOT_ID, List.of(amount10), failure);
+
+        // when & then: 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job이 멈추므로, 여기서 바로 멈춤
+        assertThatThrownBy(() -> sut.draft(SNAPSHOT_ID, 100))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("실패 기록 저장 실패");
     }
 
     @Test
@@ -135,13 +166,12 @@ class PayoutServiceTest {
         given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(List.of());
 
         // when
-        int drafted = sut.draft(SNAPSHOT_ID, 100);
+        PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
 
         // then: 0을 반환하면 tasklet이 FINISHED로 끝남
         // 처리할 판매자가 없으면 저장하지 않도록 일단 정해 두어, 저장 호출이 없는지 확인
-        assertThat(drafted).isZero();
-        then(payoutSellerDraftRepository).should(never()).saveAll(any());
-        then(payoutSystemDraftItemRepository).should(never()).saveAll(any());
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(0, 0));
+        then(payoutSellerDraftService).should(never()).saveDraft(any(), any(), any());
     }
 
     @Test
