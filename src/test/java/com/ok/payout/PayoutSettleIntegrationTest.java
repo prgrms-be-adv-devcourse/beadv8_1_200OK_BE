@@ -515,10 +515,36 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
             throw new IllegalStateException("verifyStep 실패 재현");
         })).hasMessage("verifyStep 실패 재현");
 
-        // then: 실패 기록(= 주문 잠금)은 별도 트랜잭션으로 커밋돼 남음
+        // then: 실패 기록(= 주문 잠금)은 별도 트랜잭션으로 커밋돼 남고, 다음 스냅샷에서 그 주문이 빠짐
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
                 .containsExactly(tuple(orderX, PayoutFailureReason.VERIFY_MISMATCH));
+        assertThat(snapshotItemRepository.findBySnapshotId(createSnapshot(FROM, TO))).isEmpty();
+    }
+
+    @Test
+    void 헤더와_스냅샷이_다른_판매자_draft_항목은_결과_검증이_못_보므로_정산하지_않는다() {
+        // given: 판매자 10의 draft 뒤, 스냅샷에 없는 후보 Z의 항목이 다른 스냅샷 번호로 판매자 10의 헤더 아래에 들어간 상황
+        // verify는 헤더·항목 스냅샷이 모두 이번 스냅샷인 항목만 보므로 이 항목을 보지 못함 → commit이 직접 걸러야 함
+        // 판매자 합계 검사에 걸리지 않게 헤더 금액은 항목 합계로 맞춰 둠
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        long orderZ = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderZ, 10L, 5_000L, createdAt);
+        Long otherSnapshotId = createSnapshot(FROM, TO);
+        insertSellerDraftItemUnderHeader(snapshotId, 10L, otherSnapshotId, candidateIdOf(orderZ, 10L, PayoutEventType.SALE_AMOUNT));
+
+        // when
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 판매자 10은 주문 X만 받음 (후보 Z의 5,000원은 나가지 않음)
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(10L, 9_700L));
     }
 
     // ---------- commitStep ----------
@@ -1481,7 +1507,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 오류가 사라진 상황 재현: 막아 둔 빈 draft를 지움
-    // 남겨 두면 commit이 이 빈 draft로 0원 판매자 정산을 만들어, 실제 오류 상황(롤백되어 아무것도 안 남음)과 달라짐
+    // 실제 오류 상황(롤백되어 아무것도 안 남음)과 같은 상태로 되돌려, 이후 검증·확정이 실제와 같은 데이터를 보게 함
     private void unblockSellerDraft(Long snapshotId, Long sellerId) {
         jdbcTemplate.update("DELETE FROM payout_seller_draft WHERE snapshot_id = ? AND seller_id = ?", snapshotId, sellerId);
     }
@@ -1527,6 +1553,22 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                             "WHERE d.snapshot_id = ? AND d.seller_id = ?",
                     snapshotId, sellerId);
         }
+    }
+
+    // 판매자 헤더(headerSnapshotId) 아래에 다른 스냅샷 번호(itemSnapshotId)를 가진 항목이 들어간 상황, 헤더 금액은 항목 합계로 맞춤
+    private void insertSellerDraftItemUnderHeader(Long headerSnapshotId, Long sellerId, Long itemSnapshotId, Long candidateId) {
+        PayoutCandidateItem candidate = candidateRepository.findById(candidateId).orElseThrow();
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_seller_draft_item (snapshot_id, seller_draft_id, candidate_id, event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, (SELECT id FROM payout_seller_draft WHERE snapshot_id = ? AND seller_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
+                itemSnapshotId, headerSnapshotId, sellerId, candidateId, candidate.getEventType().name(),
+                candidate.getOrderId(), candidate.getOrderItemId(), candidate.getSellerId(), candidate.getAmount(), now, now);
+        jdbcTemplate.update(
+                "UPDATE payout_seller_draft d SET amount = " +
+                        "(SELECT COALESCE(SUM(i.amount), 0) FROM payout_seller_draft_item i WHERE i.seller_draft_id = d.id) " +
+                        "WHERE d.snapshot_id = ? AND d.seller_id = ?",
+                headerSnapshotId, sellerId);
     }
 
     // draft된 후보에 실패 기록이 있는 상황 (draft 대상 조회 조건이 실패 후보를 거르지 못한 것과 같은 상태)

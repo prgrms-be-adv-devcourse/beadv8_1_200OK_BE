@@ -101,7 +101,7 @@ public class PayoutService {
     // 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환
     // 헤더와 목록을 한 트랜잭션에서 만들어, 중간에 실패하면 둘 다 남지 않음 (반쪽짜리 스냅샷 방지)
     // 이후 Step은 이 목록만 보고 처리하므로, 배치 도중 새로 생긴 정산후보는 다음 배치로 넘어감
-    // 금액 검사로 잠긴 주문(#195)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
+    // 잠긴 주문(금액 검사 #195, 결과 검증 #290)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
     //
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
@@ -122,7 +122,7 @@ public class PayoutService {
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(결과 검증으로 뺀 주문 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
 
-        // 이번 조회 기간에서 잠긴 주문(#195) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
+        // 이번 조회 기간에서 잠긴 주문(#195, #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
         // (0건이면 매일 같은 로그가 남아 생략)
         // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
         long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
@@ -291,7 +291,10 @@ public class PayoutService {
         for (PayoutSellerDraft draft : payoutSellerDraftRepository.findBySnapshotId(snapshotId)) {
             List<PayoutSellerDraftItem> items = new ArrayList<>();
             for (PayoutSellerDraftItem item : draft.getItems()) {
-                if (exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
+                // 항목의 스냅샷이 헤더와 다르면(코드 버그) verify가 보지 못한 항목이라 정산하지 않음
+                // (verify는 헤더·항목 스냅샷이 모두 이번 스냅샷인 항목만 비교함, PayoutQueryRepository.findSellerDraftItemRows)
+                if (!item.getSnapshotId().equals(snapshotId)
+                        || exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
                     excludedItemCount++;
                 } else {
                     items.add(item);
@@ -453,10 +456,19 @@ public class PayoutService {
                 }
             }
         }
+        // 주문별로 한 번 묶어 둠: 걸린 주문마다 스냅샷 전체를 다시 훑으면 (걸린 주문 수 × 스냅샷 건수)만큼 비교하게 됨
+        //   걸린 주문이 많은 날이 곧 코드 버그로 대부분 걸린 날이라, 그날 verify가 크게 느려지지 않게 함
+        Map<Long, List<SnapshotItemRow>> snapshotItemsByOrder = new LinkedHashMap<>();
+        for (SnapshotItemRow snapshotItem : snapshotItems) {
+            if (!snapshotItemsByOrder.containsKey(snapshotItem.orderId())) {
+                snapshotItemsByOrder.put(snapshotItem.orderId(), new ArrayList<>());
+            }
+            snapshotItemsByOrder.get(snapshotItem.orderId()).add(snapshotItem);
+        }
         for (PayoutDraftValidator.OrderMismatch mismatch : mismatches) {
             String heldDetail = String.format(PayoutDraftValidator.HELD_DETAIL, mismatch.causes().keySet());
-            for (SnapshotItemRow snapshotItem : snapshotItems) {
-                if (snapshotItem.orderId().equals(mismatch.orderId()) && !details.containsKey(snapshotItem.candidateId())) {
+            for (SnapshotItemRow snapshotItem : snapshotItemsByOrder.getOrDefault(mismatch.orderId(), List.of())) {
+                if (!details.containsKey(snapshotItem.candidateId())) {
                     details.put(snapshotItem.candidateId(), heldDetail);
                 }
             }
@@ -469,6 +481,7 @@ public class PayoutService {
         }
 
         List<PayoutFailure> verifyFailures = new ArrayList<>();
+        // TODO(#52): 걸린 후보가 아주 많으면(수만 건) IN 목록이 길어짐. 그런 날(대부분 걸림)이 실제로 생기면 나눠 조회하는 것을 검토
         for (PayoutCandidateItem candidate : payoutCandidateItemRepository.findAllByIdInOrderByIdAsc(details.keySet())) {
             // 원인 내용이 길거나 원인 후보가 많으면 255자를 넘을 수 있어 잘라서 기록함
             String detail = PayoutFailure.fitDetail(details.get(candidate.getId()));
@@ -497,6 +510,10 @@ public class PayoutService {
                 if (cause == null && failure.getDetail().startsWith(PayoutDraftValidator.CAUSE_PREFIX)) {
                     cause = failure.getDetail();
                 }
+            }
+            // 원인 후보의 기록이 다른 주문으로 남은 경우(draft 항목의 주문 ID가 어긋남): 함께 보류 상세에 원인 후보 ID가 있어 그걸 남김
+            if (cause == null) {
+                cause = entry.getValue().get(0).getDetail();
             }
             log.warn("정산 결과 검증 불일치로 주문 제외·잠금(코드 버그 확인 필요). snapshotId={}, orderId={}, 원인={}, 판매자 수={}, 후보 수={}",
                     snapshotId, entry.getKey(), cause, sellerIds.size(), entry.getValue().size());

@@ -101,8 +101,9 @@ final class PayoutDraftValidator {
             List<DraftItemRow> drafts = draftsByCandidate.getOrDefault(snapshot.candidateId(), List.of());
 
             // 실패 기록이 있는 후보: draft에 없어야 정상 (draft 대상 조회 조건 ④가 빼야 함)
+            // VERIFY_MISMATCH 기록은 여기까지 오지 않음: 실패 기록의 주문은 후보에서 복사하므로 그 주문은 위에서 이미 건너뜀
             if (failure != null) {
-                if (failure != PayoutFailureReason.VERIFY_MISMATCH && !drafts.isEmpty()) {
+                if (!drafts.isEmpty()) {
                     failedInDraft.add(snapshot.candidateId());
                 }
                 continue;
