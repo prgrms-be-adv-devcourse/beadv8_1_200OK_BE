@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
 
-// 단위 테스트: draftStep tasklet이 회차 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지만 확인 (#90)
+// 단위 테스트: draftStep tasklet이 회차 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지와 전원 실패 판정만 확인 (#90)
 // 판매자 실패를 실제 Job 실행 중에 만들 방법이 없어(스냅샷 ID를 미리 알 수 없고, 테스트 DB 계정은 트리거를 만들 수 없음) 이 연결부를 따로 확인함
 // 판매자 단위 격리 자체(트랜잭션 분리, 실패 기록)는 PayoutSettleIntegrationTest에서 실제 DB로 확인
 @ExtendWith(MockitoExtension.class)

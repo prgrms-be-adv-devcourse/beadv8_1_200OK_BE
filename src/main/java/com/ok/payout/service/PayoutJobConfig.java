@@ -107,6 +107,7 @@ public class PayoutJobConfig {
     // tasklet 1회 호출 = 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 1회차. 부하를 고려해 판매자 단위로 끊어 반복 처리
     // 트랜잭션: tasklet 트랜잭션 1개는 조회만 하고, 저장은 판매자마다 별도 트랜잭션에서 커밋 (PayoutService.draft 참고, #90)
     //   한 판매자 예외는 그 판매자만 롤백하고 UNEXPECTED_ERROR로 기록, Job은 계속 진행
+    //   단 전원 실패(성공 0명)면 마지막 회차에서 Step을 실패시켜 Job FAILED (failIfEverySellerFailed)
     //   실패 기록 저장마저 실패하는 등 그 밖의 예외는 그 회차가 실패하고 Job은 FAILED로 멈춤
     //   (이미 커밋된 판매자 draft는 같은 회차·이전 회차 모두 남지만 payout은 만들어지지 않음. 재실행은 새 스냅샷으로 처음부터)
     @Bean
