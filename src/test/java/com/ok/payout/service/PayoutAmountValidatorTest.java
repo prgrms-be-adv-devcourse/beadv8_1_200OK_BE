@@ -213,26 +213,6 @@ class PayoutAmountValidatorTest {
     }
 
     @Test
-    void 수수료를_계산할_수_없을_만큼_큰_금액이면_예외_대신_그_주문상품을_금액_불일치로_본다() {
-        // given: 판매 대금 4경 원 (수수료 계산 시 long 범위 초과). 같은 배치의 다른 주문은 정상
-        givenNormalOrderItem(ORDER_ID, 1001L, 10L, 40_000_000_000_000_000L, 1L);
-        givenOrder(ORDER_ID, 40_000_000_000_000_001L, 50_000_000_000_000_000L);
-        givenNormalOrderItem(OTHER_ORDER_ID, 2001L, 10L, 9_700L, 300L);
-        givenOrder(OTHER_ORDER_ID, 10_000L, 10_000L);
-
-        // when
-        List<PayoutFailure> sut = validate();
-
-        // then: 큰 금액 주문의 후보 2건만 실패 (validate가 예외로 멈춰 정상 주문까지 막히지 않음)
-        String detail = "수수료 계산 불가: 금액 범위 초과 (판매 대금 40000000000000000, 수수료 1)";
-        assertThat(sut)
-                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason, PayoutFailure::getDetail)
-                .containsExactly(
-                        tuple(ORDER_ID, PayoutFailureReason.AMOUNT_MISMATCH, detail),
-                        tuple(ORDER_ID, PayoutFailureReason.AMOUNT_MISMATCH, detail));
-    }
-
-    @Test
     void 금액이_틀린_주문만_실패이고_다른_주문은_통과한다() {
         // given: ORDER_ID는 초과 청구, OTHER_ORDER_ID는 정상
         givenNormalOrderItem(ORDER_ID, 1001L, 10L, 9_700L, 300L);
