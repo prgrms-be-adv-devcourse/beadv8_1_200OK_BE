@@ -715,14 +715,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long failedSnapshotId = createSnapshot(FROM, TO);
         payoutService.validate(failedSnapshotId);
         draftAll(failedSnapshotId, LIMIT);
-        insertMissedSnapshotItem(failedSnapshotId, 20L, 2_000L);
+        // draft가 놓친 후보(판매자 20)는 일부러 조회 기간 안에 만들어, 다음 스냅샷이 비어 있지 않게 함
+        insertMissedSnapshotItem(failedSnapshotId, 20L, 2_000L, TO.minusDays(1));
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 다음 배치
         Long nextSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 주문 X는 정산되지 않았지만(미정산 후보) 실패한 Job이 남긴 잠금 때문에 들어가지 않음
-        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+        // then: 둘 다 미정산 후보지만, 놓친 후보만 들어가고 주문 X는 실패한 Job이 남긴 잠금 때문에 빠짐
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId))
+                .extracting(PayoutSnapshotItem::getAmount)
+                .containsExactly(2_000L);
     }
 
     @Test
@@ -905,6 +908,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 같은_주문상품의_대금이_이미_정산됐어도_나중에_온_수수료를_잘못_잠그지_않는다() {
+        // 이 테스트는 "짝의 한쪽이 없다고 0으로 보고 틀렸다고 판정하지 않는다"를 확인함
+        // 정산된 대금을 실제로 가져와 비교하는지는 바로 아래 반대 경우 테스트(틀린 수수료 → 잠김)가 확인함
         // given: 판매 대금만 먼저 정산됨
         LocalDateTime createdAt = TO.minusDays(1);
         long orderX = nextOrderItemId();
@@ -1136,8 +1141,14 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 검증 실패 상황 만들기: draft가 끝난 스냅샷 목록에, draft되지 않은 후보 1건을 끼워 넣음
     // (정상 흐름에서는 생기지 않는 상태라 서비스로 만들 수 없어 SQL로 직접 넣음)
     private void insertMissedSnapshotItem(Long snapshotId, Long sellerId, Long amount) {
+        insertMissedSnapshotItem(snapshotId, sellerId, amount, LocalDateTime.now().minusDays(20));
+    }
+
+    // 끼워 넣을 후보의 생성 시각을 정해서 넣음
+    // 다음 스냅샷에 이 후보가 들어가는지가 결과에 영향을 주는 테스트용 (위 도우미의 "오늘 − 20일"은 실행 날짜에 따라 고정 기간 안팎이 바뀜)
+    private void insertMissedSnapshotItem(Long snapshotId, Long sellerId, Long amount, LocalDateTime createdAt) {
         long orderItemId = nextOrderItemId();
-        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount, LocalDateTime.now().minusDays(20));
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, amount, createdAt);
         Long candidateId = candidateIdsOf(orderItemId).get(0);
         LocalDateTime now = LocalDateTime.now();
         jdbcTemplate.update(
