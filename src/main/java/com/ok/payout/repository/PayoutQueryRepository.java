@@ -4,11 +4,13 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.QPayoutCandidateItem;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.JPAExpressions;
+import com.querydsl.jpa.JPQLSubQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -17,7 +19,9 @@ import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static com.ok.payout.domain.QPayout.payout;
@@ -204,6 +208,78 @@ public class PayoutQueryRepository {
                                 .where(payoutWalletDeduction.orderId.eq(payoutCandidateItem.orderId))
                                 .notExists(),
                         notFailedInSnapshot(snapshotId))
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // validateStep 금액 검사 대상(#195): 이번 스냅샷 후보 중 그 주문의 지갑 차감 기록이 있고, 아직 이번 스냅샷에 실패로 기록되지 않은 후보
+    // 차감 기록이 없는 주문은 차감 기록 검사(DEDUCTION_MISSING)가 먼저 빼므로 금액 검사를 하지 않음 (후보당 실패 기록 1건)
+    // 이미 실패로 기록된 후보를 빼는 이유는 findCandidatesWithoutDeduction과 같음 (같은 스냅샷 재검증 시 중복 방지)
+    public List<PayoutCandidateItem> findCandidatesWithDeduction(Long snapshotId) {
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(
+                        inSnapshot(snapshotId),
+                        JPAExpressions.selectOne()
+                                .from(payoutWalletDeduction)
+                                .where(payoutWalletDeduction.orderId.eq(payoutCandidateItem.orderId))
+                                .exists(),
+                        notFailedInSnapshot(snapshotId))
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 조정 후보, 스냅샷 이후 새로 들어온 후보까지
+    //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
+    //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
+    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) GROUP BY order_id
+    public Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId) {
+        List<Tuple> rows = queryFactory
+                .select(payoutCandidateItem.orderId, payoutCandidateItem.amount.sumLong())
+                .from(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)))
+                .groupBy(payoutCandidateItem.orderId)
+                .fetch();
+        Map<Long, Long> sums = new HashMap<>();
+        for (Tuple row : rows) {
+            sums.put(row.get(0, Long.class), row.get(1, Long.class));
+        }
+        return sums;
+    }
+
+    // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
+    // 차감 기록은 주문당 1건(UK order_id)이라 주문 ID가 겹치지 않음
+    public Map<Long, Long> findDeductionAmountByOrderInSnapshot(Long snapshotId) {
+        List<Tuple> rows = queryFactory
+                .select(payoutWalletDeduction.orderId, payoutWalletDeduction.amount)
+                .from(payoutWalletDeduction)
+                .where(payoutWalletDeduction.orderId.in(orderIdsInSnapshot(snapshotId)))
+                .fetch();
+        Map<Long, Long> amounts = new HashMap<>();
+        for (Tuple row : rows) {
+            amounts.put(row.get(0, Long.class), row.get(1, Long.class));
+        }
+        return amounts;
+    }
+
+    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
+    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
+    // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
+    // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
+    // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
+    public List<PayoutCandidateItem> findOriginalSaleCandidatesInSnapshot(Long snapshotId) {
+        QPayoutCandidateItem snapshotCandidate = new QPayoutCandidateItem("snapshotCandidate");
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        payoutCandidateItem.eventType.in(PayoutEventType.SALE_AMOUNT, PayoutEventType.SALE_FEE),
+                        payoutCandidateItem.orderItemId.in(JPAExpressions
+                                .select(snapshotCandidate.orderItemId)
+                                .from(payoutSnapshotItem)
+                                .join(snapshotCandidate).on(snapshotCandidate.id.eq(payoutSnapshotItem.candidateId))
+                                .where(payoutSnapshotItem.snapshotId.eq(snapshotId))))
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
     }
@@ -445,6 +521,17 @@ public class PayoutQueryRepository {
                 .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId),
                         payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()))
                 .exists();
+    }
+
+    // 이번 스냅샷 후보들의 주문 ID (금액 검사 집계 쿼리의 IN 조건)
+    // 바깥 쿼리와 같은 정산후보 테이블을 다시 읽으므로 별칭(snapshotCandidate)을 따로 둠
+    private JPQLSubQuery<Long> orderIdsInSnapshot(Long snapshotId) {
+        QPayoutCandidateItem snapshotCandidate = new QPayoutCandidateItem("snapshotCandidate");
+        return JPAExpressions
+                .select(snapshotCandidate.orderId)
+                .from(payoutSnapshotItem)
+                .join(snapshotCandidate).on(snapshotCandidate.id.eq(payoutSnapshotItem.candidateId))
+                .where(payoutSnapshotItem.snapshotId.eq(snapshotId));
     }
 
     // 이번 스냅샷 목록에 있는 후보

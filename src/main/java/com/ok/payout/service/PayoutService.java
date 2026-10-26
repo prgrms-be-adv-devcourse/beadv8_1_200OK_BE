@@ -41,10 +41,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 
 @Slf4j
@@ -117,21 +119,67 @@ public class PayoutService {
         return snapshot.getId();
     }
 
-    // 입력 검증(validateStep): 이번 스냅샷 후보 중 지갑 차감 기록이 없는 주문의 후보를 실패로 기록하고, 기록한 건수를 반환
-    // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외, 3단계)
+    // 입력 검증(validateStep): 이번 스냅샷 후보 중 입력이 틀린 후보를 실패로 기록하고, 기록한 건수를 반환
+    // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외)
     // 예외를 던지지 않고 기록만 함 → 틀린 주문만 빠지고 나머지는 계속 정산됨
+    // 검사 순서: 차감 기록 없음(#194) → 금액 검사(초과 청구 → 수수료, #195). 앞 검사에 걸린 후보는 뒤 검사 대상에서 빠짐 (후보당 실패 1건)
+    // 모든 검사 결과를 모아 한 번에 저장: 같은 트랜잭션이라 중간에 실패하면 이번 검증의 기록이 하나도 남지 않음
+    //
+    // 금액 검사에 걸린 주문은 잠김(AMOUNT_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
+    // 잠금은 이후 Step이 실패해 Job이 FAILED로 끝나도 유지됨 (입력 금액에 대한 판정이라 재실행해도 다시 잠김)
     @Transactional
     public int validate(Long snapshotId) {
-        List<PayoutCandidateItem> missing = payoutQueryRepository.findCandidatesWithoutDeduction(snapshotId);
         List<PayoutFailure> failures = new ArrayList<>();
+
+        // 1) 차감 기록 없음 (잠그지 않음, 다음 배치에서 다시 검사)
+        List<PayoutCandidateItem> missing = payoutQueryRepository.findCandidatesWithoutDeduction(snapshotId);
         for (PayoutCandidateItem candidate : missing) {
             failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.DEDUCTION_MISSING));
         }
+
+        // 2) 금액 검사: 차감 기록이 있는 주문만 대상 (판정은 PayoutAmountValidator, 여기는 조회·저장만)
+        // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (createSnapshot 주석 참고)
+        List<PayoutFailure> amountFailures = PayoutAmountValidator.validate(snapshotId, new PayoutAmountValidator.Input(
+                payoutQueryRepository.findCandidatesWithDeduction(snapshotId),
+                payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId),
+                payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId),
+                payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId)));
+        failures.addAll(amountFailures);
+
         payoutFailureRepository.saveAll(failures);
 
+        logLockedOrders(snapshotId, amountFailures);
         // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
-        log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}", snapshotId, failures.size());
+        log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}, 금액 검사로 제외한 후보 수={}",
+                snapshotId, missing.size(), amountFailures.size());
         return failures.size();
+    }
+
+    // 주문이 새로 잠길 때마다 WARN: 잠긴 주문은 저절로 풀리지 않아(TODO(#52)) 사람이 원인을 확인해야 함
+    // 판매자 수를 남기는 이유: 한 판매자의 금액이 틀려도 같은 주문의 다른 판매자 후보까지 함께 보류되어, 영향받은 판매자를 바로 알 수 있게
+    // 금액 검사 실패 목록은 주문별로 이어서 들어옴 (PayoutAmountValidator가 주문 단위로 만듦)
+    private void logLockedOrders(Long snapshotId, List<PayoutFailure> amountFailures) {
+        Map<Long, List<PayoutFailure>> failuresByOrder = new LinkedHashMap<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (!failuresByOrder.containsKey(failure.getOrderId())) {
+                failuresByOrder.put(failure.getOrderId(), new ArrayList<>());
+            }
+            failuresByOrder.get(failure.getOrderId()).add(failure);
+        }
+
+        for (Map.Entry<Long, List<PayoutFailure>> entry : failuresByOrder.entrySet()) {
+            Set<Long> sellerIds = new HashSet<>();
+            String cause = null;
+            for (PayoutFailure failure : entry.getValue()) {
+                sellerIds.add(failure.getSellerId());
+                // 사유는 원인 후보(AMOUNT_MISMATCH)의 상세로 남김 (함께 보류된 ORDER_LOCKED 상세는 원인이 아님)
+                if (cause == null && failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                    cause = failure.getDetail();
+                }
+            }
+            log.warn("정산 주문 잠금. snapshotId={}, orderId={}, 사유={}, 판매자 수={}, 후보 수={}",
+                    snapshotId, entry.getKey(), cause, sellerIds.size(), entry.getValue().size());
+        }
     }
 
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
