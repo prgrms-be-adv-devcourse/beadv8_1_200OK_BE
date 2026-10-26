@@ -679,12 +679,18 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         long orderX = nextOrderItemId();
         givenDeduction(orderX, 9_000L);
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
-        settleAll(FROM, TO);
+        Long firstSnapshotId = settleAll(FROM, TO);
 
-        // when: 2차 배치 (주문 X 후보는 아직 미정산)
+        // when: 2차 배치
         Long secondSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 잠긴 주문이라 스냅샷에 들어가지 않음 (차감 기록 없음과 달리 다시 검사하지 않음)
+        // then: 1차에서 금액 불일치로 빠져 정산되지 않음 (미정산 후보로 남음)
+        // 이걸 먼저 확인하는 이유: 1차에서 그냥 정산돼 버려도 2차 스냅샷은 비므로, 아래 확인만으로는 잠금 때문인지 알 수 없음
+        assertThat(failureRepository.findBySnapshotId(firstSnapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.AMOUNT_MISMATCH);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isEmpty();
+        // then: 미정산인데도 잠긴 주문이라 스냅샷에 들어가지 않음 (차감 기록 없음과 달리 다시 검사하지 않음)
         assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
     }
 
