@@ -64,6 +64,7 @@ final class PayoutAmountValidator {
             // TODO(#52): 주문 생성 시점의 주문상품별 금액을 이벤트로 받아 주문상품 단위로 비교 (없으면 ORDER_MISSING)
             // TODO(논의 필요): 합계에 조정 후보도 넣음. 조정 방향(±)이 정해지면 다시 볼 것 (+조정은 정상인데 초과로, -조정은 초과를 가릴 수 있음)
             // TODO(#52): 부분 환불이 생기면 기준값을 "차감액 − 환불액"으로 바꿔야 함 (주문 #28 구매확정 금액에 환불 수량 미반영)
+            // TODO(#52): 할인 도입 예정. 할인이 생기면 이 검사 기준도 함께 다시 정해야 함 (지금은 정해진 것 없음)
             // 조회 조건상 대상 주문에는 항상 합계·차감액이 있음 (대상 = 스냅샷 후보 중 차감 기록이 있는 것)
             long deducted = input.deductionsByOrder().get(orderId);
             long total = input.candidateTotalsByOrder().get(orderId);
