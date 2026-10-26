@@ -11,6 +11,7 @@ import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.Step;
+import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.infrastructure.repeat.RepeatStatus;
@@ -36,6 +37,7 @@ public class PayoutJobConfig {
     //              금액이 맞지 않는 주문은 잠겨 다음 배치부터 snapshot에서 빠짐
     //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
     //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 그 판매자만 실패로 기록하고 계속 진행 (#90)
+    //              단 전원 실패(성공 0명)면 여기서 멈춤 (지킬 정산이 없는 공통 오류를 FAILED로 드러냄)
     //   verify   : 스냅샷 목록과 임시 정산 비교 (불일치면 여기서 멈춤 → payout 미생성, 이벤트 미발행)
     //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지)
     //   publish  : 이번에 확정된 판매자 몫 정산만 지갑 이벤트 발행
@@ -123,6 +125,7 @@ public class PayoutJobConfig {
         return (contribution, chunkContext) -> {
             PayoutDraftResult result = payoutService.draft(snapshotId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
             if (result.sellerCount() == 0) {
+                failIfEverySellerFailed(contribution.getStepExecution(), snapshotId);
                 return RepeatStatus.FINISHED;
             }
             // 배치 실행 기록(BATCH_STEP_EXECUTION)에 판매자 수를 남김
@@ -133,6 +136,22 @@ public class PayoutJobConfig {
             contribution.incrementWriteSkipCount(result.failedSellerCount());
             return RepeatStatus.CONTINUABLE;
         };
+    }
+
+    // draft를 시도한 판매자가 있는데 전원 실패했으면(성공 0명) Step을 실패시켜 Job을 FAILED로 끝냄 (#90)
+    // 판매자 단위 격리는 "실패한 판매자를 빼고 나머지를 정산"하려는 것인데, 전원 실패면 지켜 낼 정산이 없어 격리의 이점이 없음
+    // 전원 실패는 대부분 공통 원인(코드 버그, DB 장애)이라 COMPLETED로 두면 정산 0건인데 정상 종료로 보여 놓치기 쉬움
+    //   일부만 실패하면 정상 판매자 정산을 위해 COMPLETED 유지 (실패 수는 WRITE_SKIP_COUNT, 반복 실패 알림은 #52)
+    //   셈에는 draft 예외(UNEXPECTED_ERROR)만 들어감: validate 실패(차감 기록 없음, 금액 불일치)만 있는 날은 draft 대상이 없어 해당 없음
+    //   대상 판매자가 1명뿐인 날 그 1명이 실패해도 FAILED (#90 이전과 같은 결과, "예상 못 한 오류로 정산 0건"이라는 사실은 같음)
+    // 마지막 회차(남은 판매자 없음)에서 확인: 앞 회차들의 수가 Step 실행 기록에 누적돼 있음 (tasklet 1회 = contribution 1개, 회차마다 Step에 합산)
+    // 실패 기록(UNEXPECTED_ERROR)은 잠그지 않으므로, 원인을 고친 뒤 재실행하면 새 스냅샷에서 다시 처리됨
+    private void failIfEverySellerFailed(StepExecution stepExecution, Long snapshotId) {
+        if (stepExecution.getWriteCount() == 0 && stepExecution.getWriteSkipCount() > 0) {
+            // 사용자 입력이 아닌 배치 내부 상태라 표준 예외 (exception.md: 값의 출처 기준). 메시지는 Step 실행 기록(EXIT_MESSAGE)에 남음
+            throw new IllegalStateException("draft 대상 판매자가 모두 실패해 정산할 판매자가 없습니다. snapshotId="
+                    + snapshotId + ", 실패 판매자 수=" + stepExecution.getWriteSkipCount());
+        }
     }
 
     // 검증만 하고 아무것도 저장하지 않음. 실패하면 Job이 FAILED로 멈춰 commit·publish가 실행되지 않음

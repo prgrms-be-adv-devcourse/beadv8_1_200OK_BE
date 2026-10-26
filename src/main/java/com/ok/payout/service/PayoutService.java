@@ -201,7 +201,8 @@ public class PayoutService {
     //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
     // 판매자 수에는 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
     // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
-    //   주의: 공통 코드 버그로 모든 판매자가 실패해도 Job은 COMPLETED이고 정산이 0건임 → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
+    //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
+    //   전원 실패(성공 0명)면 draft Step이 끝날 때 Job을 FAILED로 만듦 (PayoutJobConfig.failIfEverySellerFailed)
     //
     // 이 메서드의 트랜잭션은 조회용: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 여기서 쓰는 것이 없음
     @Transactional(readOnly = true)
