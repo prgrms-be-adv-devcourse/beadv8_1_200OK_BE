@@ -66,6 +66,8 @@ public class PayoutSellerDraftService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordUnexpectedError(Long snapshotId, List<PayoutCandidateItem> candidates, RuntimeException cause) {
         // 예외 메시지는 길이를 예측할 수 없어(SQL 문장이 들어가기도 함) 255자로 잘라 둠
+        // detail에는 예외 메시지(SQL 문장, 제약 조건명, ID·금액 값 등)가 그대로 들어감
+        //   지금은 payout_failure를 조회하는 API·화면이 없어 밖으로 나가지 않음. 실패 기록 조회(관리자 화면 등, #291)를 만들 때 그대로 응답에 내보내지 말 것
         // 메시지가 없는 예외(NullPointerException 등)는 "null" 대신 대체 문구를 남김
         String message = Objects.toString(cause.getMessage(), NO_MESSAGE);
         String detail = PayoutFailure.fitDetail(
