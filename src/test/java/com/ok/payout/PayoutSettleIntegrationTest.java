@@ -496,6 +496,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payoutService.verify(snapshotId))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE));
+        // then: 결과 검증 실패를 새로 기록하지 않음 (미리 넣은 1건만 남음, 잠금 없이 멈춤)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.DEDUCTION_MISSING);
     }
 
     @Test

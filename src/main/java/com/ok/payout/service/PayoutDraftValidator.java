@@ -123,6 +123,8 @@ final class PayoutDraftValidator {
 
         // 스냅샷에 없는 draft 항목: 이번 정산 대상이 아닌 후보가 draft에 들어감
         // 실패 기록이 있는 후보면 위와 같은 코드 고장, 아니면 그 항목의 주문을 뺌
+        //   이 후보의 실패 기록은 후보의 원래 주문으로 남아 그 주문이 잠김 (실패 기록의 주문은 후보에서 복사)
+        //   draft에 적힌 주문은 이번 스냅샷에 그 주문의 다른 후보가 있을 때만 잠김 (checkDraftMatchesSnapshot의 주문 다름과 같음)
         for (DraftItemRow draft : input.draftItems()) {
             if (snapshotCandidates.contains(draft.candidateId()) || verifiedOrders.contains(draft.orderId())) {
                 continue;
