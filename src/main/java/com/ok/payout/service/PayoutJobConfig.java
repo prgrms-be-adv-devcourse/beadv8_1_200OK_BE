@@ -3,6 +3,7 @@ package com.ok.payout.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.service.dto.PayoutDraftResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
@@ -118,11 +119,15 @@ public class PayoutJobConfig {
     public Tasklet payoutDraftTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         // 1회 호출에 판매자 N명 draft, 남으면 CONTINUABLE로 다시 호출, 없으면 FINISHED
         return (contribution, chunkContext) -> {
-            int drafted = payoutService.draft(snapshotId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
-            if (drafted == 0) {
+            PayoutDraftResult result = payoutService.draft(snapshotId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
+            if (result.sellerCount() == 0) {
                 return RepeatStatus.FINISHED;
             }
-            contribution.incrementWriteCount(drafted); // write count = 처리한 판매자 수 (실패로 기록한 판매자 포함)
+            // 배치 실행 기록(BATCH_STEP_EXECUTION)에 판매자 수를 남김
+            //   write count  = draft에 성공한 판매자 수
+            //   filter count = 저장에 실패해 UNEXPECTED_ERROR로 기록하고 뺀 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            contribution.incrementWriteCount(result.draftedSellerCount());
+            contribution.incrementFilterCount(result.failedSellerCount());
             return RepeatStatus.CONTINUABLE;
         };
     }

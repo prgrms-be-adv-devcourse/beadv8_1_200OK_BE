@@ -23,6 +23,7 @@ import com.ok.payout.service.dto.PayoutAdjustmentCreateCommand;
 import com.ok.payout.service.dto.PayoutCandidateResult;
 import com.ok.payout.service.dto.PayoutCandidateSearchQuery;
 import com.ok.payout.service.dto.PayoutDetailResult;
+import com.ok.payout.service.dto.PayoutDraftResult;
 import com.ok.payout.service.dto.PayoutItemResult;
 import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
@@ -188,7 +189,8 @@ public class PayoutService {
         }
     }
 
-    // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
+    // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환
+    // 판매자 수가 0이면 더 없음 → tasklet 종료
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
     // payout 생성(commitStep)과 이벤트 발행(publishStep)은 검증 이후 단계에서 함
     //
@@ -197,14 +199,16 @@ public class PayoutService {
     //   → 같은 회차의 다른 판매자와 이후 회차는 계속 처리되고 Job도 멈추지 않음 (전에는 회차 전체가 롤백되고 Job이 FAILED)
     //   실패로 기록된 후보는 다음 회차의 조회 조건(조건 ④)에서 빠지므로, 실패한 판매자를 다시 뽑는 무한 반복은 없음
     //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
-    // 반환값은 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
+    // 판매자 수에는 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
+    // 실패 수는 따로 돌려줘 배치 실행 기록(filter count)에 남김: 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
+    //   주의: 공통 코드 버그로 모든 판매자가 실패해도 Job은 COMPLETED이고 정산이 0건임 → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
     //
     // 이 메서드의 트랜잭션은 조회용: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 여기서 쓰는 것이 없음
     @Transactional
-    public int draft(Long snapshotId, int limit) {
+    public PayoutDraftResult draft(Long snapshotId, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);
         if (sellerIds.isEmpty()) {
-            return 0;
+            return new PayoutDraftResult(0, 0);
         }
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUndraftedCandidates(snapshotId, sellerIds);
@@ -223,6 +227,7 @@ public class PayoutService {
             candidatesBySeller.get(sellerId).add(candidate);
         }
 
+        int failedSellerCount = 0;
         for (Map.Entry<Long, List<PayoutCandidateItem>> entry : candidatesBySeller.entrySet()) {
             Long sellerId = entry.getKey();
             List<PayoutCandidateItem> sellerCandidates = entry.getValue();
@@ -236,9 +241,10 @@ public class PayoutService {
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
                 // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job 전체가 멈추므로, 여기서 멈추는 편이 원인이 분명함
                 payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
+                failedSellerCount++;
             }
         }
-        return sellerIds.size();
+        return new PayoutDraftResult(sellerIds.size(), failedSellerCount);
     }
 
     // 검증을 통과한 draft를 payout·payout_item으로 확정

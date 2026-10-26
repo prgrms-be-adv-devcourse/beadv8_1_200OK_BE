@@ -49,11 +49,13 @@ public class PayoutSellerDraftService {
             }
         }
 
+        // 수수료 항목을 먼저 저장: 판매자 draft 저장에서 실패해도 "이미 저장한 수수료가 함께 롤백된다"가 실제로 일어나고,
+        // 통합 테스트(판매자 draft UK 위반으로 실패 재현)가 그걸 확인할 수 있게 하려고 (판매자 draft를 먼저 두면 수수료는 저장 전에 멈춤)
+        payoutSystemDraftItemRepository.saveAll(systemItems);
         // 수수료 후보만 있는 판매자는 판매자 draft를 만들지 않음 (0원짜리 판매자 정산이 생기지 않게, 기존 동작과 같음)
         if (!sellerShare.isEmpty()) {
             payoutSellerDraftRepository.saveAll(List.of(PayoutSellerDraft.create(snapshotId, sellerId, sellerShare)));
         }
-        payoutSystemDraftItemRepository.saveAll(systemItems);
     }
 
     // saveDraft가 실패한 판매자의 후보 전체를 UNEXPECTED_ERROR로 기록
