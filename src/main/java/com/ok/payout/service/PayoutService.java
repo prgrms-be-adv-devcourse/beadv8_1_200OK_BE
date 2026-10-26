@@ -199,18 +199,19 @@ public class PayoutService {
     //   → 같은 회차의 다른 판매자와 이후 회차는 계속 처리되고, 일부만 실패하면 Job도 멈추지 않음 (전에는 회차 전체가 롤백되고 Job이 FAILED)
     //   실패로 기록된 후보는 다음 회차의 조회 조건(조건 ④)에서 빠지므로, 실패한 판매자를 다시 뽑는 무한 반복은 없음
     //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
-    // TODO(#52): 판매자 수가 크게 늘면 처리 방식 수정 필요. 판매자마다 커밋하므로 커밋 수가 판매자 수만큼 늘어남
-    //   (INSERT 수는 예전과 같음: IDENTITY라 원래도 행마다 INSERT. 늘어나는 건 커밋할 때의 디스크 로그 확정 시간)
-    //   예) 판매자 10만 명이면 커밋 1,000번 → 100,000번, 커밋 1번 1~5ms로 어림하면 약 2~8분 늘어남 (실측 아님)
-    //   수정안 후보: 판매자 N명을 한 트랜잭션으로 묶어 저장해 보고, 실패한 묶음만 판매자 한 명씩 다시 저장 (평소 커밋 수는 예전 수준, 실패 때만 판매자 단위 격리)
     // 판매자 수에는 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
-    // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
+    // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 일부 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
     //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
     //   전원 실패(성공 0명)면 draft Step이 끝날 때 Job을 FAILED로 만듦 (PayoutJobConfig.failIfEverySellerFailed)
     //
     // 이 메서드에서 쓰는 것이 없음: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 이 메서드 자체는 조회만 함
     // readOnly는 단독으로 불릴 때(서비스 테스트 등)만 적용됨. draftStep에서는 Step 트랜잭션(읽기·쓰기)에 참여해 그 설정을 따름
     //   어느 쪽이든 판매자 저장은 REQUIRES_NEW라 바깥 트랜잭션 설정과 상관없이 동작이 같음
+    //
+    // TODO(#52): 판매자 수가 크게 늘면 처리 방식 수정 필요. 판매자마다 커밋하므로 커밋 수가 판매자 수만큼 늘어남
+    //   (INSERT 수는 예전과 같음: IDENTITY라 원래도 행마다 INSERT. 늘어나는 건 커밋할 때의 디스크 로그 확정 시간)
+    //   예) 판매자 10만 명이면 커밋 1,000번 → 100,000번, 커밋 1번 1~5ms로 어림하면 약 2~8분 늘어남 (실측 아님)
+    //   수정안 후보: 판매자 N명을 한 트랜잭션으로 묶어 저장해 보고, 실패한 묶음만 판매자 한 명씩 다시 저장 (평소 커밋 수는 예전 수준, 실패 때만 판매자 단위 격리)
     @Transactional(readOnly = true)
     public PayoutDraftResult draft(Long snapshotId, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);
@@ -247,7 +248,7 @@ public class PayoutService {
                         snapshotId, sellerId, sellerCandidates.size(), e);
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
                 // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job 전체가 멈추므로, 여기서 멈추는 편이 원인이 분명함
-                // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중. 지금은 Job을 멈춤 (원인이 분명하고 잘못된 정산이 나가지 않는 쪽)
+                // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중 (지금은 위 이유로 Job을 멈춤)
                 //   다른 방법 후보: 실패 기록 저장 재시도, 기록 없이 그 판매자만 건너뛰고 verify 규칙에서 따로 허용 등 → 어떻게 할지 #52에서 정함
                 payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
                 failedSellerCount++;
