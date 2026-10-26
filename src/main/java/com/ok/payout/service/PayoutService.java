@@ -65,6 +65,8 @@ public class PayoutService {
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
     private final PayoutFailureRepository payoutFailureRepository;
+    // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
+    private final PayoutSellerDraftService payoutSellerDraftService;
     // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
@@ -189,6 +191,15 @@ public class PayoutService {
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 처리한 판매자 수를 반환 (0이면 더 없음 → tasklet 종료)
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
     // payout 생성(commitStep)과 이벤트 발행(publishStep)은 검증 이후 단계에서 함
+    //
+    // 판매자 단위 격리(#90): 판매자마다 저장 트랜잭션을 따로 둠 (PayoutSellerDraftService, REQUIRES_NEW)
+    //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 후보 전체를 UNEXPECTED_ERROR로 기록한 뒤 다음 판매자로 넘어감
+    //   → 같은 회차의 다른 판매자와 이후 회차는 계속 처리되고 Job도 멈추지 않음 (전에는 회차 전체가 롤백되고 Job이 FAILED)
+    //   실패로 기록된 후보는 다음 회차의 조회 조건(조건 ④)에서 빠지므로, 실패한 판매자를 다시 뽑는 무한 반복은 없음
+    //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
+    // 반환값은 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
+    //
+    // 이 메서드의 트랜잭션은 조회용: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 여기서 쓰는 것이 없음
     @Transactional
     public int draft(Long snapshotId, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);
@@ -202,14 +213,9 @@ public class PayoutService {
             throw new RestApiException(PayoutErrorCode.UNSETTLED_CANDIDATES_NOT_FOUND);
         }
 
-        // 정산후보 하나는 판매자 몫·시스템 몫 중 한 곳에만 들어감 (isSystemShare 기준)
+        // 판매자별로 묶음 (판매자 몫·수수료 모두 그 판매자 트랜잭션에서 함께 저장)
         Map<Long, List<PayoutCandidateItem>> candidatesBySeller = new LinkedHashMap<>();
-        List<PayoutSystemDraftItem> systemItems = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
-            if (candidate.isSystemShare()) {
-                systemItems.add(PayoutSystemDraftItem.create(snapshotId, candidate));
-                continue;
-            }
             Long sellerId = candidate.getSellerId();
             if (!candidatesBySeller.containsKey(sellerId)) {
                 candidatesBySeller.put(sellerId, new ArrayList<>());
@@ -217,13 +223,21 @@ public class PayoutService {
             candidatesBySeller.get(sellerId).add(candidate);
         }
 
-        List<PayoutSellerDraft> sellerDrafts = new ArrayList<>();
         for (Map.Entry<Long, List<PayoutCandidateItem>> entry : candidatesBySeller.entrySet()) {
-            sellerDrafts.add(PayoutSellerDraft.create(snapshotId, entry.getKey(), entry.getValue()));
+            Long sellerId = entry.getKey();
+            List<PayoutCandidateItem> sellerCandidates = entry.getValue();
+            try {
+                payoutSellerDraftService.saveDraft(snapshotId, sellerId, sellerCandidates);
+            } catch (RuntimeException e) {
+                // 예외를 다시 던지지 않고 기록으로 남기므로 팀 로그 규칙의 "던질 때 로그 금지"에 해당하지 않음
+                // 그대로 묻히지 않게 스택 트레이스까지 WARN으로 남김 (계속 진행하지만 원인 확인이 필요한 이상)
+                log.warn("정산 draft 판매자 처리 실패, 이 판매자만 제외하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
+                        snapshotId, sellerId, sellerCandidates.size(), e);
+                // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
+                // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job 전체가 멈추므로, 여기서 멈추는 편이 원인이 분명함
+                payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
+            }
         }
-
-        payoutSellerDraftRepository.saveAll(sellerDrafts);
-        payoutSystemDraftItemRepository.saveAll(systemItems);
         return sellerIds.size();
     }
 

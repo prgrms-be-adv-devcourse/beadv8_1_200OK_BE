@@ -34,6 +34,7 @@ public class PayoutJobConfig {
     //   validate : 지갑 차감 기록이 없거나 금액이 맞지 않는 주문의 후보를 실패로 기록 (이번 정산에서 빠짐, Job은 계속 진행)
     //              금액이 맞지 않는 주문은 잠겨 다음 배치부터 snapshot에서 빠짐
     //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
+    //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 그 판매자만 실패로 기록하고 계속 진행 (#90)
     //   verify   : 스냅샷 목록과 임시 정산 비교 (불일치면 여기서 멈춤 → payout 미생성, 이벤트 미발행)
     //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지)
     //   publish  : 이번에 확정된 판매자 몫 정산만 지갑 이벤트 발행
@@ -101,7 +102,8 @@ public class PayoutJobConfig {
     }
 
     // tasklet 1회 호출 = 1 트랜잭션. 부하를 고려해 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 단위로 끊어 반복 처리
-    // 예외 시 해당 회차만 롤백되고 Job은 FAILED로 멈춤 (이전 회차 draft는 남지만 payout은 만들어지지 않음)
+    // 저장은 판매자마다 별도 트랜잭션(PayoutService.draft 참고): 한 판매자 예외는 그 판매자만 롤백하고 UNEXPECTED_ERROR로 기록, Job은 계속 진행
+    // 실패 기록 저장마저 실패하는 등 그 밖의 예외는 그 회차가 실패하고 Job은 FAILED로 멈춤 (이전 회차 draft는 남지만 payout은 만들어지지 않음)
     @Bean
     public Step payoutDraftStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                 Tasklet payoutDraftTasklet) {
@@ -120,7 +122,7 @@ public class PayoutJobConfig {
             if (drafted == 0) {
                 return RepeatStatus.FINISHED;
             }
-            contribution.incrementWriteCount(drafted); // write count = draft한 판매자 수
+            contribution.incrementWriteCount(drafted); // write count = 처리한 판매자 수 (실패로 기록한 판매자 포함)
             return RepeatStatus.CONTINUABLE;
         };
     }
