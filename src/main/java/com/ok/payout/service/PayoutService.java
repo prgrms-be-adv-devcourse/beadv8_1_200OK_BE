@@ -88,6 +88,7 @@ public class PayoutService {
     // 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환
     // 헤더와 목록을 한 트랜잭션에서 만들어, 중간에 실패하면 둘 다 남지 않음 (반쪽짜리 스냅샷 방지)
     // 이후 Step은 이 목록만 보고 처리하므로, 배치 도중 새로 생긴 정산후보는 다음 배치로 넘어감
+    // 금액 검사로 잠긴 주문(#195)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
     //
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
@@ -107,6 +108,12 @@ public class PayoutService {
         // 스냅샷 생성은 배치가 맡은 대상이 정해지는 시점이라 INFO로 남김
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(검증 실패 시 누락 목록 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
+
+        // 잠긴 주문(#195) 때문에 빠진 후보가 있는 날만 남김: 잠금이 풀리지 않고 쌓이는지 로그로 확인하려고 (0건이면 매일 같은 로그가 남아 생략)
+        long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
+        if (lockedCount > 0) {
+            log.info("잠긴 주문이라 스냅샷에서 제외. snapshotId={}, 제외 후보 수={}", snapshot.getId(), lockedCount);
+        }
         return snapshot.getId();
     }
 

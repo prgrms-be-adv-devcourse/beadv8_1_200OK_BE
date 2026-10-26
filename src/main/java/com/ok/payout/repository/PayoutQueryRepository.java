@@ -3,6 +3,7 @@ package com.ok.payout.repository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailureReason;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
@@ -35,13 +36,24 @@ public class PayoutQueryRepository {
 
     private final JPAQueryFactory queryFactory;
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이)
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
     public List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
         return queryFactory
                 .selectFrom(payoutCandidateItem)
-                .where(unsettledInPeriod(from, to))
+                .where(unsettledInPeriod(from, to), lockedOrder().not())
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
+    }
+
+    // 스냅샷 대상 조건(기간 안 미정산)에는 맞지만 주문이 잠겨 뺀 후보 수 (스냅샷 생성 로그용)
+    // 위 조회와 같은 조건에서 잠금 조건만 뒤집어, "잠금 때문에 빠진 것"만 정확히 셈
+    public long countLockedUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
+        Long count = queryFactory
+                .select(payoutCandidateItem.count())
+                .from(payoutCandidateItem)
+                .where(unsettledInPeriod(from, to), lockedOrder())
+                .fetchOne();
+        return Objects.requireNonNullElse(count, 0L);
     }
 
     // draftStep 회차마다 "이번에 처리할 판매자" 조회
@@ -421,6 +433,18 @@ public class PayoutQueryRepository {
         //    validate 실패뿐 아니라 이후 생길 실패(#90 draft 예외)도 모두 여기서 빠져, 같은 후보를 다시 잡는 무한 반복이 생기지 않음
         condition.and(notFailedInSnapshot(snapshotId));
         return condition;
+    }
+
+    // 후보의 주문이 잠겼는지: 그 주문에 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
+    // 스냅샷 번호와 상관없이 주문 단위로 봄 → 잠긴 뒤 새로 들어온 같은 주문의 후보(나중에 구매확정된 상품, 조정 등)도 빠짐
+    // 잠금을 남긴 Job이 이후 Step(verify 등)에서 FAILED로 끝나도 실패 기록은 남아 잠금이 유지됨
+    //   (입력 금액에 대한 판정이라 재실행해도 다시 잠기므로, 실패한 Job의 판정을 지울 이유가 없음)
+    private BooleanExpression lockedOrder() {
+        return JPAExpressions.selectOne()
+                .from(payoutFailure)
+                .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId),
+                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()))
+                .exists();
     }
 
     // 이번 스냅샷 목록에 있는 후보
