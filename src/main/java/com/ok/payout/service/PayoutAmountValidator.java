@@ -31,6 +31,8 @@ final class PayoutAmountValidator {
     private static final String OVERCHARGE_DETAIL = "주문 합계 초과: 차감액 %d, 후보 합계 %d (어느 주문상품이 틀렸는지 판별 불가)";
     // 수수료 불일치 실패 상세 (기대값 = 수수료 계산, 실제값 = 수수료 후보, 계산에 쓴 판매 금액)
     private static final String FEE_MISMATCH_DETAIL = "수수료 불일치: 기대값 %d, 실제값 %d (판매 금액 %d 기준)";
+    // 금액이 너무 커서 수수료를 계산할 수 없는 경우의 상세 (계산 결과 대신 받은 대금·수수료를 남김)
+    private static final String FEE_UNCOMPUTABLE_DETAIL = "수수료 계산 불가: 금액 범위 초과 (판매 대금 %d, 수수료 %d)";
     // 함께 보류된 후보의 상세: 원인 주문상품을 남겨, 이 후보 자체에는 문제가 없다는 것을 바로 알 수 있게 함
     private static final String ORDER_LOCKED_DETAIL = "같은 주문의 수수료 불일치로 보류 (원인 주문상품 %s)";
 
@@ -115,8 +117,18 @@ final class PayoutAmountValidator {
             if (pair == null || pair.amount() == null || pair.fee() == null) {
                 continue;
             }
-            long saleAmount = pair.amount() + pair.fee();
-            long expectedFee = PayoutPolicy.calculateSaleFee(saleAmount);
+            long saleAmount;
+            long expectedFee;
+            try {
+                saleAmount = Math.addExact(pair.amount(), pair.fee());
+                expectedFee = PayoutPolicy.calculateSaleFee(saleAmount);
+            } catch (ArithmeticException e) {
+                // 계산이 long 범위를 넘음(판매 금액 약 3경 원 초과) = 정상 경로로는 만들어질 수 없는 금액 (후보 생성 때 같은 계산에서 먼저 실패함)
+                // 예외를 그대로 두면 validate가 롤백되어 같은 배치의 정상 주문까지 정산되지 않고, 데이터가 그대로라 매일 실패함
+                // → 틀린 금액으로 보고 이 주문상품만 실패로 기록해 잠금
+                mismatches.put(orderItemId, String.format(FEE_UNCOMPUTABLE_DETAIL, pair.amount(), pair.fee()));
+                continue;
+            }
             if (pair.fee() != expectedFee) {
                 mismatches.put(orderItemId, String.format(FEE_MISMATCH_DETAIL, expectedFee, pair.fee(), saleAmount));
             }
