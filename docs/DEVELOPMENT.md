@@ -199,6 +199,56 @@ OS 환경변수는 두 파일보다 우선합니다(예: `DB_PORT=3307 ./gradlew
 - 네이티브 SQL은 엔티티의 `catalog`가 적용되지 않으므로 테이블 이름을 스키마로 직접 한정합니다(`WalletSchema.NAME + ".buyer_wallet"`). JPQL, Spring Data, QueryDSL은 그대로 쓰면 됩니다.
 - 새 데이터 볼륨으로 처음 뜨는 MySQL 컨테이너가 스키마를 만들고 앱 계정에 권한을 줍니다(`deploy/initdb`).
 
+### 스키마·계정 생성
+
+**스키마 생성 (`deploy/initdb`)**
+
+- MySQL 컨테이너가 **빈 데이터 디렉터리로 처음 뜰 때만** `deploy/initdb/10-create-module-schemas.sh`가 실행되어 모듈 스키마를 만들고 앱 계정(`MYSQL_USER`)에 권한을 줍니다. 로컬(`infra/mysql/compose.yml`)과 운영(`deploy/compose.prod.yml`)이 같은 파일을 씁니다. 이미 데이터가 있는 DB에서는 돌지 않으므로 [로컬 DB를 이전하기](#로컬-db를-이전하기)나 [`DEPLOY.md`의 이전 절차](DEPLOY.md#8-모듈별-db-스키마-이전-288-한-번만)를 씁니다.
+- 스키마 이름은 `paldogotgan_<모듈>`이고 각 모듈의 `<모듈>Schema.NAME`과 같아야 합니다. 스크립트는 모듈 이름을 소문자 영문으로 제한하고(SQL에 그대로 들어가기 때문입니다), `GRANT`의 DB 이름에서 `_`가 한 글자 와일드카드이므로 `\_`로 이스케이프합니다(안 하면 `paldogotganXmember` 같은 다른 DB에도 권한이 갑니다).
+- 모듈 목록은 같은 폴더의 `modules.txt`에서 읽습니다. 이 파일은 `settings.gradle.kts`의 모듈에서 `./gradlew generateInitDb`가 만든 파일이라 직접 고치지 않습니다. 도메인 모듈은 `common`과 `monolith`를 뺀 서브프로젝트입니다.
+- 모듈을 추가하거나 삭제했는데 `generateInitDb`를 실행하지 않으면 `./gradlew check`의 `verifyInitDb`가 실패합니다. 이미 만든 로컬 DB 볼륨에는 새 스키마가 없으므로 직접 만들거나 볼륨을 초기화합니다.
+- 테스트 컨테이너(`TestcontainersConfiguration`)도 같은 `deploy/initdb` 폴더를 컨테이너에 넣어 운영과 같은 스크립트로 스키마를 만듭니다. 폴더 경로는 Gradle이 시스템 프로퍼티 `ok.initdb-dir`로 넘기므로, Gradle 없이 IDE에서 직접 실행하면 `-Dok.initdb-dir=<저장소>/deploy/initdb`를 지정합니다.
+
+**모듈 DB 계정 (`infra/mysql/sync-module-users.sh`)**
+
+모듈 단독 실행용 계정은 `<모듈>/.env`의 `DB_USERNAME`, `DB_PASSWORD`를 정본으로 하고, 스크립트가 같은 계정을 MySQL에 만들어 자기 스키마에만 권한을 줍니다.
+
+| 명령 | 동작 |
+|---|---|
+| `./infra/mysql/sync-module-users.sh` | `<모듈>/.env`가 있는 모듈만 MySQL에 반영합니다 |
+| `./infra/mysql/sync-module-users.sh --init` | `.env`가 없는 모듈은 `.env.example`에서 만들고(비밀번호는 무작위) 반영합니다 |
+
+- 계정이 이미 있으면 비밀번호만 `ALTER USER`로 맞춥니다(`CREATE USER IF NOT EXISTS`는 기존 계정의 비밀번호를 바꾸지 않습니다). 여러 번 실행해도 결과가 같고, 이미 떠 있는 DB에도 쓸 수 있습니다.
+- 값은 SQL에 그대로 들어가므로 형식을 제한합니다. 사용자 이름은 영문·숫자·`_` 1~32자이고 `root`나 공용 앱 계정(`MYSQL_USER`)은 쓸 수 없으며 모듈끼리 겹칠 수 없습니다. 공용 계정의 비밀번호를 바꾸면 `monolith`가 깨지기 때문입니다. 비밀번호는 영문·숫자와 `. _ ~ @ % + = -`만 쓴 12자 이상입니다.
+- 비밀번호는 명령행 인자가 아니라 표준 입력으로 MySQL에 넘깁니다.
+- 기본 대상은 이 저장소의 docker compose MySQL입니다. 다른 MySQL이면 `DB_EXEC`로 명령을 바꿉니다. root 비밀번호는 컨테이너의 `MYSQL_ROOT_PASSWORD`를 씁니다.
+
+```bash
+DB_EXEC="docker exec -i <컨테이너 이름>" ./infra/mysql/sync-module-users.sh
+```
+
+### Flyway 구성 (`ModuleFlyway`)
+
+Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키마마다 Flyway를 직접 만듭니다. 직접 만든 빈에는 `spring.flyway.*` 속성이 자동으로 적용되지 않으므로 `out-of-order`, `validate-on-migrate`를 [`ModuleFlyway`](../common/src/main/java/com/ok/common/config/ModuleFlyway.java)가 읽어 넣습니다. 그래서 개발 환경(dev)의 `out-of-order=true`가 모든 인스턴스에 그대로 적용됩니다. 모듈 설정 클래스(`<모듈>FlywayConfig`)는 자기 스키마와 모듈 이름만 넘기고, `monolith`와 모듈 단독 앱이 같은 클래스를 씁니다. `ModuleFlyway`가 빈이 아니라 정적 도우미인 이유는 모듈 테스트(`@ApplicationModuleTest`)가 모듈 밖(`common`) 클래스의 빈을 걸러 내기 때문입니다.
+
+실행 방식은 `ok.flyway.standalone` 하나로 갈립니다.
+
+| | monolith | 모듈 단독 |
+|---|---|---|
+| 접속 기본 DB | 기본 스키마(`paldogotgan`) | 모듈 자기 스키마 |
+| common 마이그레이션 | 기본 스키마, 이력 `flyway_schema_history` | 모듈 스키마, 별도 이력 `flyway_schema_history_common` |
+| 모듈 마이그레이션 | 자기 스키마, 이력 `flyway_schema_history` | 같음 |
+
+모듈 단독에서 common 이력을 따로 두는 이유는, 모듈 이력에 섞이면 같은 DB를 `monolith`로 띄울 때 모듈 인스턴스의 검증이 실패하기 때문입니다.
+
+설계 이유
+
+- `createSchemas=false`: 스키마가 없으면 새로 만들지 않고 실패합니다. 이전하지 않은 옛 구조 DB에 빈 모듈 테이블이 새로 생기는 사고를 막기 위해서이고, 스키마는 DB 준비 스크립트가 만듭니다.
+- 기본 스키마 Flyway는 `ignoreMigrationPatterns`를 비웁니다. Flyway 기본값(`*:future`)은 "로컬에 없고 가장 최신 버전보다 새로운" 적용 이력을 무시하는데, 이전하지 않은 옛 구조 DB에는 모듈 마이그레이션 행이 그런 상태로 남아 있습니다. 무시하면 이전 안 된 DB에서 앱이 뜨는 사고를 막지 못하므로, 모르는 이력이 있으면 실패하게 합니다.
+- 모듈 단독의 common Flyway는 버전 0으로 기준선을 잡고 시작합니다. 모듈 Flyway가 먼저 돌아 스키마가 비어 있지 않고 이 이력 테이블은 아직 없어서, 기준선이 없으면 Flyway가 "비어 있지 않은 스키마인데 이력이 없다"며 실패합니다. 그래서 단독 common 인스턴스는 모듈 initializer를 파라미터로 받아 모듈 마이그레이션이 끝난 뒤 실행되게 합니다.
+- common initializer가 모듈 initializer보다 먼저 실행됩니다. 옛 구조 DB에서는 common 이력에 모듈 마이그레이션 행이 남아 있어 common 검증이 실패하는데, 이 실패가 빈 모듈 테이블 생성보다 앞서야 하기 때문입니다.
+- `ok.flyway.single-history`는 모듈 테스트 전용입니다. 슬라이스 테스트(`@DataJpaTest`)는 모듈별 Flyway 설정을 읽지 않고 Boot의 Flyway 하나(모듈과 common 위치 전부)만 쓰는데, 같은 테스트 DB를 쓰는 전체 컨텍스트 테스트와 이력이 갈리면 검증이 실패합니다. 이 값이 켜지면 모듈 Flyway 하나가 common 마이그레이션까지 한 이력에 적용합니다. 앱 실행에서는 쓰지 않습니다.
+
 ### 로컬 DB를 이전하기
 
 이 구조로 바뀌기 전에 만든 로컬 DB(`data/mysql`)를 그대로 두고 앱을 띄우면 Flyway 검증(`Detected applied migration not resolved locally`)에서 멈춥니다. 둘 중 하나로 맞춥니다.
@@ -239,7 +289,7 @@ OS 환경변수는 두 파일보다 우선합니다(예: `DB_PORT=3307 ./gradlew
 - 모듈 계정은 자기 스키마에만 권한을 갖습니다(`member` 계정은 `paldogotgan_delivery`를 읽을 수 없습니다). `./infra/mysql/sync-module-users.sh --init`이 `<모듈>/.env.example`에서 `<모듈>/.env`를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만듭니다. 이미 떠 있는 DB에도 쓸 수 있고 여러 번 실행해도 됩니다. `<모듈>/.env`가 없으면 공용 계정(`myuser`)으로 접속하는 기존 방식이 그대로 동작합니다. `monolith`는 모듈 계정을 쓰지 않고 공용 계정(루트 `.env`의 `MYSQL_*`)으로 모든 스키마에 접속합니다.
 - 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
 - 단독 실행한 모듈 스키마와 monolith는 같은 DB를 번갈아 써도 됩니다. 단독 실행은 `common` 마이그레이션(`event_publication`)을 같은 스키마의 별도 이력 테이블(`flyway_schema_history_common`)에 적용하므로 모듈 이력에는 섞이지 않습니다. 단독 실행이 common 행을 모듈 이력(`flyway_schema_history`)에 함께 기록하던 초기 개발 빌드로 만든 로컬 DB는 monolith가 `Detected applied migration not resolved locally: 202610081120`으로 멈춥니다. 모듈 스키마마다 `DELETE FROM paldogotgan_<모듈>.flyway_schema_history WHERE version = '202610081120';`로 그 행을 지우거나 볼륨을 초기화하세요(운영에는 해당 없음).
-- 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다.
+- 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다. `java-test-fixtures`(jar) 대신 test 소스셋의 classes 디렉터리를 노출하는 이유는, Spring Modulith가 jar 안의 `com.ok.testsupport`를 도메인 모듈로 인식해 구조·모듈 테스트가 깨지기 때문입니다. 모듈에서는 `testImplementation(project(path = ":common", configuration = "testSupportElements"))`로 가져옵니다.
 
 ### 새 모듈 만들기
 
