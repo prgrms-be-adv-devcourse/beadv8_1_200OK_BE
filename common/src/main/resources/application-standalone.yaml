@@ -11,7 +11,9 @@ spring:
   application:
     name: ${ok.module:module}
   config:
-    import: optional:file:.env[.properties]
+    # 루트 .env(JWT_SECRET 같은 공유 값)를 먼저, 실행 디렉터리의 .env(모듈 DB 계정)를 나중에 읽어 모듈 값이 이기게 한다
+    # OK_ROOT_DIR은 모듈 bootRun이 저장소 루트로 지정한다(ok.spring-module-conventions). 없으면 실행 디렉터리의 .env만 읽는다
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties]
   datasource:
     # monolith용 DB_URL과 섞이지 않도록 DB_URL을 읽지 않는다. 접속 기본 DB는 모듈 자기 스키마(ok.schema)다
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${ok.schema}?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
@@ -50,7 +52,9 @@ jwt:
   issuer: paldo-gotgan
   audience: paldo-gotgan-api
   key-id: hs256-v1
-  # secret은 환경 변수 JWT_SECRET이 그대로 바인딩된다(테스트는 application-test.yml 값)
+  # .env로 읽은 값은 OS 환경 변수가 아니라 일반 프로퍼티라서 JWT_SECRET이 jwt.secret으로 자동 바인딩되지 않는다. 직접 참조한다
+  # 값이 없으면 빈 문자열이 되어 JwtProperties의 검증 메시지가 나온다(테스트는 application-test.yml 값)
+  secret: ${JWT_SECRET:}
   access-token-expiration: 30m
   refresh-token-expiration: 14d
 management:

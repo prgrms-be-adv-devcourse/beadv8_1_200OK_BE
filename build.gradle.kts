@@ -117,6 +117,15 @@ public class $appClass {
 }
 """)
 
+        write(".env.example", """
+# $name 모듈을 단독으로 실행할 때 쓰는 DB 계정. 이 모듈 스키마(paldogotgan_$name)에만 권한을 갖는다
+# .env로 복사해 쓴다(.env는 git에 올라가지 않는다). 루트에서 ./infra/mysql/sync-module-users.sh --init 을 실행하면
+# 이 파일에서 .env를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만든다
+# monolith는 이 파일을 읽지 않고 루트 .env의 공용 계정을 쓴다
+DB_USERNAME=paldogotgan_$name
+DB_PASSWORD=
+""")
+
         write("src/test/resources/archunit.properties", """
 # 아직 대상 클래스가 없는 규칙이 실패하지 않게 한다.
 archRule.failOnEmptyShould=false
@@ -163,6 +172,7 @@ class ArchitectureTest {
             |$name 모듈 뼈대를 만들었다. 직접 할 일:
             |  1. settings.gradle.kts 의 include(...) 에 "$name" 추가
             |  2. ./gradlew generateInitDb 로 DB 스키마 목록(deploy/initdb/modules.txt) 갱신 (이미 만든 로컬 DB 볼륨에는 스키마를 직접 만들어야 한다)
+            |     그다음 ./infra/mysql/sync-module-users.sh --init 으로 모듈 DB 계정(.env)을 만든다
             |  3. 운영에 함께 올리려면 monolith/build.gradle.kts 에 implementation(project(":$name")) 추가
         """.trimMargin())
     }

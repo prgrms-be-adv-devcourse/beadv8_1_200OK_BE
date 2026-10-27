@@ -180,7 +180,8 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ./gradlew :wallet:build          # wallet 컴파일·테스트·jar
 ```
 
-- 단독 실행은 `standalone` 프로파일과 모듈 프로파일(`application-<모듈>.yaml`)을 켜고, 접속 DB를 모듈 스키마로 둡니다. 접속 정보는 `DB_HOST`(기본 localhost), `DB_PORT`(기본 3306), `DB_USERNAME`, `DB_PASSWORD`, 서명 키는 `JWT_SECRET`, 모듈이 쓰는 값(wallet은 `TOSS_SECRET_KEY`)은 환경변수로 넘깁니다. monolith용 `DB_URL`은 읽지 않습니다.
+- 단독 실행은 `standalone` 프로파일과 모듈 프로파일(`application-<모듈>.yaml`)을 켜고, 접속 DB를 모듈 스키마로 둡니다. 접속 정보는 `DB_HOST`(기본 localhost), `DB_PORT`(기본 3306)와 모듈의 DB 계정(`DB_USERNAME`, `DB_PASSWORD`)입니다. 모듈 계정은 `<모듈>/.env`에, 서명 키(`JWT_SECRET`)처럼 모듈이 함께 쓰는 값은 루트 `.env`에 둡니다(둘 다 읽고 모듈 값이 이깁니다). 모듈이 쓰는 값(wallet은 `TOSS_SECRET_KEY`)은 환경변수나 `.env`로 넘깁니다. monolith용 `DB_URL`은 읽지 않습니다.
+- 모듈 계정은 자기 스키마에만 권한을 갖습니다(`member` 계정은 `paldogotgan_delivery`를 읽을 수 없습니다). `./infra/mysql/sync-module-users.sh --init`이 `<모듈>/.env.example`에서 `<모듈>/.env`를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만듭니다. 이미 떠 있는 DB에도 쓸 수 있고 여러 번 실행해도 됩니다. `<모듈>/.env`가 없으면 공용 계정(`myuser`)으로 접속하는 기존 방식이 그대로 동작합니다. `monolith`는 모듈 계정을 쓰지 않고 공용 계정(루트 `.env`의 `MYSQL_*`)으로 모든 스키마에 접속합니다.
 - 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
 - 단독 실행한 모듈 스키마와 monolith는 같은 DB를 번갈아 써도 됩니다. 단독 실행은 `common` 마이그레이션(`event_publication`)을 같은 스키마의 별도 이력 테이블(`flyway_schema_history_common`)에 적용하므로 모듈 이력에는 섞이지 않습니다. 단독 실행이 common 행을 모듈 이력(`flyway_schema_history`)에 함께 기록하던 초기 개발 빌드로 만든 로컬 DB는 monolith가 `Detected applied migration not resolved locally: 202610081120`으로 멈춥니다. 모듈 스키마마다 `DELETE FROM paldogotgan_<모듈>.flyway_schema_history WHERE version = '202610081120';`로 그 행을 지우거나 볼륨을 초기화하세요(운영에는 해당 없음).
 - 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다.
@@ -191,7 +192,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ./gradlew createModule -PmoduleName=notification -PdisplayName=알림
 ```
 
-`notification`/`알림`은 예시 값이고 실제로는 `-PmoduleName=<모듈이름>`(영문 소문자, 이미 있는 이름은 불가) `-PdisplayName=<표시이름>`을 씁니다. 모듈 폴더, `build.gradle.kts`, 기본 패키지(`package-info`), 앱 클래스, `ArchitectureTest` 틀을 만듭니다. 이어서 직접 할 일은 실행 끝에 안내됩니다: `settings.gradle.kts`의 `include`에 추가, 운영에 포함하려면 `monolith/build.gradle.kts`에 `implementation(project(":모듈"))` 추가. 스키마를 쓰는 모듈이면 `<모듈>Schema`, `<모듈>FlywayConfig`를 만들고(`media`를 참고), `settings.gradle.kts`에 모듈을 추가한 뒤 `./gradlew generateInitDb`로 스키마 목록(`deploy/initdb/modules.txt`)을 갱신합니다. 이미 만든 로컬 DB 볼륨에는 새 스키마가 없으므로 직접 만들거나 볼륨을 초기화합니다. 목록을 갱신하지 않으면 `./gradlew check`가 실패합니다.
+`notification`/`알림`은 예시 값이고 실제로는 `-PmoduleName=<모듈이름>`(영문 소문자, 이미 있는 이름은 불가) `-PdisplayName=<표시이름>`을 씁니다. 모듈 폴더, `build.gradle.kts`, 기본 패키지(`package-info`), 앱 클래스, `ArchitectureTest` 틀을 만듭니다. 이어서 직접 할 일은 실행 끝에 안내됩니다: `settings.gradle.kts`의 `include`에 추가, 운영에 포함하려면 `monolith/build.gradle.kts`에 `implementation(project(":모듈"))` 추가. 스키마를 쓰는 모듈이면 `<모듈>Schema`, `<모듈>FlywayConfig`를 만들고(`media`를 참고), `settings.gradle.kts`에 모듈을 추가한 뒤 `./gradlew generateInitDb`로 스키마 목록(`deploy/initdb/modules.txt`)을 갱신합니다. 이미 만든 로컬 DB 볼륨에는 새 스키마가 없으므로 직접 만들거나 볼륨을 초기화합니다. 목록을 갱신하지 않으면 `./gradlew check`가 실패합니다. 모듈 단독 실행용 DB 계정은 `./infra/mysql/sync-module-users.sh --init`으로 만듭니다.
 
 ## 7. 예외 처리 (ProblemDetail)
 
