@@ -3,7 +3,6 @@ package com.ok;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import com.ok.common.StandaloneApplication;
-import com.ok.order.OrderSchema;
 
 /**
  * 주문 모듈을 단독으로 띄우는 앱 클래스.
@@ -16,6 +15,6 @@ import com.ok.order.OrderSchema;
 public class OrderApplication {
 
     public static void main(String[] args) {
-        StandaloneApplication.run(OrderApplication.class, "order", OrderSchema.NAME, 8084, args);
+        StandaloneApplication.run(OrderApplication.class, "order", args);
     }
 }

@@ -3,7 +3,6 @@ package com.ok;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import com.ok.common.StandaloneApplication;
-import com.ok.member.MemberSchema;
 
 /**
  * 회원 모듈을 단독으로 띄우는 앱 클래스.
@@ -16,6 +15,6 @@ import com.ok.member.MemberSchema;
 public class MemberApplication {
 
     public static void main(String[] args) {
-        StandaloneApplication.run(MemberApplication.class, "member", MemberSchema.NAME, 8082, args);
+        StandaloneApplication.run(MemberApplication.class, "member", args);
     }
 }

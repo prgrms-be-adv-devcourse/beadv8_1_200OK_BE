@@ -3,7 +3,6 @@ package com.ok;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import com.ok.common.StandaloneApplication;
-import com.ok.payout.PayoutSchema;
 
 /**
  * 정산 모듈을 단독으로 띄우는 앱 클래스.
@@ -16,6 +15,6 @@ import com.ok.payout.PayoutSchema;
 public class PayoutApplication {
 
     public static void main(String[] args) {
-        StandaloneApplication.run(PayoutApplication.class, "payout", PayoutSchema.NAME, 8087, args);
+        StandaloneApplication.run(PayoutApplication.class, "payout", args);
     }
 }

@@ -18,16 +18,13 @@ dependencies {
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")
 }
 
-// 단독 실행은 모듈 폴더의 .env(모듈 DB 계정)와 루트 .env(공유 시크릿)를 함께 읽는다(application-standalone.yaml)
 tasks.bootRun {
     environment("OK_ROOT_DIR", rootProject.projectDir.absolutePath)
 }
 
-// 모듈 테스트는 모듈을 단독으로 띄운 것과 같게 돈다. 접속 기본 DB는 자기 모듈 스키마이고(ok.schema),
-// standalone 프로파일(common의 application-standalone.yaml)과 모듈 프로파일(모듈의 application-<모듈>.yaml)을 함께 켠다
 // 통합 테스트의 @ActiveProfiles("test")가 spring.profiles.active를 덮어쓰므로 include로 더한다
 tasks.withType<Test> {
-    systemProperty("spring.profiles.include", "standalone,${project.name}")
+    systemProperty("spring.profiles.include", project.name)
     systemProperty("ok.schema", "paldogotgan_${project.name}")
     // 슬라이스 테스트(@DataJpaTest)의 Boot Flyway와 전체 컨텍스트 테스트의 모듈 Flyway가 한 이력을 쓰게 한다(ModuleFlyway.SINGLE_HISTORY_PROPERTY)
     systemProperty("ok.flyway.single-history", "true")

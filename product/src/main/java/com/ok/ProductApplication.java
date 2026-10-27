@@ -3,7 +3,6 @@ package com.ok;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import com.ok.common.StandaloneApplication;
-import com.ok.product.ProductSchema;
 
 /**
  * 상품 모듈을 단독으로 띄우는 앱 클래스.
@@ -16,6 +15,6 @@ import com.ok.product.ProductSchema;
 public class ProductApplication {
 
     public static void main(String[] args) {
-        StandaloneApplication.run(ProductApplication.class, "product", ProductSchema.NAME, 8085, args);
+        StandaloneApplication.run(ProductApplication.class, "product", args);
     }
 }

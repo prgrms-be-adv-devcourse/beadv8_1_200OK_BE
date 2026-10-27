@@ -55,6 +55,7 @@ tasks.register("createModule") {
 
     val moduleName = providers.gradleProperty("moduleName")
     val displayName = providers.gradleProperty("displayName")
+    val port = providers.gradleProperty("port")
     val rootDir = layout.projectDirectory.asFile
 
     doLast {
@@ -69,6 +70,14 @@ tasks.register("createModule") {
         }
         val appClass = name.replaceFirstChar { it.uppercase() } + "Application"
         val title = displayName.orNull ?: name
+
+        val usedPorts = rootDir.listFiles { f -> f.isDirectory }.orEmpty().flatMap { dir ->
+            File(dir, "src/main/resources").listFiles { f -> f.name.startsWith("application-") && f.name.endsWith(".yaml") }.orEmpty().toList()
+        }.mapNotNull { Regex("SERVER_PORT:(\\d+)").find(it.readText())?.groupValues?.get(1)?.toInt() }
+        val modulePort = port.orNull?.toIntOrNull() ?: ((usedPorts.maxOrNull() ?: 8080) + 1)
+        if (modulePort in usedPorts) {
+            throw GradleException("이미 다른 모듈이 쓰는 포트다: $modulePort (-Pport로 다른 포트를 지정한다)")
+        }
 
         fun write(path: String, content: String) {
             val file = File(moduleDir, path)
@@ -98,8 +107,9 @@ import org.springframework.modulith.ApplicationModule;
         write("src/main/java/com/ok/$appClass.java", """
 package com.ok;
 
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import com.ok.common.StandaloneApplication;
 
 /**
  * $title 모듈을 단독으로 띄우는 앱 클래스.
@@ -112,10 +122,17 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class $appClass {
 
     public static void main(String[] args) {
-        SpringApplication.run($appClass.class, args);
+        StandaloneApplication.run($appClass.class, "$name", args);
     }
 }
 """)
+
+        val template = File(rootDir, "build-logic/templates/application-module.yaml").readText()
+        write("src/main/resources/application-$name.yaml", template
+            .replace("@MODULE@", name)
+            .replace("@APP@", appClass)
+            .replace("@APP_SCHEMA@", name.replaceFirstChar { it.uppercase() } + "Schema")
+            .replace("@PORT@", modulePort.toString()))
 
         write(".env.example", """
 # $name 모듈을 단독으로 실행할 때 쓰는 DB 계정. 이 모듈 스키마(paldogotgan_$name)에만 권한을 갖는다
@@ -169,7 +186,7 @@ class ArchitectureTest {
 """)
 
         println("""
-            |$name 모듈 뼈대를 만들었다. 직접 할 일:
+            |$name 모듈 뼈대를 만들었다(포트 $modulePort). 직접 할 일:
             |  1. settings.gradle.kts 의 include(...) 에 "$name" 추가
             |  2. ./gradlew generateInitDb 로 DB 스키마 목록(deploy/initdb/modules.txt) 갱신 (이미 만든 로컬 DB 볼륨에는 스키마를 직접 만들어야 한다)
             |     그다음 ./infra/mysql/sync-module-users.sh --init 으로 모듈 DB 계정(.env)을 만든다

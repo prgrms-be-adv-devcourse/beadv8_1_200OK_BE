@@ -3,7 +3,6 @@ package com.ok;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import com.ok.common.StandaloneApplication;
-import com.ok.refund.RefundSchema;
 
 /**
  * 환불 모듈을 단독으로 띄우는 앱 클래스.
@@ -16,6 +15,6 @@ import com.ok.refund.RefundSchema;
 public class RefundApplication {
 
     public static void main(String[] args) {
-        StandaloneApplication.run(RefundApplication.class, "refund", RefundSchema.NAME, 8088, args);
+        StandaloneApplication.run(RefundApplication.class, "refund", args);
     }
 }
