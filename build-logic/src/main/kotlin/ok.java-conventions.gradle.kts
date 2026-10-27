@@ -61,6 +61,8 @@ tasks.withType<Test> {
     //   예) 정산 실행일이 하루 앞당겨져 로컬은 통과하고 CI는 실패하는 상황
     // - 서버(Docker)도 Dockerfile에서 같은 값으로 고정한다. 둘 중 하나를 바꾸면 다른 쪽도 함께 바꾼다
     jvmArgs("-Duser.timezone=Asia/Seoul")
+    // 테스트 컨테이너가 모듈 스키마를 만드는 초기화 폴더. 운영·로컬 MySQL과 같은 스크립트를 쓴다(TestcontainersConfiguration)
+    systemProperty("ok.initdb-dir", rootProject.layout.projectDirectory.dir("deploy/initdb").asFile.absolutePath)
     finalizedBy(tasks.jacocoTestReport)
 }
 

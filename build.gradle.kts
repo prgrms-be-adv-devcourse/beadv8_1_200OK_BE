@@ -1,3 +1,50 @@
+plugins {
+    base // check 태스크를 두어 verifyInitDb를 build에 물린다
+}
+
+// DB 스키마를 만드는 초기화 스크립트(deploy/initdb)의 모듈 목록은 settings.gradle.kts의 모듈에서 만든다. 직접 고치지 않는다
+// 도메인 모듈은 common, monolith를 뺀 서브프로젝트이고 스키마 이름은 paldogotgan_<모듈 이름>이다
+//   ./gradlew generateInitDb   모듈을 추가·삭제한 뒤 실행해 deploy/initdb/modules.txt를 갱신한다
+//   ./gradlew check            modules.txt가 모듈 목록과 같은지 검사한다(verifyInitDb)
+val initDbModulesFile = layout.projectDirectory.file("deploy/initdb/modules.txt")
+val initDbModulesContent = subprojects.map { it.name }
+    .filterNot { it == "common" || it == "monolith" }
+    .sorted()
+    .joinToString(
+        separator = "\n",
+        prefix = "# 도메인 모듈 목록. settings.gradle.kts의 모듈에서 ./gradlew generateInitDb가 만든다. 직접 고치지 않는다.\n",
+        postfix = "\n",
+    )
+
+val generateInitDb = tasks.register("generateInitDb") {
+    group = "build setup"
+    description = "deploy/initdb/modules.txt를 도메인 모듈 목록으로 다시 만든다"
+    inputs.property("content", initDbModulesContent)
+    outputs.file(initDbModulesFile)
+    doLast {
+        initDbModulesFile.asFile.writeText(initDbModulesContent)
+    }
+}
+
+val verifyInitDb = tasks.register("verifyInitDb") {
+    group = "verification"
+    description = "deploy/initdb/modules.txt가 도메인 모듈 목록과 같은지 검사한다"
+    inputs.property("content", initDbModulesContent)
+    // 파일 내용은 매번 읽어 비교해야 하므로 up-to-date로 건너뛰지 않는다. 같이 실행하면 generateInitDb가 먼저 돈다
+    outputs.upToDateWhen { false }
+    mustRunAfter(generateInitDb)
+    doLast {
+        val file = initDbModulesFile.asFile
+        if (!file.exists() || file.readText() != initDbModulesContent) {
+            throw GradleException("deploy/initdb/modules.txt가 도메인 모듈 목록과 다르다. ./gradlew generateInitDb 를 실행해 갱신한다. 모듈을 추가하면 새 스키마가 만들어지지 않는다")
+        }
+    }
+}
+
+tasks.check {
+    dependsOn(verifyInitDb)
+}
+
 // 새 도메인 모듈의 뼈대를 만든다.
 //   ./gradlew createModule -PmoduleName=notification -PdisplayName=알림
 // 만드는 것: <모듈>/build.gradle.kts, 기본 패키지(package-info), 단독 기동 앱 클래스, ArchitectureTest 틀
@@ -115,7 +162,8 @@ class ArchitectureTest {
         println("""
             |$name 모듈 뼈대를 만들었다. 직접 할 일:
             |  1. settings.gradle.kts 의 include(...) 에 "$name" 추가
-            |  2. 운영에 함께 올리려면 monolith/build.gradle.kts 에 implementation(project(":$name")) 추가
+            |  2. ./gradlew generateInitDb 로 DB 스키마 목록(deploy/initdb/modules.txt) 갱신 (이미 만든 로컬 DB 볼륨에는 스키마를 직접 만들어야 한다)
+            |  3. 운영에 함께 올리려면 monolith/build.gradle.kts 에 implementation(project(":$name")) 추가
         """.trimMargin())
     }
 }

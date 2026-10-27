@@ -1,18 +1,14 @@
 package com.ok.testsupport;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.nio.file.Path;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.testcontainers.containers.Container.ExecResult;
 import org.testcontainers.mysql.MySQLContainer;
 import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.utility.MountableFile;
 
 /**
  * 테스트용 MySQL 컨테이너를 JVM 전체에서 하나만 띄워 모든 테스트 컨텍스트가 공유하게 한다 (#151).
@@ -26,11 +22,9 @@ import org.testcontainers.utility.DockerImageName;
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfiguration {
 
-    // 모듈이 소유한 스키마(MySQL 데이터베이스). 컨테이너를 띄울 때 모두 만든다 (각 모듈의 XxxSchema.NAME과 같은 값)
-    private static final List<String> MODULE_SCHEMAS = Stream.of(
-                    "member", "wallet", "order", "product", "delivery", "payout", "media", "refund")
-            .map(module -> "paldogotgan_" + module)
-            .toList();
+    // 운영·로컬 MySQL과 같은 스키마 초기화 폴더(deploy/initdb)를 Gradle이 넘긴다 (ok.java-conventions).
+    // 컨테이너가 처음 뜰 때 이 폴더의 스크립트가 모듈 스키마를 만들고 테스트 계정에 권한을 준다. 모듈 목록은 그 폴더의 modules.txt가 갖는다
+    private static final String INITDB_DIR_PROPERTY = "ok.initdb-dir";
 
     private static MySQLContainer mysql;
 
@@ -71,31 +65,20 @@ public class TestcontainersConfiguration {
     private static synchronized MySQLContainer startMysql(String mysqlVersion) {
         if (mysql == null) {
             MySQLContainer container = new MySQLContainer(DockerImageName.parse("mysql:" + mysqlVersion))
-                    .withEnv("TZ", "Asia/Seoul");
+                    .withEnv("TZ", "Asia/Seoul")
+                    .withCopyFileToContainer(MountableFile.forHostPath(initdbDir()), "/docker-entrypoint-initdb.d/");
             container.start();
-            createModuleSchemas(container);
             mysql = container;
         }
         return mysql;
     }
 
-    // 컨테이너의 테스트 계정은 데이터베이스를 만들 권한이 없어 root로 만들고 테스트 계정에 권한을 준다
-    private static void createModuleSchemas(MySQLContainer container) {
-        String sql = MODULE_SCHEMAS.stream()
-                .map(schema -> "CREATE DATABASE IF NOT EXISTS `%1$s` DEFAULT CHARACTER SET utf8mb4; GRANT ALL ON `%1$s`.* TO '%2$s'@'%%';"
-                        .formatted(schema, container.getUsername()))
-                .collect(Collectors.joining(" "));
-        try {
-            ExecResult result = container.execInContainer("mysql", "-uroot", "-p" + container.getPassword(), "-e", sql);
-            if (result.getExitCode() != 0) {
-                throw new IllegalStateException("모듈 스키마를 만들지 못했다: " + result.getStderr());
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(e);
+    private static Path initdbDir() {
+        String dir = System.getProperty(INITDB_DIR_PROPERTY, "");
+        if (dir.isBlank()) {
+            throw new IllegalStateException("스키마 초기화 폴더를 알 수 없다. Gradle로 실행하거나 -D" + INITDB_DIR_PROPERTY + "=<저장소>/deploy/initdb 를 지정한다");
         }
+        return Path.of(dir);
     }
 
 }
