@@ -293,6 +293,23 @@ class PayoutServiceTest {
     }
 
     @Test
+    void 같은_스냅샷을_다시_검증할_때_이전에_빠진_주문만으로_0건이면_멈추지_않는다() {
+        // given: 이전 검증에서 주문 1·2가 이미 빠져 기록됨 (draft 항목은 남아 있음), 이번에 새로 걸린 주문은 없음
+        givenVerifyRows(verifySnapshot(), List.of(SELLER_DRAFT_1, SELLER_DRAFT_3, SELLER_DRAFT_4), List.of(SYSTEM_DRAFT_2),
+                List.of(new FailureRow(1L, 1L, PayoutFailureReason.VERIFY_MISMATCH),
+                        new FailureRow(2L, 1L, PayoutFailureReason.VERIFY_MISMATCH),
+                        new FailureRow(3L, 2L, PayoutFailureReason.VERIFY_MISMATCH),
+                        new FailureRow(4L, 2L, PayoutFailureReason.VERIFY_MISMATCH)));
+
+        // when
+        PayoutVerifyResult result = sut.verify(SNAPSHOT_ID);
+
+        // then: "전부 걸림"은 이번에 새로 걸린 주문이 있을 때만이라 예외 없이 끝나고, 새로 기록하지 않음
+        assertThat(result).isEqualTo(new PayoutVerifyResult(0, 2, 0));
+        then(payoutFailureRepository).should(never()).saveAll(any());
+    }
+
+    @Test
     void 판매자_합계가_항목_합계와_다르면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
         // given: 판매자 10의 헤더만 틀림 (draft를 만드는 코드가 망가진 상태)
         given(payoutQueryRepository.findSellerTotalRows(SNAPSHOT_ID))
