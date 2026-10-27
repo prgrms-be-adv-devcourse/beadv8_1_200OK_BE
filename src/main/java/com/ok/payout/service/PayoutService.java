@@ -74,8 +74,6 @@ public class PayoutService {
     private final PayoutFailureRepository payoutFailureRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
-    // verifyStep의 결과 검증 실패 기록 저장 (별도 트랜잭션, #290)
-    private final PayoutVerifyFailureService payoutVerifyFailureService;
     // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
@@ -375,21 +373,23 @@ public class PayoutService {
     //   1) 코드 고장 검사 → 걸리면 아무것도 기록하지 않고 전용 에러 코드로 Job 전체 중단
     //      판매자 합계 불일치, 판매자 항목의 스냅샷 번호 불일치, 실패 후보가 draft에 섞임: 모든 판매자가 같이 쓰는 코드가 망가진 것이라 일부만 빼도 나머지를 믿기 어려움
     //      기록·잠금을 먼저 남기지 않는 이유: 망가진 코드로 판정한 결과라 대량으로 잘못 잠글 수 있고, 고친 뒤 재실행하면 깨끗하게 다시 처리됨
-    //   2) 후보 단위 검사 → 걸린 주문의 이번 스냅샷 후보(모든 판매자)를 VERIFY_MISMATCH로 기록 (주문 잠금)
+    //   2) 후보 단위 검사 → 걸린 주문의 실패 기록(VERIFY_MISMATCH)을 만들고, 빼고 나면 정산할 항목이 몇 건 남는지 셈
+    //   3) 걸린 주문을 빼니 0건 = 전부 걸림 → 1)과 같이 기록 없이 Job 전체 중단 (아래 본문 주석)
+    //   4) 일부만 걸림 → 걸린 주문의 이번 스냅샷 후보(모든 판매자)를 기록하고 주문 잠금, 나머지는 commitStep에서 정산
     //      이미 이번 스냅샷에 실패 기록이 있는 후보는 건너뜀 (실패 기록 UK, 그 후보는 원래 draft에도 없음)
-    //   3) 정산할 항목 수를 돌려줌 → 걸린 주문이 있는데 0건이면 tasklet이 Job을 FAILED로 끝냄 (PayoutJobConfig)
     //
-    // 실패 기록은 별도 트랜잭션으로 저장 (PayoutVerifyFailureService): Job이 FAILED로 끝나도 기록·잠금이 남게
-    //   그래서 이 메서드의 트랜잭션에서는 방금 저장한 기록이 다시 조회되지 않음 → 남은 항목 수는 저장한 목록으로 직접 계산
-    // 이 메서드 자체는 조회만 함 (readOnly). verifyStep에서는 Step 트랜잭션(읽기·쓰기)에 참여해 그 설정을 따르지만 동작은 같음
-    //   1)·2)의 조회가 같은 시점의 데이터를 봄: MySQL 기본 격리 수준(REPEATABLE READ)에서 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
-    @Transactional(readOnly = true)
+    // 결과는 세 가지: 통과 / 일부 걸림(기록·잠금 후 계속, Job COMPLETED) / 중대 문제(기록 없이 예외, Job FAILED)
+    // 실패 기록은 verifyStep 트랜잭션 안에서 저장해 Step이 끝날 때 함께 커밋됨
+    //   저장한 뒤 이 Step이 실패로 끝나는 경로가 없어서 따로 커밋할 필요가 없음 (전부 걸린 경우는 저장 전에 멈춤)
+    // 1)·2)의 조회가 같은 시점의 데이터를 봄: MySQL 기본 격리 수준(REPEATABLE READ)에서 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
+    @Transactional
     public PayoutVerifyResult verify(Long snapshotId) {
         // 1) 코드 고장 검사
         // 팀 규칙(service.md "로그"): 예외를 던질 때 로그를 따로 남기지 않음 → 원인을 예외 메시지에 담아 배치 실패 기록(EXIT_MESSAGE)·로그에 한 번만 남김
         List<String> totalMismatches = PayoutDraftValidator.checkSellerTotals(payoutQueryRepository.findSellerTotalRows(snapshotId));
         if (!totalMismatches.isEmpty()) {
             // TODO(#52): 코드 고장 즉시 알림 필요(슬랙 등). 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   어디서 보나: BATCH_STEP_EXECUTION에서 payoutVerifyStep이 FAILED인 실행의 EXIT_MESSAGE (판매자 ID와 헤더·항목 금액이 들어 있음)
             //   멈췄을 때 할 일: 판매자 합계 계산(PayoutSellerDraft.create) 최근 변경 확인·수정 → 재실행
             //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH, String.format(
@@ -400,6 +400,7 @@ public class PayoutService {
         List<Long> mismatchedSnapshotItems = payoutQueryRepository.findSellerDraftItemsWithMismatchedSnapshot(snapshotId);
         if (!mismatchedSnapshotItems.isEmpty()) {
             // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   어디서 보나: BATCH_STEP_EXECUTION에서 payoutVerifyStep이 FAILED인 실행의 EXIT_MESSAGE (후보 ID가 들어 있음)
             //   멈췄을 때 할 일: 판매자 draft 항목 생성(PayoutSellerDraftItem 생성자의 스냅샷 번호 복사) 최근 변경 확인·수정 → 재실행
             //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH, String.format(
@@ -416,6 +417,7 @@ public class PayoutService {
                 new PayoutDraftValidator.Input(snapshotItems, draftItems, failures));
         if (!result.failedCandidatesInDraft().isEmpty()) {
             // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   어디서 보나: BATCH_STEP_EXECUTION에서 payoutVerifyStep이 FAILED인 실행의 EXIT_MESSAGE (후보 ID가 들어 있음)
             //   멈췄을 때 할 일: draft 대상 조회 조건(PayoutQueryRepository.undraftedInSnapshot ④) 확인·수정 → 재실행
             //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE, String.format(
@@ -424,14 +426,8 @@ public class PayoutService {
                     limit(result.failedCandidatesInDraft())));
         }
 
-        // 2) 걸린 주문의 후보를 실패로 기록 (주문 잠금)
+        // 2) 걸린 주문의 실패 기록을 만들고, 빼고 나면 정산할 항목이 몇 건 남는지 셈 (commitStep과 같은 기준)
         List<PayoutFailure> verifyFailures = toVerifyFailures(snapshotId, result.orderMismatches(), snapshotItems, failures);
-        if (!verifyFailures.isEmpty()) {
-            payoutVerifyFailureService.saveAll(verifyFailures);
-        }
-        logExcludedOrders(snapshotId, verifyFailures);
-
-        // 3) commitStep이 정산할 항목 수 (commitStep과 같은 기준으로 셈)
         PayoutVerifyExclusion exclusion = PayoutVerifyExclusion.from(failures);
         exclusion.addAll(verifyFailures);
         int remainingItemCount = 0;
@@ -440,6 +436,32 @@ public class PayoutService {
                 remainingItemCount++;
             }
         }
+
+        // 3) 걸린 주문을 빼고 나니 정산할 항목이 0건이면, 실패 기록·잠금을 남기지 않고 전체를 멈춤
+        //   전부 걸렸다 = 대부분 모든 주문이 같이 쓰는 코드가 망가진 것 (위 코드 고장 세 가지와 같은 성격)
+        //   이때 기록하면 그날 대상 주문이 전부 잠김 → 코드를 고쳐도 해제 기능이 없어(#291) DB에서 직접 지워야 하고,
+        //     잠긴 지 약 3일이 지나면 지워도 조회 기간 밖이라 다시 정산되지 않음
+        //   기록 없이 멈추면 코드를 고친 뒤 재실행만으로 새 스냅샷에서 깨끗하게 다시 처리됨
+        //     (정산이 만들어지지 않는 동안은 조회 하한(마지막 정산일 기준)도 그대로라 밀린 후보가 계속 조회됨)
+        //   한계: 그날 대상이 정말로 틀린 주문뿐이었어도 잠기지 않음 → 다음 배치에서 다시 걸려 또 멈추므로 매일 FAILED로 드러남
+        // "걸려서 0건"일 때만 해당: 대상이 없는 날, validate·draft 실패만으로 0건인 날은 걸린 주문이 없어 정상 진행(COMPLETED)
+        if (remainingItemCount == 0 && exclusion.orderCount() > 0) {
+            // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   어디서 보나: BATCH_STEP_EXECUTION에서 payoutVerifyStep이 FAILED인 실행의 EXIT_MESSAGE (걸린 주문 ID와 원인이 들어 있음)
+            //   멈췄을 때 할 일: 메시지의 원인(어느 검사에 걸렸는지)으로 draft 관련 최근 변경 확인·수정 → 재실행
+            //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
+            throw new RestApiException(PayoutErrorCode.DRAFT_ALL_ORDERS_MISMATCHED, String.format(
+                    "결과 검증에 모든 주문이 걸림(코드 오류 의심). snapshotId=%d, 걸린 주문 수=%d, 걸린 후보 수=%d, 원인(최대 %d건)=%s",
+                    snapshotId, exclusion.orderCount(), verifyFailures.size(), MESSAGE_ITEM_LIMIT,
+                    limit(result.orderMismatches())));
+        }
+
+        // 4) 일부 주문만 걸림 → 그 주문의 후보를 실패로 기록 (주문 잠금), 나머지는 commitStep에서 정산
+        //   verifyStep 트랜잭션 안에서 저장해 Step이 끝날 때 함께 커밋됨
+        if (!verifyFailures.isEmpty()) {
+            payoutFailureRepository.saveAll(verifyFailures);
+        }
+        logExcludedOrders(snapshotId, verifyFailures);
 
         // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO
         log.info("정산 결과 검증. snapshotId={}, 스냅샷 후보 수={}, 정산할 draft 항목 수={}, 결과 검증 실패로 뺀 주문 수={}, 새로 기록한 실패 수={}",

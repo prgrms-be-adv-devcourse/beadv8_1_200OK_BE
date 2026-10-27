@@ -39,8 +39,6 @@ import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -115,10 +113,6 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    // 결과 검증 실패 기록이 바깥 트랜잭션 롤백과 상관없이 남는지 확인용 (verifyStep의 Step 트랜잭션 재현)
-    @Autowired
-    private PlatformTransactionManager transactionManager;
 
     // 이전 테스트가 중간에 실패해 남긴 데이터가 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
@@ -503,27 +497,23 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 결과_검증_실패_기록은_검증한_트랜잭션이_롤백돼도_남는다() {
-        // given: 정산할 것이 0건이 되어 verifyStep이 실패하는 상황 (Step 트랜잭션 안에서 검증 후 예외로 롤백)
+    void 모든_주문이_결과_검증에_걸리면_전용_에러로_멈추고_잠그지_않아_다음_스냅샷에서_다시_처리된다() {
+        // given: 대상 주문 X 하나가 결과 검증에 걸려, 빼고 나면 정산할 항목이 0건인 상황
         long orderX = nextOrderItemId();
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 1_000L, TO.minusDays(1));
         Long snapshotId = createSnapshot(FROM, TO);
         draftAll(snapshotId, LIMIT);
         changeSnapshotAmount(snapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), 1L);
-        TransactionTemplate stepTransaction = new TransactionTemplate(transactionManager);
 
-        // when
-        assertThatThrownBy(() -> stepTransaction.executeWithoutResult(status -> {
-            PayoutVerifyResult result = payoutService.verify(snapshotId);
-            assertThat(result.everyOrderExcluded()).isTrue();
-            throw new IllegalStateException("verifyStep 실패 재현");
-        })).hasMessage("verifyStep 실패 재현");
-
-        // then: 실패 기록(= 주문 잠금)은 별도 트랜잭션으로 커밋돼 남고, 다음 스냅샷에서 그 주문이 빠짐
-        assertThat(failureRepository.findBySnapshotId(snapshotId))
-                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
-                .containsExactly(tuple(orderX, PayoutFailureReason.VERIFY_MISMATCH));
-        assertThat(snapshotItemRepository.findBySnapshotId(createSnapshot(FROM, TO))).isEmpty();
+        // when & then: 전부 걸림 = 공통 코드 고장 의심이라 기록·잠금 없이 멈춤
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ALL_ORDERS_MISMATCHED));
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        // then: 잠기지 않아 코드를 고친 뒤 재실행하면 새 스냅샷에서 다시 처리됨
+        assertThat(snapshotItemRepository.findBySnapshotId(createSnapshot(FROM, TO)))
+                .extracting(PayoutSnapshotItem::getCandidateId)
+                .containsExactly(candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT));
     }
 
     @Test

@@ -35,8 +35,7 @@ final class PayoutVerifyExclusion {
         return exclusion;
     }
 
-    // verify가 방금 저장한 기록을 더함
-    // 별도 트랜잭션(REQUIRES_NEW)으로 저장해서 verify의 트랜잭션에서는 다시 조회해도 보이지 않아, 저장한 목록을 직접 더함
+    // verify가 이번에 만든 기록을 더함 (저장하기 전에 남은 항목 수를 계산하므로 아직 DB에 없음)
     void addAll(List<PayoutFailure> failures) {
         for (PayoutFailure failure : failures) {
             orderIds.add(failure.getOrderId());

@@ -30,6 +30,9 @@ public enum PayoutErrorCode implements ErrorCode {
     // 판매자 draft 항목의 스냅샷 번호가 묶인 헤더와 다름 (#290). 항목은 헤더의 번호를 그대로 복사해 만들어서, 다르면 항목을 만드는 코드가 망가진 상태
     // verify는 이번 스냅샷 기준으로 항목을 비교하고 commitStep은 헤더 기준으로 정산해서, 이런 항목은 검증 없이 지급될 수 있음 → 전체를 멈춤
     DRAFT_ITEM_SNAPSHOT_MISMATCH(HttpStatus.INTERNAL_SERVER_ERROR, "Draft item snapshot mismatch", "판매자 임시 정산 항목의 스냅샷이 묶인 판매자 정산과 다릅니다. 임시 정산 항목을 만드는 코드 오류이므로 최근 변경을 확인하세요."),
+    // 결과 검증에 걸린 주문을 빼고 나니 정산할 항목이 0건 (#290). 전부 걸렸다는 것은 대부분 draft 관련 공통 코드가 망가진 상태
+    // 코드 고장과 같이 실패 기록·잠금 없이 멈춤 (기록하면 그날 대상 주문이 전부 잠겨 뒷수습이 커짐, PayoutService.verify 참고)
+    DRAFT_ALL_ORDERS_MISMATCHED(HttpStatus.INTERNAL_SERVER_ERROR, "Draft all orders mismatched", "결과 검증에 모든 주문이 걸렸습니다. 임시 정산을 만드는 코드 오류가 의심되므로 최근 변경을 확인하세요."),
     // 이번 스냅샷에서 실패로 기록된 후보가 draft에 들어감 (#290). draft 대상 조회 조건(실패 후보 제외)이 망가진 상태라 위와 같은 코드 고장
     // 주문 단위로 빼지 않고 전체를 멈추는 이유: 이 후보에는 실패 기록이 이미 있어 결과 검증 실패를 따로 남길 수 없고(UK), 공통 조회 조건의 버그라 다른 주문도 믿기 어려움
     // 코드 버그가 아닌 경로도 하나 있음: 판매자 draft 저장이 DB에는 커밋됐는데 호출 쪽에 예외로 돌아오면(커밋 응답 유실 등) 그 판매자 후보가 UNEXPECTED_ERROR로도 기록됨

@@ -11,6 +11,7 @@ import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.repository.PayoutFailureRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutQueryRepository.CountAndAmount;
 import com.ok.payout.repository.PayoutQueryRepository.DraftItemRow;
@@ -90,7 +91,7 @@ class PayoutServiceTest {
     private PayoutCandidateItemRepository payoutCandidateItemRepository;
 
     @Mock
-    private PayoutVerifyFailureService payoutVerifyFailureService;
+    private PayoutFailureRepository payoutFailureRepository;
 
     @Mock
     private PayoutRepository payoutRepository;
@@ -231,7 +232,7 @@ class PayoutServiceTest {
 
         // then
         assertThat(result).isEqualTo(new PayoutVerifyResult(4, 0, 0));
-        then(payoutVerifyFailureService).should(never()).saveAll(any());
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     @Test
@@ -248,7 +249,7 @@ class PayoutServiceTest {
 
         // then: 주문 1의 2건만 정산할 항목으로 남음
         assertThat(result).isEqualTo(new PayoutVerifyResult(2, 1, 2));
-        then(payoutVerifyFailureService).should().saveAll(failuresCaptor.capture());
+        then(payoutFailureRepository).should().saveAll(failuresCaptor.capture());
         assertThat(failuresCaptor.getValue())
                 .extracting(PayoutFailure::getCandidateId, PayoutFailure::getReason, PayoutFailure::getDetail)
                 .containsExactly(
@@ -270,13 +271,13 @@ class PayoutServiceTest {
 
         // then
         assertThat(result).isEqualTo(new PayoutVerifyResult(2, 1, 1));
-        then(payoutVerifyFailureService).should().saveAll(failuresCaptor.capture());
+        then(payoutFailureRepository).should().saveAll(failuresCaptor.capture());
         assertThat(failuresCaptor.getValue()).extracting(PayoutFailure::getCandidateId).containsExactly(3L);
     }
 
     @Test
-    void 모든_주문이_걸리면_정산할_항목이_0건이다() {
-        // given: 주문 1은 수수료 누락, 주문 2는 대금 3번 누락
+    void 모든_주문이_걸려_정산할_항목이_0건이면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
+        // given: 주문 1은 수수료 누락, 주문 2는 대금 3번 누락 → 걸린 주문을 빼면 남는 항목 없음
         givenVerifyRows(verifySnapshot(), List.of(SELLER_DRAFT_1, SELLER_DRAFT_4), List.of(), List.of());
         given(payoutCandidateItemRepository.findAllByIdInOrderByIdAsc(any())).willReturn(List.of(
                 withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L),
@@ -284,12 +285,11 @@ class PayoutServiceTest {
                 withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 10L, 1_000L), 3L),
                 withId(PayoutCandidateItem.ofSaleAmount(2L, 2002L, 20L, 19_400L), 4L)));
 
-        // when
-        PayoutVerifyResult result = sut.verify(SNAPSHOT_ID);
-
-        // then: tasklet이 이 결과로 Job을 FAILED로 끝냄 (PayoutJobConfigTest)
-        assertThat(result).isEqualTo(new PayoutVerifyResult(0, 2, 4));
-        assertThat(result.everyOrderExcluded()).isTrue();
+        // when & then: 전부 걸림 = 공통 코드 고장 의심이라 주문을 잠그지 않고 멈춤
+        assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ALL_ORDERS_MISMATCHED));
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     @Test
@@ -302,7 +302,7 @@ class PayoutServiceTest {
         assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH));
-        then(payoutVerifyFailureService).should(never()).saveAll(any());
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     @Test
@@ -315,7 +315,7 @@ class PayoutServiceTest {
         assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
-        then(payoutVerifyFailureService).should(never()).saveAll(any());
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     @Test
@@ -329,7 +329,7 @@ class PayoutServiceTest {
         assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE));
-        then(payoutVerifyFailureService).should(never()).saveAll(any());
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     // ---------- publish ----------
