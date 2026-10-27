@@ -408,6 +408,9 @@ public class PayoutService {
                     snapshotId, mismatchedSnapshotItems.size(), MESSAGE_ITEM_LIMIT, limit(mismatchedSnapshotItems)));
         }
 
+        // TODO(#52): 스냅샷·draft·실패 기록을 전부 메모리에 올려 비교함 (createSnapshot·validate와 같은 대량 처리 한계)
+        //   어림: 행 하나 약 100~150바이트 → 스냅샷 10만 건이면 수십 MB, 100만 건이면 수백 MB (실측 아님)
+        //   정산 대상이 수십만 건 규모가 되면 주문 ID 범위로 나눠 비교하는 방식 검토 (verify는 주문 단위 판정이라 주문 단위로 끊어도 결과가 같음)
         List<SnapshotItemRow> snapshotItems = payoutQueryRepository.findSnapshotItemRows(snapshotId);
         List<DraftItemRow> draftItems = new ArrayList<>(payoutQueryRepository.findSellerDraftItemRows(snapshotId));
         draftItems.addAll(payoutQueryRepository.findSystemDraftItemRows(snapshotId));
