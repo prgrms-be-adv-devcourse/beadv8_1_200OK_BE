@@ -1,6 +1,7 @@
 import org.gradle.api.artifacts.VersionCatalogsExtension
 
-// 도메인 모듈(서브프로젝트)용 컨벤션: 공통 의존(common)과 모듈이 단독으로 기동하는 데 필요한 스타터를 준다
+// 도메인 모듈(서브프로젝트)용 컨벤션: 플러그인, Q클래스 생성, 모듈 단독 기동·테스트 설정만 준다
+// 의존성은 모듈의 build.gradle.kts에 직접 적는다. 스타터는 common이 api로 열어 두므로 모듈은 project(":common")만 가져오면 된다
 // 도메인 모듈끼리는 project(...) 의존을 걸지 않는다(선언하지 않은 모듈은 컴파일할 수 없고, 선언은 PR diff에서 보이므로 리뷰에서 확인한다)
 plugins {
     id("ok.java-conventions")
@@ -11,24 +12,7 @@ plugins {
 val libs = the<VersionCatalogsExtension>().named("libs")
 
 dependencies {
-    implementation(project(":common"))
-    testImplementation(project(path = ":common", configuration = "testSupportElements"))
-
-    implementation("org.springframework.boot:spring-boot-starter-webmvc")
-    implementation("org.springframework.boot:spring-boot-starter-validation")
-    implementation("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)
-    implementation("org.springframework.boot:spring-boot-starter-security")
-    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("org.springframework.boot:spring-boot-starter-flyway")
-    implementation("org.flywaydb:flyway-mysql")
-    implementation("org.springframework.modulith:spring-modulith-starter-core")
-    implementation("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
-    implementation(libs.findLibrary("springdoc-webmvc-ui").get())
-    implementation(libs.findLibrary("querydsl-jpa").get())
-    runtimeOnly("com.mysql:mysql-connector-j")
-
-    // Querydsl Q클래스 생성 (annotation processor)
+    // Querydsl Q클래스 생성 (annotation processor). 프로세서는 의존으로 전달되지 않아 모듈마다 필요하다
     annotationProcessor(variantOf(libs.findLibrary("querydsl-apt").get()) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")

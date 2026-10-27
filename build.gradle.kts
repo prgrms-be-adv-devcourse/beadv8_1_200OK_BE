@@ -33,6 +33,12 @@ tasks.register("createModule") {
 plugins {
     id("ok.spring-module-conventions")
 }
+
+dependencies {
+    implementation(project(":common"))
+    testImplementation(project(path = ":common", configuration = "testSupportElements"))
+    // 이 모듈만 쓰는 의존성은 여기에 더한다. 스타터는 common이 api로 열어 두었다
+}
 """)
 
         write("src/main/java/com/ok/$name/package-info.java", """
