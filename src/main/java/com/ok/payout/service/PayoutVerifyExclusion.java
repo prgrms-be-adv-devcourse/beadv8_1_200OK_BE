@@ -8,13 +8,17 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-// 결과 검증(verify)에 걸려 이번 정산에서 뺄 draft 항목의 기준 (#290)
-// verify(남은 항목 수 판단)와 commitStep(실제로 빼기)이 같은 규칙을 쓰도록 한 곳에 둠 (둘이 어긋나면 "0건 FAILED" 판단과 실제 정산이 달라짐)
-//
-// 빼는 항목 = VERIFY_MISMATCH 기록의 주문에 속한 항목 + VERIFY_MISMATCH 기록이 있는 후보의 항목
-//   주문 기준: 같은 주문의 정상 후보(배송비 등)도 함께 뺌
-//   후보 기준도 두는 이유: draft 항목의 주문 ID가 후보와 다르게 들어간 버그라면, 실패 기록(후보에서 주문 ID를 복사)의 주문으로는 그 항목을 못 거름
-// draft는 INSERT 전용 기록이라 지우지 않고, 이 기준으로 commitStep 조회 결과에서 거름
+/**
+ * 결과 검증(verify)에 걸려 이번 정산에서 뺄 draft 항목을 판단한다 (#290).
+ * verify(남은 항목 수 판단)와 commitStep(실제로 빼기)이 같은 규칙을 쓰도록 한 곳에 둔다. 둘이 어긋나면 "0건 FAILED" 판단과 실제 정산이 달라진다.
+ * <p>
+ * 빼는 항목은 {@code VERIFY_MISMATCH} 기록의 주문에 속한 항목과 {@code VERIFY_MISMATCH} 기록이 있는 후보의 항목이다.
+ * <ul>
+ *   <li>주문 기준: 같은 주문의 정상 후보(배송비 등)도 함께 뺀다.</li>
+ *   <li>후보 기준: draft 항목의 주문 ID가 후보와 다르게 들어간 버그라면, 실패 기록(후보에서 주문 ID를 복사)의 주문으로는 그 항목을 못 거른다.</li>
+ * </ul>
+ * draft는 INSERT 전용 기록이라 지우지 않고, 이 기준으로 commitStep 조회 결과에서 거른다.
+ */
 final class PayoutVerifyExclusion {
 
     private final Set<Long> orderIds = new HashSet<>();
