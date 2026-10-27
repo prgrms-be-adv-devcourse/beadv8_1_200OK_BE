@@ -408,6 +408,9 @@ public class PayoutService {
                     snapshotId, mismatchedSnapshotItems.size(), MESSAGE_ITEM_LIMIT, limit(mismatchedSnapshotItems)));
         }
 
+        // TODO(#52): 스냅샷·draft·실패 기록을 전부 메모리에 올려 비교함 (createSnapshot·validate와 같은 대량 처리 한계)
+        //   어림: 행 하나 약 100~150바이트 → 스냅샷 10만 건이면 수십 MB, 100만 건이면 수백 MB (실측 아님)
+        //   정산 대상이 수십만 건 규모가 되면 주문 ID 범위로 나눠 비교하는 방식 검토 (verify는 주문 단위 판정이라 주문 단위로 끊어도 결과가 같음)
         List<SnapshotItemRow> snapshotItems = payoutQueryRepository.findSnapshotItemRows(snapshotId);
         List<DraftItemRow> draftItems = new ArrayList<>(payoutQueryRepository.findSellerDraftItemRows(snapshotId));
         draftItems.addAll(payoutQueryRepository.findSystemDraftItemRows(snapshotId));
@@ -445,14 +448,15 @@ public class PayoutService {
         //     (정산이 만들어지지 않는 동안은 조회 하한(마지막 정산일 기준)도 그대로라 밀린 후보가 계속 조회됨)
         //   한계: 그날 대상이 정말로 틀린 주문뿐이었어도 잠기지 않음 → 다음 배치에서 다시 걸려 또 멈추므로 매일 FAILED로 드러남
         // "걸려서 0건"일 때만 해당: 대상이 없는 날, validate·draft 실패만으로 0건인 날은 걸린 주문이 없어 정상 진행(COMPLETED)
-        if (remainingItemCount == 0 && exclusion.orderCount() > 0) {
+        //   "걸린 주문"은 이번 검증에서 새로 걸린 주문만 봄: 같은 스냅샷을 다시 검증할 때 이전 검증에서 이미 빠진 주문 때문에 멈추지 않게
+        if (remainingItemCount == 0 && !result.orderMismatches().isEmpty()) {
             // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
             //   어디서 보나: BATCH_STEP_EXECUTION에서 payoutVerifyStep이 FAILED인 실행의 EXIT_MESSAGE (걸린 주문 ID와 원인이 들어 있음)
             //   멈췄을 때 할 일: 메시지의 원인(어느 검사에 걸렸는지)으로 draft 관련 최근 변경 확인·수정 → 재실행
             //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_ALL_ORDERS_MISMATCHED, String.format(
                     "결과 검증에 모든 주문이 걸림(코드 오류 의심). snapshotId=%d, 걸린 주문 수=%d, 걸린 후보 수=%d, 원인(최대 %d건)=%s",
-                    snapshotId, exclusion.orderCount(), verifyFailures.size(), MESSAGE_ITEM_LIMIT,
+                    snapshotId, result.orderMismatches().size(), verifyFailures.size(), MESSAGE_ITEM_LIMIT,
                     limit(result.orderMismatches())));
         }
 
