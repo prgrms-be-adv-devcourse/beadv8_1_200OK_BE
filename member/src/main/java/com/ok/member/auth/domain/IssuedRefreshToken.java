@@ -1,7 +1,6 @@
 package com.ok.member.auth.domain;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 
 /**
  * 클라이언트에게 전달할, 새로 발급된 Refresh Token.

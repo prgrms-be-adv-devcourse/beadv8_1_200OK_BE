@@ -2,8 +2,6 @@ package com.ok.wallet.repository;
 
 import com.ok.wallet.domain.Charge;
 import com.ok.wallet.domain.ChargeStatus;
-import jakarta.persistence.LockModeType;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
