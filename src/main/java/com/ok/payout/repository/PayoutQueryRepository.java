@@ -145,8 +145,8 @@ public class PayoutQueryRepository {
                         payoutSellerDraftItem.amount)
                 .from(payoutSellerDraftItem)
                 .join(payoutSellerDraftItem.sellerDraft, payoutSellerDraft)
-                // 헤더의 스냅샷도 같아야 함: commitStep은 헤더(스냅샷 기준) 아래 항목을 정산하므로, 헤더가 다른 스냅샷인 항목은 이번에 정산되지 않음
-                //   → 여기서도 빼서 "draft 누락"으로 잡히게 함 (verify가 통과시킨 항목이 commit에서 조용히 빠지는 일이 없게)
+                // 헤더의 스냅샷도 같아야 함: 어긋난 항목은 앞의 코드 고장 검사(findSellerDraftItemsWithMismatchedSnapshot)에서 이미 멈추지만,
+                //   이 조회만 따로 쓰일 때도 commitStep(헤더 기준)과 같은 항목을 보게 함
                 .where(payoutSellerDraftItem.snapshotId.eq(snapshotId),
                         payoutSellerDraft.snapshotId.eq(snapshotId))
                 .orderBy(payoutSellerDraftItem.candidateId.asc())
@@ -202,6 +202,20 @@ public class PayoutQueryRepository {
                 .where(payoutSellerDraft.snapshotId.eq(snapshotId))
                 .groupBy(payoutSellerDraft.id, payoutSellerDraft.sellerId, payoutSellerDraft.amount)
                 .orderBy(payoutSellerDraft.sellerId.asc())
+                .fetch();
+    }
+
+    // 판매자 draft 항목 중 묶인 헤더와 스냅샷 번호가 다른 항목의 후보 ID (정상이면 0건)
+    // 항목은 헤더의 번호를 복사해 만들어서 다르면 코드가 망가진 상태 (PayoutSellerDraftItem 생성자)
+    // 이번 스냅샷이 헤더 쪽이든 항목 쪽이든 찾음: 헤더 기준인 commitStep과 항목 기준인 verify가 서로 다른 항목을 보게 되므로
+    public List<Long> findSellerDraftItemsWithMismatchedSnapshot(Long snapshotId) {
+        return queryFactory
+                .select(payoutSellerDraftItem.candidateId)
+                .from(payoutSellerDraftItem)
+                .join(payoutSellerDraftItem.sellerDraft, payoutSellerDraft)
+                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId).or(payoutSellerDraft.snapshotId.eq(snapshotId)),
+                        payoutSellerDraftItem.snapshotId.ne(payoutSellerDraft.snapshotId))
+                .orderBy(payoutSellerDraftItem.candidateId.asc())
                 .fetch();
     }
 

@@ -527,10 +527,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 헤더와_스냅샷이_다른_판매자_draft_항목은_결과_검증이_못_보므로_정산하지_않는다() {
-        // given: 판매자 10의 draft 뒤, 스냅샷에 없는 후보 Z의 항목이 다른 스냅샷 번호로 판매자 10의 헤더 아래에 들어간 상황
-        // verify는 헤더·항목 스냅샷이 모두 이번 스냅샷인 항목만 보므로 이 항목을 보지 못함 → commit이 직접 걸러야 함
-        // 판매자 합계 검사에 걸리지 않게 헤더 금액은 항목 합계로 맞춰 둠
+    void 이번_스냅샷_헤더_아래에_스냅샷이_다른_판매자_항목이_있으면_전용_에러로_멈추고_실패를_기록하지_않는다() {
+        // given: 판매자 10의 draft 뒤, 후보 Z의 항목이 다른 스냅샷 번호로 이번 스냅샷의 판매자 10 헤더 아래에 들어간 상황
+        // commitStep은 헤더 기준이라 그대로 두면 verify가 보지 못한 이 항목이 지급될 수 있음
+        // 판매자 합계 검사에 걸리지 않게 헤더 금액은 항목 합계로 맞춰 둠 (스냅샷 번호 검사만으로 잡는지 확인)
         LocalDateTime createdAt = TO.minusDays(1);
         long orderX = nextOrderItemId();
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
@@ -541,14 +541,32 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long otherSnapshotId = createSnapshot(FROM, TO);
         insertSellerDraftItemUnderHeader(snapshotId, 10L, otherSnapshotId, candidateIdOf(orderZ, 10L, PayoutEventType.SALE_AMOUNT));
 
-        // when
-        payoutService.verify(snapshotId);
-        payoutService.commit(snapshotId);
+        // when & then: 항목을 만드는 코드가 망가진 상태라 기록·잠금 없이 멈춤
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
 
-        // then: 판매자 10은 주문 X만 받음 (후보 Z의 5,000원은 나가지 않음)
-        assertThat(payoutRepository.findBySnapshotId(snapshotId))
-                .extracting(Payout::getPayeeId, Payout::getAmount)
-                .containsExactly(tuple(10L, 9_700L));
+    @Test
+    void 이번_스냅샷_번호의_판매자_항목이_다른_스냅샷_헤더_아래에_있어도_전용_에러로_멈춘다() {
+        // given: 이번 스냅샷(X) 번호를 가진 후보 Z의 항목이 다른 스냅샷(Y)의 판매자 10 헤더 아래에 들어간 상황 (반대 방향)
+        // 그대로 두면 Y의 commitStep이 Y의 verify가 보지 못한 이 항목을 지급할 수 있음
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        Long otherSnapshotId = createSnapshot(FROM, TO);
+        draftAll(otherSnapshotId, LIMIT);
+        long orderZ = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderZ, 10L, 5_000L, createdAt);
+        insertSellerDraftItemUnderHeader(otherSnapshotId, 10L, snapshotId, candidateIdOf(orderZ, 10L, PayoutEventType.SALE_AMOUNT));
+
+        // when & then
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
     }
 
     // ---------- commitStep ----------

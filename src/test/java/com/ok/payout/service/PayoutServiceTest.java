@@ -306,6 +306,19 @@ class PayoutServiceTest {
     }
 
     @Test
+    void 판매자_항목의_스냅샷이_헤더와_다르면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
+        // given: 판매자 합계는 맞는데, 후보 3번 항목의 스냅샷 번호가 묶인 헤더와 다름 (항목을 만드는 코드가 망가진 상태)
+        given(payoutQueryRepository.findSellerTotalRows(SNAPSHOT_ID)).willReturn(List.of());
+        given(payoutQueryRepository.findSellerDraftItemsWithMismatchedSnapshot(SNAPSHOT_ID)).willReturn(List.of(3L));
+
+        // when & then
+        assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
+        then(payoutVerifyFailureService).should(never()).saveAll(any());
+    }
+
+    @Test
     void 실패_기록이_있는_후보가_draft에_들어가면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
         // given: 대금 3번은 validate에서 빠졌는데 draft에도 있고, 주문 1은 수수료가 누락됨
         // 다른 주문의 불일치가 함께 있어도 기록을 먼저 남기지 않음 (망가진 코드로 판정한 결과라)

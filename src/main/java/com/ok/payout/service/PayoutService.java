@@ -291,10 +291,7 @@ public class PayoutService {
         for (PayoutSellerDraft draft : payoutSellerDraftRepository.findBySnapshotId(snapshotId)) {
             List<PayoutSellerDraftItem> items = new ArrayList<>();
             for (PayoutSellerDraftItem item : draft.getItems()) {
-                // 항목의 스냅샷이 헤더와 다르면(코드 버그) verify가 보지 못한 항목이라 정산하지 않음
-                // (verify는 헤더·항목 스냅샷이 모두 이번 스냅샷인 항목만 비교함, PayoutQueryRepository.findSellerDraftItemRows)
-                if (!item.getSnapshotId().equals(snapshotId)
-                        || exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
+                if (exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
                     excludedItemCount++;
                 } else {
                     items.add(item);
@@ -376,7 +373,7 @@ public class PayoutService {
     //
     // 순서
     //   1) 코드 고장 검사 → 걸리면 아무것도 기록하지 않고 전용 에러 코드로 Job 전체 중단
-    //      판매자 합계 불일치, 실패 후보가 draft에 섞임: 모든 판매자가 같이 쓰는 코드가 망가진 것이라 일부만 빼도 나머지를 믿기 어려움
+    //      판매자 합계 불일치, 판매자 항목의 스냅샷 번호 불일치, 실패 후보가 draft에 섞임: 모든 판매자가 같이 쓰는 코드가 망가진 것이라 일부만 빼도 나머지를 믿기 어려움
     //      기록·잠금을 먼저 남기지 않는 이유: 망가진 코드로 판정한 결과라 대량으로 잘못 잠글 수 있고, 고친 뒤 재실행하면 깨끗하게 다시 처리됨
     //   2) 후보 단위 검사 → 걸린 주문의 이번 스냅샷 후보(모든 판매자)를 VERIFY_MISMATCH로 기록 (주문 잠금)
     //      이미 이번 스냅샷에 실패 기록이 있는 후보는 건너뜀 (실패 기록 UK, 그 후보는 원래 draft에도 없음)
@@ -398,6 +395,16 @@ public class PayoutService {
             throw new RestApiException(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH, String.format(
                     "판매자 임시 정산 합계 불일치(코드 오류). snapshotId=%d, 불일치 판매자 수=%d, 내용(최대 %d건)=%s",
                     snapshotId, totalMismatches.size(), MESSAGE_ITEM_LIMIT, limit(totalMismatches)));
+        }
+
+        List<Long> mismatchedSnapshotItems = payoutQueryRepository.findSellerDraftItemsWithMismatchedSnapshot(snapshotId);
+        if (!mismatchedSnapshotItems.isEmpty()) {
+            // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
+            //   멈췄을 때 할 일: 판매자 draft 항목 생성(PayoutSellerDraftItem 생성자의 스냅샷 번호 복사) 최근 변경 확인·수정 → 재실행
+            //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
+            throw new RestApiException(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH, String.format(
+                    "판매자 임시 정산 항목의 스냅샷 불일치(코드 오류). snapshotId=%d, 항목 수=%d, 후보 ID(최대 %d건)=%s",
+                    snapshotId, mismatchedSnapshotItems.size(), MESSAGE_ITEM_LIMIT, limit(mismatchedSnapshotItems)));
         }
 
         List<SnapshotItemRow> snapshotItems = payoutQueryRepository.findSnapshotItemRows(snapshotId);
