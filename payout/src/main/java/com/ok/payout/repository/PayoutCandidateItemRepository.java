@@ -30,4 +30,7 @@ public interface PayoutCandidateItemRepository extends Repository<PayoutCandidat
                                                                   Long adjustmentId);
 
     List<PayoutCandidateItem> saveAll(Iterable<PayoutCandidateItem> items);
+
+    // 결과 검증 실패 기록을 만들 후보들 (#290). id 순으로 받아 실패 기록 순서가 매번 같게 함
+    List<PayoutCandidateItem> findAllByIdInOrderByIdAsc(Collection<Long> ids);
 }

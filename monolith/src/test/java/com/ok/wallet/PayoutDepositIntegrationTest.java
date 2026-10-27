@@ -33,6 +33,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     private static final long ORDER_ID = 600_001L;
     private static final long ORDER_ITEM_ID = 6_000_001L;
     private static final long SELLER_ID = 6_001L;
+    private static final long BUYER_ID = 6_002L;
 
     @Autowired
     ApplicationEventPublisher eventPublisher;
@@ -59,6 +60,8 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 구매확정부터_정산까지_진행되면_판매자_지갑에_정산금이_입금된다() throws Exception {
         // Given: 상품 10,000원, 배송비 3,000원 구매확정
+        // 정산은 지갑 차감 기록이 없는 주문을 정산에서 빼므로(정산 #194), 이 주문의 결제 금액(13,000원) 차감 기록을 먼저 넣는다
+        givenWalletDeduction(13_000L);
         // 정산 후보 리스너는 커밋 후 실행되므로 트랜잭션 안에서 발행한다
         transactionTemplate.executeWithoutResult(status -> eventPublisher.publishEvent(
                 new OrderProductConfirmedEvent(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L)));
@@ -76,6 +79,15 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         await().atMost(Duration.ofSeconds(10)).until(() -> sellerBalance() == 12_700L);
         assertThat(countSellerLedgers()).isEqualTo(1);
         assertThat(latestReferenceKey()).isEqualTo("PAYOUT:" + sellerPayoutId());
+    }
+
+    // 정산의 지갑 차감 기록을 직접 넣는다
+    // 실제로는 지갑의 결제 완료 이벤트를 정산이 받아 저장하지만, 이 테스트는 구매확정 이후의 정산·입금 흐름만 보므로 기록만 둔다
+    private void givenWalletDeduction(long amount) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                q("INSERT INTO payout_wallet_deduction (order_id, buyer_id, amount, deducted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"),
+                ORDER_ID, BUYER_ID, amount, now, now, now);
     }
 
     // 주문 ID로 세는 이유: 배송비 후보는 판매자 묶음 단위라 order_item_id가 NULL (주문항목 ID로 세면 배송비가 빠짐)
@@ -135,10 +147,14 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update(q("DELETE FROM payout_seller_draft_item"));
         jdbcTemplate.update(q("DELETE FROM payout_seller_draft"));
         jdbcTemplate.update(q("DELETE FROM payout_system_draft_item"));
+        // 정산 실패 기록은 스냅샷·후보를 참조하므로 그 둘보다 먼저 지운다 (정산 #194에서 생긴 테이블)
+        // 빠뜨리면 스냅샷 삭제에서 FK 오류로 멈춰 후보가 남고, 뒤에 도는 정산 테스트까지 오염된다
+        jdbcTemplate.update(q("DELETE FROM payout_failure"));
         jdbcTemplate.update(q("DELETE FROM payout_snapshot_item"));
         jdbcTemplate.update(q("DELETE FROM payout_snapshot"));
         // 배송비 후보(order_item_id NULL)까지 지우도록 주문 ID로 지움
         jdbcTemplate.update(q("DELETE FROM payout_candidate_items WHERE order_id = ?"), ORDER_ID);
+        jdbcTemplate.update(q("DELETE FROM payout_wallet_deduction WHERE order_id = ?"), ORDER_ID);
     }
 
     // 이 테스트는 wallet·payout 두 스키마의 테이블을 함께 쓰고 접속 기본 DB는 기본 스키마라서, 테이블 이름을 스키마로 한정한다

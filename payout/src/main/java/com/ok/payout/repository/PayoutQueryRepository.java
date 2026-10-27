@@ -3,11 +3,15 @@ package com.ok.payout.repository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutSystemDraftItem;
+import com.ok.payout.domain.QPayoutCandidateItem;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.JPAExpressions;
+import com.querydsl.jpa.JPQLSubQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -16,7 +20,10 @@ import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static com.ok.payout.domain.QPayout.payout;
@@ -35,13 +42,24 @@ public class PayoutQueryRepository {
 
     private final JPAQueryFactory queryFactory;
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이)
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
     public List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
         return queryFactory
                 .selectFrom(payoutCandidateItem)
-                .where(unsettledInPeriod(from, to))
+                .where(unsettledInPeriod(from, to), lockedOrder().not())
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
+    }
+
+    // 스냅샷 대상 조건(기간 안 미정산)에는 맞지만 주문이 잠겨 뺀 후보 수 (스냅샷 생성 로그용)
+    // 위 조회와 같은 조건에서 잠금 조건만 뒤집어, "잠금 때문에 빠진 것"만 정확히 셈
+    public long countLockedUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
+        Long count = queryFactory
+                .select(payoutCandidateItem.count())
+                .from(payoutCandidateItem)
+                .where(unsettledInPeriod(from, to), lockedOrder())
+                .fetchOne();
+        return Objects.requireNonNullElse(count, 0L);
     }
 
     // draftStep 회차마다 "이번에 처리할 판매자" 조회
@@ -69,113 +87,135 @@ public class PayoutQueryRepository {
                 .fetch();
     }
 
-    // 건수·금액 합계를 함께 담는 값 (verifyStep 비교용)
-    // record라 equals가 자동 생성됨 → expected.equals(drafted)로 건수와 금액이 "둘 다" 같은지 한 번에 비교
-    //   예) CountAndAmount(250, 2_500_000) = 250건, 2,500,000원
+    // 건수·금액 합계를 함께 담는 값 (정산 상세의 판매자 수수료 집계)
+    //   예) CountAndAmount(2, 900) = 2건, 900원
     public record CountAndAmount(long count, long amount) {
-        // 판매자 항목 결과 + 시스템 항목 결과를 합칠 때 사용
-        //   예) (170, 2_425_000).plus(80, 75_000) → (250, 2_500_000)
-        public CountAndAmount plus(CountAndAmount other) {
-            return new CountAndAmount(count + other.count, amount + other.amount);
-        }
     }
 
-    // 스냅샷 목록 집계 = "원래 처리해야 할 양"
-    //   SQL) SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM payout_snapshot_item WHERE snapshot_id = ?
-    //   예) 250건, 2,500,000원
-    // coalesce(0L): 행이 없으면 SUM이 NULL이라 0으로 바꿈 (대상 0건인 스냅샷)
-    // Tuple: 두 값을 한 번에 조회한 결과. get(0) = 건수, get(1) = 금액 합계
-    public CountAndAmount summarizeSnapshotItems(Long snapshotId) {
-        Tuple row = queryFactory
-                .select(payoutSnapshotItem.count(), payoutSnapshotItem.amount.sumLong().coalesce(0L))
-                .from(payoutSnapshotItem)
-                .where(payoutSnapshotItem.snapshotId.eq(snapshotId))
-                .fetchOne();
-        return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
+    // ---------- verifyStep 결과 검증 (#290) ----------
+    // 후보 단위로 비교하려고 스냅샷·draft·실패 기록을 한 줄씩 가져옴 (판정은 PayoutDraftValidator)
+    // 서비스 쪽 타입을 리포지토리가 쓰면 레이어 규칙에 걸려서, 조회 결과용 record를 여기에 둠 (CandidateRow와 같은 이유)
+
+    // 스냅샷 항목 한 줄 = "원래 처리해야 할 후보". 금액은 스냅샷 시점 값, 주문·판매자·타입은 정산후보에서 가져옴
+    public record SnapshotItemRow(Long candidateId, Long orderId, Long sellerId, PayoutEventType eventType, Long amount) {
     }
 
-    // 판매자 몫 draft 항목 집계 = "실제로 처리한 양" 중 판매 대금·배송비
-    //   예) 170건, 2,425,000원
-    public CountAndAmount summarizeSellerDraftItems(Long snapshotId) {
-        Tuple row = queryFactory
-                .select(payoutSellerDraftItem.count(), payoutSellerDraftItem.amount.sumLong().coalesce(0L))
-                .from(payoutSellerDraftItem)
-                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId))
-                .fetchOne();
-        return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
+    // draft 항목 한 줄 (판매자 몫·시스템 몫 공통)
+    //   headerSellerId: 판매자 몫이면 그 항목이 묶인 판매자 draft(헤더)의 판매자, 시스템 몫이면 null
+    //                   commitStep은 헤더의 판매자로 정산 수취인을 정하므로, 항목의 판매자와 다르면 돈이 다른 판매자에게 감
+    //   systemShare: 시스템 몫 테이블에서 왔으면 true
+    public record DraftItemRow(Long candidateId, Long orderId, Long sellerId, Long headerSellerId,
+                               PayoutEventType eventType, Long amount, boolean systemShare) {
     }
 
-    // 시스템 몫 draft 항목 집계 = "실제로 처리한 양" 중 수수료
-    //   예) 80건, 75,000원 (수수료가 없으면 coalesce로 0건, 0원)
-    public CountAndAmount summarizeSystemDraftItems(Long snapshotId) {
-        Tuple row = queryFactory
-                .select(payoutSystemDraftItem.count(), payoutSystemDraftItem.amount.sumLong().coalesce(0L))
-                .from(payoutSystemDraftItem)
-                .where(payoutSystemDraftItem.snapshotId.eq(snapshotId))
-                .fetchOne();
-        return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
+    // 이번 스냅샷 실패 기록 한 줄
+    public record FailureRow(Long candidateId, Long orderId, PayoutFailureReason reason) {
     }
 
-    // 판매자 draft 헤더(판매자별 합계)의 금액을 모두 더한 값
-    // 헤더는 PayoutSellerDraft.create()가 항목을 더해 만든 값이라, 판매자 항목 금액 합계와 같아야 정상
-    //   예) 판매자 A 헤더 1,000,000 + B 헤더 1,425,000 = 2,425,000 → summarizeSellerDraftItems 금액(2,425,000)과 비교
-    // 다르면 draft 헤더 합계 계산 버그 (draft는 검증 실패 시에도 남는 기록이라 스스로 맞아야 함)
-    // commitStep은 헤더 금액을 쓰지 않고 항목을 다시 더해 payout 금액을 만들므로, 헤더가 틀려도 장부 금액에는 번지지 않음
-    public long sumSellerDraftAmount(Long snapshotId) {
-        Long sum = queryFactory
-                .select(payoutSellerDraft.amount.sumLong().coalesce(0L))
-                .from(payoutSellerDraft)
-                .where(payoutSellerDraft.snapshotId.eq(snapshotId))
-                .fetchOne();
-        return sum;
+    // 판매자 draft 헤더 1건의 금액과 그 헤더에 묶인 항목 금액 합계
+    public record SellerTotalRow(Long sellerId, Long headerAmount, Long itemAmount) {
     }
 
-    // 실패 기록 집계 = "처리하지 않고 뺀 양" (verifyStep에서 스냅샷 = draft + 실패 비교용)
-    // payout_failure에는 금액이 없어 스냅샷 항목과 조인해 스냅샷 시점 금액을 씀 (금액을 두 곳에 저장하면 어긋날 수 있어서)
-    //   예) 실패 2건, 13,000원
-    public CountAndAmount summarizeFailures(Long snapshotId) {
-        Tuple row = queryFactory
-                .select(payoutFailure.count(), payoutSnapshotItem.amount.sumLong().coalesce(0L))
-                .from(payoutFailure)
-                .join(payoutSnapshotItem).on(
-                        payoutSnapshotItem.snapshotId.eq(payoutFailure.snapshotId),
-                        payoutSnapshotItem.candidateId.eq(payoutFailure.candidateId))
-                .where(payoutFailure.snapshotId.eq(snapshotId))
-                .fetchOne();
-        return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
-    }
-
-    // draft에도 들어가고 실패로도 기록된 후보 수 (정상이면 0)
-    // 0이 아니면 실패한 후보가 정산에 섞인 것 → draft 제외 조건(④) 버그
-    public long countDraftedFailures(Long snapshotId) {
-        Long count = queryFactory
-                .select(payoutFailure.count())
-                .from(payoutFailure)
-                .where(payoutFailure.snapshotId.eq(snapshotId),
-                        JPAExpressions.selectOne()
-                                .from(payoutSellerDraftItem)
-                                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId),
-                                        payoutSellerDraftItem.candidateId.eq(payoutFailure.candidateId))
-                                .exists()
-                                .or(JPAExpressions.selectOne()
-                                        .from(payoutSystemDraftItem)
-                                        .where(payoutSystemDraftItem.snapshotId.eq(snapshotId),
-                                                payoutSystemDraftItem.candidateId.eq(payoutFailure.candidateId))
-                                        .exists()))
-                .fetchOne();
-        return count;
-    }
-
-    // 스냅샷에 있는데 draft로 옮겨지지 않은 후보 ID (검증 실패 시 원인 확인용, limit개까지)
-    // draft 조회와 같은 조건(undraftedInSnapshot)을 써서 "draftStep이 놓친 것"과 정확히 같은 대상을 봄
-    //   예) 스냅샷 250건 중 draft 230건 → 누락 20건의 ID [101, 207, 233, ...]
-    public List<Long> findUndraftedCandidateIds(Long snapshotId, int limit) {
+    // 스냅샷 항목 전체 (정산후보와 조인)
+    // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (PayoutService.createSnapshot 주석 참고)
+    public List<SnapshotItemRow> findSnapshotItemRows(Long snapshotId) {
         return queryFactory
-                .select(payoutCandidateItem.id)
-                .from(payoutCandidateItem)
-                .where(undraftedInSnapshot(snapshotId))
-                .orderBy(payoutCandidateItem.id.asc())
-                .limit(limit)
+                .select(Projections.constructor(SnapshotItemRow.class,
+                        payoutSnapshotItem.candidateId,
+                        payoutCandidateItem.orderId,
+                        payoutCandidateItem.sellerId,
+                        payoutCandidateItem.eventType,
+                        payoutSnapshotItem.amount))
+                .from(payoutSnapshotItem)
+                .join(payoutCandidateItem).on(payoutCandidateItem.id.eq(payoutSnapshotItem.candidateId))
+                .where(payoutSnapshotItem.snapshotId.eq(snapshotId))
+                .orderBy(payoutSnapshotItem.candidateId.asc())
+                .fetch();
+    }
+
+    // 판매자 몫 draft 항목 전체 (묶인 헤더의 판매자 포함)
+    // 몫 구분(systemShare)은 조회한 테이블로 정해지는 값이라 select에 상수로 넣지 않고 Java에서 채움
+    public List<DraftItemRow> findSellerDraftItemRows(Long snapshotId) {
+        List<Tuple> rows = queryFactory
+                .select(payoutSellerDraftItem.candidateId,
+                        payoutSellerDraftItem.orderId,
+                        payoutSellerDraftItem.sellerId,
+                        payoutSellerDraft.sellerId,
+                        payoutSellerDraftItem.eventType,
+                        payoutSellerDraftItem.amount)
+                .from(payoutSellerDraftItem)
+                .join(payoutSellerDraftItem.sellerDraft, payoutSellerDraft)
+                // 헤더의 스냅샷도 같아야 함: 어긋난 항목은 앞의 코드 고장 검사(findSellerDraftItemsWithMismatchedSnapshot)에서 이미 멈추지만,
+                //   이 조회만 따로 쓰일 때도 commitStep(헤더 기준)과 같은 항목을 보게 함
+                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId),
+                        payoutSellerDraft.snapshotId.eq(snapshotId))
+                .orderBy(payoutSellerDraftItem.candidateId.asc())
+                .fetch();
+        List<DraftItemRow> items = new ArrayList<>();
+        for (Tuple row : rows) {
+            items.add(new DraftItemRow(row.get(payoutSellerDraftItem.candidateId), row.get(payoutSellerDraftItem.orderId),
+                    row.get(payoutSellerDraftItem.sellerId), row.get(payoutSellerDraft.sellerId),
+                    row.get(payoutSellerDraftItem.eventType), row.get(payoutSellerDraftItem.amount), false));
+        }
+        return items;
+    }
+
+    // 시스템 몫 draft 항목 전체 (수수료). 헤더가 없어 headerSellerId는 null
+    public List<DraftItemRow> findSystemDraftItemRows(Long snapshotId) {
+        List<PayoutSystemDraftItem> rows = queryFactory
+                .selectFrom(payoutSystemDraftItem)
+                .where(payoutSystemDraftItem.snapshotId.eq(snapshotId))
+                .orderBy(payoutSystemDraftItem.candidateId.asc())
+                .fetch();
+        List<DraftItemRow> items = new ArrayList<>();
+        for (PayoutSystemDraftItem row : rows) {
+            items.add(new DraftItemRow(row.getCandidateId(), row.getOrderId(), row.getSellerId(), null,
+                    row.getEventType(), row.getAmount(), true));
+        }
+        return items;
+    }
+
+    // 이번 스냅샷 실패 기록 전체 (verify 판정, commitStep의 결과 검증 실패 제외에 씀)
+    public List<FailureRow> findFailureRows(Long snapshotId) {
+        return queryFactory
+                .select(Projections.constructor(FailureRow.class,
+                        payoutFailure.candidateId,
+                        payoutFailure.orderId,
+                        payoutFailure.reason))
+                .from(payoutFailure)
+                .where(payoutFailure.snapshotId.eq(snapshotId))
+                .orderBy(payoutFailure.candidateId.asc())
+                .fetch();
+    }
+
+    // 판매자 draft 헤더마다 헤더 금액과 항목 금액 합계
+    // 헤더는 PayoutSellerDraft.create()가 항목을 더해 만든 값이라 정상이면 항상 같음 (다르면 draft를 만드는 코드 자체가 망가진 상태)
+    // 항목이 없는 헤더도 잡으려고 헤더 기준 LEFT JOIN (항목 합계 0)
+    public List<SellerTotalRow> findSellerTotalRows(Long snapshotId) {
+        return queryFactory
+                .select(Projections.constructor(SellerTotalRow.class,
+                        payoutSellerDraft.sellerId,
+                        payoutSellerDraft.amount,
+                        payoutSellerDraftItem.amount.sumLong().coalesce(0L)))
+                .from(payoutSellerDraft)
+                .leftJoin(payoutSellerDraftItem).on(payoutSellerDraftItem.sellerDraft.id.eq(payoutSellerDraft.id))
+                .where(payoutSellerDraft.snapshotId.eq(snapshotId))
+                .groupBy(payoutSellerDraft.id, payoutSellerDraft.sellerId, payoutSellerDraft.amount)
+                .orderBy(payoutSellerDraft.sellerId.asc())
+                .fetch();
+    }
+
+    // 판매자 draft 항목 중 묶인 헤더와 스냅샷 번호가 다른 항목의 후보 ID (정상이면 0건)
+    // 항목은 헤더의 번호를 복사해 만들어서 다르면 코드가 망가진 상태 (PayoutSellerDraftItem 생성자)
+    // 이번 스냅샷이 헤더 쪽이든 항목 쪽이든 찾음: 헤더 기준인 commitStep과 항목 기준인 verify가 서로 다른 항목을 보게 되므로
+    public List<Long> findSellerDraftItemsWithMismatchedSnapshot(Long snapshotId) {
+        return queryFactory
+                .select(payoutSellerDraftItem.candidateId)
+                .from(payoutSellerDraftItem)
+                .join(payoutSellerDraftItem.sellerDraft, payoutSellerDraft)
+                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId).or(payoutSellerDraft.snapshotId.eq(snapshotId)),
+                        payoutSellerDraftItem.snapshotId.ne(payoutSellerDraft.snapshotId))
+                .orderBy(payoutSellerDraftItem.candidateId.asc())
                 .fetch();
     }
 
@@ -192,6 +232,78 @@ public class PayoutQueryRepository {
                                 .where(payoutWalletDeduction.orderId.eq(payoutCandidateItem.orderId))
                                 .notExists(),
                         notFailedInSnapshot(snapshotId))
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // validateStep 금액 검사 대상(#195): 이번 스냅샷 후보 중 그 주문의 지갑 차감 기록이 있고, 아직 이번 스냅샷에 실패로 기록되지 않은 후보
+    // 차감 기록이 없는 주문은 차감 기록 검사(DEDUCTION_MISSING)가 먼저 빼므로 금액 검사를 하지 않음 (후보당 실패 기록 1건)
+    // 이미 실패로 기록된 후보를 빼는 이유는 findCandidatesWithoutDeduction과 같음 (같은 스냅샷 재검증 시 중복 방지)
+    public List<PayoutCandidateItem> findCandidatesWithDeduction(Long snapshotId) {
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(
+                        inSnapshot(snapshotId),
+                        JPAExpressions.selectOne()
+                                .from(payoutWalletDeduction)
+                                .where(payoutWalletDeduction.orderId.eq(payoutCandidateItem.orderId))
+                                .exists(),
+                        notFailedInSnapshot(snapshotId))
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 조정 후보, 스냅샷 이후 새로 들어온 후보까지
+    //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
+    //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
+    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) GROUP BY order_id
+    public Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId) {
+        List<Tuple> rows = queryFactory
+                .select(payoutCandidateItem.orderId, payoutCandidateItem.amount.sumLong())
+                .from(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)))
+                .groupBy(payoutCandidateItem.orderId)
+                .fetch();
+        Map<Long, Long> sums = new HashMap<>();
+        for (Tuple row : rows) {
+            sums.put(row.get(0, Long.class), row.get(1, Long.class));
+        }
+        return sums;
+    }
+
+    // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
+    // 차감 기록은 주문당 1건(UK order_id)이라 주문 ID가 겹치지 않음
+    public Map<Long, Long> findDeductionAmountByOrderInSnapshot(Long snapshotId) {
+        List<Tuple> rows = queryFactory
+                .select(payoutWalletDeduction.orderId, payoutWalletDeduction.amount)
+                .from(payoutWalletDeduction)
+                .where(payoutWalletDeduction.orderId.in(orderIdsInSnapshot(snapshotId)))
+                .fetch();
+        Map<Long, Long> amounts = new HashMap<>();
+        for (Tuple row : rows) {
+            amounts.put(row.get(0, Long.class), row.get(1, Long.class));
+        }
+        return amounts;
+    }
+
+    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
+    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
+    // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
+    // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
+    // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
+    public List<PayoutCandidateItem> findOriginalSaleCandidatesInSnapshot(Long snapshotId) {
+        QPayoutCandidateItem snapshotCandidate = new QPayoutCandidateItem("snapshotCandidate");
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        payoutCandidateItem.eventType.in(PayoutEventType.SALE_AMOUNT, PayoutEventType.SALE_FEE),
+                        payoutCandidateItem.orderItemId.in(JPAExpressions
+                                .select(snapshotCandidate.orderItemId)
+                                .from(payoutSnapshotItem)
+                                .join(snapshotCandidate).on(snapshotCandidate.id.eq(payoutSnapshotItem.candidateId))
+                                .where(payoutSnapshotItem.snapshotId.eq(snapshotId))))
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
     }
@@ -421,6 +533,31 @@ public class PayoutQueryRepository {
         //    validate 실패뿐 아니라 이후 생길 실패(#90 draft 예외)도 모두 여기서 빠져, 같은 후보를 다시 잡는 무한 반복이 생기지 않음
         condition.and(notFailedInSnapshot(snapshotId));
         return condition;
+    }
+
+    // 후보의 주문이 잠겼는지: 그 주문에 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
+    // 스냅샷 번호와 상관없이 주문 단위로 봄 → 잠긴 뒤 새로 들어온 같은 주문의 후보(나중에 구매확정된 상품, 조정 등)도 빠짐
+    // 잠그는 사유: 금액 검사 불일치(validate, #195), 결과 검증 불일치(verify, #290)
+    // 잠금을 남긴 Job이 이후 Step에서 FAILED로 끝나도 실패 기록은 남아 잠금이 유지됨
+    //   (금액 불일치는 입력에 대한 판정이라 재실행해도 다시 잠기고, 결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
+    //    실패한 Job의 판정을 지울 이유가 없음)
+    private BooleanExpression lockedOrder() {
+        return JPAExpressions.selectOne()
+                .from(payoutFailure)
+                .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId),
+                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()))
+                .exists();
+    }
+
+    // 이번 스냅샷 후보들의 주문 ID (금액 검사 집계 쿼리의 IN 조건)
+    // 바깥 쿼리와 같은 정산후보 테이블을 다시 읽으므로 별칭(snapshotCandidate)을 따로 둠
+    private JPQLSubQuery<Long> orderIdsInSnapshot(Long snapshotId) {
+        QPayoutCandidateItem snapshotCandidate = new QPayoutCandidateItem("snapshotCandidate");
+        return JPAExpressions
+                .select(snapshotCandidate.orderId)
+                .from(payoutSnapshotItem)
+                .join(snapshotCandidate).on(snapshotCandidate.id.eq(payoutSnapshotItem.candidateId))
+                .where(payoutSnapshotItem.snapshotId.eq(snapshotId));
     }
 
     // 이번 스냅샷 목록에 있는 후보
