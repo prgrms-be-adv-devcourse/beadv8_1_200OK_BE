@@ -14,7 +14,7 @@ import java.util.Map;
 // validateStep 금액 검사 판정 (#195). DB 조회·저장은 PayoutService.validate가 하고, 여기는 받은 값으로 판정만 함
 // verifyStep의 PayoutDraftValidator와 역할이 다름:
 //   여기(입력 검증) = 들어온 금액이 맞는지 후보 단위로 판정 → 틀린 주문만 실패로 빼고 나머지는 계속 정산
-//   PayoutDraftValidator(결과 검증) = 우리 코드가 만든 draft가 맞는지 → 틀리면 Job 전체를 멈춤
+//   PayoutDraftValidator(결과 검증) = 우리 코드가 만든 draft가 맞는지 → 틀리면 코드 버그 (그 주문을 잠그거나, 코드 고장이면 Job 전체를 멈춤, #290)
 //
 // 판정 단위는 주문: 이번 스냅샷에 들어온 같은 주문의 후보를 묶어 먼저 판정한 뒤 실패 목록을 한 번에 돌려줌
 //   주문상품마다 바로 실패를 만들면, 한 주문에 틀린 주문상품이 2개일 때 같은 후보가 AMOUNT_MISMATCH와 ORDER_LOCKED로 두 번 기록됨

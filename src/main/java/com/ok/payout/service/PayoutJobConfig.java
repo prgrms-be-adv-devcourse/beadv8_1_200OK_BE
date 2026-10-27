@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.service.dto.PayoutDraftResult;
+import com.ok.payout.service.dto.PayoutVerifyResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
@@ -38,8 +39,9 @@ public class PayoutJobConfig {
     //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
     //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 그 판매자만 실패로 기록하고 계속 진행 (#90)
     //              단 전원 실패(성공 0명)면 여기서 멈춤 (지킬 정산이 없는 공통 오류를 FAILED로 드러냄)
-    //   verify   : 스냅샷 목록과 임시 정산 비교 (불일치면 여기서 멈춤 → payout 미생성, 이벤트 미발행)
-    //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지)
+    //   verify   : 스냅샷과 임시 정산을 후보 단위로 비교, 어긋난 후보의 주문만 실패로 기록하고 잠금 (#290)
+    //              단 코드 자체가 망가진 경우(판매자 합계 불일치 등)와 정산할 것이 0건 남은 경우는 여기서 멈춤
+    //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지). 결과 검증에 걸린 주문의 항목은 뺌
     //   publish  : 이번에 확정된 판매자 몫 정산만 지갑 이벤트 발행
     // 앞 Step이 실패하면 Job이 FAILED로 멈추고 뒤 Step은 실행되지 않음
     // 실패한 Job은 재시작하지 않고 새 스냅샷으로 처음부터 재실행 (PayoutJobRunner 주석 참고)
@@ -85,7 +87,7 @@ public class PayoutJobConfig {
     }
 
     // 입력 검증: 틀린 후보는 실패로 기록만 하고 예외를 던지지 않음 → 나머지 후보는 draftStep으로 넘어감
-    // 결과 검증(verifyStep)과 다름: 그쪽은 우리가 만든 결과를 의심하고, 틀리면 Job 전체를 멈춤
+    // 결과 검증(verifyStep)과 다름: 그쪽은 우리가 만든 결과를 의심함 (틀리면 코드 버그라 주문을 잠그거나, 코드 고장이면 Job 전체를 멈춤)
     @Bean
     public Step payoutValidateStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                    Tasklet payoutValidateTasklet) {
@@ -155,7 +157,8 @@ public class PayoutJobConfig {
         }
     }
 
-    // 검증만 하고 아무것도 저장하지 않음. 실패하면 Job이 FAILED로 멈춰 commit·publish가 실행되지 않음
+    // 어긋난 후보의 주문은 실패로 기록하고 나머지는 commit으로 넘김 (#290, PayoutService.verify 참고)
+    // 중대 문제(코드 고장, 전부 걸려 정산 0건)면 verify가 기록 없이 예외를 던져 Job이 FAILED로 멈추고 commit·publish가 실행되지 않음
     @Bean
     public Step payoutVerifyStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                  Tasklet payoutVerifyTasklet) {
@@ -164,11 +167,16 @@ public class PayoutJobConfig {
                 .build();
     }
 
+    // 배치 실행 기록(BATCH_STEP_EXECUTION)에 남기는 수
+    //   WRITE_COUNT      = 결과 검증을 통과해 commitStep이 정산할 draft 항목 수
+    //   WRITE_SKIP_COUNT = 결과 검증 실패로 새로 기록한 후보 수 (함께 보류된 후보 포함). 일부만 걸리면 Job은 COMPLETED라 여기서 확인
     @Bean
     @StepScope
     public Tasklet payoutVerifyTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         return (contribution, chunkContext) -> {
-            payoutService.verify(snapshotId);
+            PayoutVerifyResult result = payoutService.verify(snapshotId);
+            contribution.incrementWriteCount(result.remainingItemCount());
+            contribution.incrementWriteSkipCount(result.recordedFailureCount());
             return RepeatStatus.FINISHED;
         };
     }

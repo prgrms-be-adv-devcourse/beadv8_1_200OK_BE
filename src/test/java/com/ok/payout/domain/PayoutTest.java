@@ -18,7 +18,7 @@ class PayoutTest {
                 withId(PayoutCandidateItem.ofSaleShippingFee(1L, 10L, 3_000L), 2L)));
 
         // when
-        Payout sut = Payout.forSeller(12L, draft);
+        Payout sut = Payout.forSeller(12L, draft.getSellerId(), draft.getItems());
 
         // then
         assertThat(sut).isNotNull();
@@ -28,6 +28,24 @@ class PayoutTest {
             softly.assertThat(sut.isSystem()).isFalse();
             softly.assertThat(sut.getAmount()).isEqualTo(12_700L);
             softly.assertThat(sut.getItems()).extracting(PayoutItem::getCandidateId).containsExactly(1L, 2L);
+        });
+    }
+
+    @Test
+    void 판매자_draft_항목_중_일부만_넘기면_넘긴_항목만_담고_금액도_그_합계다() {
+        // given: 판매자 10의 draft (대금 9,700 + 배송비 3,000) 중 결과 검증에 걸린 주문을 거르고 대금만 남은 경우 (#290)
+        PayoutSellerDraft draft = PayoutSellerDraft.create(12L, 10L, List.of(
+                withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L),
+                withId(PayoutCandidateItem.ofSaleShippingFee(2L, 10L, 3_000L), 2L)));
+
+        // when
+        Payout sut = Payout.forSeller(12L, 10L, List.of(draft.getItems().get(0)));
+
+        // then: 헤더 금액(12,700)이 아니라 넘긴 항목 합계
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getAmount()).isEqualTo(9_700L);
+            softly.assertThat(sut.getItems()).extracting(PayoutItem::getCandidateId).containsExactly(1L);
         });
     }
 

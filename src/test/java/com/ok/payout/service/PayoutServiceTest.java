@@ -3,12 +3,21 @@ package com.ok.payout.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailure;
+import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.repository.PayoutFailureRepository;
 import com.ok.payout.repository.PayoutQueryRepository;
 import com.ok.payout.repository.PayoutQueryRepository.CountAndAmount;
+import com.ok.payout.repository.PayoutQueryRepository.DraftItemRow;
+import com.ok.payout.repository.PayoutQueryRepository.FailureRow;
+import com.ok.payout.repository.PayoutQueryRepository.SellerTotalRow;
+import com.ok.payout.repository.PayoutQueryRepository.SnapshotItemRow;
 import com.ok.payout.repository.PayoutRepository;
 import com.ok.payout.repository.PayoutSellerDraftRepository;
 import com.ok.payout.repository.PayoutSnapshotItemRepository;
@@ -21,6 +30,7 @@ import com.ok.payout.service.dto.PayoutItemSearchQuery;
 import com.ok.payout.service.dto.PayoutSearchQuery;
 import com.ok.payout.service.dto.PayoutSellerSearchQuery;
 import com.ok.payout.service.dto.PayoutSummaryResult;
+import com.ok.payout.service.dto.PayoutVerifyResult;
 import com.ok.payout.service.dto.SellerPayoutCreatedCommand;
 import com.ok.payout.service.publisher.PayoutEventPublisher;
 import org.junit.jupiter.api.Test;
@@ -39,6 +49,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -63,8 +74,24 @@ class PayoutServiceTest {
     private static final LocalDateTime PERIOD_FROM = LocalDateTime.of(2026, 9, 27, 0, 0);
     private static final LocalDateTime PERIOD_TO = LocalDateTime.of(2026, 9, 30, 0, 0);
 
+    // verify 테스트용 draft 항목 (후보 1·2는 주문 1, 3·4는 주문 2)
+    private static final DraftItemRow SELLER_DRAFT_1 =
+            new DraftItemRow(1L, 1L, 10L, 10L, PayoutEventType.SALE_AMOUNT, 9_700L, false);
+    private static final DraftItemRow SYSTEM_DRAFT_2 =
+            new DraftItemRow(2L, 1L, 10L, null, PayoutEventType.SALE_FEE, 300L, true);
+    private static final DraftItemRow SELLER_DRAFT_3 =
+            new DraftItemRow(3L, 2L, 10L, 10L, PayoutEventType.SALE_AMOUNT, 1_000L, false);
+    private static final DraftItemRow SELLER_DRAFT_4 =
+            new DraftItemRow(4L, 2L, 20L, 20L, PayoutEventType.SALE_AMOUNT, 19_400L, false);
+
     @Mock
     private PayoutQueryRepository payoutQueryRepository;
+
+    @Mock
+    private PayoutCandidateItemRepository payoutCandidateItemRepository;
+
+    @Mock
+    private PayoutFailureRepository payoutFailureRepository;
 
     @Mock
     private PayoutRepository payoutRepository;
@@ -92,6 +119,9 @@ class PayoutServiceTest {
 
     @Captor
     private ArgumentCaptor<SellerPayoutCreatedCommand> commandCaptor;
+
+    @Captor
+    private ArgumentCaptor<List<PayoutFailure>> failuresCaptor;
 
     // ---------- draft ----------
 
@@ -154,7 +184,7 @@ class PayoutServiceTest {
         willThrow(new IllegalStateException("실패 기록 저장 실패"))
                 .given(payoutSellerDraftService).recordUnexpectedError(SNAPSHOT_ID, List.of(amount10), failure);
 
-        // when & then: 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify에서 Job이 멈추므로, 여기서 바로 멈춤
+        // when & then: 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify가 "draft 누락"으로 주문을 잠그므로, 여기서 바로 멈춤
         assertThatThrownBy(() -> sut.draft(SNAPSHOT_ID, 100))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("실패 기록 저장 실패");
@@ -189,36 +219,117 @@ class PayoutServiceTest {
 
     // ---------- verify ----------
 
-    @Test
-    void 스냅샷과_draft의_건수_금액이_같고_판매자_헤더_합계가_맞으면_통과한다() {
-        // given: 스냅샷 3건 10,000원 = 판매자 항목 2건 9,700원 + 시스템 항목 1건 300원
-        givenSummaries(new CountAndAmount(3, 10_000), new CountAndAmount(2, 9_700), new CountAndAmount(1, 300), 9_700);
+    // 기본 데이터: 주문 1(판매자 10: 대금 1번 9,700 + 수수료 2번 300), 주문 2(판매자 10 대금 3번 1,000 + 판매자 20 대금 4번 19,400)
 
-        // when & then
-        assertThatCode(() -> sut.verify(SNAPSHOT_ID)).doesNotThrowAnyException();
+    @Test
+    void 모두_맞으면_실패를_기록하지_않고_정산할_항목_수를_돌려준다() {
+        // given
+        givenVerifyRows(verifySnapshot(),
+                List.of(SELLER_DRAFT_1, SELLER_DRAFT_3, SELLER_DRAFT_4), List.of(SYSTEM_DRAFT_2), List.of());
+
+        // when
+        PayoutVerifyResult result = sut.verify(SNAPSHOT_ID);
+
+        // then
+        assertThat(result).isEqualTo(new PayoutVerifyResult(4, 0, 0));
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     @Test
-    void 스냅샷보다_draft가_적으면_검증에_실패한다() {
-        // given: 스냅샷 3건인데 draft는 2건 (1건 누락)
-        givenSummaries(new CountAndAmount(3, 10_000), new CountAndAmount(1, 9_700), new CountAndAmount(1, 300), 9_700);
-        given(payoutQueryRepository.findUndraftedCandidateIds(SNAPSHOT_ID, 100)).willReturn(List.of(7L));
+    void 걸린_주문의_후보는_모든_판매자분을_결과_검증_실패로_기록하고_나머지만_정산할_항목으로_센다() {
+        // given: 주문 2의 판매자 10 대금 3번이 draft에서 빠짐 → 주문 2의 판매자 20 대금 4번도 함께 빠짐
+        givenVerifyRows(verifySnapshot(),
+                List.of(SELLER_DRAFT_1, SELLER_DRAFT_4), List.of(SYSTEM_DRAFT_2), List.of());
+        given(payoutCandidateItemRepository.findAllByIdInOrderByIdAsc(any())).willReturn(List.of(
+                withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 10L, 1_000L), 3L),
+                withId(PayoutCandidateItem.ofSaleAmount(2L, 2002L, 20L, 19_400L), 4L)));
+
+        // when
+        PayoutVerifyResult result = sut.verify(SNAPSHOT_ID);
+
+        // then: 주문 1의 2건만 정산할 항목으로 남음
+        assertThat(result).isEqualTo(new PayoutVerifyResult(2, 1, 2));
+        then(payoutFailureRepository).should().saveAll(failuresCaptor.capture());
+        assertThat(failuresCaptor.getValue())
+                .extracting(PayoutFailure::getCandidateId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(
+                        tuple(3L, PayoutFailureReason.VERIFY_MISMATCH, "[원인] draft 누락"),
+                        tuple(4L, PayoutFailureReason.VERIFY_MISMATCH, "[함께 보류] 같은 주문의 결과 검증 불일치 (원인 후보 [3])"));
+    }
+
+    @Test
+    void 걸린_주문이라도_이미_실패_기록이_있는_후보는_다시_기록하지_않는다() {
+        // given: 주문 2의 판매자 20 대금 4번은 validate에서 이미 빠짐 (실패 기록 UK라 다시 저장하면 안 됨)
+        givenVerifyRows(verifySnapshot(),
+                List.of(SELLER_DRAFT_1), List.of(SYSTEM_DRAFT_2),
+                List.of(new FailureRow(4L, 2L, PayoutFailureReason.DEDUCTION_MISSING)));
+        given(payoutCandidateItemRepository.findAllByIdInOrderByIdAsc(Set.of(3L)))
+                .willReturn(List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 10L, 1_000L), 3L)));
+
+        // when
+        PayoutVerifyResult result = sut.verify(SNAPSHOT_ID);
+
+        // then
+        assertThat(result).isEqualTo(new PayoutVerifyResult(2, 1, 1));
+        then(payoutFailureRepository).should().saveAll(failuresCaptor.capture());
+        assertThat(failuresCaptor.getValue()).extracting(PayoutFailure::getCandidateId).containsExactly(3L);
+    }
+
+    @Test
+    void 모든_주문이_걸려_정산할_항목이_0건이면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
+        // given: 주문 1은 수수료 누락, 주문 2는 대금 3번 누락 → 걸린 주문을 빼면 남는 항목 없음
+        givenVerifyRows(verifySnapshot(), List.of(SELLER_DRAFT_1, SELLER_DRAFT_4), List.of(), List.of());
+        given(payoutCandidateItemRepository.findAllByIdInOrderByIdAsc(any())).willReturn(List.of(
+                withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L),
+                withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 2L),
+                withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 10L, 1_000L), 3L),
+                withId(PayoutCandidateItem.ofSaleAmount(2L, 2002L, 20L, 19_400L), 4L)));
+
+        // when & then: 전부 걸림 = 공통 코드 고장 의심이라 주문을 잠그지 않고 멈춤
+        assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ALL_ORDERS_MISMATCHED));
+        then(payoutFailureRepository).should(never()).saveAll(any());
+    }
+
+    @Test
+    void 판매자_합계가_항목_합계와_다르면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
+        // given: 판매자 10의 헤더만 틀림 (draft를 만드는 코드가 망가진 상태)
+        given(payoutQueryRepository.findSellerTotalRows(SNAPSHOT_ID))
+                .willReturn(List.of(new SellerTotalRow(10L, 9_000L, 10_700L)));
 
         // when & then
         assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_VERIFICATION_FAILED));
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH));
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     @Test
-    void 판매자_헤더_합계가_항목_합계와_다르면_검증에_실패한다() {
-        // given: 항목 건수·금액은 맞는데 판매자 헤더 합계만 다름 (헤더 합계 계산 버그)
-        givenSummaries(new CountAndAmount(3, 10_000), new CountAndAmount(2, 9_700), new CountAndAmount(1, 300), 9_000);
+    void 판매자_항목의_스냅샷이_헤더와_다르면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
+        // given: 판매자 합계는 맞는데, 후보 3번 항목의 스냅샷 번호가 묶인 헤더와 다름 (항목을 만드는 코드가 망가진 상태)
+        given(payoutQueryRepository.findSellerTotalRows(SNAPSHOT_ID)).willReturn(List.of());
+        given(payoutQueryRepository.findSellerDraftItemsWithMismatchedSnapshot(SNAPSHOT_ID)).willReturn(List.of(3L));
 
         // when & then
         assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_VERIFICATION_FAILED));
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
+        then(payoutFailureRepository).should(never()).saveAll(any());
+    }
+
+    @Test
+    void 실패_기록이_있는_후보가_draft에_들어가면_아무것도_기록하지_않고_전용_에러로_멈춘다() {
+        // given: 대금 3번은 validate에서 빠졌는데 draft에도 있고, 주문 1은 수수료가 누락됨
+        // 다른 주문의 불일치가 함께 있어도 기록을 먼저 남기지 않음 (망가진 코드로 판정한 결과라)
+        givenVerifyRows(verifySnapshot(), List.of(SELLER_DRAFT_1, SELLER_DRAFT_3, SELLER_DRAFT_4), List.of(),
+                List.of(new FailureRow(3L, 2L, PayoutFailureReason.DEDUCTION_MISSING)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.verify(SNAPSHOT_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE));
+        then(payoutFailureRepository).should(never()).saveAll(any());
     }
 
     // ---------- publish ----------
@@ -226,9 +337,9 @@ class PayoutServiceTest {
     @Test
     void 조회한_판매자_몫_정산마다_지갑_이벤트를_1건씩_발행한다() {
         // given: 이번 스냅샷의 판매자 몫 정산 2건 (시스템 몫 제외는 조회 쿼리가 맡음 → 통합 테스트에서 확인)
-        Payout seller10 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
+        Payout seller10 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
                 List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))));
-        Payout seller20 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
+        Payout seller20 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
                 List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L))));
         given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID)).willReturn(List.of(seller10, seller20));
 
@@ -248,11 +359,11 @@ class PayoutServiceTest {
     @Test
     void 금액이_0원_이하인_판매자_정산은_지갑_이벤트를_발행하지_않는다() {
         // given: 판매자 10은 9,700원, 판매자 20은 0원(0원 상품만 판매), 판매자 30은 -2,000원(차감 조정만 남음)
-        Payout seller10 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
+        Payout seller10 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
                 List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))));
-        Payout zeroSeller20 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
+        Payout zeroSeller20 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
                 List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 0L), 4L))));
-        Payout negativeSeller30 = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, 30L,
+        Payout negativeSeller30 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 30L,
                 List.of(withId(PayoutCandidateItem.ofSaleAmount(3L, 3001L, 30L, -2_000L), 7L))));
         given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID))
                 .willReturn(List.of(seller10, zeroSeller20, negativeSeller30));
@@ -519,15 +630,29 @@ class PayoutServiceTest {
 
     // ---------- 도우미 ----------
 
-    // verify가 비교할 집계값을 한 번에 준비 (스냅샷, 판매자 항목, 시스템 항목, 판매자 헤더 금액 합계)
-    // 실패 기록은 0건으로 둠: 실패가 섞인 경우의 판정은 PayoutDraftValidatorTest, 실제 흐름은 통합 테스트에서 확인
-    private void givenSummaries(CountAndAmount snapshot, CountAndAmount sellerItems,
-                                CountAndAmount systemItems, long sellerHeaderAmount) {
-        given(payoutQueryRepository.summarizeSnapshotItems(SNAPSHOT_ID)).willReturn(snapshot);
-        given(payoutQueryRepository.summarizeSellerDraftItems(SNAPSHOT_ID)).willReturn(sellerItems);
-        given(payoutQueryRepository.summarizeSystemDraftItems(SNAPSHOT_ID)).willReturn(systemItems);
-        given(payoutQueryRepository.sumSellerDraftAmount(SNAPSHOT_ID)).willReturn(sellerHeaderAmount);
-        given(payoutQueryRepository.summarizeFailures(SNAPSHOT_ID)).willReturn(new CountAndAmount(0, 0));
+    // verify가 읽을 값을 한 번에 준비 (판매자 합계는 모두 맞는 것으로 둠)
+    // 판정 규칙 자체는 PayoutDraftValidatorTest, 실제 DB 흐름은 통합 테스트에서 확인
+    private void givenVerifyRows(List<SnapshotItemRow> snapshotItems, List<DraftItemRow> sellerItems,
+                                 List<DraftItemRow> systemItems, List<FailureRow> failures) {
+        given(payoutQueryRepository.findSellerTotalRows(SNAPSHOT_ID)).willReturn(List.of());
+        given(payoutQueryRepository.findSnapshotItemRows(SNAPSHOT_ID)).willReturn(snapshotItems);
+        given(payoutQueryRepository.findSellerDraftItemRows(SNAPSHOT_ID)).willReturn(sellerItems);
+        given(payoutQueryRepository.findSystemDraftItemRows(SNAPSHOT_ID)).willReturn(systemItems);
+        given(payoutQueryRepository.findFailureRows(SNAPSHOT_ID)).willReturn(failures);
+    }
+
+    // verify 테스트용 스냅샷 (draft 항목 상수와 같은 후보)
+    private List<SnapshotItemRow> verifySnapshot() {
+        return List.of(
+                new SnapshotItemRow(1L, 1L, 10L, PayoutEventType.SALE_AMOUNT, 9_700L),
+                new SnapshotItemRow(2L, 1L, 10L, PayoutEventType.SALE_FEE, 300L),
+                new SnapshotItemRow(3L, 2L, 10L, PayoutEventType.SALE_AMOUNT, 1_000L),
+                new SnapshotItemRow(4L, 2L, 20L, PayoutEventType.SALE_AMOUNT, 19_400L));
+    }
+
+    // 판매자 draft 전체 항목으로 판매자 몫 정산을 만듦 (commit 없이 정산 객체만 필요한 테스트용)
+    private Payout forSeller(PayoutSellerDraft draft) {
+        return Payout.forSeller(SNAPSHOT_ID, draft.getSellerId(), draft.getItems());
     }
 
     // 저장된 후보처럼 id를 채움 (setId가 없고 id는 DB 저장 시 채워지므로 단위 테스트에서 직접 넣음)
@@ -561,7 +686,7 @@ class PayoutServiceTest {
 
     // 판매자 몫 정산 1건 (판매 대금 항목 1개). DB 없이 만들어서 ID는 직접 넣음
     private Payout sellerPayout(Long payoutId, Long sellerId, long amount) {
-        Payout payout = Payout.forSeller(SNAPSHOT_ID, PayoutSellerDraft.create(SNAPSHOT_ID, sellerId,
+        Payout payout = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, sellerId,
                 List.of(withId(PayoutCandidateItem.ofSaleAmount(900L + payoutId, 9_000L + payoutId, sellerId, amount), 100L + payoutId))));
         ReflectionTestUtils.setField(payout, "id", payoutId);
         return payout;

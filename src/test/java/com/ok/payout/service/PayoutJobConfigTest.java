@@ -2,6 +2,7 @@ package com.ok.payout.service;
 
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.service.dto.PayoutDraftResult;
+import com.ok.payout.service.dto.PayoutVerifyResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -18,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
 
-// 단위 테스트: draftStep tasklet이 회차 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지와 전원 실패 판정만 확인 (#90)
+// 단위 테스트: draftStep·verifyStep tasklet이 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지와 전원 실패 판정만 확인 (#90, #290)
 // 판매자 실패를 실제 Job 실행 중에 만들 방법이 없어(스냅샷 ID를 미리 알 수 없고, 테스트 DB 계정은 트리거를 만들 수 없음) 이 연결부를 따로 확인함
 // 판매자 단위 격리 자체(트랜잭션 분리, 실패 기록)는 PayoutSettleIntegrationTest에서 실제 DB로 확인
 @ExtendWith(MockitoExtension.class)
@@ -98,6 +99,38 @@ class PayoutJobConfigTest {
         assertThatThrownBy(() -> runRounds(stepExecution, 3))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("draft 대상 판매자가 모두 실패해 정산할 판매자가 없습니다. snapshotId=12, 실패 판매자 수=3");
+    }
+
+    // ---------- verifyStep (#290) ----------
+
+    @Test
+    void verify_결과의_정산할_항목_수는_write_count_새로_기록한_실패_수는_write_skip_count로_남긴다() throws Exception {
+        // given: 주문 1개가 걸려 후보 3건을 기록하고, 정산할 항목 5건이 남음
+        given(payoutService.verify(SNAPSHOT_ID)).willReturn(new PayoutVerifyResult(5, 1, 3));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutService).payoutVerifyTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then: 일부만 걸리면 정상 주문 정산을 위해 Step을 끝내고 commit으로 넘어감
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertSoftly(softly -> {
+            softly.assertThat(contribution.getWriteCount()).isEqualTo(5L);
+            softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(3L);
+        });
+    }
+
+    @Test
+    void 걸린_주문이_없어_정산할_항목이_0건이면_verify_Step을_끝낸다() throws Exception {
+        // given: 정산 대상이 없는 날 (validate 실패만 있는 날도 draft 항목은 0건)
+        given(payoutService.verify(SNAPSHOT_ID)).willReturn(new PayoutVerifyResult(0, 0, 0));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutService).payoutVerifyTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
     }
 
     // 실제 Step처럼 tasklet을 회차마다 새 contribution으로 부르고, 끝난 회차의 수를 Step 실행 기록에 합산(apply)함

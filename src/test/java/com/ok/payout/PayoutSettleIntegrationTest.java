@@ -26,6 +26,7 @@ import com.ok.payout.repository.PayoutSystemDraftItemRepository;
 import com.ok.payout.repository.PayoutWalletDeductionRepository;
 import com.ok.payout.service.PayoutJobRunner;
 import com.ok.payout.service.PayoutService;
+import com.ok.payout.service.dto.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -275,18 +276,287 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // ---------- verifyStep ----------
 
     @Test
-    void 검증에_실패하면_예외가_나고_정산은_만들어지지_않는다() {
-        // given: draft까지 끝난 뒤, draft가 놓친 후보 1건이 스냅샷 목록에 있는 상황을 만듦
+    void draft가_놓친_후보의_주문만_결과_검증_실패로_빠지고_다른_주문은_정산된다() {
+        // given: draft까지 끝난 뒤, draft가 놓친 후보(판매자 20) 1건이 스냅샷 목록에 있는 상황을 만듦
         insertSaleAmount(10L, 1_000L, TO.minusDays(1));
         Long snapshotId = createSnapshot(FROM, TO);
         draftAll(snapshotId, LIMIT);
         insertMissedSnapshotItem(snapshotId, 20L, 2_000L);
 
+        // when
+        PayoutVerifyResult result = payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 놓친 후보만 원인으로 기록되고, 판매자 10은 정산됨 (전에는 그날 정산 전체가 멈춤)
+        assertThat(result).isEqualTo(new PayoutVerifyResult(1, 1, 1));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getSellerId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(tuple(20L, PayoutFailureReason.VERIFY_MISMATCH, "[원인] draft 누락"));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(10L, 1_000L));
+    }
+
+    @Test
+    void 결과_검증에_걸린_주문은_모든_판매자_후보와_수수료가_빠지고_같은_판매자의_다른_주문은_정산된다() {
+        // given: 주문 X = 판매자 10 대금·수수료 + 판매자 20 대금, 주문 Y = 판매자 10 대금·수수료
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX);
+        long orderItemX10 = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, orderItemX10, 10L, 9_700L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, orderItemX10, 10L, 300L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, nextOrderItemId(), 20L, 19_400L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 10L, 970L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderY, 10L, 30L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(snapshotId);
+        draftAll(snapshotId, LIMIT);
+        // draft가 판매자 10의 주문 X 대금을 스냅샷과 다른 금액으로 옮긴 상황 (스냅샷 쪽 금액을 바꿔 재현)
+        Long brokenCandidateId = candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT);
+        changeSnapshotAmount(snapshotId, brokenCandidateId, 9_000L);
+
+        // when
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 주문 X의 후보 3건(판매자 10·20)이 모두 결과 검증 실패, 원인 후보만 [원인]
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getSellerId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(orderX, 10L, PayoutFailureReason.VERIFY_MISMATCH),
+                        tuple(orderX, 10L, PayoutFailureReason.VERIFY_MISMATCH),
+                        tuple(orderX, 20L, PayoutFailureReason.VERIFY_MISMATCH));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .filteredOn(failure -> failure.getCandidateId().equals(brokenCandidateId))
+                .extracting(PayoutFailure::getDetail)
+                .containsExactly("[원인] 금액 다름(스냅샷 9000, draft 9700)");
+        // then: 판매자 10은 주문 Y만, 시스템 몫은 주문 Y 수수료만. 항목이 모두 빠진 판매자 20은 정산을 만들지 않음
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(10L, 970L), tuple(null, 30L));
+    }
+
+    @Test
+    void 결과_검증으로_잠긴_주문은_다음_스냅샷에서_빠진다() {
+        // given: 1차 배치에서 주문 X가 결과 검증에 걸림 (주문 Y는 정상 정산)
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 20L, 19_400L, createdAt);
+        Long firstSnapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(firstSnapshotId);
+        draftAll(firstSnapshotId, LIMIT);
+        changeSnapshotAmount(firstSnapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), 1L);
+        payoutService.verify(firstSnapshotId);
+        payoutService.commit(firstSnapshotId);
+
+        // when: 2차 배치
+        Long secondSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 주문 X는 미정산인데도 잠겨 스냅샷에 들어가지 않음 (관리자 확인 전까지 자동 재시도하지 않음)
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId))
+                .extracting(Payout::getPayeeId)
+                .containsExactly(20L);
+        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+    }
+
+    @Test
+    void 같은_스냅샷을_다시_검증해도_결과_검증_실패_기록은_중복되지_않는다() {
+        // given: 1차 검증에서 놓친 후보의 주문이 빠짐
+        insertSaleAmount(10L, 1_000L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        insertMissedSnapshotItem(snapshotId, 20L, 2_000L);
+        payoutService.verify(snapshotId);
+
+        // when: 같은 스냅샷을 다시 검증
+        PayoutVerifyResult result = payoutService.verify(snapshotId);
+
+        // then: 이미 빠진 주문은 다시 보지 않아 새 기록이 없고, 빠진 주문 수·정산할 항목 수는 같음
+        assertThat(result).isEqualTo(new PayoutVerifyResult(1, 1, 0));
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).hasSize(1);
+    }
+
+    @Test
+    void 스냅샷에_없는_후보가_draft에_들어가면_그_주문이_빠지고_수수료도_시스템_몫에_들어가지_않는다() {
+        // given: 정상 주문 Y(판매자 10 대금·수수료)를 draft한 뒤, 스냅샷에 없는 주문 Z의 수수료 후보가 시스템 몫에 들어간 상황
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderY, 10L, 300L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        long orderZ = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_FEE, orderZ, 20L, 600L, createdAt);
+        insertSystemDraftItem(snapshotId, candidateIdOf(orderZ, 20L, PayoutEventType.SALE_FEE));
+
+        // when
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 주문 Z의 후보가 원인으로 기록되고, 시스템 몫에는 주문 Y 수수료만
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getDetail)
+                .containsExactly(tuple(orderZ, "[원인] 스냅샷에 없는 항목"));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(null, 300L));
+    }
+
+    @Test
+    void 다른_판매자_정산에_묶인_항목은_금액이_같아도_그_주문이_빠진다() {
+        // given: 판매자 10(주문 X), 20(주문 Y)을 draft한 뒤, 판매자 10의 항목이 판매자 20의 헤더 아래로 들어간 상황
+        // 판매자 합계 검사에는 걸리지 않게 두 헤더 금액도 맞춰 둠 (항목 단위 검사만으로 잡는지 확인)
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 20L, 19_400L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        moveSellerDraftItem(snapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), 10L, 20L);
+
+        // when
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 주문 X는 빠지고, 판매자 20은 자기 주문 Y만 받음 (판매자 10의 돈이 20에게 가지 않음)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getDetail)
+                .containsExactly(tuple(orderX, "[원인] 다른 판매자 정산에 묶임(후보 10, 헤더 20)"));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(20L, 19_400L));
+    }
+
+    @Test
+    void 주문이_다르게_들어간_draft_항목은_그_주문에_실패_기록이_없어도_정산에서_빠진다() {
+        // given: 판매자 10(주문 X), 20(주문 Y)을 draft한 뒤, 주문 X 대금 항목의 주문 ID가 스냅샷에 없는 주문으로 들어간 상황
+        // 실패 기록의 주문은 후보에서 복사(X)하므로 draft 항목의 주문으로는 거를 수 없음 → 후보 기준 제외가 막아야 함
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        long orderY = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderY, 20L, 19_400L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        long wrongOrderId = nextOrderItemId();
+        Long candidateX = candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT);
+        jdbcTemplate.update("UPDATE payout_seller_draft_item SET order_id = ? WHERE snapshot_id = ? AND candidate_id = ?",
+                wrongOrderId, snapshotId, candidateX);
+
+        // when
+        payoutService.verify(snapshotId);
+        payoutService.commit(snapshotId);
+
+        // then: 판매자 10의 돈은 나가지 않고, 판매자 20만 정산
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getDetail)
+                .containsExactly(tuple(orderX, "[원인] 주문 다름(스냅샷 " + orderX + ", draft " + wrongOrderId + ")"));
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(20L, 19_400L));
+    }
+
+    @Test
+    void 판매자_합계가_항목_합계와_다르면_전용_에러로_멈추고_실패를_기록하지_않는다() {
+        // given: draft 뒤 판매자 10의 헤더 금액만 바뀜 (draft를 만드는 코드가 망가진 상황), 놓친 후보도 함께 있음
+        insertSaleAmount(10L, 1_000L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        insertMissedSnapshotItem(snapshotId, 20L, 2_000L);
+        changeSellerDraftAmount(snapshotId, 10L, 999L);
+
+        // when & then: 망가진 코드로 판정한 결과라 주문을 잠그지 않고 멈춤
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_SELLER_TOTAL_MISMATCH));
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    @Test
+    void 실패_기록이_있는_후보가_draft에_들어가면_전용_에러로_멈춘다() {
+        // given: draft 뒤 이미 draft된 후보에 실패 기록이 생긴 상황 (draft 대상 조회 조건이 실패 후보를 거르지 못한 것과 같은 상태)
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 1_000L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        insertFailure(snapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), orderX, 10L);
+
         // when & then
         assertThatThrownBy(() -> payoutService.verify(snapshotId))
                 .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_VERIFICATION_FAILED));
-        assertThat(payoutRepository.count()).isZero();
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE));
+        // then: 결과 검증 실패를 새로 기록하지 않음 (미리 넣은 1건만 남음, 잠금 없이 멈춤)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.DEDUCTION_MISSING);
+    }
+
+    @Test
+    void 모든_주문이_결과_검증에_걸리면_전용_에러로_멈추고_잠그지_않아_다음_스냅샷에서_다시_처리된다() {
+        // given: 대상 주문 X 하나가 결과 검증에 걸려, 빼고 나면 정산할 항목이 0건인 상황
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 1_000L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        changeSnapshotAmount(snapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), 1L);
+
+        // when & then: 전부 걸림 = 공통 코드 고장 의심이라 기록·잠금 없이 멈춤
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ALL_ORDERS_MISMATCHED));
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        // then: 잠기지 않아 코드를 고친 뒤 재실행하면 새 스냅샷에서 다시 처리됨
+        assertThat(snapshotItemRepository.findBySnapshotId(createSnapshot(FROM, TO)))
+                .extracting(PayoutSnapshotItem::getCandidateId)
+                .containsExactly(candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT));
+    }
+
+    @Test
+    void 이번_스냅샷_헤더_아래에_스냅샷이_다른_판매자_항목이_있으면_전용_에러로_멈추고_실패를_기록하지_않는다() {
+        // given: 판매자 10의 draft 뒤, 후보 Z의 항목이 다른 스냅샷 번호로 이번 스냅샷의 판매자 10 헤더 아래에 들어간 상황
+        // commitStep은 헤더 기준이라 그대로 두면 verify가 보지 못한 이 항목이 지급될 수 있음
+        // 판매자 합계 검사에 걸리지 않게 헤더 금액은 항목 합계로 맞춰 둠 (스냅샷 번호 검사만으로 잡는지 확인)
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        long orderZ = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderZ, 10L, 5_000L, createdAt);
+        Long otherSnapshotId = createSnapshot(FROM, TO);
+        insertSellerDraftItemUnderHeader(snapshotId, 10L, otherSnapshotId, candidateIdOf(orderZ, 10L, PayoutEventType.SALE_AMOUNT));
+
+        // when & then: 항목을 만드는 코드가 망가진 상태라 기록·잠금 없이 멈춤
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    @Test
+    void 이번_스냅샷_번호의_판매자_항목이_다른_스냅샷_헤더_아래에_있어도_전용_에러로_멈춘다() {
+        // given: 이번 스냅샷(X) 번호를 가진 후보 Z의 항목이 다른 스냅샷(Y)의 판매자 10 헤더 아래에 들어간 상황 (반대 방향)
+        // 그대로 두면 Y의 commitStep이 Y의 verify가 보지 못한 이 항목을 지급할 수 있음
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+        draftAll(snapshotId, LIMIT);
+        Long otherSnapshotId = createSnapshot(FROM, TO);
+        draftAll(otherSnapshotId, LIMIT);
+        long orderZ = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderZ, 10L, 5_000L, createdAt);
+        insertSellerDraftItemUnderHeader(otherSnapshotId, 10L, snapshotId, candidateIdOf(orderZ, 10L, PayoutEventType.SALE_AMOUNT));
+
+        // when & then
+        assertThatThrownBy(() -> payoutService.verify(snapshotId))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_ITEM_SNAPSHOT_MISMATCH));
     }
 
     // ---------- commitStep ----------
@@ -616,12 +886,14 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 검증에_실패한_뒤_재실행하면_새_스냅샷으로_처음부터_정상_처리된다() throws Exception {
-        // given: 이전 실행이 검증에서 실패한 상황 (draft는 남고 payout은 없음)
+        // given: 이전 실행이 결과 검증의 코드 고장 검사(판매자 합계 불일치)로 멈춘 상황 (draft는 남고 payout·실패 기록은 없음)
+        // 코드 고장으로 멈출 때는 주문을 잠그지 않으므로, 코드를 고친 뒤 재실행하면 모두 다시 처리됨
         LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
         insertSaleAmount(10L, 1_000L, createdAt);
+        insertSaleAmount(20L, 2_000L, createdAt);
         Long failedSnapshotId = createSnapshot(null, LocalDateTime.now().minusDays(15));
         draftAll(failedSnapshotId, LIMIT);
-        insertMissedSnapshotItem(failedSnapshotId, 20L, 2_000L);
+        changeSellerDraftAmount(failedSnapshotId, 10L, 999L);
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 재실행
@@ -714,21 +986,22 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 결과_검증에_실패한_Job이_남긴_잠금도_다음_스냅샷에서_작동한다() {
-        // given: 입력 검증에서 주문 X를 잠근 뒤 결과 검증(verify)이 실패해 정산 없이 끝남
+        // given: 입력 검증에서 주문 X를 잠근 뒤 결과 검증(verify)이 코드 고장 검사(판매자 합계 불일치)로 멈춰 정산 없이 끝남
+        // 판매자 20의 후보는 다음 스냅샷이 비어 있지 않게 하려고 둠
         long orderX = nextOrderItemId();
         givenDeduction(orderX, 9_000L);
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
+        insertSaleAmount(20L, 2_000L, TO.minusDays(1));
         Long failedSnapshotId = createSnapshot(FROM, TO);
         payoutService.validate(failedSnapshotId);
         draftAll(failedSnapshotId, LIMIT);
-        // draft가 놓친 후보(판매자 20)는 일부러 조회 기간 안에 만들어, 다음 스냅샷이 비어 있지 않게 함
-        insertMissedSnapshotItem(failedSnapshotId, 20L, 2_000L, TO.minusDays(1));
+        changeSellerDraftAmount(failedSnapshotId, 20L, 1L);
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 다음 배치
         Long nextSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 둘 다 미정산 후보지만, 놓친 후보만 들어가고 주문 X는 실패한 Job이 남긴 잠금 때문에 빠짐
+        // then: 둘 다 미정산 후보지만, 판매자 20의 후보만 들어가고 주문 X는 실패한 Job이 남긴 잠금 때문에 빠짐
         assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId))
                 .extracting(PayoutSnapshotItem::getAmount)
                 .containsExactly(2_000L);
@@ -1246,9 +1519,87 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 오류가 사라진 상황 재현: 막아 둔 빈 draft를 지움
-    // 남겨 두면 commit이 이 빈 draft로 0원 판매자 정산을 만들어, 실제 오류 상황(롤백되어 아무것도 안 남음)과 달라짐
+    // 실제 오류 상황(롤백되어 아무것도 안 남음)과 같은 상태로 되돌려, 이후 검증·확정이 실제와 같은 데이터를 보게 함
     private void unblockSellerDraft(Long snapshotId, Long sellerId) {
         jdbcTemplate.update("DELETE FROM payout_seller_draft WHERE snapshot_id = ? AND seller_id = ?", snapshotId, sellerId);
+    }
+
+    // ---------- 도우미: 결과 검증 불일치 재현 (#290) ----------
+    // 정상 흐름에서는 생기지 않는 상태(우리 코드 버그)라 서비스로 만들 수 없어 draft 뒤에 SQL로 바꿔 재현함
+
+    // draft가 금액을 다르게 옮긴 상황: draft 쪽 대신 스냅샷 쪽 금액을 바꿔 재현 (draft 금액을 바꾸면 판매자 합계 검사에 먼저 걸림)
+    private void changeSnapshotAmount(Long snapshotId, Long candidateId, long amount) {
+        jdbcTemplate.update("UPDATE payout_snapshot_item SET amount = ? WHERE snapshot_id = ? AND candidate_id = ?",
+                amount, snapshotId, candidateId);
+    }
+
+    // 판매자 합계(헤더)만 틀린 상황 (draft를 만드는 코드가 망가진 상황)
+    private void changeSellerDraftAmount(Long snapshotId, Long sellerId, long amount) {
+        jdbcTemplate.update("UPDATE payout_seller_draft SET amount = ? WHERE snapshot_id = ? AND seller_id = ?",
+                amount, snapshotId, sellerId);
+    }
+
+    // 스냅샷에 없는 후보가 시스템 몫 draft에 들어간 상황
+    private void insertSystemDraftItem(Long snapshotId, Long candidateId) {
+        PayoutCandidateItem candidate = candidateRepository.findById(candidateId).orElseThrow();
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_system_draft_item (snapshot_id, candidate_id, event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, candidate.getEventType().name(), candidate.getOrderId(), candidate.getOrderItemId(),
+                candidate.getSellerId(), candidate.getAmount(), now, now);
+    }
+
+    // 판매자 몫 항목 하나가 다른 판매자의 헤더 아래로 들어간 상황
+    // 두 헤더 금액은 항목 합계로 다시 맞춰, 판매자 합계 검사가 아니라 항목 단위 검사로 잡히는지 확인할 수 있게 함
+    private void moveSellerDraftItem(Long snapshotId, Long candidateId, Long fromSellerId, Long toSellerId) {
+        jdbcTemplate.update(
+                "UPDATE payout_seller_draft_item SET seller_draft_id = " +
+                        "(SELECT id FROM payout_seller_draft WHERE snapshot_id = ? AND seller_id = ?) " +
+                        "WHERE snapshot_id = ? AND candidate_id = ?",
+                snapshotId, toSellerId, snapshotId, candidateId);
+        for (Long sellerId : List.of(fromSellerId, toSellerId)) {
+            jdbcTemplate.update(
+                    "UPDATE payout_seller_draft d SET amount = " +
+                            "(SELECT COALESCE(SUM(i.amount), 0) FROM payout_seller_draft_item i WHERE i.seller_draft_id = d.id) " +
+                            "WHERE d.snapshot_id = ? AND d.seller_id = ?",
+                    snapshotId, sellerId);
+        }
+    }
+
+    // 판매자 헤더(headerSnapshotId) 아래에 다른 스냅샷 번호(itemSnapshotId)를 가진 항목이 들어간 상황, 헤더 금액은 항목 합계로 맞춤
+    private void insertSellerDraftItemUnderHeader(Long headerSnapshotId, Long sellerId, Long itemSnapshotId, Long candidateId) {
+        PayoutCandidateItem candidate = candidateRepository.findById(candidateId).orElseThrow();
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_seller_draft_item (snapshot_id, seller_draft_id, candidate_id, event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) " +
+                        "VALUES (?, (SELECT id FROM payout_seller_draft WHERE snapshot_id = ? AND seller_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
+                itemSnapshotId, headerSnapshotId, sellerId, candidateId, candidate.getEventType().name(),
+                candidate.getOrderId(), candidate.getOrderItemId(), candidate.getSellerId(), candidate.getAmount(), now, now);
+        jdbcTemplate.update(
+                "UPDATE payout_seller_draft d SET amount = " +
+                        "(SELECT COALESCE(SUM(i.amount), 0) FROM payout_seller_draft_item i WHERE i.seller_draft_id = d.id) " +
+                        "WHERE d.snapshot_id = ? AND d.seller_id = ?",
+                headerSnapshotId, sellerId);
+    }
+
+    // draft된 후보에 실패 기록이 있는 상황 (draft 대상 조회 조건이 실패 후보를 거르지 못한 것과 같은 상태)
+    private void insertFailure(Long snapshotId, Long candidateId, long orderId, Long sellerId) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, orderId, sellerId, PayoutFailureReason.DEDUCTION_MISSING.name(), "테스트", now, now);
+    }
+
+    // 주문·판매자·타입으로 정산후보 id 하나를 찾음 (JPA 조회)
+    private Long candidateIdOf(long orderId, Long sellerId, PayoutEventType eventType) {
+        for (PayoutCandidateItem candidate : candidateRepository.findAllByOrderId(orderId)) {
+            if (candidate.getSellerId().equals(sellerId) && candidate.getEventType() == eventType) {
+                return candidate.getId();
+            }
+        }
+        throw new IllegalStateException("정산후보가 없습니다. orderId=" + orderId + ", sellerId=" + sellerId);
     }
 
     private long nextOrderItemId() {

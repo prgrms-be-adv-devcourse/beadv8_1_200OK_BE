@@ -42,7 +42,15 @@ public enum PayoutFailureReason {
     // 잠그지 않음 = 다음 배치에서 다시 시도함 (일시적 오류면 그때 정산, 같은 입력으로 계속 실패하면 배치마다 기록됨 → 반복 알림은 #52)
     //   단 다시 시도되는 건 스냅샷 조회 기간 안에 있는 동안뿐 (매일 실행이면 생성 후 약 16~19일째, 4번 정도)
     //   그 뒤로는 하한 밖으로 밀려 다시 잡히지 않음 → 조회 하한 밖 미정산 후보 재처리는 #291 (DEDUCTION_MISSING과 같은 한계)
-    UNEXPECTED_ERROR(PayoutFailureStep.DRAFT, false, "예상하지 못한 오류");
+    UNEXPECTED_ERROR(PayoutFailureStep.DRAFT, false, "예상하지 못한 오류"),
+
+    // verifyStep에서 draft가 스냅샷과 어긋난 후보를 찾음 (누락, 금액 다름, 스냅샷에 없는 항목 등) → 그 후보의 주문 전체가 빠지고 주문을 잠금 (#290)
+    // 같은 주문이라 함께 빠진 정상 후보도 이 사유로 기록하고, 상세로 원인 후보와 구분함
+    //   (#195의 ORDER_LOCKED처럼 사유를 나누지 않는 이유: verify에서 빠진 주문은 commitStep이 이 사유로 찾아 빼므로 사유 하나로 단순하게 둠)
+    // 잠그는 이유: 입력 검증을 통과한 데이터로 우리 코드가 draft를 잘못 만든 것 = 코드 버그. 원인을 모르니 관리자가 확인할 때까지 그 주문을 정산하지 않음
+    //   잠그지 않으면 버그가 남아 있는 동안 매 배치 같은 주문을 다시 처리함 (틀린 돈은 매번 verify가 막지만, 확인 없이 자동 재시도하는 것보다 멈춰 두는 편이 안전)
+    // TODO(#52): 잠금 해제 경로가 없음 (AMOUNT_MISMATCH와 같음, #291). 임시 해제와 조회 기간 한계도 AMOUNT_MISMATCH 주석과 같음
+    VERIFY_MISMATCH(PayoutFailureStep.VERIFY, true, "결과 검증 불일치");
 
     private final PayoutFailureStep step;
     private final boolean locksOrder;
