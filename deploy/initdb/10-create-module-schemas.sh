@@ -3,7 +3,7 @@
 # MySQL 컨테이너가 빈 데이터 디렉터리로 처음 뜰 때만 실행된다(/docker-entrypoint-initdb.d).
 # 이미 데이터가 있는 DB는 이 스크립트가 돌지 않으므로 infra/mysql/migration-288의 이전 절차를 쓴다. 로컬(infra/mysql/compose.yml)과 운영(deploy/compose.prod.yml)이 이 파일을 함께 쓴다.
 # 스키마 이름은 paldogotgan_<모듈 이름>이고 각 모듈의 XxxSchema.NAME과 같아야 한다.
-# 모듈 목록은 같은 폴더의 modules.txt에서 읽는다. 그 파일은 settings.gradle.kts의 모듈에서 ./gradlew generateInitDb가 만든다(직접 고치지 않는다).
+# 모듈 목록은 같은 폴더의 modules.txt를 읽는다(./gradlew generateInitDb가 만든다).
 # GRANT의 DB 이름에서 `_`는 한 글자 와일드카드이므로 `\_`로 이스케이프한다(안 하면 paldogotganXmember 같은 다른 DB에도 권한이 간다).
 set -euo pipefail
 

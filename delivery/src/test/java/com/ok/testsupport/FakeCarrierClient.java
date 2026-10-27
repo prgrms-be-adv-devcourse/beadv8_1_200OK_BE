@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
  * <p>운영의 Mock 택배사({@code MockCarrierClient})는 test 프로필에서 등록되지 않는다.
  * 시간이 지나 shipment를 배송 완료로 바꾸면 통합 테스트 결과가 흔들리기 때문이다.
  *
- * <p>{@code FakeOrderApiClient}처럼 {@code AbstractIntegrationTest}의 {@code @ComponentScan}이 주워 가서 등록한다.
  * 운영 {@code MockCarrierClient}는 test 프로필에서 등록되지 않으므로 빈이 겹치지 않는다.
  * 모듈 테스트({@code DeliveryModuleTest})는 컴포넌트 스캔을 하지 않아 {@code @Import}로 직접 등록한다.
  */

@@ -12,9 +12,7 @@ FROM (
     WHERE e.name NOT IN (SELECT table_name FROM information_schema.tables WHERE table_schema = '__DB__')
 ) diff;
 
--- (b) 이력이 기대하는 55개 마이그레이션과 정확히 같다(파일명 기준, 폴더 제외). 이전 후 검증·rollback이 55행을 전제로 하므로
---     누락도 초과도 이전 전에 막는다. 초과는 병합되지 않은 브랜치의 마이그레이션이고, 누락은 로컬 DB가 일부만 적용된 경우다
---     (이럴 땐 마이그레이션을 이어 적용하지 말고 DB를 초기화(방법 B)한다)
+-- (b) 이력이 기대하는 55개 마이그레이션과 정확히 같다(파일명 기준). 이전 후 검증·rollback이 55행을 전제로 하므로 누락도 초과도 막는다
 USE `__DB__`;
 CREATE TEMPORARY TABLE expected_history (name VARCHAR(200) NOT NULL PRIMARY KEY) DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin;
 INSERT INTO expected_history (name) VALUES
@@ -101,8 +99,7 @@ FROM mysql.tables_priv WHERE Db = '__DB__';
 SELECT 'target_schemas_empty', IF(COUNT(*) = 0, 'PASS', 'FAIL'), IFNULL(GROUP_CONCAT(CONCAT(table_schema, '.', table_name)), '')
 FROM information_schema.tables WHERE table_schema LIKE 'paldogotgan\_%';
 
--- (e-1) 앱 계정에 이스케이프 없이 준 모듈 스키마 권한(paldogotgan_x)이 없다. 이 패턴은 `_`가 와일드카드라 다른 DB까지 닿고,
---       이전 스크립트의 GRANT·REVOKE(paldogotgan\_x)와 이름이 달라 REVOKE가 거두지 못한다(있으면 REVOKE ... ON `paldogotgan_x`.*로 먼저 거둔다)
+-- (e-1) 앱 계정에 이스케이프 없이 준 모듈 스키마 권한(paldogotgan_x)이 없다. `_`가 와일드카드라 다른 DB까지 닿고 이전 스크립트의 REVOKE가 거두지 못한다
 SELECT 'no_unescaped_module_grants', IF(COUNT(*) = 0, 'PASS', 'FAIL'), IFNULL(GROUP_CONCAT(Db), '')
 FROM mysql.db WHERE User = '__APP_USER__' AND Db LIKE 'paldogotgan\\_%';
 

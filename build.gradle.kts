@@ -2,10 +2,7 @@ plugins {
     base // check 태스크를 두어 verifyInitDb를 build에 물린다
 }
 
-// DB 스키마를 만드는 초기화 스크립트(deploy/initdb)의 모듈 목록은 settings.gradle.kts의 모듈에서 만든다. 직접 고치지 않는다
-// 도메인 모듈은 common, monolith를 뺀 서브프로젝트이고 스키마 이름은 paldogotgan_<모듈 이름>이다
-//   ./gradlew generateInitDb   모듈을 추가·삭제한 뒤 실행해 deploy/initdb/modules.txt를 갱신한다
-//   ./gradlew check            modules.txt가 모듈 목록과 같은지 검사한다(verifyInitDb)
+// 도메인 모듈(common, monolith 제외)로 deploy/initdb/modules.txt를 만든다. 직접 고치지 않고 모듈을 바꾼 뒤 generateInitDb를 실행한다
 val initDbModulesFile = layout.projectDirectory.file("deploy/initdb/modules.txt")
 val initDbModulesContent = subprojects.map { it.name }
     .filterNot { it == "common" || it == "monolith" }
@@ -30,7 +27,7 @@ val verifyInitDb = tasks.register("verifyInitDb") {
     group = "verification"
     description = "deploy/initdb/modules.txt가 도메인 모듈 목록과 같은지 검사한다"
     inputs.property("content", initDbModulesContent)
-    // 파일 내용은 매번 읽어 비교해야 하므로 up-to-date로 건너뛰지 않는다. 같이 실행하면 generateInitDb가 먼저 돈다
+    // 파일 내용을 매번 비교해야 하므로 up-to-date로 건너뛰지 않는다
     outputs.upToDateWhen { false }
     mustRunAfter(generateInitDb)
     doLast {
@@ -45,10 +42,6 @@ tasks.check {
     dependsOn(verifyInitDb)
 }
 
-// 새 도메인 모듈의 뼈대를 만든다.
-//   ./gradlew createModule -PmoduleName=notification -PdisplayName=알림
-// 만드는 것: <모듈>/build.gradle.kts, 기본 패키지(package-info), 단독 기동 앱 클래스, ArchitectureTest 틀
-// settings.gradle.kts와 monolith 의존은 직접 추가해야 한다(실행 끝에 안내를 출력한다)
 tasks.register("createModule") {
     group = "help"
     description = "새 도메인 모듈의 뼈대를 만든다. -PmoduleName=<소문자 모듈 이름> [-PdisplayName=<표시 이름>]"
@@ -93,7 +86,6 @@ plugins {
 dependencies {
     implementation(project(":common"))
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
-    // 이 모듈만 쓰는 의존성은 여기에 더한다. 스타터는 common이 api로 열어 두었다
 }
 """)
 
@@ -114,9 +106,8 @@ import com.ok.common.StandaloneApplication;
 /**
  * $title 모듈을 단독으로 띄우는 앱 클래스.
  *
- * <p>Spring Modulith가 앱 클래스의 패키지를 루트로 보고 그 바로 아래 패키지를 모듈로 인식하므로 {@code com.ok}에 둔다.
- * 모듈 앱 클래스는 모듈마다 이름이 다르다. monolith에서는 다른 앱 클래스가 클래스패스에 함께 보이기 때문이다.
- * monolith는 이 클래스를 설정 클래스로 함께 스캔하므로 {@code main}과 {@code @SpringBootApplication} 외에는 얹지 않는다.
+ * <p>Spring Modulith가 앱 클래스의 패키지를 모듈 루트로 보므로 {@code com.ok}에 둔다.
+ * monolith에서 모든 모듈의 앱 클래스가 함께 보이므로 이름을 모듈마다 달리하고, 함께 스캔되므로 {@code main}과 {@code @SpringBootApplication} 외에는 얹지 않는다.
  */
 @SpringBootApplication
 public class $appClass {
@@ -135,10 +126,7 @@ public class $appClass {
             .replace("@PORT@", modulePort.toString()))
 
         write(".env.example", """
-# $name 모듈을 단독으로 실행할 때 쓰는 DB 계정. 이 모듈 스키마(paldogotgan_$name)에만 권한을 갖는다
-# .env로 복사해 쓴다(.env는 git에 올라가지 않는다). 루트에서 ./infra/mysql/sync-module-users.sh --init 을 실행하면
-# 이 파일에서 .env를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만든다
-# monolith는 이 파일을 읽지 않고 루트 .env의 공용 계정을 쓴다
+# $name 모듈 단독 실행용 DB 계정. ./infra/mysql/sync-module-users.sh --init 이 이 파일에서 .env를 만들고 MySQL에 같은 계정을 만든다
 DB_USERNAME=paldogotgan_$name
 DB_PASSWORD=
 """)

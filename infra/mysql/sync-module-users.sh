@@ -1,14 +1,6 @@
 #!/bin/bash
-# 모듈별 DB 계정을 <모듈>/.env 의 DB_USERNAME, DB_PASSWORD 대로 MySQL에 만든다. 계정은 자기 모듈 스키마에만 권한을 갖는다.
-# 이미 떠 있는 DB에도 쓸 수 있고(initdb는 빈 데이터 디렉터리일 때만 돈다), 여러 번 실행해도 같은 결과다(비밀번호가 바뀌었으면 갱신한다).
-#
-#   ./infra/mysql/sync-module-users.sh           모듈 .env가 있는 모듈만 반영한다
-#   ./infra/mysql/sync-module-users.sh --init    .env가 없는 모듈은 .env.example에서 만들고(비밀번호는 무작위) 반영한다
-#
-# 모듈 목록은 deploy/initdb/modules.txt(./gradlew generateInitDb)를 따르고, 스키마 이름은 paldogotgan_<모듈>이다.
-# 기본은 이 저장소의 docker compose MySQL에 실행한다. 다른 곳이면 DB_EXEC로 명령을 바꾼다(root 비밀번호는 컨테이너의 MYSQL_ROOT_PASSWORD를 쓴다).
-#   예) DB_EXEC="docker exec -i <컨테이너 이름>" ./infra/mysql/sync-module-users.sh
-# 비밀번호는 명령행 인자가 아니라 표준 입력으로 넘긴다.
+# <모듈>/.env의 DB 계정(DB_USERNAME, DB_PASSWORD)을 MySQL에 반영한다. 계정은 자기 모듈 스키마에만 권한을 갖는다.
+# 사용법과 DB_EXEC는 docs/DEVELOPMENT.md를 본다. 비밀번호는 명령행 인자가 아니라 표준 입력으로 넘긴다.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
@@ -33,7 +25,6 @@ if [[ -f .env ]]; then
   [[ -n "${shared_from_env}" ]] && SHARED_USER="${shared_from_env}"
 fi
 
-# KEY=VALUE 파일에서 마지막으로 나온 KEY의 값을 읽는다
 read_key() {
   grep -E "^$2=" "$1" | tail -1 | cut -d= -f2- | tr -d '\r' || true
 }
@@ -84,7 +75,7 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
   fi
   seen="${seen}${username} "
 
-  # IF NOT EXISTS로 만든 뒤 ALTER로 비밀번호를 맞춘다. GRANT의 DB 이름에서 _는 와일드카드라 \_로 이스케이프한다
+  # IF NOT EXISTS는 기존 계정의 비밀번호를 바꾸지 않아 ALTER로 맞춘다. GRANT의 DB 이름에서 _는 와일드카드라 \_로 이스케이프한다
   sql+="CREATE USER IF NOT EXISTS '${username}'@'%' IDENTIFIED BY '${password}';
 ALTER USER '${username}'@'%' IDENTIFIED BY '${password}';
 GRANT ALL PRIVILEGES ON \`paldogotgan\\_${module}\`.* TO '${username}'@'%';

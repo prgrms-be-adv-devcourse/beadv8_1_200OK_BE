@@ -1,8 +1,6 @@
 import org.gradle.api.artifacts.VersionCatalogsExtension
 
-// 도메인 모듈(서브프로젝트)용 컨벤션: 플러그인, Q클래스 생성, 모듈 단독 기동·테스트 설정만 준다
-// 의존성은 모듈의 build.gradle.kts에 직접 적는다. 스타터는 common이 api로 열어 두므로 모듈은 project(":common")만 가져오면 된다
-// 도메인 모듈끼리는 project(...) 의존을 걸지 않는다(선언하지 않은 모듈은 컴파일할 수 없고, 선언은 PR diff에서 보이므로 리뷰에서 확인한다)
+// 도메인 모듈끼리는 project(...) 의존을 걸지 않는다(선언은 PR diff에서 보이므로 리뷰에서 확인한다)
 plugins {
     id("ok.java-conventions")
     `java-library`
@@ -12,7 +10,7 @@ plugins {
 val libs = the<VersionCatalogsExtension>().named("libs")
 
 dependencies {
-    // Querydsl Q클래스 생성 (annotation processor). 프로세서는 의존으로 전달되지 않아 모듈마다 필요하다
+    // Querydsl Q클래스 생성. 어노테이션 프로세서는 의존으로 전달되지 않아 모듈마다 선언한다
     annotationProcessor(variantOf(libs.findLibrary("querydsl-apt").get()) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")
@@ -26,6 +24,6 @@ tasks.bootRun {
 tasks.withType<Test> {
     systemProperty("spring.profiles.include", project.name)
     systemProperty("ok.schema", "paldogotgan_${project.name}")
-    // 슬라이스 테스트(@DataJpaTest)의 Boot Flyway와 전체 컨텍스트 테스트의 모듈 Flyway가 한 이력을 쓰게 한다(ModuleFlyway.SINGLE_HISTORY_PROPERTY)
+    // 슬라이스 테스트와 전체 컨텍스트 테스트가 한 이력을 쓰게 한다(ModuleFlyway.SINGLE_HISTORY_PROPERTY)
     systemProperty("ok.flyway.single-history", "true")
 }

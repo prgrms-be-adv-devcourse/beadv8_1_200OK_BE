@@ -26,9 +26,7 @@ public class WalletFlywayConfig {
     }
 
     /**
-     * 모듈 단독 앱에서만, 같은 스키마에 common 마이그레이션(event_publication)을 별도 이력 테이블로 적용한다.
-     * 모듈 이력에 common 행이 섞이면 같은 DB를 monolith로 띄울 때 검증이 실패한다.
-     * 모듈 Flyway가 먼저 실행되어 스키마에 테이블이 있으므로 이 인스턴스는 기준선을 잡고 시작한다({@link ModuleFlyway#createStandaloneCommon}).
+     * 모듈 단독 앱에서만, 같은 스키마에 common 마이그레이션을 별도 이력 테이블로 적용한다({@link ModuleFlyway#createStandaloneCommon}).
      */
     @Bean
     @ConditionalOnExpression("${ok.flyway.standalone:false} and !${ok.flyway.single-history:false}")

@@ -22,15 +22,12 @@ import org.testcontainers.utility.MountableFile;
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfiguration {
 
-    // 운영·로컬 MySQL과 같은 스키마 초기화 폴더(deploy/initdb)를 Gradle이 넘긴다 (ok.java-conventions).
-    // 컨테이너가 처음 뜰 때 이 폴더의 스크립트가 모듈 스키마를 만들고 테스트 계정에 권한을 준다. 모듈 목록은 그 폴더의 modules.txt가 갖는다
     private static final String INITDB_DIR_PROPERTY = "ok.initdb-dir";
 
     private static MySQLContainer mysql;
 
     /**
-     * 접속 기본 DB는 {@code ok.schema} 속성이 정한다. 모듈 서브프로젝트의 테스트는 자기 모듈 스키마(컨벤션 플러그인이 지정)를,
-     * monolith 테스트는 속성이 없어 컨테이너의 기본 DB를 쓴다. 모듈 테이블을 한정자 없이 쓰는 모듈 테스트가 그대로 동작한다.
+     * 접속 기본 DB는 {@code ok.schema} 속성이 정한다. 모듈 테스트는 자기 모듈 스키마를, 속성이 없는 monolith 테스트는 컨테이너의 기본 DB를 쓴다.
      */
     @Bean
     JdbcConnectionDetails mysqlConnectionDetails(@Value("${MYSQL_VERSION:9.4}") String mysqlVersion,

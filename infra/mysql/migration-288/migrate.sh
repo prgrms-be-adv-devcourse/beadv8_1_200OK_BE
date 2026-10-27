@@ -1,28 +1,6 @@
 #!/bin/bash
 # 모듈별 MySQL 스키마로 기존 데이터를 옮긴다(#288). 사람이 점검하며 실행한다. deploy.sh에 넣지 않는다.
-#
-# 사용:
-#   [MYSQL_EXEC="<mysql 컨테이너에 명령을 실행하는 접두어>"] ./migrate.sh <명령> <기본 스키마> <앱 계정> [결과 폴더]
-#
-# 명령:
-#   preflight  사전 점검만 한다(00_preflight.sql). 아무것도 바꾸지 않는다.
-#   all        사전 점검 -> 이전 전 행 수·체크섬 기록 -> 이전(10_forward.sql) -> 사후 점검(20_verify.sql)
-#              -> 이전 후 비교. 어느 단계든 실패하면 즉시 멈추고, 이전 중 실패하면 상태와 다음 할 일을 출력한다.
-#   rollback   이전한 것을 되돌린다(90_rollback.sql, 91_rollback_drop.sql). 이전 후 새 마이그레이션이 적용되지 않았을 때만 된다.
-#              이전 도중 실패한 상태에서도 다시 실행할 수 있다.
-#   cleanup    테이블을 옮기기 전에 이전이 실패했을 때 만들어 둔 빈 모듈 스키마와 이력 복사본을 지운다.
-#
-# root 계정으로 mysql을 실행한다. 비밀번호는 명령행에 쓰지 않는다.
-#   - MYSQL_EXEC가 있으면 그 접두어로 mysql 컨테이너 안에서 실행하고, 컨테이너의 MYSQL_ROOT_PASSWORD 환경변수를 쓴다.
-#       예(운영): MYSQL_EXEC="docker compose -f compose.prod.yml exec -T mysql"
-#       예(로컬): MYSQL_EXEC="docker compose -f infra/mysql/compose.yml exec -T mysql"
-#   - 없으면 이 컴퓨터의 mysql 클라이언트로 root에 접속한다(비밀번호는 MYSQL_PWD 환경변수).
-#
-# 환경변수 SNAPSHOT_MODE=rows 이면 테이블마다 CHECKSUM TABLE을 하지 않고 행 수만 기록·비교한다(기본 full).
-# CHECKSUM TABLE은 테이블 전체를 읽으므로 데이터가 크면 오래 걸린다(이전 자체는 메타데이터 작업이라 크기와 무관하다).
-#
-# 실행 전에 앱을 멈추고(docker compose stop app) 백업한다. 절차 전체는 docs/DEPLOY.md, docs/DEVELOPMENT.md를 본다.
-# 결과 폴더(기본: ./out/<시각>)에 각 단계의 출력, 이전 전후의 행 수·체크섬이 남는다.
+# 실행 전에 앱을 멈추고(docker compose stop app) 백업한다. 명령, 환경변수(MYSQL_EXEC, SNAPSHOT_MODE), 절차 전체는 docs/DEPLOY.md를 본다.
 set -euo pipefail
 
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -61,7 +39,6 @@ mysql_cli() {
   fi
 }
 
-# 한 줄 질의의 결과 값 하나를 돌려준다
 query() {
   echo "$1" | mysql_cli --batch --skip-column-names
 }
@@ -100,7 +77,6 @@ warn_if_known_scripts_differ() {
   fi
 }
 
-# 점검 SQL을 실행하고 FAIL이 있으면 멈춘다
 run_checks() {
   local file=$1 log=$2 note=$3
   run_sql "$file" | tee "$log"
@@ -110,12 +86,10 @@ run_checks() {
   fi
 }
 
-# 모듈 스키마 안에 flyway_schema_history 말고 테이블이 몇 개 있는지
 moved_table_count() {
   query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema LIKE 'paldogotgan\\_%' AND table_name NOT IN ('flyway_schema_history', 'media_placeholder');"
 }
 
-# 이전 도중 실패했을 때 지금 상태와 다음 할 일을 알려 준다
 describe_state_after_failure() {
   local moved
   moved=$(moved_table_count || echo "?")
@@ -128,7 +102,6 @@ describe_state_after_failure() {
   fi
 }
 
-# 테이블마다 행 수와 체크섬을 적는다. $1이 before면 기본 스키마, after면 모듈 스키마의 테이블을 읽는다.
 # 스키마 이름은 지우고 "테이블 행수/체크섬"만 남겨 이전 전후를 파일로 비교할 수 있게 한다
 snapshot() {
   local when=$1 module table schema sql=""
