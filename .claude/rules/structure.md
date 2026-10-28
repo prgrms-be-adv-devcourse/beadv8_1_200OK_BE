@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/main/java/**/*.java"
+  - "**/src/main/java/**/*.java"
 ---
 
 # 패키지·네이밍
@@ -16,7 +16,7 @@ paths:
 - 성격이 다른 하위 도메인으로 나뉘는 모듈: `모듈/하위 도메인/레이어` 구조로 둔다.
 - 하위 도메인이 하나뿐이면 패키지를 한 단계 더 만들지 않는다(`core` 같은 의미 없는 패키지 금지).
 - 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정)를 추가한다. 하위 도메인이 있으면 그 아래에 둔다.
-- 전역 설정(`SecurityConfig` 등)은 `com.ok.config`에 둔다.
+- 전역 설정(`SecurityConfig` 등)은 `common` 서브프로젝트의 `com.ok.common.config`에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
 - 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다(`ArchitectureTest`가 검사).
 - 서비스는 `service` 패키지에 둔 발행 인터페이스로만 이벤트를 발행한다. 인터페이스는 값이나 `*Command`를 받고(이벤트 클래스 금지), 구현체는 `event`에 둔다(`ArchitectureTest`가 검사).
@@ -52,9 +52,10 @@ com.ok.wallet
 - 다른 모듈에 공개할 클래스(서비스, 이벤트)는 **모듈 최상위 패키지**에 둔다. 하위 패키지(`order.internal` 등)는 다른 모듈에서 접근할 수 없다.
 - 모듈 간 순환 의존은 금지한다. `common`은 도메인 모듈을 import하지 않는다.
 - 모듈 간 연동은 가능하면 이벤트(`@ApplicationModuleListener`)로 한다.
-- `package-info.java`는 모듈 선언이므로 지우지 않는다. 새 모듈을 추가하면 `ModulithStructureTest`의 모듈 목록도 갱신한다.
+- 모듈은 Gradle 서브프로젝트다. 도메인 모듈끼리는 `project(...)` 의존을 걸지 않는다(다른 도메인 모듈은 `build.gradle.kts`에 `project(...)`로 선언하지 않으면 컴파일할 수 없다. 선언은 PR diff에서 바로 보이므로 리뷰에서 확인한다). 공용 코드는 `common`에 둔다.
+- `package-info.java`는 모듈 선언이므로 지우지 않는다. 새 모듈은 `./gradlew createModule -PmoduleName=<이름>`으로 만든다.
 
-**이유**: 모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있다. 순환 의존이 있으면 모듈을 따로 테스트하거나 분리할 수 없고, 이벤트로 연동하면 결합이 낮아진다. 위 규칙을 어기면 `ModulithStructureTest`가 실패한다.
+**이유**: 모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있다. 순환 의존이 있으면 모듈을 따로 테스트하거나 분리할 수 없고, 이벤트로 연동하면 결합이 낮아진다. 도메인 모듈 간 `project(...)` 의존은 선언해야만 컴파일되고 선언은 PR diff에 보이므로, 규칙을 어기는 변경은 리뷰에서 먼저 걸린다.
 
 ```java
 // O

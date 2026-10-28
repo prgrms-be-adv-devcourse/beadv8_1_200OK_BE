@@ -114,7 +114,7 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 하위 도메인이 없는 모듈은 모듈 바로 아래에 레이어 패키지(`controller`, `service`, `domain`, `repository`)를 둔다.
 - 도메인이 커서 성격이 다른 하위 도메인으로 나뉘는 모듈은 `모듈/하위 도메인/레이어` 구조로 둔다.
 - 하위 도메인이 하나뿐인 모듈은 패키지를 한 단계 더 만들지 않는다. 의미 없는 패키지를 두지 않는다.
-- 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `com.ok.config` 모듈에 둔다.
+- 필요하면 `exception`(에러 코드), `event`(이벤트 리스너), `config`(모듈 전용 설정) 패키지를 추가한다. 하위 도메인이 있는 모듈은 이 패키지도 하위 도메인 아래에 둔다. 전역 설정(`SecurityConfig` 등)은 `common` 서브프로젝트의 `com.ok.common.config`에 둔다.
 - 배치·스케줄러 클래스는 `service` 패키지에 둔다.
 - 이벤트 리스너는 서비스만 호출한다. `controller`, `repository`, `domain`을 직접 쓰지 않는다.
 - 서비스는 `service` 패키지에 둔 발행 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받는다. 구현체는 `event` 패키지에 둔다.
@@ -173,9 +173,10 @@ com.ok.wallet
 - 다른 모듈에 공개할 클래스(서비스, 이벤트)는 **모듈의 최상위 패키지**에 둔다. 하위 패키지(예: `order.internal`)는 다른 모듈에서 접근할 수 없다.
 - 모듈 간 순환 의존은 금지한다. `common`은 도메인 모듈을 import하지 않는다.
 - 모듈 간 연동은 가능하면 이벤트(`@ApplicationModuleListener`)로 한다.
-- 각 모듈 패키지의 `package-info.java`는 모듈 선언이므로 지우지 않는다. 새 모듈을 추가하면 `ModulithStructureTest`의 모듈 목록도 갱신한다. 위 규칙을 어기면 이 테스트가 실패한다.
+- 모듈은 Gradle 서브프로젝트다. 도메인 모듈끼리는 `project(...)` 의존을 걸지 않는다. 다른 도메인 모듈은 `build.gradle.kts`에 `project(...)`로 선언하지 않으면 컴파일할 수 없다. 선언은 PR diff에서 바로 보이므로 리뷰에서 확인한다. 공용 코드는 `common`에 둔다.
+- 각 모듈 패키지의 `package-info.java`는 모듈 선언이므로 지우지 않는다. 새 모듈은 `./gradlew createModule -PmoduleName=<이름>`으로 만든다. 모듈 안의 구조 규칙은 모듈별 `ArchitectureTest`가 검사한다.
 
-**이유**: 모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있다. 순환 의존이 있으면 모듈을 따로 테스트하거나 분리할 수 없고, 이벤트로 연동하면 모듈 간 결합이 낮아진다.
+**이유**: 모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있다. 순환 의존이 있으면 모듈을 따로 테스트하거나 분리할 수 없고, 이벤트로 연동하면 모듈 간 결합이 낮아진다. 도메인 모듈 간 `project(...)` 의존은 선언해야만 컴파일되고 선언은 PR diff에 보이므로, 규칙을 어기는 변경은 리뷰에서 먼저 걸린다.
 
 ```java
 // 좋은 예: 다른 모듈에 공개하는 이벤트는 모듈 최상위 패키지에 둔다
@@ -398,6 +399,26 @@ private LocalDateTime deletedAt;
 
 // 나쁜 예: 행을 실제로 지운다
 cartItemRepository.delete(cartItem);
+```
+
+### 4.3 스키마
+
+**규칙**
+- 엔티티는 `@Table(name = "...", catalog = <모듈>Schema.NAME)`으로 자기 모듈의 MySQL 스키마를 지정한다. 스키마 이름 상수는 모듈 최상위 패키지의 `<모듈>Schema`에 있다(예: `WalletSchema.NAME`). 모듈 간 조인·외래키는 두지 않는다.
+- `@Table(schema = ...)`는 쓰지 않는다. MySQL은 데이터베이스를 catalog로 다루므로 Hibernate가 `schema` 값을 조용히 무시한다.
+- 네이티브 SQL은 `catalog`가 적용되지 않으므로 테이블 이름을 스키마로 직접 한정한다(`"INSERT INTO " + WalletSchema.NAME + ".buyer_wallet ..."`). JPQL, Spring Data 파생 쿼리, QueryDSL은 그대로 쓴다.
+- 새 모듈은 `<모듈>Schema`와 모듈의 Flyway 설정 클래스(`com.ok.<모듈>.config.<모듈>FlywayConfig`)를 함께 만든다. 스키마는 DB 준비 스크립트(`deploy/initdb`)가 만든다.
+
+**이유**: 모듈이 자기 스키마에 테이블을 두면 모듈을 서비스로 떼어낼 때 데이터가 이미 나뉘어 있다. catalog를 빼먹으면 접속 기본 DB(기본 스키마)에서 테이블을 찾아, 로컬 테스트는 통과해도 운영에서만 실패할 수 있어 `ArchitectureTest`가 검사한다.
+
+```java
+// 좋은 예
+@Entity
+@Table(name = "buyer_wallet", catalog = WalletSchema.NAME)
+public class BuyerWallet extends BaseIdAndTime { ... }
+
+// 나쁜 예: schema는 MySQL에서 무시된다
+@Table(name = "buyer_wallet", schema = "paldogotgan_wallet")
 ```
 
 ## 5. DTO·API
@@ -723,7 +744,7 @@ public MediaInfo upload(MediaPurpose purpose, MultipartFile file) {
 **규칙**
 - 현재 시각은 `Clock`을 주입받아 `LocalDateTime.now(clock)`처럼 얻는다. `LocalDateTime.now()`를 직접 호출하지 않는다.
 - 테스트에서는 고정된 시각의 `Clock`을 사용한다.
-- `Clock` 빈은 `com.ok.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
+- `Clock` 빈은 `com.ok.common.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
 - 모듈 테스트(`@ApplicationModuleTest`)에서는 `testsupport/TestClockConfiguration`을 `@Import`한다.
 
 **이유**: 시각에 의존하는 로직을 현재 시각과 상관없이 같은 결과로 테스트할 수 있다. 또한 `LocalDateTime.now()`는 JVM의 기본 타임존을 사용하므로, 앱의 타임존 설정(`APP_TIME_ZONE`)과 어긋날 수 있다. `Clock` 빈을 한 곳(`ClockConfig`)에 두고, JVM 시간대와 `APP_TIME_ZONE`을 모두 Asia/Seoul로 고정해 이를 막는다.
@@ -809,7 +830,7 @@ class WalletQueryService { ... }
 ### 8.1 파일 작성
 
 **규칙**
-- 스키마 변경은 항상 `src/main/resources/db/migration`에 SQL 파일로 추가한다.
+- 스키마 변경은 항상 모듈 서브프로젝트의 `src/main/resources/db/migration/<모듈>/`에 SQL 파일로 추가한다. 폴더 이름은 파일명의 도메인과 같다(`common`은 `common/src/main/resources/db/migration/common/`). 스키마마다 Flyway가 따로 돌고 각자 자기 폴더만 읽는다.
 - 파일명은 `V{yyyyMMddHHmm}__{도메인}__{설명}.sql`로 한다. 구분자는 밑줄 두 개, 설명 안의 단어 구분은 밑줄 한 개다.
   - 버전은 파일을 만드는 시점의 시각(12자리)이다.
   - 도메인은 모듈 이름(`member`, `order`, `common` 등)이다.
@@ -833,6 +854,7 @@ V202610091620__member_create_member.sql
 - 개발 환경(dev 프로파일)은 `out-of-order`를 허용해서 늦은 버전이 먼저 병합되어도 적용한다. 운영은 순서대로 적용되도록 허용하지 않는다.
 - 운영은 `main`의 코드로 실행되므로, 새 마이그레이션의 버전은 `main`에 이미 있는 가장 최신 버전보다 뒤여야 한다. 병합 전에 `main`을 합쳐서 확인하고, 뒤처졌으면 아직 병합되지 않은 내 파일의 버전을 현재 시각으로 바꾼다.
 - 이벤트 발행 기록 테이블 마이그레이션(`...common__create_event_publication_table.sql`)은 Spring Modulith가 쓰므로 지우지 않는다.
+- 다른 모듈의 테이블을 외래키로 참조하거나 수정하는 마이그레이션은 쓰지 않는다. 모듈마다 자기 스키마에 적용되므로 다른 스키마의 테이블을 모른다.
 
 **이유**: 이미 적용된 파일을 수정하면 체크섬이 달라져 앱이 기동하지 않는다. 개발 환경은 여러 브랜치의 병합 시점이 달라질 수 있어서 순서를 허용한다. 운영은 순서대로 적용되므로, 운영 DB에 이미 적용된 버전보다 오래된 파일이 나중에 올라가면 오류가 난다.
 
@@ -1047,7 +1069,7 @@ Wallet result = Wallet.create(memberId, WalletType.BUYER);
 | 서비스 단위 테스트 | 유스케이스의 분기, 예외, 협력 동작(이벤트 발행, 외부 경계 호출, 실패 경로) | Mockito |
 | 통합 테스트 | Controller → Service → Repository 전체 흐름, 실제 DB가 필요한 것(영속성, 쿼리, 제약, 트랜잭션) | `AbstractIntegrationTest` 상속 |
 | 모듈 테스트 | 한 모듈 안의 이벤트 연동. 이벤트 발행·수신 같은 모듈 외부 계약이 있는 모듈마다 모듈 테스트 클래스를 둔다 | `@ApplicationModuleTest` |
-| 구조 테스트 | 모듈 간 의존 규칙(Modulith), 모듈 안의 레이어 의존 방향과 클래스 이름·위치(ArchUnit) | `ModulithStructureTest`, `ArchitectureTest` |
+| 구조 테스트 | 모듈 안의 레이어 의존 방향과 클래스 이름·위치, 엔티티 스키마(ArchUnit). 모듈 간 의존은 `build.gradle.kts` 선언으로 정해지고 리뷰에서 확인한다 | 모듈마다 `ArchitectureTest` |
 
 **이유**: 통합 테스트가 레이어를 통과하며 흐름과 DB 동작을 검증하므로, 저장소와 컨트롤러를 따로 테스트하면 같은 것을 다시 검증하게 된다. 컨트롤러는 단위 테스트와 통합 테스트가 검증하는 내용이 크게 다르지 않다. 반면 서비스의 분기와 실패 경로는 통합 시나리오로 모두 덮으면 너무 많아지므로 단위 테스트가 맡는다. 핵심 비즈니스 로직은 가장 중요하므로 Spring 없이 빠르고 촘촘하게 먼저 검증한다. 또한 스프링 컨텍스트는 설정이 조금이라도 다르면 새로 뜨고(8~10초), `AbstractIntegrationTest`를 상속한 테스트는 컨텍스트 하나를 공유하므로, 컨텍스트가 이미 떠 있으면 테스트 11개가 약 2초에 끝난다.
 
@@ -1061,7 +1083,7 @@ class OrderServiceIntegrationTest extends AbstractIntegrationTest { ... }
 class OrderServiceIntegrationTest { ... }
 ```
 
-**구조 테스트 (ArchUnit)**: `ArchitectureTest`는 이 문서의 규칙 중 코드로 검사할 수 있는 것을 검사한다. 규칙마다 `because`에 이유와 근거 절을 적어, 실패 메시지만 보고 원인을 알 수 있게 한다.
+**구조 테스트 (ArchUnit)**: 모듈(과 `common`)마다 `ArchitectureTest`가 있고, 이 문서의 규칙 중 코드로 검사할 수 있는 것을 자기 모듈 범위에서 검사한다. 규칙은 공유 코드가 아니라 모듈마다 복사해 두어, 모듈이 자기 규칙을 바꿀 수 있다. 규칙마다 `because`에 이유와 근거 절을 적어, 실패 메시지만 보고 원인을 알 수 있게 한다.
 
 | 검사 | 근거 |
 |---|---|
@@ -1077,13 +1099,14 @@ class OrderServiceIntegrationTest { ... }
 | Swagger 문서 인터페이스는 `*Spec`, package-private이고 `spec` 패키지에 두지 않는다 | 3.3 |
 | 컨트롤러 클래스·메서드에 `@Transactional`을 붙이지 않는다 | 7.1 |
 | `System.out`, `System.err`를 쓰지 않는다 | 일반 |
+| 엔티티는 `@Table(catalog = <모듈>Schema.NAME)`으로 자기 모듈 스키마를 지정한다 | 4.3 |
 
-규칙을 넣을 때 이미 있던 위반은 freeze로 `src/test/resources/archunit_store/`에 기준선으로 저장한다. 기준선에 있는 위반은 통과하고, 새로 생긴 위반만 실패한다. 위반을 고치면 기준선에서 자동으로 빠지므로, 바뀐 `archunit_store` 파일도 같이 커밋한다.
+규칙을 넣을 때 이미 있던 위반은 freeze로 그 모듈의 `src/test/resources/archunit_store/`에 기준선으로 저장한다. 기준선에 있는 위반은 통과하고, 새로 생긴 위반만 실패한다. 위반을 고치면 기준선에서 자동으로 빠지므로, 바뀐 `archunit_store` 파일도 같이 커밋한다.
 
 freeze 규칙을 추가하거나 문구(`because` 포함)를 바꾸면 기준선을 다시 만든다. 기준선은 규칙 설명 문장으로 찾으므로 문구만 바뀌어도 다른 규칙으로 본다.
 
 1. `archunit.properties`의 `freeze.store.default.allowStoreCreation`을 `true`로 바꾼다. 이미 기준선이 있는 규칙을 다시 만들려면 `freeze.refreeze=true`도 넣는다.
-2. `./gradlew test --tests com.ok.ArchitectureTest`를 실행한다.
+2. `./gradlew :<모듈>:test --tests '*ArchitectureTest'`를 실행한다.
 3. 설정을 되돌리고, 기록된 위반이 예상과 같은지 확인한 뒤 커밋한다.
 
 Gradle의 `-D` 옵션은 테스트 JVM에 전달되지 않으므로 설정 파일을 직접 고친다.
@@ -1191,7 +1214,7 @@ assertThatThrownBy(() -> CartItem.create(cart, 1L, 1L, 0))
 ### 9.9 테스트 클래스
 
 **규칙**
-- 테스트 클래스는 `src/test/java`에서 테스트 대상과 같은 패키지에 둔다.
+- 테스트 클래스는 서브프로젝트의 `src/test/java`에서 테스트 대상과 같은 패키지에 둔다.
 - 테스트 클래스는 package-private(`class`)로 선언한다. `public`을 붙이지 않는다.
 - 클래스 이름은 테스트 종류에 따라 접미사를 붙인다.
   - 도메인·서비스 단위 테스트: `*Test`

@@ -1,0 +1,90 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: paldo-gotgan
+  config:
+    import: optional:file:.env[.properties]
+  profiles:
+    default: dev
+  jackson:
+    # API 응답(JSON)에 시각을 쓸 때의 시간대. 기본값은 팀 기준 Asia/Seoul (#93)
+    # .env 가 없는 서버·CI에서도 Asia/Seoul 이 되도록 기본값을 UTC에서 바꿈. 아래 datasource, hibernate 의 기본값과 같이 바꾼다
+    time-zone: ${APP_TIME_ZONE:Asia/Seoul}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 30MB
+  batch:
+    jdbc:
+      # 배치 메타데이터 테이블(BATCH_*)은 payout 스키마에 있다. 접속 기본 DB는 기본 스키마라서 스키마를 붙여 지정한다 (PayoutSchema.NAME)
+      table-prefix: paldogotgan_payout.BATCH_
+  datasource:
+    # serverTimezone: JDBC 드라이버가 DB와 시각을 주고받을 때 기준 시간대 (기본값 Asia/Seoul, #93)
+    url: ${DB_URL:jdbc:mysql://localhost:3306/paldogotgan?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:password}
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          # Hibernate가 LocalDateTime을 DB에 저장·조회할 때 변환하는 기준 시간대 (기본값 Asia/Seoul, #93)
+          # JVM 시간대(Dockerfile, build-logic의 ok.java-conventions 플러그인의 -Duser.timezone)와 같아야 저장한 시각이 그대로 들어간다
+          time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+app:
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION}
+    bucket: ${S3_BUCKET}
+
+# 앱 시작 시 만들 최초 관리자 계정 (member.member.config.AdminBootstrapConfig)
+# - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)
+# - 같은 아이디의 회원이 이미 있으면 만들지 않고 비밀번호도 바꾸지 않는다
+admin-bootstrap:
+  login-id: ${ADMIN_BOOTSTRAP_LOGIN_ID:}
+  password: ${ADMIN_BOOTSTRAP_PASSWORD:}
+  email: ${ADMIN_BOOTSTRAP_EMAIL:}
+jwt:
+  issuer: paldo-gotgan
+  # 토큰을 받는 서비스(aud). 서비스가 분리되면 서비스마다 다른 값을 쓴다.
+  audience: paldo-gotgan-api
+  # 서명 키 식별자(kid). 비밀키(JWT_SECRET)를 교체할 때 함께 바꾼다.
+  # - 토큰 헤더에 그대로 노출되는 값이므로 키 내용이나 추측 가능한 정보를 넣지 않는다.
+  # - 형식: {알고리즘}-v{버전} (예: hs256-v1 → hs256-v2, RS256 전환 시 rs256-v1)
+  key-id: hs256-v1
+  secret: ${JWT_SECRET}
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
+
+toss:
+  payments:
+    base-url: https://api.tosspayments.com
+    secret-key: ${TOSS_SECRET_KEY}
+    connect-timeout: 3s
+    read-timeout: 30s
+
+delivery:
+  # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
+  default-shipping:
+    base-shipping-fee: 3000
+    free-shipping-threshold: 50000
+    cutoff-time: "13:00"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 컨테이너 헬스체크에만 쓴다. 외부 노출은 nginx가 막고, 다른 엔드포인트는 열지 않는다
+        include: health
+  endpoint:
+    health:
+      show-details: never

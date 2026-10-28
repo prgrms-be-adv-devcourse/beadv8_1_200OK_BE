@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/main/java/**/service/**/*.java"
+  - "**/src/main/java/**/service/**/*.java"
 ---
 
 # 서비스·트랜잭션
@@ -73,7 +73,7 @@ public MediaInfo upload(MediaPurpose purpose, MultipartFile file) {
 
 - `Clock`을 주입받아 `LocalDateTime.now(clock)`로 얻는다. `LocalDateTime.now()`를 직접 호출하지 않는다.
 - 테스트에서는 고정된 시각의 `Clock`을 사용한다.
-- `Clock` 빈은 `com.ok.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
+- `Clock` 빈은 `com.ok.common.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
 - 모듈 테스트(`@ApplicationModuleTest`)에서는 `testsupport/TestClockConfiguration`을 `@Import`한다.
 
 **이유**: 시각에 의존하는 로직을 현재 시각과 상관없이 같은 결과로 테스트할 수 있다. `LocalDateTime.now()`는 JVM 기본 타임존을 써서 앱 타임존 설정(`APP_TIME_ZONE`)과 어긋날 수 있다.

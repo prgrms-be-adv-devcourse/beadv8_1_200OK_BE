@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/main/java/**/controller/**/*.java"
+  - "**/src/main/java/**/controller/**/*.java"
 ---
 
 # DTO·API

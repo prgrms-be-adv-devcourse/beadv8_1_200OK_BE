@@ -1,7 +1,7 @@
 .git
-.gradle
+**/.gradle
 .idea
-build
+**/build
 target
 node_modules
 data

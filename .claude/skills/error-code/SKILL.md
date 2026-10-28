@@ -14,7 +14,7 @@ description: 모듈의 ErrorCode enum에 에러 코드를 추가하거나 새 �
    - 다른 모듈이나 시스템이 계산해서 넘긴 값의 오류(이벤트·배치가 받은 값 포함) → `IllegalArgumentException` 등 표준 예외. 이 스킬 대상이 아니다.
 2. **모듈의 `*ErrorCode`를 찾는다.**
    ```bash
-   find src/main -name '*ErrorCode.java'
+   find . -path '*/src/main/*' -name '*ErrorCode.java'
    ```
    없으면 모듈의 `exception` 패키지에 새로 만든다(`ErrorCode` 구현). 기존 파일이 `domain` 등 다른 패키지에 있어도 옮기지 않고 그 파일에 추가한다.
 3. **이미 같은 의미의 코드가 있는지 확인한다.** 있으면 재사용한다. `CommonErrorCode`에 직접 쓴 메시지를 조합해 도메인 오류를 만들지 않는다.

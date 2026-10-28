@@ -1,0 +1,66 @@
+ok:
+  flyway:
+    standalone: true
+server:
+  port: ${SERVER_PORT:8083}
+spring:
+  application:
+    name: wallet
+  config:
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties]
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_wallet?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:password}
+  jackson:
+    time-zone: ${APP_TIME_ZONE:Asia/Seoul}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+  flyway:
+    out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+app:
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION:ap-northeast-2}
+    bucket: ${S3_BUCKET:local-bucket}
+jwt:
+  issuer: paldo-gotgan
+  audience: paldo-gotgan-api
+  key-id: hs256-v1
+  secret: ${JWT_SECRET:}
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+logging:
+  level:
+    com.ok: ${LOG_LEVEL_OK:INFO}
+toss:
+  payments:
+    base-url: https://api.tosspayments.com
+    secret-key: ${TOSS_SECRET_KEY}
+    connect-timeout: 3s
+    read-timeout: 30s

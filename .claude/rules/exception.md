@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/main/java/**/exception/**/*.java"
+  - "**/src/main/java/**/exception/**/*.java"
 ---
 
 # 예외·에러 코드

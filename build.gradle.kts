@@ -1,123 +1,184 @@
 plugins {
-    java
-    jacoco
-    id("org.springframework.boot") version "4.1.1"
-    id("io.spring.dependency-management") version "1.1.7"
+    base // check 태스크를 두어 verifyInitDb를 build에 물린다
 }
 
-group = "com"
-version = "0.0.1-SNAPSHOT"
-description = "paldo-gotgan"
+// 도메인 모듈(common, monolith 제외)로 deploy/initdb/modules.txt를 만든다. 직접 고치지 않고 모듈을 바꾼 뒤 generateInitDb를 실행한다
+val initDbModulesFile = layout.projectDirectory.file("deploy/initdb/modules.txt")
+val initDbModulesContent = subprojects.map { it.name }
+    .filterNot { it == "common" || it == "monolith" }
+    .sorted()
+    .joinToString(
+        separator = "\n",
+        prefix = "# 도메인 모듈 목록. settings.gradle.kts의 모듈에서 ./gradlew generateInitDb가 만든다. 직접 고치지 않는다.\n",
+        postfix = "\n",
+    )
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+val generateInitDb = tasks.register("generateInitDb") {
+    group = "build setup"
+    description = "deploy/initdb/modules.txt를 도메인 모듈 목록으로 다시 만든다"
+    inputs.property("content", initDbModulesContent)
+    outputs.file(initDbModulesFile)
+    doLast {
+        initDbModulesFile.asFile.writeText(initDbModulesContent)
     }
 }
 
-repositories {
-    mavenCentral()
+val verifyInitDb = tasks.register("verifyInitDb") {
+    group = "verification"
+    description = "deploy/initdb/modules.txt가 도메인 모듈 목록과 같은지 검사한다"
+    inputs.property("content", initDbModulesContent)
+    // 파일 내용을 매번 비교해야 하므로 up-to-date로 건너뛰지 않는다
+    outputs.upToDateWhen { false }
+    mustRunAfter(generateInitDb)
+    doLast {
+        val file = initDbModulesFile.asFile
+        if (!file.exists() || file.readText() != initDbModulesContent) {
+            throw GradleException("deploy/initdb/modules.txt가 도메인 모듈 목록과 다르다. ./gradlew generateInitDb 를 실행해 갱신한다. 모듈을 추가하면 새 스키마가 만들어지지 않는다")
+        }
+    }
 }
 
-extra["springModulithVersion"] = "2.1.1"
-extra["awsSdkVersion"] = "2.55.12"
+tasks.check {
+    dependsOn(verifyInitDb)
+}
 
-val querydslVersion = "7.7"
-val springdocVersion = "3.1.1"
-val archunitVersion = "1.5.1"
+tasks.register("createModule") {
+    group = "help"
+    description = "새 도메인 모듈의 뼈대를 만든다. -PmoduleName=<소문자 모듈 이름> [-PdisplayName=<표시 이름>]"
+
+    val moduleName = providers.gradleProperty("moduleName")
+    val displayName = providers.gradleProperty("displayName")
+    val port = providers.gradleProperty("port")
+    val rootDir = layout.projectDirectory.asFile
+
+    doLast {
+        val name = moduleName.orNull
+            ?: throw GradleException("모듈 이름이 필요하다: ./gradlew createModule -PmoduleName=refund")
+        if (!Regex("[a-z]+").matches(name)) {
+            throw GradleException("모듈 이름은 영문 소문자만 쓴다: $name")
+        }
+        val moduleDir = File(rootDir, name)
+        if (moduleDir.exists()) {
+            throw GradleException("이미 있는 폴더다: $moduleDir")
+        }
+        val appClass = name.replaceFirstChar { it.uppercase() } + "Application"
+        val title = displayName.orNull ?: name
+
+        val usedPorts = rootDir.listFiles { f -> f.isDirectory }.orEmpty().flatMap { dir ->
+            File(dir, "src/main/resources").listFiles { f -> f.name.startsWith("application-") && f.name.endsWith(".yaml") }.orEmpty().toList()
+        }.mapNotNull { Regex("SERVER_PORT:(\\d+)").find(it.readText())?.groupValues?.get(1)?.toInt() }
+        val modulePort = port.orNull?.toIntOrNull() ?: ((usedPorts.maxOrNull() ?: 8080) + 1)
+        if (modulePort in usedPorts) {
+            throw GradleException("이미 다른 모듈이 쓰는 포트다: $modulePort (-Pport로 다른 포트를 지정한다)")
+        }
+
+        fun write(path: String, content: String) {
+            val file = File(moduleDir, path)
+            file.parentFile.mkdirs()
+            file.writeText(content.trimStart('\n'))
+        }
+
+        write("build.gradle.kts", """
+plugins {
+    id("ok.spring-module-conventions")
+}
 
 dependencies {
-    // ---------- Web / API ----------
-    implementation("org.springframework.boot:spring-boot-starter-webmvc")
-    implementation("org.springframework.boot:spring-boot-starter-validation")
-    implementation("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:$springdocVersion") // Swagger UI
-
-    // ---------- Spring Modulith (도메인 모듈, 이벤트) ----------
-    implementation("org.springframework.modulith:spring-modulith-starter-core")
-    implementation("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
-    runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
-
-    // ---------- Batch ----------
-    implementation("org.springframework.boot:spring-boot-starter-batch-jdbc") // 배치 실행 기록 DB 저장(BATCH_* 테이블)
-
-    // ---------- Security ----------
-    implementation("org.springframework.boot:spring-boot-starter-security")
-    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
-
-    // ---------- Database (JPA, Querydsl, MySQL) ----------
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("io.github.openfeign.querydsl:querydsl-jpa:$querydslVersion")
-    runtimeOnly("com.mysql:mysql-connector-j")
-
-    // Querydsl Q클래스 생성 (annotation processor)
-    annotationProcessor("io.github.openfeign.querydsl:querydsl-apt:$querydslVersion:jpa")
-    annotationProcessor("jakarta.persistence:jakarta.persistence-api")
-    annotationProcessor("jakarta.annotation:jakarta.annotation-api")
-
-    // ---------- DB 마이그레이션 (Flyway) ----------
-    implementation("org.springframework.boot:spring-boot-starter-flyway")
-    implementation("org.flywaydb:flyway-mysql")
-
-    // ---------- AWS ----------
-    implementation("software.amazon.awssdk:s3")
-
-    // ---------- Image ----------
-    implementation("net.coobird:thumbnailator:0.4.21")
-
-    // ---------- HTML ----------
-    implementation("com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer:20260924.2") // 상품 상세설명 HTML 정제 (XSS 방지)
-
-    // ---------- 개발 편의 ----------
-    compileOnly("org.projectlombok:lombok")
-    annotationProcessor("org.projectlombok:lombok")
-    developmentOnly("org.springframework.boot:spring-boot-devtools")
-    developmentOnly("org.springframework.boot:spring-boot-docker-compose") // 앱 실행 시 docker compose 자동 기동 (DOCKER_COMPOSE_ENABLED)
-
-    // ---------- Test: Spring Boot 테스트 스타터 ----------
-    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-flyway-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-security-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-batch-test")
-    testImplementation("org.springframework.modulith:spring-modulith-starter-test")
-
-    // ---------- Test: Testcontainers ----------
-    testImplementation("org.springframework.boot:spring-boot-testcontainers")
-    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
-    testImplementation("org.testcontainers:testcontainers-mysql")
-
-    // ---------- Test: 구조 검증 / 기타 ----------
-    testImplementation("com.tngtech.archunit:archunit-junit5:$archunitVersion")
-    testCompileOnly("org.projectlombok:lombok")
-    testAnnotationProcessor("org.projectlombok:lombok")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    implementation(project(":common"))
+    testImplementation(project(path = ":common", configuration = "testSupportElements"))
 }
+""")
 
-dependencyManagement {
-    imports {
-        mavenBom("org.springframework.modulith:spring-modulith-bom:${property("springModulithVersion")}")
-        mavenBom("software.amazon.awssdk:bom:${property("awsSdkVersion")}")
+        write("src/main/java/com/ok/$name/package-info.java", """
+@ApplicationModule(displayName = "$title")
+package com.ok.$name;
+
+import org.springframework.modulith.ApplicationModule;
+""")
+
+        write("src/main/java/com/ok/$appClass.java", """
+package com.ok;
+
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+import com.ok.common.StandaloneApplication;
+
+/**
+ * $title 모듈을 단독으로 띄우는 앱 클래스.
+ *
+ * <p>Spring Modulith가 앱 클래스의 패키지를 모듈 루트로 보므로 {@code com.ok}에 둔다.
+ * monolith에서 모든 모듈의 앱 클래스가 함께 보이므로 이름을 모듈마다 달리하고, 함께 스캔되므로 {@code main}과 {@code @SpringBootApplication} 외에는 얹지 않는다.
+ */
+@SpringBootApplication
+public class $appClass {
+
+    public static void main(String[] args) {
+        StandaloneApplication.run($appClass.class, "$name", args);
     }
 }
+""")
 
-tasks.withType<Test> {
-    useJUnitPlatform()
-    // 테스트는 application-test.yml 을 사용 (dev 기본 프로파일 대신)
-    systemProperty("spring.profiles.active", "test")
-    // 테스트 JVM의 시간대를 팀 기준(Asia/Seoul)으로 고정 (#93)
-    // - LocalDateTime.now(), Clock.systemDefaultZone(), JPA Auditing(createdAt)은 JVM 기본 시간대를 따른다
-    // - 로컬(Windows)은 OS가 KST라 문제가 없지만, CI(GitHub Actions)는 UTC라서 같은 테스트가 다른 날짜로 계산될 수 있다
-    //   예) 정산 실행일이 하루 앞당겨져 로컬은 통과하고 CI는 실패하는 상황
-    // - 서버(Docker)도 Dockerfile에서 같은 값으로 고정한다. 둘 중 하나를 바꾸면 다른 쪽도 함께 바꾼다
-    jvmArgs("-Duser.timezone=Asia/Seoul")
-    finalizedBy(tasks.jacocoTestReport)
+        val template = File(rootDir, "build-logic/templates/application-module.yaml").readText()
+        write("src/main/resources/application-$name.yaml", template
+            .replace("@MODULE@", name)
+            .replace("@APP@", appClass)
+            .replace("@APP_SCHEMA@", name.replaceFirstChar { it.uppercase() } + "Schema")
+            .replace("@PORT@", modulePort.toString()))
+
+        write(".env.example", """
+# $name 모듈 단독 실행용 DB 계정. ./infra/mysql/sync-module-users.sh --init 이 이 파일에서 .env를 만들고 MySQL에 같은 계정을 만든다
+DB_USERNAME=paldogotgan_$name
+DB_PASSWORD=
+""")
+
+        write("src/test/resources/archunit.properties", """
+# 아직 대상 클래스가 없는 규칙이 실패하지 않게 한다.
+archRule.failOnEmptyShould=false
+""")
+
+        write("src/test/java/com/ok/$name/ArchitectureTest.java", """
+package com.ok.$name;
+
+import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
+
+import com.tngtech.archunit.core.importer.ImportOption;
+import com.tngtech.archunit.junit.AnalyzeClasses;
+import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchRule;
+
+// 모듈마다 자기 구조 규칙을 가진다. 규칙은 공유 코드가 아니라 복사해서 쓰고, 모듈이 자라면 이 파일에서 바꾼다
+@AnalyzeClasses(packages = "com.ok.$name", importOptions = ImportOption.DoNotIncludeTests.class)
+class ArchitectureTest {
+
+    @ArchTest
+    static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = layeredArchitecture()
+            .consideringOnlyDependenciesInLayers()
+            .withOptionalLayers(true) // 아직 없는 레이어가 있어도 실패하지 않는다
+            .layer("Controller").definedBy("..controller..")
+            .layer("Service").definedBy("..service..")
+            .layer("Repository").definedBy("..repository..")
+            .layer("Domain").definedBy("..domain..")
+            .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
+            .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
+            .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
+            .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
+            .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)");
+
+    @ArchTest
+    static final ArchRule 패키지_간_순환_의존이_없다 = slices()
+            .matching("com.ok.$name.(**)")
+            .should().beFreeOfCycles()
+            .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다");
 }
+""")
 
-tasks.jacocoTestReport {
-    dependsOn(tasks.test)
-    reports {
-        xml.required = true
-        html.required = true
+        println("""
+            |$name 모듈 뼈대를 만들었다(포트 $modulePort). 직접 할 일:
+            |  1. settings.gradle.kts 의 include(...) 에 "$name" 추가
+            |  2. ./gradlew generateInitDb 로 DB 스키마 목록(deploy/initdb/modules.txt) 갱신 (이미 만든 로컬 DB 볼륨에는 스키마를 직접 만들어야 한다)
+            |     그다음 ./infra/mysql/sync-module-users.sh --init 으로 모듈 DB 계정(.env)을 만든다
+            |  3. 운영에 함께 올리려면 monolith/build.gradle.kts 에 implementation(project(":$name")) 추가
+        """.trimMargin())
     }
 }

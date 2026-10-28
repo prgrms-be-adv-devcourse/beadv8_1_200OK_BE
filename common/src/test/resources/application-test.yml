@@ -1,0 +1,42 @@
+spring:
+  docker:
+    compose:
+      enabled: false
+  batch:
+    job:
+      enabled: false
+    jdbc:
+      initialize-schema: never
+  jackson:
+    # 테스트는 .env 와 상관없이 팀 기준 시간대를 쓴다 (#93, .env 영향 없음)
+    # 테스트 JVM(build-logic의 ok.java-conventions -Duser.timezone)과 같아야 jdbcTemplate 으로 넣은 시각과 JPA 로 읽은 시각이 맞는다
+    time-zone: Asia/Seoul
+  jpa:
+    hibernate:
+      # 마이그레이션과 엔티티 일치 여부를 테스트에서 검증 (.env 영향 없음)
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          # 위와 같은 이유로 Hibernate 의 시간대 변환 기준도 고정 (.env 영향 없음, #93)
+          time_zone: Asia/Seoul
+logging:
+  level:
+    com.ok: DEBUG
+app:
+  s3:
+    region: ap-northeast-2
+    bucket: test-mock-bucket
+    # 에러 응답의 type(slug)을 통합 테스트에서 검증할 수 있도록 실제 URI 형태로 둔다 (about:blank이면 slug가 응답에 나오지 않음)
+  problem:
+    base-uri: https://api.example.com/problems
+admin-bootstrap:
+  login-id: ""
+jwt:
+  # 테스트 전용 키. 개발·운영 환경의 JWT_SECRET으로 절대 사용하지 않는다.
+  secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl
+
+toss:
+  # 토스 테스트 전용 키.
+  payments:
+    secret-key: test_sk_dummy-for-test

@@ -33,14 +33,14 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
 
 ```bash
 # 로컬: 배포 파일 복사
-scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/nginx deploy/.env.prod.example ubuntu@<EIP>:/tmp/
+scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/nginx deploy/initdb deploy/.env.prod.example ubuntu@<EIP>:/tmp/
 
 # 서버
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
-mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/nginx /tmp/.env.prod.example /opt/paldo-gotgan/
+mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
 cp .env.prod.example .env && chmod 600 .env
 vi .env                      # 비밀번호·키 채우기
@@ -53,6 +53,7 @@ mountpoint /data             # "/data is a mountpoint"가 나와야 한다
 이미지는 배포 브랜치 `semi`에 push되면 GitHub Actions(`.github/workflows/docker-image.yml`)가 빌드해 GHCR에 `latest`와 커밋 SHA 7자리 태그로 올립니다.
 
 - `semi`는 세미 프로젝트까지 쓰는 임시 배포 브랜치입니다. dev 머지마다 빌드하면 너무 자주 돌아서, 확인하고 싶을 때만 `semi`를 올립니다. 이후 main으로 옮길 예정입니다.
+- **모듈별 DB 스키마 이전(#288)이 들어간 버전을 처음 배포할 때는 배포 전에 [8. 모듈별 DB 스키마 이전](#8-모듈별-db-스키마-이전-288-한-번만)을 먼저 실행합니다.** 하지 않으면 새 버전 앱이 기동 검증에서 멈춥니다.
 - `semi`에는 직접 커밋하거나 PR을 머지하지 않고 dev를 그대로 따라가게만(fast-forward) 합니다. dev에 없는 코드가 배포되면, 나중에 dev에 들어오는 더 이른 번호의 마이그레이션 때문에 Flyway 검증이 실패해 앱이 뜨지 않습니다.
 
 1. 배포할 시점의 dev로 `semi`를 올립니다. fast-forward가 안 되면 push가 거부됩니다.
@@ -121,3 +122,93 @@ docker pull ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest   # 새 토큰�
 ```
 
 이전 토큰은 GitHub에서 삭제합니다.
+
+## 8. 모듈별 DB 스키마 이전 (#288, 한 번만)
+
+앱이 모듈마다 자기 MySQL 스키마(`paldogotgan_member`, `paldogotgan_wallet` 등 8개)를 쓰도록 바뀌었습니다. 기존 데이터가 있는 DB는 테이블을 새 스키마로 옮겨야 하고(데이터 복사 없이 `RENAME TABLE`), 이 버전을 처음 배포하기 전에 한 번만 실행합니다. 새 데이터 볼륨(최초 설치)은 MySQL 컨테이너가 스키마를 만들고 앱이 테이블을 만들므로 이 절차가 필요 없습니다.
+
+- 이전하지 않은 DB로 새 버전을 띄우면 앱이 Flyway 검증(`Detected applied migration not resolved locally`)에서 멈춥니다. 빈 테이블이 만들어지지는 않습니다.
+- 반대로, 이전한 DB에 **이전 버전 이미지를 띄우면** 기본 스키마에 빈 테이블이 새로 생기고 데이터가 갈라질 수 있어서, 이전 스크립트가 기본 스키마에 자리표시 테이블 `media`를 둡니다. 이전 버전 앱은 첫 마이그레이션(`media` 테이블 생성)에서 `already exists`로 멈춥니다. 되돌릴 때는 진짜 `media` 테이블이 돌아오는 것과 같은 한 문장(원자적)에서 이 테이블이 모듈 스키마로 함께 옮겨지므로, 되돌리기가 실패하면 자리표시도 그대로 남습니다. 이 자리표시는 **이전 스크립트로 이전한 DB에만** 생깁니다. 새 데이터 볼륨에서 새 버전으로 시작한 DB에는 없으므로, 그 DB에서는 이전 버전 이미지로 되돌리지 않습니다(기본 스키마에 빈 테이블이 생겨 데이터가 갈라집니다).
+- 스크립트: `infra/mysql/migration-288/` (`migrate.sh`가 점검 → 이전 → 사후 점검을 이어서 실행하고, 실패하면 바로 멈춥니다). 서버에서 실행하려면 이 폴더를 `scp`로 서버에 복사합니다.
+- 이전 중에는 앱이 꺼져 있어야 합니다(쓰기 중단). 테이블을 옮기는 `RENAME TABLE`은 데이터를 복사하지 않아 데이터 크기와 무관하게 짧습니다. 다만 이전 전후의 행 수·`CHECKSUM TABLE` 비교는 테이블 전체를 읽으므로 데이터가 크면 오래 걸립니다([운영 적용 전에 확인할 것](#운영-적용-전에-확인할-것) 참고).
+
+```bash
+# 서버 (/opt/paldo-gotgan)
+docker compose -f compose.prod.yml stop app nginx          # 쓰기 중단
+# 백업: EBS 스냅숏을 1차 복구 수단으로 만들고, 덤프도 남긴다. 덤프에는 회원·주소·지갑 원장이 모두 들어 있으므로 본인만 읽게 만들고 확인 뒤 지운다
+(umask 077; docker compose -f compose.prod.yml exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines --triggers --databases "$MYSQL_DATABASE"' > /data/backup-before-288.sql)
+# 이전. root 비밀번호는 명령행·환경변수로 넘기지 않는다(컨테이너 안의 MYSQL_ROOT_PASSWORD를 쓴다)
+export MYSQL_EXEC='docker compose -f compose.prod.yml exec -T mysql'
+./migrate.sh all <MYSQL_DATABASE 값> <MYSQL_USER 값> /data/migrate-288-out
+```
+
+- `migrate.sh`는 먼저 사전 점검을 하고(테이블 목록이 예상과 같은지, 알려진 55개 외의 마이그레이션 이력이 없는지, 트리거·뷰·테이블 권한이 없는지, 앱 연결·열린 트랜잭션이 없는지, 대상 스키마가 비어 있는지), 하나라도 실패하면 아무것도 바꾸지 않고 멈춥니다. 병합되지 않은 브랜치의 마이그레이션이 이력에 있으면 중단되니 그 브랜치를 정리한 뒤 다시 실행합니다.
+- 이전 전후로 모든 테이블의 행 수와 `CHECKSUM TABLE` 값을 결과 폴더(`before.txt`, `after.txt`)에 남기고 같은지 비교합니다. 다르면 실패로 끝납니다.
+- 이전 뒤 새 버전을 배포하고(`./deploy.sh`) 확인합니다: health UP, 로그인, 상품 조회, 지갑 잔액, 정산 조회, 가입 후 지갑이 생기는지. 앱 로그에서 Flyway가 스키마 9곳을 검증하고 새로 적용한 마이그레이션이 0건인지 봅니다.
+- 이전이 끝나면 덤프 파일(`/data/backup-before-288.sql`)은 배포가 안정된 것을 확인한 뒤 지웁니다.
+
+### `migrate.sh` 명령과 환경변수
+
+`migrate.sh <명령> <기본 스키마> <앱 계정> [결과 폴더]` 형식으로 실행하고, 실행 전에 앱을 멈추고 백업합니다.
+
+| 명령 | 동작 |
+|---|---|
+| `preflight` | 사전 점검(`00_preflight.sql`)만 합니다. 아무것도 바꾸지 않습니다 |
+| `all` | 사전 점검 → 이전 전 행 수·체크섬 기록 → 이전(`10_forward.sql`) → 사후 점검(`20_verify.sql`) → 이전 후 비교. 어느 단계든 실패하면 즉시 멈추고, 이전 중 실패하면 상태와 다음 할 일을 출력합니다 |
+| `rollback` | 이전한 것을 되돌립니다(`90_rollback.sql`, `91_rollback_drop.sql`). 이전 후 새 마이그레이션이 적용되지 않았을 때만 됩니다. 이전 도중 실패한 상태에서도 다시 실행할 수 있습니다 |
+| `cleanup` | 테이블을 옮기기 전에 이전이 실패했을 때 만들어 둔 빈 모듈 스키마와 이력 복사본을 지웁니다 |
+
+| 환경변수 | 의미 |
+|---|---|
+| `MYSQL_EXEC` | mysql 컨테이너에서 명령을 실행하는 접두어(예: `docker compose -f compose.prod.yml exec -T mysql`, 로컬은 `docker compose -f infra/mysql/compose.yml exec -T mysql`). 있으면 컨테이너 안에서 root로 실행하고 컨테이너의 `MYSQL_ROOT_PASSWORD`를 씁니다. 없으면 이 컴퓨터의 mysql 클라이언트로 root에 접속하고 비밀번호는 `MYSQL_PWD`에서 읽습니다. 어느 쪽이든 비밀번호는 명령행에 나타나지 않습니다 |
+| `SNAPSHOT_MODE` | `rows`이면 테이블마다 `CHECKSUM TABLE`을 하지 않고 행 수만 기록·비교합니다(기본 `full`). `CHECKSUM TABLE`은 테이블 전체를 읽어 데이터가 크면 오래 걸립니다. 이전 자체는 메타데이터 작업이라 크기와 무관합니다 |
+
+결과 폴더(기본 `./out/<시각>`)에 각 단계의 출력과 이전 전후의 행 수·체크섬이 남습니다.
+
+### 사전 점검이 실패했을 때
+
+`00_preflight.sql`의 출력 한 줄이 점검 하나이고(`CHECK <이름> <PASS|FAIL> <상세>`), `FAIL`이 하나라도 있으면 `migrate.sh`가 중단합니다.
+
+| 점검 | 실패하는 경우와 대응 |
+|---|---|
+| (a) 테이블 목록 | 기본 스키마의 테이블이 이전 대상 목록(`tables.txt`)과 다릅니다(`event_publication`, `flyway_schema_history` 제외) |
+| (b) 이력 55개 | 이력이 기대하는 55개 마이그레이션(파일명 기준)과 다릅니다. 이전 후 검증과 `rollback`이 55행을 전제로 하므로 누락과 초과를 모두 막습니다. 초과는 병합되지 않은 브랜치의 마이그레이션이고, 누락은 로컬 DB에 일부만 적용된 경우입니다. 누락이면 마이그레이션을 이어 적용하지 말고 DB를 초기화(방법 B)합니다 |
+| (c) 실패한 이력 | 실패한 마이그레이션 이력(`success = 0`)이 있습니다 |
+| (d) 트리거·뷰·권한 | 트리거·뷰·테이블 단위 권한이 있습니다. 트리거가 있으면 `RENAME`이 실패하고, 테이블 권한은 `RENAME`을 따라가지 않습니다 |
+| (e) 대상 스키마 | 대상 모듈 스키마에 테이블이 있습니다. 이미 이전했거나 앱이 먼저 떠서 빈 테이블을 만든 경우입니다 |
+| (e-1) 이스케이프 없는 권한 | 앱 계정에 `paldogotgan_x` 형태(이스케이프 없음)의 권한이 있습니다. `_`가 와일드카드라 다른 DB까지 닿고 이전 스크립트의 `REVOKE`(`paldogotgan\_x`)가 거두지 못합니다. 있으면 ``REVOKE ... ON `paldogotgan_x`.*``로 먼저 거둡니다 |
+| (e-2) 앱 정지 | 앱 계정 연결이나 열린 트랜잭션이 있습니다. 있으면 `RENAME`이 메타데이터 락을 기다립니다 |
+| (f) 참고 | 아직 발행이 끝나지 않은 이벤트 수입니다(0이 좋고, 있어도 이전 후 재발행됩니다) |
+
+### 이전이 도중에 실패했을 때
+
+`migrate.sh all`은 이전(`10_forward.sql`) 중에 실패하면 현재 상태와 다음 할 일을 출력합니다. 앱은 올리지 않습니다.
+
+| 실패한 곳 | 상태 | 할 일 |
+|---|---|---|
+| 사전 점검 | 아무것도 바뀌지 않음 | 실패한 점검(`preflight.log`)을 고치고 다시 실행 |
+| 스키마 생성·이력 복사·`RENAME TABLE` (예: 열린 트랜잭션 때문에 락 대기 시간 초과) | 테이블은 그대로, 빈 모듈 스키마와 이력 복사본만 있음 | `./migrate.sh cleanup ...`으로 정리하고 원인을 고친 뒤 처음부터 다시 실행 |
+| `RENAME TABLE` 뒤(기본 이력 정리, 자리표시 테이블, 사후 점검, 전후 비교) | 테이블은 옮겨졌고 일부 정리가 덜 됨(예: 기본 이력이 55행으로 남음) | `./migrate.sh rollback ...`로 되돌린 뒤 원인을 고쳐 다시 실행(되돌리기는 도중에 실패한 상태에서도 다시 실행할 수 있고, 끝나면 기본 이력이 55행인지 확인한다. 예외: `RENAME TABLE`은 성공했는데 이력 복원만 실패한 경우에는 모듈 스키마에 옮겨진 테이블이 0이라 `rollback`이 "이미 되돌렸다"며 멈추고, 안내하는 `cleanup`은 모듈 스키마와 이력 복사본을 지우므로 쓰지 않는다. 이때는 이력 복원이 필요하니 백업 복원 절차를 따른다) |
+
+### 이전 되돌리기
+
+새 앱을 멈춘 뒤, 이전 후 새 마이그레이션이 적용되기 전일 때만 스크립트로 되돌립니다. 새 앱이 쓴 데이터도 함께 원래 스키마로 돌아옵니다.
+
+```bash
+docker compose -f compose.prod.yml stop app nginx
+./migrate.sh rollback <MYSQL_DATABASE 값> <MYSQL_USER 값> /data/migrate-288-out   # 같은 결과 폴더를 넘긴다
+APP_IMAGE_TAG=<이전 SHA 태그> ./deploy.sh                                          # 이전 이미지로 배포
+```
+
+- 이전 버전 이미지는 **되돌리기를 먼저 한 뒤에** 배포합니다. 되돌리기 전에 이전 이미지를 띄우면 앞에서 설명한 대로 멈추는데, 이때 기본 스키마 이력에 실패한 마이그레이션 행이 남습니다. 그러면 `rollback`이 기본 스키마 이력에 실패한 행(`success = 0`)이 있다며 거부하므로, 안내대로 실패 행을 지운 뒤(`DELETE FROM <기본 스키마>.flyway_schema_history WHERE success = 0`) 다시 실행합니다.
+- 되돌린 뒤 행 수·체크섬이 되돌리기 직전과 같은지 스크립트가 비교합니다. 이전 후 새 마이그레이션이 적용됐거나 스크립트가 실패하면, 앞에서 만든 EBS 스냅숏이나 덤프로 복원합니다. 덤프 복원은 `mysql.db`의 권한을 되돌리지 않으므로 복원 뒤 `SHOW GRANTS`로 모듈 스키마(`paldogotgan_*`) 권한이 남았는지 확인하고, 남았으면 거두거나 모듈 스키마를 지웁니다.
+
+### 운영 적용 전에 확인할 것
+
+이 절차는 로컬 임시 MySQL에서만 리허설했습니다. 운영에 적용하기 전에 다음을 확인합니다.
+
+- **운영 데이터 규모**: `SELECT table_name, table_rows, ROUND((data_length + index_length) / 1024 / 1024) AS mb FROM information_schema.tables WHERE table_schema = '<MYSQL_DATABASE 값>' ORDER BY mb DESC;`로 큰 테이블을 봅니다. `table_rows`는 추정치입니다.
+- **점검 시간 예상**: 앱 중지 시간 = 백업 시간 + 이전(순간) + 이전 전후 비교. 이 중 비교(`CHECKSUM TABLE`)가 데이터 크기에 비례합니다. 운영 스냅숏을 복원한 DB에서 `migrate.sh all`을 실제로 실행해 걸리는 시간을 재고, 너무 길면 `SNAPSHOT_MODE=rows`(행 수만 비교)로 줄일지 정합니다. `rows`는 체크섬 비교를 하지 않으므로 그 만큼 검증이 약해집니다.
+- **MySQL 권한 설정**: `SELECT @@partial_revokes;`. `ON`이면 와일드카드 권한이 문자 그대로 해석되는데, 이 절차는 스키마 8개를 하나씩 명시해 권한을 주므로 영향이 없어야 합니다. `20_verify.sql`의 권한 점검이 PASS인지 확인합니다.
+- **알려진 마이그레이션 목록**: `00_preflight.sql`의 목록은 이 PR 시점의 55개입니다. 이후 병합된 마이그레이션이 운영 DB에 이미 적용돼 있으면 사전 점검이 멈추고, `migrate.sh`가 저장소의 마이그레이션 파일과 목록이 다르면 경고를 출력합니다. 그 경우 목록(`00_preflight.sql`)과 `20_verify.sql`의 행 수, `migrate.sh`의 이력 합계(54)를 새 마이그레이션까지 포함하도록 고친 뒤 실행합니다.
+- **앱 계정 권한**: 앱 계정이 모든 모듈 스키마에 `ALL` 권한을 가집니다. 모듈 단독 실행(개발)에는 모듈별 계정이 있지만([`DEVELOPMENT.md`의 모듈 DB 계정](DEVELOPMENT.md#스키마계정-생성)), 운영 `monolith`는 이 공용 계정을 씁니다.
