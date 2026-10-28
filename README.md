@@ -14,6 +14,7 @@ Spring Boot 4 / Java 25 기반 백엔드입니다. 도메인별 Gradle 서브프
 
 - JDK 25, Docker(로컬 MySQL과 통합 테스트에 필요)
 - 환경변수 파일: `cp .env.example .env` 후 **`JWT_SECRET`을 `openssl rand -base64 32` 결과로 바꿉니다.** 나머지는 기본값으로 실행됩니다. 값의 의미는 `docs/DEVELOPMENT.md`의 환경변수 표를 봅니다.
+- 외부 서비스 키: `.env.example`의 `TOSS_SECRET_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET`은 자리표시 값입니다. 앱은 이 값으로도 뜨지만, 지갑 충전 같은 토스페이먼츠 결제(wallet)와 이미지 업로드(media, S3)는 실제 키로 바꿔야 동작합니다.
 
 ## 모듈 구조
 
@@ -56,6 +57,7 @@ set -a; source .env; set +a     # JWT_SECRET 등을 셸 환경변수로 내보�
 |---|---|---|---|---|---|---|---|---|
 | 포트 | 8081 | 8082 | 8083 | 8084 | 8085 | 8086 | 8087 | 8088 |
 
+- 단독 기동은 member, wallet, delivery, payout, refund에서 확인했습니다. media, order, product는 아직 확인하지 못했습니다(#288).
 - 단독 실행은 모듈 이름 프로파일이 자동으로 켜지고, 접속 DB·포트 같은 설정은 모듈의 `src/main/resources/application-<모듈>.yaml`에 있습니다. DB 접속은 `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`로 바꿀 수 있습니다(`DB_URL`은 읽지 않습니다).
 - **다른 모듈이 같이 떠 있지 않으므로 모듈 간 이벤트 연동(예: 회원 가입 → 지갑 생성)은 동작하지 않습니다.** 이 연동은 `monolith`에서만 됩니다.
 - 헬스 체크는 `http://localhost:<포트>/actuator/health`입니다. 단독 실행에서는 Swagger UI가 인증을 요구합니다.
