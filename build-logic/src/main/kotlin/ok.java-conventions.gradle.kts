@@ -44,8 +44,6 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-mysql")
-    // 통합 테스트용 Kafka 컨테이너 (#318). 운영·로컬은 3대지만 테스트는 연결과 송수신만 확인하므로 1대로 띄운다
-    testImplementation("org.testcontainers:testcontainers-kafka")
 
     // ---------- Test: 구조 검증 / 기타 ----------
     testImplementation(libs.findLibrary("archunit-junit5").get())

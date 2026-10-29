@@ -7,8 +7,30 @@ spring:
   application:
     name: refund
   config:
-    # Kafka 설정은 common의 common-kafka.yaml 한 곳에서 관리한다 (#318)
-    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-kafka.yaml
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties]
+  # Kafka 접속 설정. DB 설정처럼 monolith와 모듈 yaml이 같은 값을 각자 갖는다
+  kafka:
+    # 브로커 3대를 모두 적어 1대가 죽어 있어도 처음 접속한다. 기본값은 로컬 compose의 브로커 3대(127.0.0.1에만 열림)
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}
+    producer:
+      # 브로커 min.insync.replicas=2와 짝이다. 3대 중 2대 이상에 저장돼야 발행 성공으로 본다
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      properties:
+        # 받는 쪽이 보내는 쪽 Java 클래스를 몰라도 되도록 타입 헤더를 싣지 않는다
+        spring.json.add.type.headers: false
+    consumer:
+      # 기본은 앱 이름. 서비스로 나누면 서비스마다 그룹이 달라져 같은 이벤트를 각자 받는다
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:${spring.application.name}}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # JSON으로 못 읽는 메시지 하나 때문에 컨슈머가 같은 메시지에서 멈추지 않게 실패를 오류 처리로 넘긴다
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        # 타입 헤더가 없으므로 읽을 타입은 리스너(토픽)마다 정한다
+        spring.json.use.type.headers: false
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_refund?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
     username: ${DB_USERNAME:myuser}
