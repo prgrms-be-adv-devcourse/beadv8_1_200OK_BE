@@ -4,7 +4,8 @@ spring:
   application:
     name: paldo-gotgan
   config:
-    import: optional:file:.env[.properties]
+    # Redis 설정은 common의 common-redis.yaml 한 곳에서 관리한다 (#319)
+    import: optional:file:.env[.properties],classpath:common-redis.yaml
   profiles:
     default: dev
   jackson:
@@ -29,18 +30,6 @@ spring:
     url: ${DB_URL:jdbc:mysql://localhost:3306/paldogotgan?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8}
     username: ${DB_USERNAME:myuser}
     password: ${DB_PASSWORD:password}
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      # 비어 있으면 비밀번호 없이 접속한다 (로컬)
-      password: ${REDIS_PASSWORD:}
-      # Redis가 응답하지 않을 때 요청 스레드가 오래 묶이지 않게 짧게 둔다
-      connect-timeout: 2s
-      timeout: 1s
-      repositories:
-        # JPA와 함께 있을 때 리포지터리마다 저장소를 판정하는 로그가 쌓인다. Redis 리포지터리는 쓰지 않는다
-        enabled: false
   jpa:
     open-in-view: false
     properties:
@@ -100,7 +89,3 @@ management:
   endpoint:
     health:
       show-details: never
-  health:
-    redis:
-      # 아직 Redis에 의존하는 기능이 없어 Redis 장애가 앱 상태(헬스체크)를 정하면 안 된다
-      enabled: false
