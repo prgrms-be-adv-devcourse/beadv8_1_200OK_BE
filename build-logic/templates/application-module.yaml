@@ -7,8 +7,7 @@ spring:
   application:
     name: @MODULE@
   config:
-    # Redis 설정은 common의 common-redis.yaml 한 곳에서 관리한다 (#319)
-    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-redis.yaml
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties]
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_@MODULE@?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
     username: ${DB_USERNAME:myuser}
