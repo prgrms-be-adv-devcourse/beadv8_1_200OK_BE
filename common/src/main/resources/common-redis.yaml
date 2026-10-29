@@ -1,5 +1,5 @@
-# 모든 앱(monolith, 모듈 단독 실행)이 같은 Redis 설정을 쓴다 (#319)
-# 각 앱의 application*.yaml이 spring.config.import로 이 파일을 가져온다. 값을 바꿀 곳은 여기 한 곳이다
+# Redis를 쓰는 앱이 spring.config.import로 가져다 쓰는 공통 Redis 설정 (#319)
+# 지금은 monolith가 가져온다. 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 추가한다. 값을 바꿀 곳은 여기 한 곳이다
 spring:
   data:
     redis:
@@ -13,8 +13,3 @@ spring:
       repositories:
         # JPA와 함께 있을 때 리포지터리마다 저장소를 판정하는 로그가 쌓인다. Redis 리포지터리는 쓰지 않는다
         enabled: false
-management:
-  health:
-    redis:
-      # 아직 Redis에 의존하는 기능이 없어 Redis 장애가 앱 상태(헬스체크)를 정하면 안 된다
-      enabled: false
