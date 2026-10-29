@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
@@ -48,8 +49,7 @@ class RefreshTokenServiceTest {
         JwtProperties properties = new JwtProperties(
                 "paldo-gotgan",
                 "paldo-gotgan-api",
-                "hs256-v1",
-                "dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl",
+                List.of(new JwtProperties.VerificationKey("rs256-v1", new ClassPathResource("jwt/test-public.pem"))),
                 Duration.ofMinutes(30),
                 REFRESH_EXPIRATION);
         Clock fixedClock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);

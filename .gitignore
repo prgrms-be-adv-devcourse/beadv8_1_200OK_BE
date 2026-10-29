@@ -86,3 +86,10 @@ docs/private/
 *.tfstate.*
 crash.log
 *.tfplan
+
+### JWT 키 ###
+# 서명용 개인키가 저장소에 들어가지 않게 한다. 로컬 키는 /keys, 운영 키는 서버의 /opt/paldo-gotgan/keys에 둔다
+/keys/
+*.pem
+# 테스트 전용 키 쌍만 예외 (개발·운영에서 쓰지 않는다)
+!**/src/test/resources/jwt/*.pem

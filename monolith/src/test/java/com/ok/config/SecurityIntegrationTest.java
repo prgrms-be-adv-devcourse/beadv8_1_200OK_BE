@@ -6,6 +6,7 @@ import com.ok.common.security.CurrentMemberId;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.config.JwtConfig;
 import com.ok.common.config.JwtProperties;
+import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,6 +69,9 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JwtProperties jwtProperties;
+
+    @Autowired
+    JwtSigningProperties signingProperties;
 
     private MockMvc mockMvc;
 
@@ -488,7 +492,7 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 .build();
         JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
                 .type(JwtConfig.TOKEN_TYPE)
-                .keyId(jwtProperties.keyId())
+                .keyId(signingProperties.keyId())
                 .build();
         return jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }

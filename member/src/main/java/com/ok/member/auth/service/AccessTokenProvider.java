@@ -3,6 +3,7 @@ package com.ok.member.auth.service;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.config.JwtConfig;
 import com.ok.common.config.JwtProperties;
+import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.member.auth.domain.AccessToken;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.oauth2.jwt.JwsHeader;
@@ -23,7 +24,7 @@ import java.util.UUID;
  *
  * <p>헤더
  * <ul>
- *   <li>alg: 서명 알고리즘 (HS256)</li>
+ *   <li>alg: 서명 알고리즘 (RS256)</li>
  *   <li>typ: 토큰 타입 ({@code at+jwt}). 용도가 다른 JWT와 구분한다.</li>
  *   <li>kid: 서명 키 식별자. 키를 교체할 때 어떤 키로 서명했는지 구분한다.</li>
  * </ul>
@@ -51,6 +52,7 @@ public class AccessTokenProvider {
 
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
+    private final JwtSigningProperties signingProperties;
 
     /** 현재 시각 기준. 테스트에서 고정할 수 있도록 주입받는다. (ClockConfig 참고) */
     private final Clock clock;
@@ -90,11 +92,11 @@ public class AccessTokenProvider {
                 .claim(TokenClaims.ROLES, List.copyOf(roles))
                 .build();
 
-        // 대칭키 인코더는 알고리즘을 스스로 고르지 못하므로 명시한다. 검증 쪽과 같은 상수를 사용한다. (JwtConfig 참고)
+        // 알고리즘은 검증 쪽과 같은 상수를 쓴다. (JwtConfig 참고)
         // typ은 Access Token임을, kid는 어떤 키로 서명했는지를 나타낸다. 인코더는 kid로 서명 키를 고른다.
         JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
                 .type(JwtConfig.TOKEN_TYPE)
-                .keyId(jwtProperties.keyId())
+                .keyId(signingProperties.keyId())
                 .build();
 
         String tokenValue = jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
