@@ -35,6 +35,9 @@ x-kafka-environment: &kafka-environment
 x-kafka-service: &kafka-service
   image: apache/kafka:${KAFKA_VERSION:-4.2.1}
   networks: [db-net]
+  # 기본 10초 안에 안 꺼지면 강제 종료(137)되는데, 마지막으로 남은 브로커는 넘길 상대가 없어 정상 종료가 10초를 넘길 수 있다
+  # 강제 종료되면 다음 기동 때 로그 복구로 오래 걸리므로 넉넉히 기다린다
+  stop_grace_period: 30s
   healthcheck:
     # 브로커가 요청을 받을 수 있는지 묻는다. 이 명령도 JVM을 띄우므로 힙을 작게 묶는다(컨테이너의 KAFKA_HEAP_OPTS 384m를 그대로 쓰지 않게)
     test: ['CMD-SHELL', 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null']
