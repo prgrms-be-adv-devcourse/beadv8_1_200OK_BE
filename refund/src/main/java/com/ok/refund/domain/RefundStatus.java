@@ -30,4 +30,12 @@ public enum RefundStatus {
     public boolean countsAsCancelled() {
         return this == PROCESSING || this == COMPLETED;
     }
+
+    /**
+     * 돈을 하나도 돌려주지 않고 끝난 상태인지 확인한다.
+     * 승인 불가는 승인할 때 배송비까지 계산해 저장한 뒤 끝나므로, 저장 값을 그대로 보여 주면 받지 않을 돈이 보인다.
+     */
+    public boolean refundsNothing() {
+        return this == REJECTED || this == WITHDRAWN || this == NOT_APPROVABLE;
+    }
 }

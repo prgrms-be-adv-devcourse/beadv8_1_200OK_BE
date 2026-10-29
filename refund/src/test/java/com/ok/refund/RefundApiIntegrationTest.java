@@ -166,7 +166,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")));
 
         // then
-        sut.andExpect(status().isOk()).andExpect(jsonPath("$.status", is("WITHDRAWN")));
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("WITHDRAWN")))
+                .andExpect(jsonPath("$.refundAmount", is(0)));
         request(ORDER_ITEM_ID, 1).andExpect(status().isCreated());
     }
 
@@ -285,7 +287,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         ResultActions sut = decide(refundId, SELLER_ID, "APPROVE", null);
 
         // then
-        sut.andExpect(status().isOk()).andExpect(jsonPath("$.status", is("NOT_APPROVABLE")));
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("NOT_APPROVABLE")))
+                .andExpect(jsonPath("$.refundAmount", is(0)));
         assertSoftly(softly -> {
             softly.assertThat(walletClient.refunded()).isEmpty();
             softly.assertThat(orderClient.applied()).isEmpty();
@@ -357,7 +361,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // then
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("REJECTED")))
-                .andExpect(jsonPath("$.rejectReason", is("이미 포장을 마쳤습니다.")));
+                .andExpect(jsonPath("$.rejectReason", is("이미 포장을 마쳤습니다.")))
+                .andExpect(jsonPath("$.refundAmount", is(0)));
         assertThat(deliveryClient.reservedRefundIds()).isEmpty();
     }
 
