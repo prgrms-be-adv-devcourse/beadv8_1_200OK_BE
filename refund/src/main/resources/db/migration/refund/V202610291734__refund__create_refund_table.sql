@@ -28,7 +28,7 @@ CREATE TABLE refund (
     CONSTRAINT ck_refund_quantity CHECK (quantity >= 1)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
--- 판매자 목록 (상태 거르기 포함, 최신순)
+-- 판매자 목록 (상태 거르기)
 CREATE INDEX idx_refund_seller_id_status ON refund (seller_id, status);
 -- 구매자 목록 (최신순)
 CREATE INDEX idx_refund_buyer_id_created_at ON refund (buyer_id, created_at);

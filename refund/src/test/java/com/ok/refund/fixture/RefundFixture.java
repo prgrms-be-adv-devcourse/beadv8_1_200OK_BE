@@ -37,6 +37,11 @@ public final class RefundFixture {
                 "양말", "흰색", UNIT_PRICE);
     }
 
+    /** 같은 묶음의 모자(주문 상품 102, 5,000원) 요청됨 */
+    public static Refund requestedHat() {
+        return Refund.request(ORDER_ID, HAT_ORDER_ITEM_ID, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L);
+    }
+
     /**
      * 주문 모듈이 돌려줄 양말 정보. 같은 판매자 묶음에 양말(101) 3개 + 모자(102) 1개, 배송비 3,000원, 추가 운임 3,000원.
      */

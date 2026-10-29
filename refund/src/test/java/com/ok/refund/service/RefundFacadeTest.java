@@ -16,6 +16,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static com.ok.refund.fixture.RefundFixture.BUYER_ID;
+import static com.ok.refund.fixture.RefundFixture.HAT_ORDER_ITEM_ID;
+import static com.ok.refund.fixture.RefundFixture.hat;
+import static com.ok.refund.fixture.RefundFixture.requestedHat;
 import static com.ok.refund.fixture.RefundFixture.NOW;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ID;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ITEM_ID;
@@ -99,6 +102,24 @@ class RefundFacadeTest {
         order.verify(productClient).releaseStock(REFUND_ID, ORDER_ID, PRODUCT_OPTION_ID, 1);
         order.verify(deliveryClient).confirmCancel(REFUND_ID);
         order.verify(refundService).complete(REFUND_ID);
+    }
+
+    @Test
+    void 묶음_전부_취소면_배송비와_추가_운임을_더한_금액을_지갑에_보낸다() {
+        // given: 모자 5,000원 + 배송비 3,000원 + 추가 운임 3,000원이 저장된 처리 중
+        Refund hat = withId(requestedHat(), REFUND_ID);
+        hat.startProcessing(3_000L, 3_000L, NOW);
+        given(refundService.getForDecision(REFUND_ID, SELLER_ID)).willReturn(RefundResult.from(withId(requestedHat(), REFUND_ID)));
+        given(deliveryClient.hasShipment(HAT_ORDER_ITEM_ID)).willReturn(true);
+        given(orderClient.getOrderItem(ORDER_ID, HAT_ORDER_ITEM_ID)).willReturn(hat());
+        given(refundService.startApproval(REFUND_ID, SELLER_ID, hat())).willReturn(RefundResult.from(hat));
+        given(deliveryClient.reserveCancel(REFUND_ID, HAT_ORDER_ITEM_ID, 1)).willReturn(ShipmentReserveResult.RESERVED);
+
+        // when
+        sut.decide(approve());
+
+        // then
+        then(walletClient).should().refund(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 11_000L);
     }
 
     @Test

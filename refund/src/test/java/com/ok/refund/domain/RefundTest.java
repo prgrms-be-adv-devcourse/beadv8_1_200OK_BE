@@ -227,14 +227,26 @@ class RefundTest {
     }
 
     @Test
-    void 구매자와_판매자_주인을_구분한다() {
+    void 요청한_구매자만_구매자_주인이다() {
         // given
         Refund sut = requested(1);
 
-        // when & then
+        // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.isOwnedByBuyer(BUYER_ID)).isTrue();
             softly.assertThat(sut.isOwnedByBuyer(999L)).isFalse();
+        });
+    }
+
+    @Test
+    void 주문에서_받은_판매자만_판매자_주인이다() {
+        // given
+        Refund sut = requested(1);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
             softly.assertThat(sut.isOwnedBySeller(SELLER_ID)).isTrue();
             softly.assertThat(sut.isOwnedBySeller(999L)).isFalse();
         });

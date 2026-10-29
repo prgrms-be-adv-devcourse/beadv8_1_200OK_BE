@@ -64,10 +64,10 @@ class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
         refundRepository.saveAndFlush(requested(1));
 
         // when
-        long sut = refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED);
+        long result = refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED);
 
         // then
-        assertThat(sut).isEqualTo(2L);
+        assertThat(result).isEqualTo(2L);
     }
 
     @Test
@@ -83,19 +83,19 @@ class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
         refundRepository.saveAndFlush(requested(102L, 1));
 
         // when
-        List<CancelledQuantity> sut = refundRepository.sumQuantityByOrderItem(ORDER_ID, SELLER_ID,
+        List<CancelledQuantity> result = refundRepository.sumQuantityByOrderItem(ORDER_ID, SELLER_ID,
                 List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED));
 
         // then
-        assertThat(sut).containsExactly(new CancelledQuantity(ORDER_ITEM_ID, 3L));
+        assertThat(result).containsExactly(new CancelledQuantity(ORDER_ITEM_ID, 3L));
     }
 
     @Test
     void 완료된_요청이_없으면_0을_돌려준다() {
         // when
-        long sut = refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED);
+        long result = refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED);
 
         // then
-        assertThat(sut).isZero();
+        assertThat(result).isZero();
     }
 }

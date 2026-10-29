@@ -80,7 +80,7 @@ public class RefundFacade {
         ShipmentReserveResult reserved = runStep(refundId, RefundFailedStep.SHIPMENT_RESERVE,
                 () -> deliveryClient.reserveCancel(refundId, processing.orderItemId(), processing.quantity()));
         if (reserved == ShipmentReserveResult.REJECTED) {
-            return refundService.markNotApprovable(refundId);
+            return saveFinalStatus(refundId, "승인 불가", () -> refundService.markNotApprovable(refundId));
         }
 
         // 다시 처리할 때도 같은 금액을 보내야 지갑의 환불ID 중복 확인과 맞으므로, 승인 때 저장한 금액을 그대로 보낸다
@@ -100,7 +100,18 @@ public class RefundFacade {
             deliveryClient.confirmCancel(refundId);
             return null;
         });
-        return refundService.complete(refundId);
+        return saveFinalStatus(refundId, "완료", () -> refundService.complete(refundId));
+    }
+
+    // 다른 모듈 호출은 끝났는데 상태 저장만 실패하면(DB 순간 장애 등) 처리 중에 실패 단계 없이 남아 진행 중인 건과 구분되지 않는다.
+    // 같은 원인이면 실패 기록도 실패하기 쉬우므로 운영에서 찾을 수 있게 WARN 로그를 남기고 다시 던진다
+    private RefundResult saveFinalStatus(Long refundId, String finalStatus, Supplier<RefundResult> save) {
+        try {
+            return save.get();
+        } catch (RuntimeException e) {
+            log.warn("다른 모듈 처리 후 환불 상태 저장 실패. refundId={}, status={}", refundId, finalStatus, e);
+            throw e;
+        }
     }
 
     // 실패하면 멈춘 단계를 기록하고 원래 예외를 그대로 던진다. 1차 구현에는 자동 재시도가 없다(설계 11장)

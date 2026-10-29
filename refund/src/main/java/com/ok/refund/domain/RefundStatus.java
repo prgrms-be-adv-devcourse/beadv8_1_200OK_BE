@@ -23,13 +23,6 @@ public enum RefundStatus {
     COMPLETED;
 
     /**
-     * 끝 상태인지 확인한다. 끝 상태가 되면 같은 주문 상품에 새 요청을 받을 수 있다.
-     */
-    public boolean isFinished() {
-        return this == REJECTED || this == WITHDRAWN || this == NOT_APPROVABLE || this == COMPLETED;
-    }
-
-    /**
      * 판매자 묶음 전부 취소 판단에 넣는 상태인지 확인한다.
      * 처리 중은 승인 뒤 되돌리지 않으므로 결국 완료되거나 묶음 전체가 출고되어 승인 불가가 된다. 그래서 완료와 같이 센다.
      */

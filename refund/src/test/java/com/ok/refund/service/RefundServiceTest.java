@@ -8,26 +8,29 @@ import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundRequestCommand;
 import com.ok.refund.service.dto.RefundResult;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.sql.Connection;
 import java.time.Clock;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
 import static com.ok.refund.fixture.RefundFixture.BUYER_ID;
-import static com.ok.refund.fixture.RefundFixture.HAT_ORDER_ITEM_ID;
 import static com.ok.refund.fixture.RefundFixture.NOW;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ID;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ITEM_ID;
 import static com.ok.refund.fixture.RefundFixture.SELLER_ID;
 import static com.ok.refund.fixture.RefundFixture.hat;
 import static com.ok.refund.fixture.RefundFixture.requested;
+import static com.ok.refund.fixture.RefundFixture.requestedHat;
 import static com.ok.refund.fixture.RefundFixture.socks;
 import static com.ok.refund.fixture.RefundFixture.withId;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +58,25 @@ class RefundServiceTest {
     void setUp() {
         Clock clock = Clock.fixed(NOW.atZone(ZoneId.of("Asia/Seoul")).toInstant(), ZoneId.of("Asia/Seoul"));
         sut = new RefundService(refundRepository, clock);
+        // 단위 테스트에는 스프링 트랜잭션이 없으므로, 승인이 확인하는 격리 수준을 실제 트랜잭션처럼 지정해 둔다
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(Connection.TRANSACTION_READ_COMMITTED);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
+    }
+
+    @Test
+    void 승인이_READ_COMMITTED가_아닌_트랜잭션에서_불리면_바로_실패한다() {
+        // given: 바깥 트랜잭션(기본 REPEATABLE READ)에 합류한 경우
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(Connection.TRANSACTION_REPEATABLE_READ);
+
+        // when & then
+        assertThatThrownBy(() -> sut.startApproval(REFUND_ID, SELLER_ID, socks()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불 승인은 READ COMMITTED 새 트랜잭션에서만 실행해야 합니다.");
+        then(refundRepository).should(never()).findIdsByOrderIdAndSellerId(any(), any());
     }
 
     // 요청
@@ -195,7 +217,7 @@ class RefundServiceTest {
     @Test
     void 묶음을_전부_취소하는_승인이면_배송비와_추가_운임을_저장한다() {
         // given: 양말 3개 처리 중·완료, 이번에 모자 1개
-        Refund target = withId(requested(HAT_ORDER_ITEM_ID, 1), REFUND_ID);
+        Refund target = withId(requestedHat(), REFUND_ID);
         given(refundRepository.findIdsByOrderIdAndSellerId(ORDER_ID, SELLER_ID)).willReturn(List.of(REFUND_ID));
         given(refundRepository.findAllByIdInForUpdate(List.of(REFUND_ID))).willReturn(List.of(target));
         given(refundRepository.sumQuantityByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED)))
@@ -210,7 +232,7 @@ class RefundServiceTest {
             softly.assertThat(result.status()).isEqualTo("PROCESSING");
             softly.assertThat(result.shippingFeeAmount()).isEqualTo(3_000L);
             softly.assertThat(result.remoteAreaFeeAmount()).isEqualTo(3_000L);
-            softly.assertThat(result.refundAmount()).isEqualTo(10_000L + 6_000L);
+            softly.assertThat(result.refundAmount()).isEqualTo(5_000L + 6_000L);
         });
     }
 

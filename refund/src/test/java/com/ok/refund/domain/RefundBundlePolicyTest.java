@@ -56,6 +56,32 @@ class RefundBundlePolicyTest {
     }
 
     @Test
+    void 이번_상품이_나눠서_마지막으로_채워지면_전부_취소다() {
+        // given: 모자 1개·양말 2개 이미 취소, 이번에 양말 1개
+        Refund target = requested(SOCKS, 1);
+        List<CancelledQuantity> cancelled = List.of(new CancelledQuantity(HAT, 1L), new CancelledQuantity(SOCKS, 2L));
+
+        // when
+        boolean sut = RefundBundlePolicy.cancelsWholeBundle(target, BUNDLE, cancelled);
+
+        // then
+        assertThat(sut).isTrue();
+    }
+
+    @Test
+    void 묶음_밖_상품의_집계는_판단에_넣지_않는다() {
+        // given: 다른 묶음 상품(999)이 집계에 섞여 와도 묶음 상품만 본다
+        Refund target = requested(HAT, 1);
+        List<CancelledQuantity> cancelled = List.of(new CancelledQuantity(SOCKS, 3L), new CancelledQuantity(999L, 5L));
+
+        // when
+        boolean sut = RefundBundlePolicy.cancelsWholeBundle(target, BUNDLE, cancelled);
+
+        // then
+        assertThat(sut).isTrue();
+    }
+
+    @Test
     void 다른_상품이_덜_취소됐으면_전부_취소가_아니다() {
         // given: 양말 2개만 취소됨, 이번에 모자 1개
         Refund target = requested(HAT, 1);

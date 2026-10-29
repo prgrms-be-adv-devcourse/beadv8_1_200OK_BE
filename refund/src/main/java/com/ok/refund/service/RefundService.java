@@ -22,7 +22,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.sql.Connection;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -41,7 +43,8 @@ public class RefundService {
     private static final int PAGE_SIZE = 25;
     // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
-    private static final List<RefundStatus> CANCELLED_STATUSES = List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED);
+    // 묶음 전부 취소 판단에 넣는 상태. 기준은 RefundStatus 한 곳에 두고 여기서 모은다
+    private static final List<RefundStatus> CANCELLED_STATUSES = cancelledStatuses();
 
     private final RefundRepository refundRepository;
     private final Clock clock;
@@ -136,6 +139,11 @@ public class RefundService {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RefundResult startApproval(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
+        // 바깥 트랜잭션에 합류하면 스프링은 격리 수준 지정을 경고 없이 무시한다. 그러면 테스트는 통과해도 배송비가 조용히 빠지므로 바로 실패시킨다
+        if (!Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+                .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+            throw new IllegalStateException("환불 승인은 READ COMMITTED 새 트랜잭션에서만 실행해야 합니다.");
+        }
         List<Long> bundleIds = refundRepository.findIdsByOrderIdAndSellerId(orderItem.orderId(), sellerId);
         // 다른 판매자나 다른 주문의 요청이면 묶음 ID가 비어 있을 수 있다. 빈 IN 조건으로 잠금 쿼리를 보내지 않는다
         if (bundleIds.isEmpty()) {
@@ -155,6 +163,8 @@ public class RefundService {
         if (target.getStatus() != RefundStatus.REQUESTED) {
             throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
         }
+        // 순서가 중요하다: 이번 요청이 아직 요청됨일 때 집계해야 집계에서 빠지고, 정책이 한 번만 더한다.
+        // startProcessing을 집계 앞으로 옮기면 조회 전 자동 flush로 처리 중이 반영되어 이번 요청을 두 번 세고 배송비를 아무도 못 받는다
         List<CancelledQuantity> cancelled = refundRepository.sumQuantityByOrderItem(orderItem.orderId(), sellerId, CANCELLED_STATUSES);
         boolean wholeBundle = RefundBundlePolicy.cancelsWholeBundle(target, toBundleItems(orderItem), cancelled);
         long shippingFee = wholeBundle ? orderItem.shippingFee() : 0L;
@@ -251,6 +261,16 @@ public class RefundService {
             bundleItems.add(new BundleItem(item.orderItemId(), item.quantity()));
         }
         return bundleItems;
+    }
+
+    private static List<RefundStatus> cancelledStatuses() {
+        List<RefundStatus> statuses = new ArrayList<>();
+        for (RefundStatus status : RefundStatus.values()) {
+            if (status.countsAsCancelled()) {
+                statuses.add(status);
+            }
+        }
+        return List.copyOf(statuses);
     }
 
     private static Pageable pageOf(int page) {
