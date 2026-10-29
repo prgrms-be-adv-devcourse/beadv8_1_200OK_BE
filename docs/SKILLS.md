@@ -12,7 +12,7 @@
 | [`pr`](#pr) | PR 제목·본문 초안이 필요할 때 | `/pr` 또는 "PR 초안 써 줘" | CONVENTION 11.2, 11.3 |
 | [`migration`](#migration) | 테이블·컬럼·인덱스를 바꿀 때 | `/migration` 또는 "마이그레이션 만들어 줘" | CONVENTION 8절 |
 | [`error-code`](#error-code) | 도메인 오류 응답을 새로 정의할 때 | `/error-code` 또는 "에러 코드 추가해 줘" | CONVENTION 6절 |
-| [`stacked-pr`](#stacked-pr) | 서로 의존하는 PR을 스택으로 관리할 때 | `/stacked-pr` 또는 "스택 보여 줘" | CONVENTION 11절 |
+| [`ok-stacked-pr`](#ok-stacked-pr) | 서로 의존하는 PR을 스택으로 관리할 때 | `/ok-stacked-pr` 또는 "스택 보여 줘" | CONVENTION 11절 |
 
 ## 부르는 방법
 
@@ -115,7 +115,7 @@ Flyway 마이그레이션 SQL 파일을 컨벤션대로 새로 만든다. 엔티
 - `OrderErrorCode`, `PayoutErrorCode`는 `slug()` 모듈 접두사 오버라이드가 없어 컨벤션과 다르다. 스킬은 임의로 고치지 않고 알려 준다.
 - 상세 규칙은 `.claude/rules/exception.md`에 있다.
 
-## stacked-pr
+## ok-stacked-pr
 
 서로 의존하는 PR을 **스택**(브랜치를 부모-자식으로 쌓은 구조)으로 관리한다. 앞 작업의 리뷰를 기다리는 동안 그 위에서 이어서 작업해야 할 때 쓴다. `git`과 `gh`만 쓰며 외부 서비스나 GitHub 앱 설치가 필요 없다. 서로 독립인 작업은 스택으로 만들지 않고 각각 `dev`에서 시작한다.
 
@@ -136,7 +136,7 @@ dev ── feature/278 ── feature/279 ── feature/280
 
 **예시 요청**
 ```
-/stacked-pr 스택 보여 줘
+/ok-stacked-pr 스택 보여 줘
 ```
 ```
 feature/278에 커밋 추가했어. 뒤 브랜치들 restack 해 줘

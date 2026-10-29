@@ -1,5 +1,5 @@
 ---
-name: stacked-pr
+name: ok-stacked-pr
 description: 서로 의존하는 PR을 스택(브랜치를 부모-자식으로 쌓은 구조)으로 관리한다. 스택 보기, 새 브랜치 쌓기, 앞 브랜치가 바뀐 뒤 뒤 브랜치 다시 쌓기(restack), PR 올리기(항상 draft), 앞 PR이 머지된 뒤 정리(sync)를 git과 gh만으로 한다. "스택 PR", "PR 쌓기", "restack", "스택 정리", "이 PR 위에 이어서 작업"이라는 요청에 쓴다.
 ---
 
@@ -40,7 +40,7 @@ description: 서로 의존하는 PR을 스택(브랜치를 부모-자식으로 �
 ## 1. 스택 보기
 
 ```bash
-python3 "$(git rev-parse --show-toplevel)/.claude/skills/stacked-pr/scripts/stack.py"
+python3 "$(git rev-parse --show-toplevel)/.claude/skills/ok-stacked-pr/scripts/stack.py"
 ```
 
 기준 브랜치(스택의 뿌리)부터 부모-자식 트리를 PR 상태(`draft`, `open`, `merged`)와 함께 보여 준다. 뿌리가 여럿이면 트리를 여러 개 보여 준다. 부모보다 뒤처진 브랜치는 `restack 필요`, 그 아래 자식은 `상위 restack 뒤 필요`로 표시한다. 다른 작업 전에 먼저 실행해서 현재 상태를 파악한다.
