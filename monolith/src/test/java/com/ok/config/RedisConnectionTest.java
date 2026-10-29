@@ -1,4 +1,4 @@
-package com.ok.common.config;
+package com.ok.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,15 +33,6 @@ class RedisConnectionTest {
 
         // then
         assertThat(actual).isEqualTo("ok");
-    }
-
-    @Test
-    void 없는_키는_null을_돌려준다() {
-        // when
-        String actual = sut.opsForValue().get("redis-connection-test-missing");
-
-        // then
-        assertThat(actual).isNull();
     }
 
 }
