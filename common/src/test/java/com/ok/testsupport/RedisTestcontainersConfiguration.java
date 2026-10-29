@@ -11,7 +11,8 @@ import org.testcontainers.utility.DockerImageName;
  * 테스트용 Redis 컨테이너를 JVM 전체에서 하나만 띄워 쓰는 테스트 컨텍스트가 공유하게 한다 (#319).
  * <p>{@link TestcontainersConfiguration}과 같은 방식으로 컨테이너가 아니라 접속 정보({@link DataRedisConnectionDetails})만 빈으로 등록한다.
  * 컨테이너를 빈으로 두면 컨텍스트마다 컨테이너가 새로 뜨거나, 컨텍스트가 닫힐 때 다른 컨텍스트의 Redis까지 멈춘다 (#151).
- * <p>기본 통합 테스트({@link AbstractIntegrationTest})에는 넣지 않는다. Redis를 쓰는 테스트만 {@code @Import}해서, 쓰지 않는 테스트 JVM이 컨테이너를 띄우는 시간을 아낀다.
+ * <p>통합 테스트는 {@link AbstractIntegrationTest}가 이 설정을 함께 가져오므로 따로 {@code @Import}하지 않는다.
+ * 통합 테스트가 아닌 슬라이스 테스트(예: {@code @DataRedisTest})만 직접 {@code @Import}한다.
  */
 @TestConfiguration(proxyBeanMethods = false)
 public class RedisTestcontainersConfiguration {
