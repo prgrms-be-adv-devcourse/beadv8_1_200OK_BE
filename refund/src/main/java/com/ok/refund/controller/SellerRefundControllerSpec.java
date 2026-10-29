@@ -32,7 +32,8 @@ interface SellerRefundControllerSpec {
             @ApiResponse(responseCode = "200", description = "처리 결과 (COMPLETED, NOT_APPROVABLE, REJECTED)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
             @ApiResponse(responseCode = "403", description = "판매자가 아님"),
-            @ApiResponse(responseCode = "404", description = "없거나 다른 판매자의 요청 (REFUND_NOT_FOUND)"),
+            @ApiResponse(responseCode = "404", description = "없거나 다른 판매자의 요청 (REFUND_NOT_FOUND), "
+                    + "승인 때 주문 상품을 찾지 못함 (ORDER_ITEM_NOT_FOUND, 요청됨 그대로)"),
             @ApiResponse(responseCode = "409", description = "요청됨이 아님 (INVALID_REFUND_STATE), "
                     + "배송 준비가 아직 안 끝나 잠시 후 다시 (SHIPMENT_NOT_READY), 주문 수량을 넘음 (REFUND_QUANTITY_EXCEEDED)"),
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (VALIDATION_FAILED), 거절인데 사유 없음 (REJECT_REASON_REQUIRED)"),

@@ -36,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -225,6 +226,40 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.remoteAreaFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.refundAmount", is(36000)));
         assertThat(walletClient.totalAmount()).isEqualTo(36_000L);
+    }
+
+    @Test
+    void 승인_응답의_모든_칸이_저장한_값과_맞는다() throws Exception {
+        // given: 배송비·추가 운임, 단가·상품 금액이 서로 다르게 나오도록 개수 2, 배송비 3,000원, 추가 운임 2,500원으로 둔다.
+        // 같은 타입 칸이 뒤바뀌어도 잡히게 하려는 것이다
+        orderClient.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 55L, "양말", "흰색",
+                RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 2, 3_000L, 2_500L,
+                List.of(new SellerGroupItem(ORDER_ITEM_ID, 2))));
+        Long refundId = requestedId(ORDER_ITEM_ID, 2);
+
+        // when
+        ResultActions sut = decide(refundId, SELLER_ID, "APPROVE", null);
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.refundId", is(refundId.intValue())))
+                .andExpect(jsonPath("$.orderId", is(ORDER_ID.intValue())))
+                .andExpect(jsonPath("$.orderItemId", is(ORDER_ITEM_ID.intValue())))
+                .andExpect(jsonPath("$.productName", is("양말")))
+                .andExpect(jsonPath("$.optionName", is("흰색")))
+                .andExpect(jsonPath("$.quantity", is(2)))
+                .andExpect(jsonPath("$.unitPrice", is(10000)))
+                .andExpect(jsonPath("$.itemAmount", is(20000)))
+                .andExpect(jsonPath("$.shippingFeeAmount", is(3000)))
+                .andExpect(jsonPath("$.remoteAreaFeeAmount", is(2500)))
+                .andExpect(jsonPath("$.refundAmount", is(25500)))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.rejectReason", nullValue()))
+                .andExpect(jsonPath("$.failedStep", nullValue()))
+                .andExpect(jsonPath("$.requestedAt").exists())
+                .andExpect(jsonPath("$.decidedAt").exists())
+                .andExpect(jsonPath("$.completedAt").exists());
+        assertThat(walletClient.totalAmount()).isEqualTo(25_500L);
     }
 
     @Test

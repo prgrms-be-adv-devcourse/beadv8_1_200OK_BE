@@ -69,13 +69,13 @@ class RefundServiceTest {
 
     @Test
     void 승인이_READ_COMMITTED가_아닌_트랜잭션에서_불리면_바로_실패한다() {
-        // given: 바깥 트랜잭션(기본 REPEATABLE READ)에 합류한 경우
-        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(Connection.TRANSACTION_REPEATABLE_READ);
+        // given: 기본 격리 수준 트랜잭션에 합류한 경우. 스프링은 기본 격리 수준이면 값을 null로 둔다
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
 
         // when & then
         assertThatThrownBy(() -> sut.startApproval(REFUND_ID, SELLER_ID, socks()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("환불 승인은 READ COMMITTED 새 트랜잭션에서만 실행해야 합니다.");
+                .hasMessage("환불 승인은 READ COMMITTED 트랜잭션에서만 실행해야 합니다.");
         then(refundRepository).should(never()).findIdsByOrderIdAndSellerId(any(), any());
     }
 

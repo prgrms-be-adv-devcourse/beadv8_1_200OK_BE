@@ -142,7 +142,7 @@ public class RefundService {
         // 바깥 트랜잭션에 합류하면 스프링은 격리 수준 지정을 경고 없이 무시한다. 그러면 테스트는 통과해도 배송비가 조용히 빠지므로 바로 실패시킨다
         if (!Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
                 .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
-            throw new IllegalStateException("환불 승인은 READ COMMITTED 새 트랜잭션에서만 실행해야 합니다.");
+            throw new IllegalStateException("환불 승인은 READ COMMITTED 트랜잭션에서만 실행해야 합니다.");
         }
         List<Long> bundleIds = refundRepository.findIdsByOrderIdAndSellerId(orderItem.orderId(), sellerId);
         // 다른 판매자나 다른 주문의 요청이면 묶음 ID가 비어 있을 수 있다. 빈 IN 조건으로 잠금 쿼리를 보내지 않는다
@@ -255,9 +255,13 @@ public class RefundService {
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
     }
 
+    // 주문 응답의 묶음 목록과 상품 자체 수량이 다르면 어느 쪽을 믿을지 알 수 없어 판단하지 않는다(주문 모듈 응답 버그)
     private static List<BundleItem> toBundleItems(RefundableOrderItem orderItem) {
         List<BundleItem> bundleItems = new ArrayList<>();
         for (SellerGroupItem item : orderItem.sellerGroupItems()) {
+            if (item.orderItemId().equals(orderItem.orderItemId()) && item.quantity() != orderItem.quantity()) {
+                throw new IllegalStateException("주문 응답의 묶음 수량과 상품 수량이 다릅니다. orderItemId=" + orderItem.orderItemId());
+            }
             bundleItems.add(new BundleItem(item.orderItemId(), item.quantity()));
         }
         return bundleItems;

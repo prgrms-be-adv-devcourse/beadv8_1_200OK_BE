@@ -21,7 +21,7 @@ interface RefundControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "요청 성공 (REQUESTED)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
-            @ApiResponse(responseCode = "403", description = "일반 회원이 아님"),
+            @ApiResponse(responseCode = "403", description = "구매 권한(BUYER) 없음"),
             @ApiResponse(responseCode = "404", description = "없거나 남의 주문 상품 (ORDER_ITEM_NOT_FOUND)"),
             @ApiResponse(responseCode = "409", description = "출고 전이 아님 (ORDER_ITEM_NOT_CANCELLABLE), "
                     + "남은 개수보다 많음 (REFUND_QUANTITY_EXCEEDED), 진행 중인 요청 있음 (REFUND_ALREADY_IN_PROGRESS)"),
@@ -34,7 +34,7 @@ interface RefundControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
-            @ApiResponse(responseCode = "403", description = "일반 회원이 아님"),
+            @ApiResponse(responseCode = "403", description = "구매 권한(BUYER) 없음"),
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (VALIDATION_FAILED)")
     })
     ResponseEntity<RefundPageResponse> getMyRefunds(Long buyerId, @ParameterObject RefundPageRequest request);
@@ -43,7 +43,7 @@ interface RefundControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "철회 성공 (WITHDRAWN)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
-            @ApiResponse(responseCode = "403", description = "일반 회원이 아님"),
+            @ApiResponse(responseCode = "403", description = "구매 권한(BUYER) 없음"),
             @ApiResponse(responseCode = "404", description = "없거나 남의 요청 (REFUND_NOT_FOUND)"),
             @ApiResponse(responseCode = "409", description = "요청됨이 아님 (INVALID_REFUND_STATE)")
     })

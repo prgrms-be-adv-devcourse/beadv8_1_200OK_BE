@@ -90,13 +90,12 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // then: 30,000 + 5,000 + 배송비·추가 운임 6,000은 한 번만 = 결제 41,000원
         assertThat(results).containsOnly(SUCCESS);
         assertThat(walletClient.totalAmount()).isEqualTo(41_000L);
-        int feeReceivers = 0;
+        // 배송비와 추가 운임을 함께 받은 요청이 정확히 한 건이고, 나머지는 둘 다 0이어야 한다
+        List<Long> feesPerRefund = new ArrayList<>();
         for (Refund refund : refundRepository.findAll()) {
-            if (refund.getShippingFeeAmount() > 0) {
-                feeReceivers++;
-            }
+            feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
         }
-        assertThat(feeReceivers).isOne();
+        assertThat(feesPerRefund).containsExactlyInAnyOrder(6_000L, 0L);
     }
 
     @RepeatedTest(5)

@@ -20,7 +20,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-// 주문은 일반 회원만 하므로 환불 요청도 BUYER 권한으로 거른다. 본인 주문·요청인지는 서비스가 구매자 ID로 확인한다
+// 주문은 구매 권한(BUYER)이 있는 회원만 하므로 환불 요청도 같은 권한으로 거른다(판매자 토큰에도 BUYER가 함께 담긴다).
+// 본인 주문·요청인지는 서비스가 구매자 ID로 확인한다
 @RestController
 @RequestMapping("/api/v1/refunds")
 @PreAuthorize("hasRole('BUYER')")
