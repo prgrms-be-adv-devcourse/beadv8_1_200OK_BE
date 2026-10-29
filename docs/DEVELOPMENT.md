@@ -101,7 +101,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `MYSQL_VERSION` | MySQL 이미지 버전 (docker compose, 통합 테스트 공통) | `9.4` |
 | `MYSQL_PORT` | 호스트에 열 DB 포트 | `3306` |
 | `REDIS_VERSION` | Redis 이미지 버전 (docker compose, 통합 테스트 공통) | `8.10` |
-| `REDIS_PORT` | 호스트에 열 Redis 포트. 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
+| `REDIS_PORT` | 호스트의 loopback(127.0.0.1)에만 여는 Redis 포트(비밀번호가 없어 외부 비공개). 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
 | `REDIS_HOST` / `REDIS_PASSWORD` | 앱의 Redis 접속 정보. 비밀번호가 비어 있으면 없이 접속(로컬). 운영은 `REDIS_PASSWORD` 필수 | `localhost` / 빈 값 |
 | `APP_PORT` | docker compose로 실행하는 앱 컨테이너의 호스트 포트 | `8080` |
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | docker compose의 MySQL 계정 | `.env.example` 참고 |
