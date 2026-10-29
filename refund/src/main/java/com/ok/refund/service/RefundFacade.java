@@ -1,0 +1,132 @@
+package com.ok.refund.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.exception.RefundErrorCode;
+import com.ok.refund.service.dto.RefundDecision;
+import com.ok.refund.service.dto.RefundDecisionCommand;
+import com.ok.refund.service.dto.RefundRequestCommand;
+import com.ok.refund.service.dto.RefundResult;
+import com.ok.refund.service.dto.RefundableOrderItem;
+import com.ok.refund.service.dto.ShipmentReserveResult;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.function.Supplier;
+
+/**
+ * 환불 요청과 판매자 승인처럼 다른 모듈(주문·배송·상품·지갑) 호출이 섞인 흐름을 조율한다.
+ * 외부 호출 동안 DB 트랜잭션과 행 잠금을 잡지 않도록 이 클래스에는 트랜잭션을 두지 않고, DB 저장은 {@link RefundService}의 짧은 트랜잭션으로 나눈다.
+ *
+ * <p>승인 뒤에는 되돌리지 않는다(보상 처리 없음). {@code service.md}의 "실패하면 보상 처리"와 다른 예외다:
+ * 판매자가 승인한 취소를 무르면 상품이 다시 나갈 수 있고, 예약 풀기 API도 두지 않기로 했다(설계 3장).
+ * 대신 실패한 단계를 기록하고 "처리 중"으로 남겨, 같은 환불ID로 다시 보내면 받는 쪽이 중복을 막는다.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class RefundFacade {
+
+    private final RefundService refundService;
+    private final RefundOrderClient orderClient;
+    private final RefundDeliveryClient deliveryClient;
+    private final RefundProductClient productClient;
+    private final RefundWalletClient walletClient;
+
+    /**
+     * 구매자의 취소 요청을 받는다(흐름 1~2번). 주문에서 정보를 받아 확인한 뒤 "요청됨"으로 저장한다.
+     *
+     * @throws RestApiException 주문 상품이 없거나 남의 것이면 {@code ORDER_ITEM_NOT_FOUND}, 그 밖은 {@link RefundService#request}를 따른다
+     */
+    public RefundResult request(RefundRequestCommand command) {
+        RefundableOrderItem orderItem = orderClient.getOrderItem(command.orderId(), command.orderItemId());
+        return refundService.request(command, orderItem);
+    }
+
+    /**
+     * 판매자의 승인·거절을 처리한다. 승인 불가도 상태가 저장되는 정상 결과라 결과로 돌려준다.
+     *
+     * @throws RestApiException 거절 규칙은 {@link RefundService#reject}, 승인 규칙은 {@link #approve}를 따른다
+     */
+    public RefundResult decide(RefundDecisionCommand command) {
+        if (command.decision() == RefundDecision.REJECT) {
+            return refundService.reject(command.refundId(), command.sellerId(), command.rejectReason());
+        }
+        return approve(command.refundId(), command.sellerId());
+    }
+
+    /**
+     * 판매자 승인을 처리한다(설계 4.4).
+     * 0. 배송 건 확인 → 주문 조회 → 1~3. 줄 세우기·처리 중·금액 저장 → 4. 배송 잠금 → 5. 지갑·주문·상품·잠금 해제 → 6. 완료.
+     * 배송 잠금이 맨 처음이고 잠금 해제가 맨 마지막이다. 잠긴 동안에는 출고·구매확정·정산이 일어나지 않아 중간 단계가 안전하다.
+     *
+     * @throws RestApiException 배송 건이 아직 없으면 {@code SHIPMENT_NOT_READY}(상태 그대로),
+     *                          다른 모듈 호출 실패면 {@code *_API_FAILED}(처리 중으로 남고 실패 단계 기록),
+     *                          그 밖은 {@link RefundService#getForDecision}, {@link RefundService#startApproval}을 따른다
+     */
+    private RefundResult approve(Long refundId, Long sellerId) {
+        RefundResult requested = refundService.getForDecision(refundId, sellerId);
+
+        // "처리 중"으로 바꾸기 전에 확인한다. 바꾼 뒤 "배송 건 없음"으로 되돌리면, 그 요청을 처리 중으로 세어
+        // 배송비를 받은 같은 묶음의 다른 요청과 어긋나 배송비가 두 번 나갈 수 있다(설계 12.6)
+        if (!deliveryClient.hasShipment(requested.orderItemId())) {
+            throw new RestApiException(RefundErrorCode.SHIPMENT_NOT_READY);
+        }
+        // 묶음 수량과 배송비는 결제 뒤 바뀌지 않으므로 줄 서기 전에 읽어도 된다. 줄 선 채로 응답을 기다리면 같은 묶음이 모두 멈춘다
+        RefundableOrderItem orderItem = orderClient.getOrderItem(requested.orderId(), requested.orderItemId());
+        RefundResult processing = refundService.startApproval(refundId, sellerId, orderItem);
+
+        ShipmentReserveResult reserved = runStep(refundId, RefundFailedStep.SHIPMENT_RESERVE,
+                () -> deliveryClient.reserveCancel(refundId, processing.orderItemId(), processing.quantity()));
+        if (reserved == ShipmentReserveResult.REJECTED) {
+            return refundService.markNotApprovable(refundId);
+        }
+
+        // 다시 처리할 때도 같은 금액을 보내야 지갑의 환불ID 중복 확인과 맞으므로, 승인 때 저장한 금액을 그대로 보낸다
+        runStep(refundId, RefundFailedStep.WALLET, () -> {
+            walletClient.refund(refundId, processing.orderId(), processing.buyerId(), processing.sellerId(), processing.refundAmount());
+            return null;
+        });
+        runStep(refundId, RefundFailedStep.ORDER, () -> {
+            orderClient.applyRefund(refundId, processing.orderItemId(), processing.quantity());
+            return null;
+        });
+        runStep(refundId, RefundFailedStep.PRODUCT, () -> {
+            productClient.releaseStock(refundId, processing.orderId(), processing.productOptionId(), processing.quantity());
+            return null;
+        });
+        runStep(refundId, RefundFailedStep.SHIPMENT_CONFIRM, () -> {
+            deliveryClient.confirmCancel(refundId);
+            return null;
+        });
+        return refundService.complete(refundId);
+    }
+
+    // 실패하면 멈춘 단계를 기록하고 원래 예외를 그대로 던진다. 1차 구현에는 자동 재시도가 없다(설계 11장)
+    private <T> T runStep(Long refundId, RefundFailedStep step, Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (RuntimeException e) {
+            recordFailureQuietly(refundId, step, e);
+            throw e;
+        }
+    }
+
+    // 기록 자체가 실패해도(DB 순간 장애 등) 원래 예외를 가리지 않게 로그만 남긴다. 기록이 없으면 진행 중인 건과 구분되지 않으니 WARN으로 남긴다
+    private void recordFailureQuietly(Long refundId, RefundFailedStep step, RuntimeException cause) {
+        try {
+            refundService.recordFailure(refundId, step, failureCodeOf(cause));
+        } catch (RuntimeException e) {
+            log.warn("환불 실패 단계 기록 실패. refundId={}, step={}, cause={}", refundId, step, failureCodeOf(cause), e);
+        }
+    }
+
+    // 내부 메시지를 DB에 남기지 않도록 에러 코드 이름이나 예외 클래스 이름만 쓴다
+    private static String failureCodeOf(RuntimeException e) {
+        if (e instanceof RestApiException restApiException) {
+            return restApiException.getErrorCode().name();
+        }
+        return e.getClass().getSimpleName();
+    }
+}
