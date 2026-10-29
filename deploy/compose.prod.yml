@@ -54,6 +54,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
+      # 대신 Redis가 healthy가 되지 못하면(예: REDIS_PASSWORD 형식 오류) 앱이 뜨지 않고 배포가 실패한다
       redis:
         condition: service_healthy
     # env_file을 쓰지 않고 앱이 쓰는 값만 넘긴다. MYSQL_ROOT_PASSWORD 같은 값이 앱 컨테이너에 들어가지 않게 하기 위함이다

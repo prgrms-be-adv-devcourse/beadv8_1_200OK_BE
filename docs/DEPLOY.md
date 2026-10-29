@@ -125,7 +125,7 @@ cd /opt/paldo-gotgan
 docker compose -f compose.prod.yml restart nginx
 ```
 
-- **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
+- **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). app은 Redis가 healthy가 된 뒤에 시작하므로, 형식이 틀려 Redis가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
 
