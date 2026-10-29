@@ -28,8 +28,8 @@ import java.util.UUID;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Charge extends BaseTime {
+    // 결제 건마다 PG 수수료와 승인 호출이 생기므로 초소액 충전을 막는다. 단위 제한은 두지 않는다 (#274)
     public static final long MIN_AMOUNT = 10_000;
-    public static final long AMOUNT_UNIT = 10_000;
     private static final String CHARGE_NO_PREFIX = "CHG_";
 
     @Id
@@ -114,7 +114,7 @@ public class Charge extends BaseTime {
     }
 
     private static void validateAmount(long amount) {
-        if (amount < MIN_AMOUNT || amount % AMOUNT_UNIT != 0) {
+        if (amount < MIN_AMOUNT) {
             throw new RestApiException(WalletErrorCode.INVALID_CHARGE_AMOUNT);
         }
     }
