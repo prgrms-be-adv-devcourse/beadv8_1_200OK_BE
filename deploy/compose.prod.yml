@@ -139,7 +139,8 @@ services:
       ADMIN_BOOTSTRAP_LOGIN_ID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Kafka(3대 약 2GB)와 앱 추가 인스턴스 여유를 남긴다
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Kafka(3대 약 2GB)를 함께 올리면
+      # 남는 메모리(약 1.8GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     mem_limit: 2560m
     healthcheck:

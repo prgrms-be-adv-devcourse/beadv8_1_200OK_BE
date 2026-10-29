@@ -17,19 +17,32 @@ cd "$(dirname "$0")"
 
 export COMPOSE_FILE="${COMPOSE_FILE:-compose.prod.yml}"
 
+# 두 번 동시에 돌면 서로 다른 브로커를 함께 내려 클러스터가 멈출 수 있어 한 번에 하나만 실행한다
+# deploy.sh의 잠금과 다른 파일을 쓴다. deploy.sh가 잠근 채 이 스크립트를 부르므로 같은 파일이면 스스로 막힌다
+# flock이 없는 곳(Windows 로컬 검증)에서는 잠그지 않는다
+if command -v flock > /dev/null; then
+  exec 8>/tmp/paldo-kafka-rollout.lock
+  flock -n 8 || { echo "Kafka 재시작이 이미 진행 중이다" >&2; exit 1; }
+fi
+
 BROKERS=(kafka-1 kafka-2 kafka-3)
 RETRIES=24   # 5초 × 24 = 최대 2분 (deploy.sh의 app 대기와 같은 기준)
 INTERVAL=5
 
-# 서비스의 상태를 한 단어로 돌려준다: healthy / starting / unhealthy / stopped / none
+# 서비스의 상태를 한 단어로 돌려준다: healthy / starting / unhealthy / stopped / none / error
+# docker 조회가 실패했을 때 none(컨테이너 없음)으로 보면 "3대 동시 기동" 경로로 빠져,
+# 설정이 바뀐 배포에서 막으려던 3대 동시 재시작이 일어난다. 그래서 조회 실패는 error로 따로 돌려준다
 broker_status() {
   local cid
-  cid=$(docker compose ps -a -q "$1" 2>/dev/null || true)
+  if ! cid=$(docker compose ps -a -q "$1"); then
+    echo error
+    return
+  fi
   if [ -z "$cid" ]; then
     echo none
     return
   fi
-  docker inspect -f '{{if .State.Running}}{{.State.Health.Status}}{{else}}stopped{{end}}' "$cid" 2>/dev/null || echo none
+  docker inspect -f '{{if .State.Running}}{{.State.Health.Status}}{{else}}stopped{{end}}' "$cid" || echo error
 }
 
 wait_healthy() {
@@ -50,17 +63,22 @@ wait_healthy() {
 # 잠깐 복사본이 1벌뿐인 파티션이 생기므로, 복사가 덜 된 파티션이 0개가 될 때까지 기다린다
 # 리더가 없어 읽고 쓸 수 없는 파티션은 복사가 덜 된 파티션 목록에 나오지 않을 수 있어 함께 확인한다
 wait_in_sync() {
-  local broker=$1 lagging=""
+  local broker=$1 lagging="" errlog
+  # 조회가 실패했을 때 원인(접속 오류, 메모리 부족 등)을 실패 메시지에 남기려고 오류 출력을 따로 받는다
+  errlog=$(mktemp)
   for _ in $(seq 1 "$RETRIES"); do
     # 이 명령도 JVM을 띄우므로 힙을 작게 묶는다
     lagging=$(docker compose exec -T "$broker" sh -c \
       'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions &&
-       KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --unavailable-partitions' 2>/dev/null || echo "조회 실패")
+       KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --unavailable-partitions' 2>"$errlog") \
+      || lagging="조회 실패: $(tail -n 5 "$errlog")"
     if [ -z "$lagging" ]; then
+      rm -f "$errlog"
       return 0
     fi
     sleep "$INTERVAL"
   done
+  rm -f "$errlog"
   echo "Kafka 배포 실패: $broker 재시작 뒤 2분 안에 복사를 따라잡지 못했다" >&2
   echo "$lagging" >&2
   return 1
@@ -79,6 +97,10 @@ healthy_count=0
 up_count=0
 for broker in "${BROKERS[@]}"; do
   status=$(broker_status "$broker")
+  if [ "$status" = error ]; then
+    echo "Kafka 배포 중단: $broker 상태를 조회하지 못했다. docker 상태를 확인한 뒤 다시 배포한다" >&2
+    exit 1
+  fi
   [ "$status" = healthy ] && healthy_count=$((healthy_count + 1))
   [ "$status" != none ] && [ "$status" != stopped ] && up_count=$((up_count + 1))
 done

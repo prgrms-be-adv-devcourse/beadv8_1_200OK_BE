@@ -125,7 +125,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `Asia/Seoul` |
 | `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
-| `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose, 통합 테스트 공통). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
+| `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
 | `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림) | `19092` / `29092` / `39092` |
 | `KAFKA_BOOTSTRAP_SERVERS` | 앱이 접속할 브로커 3대 | `localhost:19092,localhost:29092,localhost:39092` |
 | `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`, 모듈 단독 실행은 모듈 이름) |
@@ -147,6 +147,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ### 모듈 설정 파일 (`application-<모듈>.yaml`)
 
 모듈을 단독으로 실행하거나 모듈 테스트를 돌릴 때의 설정은 모듈마다 `src/main/resources/application-<모듈>.yaml` 하나에 모두 있습니다. `common`에는 설정 파일을 두지 않습니다. 서비스를 나눌 때 모듈 폴더만 떼어 가면 설정이 함께 따라가도록 한 구조이고, 그 대신 같은 값이 모듈마다 반복됩니다.
+
 **`application.yaml`이 아니라 프로파일 파일을 쓰는 이유**
 
 - `monolith`는 모든 모듈의 jar를 클래스패스에 올립니다. 모듈마다 `application.yaml`을 두면 어느 것이 읽힐지가 클래스패스 순서에 달려 `monolith`의 설정이 가려질 수 있습니다.
