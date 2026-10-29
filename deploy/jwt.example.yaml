@@ -1,0 +1,13 @@
+# 운영 서버의 JWT 키 설정. 서버의 /opt/paldo-gotgan/keys/jwt.yaml로 복사해 쓴다 (docs/DEPLOY.md 9절)
+# 앱(application-prod.yml)이 이 파일을 읽어 application.yaml의 jwt.verification-keys, jwt.signing을 덮어쓴다.
+# 경로는 컨테이너 기준이다. compose.prod.yml이 서버의 keys 폴더를 /run/secrets/jwt에 마운트한다.
+# 파일 이름은 kid를 따른다: <kid>-private.pem, <kid>-public.pem
+jwt:
+  # 검증용 공개키 목록. 교체 중에는 옛 키와 새 키를 함께 둔다
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: file:/run/secrets/jwt/rs256-v1-public.pem
+  # 서명용 개인키. key-id는 위 목록에 있어야 하고, 개인키가 그 공개키와 짝이어야 앱이 기동한다
+  signing:
+    key-id: rs256-v1
+    private-key: file:/run/secrets/jwt/rs256-v1-private.pem
