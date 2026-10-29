@@ -7,7 +7,8 @@ spring:
   application:
     name: media
   config:
-    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties]
+    # Kafka 설정은 common의 common-kafka.yaml 한 곳에서 관리한다 (#318)
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-kafka.yaml
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_media?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
     username: ${DB_USERNAME:myuser}

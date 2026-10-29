@@ -4,7 +4,8 @@ spring:
   application:
     name: paldo-gotgan
   config:
-    import: optional:file:.env[.properties]
+    # Kafka 설정은 common의 common-kafka.yaml 한 곳에서 관리한다 (#318)
+    import: optional:file:.env[.properties],classpath:common-kafka.yaml
   profiles:
     default: dev
   jackson:

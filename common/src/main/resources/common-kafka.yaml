@@ -1,0 +1,13 @@
+# 모든 앱(monolith, 모듈 단독 실행)이 같은 Kafka 설정을 쓴다 (#318)
+# 각 앱의 application*.yaml이 spring.config.import로 이 파일을 가져온다. 값을 바꿀 곳은 여기 한 곳이다
+# Kafka 상태는 앱 헬스체크(/actuator/health)에 들어가지 않는다. Spring Boot에 Kafka 헬스 지표가 없고, 브로커 상태는 kafka 컨테이너의 healthcheck로 본다
+spring:
+  kafka:
+    # 브로커 3대를 모두 적는다. 처음 접속할 때 1대가 죽어 있어도 나머지로 붙기 위해서다
+    # 기본값은 로컬 compose가 127.0.0.1에만 여는 EXTERNAL 포트라서 .env가 없어도 로컬에서 바로 붙는다
+    # 운영과 로컬 app 컨테이너는 compose가 KAFKA_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092 로 덮어쓴다 (컨테이너 안의 localhost는 자기 자신이라서)
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}
+    producer:
+      # 브로커의 min.insync.replicas=2와 짝이다. 메시지가 3대 중 2대 이상에 저장돼야 발행 성공으로 본다
+      # Kafka 3.0부터 기본값도 all이지만, 복제 설정이 이 값에 기대고 있다는 걸 남기려고 적는다
+      acks: all
