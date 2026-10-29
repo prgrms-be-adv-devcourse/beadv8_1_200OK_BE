@@ -42,9 +42,14 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
     /**
      * 같은 판매자 묶음에서 주문 상품별로 주어진 상태들의 취소 개수 합을 구한다. 묶음 전부 취소 판단에 쓴다.
      * 승인할 때 잠금을 얻은 뒤 READ COMMITTED로 불러야, ID를 읽은 뒤 끼어든 다른 승인의 커밋까지 보인다.
+     * 배송 잠금 단계({@code SHIPMENT_RESERVE})에서 멈춘 건은 빼고 센다. 잠금이 실제로 걸렸는지 몰라 출고될 수도 있는데,
+     * 취소로 세면 다른 요청이 배송비를 받아 가 출고된 상품의 배송비까지 돌려주게 된다.
+     * 빼고 세면 배송비를 덜 줄 수는 있지만, 그 차액은 멈춘 건을 정리할 때 따로 돌려준다(설계 11장 미룬 일).
      */
     @Query("select new com.ok.refund.domain.CancelledQuantity(r.orderItemId, sum(r.quantity)) from Refund r "
-            + "where r.orderId = :orderId and r.sellerId = :sellerId and r.status in :statuses group by r.orderItemId")
+            + "where r.orderId = :orderId and r.sellerId = :sellerId and r.status in :statuses "
+            + "and (r.failedStep is null or r.failedStep <> com.ok.refund.domain.RefundFailedStep.SHIPMENT_RESERVE) "
+            + "group by r.orderItemId")
     List<CancelledQuantity> sumQuantityByOrderItem(
             @Param("orderId") Long orderId,
             @Param("sellerId") Long sellerId,

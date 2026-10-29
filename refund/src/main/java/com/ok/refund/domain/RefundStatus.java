@@ -25,6 +25,7 @@ public enum RefundStatus {
     /**
      * 판매자 묶음 전부 취소 판단에 넣는 상태인지 확인한다.
      * 처리 중은 승인 뒤 되돌리지 않으므로 결국 완료되거나 묶음 전체가 출고되어 승인 불가가 된다. 그래서 완료와 같이 센다.
+     * 단, 배송 잠금 단계에서 멈춘 처리 중은 집계 쿼리에서 따로 뺀다({@code RefundRepository.sumQuantityByOrderItem}).
      */
     public boolean countsAsCancelled() {
         return this == PROCESSING || this == COMPLETED;

@@ -2,6 +2,7 @@ package com.ok.refund.repository;
 
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
@@ -88,6 +89,26 @@ class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(result).containsExactly(new CancelledQuantity(ORDER_ITEM_ID, 3L));
+    }
+
+    @Test
+    void 배송_잠금_단계에서_멈춘_처리_중은_묶음_개수에서_뺀다() {
+        // given: 양말 처리 중 2(배송 잠금에서 멈춤, 세지 않음) + 모자 처리 중 1(지갑에서 멈춤, 잠금은 걸려 셈)
+        Refund stuckAtReserve = requested(2);
+        stuckAtReserve.startProcessing(0L, 0L, NOW);
+        stuckAtReserve.recordFailure(RefundFailedStep.SHIPMENT_RESERVE, "DELIVERY_API_FAILED");
+        refundRepository.saveAndFlush(stuckAtReserve);
+        Refund stuckAtWallet = requested(102L, 1);
+        stuckAtWallet.startProcessing(0L, 0L, NOW);
+        stuckAtWallet.recordFailure(RefundFailedStep.WALLET, "WALLET_API_FAILED");
+        refundRepository.saveAndFlush(stuckAtWallet);
+
+        // when
+        List<CancelledQuantity> result = refundRepository.sumQuantityByOrderItem(ORDER_ID, SELLER_ID,
+                List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED));
+
+        // then
+        assertThat(result).containsExactly(new CancelledQuantity(102L, 1L));
     }
 
     @Test
