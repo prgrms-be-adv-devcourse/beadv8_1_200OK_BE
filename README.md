@@ -13,7 +13,13 @@ Spring Boot 4 / Java 25 기반 백엔드입니다. 도메인별 Gradle 서브프
 ## 사전 준비
 
 - JDK 25, Docker(로컬 MySQL과 통합 테스트에 필요)
-- 환경변수 파일: `cp .env.example .env` 후 **`JWT_SECRET`을 `openssl rand -base64 32` 결과로 바꿉니다.** 나머지는 기본값으로 실행됩니다. 값의 의미는 `docs/DEVELOPMENT.md`의 환경변수 표를 봅니다.
+- 환경변수 파일: `cp .env.example .env`. 기본값으로 실행됩니다. 값의 의미는 `docs/DEVELOPMENT.md`의 환경변수 표를 봅니다.
+- JWT 서명 키: 저장소 루트에서 아래를 실행해 `keys/`에 키 쌍을 만듭니다(`.gitignore`에 들어 있음). 자세한 내용은 `docs/DEVELOPMENT.md`의 "키 관리와 교체"를 봅니다.
+  ```bash
+  mkdir -p keys
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/rs256-v1-private.pem
+  openssl pkey -in keys/rs256-v1-private.pem -pubout -out keys/rs256-v1-public.pem
+  ```
 - 외부 서비스 키: `.env.example`의 `TOSS_SECRET_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET`은 자리표시 값입니다. 앱은 이 값으로도 뜨지만, 지갑 충전 같은 토스페이먼츠 결제(wallet)와 이미지 업로드(media, S3)는 실제 키로 바꿔야 동작합니다.
 
 ## 모듈 구조
@@ -49,7 +55,7 @@ docker compose up -d     # data/mysql 에 데이터 저장, 호스트 포트는 
 ### 3. 모듈 하나만 단독 실행
 
 ```bash
-set -a; source .env; set +a     # JWT_SECRET 등을 셸 환경변수로 내보낸다 (단독 실행은 .env의 이 값을 직접 읽지 못한다)
+set -a; source .env; set +a     # 루트 .env의 값을 셸 환경변수로 내보낸다
 ./gradlew :wallet:bootRun       # wallet만 실행 (포트 8083, 접속 DB는 paldogotgan_wallet)
 ```
 

@@ -45,6 +45,7 @@ cd /opt/paldo-gotgan
 cp .env.prod.example .env && chmod 600 .env
 vi .env                      # 비밀번호·키 채우기
 mountpoint /data             # "/data is a mountpoint"가 나와야 한다
+# JWT 서명 키 만들기 (아래 9절)
 ./deploy.sh
 ```
 
@@ -212,3 +213,70 @@ APP_IMAGE_TAG=<이전 SHA 태그> ./deploy.sh                                   
 - **MySQL 권한 설정**: `SELECT @@partial_revokes;`. `ON`이면 와일드카드 권한이 문자 그대로 해석되는데, 이 절차는 스키마 8개를 하나씩 명시해 권한을 주므로 영향이 없어야 합니다. `20_verify.sql`의 권한 점검이 PASS인지 확인합니다.
 - **알려진 마이그레이션 목록**: `00_preflight.sql`의 목록은 이 PR 시점의 55개입니다. 이후 병합된 마이그레이션이 운영 DB에 이미 적용돼 있으면 사전 점검이 멈추고, `migrate.sh`가 저장소의 마이그레이션 파일과 목록이 다르면 경고를 출력합니다. 그 경우 목록(`00_preflight.sql`)과 `20_verify.sql`의 행 수, `migrate.sh`의 이력 합계(54)를 새 마이그레이션까지 포함하도록 고친 뒤 실행합니다.
 - **앱 계정 권한**: 앱 계정이 모든 모듈 스키마에 `ALL` 권한을 가집니다. 모듈 단독 실행(개발)에는 모듈별 계정이 있지만([`DEVELOPMENT.md`의 모듈 DB 계정](DEVELOPMENT.md#스키마계정-생성)), 운영 `monolith`는 이 공용 계정을 씁니다.
+
+## 9. JWT 서명 키 (#313)
+
+Access Token은 RS256(비대칭키)으로 서명합니다. 서버의 `/opt/paldo-gotgan/keys`에 키 PEM 파일과 키 설정 파일(`jwt.yaml`)을 두고, `compose.prod.yml`이 이 폴더를 앱 컨테이너의 `/run/secrets/jwt`에 읽기 전용으로 마운트합니다.
+
+```
+/opt/paldo-gotgan/keys/
+├── jwt.yaml               어떤 키로 검증·서명하는지 (예시: deploy/jwt.example.yaml)
+├── rs256-v1-private.pem   서명용 개인키
+└── rs256-v1-public.pem    검증용 공개키
+```
+
+- 앱은 `application-prod.yml`에서 `jwt.yaml`을 읽어 이미지 안의 키 설정(`jwt.verification-keys`, `jwt.signing`)을 덮어씁니다. 그래서 키를 교체·폐기할 때 새 이미지 없이 이 폴더만 바꾸고 앱을 재시작합니다.
+- `jwt.yaml`이 없거나, 키 파일이 없거나, 형식이 맞지 않거나, 개인키가 서명 `kid`의 공개키와 짝이 아니면 앱이 기동하지 않습니다.
+- 파일 이름은 키 식별자(`kid`)를 따릅니다(`<kid>-private.pem`, `<kid>-public.pem`). 교체 중에는 옛 키와 새 키가 한 폴더에 함께 있기 때문입니다.
+- 키는 백업하지 않습니다. 서버를 잃으면 새 키를 만들면 되고, 사용자는 Refresh Token으로 새 Access Token을 받습니다(Refresh Token은 JWT가 아니라 DB에 있음).
+
+### 키 만들기 (최초 설정, 또는 HS256에서 처음 전환할 때)
+
+로컬·개발 환경과 다른 키를 서버에서 직접 만듭니다. 개인키를 다른 곳으로 복사하거나 저장소에 올리지 않습니다.
+
+```bash
+# 로컬: 키 설정 예시를 서버로 올린다 (키 내용은 없고 kid와 컨테이너 경로만 있다)
+scp -i <키 파일> deploy/jwt.example.yaml ubuntu@<EIP>:/tmp/jwt.yaml
+
+# 서버
+cd /opt/paldo-gotgan
+mkdir -p keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/rs256-v1-private.pem
+openssl pkey -in keys/rs256-v1-private.pem -pubout -out keys/rs256-v1-public.pem
+mv /tmp/jwt.yaml keys/jwt.yaml
+# 컨테이너 사용자(uid 1001, Dockerfile의 appuser)만 개인키를 읽게 한다
+sudo chown -R 1001 keys && sudo chmod 500 keys && sudo chmod 400 keys/*
+```
+
+- 이후 키 폴더의 파일을 읽거나 바꾸려면 `sudo`가 필요합니다. `ubuntu` 사용자는 개인키를 읽을 수 없습니다.
+
+### HS256에서 처음 전환하는 배포
+
+0. 프론트엔드가 401을 받으면 Refresh Token으로 재발급받고 요청을 다시 보내는지 확인합니다. 배포 직후 기존 토큰이 모두 401을 받기 때문입니다.
+1. 위 절차로 키와 `jwt.yaml`을 만듭니다.
+2. [6. 배포 파일 갱신](#6-배포-파일-갱신)으로 새 `compose.prod.yml`을 서버에 올리고 `./deploy.sh`로 배포합니다.
+3. 배포가 성공하면 `.env`에서 `JWT_SECRET` 줄을 지웁니다. 새 버전은 이 값을 읽지 않습니다.
+
+- 배포 전에 발급된 HS256 Access Token은 배포 직후부터 401을 받습니다. 클라이언트는 Refresh Token으로 재발급받으면 되고, Refresh Token은 JWT가 아니라서 영향이 없습니다. HS256 토큰을 함께 받아들이는 기간은 두지 않습니다(비밀키가 계속 남기 때문).
+- 이전 버전 이미지는 `JWT_SECRET`으로 기동하고, 새 `compose.prod.yml`은 이 값을 앱에 넘기지 않습니다. 이 배포를 롤백할 때는 `APP_IMAGE_TAG`만 바꾸지 말고 `compose.prod.yml`도 이전 버전(git의 이전 커밋)으로 되돌린 뒤 [4. 롤백](#4-롤백)을 합니다. 그래서 3번은 새 버전이 안정된 것을 확인한 뒤에 합니다.
+
+### 키 교체
+
+정기 교체는 하지 않습니다. 개인키 유출이 의심되거나 서버에 접근할 수 있는 사람이 바뀌었을 때 교체합니다. 이미지 배포 없이 서버에서 끝납니다. 예: `rs256-v1` → `rs256-v2`
+
+```bash
+# 서버
+cd /opt/paldo-gotgan
+sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/rs256-v2-private.pem
+sudo openssl pkey -in keys/rs256-v2-private.pem -pubout -out keys/rs256-v2-public.pem
+sudo chown 1001 keys/rs256-v2-* && sudo chmod 400 keys/rs256-v2-*
+sudo vi keys/jwt.yaml          # 아래 1번처럼 고친다
+docker compose -f compose.prod.yml restart app
+```
+
+1. `jwt.yaml`의 `verification-keys`에 `rs256-v2`를 **추가**하고, `signing`을 `rs256-v2`와 새 개인키로 바꾼 뒤 재시작합니다. 새 토큰은 `rs256-v2`로 서명되고, 이전 토큰은 `rs256-v1` 공개키로 만료될 때까지 검증됩니다.
+2. Access Token 유효 기간(30분)이 지나면 `verification-keys`에서 `rs256-v1`을 빼고 재시작한 뒤 `rs256-v1-*.pem`을 지웁니다.
+
+- 앱이 monolith 하나라 검증 목록 추가와 서명 키 변경을 한 번에 합니다. 검증하는 앱이 여럿이면 순서가 필요합니다([`DEVELOPMENT.md`의 키 교체](DEVELOPMENT.md#키-관리와-교체)).
+- 개인키가 유출되었으면 2를 기다리지 않고 1에서 `rs256-v1`을 바로 뺍니다. 그 키로 서명된 토큰은 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다.
+- 재시작 중 수십 초간 요청이 실패합니다([1. 구성](#1-구성)).
