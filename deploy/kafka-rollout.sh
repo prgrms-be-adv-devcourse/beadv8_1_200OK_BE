@@ -10,6 +10,7 @@
 #   [b] 3대 모두 healthy → 1대씩 up -d → healthy와 복사 따라잡기를 기다린 뒤 다음 브로커
 #       설정이 그대로인 브로커는 compose가 다시 만들지 않아 평소 배포에서는 바로 지나간다
 #   [c] 일부만 살아 있음 → 중단한다. 이 상태에서 1대를 더 내리면 살아 있는 브로커가 1대뿐이라 Kafka 전체가 멈춘다
+#   켜지는 중(starting)인 브로커는 판정 전에 healthy가 될 때까지 기다린다
 # 로컬 검증: COMPOSE_FILE=../docker-compose.yml ./kafka-rollout.sh (로컬 compose도 같은 서비스 이름을 쓴다)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -47,12 +48,14 @@ wait_healthy() {
 
 # healthy는 "요청을 받기 시작함"일 뿐이다. 밀린 복사본을 다 따라잡기 전에 다음 브로커를 내리면
 # 잠깐 복사본이 1벌뿐인 파티션이 생기므로, 복사가 덜 된 파티션이 0개가 될 때까지 기다린다
+# 리더가 없어 읽고 쓸 수 없는 파티션은 복사가 덜 된 파티션 목록에 나오지 않을 수 있어 함께 확인한다
 wait_in_sync() {
   local broker=$1 lagging=""
   for _ in $(seq 1 "$RETRIES"); do
     # 이 명령도 JVM을 띄우므로 힙을 작게 묶는다
     lagging=$(docker compose exec -T "$broker" sh -c \
-      'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions' 2>/dev/null || echo "조회 실패")
+      'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions &&
+       KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --unavailable-partitions' 2>/dev/null || echo "조회 실패")
     if [ -z "$lagging" ]; then
       return 0
     fi
@@ -62,6 +65,15 @@ wait_in_sync() {
   echo "$lagging" >&2
   return 1
 }
+
+# 서버 재부팅 직후처럼 아직 켜지는 중(starting)인 브로커가 있으면, 바로 판정하면 "일부만 살아 있음"으로 잘못 보고 배포가 멈춘다
+# 켜지는 중인 브로커는 healthy가 될 때까지 기다린 뒤 판정한다
+for broker in "${BROKERS[@]}"; do
+  if [ "$(broker_status "$broker")" = starting ]; then
+    echo "Kafka: $broker 이(가) 켜지는 중이라 healthy가 될 때까지 기다린다"
+    wait_healthy "$broker"
+  fi
+done
 
 healthy_count=0
 up_count=0

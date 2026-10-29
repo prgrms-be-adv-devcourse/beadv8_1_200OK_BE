@@ -41,11 +41,15 @@ x-kafka-service: &kafka-service
   healthcheck:
     # 브로커가 요청을 받을 수 있는지 묻는다. 이 명령도 JVM을 띄우므로 힙을 작게 묶는다(컨테이너의 KAFKA_HEAP_OPTS 384m를 그대로 쓰지 않게)
     test: ['CMD-SHELL', 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null']
-    interval: 10s
+    # 확인할 때마다 JVM이 하나 더 떠서 메모리·CPU를 쓰므로, 평소에는 30초마다만 확인한다
+    interval: 30s
     timeout: 10s
-    retries: 12
+    # 연속 4번(약 2분) 실패하면 unhealthy
+    retries: 4
     # 3대 중 2대가 모여 컨트롤러를 뽑을 때까지 걸리는 시간을 실패로 세지 않는다
-    start_period: 30s
+    # 이 동안에는 5초마다 확인해, 간격을 늘려도 기동 직후 healthy가 늦게 잡히지 않게 한다 (Docker Engine 25 이상)
+    start_period: 60s
+    start_interval: 5s
 
 services:
   mysql:
