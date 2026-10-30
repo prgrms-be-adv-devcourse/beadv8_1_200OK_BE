@@ -106,8 +106,10 @@ for broker in "${BROKERS[@]}"; do
   [ "$status" != none ] && [ "$status" != stopped ] && up_count=$((up_count + 1))
 done
 
-# 새 이미지(KAFKA_VERSION 변경)를 미리 받아, 브로커가 내려가 있는 시간을 줄인다
-docker compose pull --quiet "${BROKERS[@]}"
+# 새 이미지(KAFKA_VERSION 변경)를 브로커를 건드리기 전에 미리 받아, 받기가 실패하면 아무것도 내리지 않은 채 멈춘다
+# 로컬에 이미 있는 이미지는 레지스트리에 묻지 않는다(--policy missing). 버전 태그를 고정해 쓰므로 다시 받을 일이 없고,
+# 묻게 두면 Docker Hub 장애 때 Kafka가 바뀌지 않는 배포까지 실패한다
+docker compose pull --quiet --policy missing "${BROKERS[@]}"
 
 if [ "$up_count" -eq 0 ]; then
   # [a] 3대를 동시에 띄운다. 브로커끼리 depends_on이 없어 compose가 한꺼번에 시작한다
