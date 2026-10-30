@@ -291,6 +291,24 @@ class OrderFacadeTest {
     }
 
     @Test
+    void 멱등키_제약에_걸렸는데_먼저_저장된_주문이_사라졌으면_다시_시도하라고_알린다() {
+        // given: 먼저 저장한 요청이 재고 선점에 실패해 주문을 지운 뒤라 키로 찾아도 없음
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
+        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
+        given(orderService.create(any(Order.class)))
+                .willThrow(new DataIntegrityViolationException("Duplicate entry for key 'orders.uk_orders_buyer_id_idempotency_key'"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.IDEMPOTENCY_KEY_CONFLICT));
+        then(productApiClient).should(never()).allocateStock(anyLong(), anyList());
+    }
+
+    @Test
     void 멱등키가_아닌_제약에_걸려_저장에_실패하면_예외를_그대로_던진다() {
         // given: 저장은 실패했는데 같은 키의 주문이 없음 = 다른 원인
         given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());

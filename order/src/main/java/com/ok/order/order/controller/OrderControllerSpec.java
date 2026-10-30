@@ -18,7 +18,7 @@ interface OrderControllerSpec {
             + "같은 Idempotency-Key로 다시 요청하면 주문을 새로 만들지 않고 처음 만든 주문 ID를 돌려줍니다.")
     @ApiResponse(responseCode = "201", description = "주문 생성 성공 (같은 키로 다시 요청한 경우 기존 주문 ID)")
     @ApiResponse(responseCode = "400", description = "Idempotency-Key 헤더가 없거나 비어 있거나 64자 초과")
-    @ApiResponse(responseCode = "409", description = "주문 금액 변경, 잔액 부족, 재고 부족 등")
+    @ApiResponse(responseCode = "409", description = "주문 금액 변경, 잔액 부족, 재고 부족, 같은 Idempotency-Key 요청의 동시 처리 충돌 등")
     @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
     ResponseEntity<CreateOrderResponse> createOrder(
             Long memberId,

@@ -37,6 +37,7 @@ public class OrderFacade {
     private final WalletApiClient walletApiClient;
 
     private static final int IDEMPOTENCY_KEY_MAX_LENGTH = 64;
+    private static final String IDEMPOTENCY_KEY_CONSTRAINT = "uk_orders_buyer_id_idempotency_key";
 
     // 주문서 조회
     public CheckoutResult getCheckout(Long memberId) {
@@ -80,10 +81,15 @@ public class OrderFacade {
         try {
             orderId = orderService.create(order);
         } catch (DataIntegrityViolationException e) {
+            // 멱등키가 아닌 제약 위반은 주문을 만드는 우리 코드의 버그라 그대로 던져 500으로 드러낸다
+            if (!isIdempotencyKeyViolation(e)) {
+                throw e;
+            }
             // 같은 키의 요청이 거의 동시에 와서 위 조회를 둘 다 통과한 경우, 유니크 제약이 나중 요청을 막는다.
-            // 재고 선점과 이벤트 발행은 먼저 저장한 요청이 하므로 여기서는 그 주문만 돌려준다
+            // 재고 선점과 이벤트 발행은 먼저 저장한 요청이 하므로 여기서는 그 주문만 돌려준다.
+            // 먼저 저장된 주문이 재고 선점 실패로 그 사이 삭제됐으면 키가 풀린 상태라 다시 시도하도록 알린다
             Long savedOrderId = orderService.findIdByIdempotencyKey(command.memberId(), command.idempotencyKey())
-                    .orElseThrow(() -> e);
+                    .orElseThrow(() -> new RestApiException(OrderErrorCode.IDEMPOTENCY_KEY_CONFLICT));
             log.info("같은 멱등키의 동시 요청, 먼저 저장된 주문 반환. orderId={}", savedOrderId);
             return savedOrderId;
         }
@@ -106,6 +112,11 @@ public class OrderFacade {
         if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > IDEMPOTENCY_KEY_MAX_LENGTH) {
             throw new RestApiException(OrderErrorCode.INVALID_IDEMPOTENCY_KEY);
         }
+    }
+
+    // 제약 이름은 DB 오류 메시지에만 담겨 있어 메시지로 구분한다 (ShipmentService, MemberDuplicateValidator와 같은 방식)
+    private boolean isIdempotencyKeyViolation(DataIntegrityViolationException e) {
+        return String.valueOf(e.getMostSpecificCause().getMessage()).contains(IDEMPOTENCY_KEY_CONSTRAINT);
     }
 
     // 장바구니 선택 상품 + 상품 모듈의 최신 정보로 주문 객체 만들기 (저장 X)
