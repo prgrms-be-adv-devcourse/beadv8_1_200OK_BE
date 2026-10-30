@@ -65,8 +65,9 @@ public class JwtConfig {
     private static final JWSAlgorithm JWS_ALGORITHM = JWSAlgorithm.parse(SIGNING_ALGORITHM.getName());
 
     /**
-     * 만료 시간 허용 오차. 기본값은 60초지만, 발급과 검증을 같은 애플리케이션(NTP로 시간 동기화된 서버)에서 하므로
-     * 서버 간 시계 차이를 보정할 필요가 없다. 설정한 유효 기간(30분)이 정확히 지켜지도록 0으로 둔다.
+     * 만료 시간 허용 오차. 기본값은 60초지만, 설정한 유효 기간(30분)이 정확히 지켜지도록 0으로 둔다.
+     * 발급(member)과 검증(각 모듈 앱)이 다른 서버로 나뉘어도 0을 유지한다. 검증 서버의 시계가 빠르면 토큰이 그만큼 일찍
+     * 만료될 뿐이고 클라이언트는 Refresh Token으로 재발급받는다. 큰 시계 차이는 허용 오차가 아니라 서버 시간 동기화(NTP)로 막는다.
      * 만료는 {@link ExpiredTokenValidator} 하나가 이 값으로 판단한다.
      */
     private static final Duration CLOCK_SKEW = Duration.ZERO;
