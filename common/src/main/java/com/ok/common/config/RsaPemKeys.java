@@ -29,7 +29,8 @@ public final class RsaPemKeys {
      */
     static final int MIN_KEY_BITS = 2048;
 
-    private static final String KEY_GUIDE = "키 생성 방법은 docs/DEVELOPMENT.md의 '8. 인증 (JWT)'를 참고하세요.";
+    /** 키 오류 메시지 끝에 붙이는 안내. 테스트가 전체 메시지를 비교할 수 있도록 패키지 범위로 둔다. */
+    static final String KEY_GUIDE ="키 생성 방법은 docs/DEVELOPMENT.md의 '8. 인증 (JWT)'를 참고하세요.";
 
     private RsaPemKeys() {
     }

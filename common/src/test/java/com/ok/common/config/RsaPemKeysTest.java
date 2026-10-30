@@ -41,7 +41,8 @@ class RsaPemKeysTest {
         // when & then
         assertThatThrownBy(() -> RsaPemKeys.publicKey(missing))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageStartingWith("JWT 키 파일을 읽을 수 없습니다: class path resource [jwt/missing.pem]");
+                .hasMessage("JWT 키 파일을 읽을 수 없습니다: class path resource [jwt/missing.pem]. "
+                        + RsaPemKeys.KEY_GUIDE);
     }
 
     @Test
@@ -49,7 +50,8 @@ class RsaPemKeysTest {
         // when & then
         assertThatThrownBy(() -> RsaPemKeys.publicKey(PRIVATE_KEY))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageStartingWith("JWT 키 파일이 X.509 공개키(-----BEGIN PUBLIC KEY-----) 형식이 아닙니다");
+                .hasMessage("JWT 키 파일이 X.509 공개키(-----BEGIN PUBLIC KEY-----) 형식이 아닙니다: "
+                        + "class path resource [jwt/test-private.pem]. " + RsaPemKeys.KEY_GUIDE);
     }
 
     @Test
@@ -62,7 +64,8 @@ class RsaPemKeysTest {
         // when & then
         assertThatThrownBy(() -> RsaPemKeys.privateKey(pkcs1))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageStartingWith("JWT 키 파일이 PKCS#8 개인키(-----BEGIN PRIVATE KEY-----) 형식이 아닙니다")
+                .hasMessage("JWT 키 파일이 PKCS#8 개인키(-----BEGIN PRIVATE KEY-----) 형식이 아닙니다: %s. %s"
+                        .formatted(pkcs1.getDescription(), RsaPemKeys.KEY_GUIDE))
                 .hasMessageNotContaining(body);
     }
 
@@ -77,7 +80,8 @@ class RsaPemKeysTest {
         // when & then
         assertThatThrownBy(() -> RsaPemKeys.publicKey(shortKey))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageStartingWith("JWT 키는 2048비트 이상이어야 합니다");
+                .hasMessage("JWT 키는 2048비트 이상이어야 합니다: %s. %s"
+                        .formatted(shortKey.getDescription(), RsaPemKeys.KEY_GUIDE));
     }
 
     private static Resource pem(String type, String base64Body) {

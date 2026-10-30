@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
@@ -34,8 +35,14 @@ class JwtEncoderConfigTest {
 
     @Test
     void 서명_키와_검증_키가_짝이면_인코더가_만들어진다() {
-        // when & then
-        assertThat(jwtEncoderConfig.jwtEncoder(PROPERTIES, new JwtSigningProperties(KEY_ID, PRIVATE_KEY))).isNotNull();
+        // given
+        JwtSigningProperties signing = new JwtSigningProperties(KEY_ID, PRIVATE_KEY);
+
+        // when
+        JwtEncoder sut = jwtEncoderConfig.jwtEncoder(PROPERTIES, signing);
+
+        // then
+        assertThat(sut).isNotNull();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.ok.testsupport;
 
+import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
@@ -55,7 +56,14 @@ public class TestAccessTokens {
                             @Value("${jwt.signing.private-key}") Resource privateKey) {
         this.jwtProperties = jwtProperties;
         this.keyId = keyId;
-        RSAKey publicKey = JwtConfig.verificationKeys(jwtProperties).getKeyByKeyId(keyId).toRSAKey();
+        JWK verificationKey = JwtConfig.verificationKeys(jwtProperties).getKeyByKeyId(keyId);
+        // 그냥 두면 NPE만 나서 원인(테스트 설정의 kid 불일치)을 찾기 어렵다
+        if (verificationKey == null) {
+            throw new IllegalStateException(
+                    "jwt.signing.key-id(%s)의 공개키가 jwt.verification-keys에 없습니다. application-test.yml을 확인하세요."
+                            .formatted(keyId));
+        }
+        RSAKey publicKey = verificationKey.toRSAKey();
         RSAKey signingKey = new RSAKey.Builder(publicKey).privateKey(RsaPemKeys.privateKey(privateKey)).build();
         this.jwtEncoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(signingKey)));
     }
