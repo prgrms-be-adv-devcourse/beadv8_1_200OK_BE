@@ -17,13 +17,18 @@ import com.ok.order.order.service.dto.CheckoutResult;
 import com.ok.order.order.service.dto.CreateOrderCommand;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,6 +59,7 @@ class OrderFacadeTest {
     static final Long BUYER_ID = 1L;
     static final Long SELLER_ID = 100L;
     static final String ZIP_CODE = "06236";
+    static final String IDEMPOTENCY_KEY = "3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f";
 
     // 상품 모듈 응답 한 건 (옵션 ID, 판매자, 가격, 재고, 구매 가능 여부)
     private ProductOptionInfoResponse option(Long optionId, Long sellerId, long salePrice, int stock, boolean purchasable) {
@@ -67,7 +73,11 @@ class OrderFacadeTest {
     }
 
     private CreateOrderCommand command(long expectedTotalAmount) {
-        return new CreateOrderCommand(BUYER_ID, "홍길동", "010-1234-5678", ZIP_CODE,
+        return command(IDEMPOTENCY_KEY, expectedTotalAmount);
+    }
+
+    private CreateOrderCommand command(String idempotencyKey, long expectedTotalAmount) {
+        return new CreateOrderCommand(BUYER_ID, idempotencyKey, "홍길동", "010-1234-5678", ZIP_CODE,
                 "서울시 강남구 테헤란로 1", "101호", true, expectedTotalAmount);
     }
 
@@ -227,6 +237,7 @@ class OrderFacadeTest {
         assertSoftly(softly -> {
             softly.assertThat(orderId).isEqualTo(10L);
             softly.assertThat(saved.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+            softly.assertThat(saved.getIdempotencyKey()).isEqualTo(IDEMPOTENCY_KEY);
             softly.assertThat(saved.getRecipientName()).isEqualTo("홍길동");
             softly.assertThat(saved.getZipCode()).isEqualTo(ZIP_CODE);
             softly.assertThat(saved.getTotalRemoteAreaFee()).isEqualTo(3_000L);
@@ -238,6 +249,75 @@ class OrderFacadeTest {
         then(productApiClient).should().allocateStock(eq(10L), stockItemsCaptor.capture());
         assertThat(stockItemsCaptor.getValue()).containsExactly(new StockAllocationItemRequest(11L, 1));
         then(orderService).should().publishCreated(10L);
+    }
+
+    // ---------- 주문 생성 멱등키 ----------
+
+    @Test
+    void 같은_멱등키로_만든_주문이_있으면_외부_API를_부르지_않고_그_주문을_돌려준다() {
+        // given
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.of(10L));
+
+        // when
+        Long orderId = sut.createOrder(command(13_000L));
+
+        // then: 다시 만들지 않는 것 자체가 요구사항이라 호출하지 않았는지 확인
+        assertThat(orderId).isEqualTo(10L);
+        then(cartService).should(never()).getSelectedCartItems(anyLong());
+        then(walletApiClient).should(never()).getBalance(anyLong());
+        then(orderService).should(never()).create(any(Order.class));
+        then(productApiClient).should(never()).allocateStock(anyLong(), anyList());
+        then(orderService).should(never()).publishCreated(anyLong());
+    }
+
+    @Test
+    void 같은_멱등키의_동시_요청이_먼저_저장했으면_재고를_선점하지_않고_먼저_저장된_주문을_돌려준다() {
+        // given: 조회 시점에는 없었지만, 저장할 때 다른 요청이 먼저 저장해 유니크 제약에 걸림
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY))
+                .willReturn(Optional.empty(), Optional.of(10L));
+        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
+        given(orderService.create(any(Order.class))).willThrow(new DataIntegrityViolationException("uk_orders_buyer_id_idempotency_key"));
+
+        // when
+        Long orderId = sut.createOrder(command(10_000L));
+
+        // then: 재고 선점과 이벤트 발행은 먼저 저장한 요청의 몫
+        assertThat(orderId).isEqualTo(10L);
+        then(productApiClient).should(never()).allocateStock(anyLong(), anyList());
+        then(orderService).should(never()).publishCreated(anyLong());
+    }
+
+    @Test
+    void 멱등키가_아닌_제약에_걸려_저장에_실패하면_예외를_그대로_던진다() {
+        // given: 저장은 실패했는데 같은 키의 주문이 없음 = 다른 원인
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
+        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
+        given(orderService.create(any(Order.class))).willThrow(new DataIntegrityViolationException("other"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        then(productApiClient).should(never()).allocateStock(anyLong(), anyList());
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_멱등키")
+    void 멱등키가_비었거나_64자를_넘으면_주문할_수_없다(String idempotencyKey) {
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(idempotencyKey, 10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_IDEMPOTENCY_KEY));
+        then(orderService).should(never()).create(any(Order.class));
+    }
+
+    static Stream<String> 잘못된_멱등키() {
+        return Stream.of(null, "", "   ", "a".repeat(65));
     }
 
     // ---------- 결제 실패 ----------

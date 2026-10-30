@@ -13,6 +13,7 @@ public enum OrderErrorCode implements ErrorCode {
     EMPTY_ORDER_ITEMS(HttpStatus.BAD_REQUEST, "Empty order items", "주문할 상품을 선택해 주세요."),
     THIRD_PARTY_CONSENT_REQUIRED(HttpStatus.BAD_REQUEST, "Third party consent required", "판매자에게 주문 정보를 제공하는 데 동의해 주세요."),
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order not found", "주문을 찾을 수 없습니다."),
+    INVALID_IDEMPOTENCY_KEY(HttpStatus.BAD_REQUEST, "Invalid idempotency key", "Idempotency-Key 헤더는 공백이 아닌 64자 이하여야 합니다."),
     ORDER_AMOUNT_CHANGED(HttpStatus.CONFLICT, "Order amount changed", "주문 금액이 변경되었습니다. 금액을 다시 확인해 주세요."),
     CANNOT_ORDER_OWN_PRODUCT(HttpStatus.BAD_REQUEST, "Cannot order own product", "본인이 판매하는 상품은 주문할 수 없습니다."),
     ORDER_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Order item not found", "주문 상품을 찾을 수 없습니다."),
