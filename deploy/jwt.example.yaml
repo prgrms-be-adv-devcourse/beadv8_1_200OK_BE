@@ -4,6 +4,7 @@
 # 파일 이름은 kid를 따른다: <kid>-private.pem, <kid>-public.pem
 jwt:
   # 검증용 공개키 목록. 교체 중에는 옛 키와 새 키를 함께 둔다
+  # 이 목록은 application.yaml의 목록에 더해지지 않고 통째로 바뀐다(Spring은 리스트를 병합하지 않음). 검증에 쓸 키를 모두 적는다
   verification-keys:
     - key-id: rs256-v1
       public-key: file:/run/secrets/jwt/rs256-v1-public.pem

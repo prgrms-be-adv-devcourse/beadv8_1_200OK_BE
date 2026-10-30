@@ -19,6 +19,7 @@ import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.member.auth.domain.AccessToken;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.security.oauth2.jwt.*;
@@ -291,6 +292,56 @@ class AccessTokenProviderTest {
     }
 
     @Test
+    void 서명_없는_alg_none_토큰은_거부된다() {
+        // given
+        // alg=none은 서명이 없는 토큰이다. 받아들이면 누구나 아무 클레임이나 담아 보낼 수 있다
+        String header = base64Url("{\"alg\":\"none\",\"typ\":\"%s\",\"kid\":\"%s\"}"
+                .formatted(JwtConfig.TOKEN_TYPE, KEY_ID));
+        String payload = base64Url("{\"iss\":\"%s\",\"sub\":\"1\",\"aud\":[\"%s\"],\"exp\":%d,\"roles\":[\"ADMIN\"]}"
+                .formatted(ISSUER, AUDIENCE, now.plus(ACCESS_EXPIRATION).getEpochSecond()));
+        String unsigned = header + "." + payload + ".";
+
+        // when & then
+        assertThatThrownBy(() -> jwtDecoder.decode(unsigned))
+                .isInstanceOf(BadJwtException.class);
+    }
+
+    @Test
+    void 키_교체_중에는_옛_kid와_새_kid로_서명한_토큰이_모두_검증된다() throws Exception {
+        // given
+        // 교체 기간: 검증 목록에 v1(기존)과 v2(새 키)가 함께 있고, 서명은 v2로 바뀐 상태
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair v2Keys = generator.generateKeyPair();
+        JwtProperties rotating = new JwtProperties(ISSUER, AUDIENCE, List.of(
+                new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY),
+                new JwtProperties.VerificationKey("rs256-v2", publicKeyPem(v2Keys.getPublic().getEncoded()))),
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtDecoder rotatingDecoder = jwtConfig.jwtDecoder(rotating, fixedClock);
+        // 교체 전에 v1으로 발급된 토큰과 교체 후 v2로 발급된 토큰
+        String v1Token = accessTokenProvider.issue(1L, BUYER).value();
+        JwtEncoder v2Encoder = rsaEncoder(
+                (RSAPublicKey) v2Keys.getPublic(), (RSAPrivateKey) v2Keys.getPrivate(), "rs256-v2");
+        JwsHeader v2Header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
+                .type(JwtConfig.TOKEN_TYPE)
+                .keyId("rs256-v2")
+                .build();
+        String v2Token = encode(v2Encoder, validClaims().build(), v2Header);
+
+        // when
+        Jwt v1 = rotatingDecoder.decode(v1Token);
+        Jwt v2 = rotatingDecoder.decode(v2Token);
+
+        // then
+        assertThat(v1).isNotNull();
+        assertThat(v2).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(v1.getHeaders().get("kid")).isEqualTo(KEY_ID);
+            softly.assertThat(v2.getHeaders().get("kid")).isEqualTo("rs256-v2");
+        });
+    }
+
+    @Test
     void 권한을_ADMIN으로_변조한_토큰은_거부된다() {
         // given
         String token = accessTokenProvider.issue(1L, BUYER).value();
@@ -344,6 +395,16 @@ class AccessTokenProviderTest {
     private static JwtEncoder rsaEncoder(RSAPublicKey publicKey, RSAPrivateKey privateKey, String keyId) {
         RSAKey key = new RSAKey.Builder(publicKey).privateKey(privateKey).keyID(keyId).build();
         return new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(key)));
+    }
+
+    private static Resource publicKeyPem(byte[] x509) {
+        String pem = "-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n"
+                .formatted(Base64.getMimeEncoder().encodeToString(x509));
+        return new ByteArrayResource(pem.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String base64Url(String json) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(json.getBytes(StandardCharsets.UTF_8));
     }
 
     private static String encode(JwtEncoder encoder, JwtClaimsSet claims, JwsHeader header) {
