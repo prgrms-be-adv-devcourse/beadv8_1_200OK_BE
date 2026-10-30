@@ -1,7 +1,63 @@
 # 운영 EC2(/opt/paldo-gotgan)에서 deploy.sh로 실행한다. 절차는 docs/DEPLOY.md
-# app·bff·mysql은 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
-# 메모리(t3.large 8GB): app 2560m + bff 256m에 제한 없는 MySQL·nginx와 앱 추가 인스턴스 여유를 남긴다
+# app·bff·mysql·kafka는 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
 name: paldo-gotgan
+
+# ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
+# 클러스터 1개에 브로커 3대, KRaft combined 모드다. 로컬 docker-compose.yml과 같은 구성이고, 다른 점은
+# 외부 포트를 열지 않는 것(EXTERNAL listener 없음), 메모리 제한, 디스크 용량 상한, 클러스터 ID를 .env에서 받는 것이다
+# 같은 EC2에 3대를 두므로 브로커 1대 고장은 버티지만 EC2가 죽으면 3대가 함께 죽고, 처리량도 늘지 않는다 (장애 대비용)
+# apache/kafka 이미지는 KAFKA_* 환경변수를 하나라도 넣으면 이미지 기본 설정을 전혀 쓰지 않으므로, 필요한 값을 모두 적는다
+x-kafka-environment: &kafka-environment
+  KAFKA_PROCESS_ROLES: broker,controller
+  # 3대가 같은 값을 가져야 한 클러스터로 묶인다. 비밀값은 아니지만 서버마다 정하므로 .env에서 받는다
+  # 처음 정한 뒤 바꾸면 기존 볼륨과 맞지 않아 브로커가 뜨지 않는다 (docs/DEPLOY.md)
+  CLUSTER_ID: ${KAFKA_CLUSTER_ID:?KAFKA_CLUSTER_ID가 필요하다}
+  # 3대 중 2대(과반)가 모여야 컨트롤러를 뽑고 시작한다. 그래서 브로커끼리는 depends_on을 걸지 않는다
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+  # INTERNAL: 브로커끼리 복사, app 접속 / CONTROLLER: 브로커끼리 투표. 밖에서 붙는 listener는 두지 않는다
+  KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  # 메시지를 3대에 복사하고, 2대 이상에 저장돼야 발행 성공으로 본다(앱의 acks=all과 짝). 1대가 고장 나도 발행이 계속된다
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  # 데이터는 루트 디스크(30GB, 도커 볼륨)에 둔다. /data(EBS)는 MySQL 전용이라 Kafka가 디스크를 채워도 MySQL은 멈추지 않는다
+  # 보관 기간(기본 7일)보다 용량이 먼저 차는 경우를 막으려고 파티션 하나당 256MB까지만 남기고 오래된 것부터 지운다
+  # 예) 토픽 5개 × 파티션 1개 × 복사 3벌 × 256MB ≈ 3.8GB. 토픽이 늘면 docs/DEPLOY.md의 디스크 예산을 다시 계산한다
+  # 오래된 메시지는 세그먼트 파일 단위로만 지워지고 쓰는 중인 파일은 지우지 않으므로, 세그먼트를 상한보다 작게 둬야 상한이 동작한다
+  KAFKA_LOG_RETENTION_BYTES: 268435456
+  KAFKA_LOG_SEGMENT_BYTES: 67108864
+  # 힙은 비율이 아니라 고정값으로 잡는다. Kafka는 힙보다 OS 페이지 캐시를 많이 써서 mem_limit 안에 그 자리를 남겨야 한다 (384/680)
+  KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+
+x-kafka-service: &kafka-service
+  image: apache/kafka:${KAFKA_VERSION:?KAFKA_VERSION이 필요하다}
+  restart: unless-stopped
+  # Kafka는 app만 닿으면 되므로 mysql·nginx가 있는 기본 네트워크와 나눈다 (#318)
+  networks: [kafka-net]
+  # 기본 10초 안에 안 꺼지면 강제 종료(137)되는데, 리더를 넘기는 정상 종료가 10초를 넘길 수 있다
+  # 강제 종료되면 다음 기동 때 로그 복구로 오래 걸려 1대씩 재시작(kafka-rollout.sh)이 느려지므로 넉넉히 기다린다
+  stop_grace_period: 30s
+  # 3대 합계 약 2GB. 한 대가 메모리를 몰아 써서 다른 브로커까지 죽이지 않게 대마다 묶는다 (docs/DEPLOY.md 메모리 예산)
+  mem_limit: 680m
+  healthcheck:
+    # 브로커가 요청을 받을 수 있는지 묻는다. 이 명령도 JVM을 띄우므로 힙을 작게 묶는다(컨테이너의 KAFKA_HEAP_OPTS 384m를 그대로 쓰지 않게)
+    # app이 이 결과(healthy)를 기다리므로 재시도를 둬서 바쁠 때의 일시적 실패로 배포가 막히지 않게 한다
+    test: ['CMD-SHELL', 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null']
+    # 확인할 때마다 JVM이 하나 더 떠서 브로커와 같은 mem_limit 안에서 메모리를 쓰고 CPU 크레딧(cpu_credits=standard)도 쓴다
+    # 3대 × 10초마다면 대기 중에도 부담이 커서, 평소에는 30초마다만 확인한다
+    interval: 30s
+    timeout: 10s
+    # 연속 4번(약 2분) 실패하면 unhealthy
+    retries: 4
+    # 기동 직후에는 5초마다 확인해, 간격을 늘려도 배포 때 healthy가 늦게 잡히지 않게 한다 (Docker Engine 25 이상)
+    start_period: 60s
+    start_interval: 5s
 
 services:
   mysql:
@@ -26,11 +82,50 @@ services:
       retries: 20
       start_period: 20s
 
+  # 브로커 3대는 이름·번호만 다르다. 1대씩 다시 띄우는 순서는 deploy.sh가 맡는다
+  kafka-1:
+    <<: *kafka-service
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092
+    volumes:
+      - kafka-1-data:/var/lib/kafka/data
+
+  kafka-2:
+    <<: *kafka-service
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9092
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+
+  kafka-3:
+    <<: *kafka-service
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:9092
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+
   app:
     image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # default: mysql·nginx와 통신 / kafka-net: 브로커 접속
+    # mysql·nginx는 기본 네트워크에 그대로 둔다. 네트워크를 바꾸면 배포 때 mysql 컨테이너를 새로 만들어 DB가 잠깐 끊긴다
+    networks: [default, kafka-net]
     depends_on:
       mysql:
+        condition: service_healthy
+      # mysql과 같이 Kafka 3대도 healthy가 된 뒤에 앱을 띄운다 (#318)
+      # 대신 브로커가 healthy가 되지 못하면 앱이 뜨지 않고 배포가 실패한다. 헬스체크 오판으로 배포가 자주 막히면 service_started로 바꾼다
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
         condition: service_healthy
     # env_file을 쓰지 않고 앱이 쓰는 값만 넘긴다. MYSQL_ROOT_PASSWORD 같은 값이 앱 컨테이너에 들어가지 않게 하기 위함이다
     environment:
@@ -39,6 +134,8 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
+      # 브로커 3대를 모두 적어, 1대가 죽어 있어도 나머지로 처음 접속한다
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET이 필요하다}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY가 필요하다}
       AWS_REGION: ${AWS_REGION:?AWS_REGION이 필요하다}
@@ -47,7 +144,8 @@ services:
       ADMIN_BOOTSTRAP_LOGIN_ID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. 전체 예산은 파일 맨 위 주석을 본다
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Kafka(3대 약 2GB)·BFF(256m)를 함께 올리면
+      # 남는 메모리(약 1.5GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     mem_limit: 2560m
     healthcheck:
@@ -91,3 +189,13 @@ services:
     volumes:
       # 템플릿은 nginx가 시작할 때 conf.d로 렌더링된다. 템플릿을 바꾸면 nginx를 재시작해야 반영된다
       - ./nginx/templates:/etc/nginx/templates:ro
+
+networks:
+  kafka-net:
+
+# 브로커마다 따로 둔다. 도커 볼륨이라 루트 디스크(/var/lib/docker)에 쌓인다
+# 인스턴스를 교체하면 루트 디스크와 함께 사라져 아직 안 읽힌 메시지도 사라진다. 원본 데이터는 DB에 있으므로 받아들인다
+volumes:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:

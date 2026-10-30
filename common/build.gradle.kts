@@ -18,6 +18,9 @@ dependencies {
     api("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
     api("software.amazon.awssdk:s3")
     api(libs.owasp.html.sanitizer)
+    // 모듈 간 이벤트를 메시지 브로커로 옮길 기반 (#318). 접속 설정은 DB처럼 monolith와 모듈 yaml이 각자 갖는다
+    // 모든 모듈이 같은 브로커를 쓰는 공통 인프라라 common의 api로 연다(#288). 연결은 처음 쓸 때 맺어 쓰지 않는 모듈의 비용은 거의 없다
+    api("org.springframework.boot:spring-boot-starter-kafka")
 
     runtimeOnly("com.mysql:mysql-connector-j")
 
