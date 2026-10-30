@@ -322,21 +322,18 @@ public class PayoutService {
 
     // 이번 스냅샷에서 확정된 판매자 몫 정산만 지갑 이벤트로 발행하고(0원 이하 제외), 발행 건수를 반환
     // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
-    // 수신은 커밋 후 → 이 트랜잭션이 롤백되면 전달 안 됨. 같은 정산이 두 번 전달돼도 지갑은 payoutId로 중복 반영을 막음
+    // 발행은 Kafka(payout.seller-payout-created)로 한 건씩 저장 확인을 기다림. 한 건이라도 실패하면 예외로 이 Step이 멈춤
+    // 같은 정산이 두 번 전달돼도 지갑은 payoutId로 중복 반영을 막음
     //
-    // TODO(#52): 발행 누락 위험. commitStep은 성공했는데 publishStep이 실패하면 확정된 정산의 이벤트가 영원히 발행되지 않음
-    //   예) commitStep ✅ payout 커밋 → publishStep ❌ (DB 연결 끊김 등) → Job FAILED
+    // TODO(#309): 발행 누락 위험. commitStep은 성공했는데 publishStep이 실패하면 확정된 정산의 이벤트가 영원히 발행되지 않음
+    //   예) 판매자 100명 중 37번째에서 브로커 오류 → 1~36은 지갑에 입금, 37~100은 정산은 확정됐지만 메시지가 안 감 → Job FAILED
     //       → 다음 배치의 스냅샷은 "payout_item에 없는 후보"만 대상이라 이미 확정된 이 정산은 다시 다뤄지지 않음
     //       → 판매자는 정산이 확정됐는데 지갑에 돈이 들어오지 않음
     //   지금 구조는 실패한 Job을 재시작(restart)하지 않고 새로 재실행하므로 이 publishStep만 다시 돌릴 경로가 없음
     //   누락 찾는 방법: payout_snapshot.job_execution_id로 BATCH_STEP_EXECUTION에서 payoutPublishStep이 COMPLETED가 아닌 실행을 찾고,
-    //   그 스냅샷의 판매자 몫 payout을 다시 발행 (지갑은 payoutId로 중복 반영을 막아야 함)
-    //   해결 방향(후속 이슈에서 결정):
-    //     - 발행 누락 정산(이벤트 발행 기록이 없는 판매자 몫 payout)을 찾아 다시 발행하는 경로 추가, 또는
-    //     - 이벤트 발행을 commitStep 트랜잭션 안으로 옮김 (Spring Modulith가 발행 기록(event_publication)을 같은 트랜잭션에 저장하므로
-    //       payout과 발행 기록이 함께 커밋·롤백되어 누락이 생기지 않음. 대신 publishStep이 없어짐)
+    //   EXIT_MESSAGE의 payoutId(멈춘 정산)부터 그 스냅샷의 판매자 몫 payout을 다시 발행 (지갑은 payoutId로 중복 반영을 막음)
+    //   해결 방향: outbox. 보낼 메시지를 commitStep 트랜잭션에서 payout과 함께 DB에 저장하고, 별도 발행기가 보내고 실패하면 다시 보냄
     //   현재는 이슈 #69 설계(확정과 발행을 Step으로 분리)를 따름
-    //   Kafka 전환 때 발행 방식(아웃박스 등)이 바뀌므로 그때 함께 처리 (#52에 기록)
     @Transactional
     public int publish(Long snapshotId) {
         List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
