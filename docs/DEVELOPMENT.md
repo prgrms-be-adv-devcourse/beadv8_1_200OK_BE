@@ -68,14 +68,15 @@ docker compose up -d
 `docker compose up -d`는 MySQL과 함께 Kafka 브로커 3대(`kafka-1`~`kafka-3`)를 띄웁니다. 운영과 같은 구성(클러스터 1개, 브로커 3대, KRaft combined)입니다.
 
 - 내 PC에서는 `localhost:19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서).
-- 앱의 접속 주소는 `application.yaml`(모듈 단독 실행은 `application-<모듈>.yaml`)의 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값이 위 3대라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
+- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값이 위 3대라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
 - 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다. 상태는 `docker compose ps`에서 `healthy`로 확인합니다.
 - 메시지는 3대에 복사되고 2대 이상에 저장돼야 발행 성공입니다. 그래서 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고, 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다.
 - Kafka만 처음 상태로 되돌리려면 `docker compose down -v`로 볼륨까지 지웁니다(토픽·메시지가 모두 사라지고 새 클러스터로 시작합니다).
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
 - Kafka 상태는 앱 헬스체크(`/actuator/health`)에 들어가지 않습니다. 앱은 메시지를 보내거나 받을 때 처음 브로커에 접속하므로, 브로커가 꺼져 있어도 기동은 됩니다.
-- 메시지 키는 문자열, 값은 JSON(Jackson)입니다. 메시지 헤더에 보내는 쪽 Java 클래스 이름(타입 헤더)을 싣지 않으므로, 받는 쪽은 리스너(토픽)마다 읽을 타입을 정합니다. 값을 JSON으로 읽지 못한 메시지 때문에 컨슈머가 멈추지 않도록 역직렬화 실패는 오류 처리로 넘깁니다(`ErrorHandlingDeserializer`). 설정은 `application.yaml`과 모듈 yaml의 `spring.kafka`에 같은 값으로 있습니다.
+- 메시지 키는 문자열, 값은 JSON(Jackson)입니다. 메시지 헤더에 보내는 쪽 Java 클래스 이름(타입 헤더)을 싣지 않으므로, 받는 쪽은 리스너(토픽)마다 읽을 타입을 정합니다. 값을 JSON으로 읽지 못한 메시지 때문에 컨슈머가 멈추지 않도록 역직렬화 실패는 오류 처리로 넘깁니다(`ErrorHandlingDeserializer`). 설정은 `monolith`의 `application.yaml`의 `spring.kafka`에만 있습니다.
+- 의존성(`spring-boot-starter-kafka`)은 `common`이 `api`로 모든 모듈에 노출합니다. 모듈 yaml에는 Kafka 설정을 두지 않으므로, 모듈을 단독 실행하며 Kafka를 쓰게 되면 `monolith`의 `spring.kafka` 블록을 그대로 복사합니다. 직렬화 설정이 모듈마다 다르면 보내는 쪽과 받는 쪽이 메시지를 서로 읽지 못합니다.
 
 ### 앱까지 컨테이너(docker compose)로 실행
 
@@ -129,7 +130,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
 | `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림) | `19092` / `29092` / `39092` |
 | `KAFKA_BOOTSTRAP_SERVERS` | 앱이 접속할 브로커 3대 | `localhost:19092,localhost:29092,localhost:39092` |
-| `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`, 모듈 단독 실행은 모듈 이름) |
+| `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`) |
 
 ### 새 설정값을 환경변수로 추가하는 방법
 
@@ -168,7 +169,6 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `server.port` | `${SERVER_PORT:<포트>}` | 단독 실행 포트. 환경변수 `SERVER_PORT`로 바꿀 수 있고, 모듈마다 달라야 합니다 |
 | `spring.application.name` | 모듈 이름 | 로그와 메트릭의 앱 이름 |
 | `spring.config.import` | 루트 `.env`, 모듈 `.env` | 읽는 순서는 아래 [`.env` 읽는 순서](#env-읽는-순서-모듈-단독-실행) |
-| `spring.kafka.*` | `${KAFKA_BOOTSTRAP_SERVERS:...}`, `${KAFKA_CONSUMER_GROUP_ID:${spring.application.name}}` 등 | Kafka 접속 주소, 컨슈머 그룹(기본은 모듈 이름), 직렬화. 모든 모듈과 `monolith`가 같은 값이어야 합니다 |
 | `spring.datasource.url` | `jdbc:mysql://${DB_HOST}:${DB_PORT}/paldogotgan_<모듈>?...` | 이 모듈이 접속하는 DB. 스키마 이름이 URL에 적혀 있고 `<모듈>Schema.NAME`(엔티티의 `@Table(catalog)`)과 같아야 합니다. `monolith`용 `DB_URL`은 읽지 않습니다 |
 | `spring.datasource.username`, `password` | `${DB_USERNAME:myuser}`, `${DB_PASSWORD:password}` | 모듈 `.env`의 모듈 계정. `.env`가 없으면 공용 계정으로 접속합니다 |
 | `spring.jpa.hibernate.ddl-auto` | `${JPA_DDL_AUTO:validate}` | 테이블은 Flyway가 만들므로 기본은 검증만 합니다 |
