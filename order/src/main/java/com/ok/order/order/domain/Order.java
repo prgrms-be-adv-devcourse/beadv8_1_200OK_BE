@@ -30,6 +30,10 @@ public class Order extends BaseTime {
     @Column(nullable = false)
     private Long buyerId;
 
+    // 주문 생성 멱등키 (Idempotency-Key 헤더), 키 도입 전 주문은 null
+    @Column(length = 64)
+    private String idempotencyKey;
+
     // 주문 상태
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -131,6 +135,11 @@ public class Order extends BaseTime {
         this.zipCode = zipCode;
         this.address = address;
         this.addressDetail = addressDetail;
+    }
+
+    // 멱등키 기록: (구매자, 멱등키) 유니크 제약이 같은 요청의 중복 저장을 막는다
+    public void assignIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 
     // 판매자에게 주문 정보 제공 동의

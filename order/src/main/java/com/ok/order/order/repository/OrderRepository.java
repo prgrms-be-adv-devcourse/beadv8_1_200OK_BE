@@ -16,6 +16,7 @@ import java.util.Optional;
 public interface OrderRepository extends JpaRepository<Order, Long> {
     Page<Order> findByBuyerIdOrderByIdDesc(Long buyerId, Pageable pageable);
     Optional<Order> findByIdAndBuyerId(Long id, Long buyerId);
+    Optional<Order> findByBuyerIdAndIdempotencyKey(Long buyerId, String idempotencyKey);
     @Query("""
             select i from OrderItem i
             join fetch i.sellerGroup g
