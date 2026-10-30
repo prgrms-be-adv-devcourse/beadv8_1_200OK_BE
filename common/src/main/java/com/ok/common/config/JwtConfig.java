@@ -18,9 +18,13 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JoseHeaderNames;
 import org.springframework.security.oauth2.jwt.JwtClaimNames;
 import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -73,11 +77,21 @@ public class JwtConfig {
     private static final Duration CLOCK_SKEW = Duration.ZERO;
 
     /**
+     * kid가 없는 토큰을 거부하는 검증기. 우리가 발급하는 토큰에는 항상 kid가 있다.
+     * kid가 없으면 Nimbus가 검증 목록의 모든 키로 서명을 맞춰 보므로, "kid로 검증할 공개키를 고른다"는 규칙이
+     * kid 없는 토큰에도 적용되도록 막는다.
+     */
+    private static final OAuth2TokenValidator<Jwt> KEY_ID_REQUIRED = jwt -> jwt.getHeaders().get(JoseHeaderNames.KID) != null
+            ? OAuth2TokenValidatorResult.success()
+            : OAuth2TokenValidatorResult.failure(
+                    new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN, "The kid header is missing", null));
+
+    /**
      * 토큰을 검증하는 디코더. 보안 필터({@code SecurityConfig}의 oauth2ResourceServer)가 요청마다 이 빈으로 토큰을 검증한다.
      *
      * <p>검증 항목
      * <ul>
-     *   <li>서명: 헤더의 {@code kid}에 해당하는 공개키로 RS256 서명이 맞는지 (위조·변조된 토큰, 등록되지 않은 {@code kid} 거부)</li>
+     *   <li>서명: 헤더의 {@code kid}에 해당하는 공개키로 RS256 서명이 맞는지 (위조·변조된 토큰, {@code kid}가 없거나 등록되지 않은 {@code kid} 거부)</li>
      *   <li>타입(typ): Access Token({@link #TOKEN_TYPE})인지</li>
      *   <li>만료(exp): 필수이며, 허용 오차 없이 검증 ({@link #CLOCK_SKEW})</li>
      *   <li>발급자(iss): 우리 서비스가 발급한 토큰인지</li>
@@ -105,6 +119,7 @@ public class JwtConfig {
                 new JwtClaimValidator<Instant>(JwtClaimNames.EXP, Objects::nonNull),
                 // 만료 판단은 이 검증기 하나가 맡는다. 만료를 위조·형식 오류와 구분할 수 있도록 별도 오류 코드를 남긴다.
                 new ExpiredTokenValidator(CLOCK_SKEW, clock),
+                KEY_ID_REQUIRED,
                 new JwtIssuerValidator(properties.issuer()),
                 new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
                         audience -> audience != null && audience.contains(properties.audience()))

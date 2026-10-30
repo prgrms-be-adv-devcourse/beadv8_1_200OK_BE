@@ -292,6 +292,23 @@ class AccessTokenProviderTest {
     }
 
     @Test
+    void kid가_없는_토큰은_우리_개인키로_서명했어도_거부된다() {
+        // given
+        // kid가 없으면 Nimbus는 검증 목록의 모든 키로 서명을 맞춰 보므로, 서명만으로는 거부되지 않는다
+        JwtEncoder noKidEncoder = rsaEncoder(
+                RsaPemKeys.publicKey(PUBLIC_KEY), RsaPemKeys.privateKey(PRIVATE_KEY), null);
+        JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
+                .type(JwtConfig.TOKEN_TYPE)
+                .build();
+        String token = encode(noKidEncoder, validClaims().build(), header);
+
+        // when & then
+        assertThatThrownBy(() -> jwtDecoder.decode(token))
+                .isInstanceOf(JwtValidationException.class)
+                .hasMessage("An error occurred while attempting to decode the Jwt: The kid header is missing");
+    }
+
+    @Test
     void 서명_없는_alg_none_토큰은_거부된다() {
         // given
         // alg=none은 서명이 없는 토큰이다. 받아들이면 누구나 아무 클레임이나 담아 보낼 수 있다
