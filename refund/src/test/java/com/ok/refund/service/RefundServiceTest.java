@@ -8,6 +8,8 @@ import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundRequestCommand;
 import com.ok.refund.service.dto.RefundResult;
+import com.ok.refund.service.dto.RefundableOrderItem;
+import com.ok.refund.service.dto.SellerGroupItem;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static com.ok.refund.fixture.RefundFixture.BUYER_ID;
+import static com.ok.refund.fixture.RefundFixture.HAT_ORDER_ITEM_ID;
 import static com.ok.refund.fixture.RefundFixture.NOW;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ID;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ITEM_ID;
@@ -255,6 +258,25 @@ class RefundServiceTest {
             softly.assertThat(result.remoteAreaFeeAmount()).isZero();
             softly.assertThat(result.refundAmount()).isEqualTo(10_000L);
         });
+    }
+
+    @Test
+    void 주문_응답의_묶음_수량과_상품_수량이_다르면_승인하지_않고_요청됨으로_둔다() {
+        // given: 양말 상품 수량은 3인데 묶음 목록에는 2로 온 주문 응답(주문 모듈 응답 버그)
+        Refund target = withId(requested(1), REFUND_ID);
+        RefundableOrderItem socks = socks();
+        RefundableOrderItem mismatched = new RefundableOrderItem(socks.orderId(), socks.orderItemId(), socks.buyerId(),
+                socks.sellerId(), socks.productOptionId(), socks.productName(), socks.optionName(), socks.status(),
+                socks.unitPrice(), socks.quantity(), socks.shippingFee(), socks.remoteAreaFee(),
+                List.of(new SellerGroupItem(ORDER_ITEM_ID, 2), new SellerGroupItem(HAT_ORDER_ITEM_ID, 1)));
+        given(refundRepository.findIdsByOrderIdAndSellerId(ORDER_ID, SELLER_ID)).willReturn(List.of(REFUND_ID));
+        given(refundRepository.findAllByIdInForUpdate(List.of(REFUND_ID))).willReturn(List.of(target));
+
+        // when & then: 어느 수량을 믿을지 몰라 배송비를 판단하지 않는다
+        assertThatThrownBy(() -> sut.startApproval(REFUND_ID, SELLER_ID, mismatched))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("주문 응답의 묶음 수량과 상품 수량이 다릅니다. orderItemId=" + ORDER_ITEM_ID);
+        assertThat(target.getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
     @Test

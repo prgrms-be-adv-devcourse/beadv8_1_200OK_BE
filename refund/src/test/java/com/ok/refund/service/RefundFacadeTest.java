@@ -14,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import static com.ok.refund.fixture.RefundFixture.BUYER_ID;
 import static com.ok.refund.fixture.RefundFixture.HAT_ORDER_ITEM_ID;
@@ -200,6 +201,20 @@ class RefundFacadeTest {
         assertThatThrownBy(() -> sut.decide(approve()))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+    }
+
+    @Test
+    void 다른_모듈_처리_뒤_완료_저장이_실패하면_실패_단계를_기록하지_않고_예외를_그대로_던진다() {
+        // given: 배송 잠금 해제까지 끝났는데 완료 저장만 DB 장애로 실패
+        givenApprovalStarts();
+        given(deliveryClient.reserveCancel(REFUND_ID, ORDER_ITEM_ID, 1)).willReturn(ShipmentReserveResult.RESERVED);
+        DataAccessResourceFailureException dbFailure = new DataAccessResourceFailureException("DB 연결 실패");
+        willThrow(dbFailure).given(refundService).complete(REFUND_ID);
+
+        // when & then: 다른 예외로 감싸지 않아야 ApiControllerAdvice가 500으로 한 번 기록한다
+        assertThatThrownBy(() -> sut.decide(approve())).isSameAs(dbFailure);
+        // 모든 단계가 이미 끝났으므로 어느 단계에서 멈췄다고 기록하면 다시 처리할 때 끝난 단계를 또 부르게 된다
+        then(refundService).should(never()).recordFailure(any(), any(), any());
     }
 
     @Test
