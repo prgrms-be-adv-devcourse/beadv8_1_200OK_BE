@@ -7,7 +7,7 @@
 # 상태별 처리:
 #   [a] 3대 모두 떠 있지 않음(첫 배포, down 이후) → 3대를 동시에 띄운다
 #       KRaft는 3대 중 2대가 모여야 시작하므로, 1대씩 띄우고 기다리면 혼자서는 시작할 수 없어 끝없이 기다린다
-#   [b] 3대 모두 healthy → 1대씩 up -d → healthy와 복사 따라잡기를 기다린 뒤 다음 브로커
+#   [b] 3대 모두 healthy → 복사가 다 따라잡혔는지 먼저 확인 → 1대씩 up -d → healthy와 복사 따라잡기를 기다린 뒤 다음 브로커
 #       설정이 그대로인 브로커는 compose가 다시 만들지 않아 평소 배포에서는 바로 지나간다
 #   [c] 일부만 살아 있음 → 중단한다. 이 상태에서 1대를 더 내리면 살아 있는 브로커가 1대뿐이라 Kafka 전체가 멈춘다
 #   켜지는 중(starting)인 브로커는 판정 전에 healthy가 될 때까지 기다린다
@@ -62,8 +62,9 @@ wait_healthy() {
 # healthy는 "요청을 받기 시작함"일 뿐이다. 밀린 복사본을 다 따라잡기 전에 다음 브로커를 내리면
 # 잠깐 복사본이 1벌뿐인 파티션이 생기므로, 복사가 덜 된 파티션이 0개가 될 때까지 기다린다
 # 리더가 없어 읽고 쓸 수 없는 파티션은 복사가 덜 된 파티션 목록에 나오지 않을 수 있어 함께 확인한다
+# 두 번째 인자는 실패 메시지에 넣을 시점이다 (재시작 전 / 재시작 뒤)
 wait_in_sync() {
-  local broker=$1 lagging="" errlog
+  local broker=$1 when=$2 lagging="" errlog
   # 조회가 실패했을 때 원인(접속 오류, 메모리 부족 등)을 실패 메시지에 남기려고 오류 출력을 따로 받는다
   errlog=$(mktemp)
   for _ in $(seq 1 "$RETRIES"); do
@@ -79,7 +80,7 @@ wait_in_sync() {
     sleep "$INTERVAL"
   done
   rm -f "$errlog"
-  echo "Kafka 배포 실패: $broker 재시작 뒤 2분 안에 복사를 따라잡지 못했다" >&2
+  echo "Kafka 배포 실패: $broker $when 2분 안에 복사가 다 따라잡히지 않았다" >&2
   echo "$lagging" >&2
   return 1
 }
@@ -116,11 +117,15 @@ if [ "$up_count" -eq 0 ]; then
     wait_healthy "$broker"
   done
 elif [ "$healthy_count" -eq "${#BROKERS[@]}" ]; then
-  # [b] 1대씩 다시 띄운다 (바뀐 것이 없으면 compose가 그대로 둔다)
+  # [b] healthy는 복사를 다 따라잡았다는 뜻이 아니다. 직전에 다시 켜진 브로커가 아직 따라잡는 중이면
+  #     최신 복사본을 가진 브로커가 2대뿐인 파티션이 있어, 첫 브로커를 내리는 순간 min.insync.replicas=2를 못 채워 발행이 실패한다
+  #     그래서 첫 재시작 전에도 확인한다. 클러스터 전체를 조회하므로 한 대에서만 물으면 된다
+  wait_in_sync "${BROKERS[0]}" "재시작 전"
+  # 1대씩 다시 띄운다 (바뀐 것이 없으면 compose가 그대로 둔다)
   for broker in "${BROKERS[@]}"; do
     docker compose up -d --no-deps "$broker"
     wait_healthy "$broker"
-    wait_in_sync "$broker"
+    wait_in_sync "$broker" "재시작 뒤"
   done
   echo "Kafka: 3대 모두 healthy, 복사 따라잡음"
 else
