@@ -120,8 +120,12 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 - 서비스는 `service` 패키지에 둔 발행 인터페이스로만 이벤트를 발행한다. 인터페이스는 이벤트 클래스가 아니라 값이나 `*Command`를 받는다. 구현체는 `event` 패키지에 둔다.
 - 발행 인터페이스는 발행하는 도메인(하위 도메인이 있으면 하위 도메인)마다 하나를 두고, 발행할 이벤트가 늘면 그 인터페이스에 메서드를 추가한다. 서비스마다 쓰는 메서드가 갈리면 유스케이스 기준으로 나눈다. 받는 모듈 기준으로 나누거나 이벤트마다 인터페이스를 따로 만들지 않는다.
 - 발행 인터페이스와 구현체 이름에는 도메인(하위 도메인) 이름을 붙인다(예: `PayoutEventPublisher`, `SpringPayoutEventPublisher`, member 모듈의 판매자 하위 도메인은 `SellerEventPublisher`, `SpringSellerEventPublisher`).
-- 모듈 간 이벤트 클래스는 `common.event.DomainEvent`를 구현하고, 발행 구현체는 `DomainEvent`만 발행한다. 이벤트가 담는 값 레코드(배송지, 판매자별 묶음 등)는 `common.event.payload`에 둔다.
-- `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다.
+- 모듈 간 이벤트 DTO는 보내는 모듈과 받는 모듈이 각자 자기 `event` 패키지에 둔다. 공통 클래스를 같이 쓰지 않고, 메시지 모양(필드 이름·타입·단위)으로 약속한다.
+- 새 이벤트는 처음부터 메시지 브로커로 보내고 자기 DTO로 만든다. `common.event`에 새 이벤트를 추가하지 않는다.
+- 기존 이벤트를 브로커로 옮길 때는 그 이벤트의 보내는 쪽과 받는 쪽을 같은 시점에 함께 자기 DTO로 바꾼다. 한쪽만 먼저 옮기지 않고, 양쪽 변경은 한 PR로 묶거나 두 PR을 서로 링크해 같이 머지한다.
+- 아직 Spring 이벤트로 주고받는 기존 이벤트는 공통 이벤트 클래스(`common.event`)를 그대로 쓴다. 지금처럼 `DomainEvent`를 구현하고 `event` 패키지에서만 쓴다. 모든 이벤트를 옮기면 `common.event`를 지운다.
+- 메시지 약속(토픽, 필드 이름·타입·단위)은 보내는 쪽이 전환 이슈 본문에 적고, 받는 쪽 담당이 그 PR을 함께 리뷰한다.
+- 발행 도구(`ApplicationEventPublisher` 등)와 이벤트 DTO는 `event` 패키지에서만 쓴다. 리스너는 이벤트를 `*Command`나 값으로 바꿔 서비스를 호출한다.
 
 **이유**:
 한 모듈에 성격이 다른 하위 도메인이 있으면(예: product와 review) `Service`, `Repository` 같은 클래스 이름이 겹치고, 이름만으로 구분하기 어렵다.
@@ -134,7 +138,10 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 같은 모듈이라도 하위 도메인은 역할과 성격이 다르다(예: member 모듈의 회원과 판매자). 한 인터페이스에 모으면 한 하위 도메인의 기능이 늘 때 다른 하위 도메인의 서비스가 쓰지 않는 메서드까지 함께 커지므로, 발행하는 하위 도메인마다 둔다. 같은 이유로, 한 인터페이스를 여러 서비스가 쓰는데 서비스마다 쓰는 메서드가 갈리면 유스케이스 기준으로 나눈다.
 받는 모듈 기준으로 나누면 발행하는 쪽이 누가 받는지 알아야 해서, 이벤트로 결합을 낮춘 의미가 없어진다. 이벤트마다 나누면 인터페이스가 이벤트 수만큼 늘고, 한 서비스가 발행 인터페이스를 여러 개 주입받게 된다.
 구현체가 같은 이름이면 스프링 빈 이름이 겹쳐 앱이 시작되지 않으므로 도메인(하위 도메인) 이름을 붙인다. 발행 구현체를 공통 모듈에 하나로 두지 않는 이유는, 메시지 브로커로 바꿀 때 토픽·메시지 키·아웃박스 여부가 모듈마다 다르고 모듈을 서비스로 분리하면 각자 구현체를 가져가기 때문이다.
-`DomainEvent`는 모듈 간 계약으로 정한 타입만 발행되게 한다. 값 레코드는 따로 발행하지 않으므로 하위 패키지로 나눠 이 검사에서 뺀다.
+이벤트 DTO를 모듈마다 두면, 모듈을 서비스로 나눌 때 같이 쓰는 클래스(공유 jar) 없이 각자 배포할 수 있고, 한쪽이 필드를 추가해도 다른 모듈의 컴파일이 깨지지 않는다. 메시지에 보내는 쪽 클래스 이름을 싣지 않는 Kafka 설정([`DEVELOPMENT.md`의 로컬 Kafka](DEVELOPMENT.md#로컬-kafka-318))과도 맞는다. 대신 필드 이름·타입·단위가 어긋나도 컴파일러가 잡지 못하므로, 약속을 이슈에 적어 두고 양쪽이 함께 리뷰한다.
+Spring 이벤트는 클래스 타입이 같아야 전달되므로, 각자 DTO는 Spring 이벤트로는 연결되지 않는다. 메시지 브로커는 JSON으로 보내고 받는 쪽이 자기 DTO로 읽으므로, DTO를 나누는 시점은 그 이벤트를 브로커로 옮기는 시점과 같다. 한쪽만 먼저 옮기면 오류 없이 이벤트가 전달되지 않으므로 양쪽을 같이 머지한다. 새 이벤트를 처음부터 브로커와 자기 DTO로 만들면 나중에 옮길 이벤트가 늘지 않는다.
+받는 모듈이 보내는 모듈의 클래스를 import하지 않는 것은 도메인 모듈끼리 `project(...)` 의존을 걸지 않는 규칙(2.2)으로 이미 보장된다.
+옮기는 동안 남는 `DomainEvent`는 모듈 간 계약으로 정한 타입만 발행되게 한다. 값 레코드는 따로 발행하지 않으므로 하위 패키지로 나눠 이 검사에서 뺀다.
 
 
 ```
@@ -170,25 +177,14 @@ com.ok.wallet
 ### 2.2 모듈 간 규칙
 
 **규칙**
-- 다른 모듈에 공개할 클래스(서비스, 이벤트)는 **모듈의 최상위 패키지**에 둔다. 하위 패키지(예: `order.internal`)는 다른 모듈에서 접근할 수 없다.
+- 다른 모듈에 공개할 클래스는 **모듈의 최상위 패키지**에 둔다. 하위 패키지(예: `order.internal`)는 다른 모듈에서 접근할 수 없다.
+- 이벤트 DTO는 공개하지 않는다. 받는 모듈은 보내는 모듈의 클래스를 import하지 않고 자기 DTO를 둔다(2.1).
 - 모듈 간 순환 의존은 금지한다. `common`은 도메인 모듈을 import하지 않는다.
 - 모듈 간 연동은 가능하면 이벤트(`@ApplicationModuleListener`)로 한다.
 - 모듈은 Gradle 서브프로젝트다. 도메인 모듈끼리는 `project(...)` 의존을 걸지 않는다. 다른 도메인 모듈은 `build.gradle.kts`에 `project(...)`로 선언하지 않으면 컴파일할 수 없다. 선언은 PR diff에서 바로 보이므로 리뷰에서 확인한다. 공용 코드는 `common`에 둔다.
 - 각 모듈 패키지의 `package-info.java`는 모듈 선언이므로 지우지 않는다. 새 모듈은 `./gradlew createModule -PmoduleName=<이름>`으로 만든다. 모듈 안의 구조 규칙은 모듈별 `ArchitectureTest`가 검사한다.
 
 **이유**: 모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있다. 순환 의존이 있으면 모듈을 따로 테스트하거나 분리할 수 없고, 이벤트로 연동하면 모듈 간 결합이 낮아진다. 도메인 모듈 간 `project(...)` 의존은 선언해야만 컴파일되고 선언은 PR diff에 보이므로, 규칙을 어기는 변경은 리뷰에서 먼저 걸린다.
-
-```java
-// 좋은 예: 다른 모듈에 공개하는 이벤트는 모듈 최상위 패키지에 둔다
-package com.ok.member;
-
-public record MemberRegisteredEvent(Long memberId) { }
-
-// 나쁜 예: 다른 모듈이 쓰는 클래스를 하위 패키지에 둔다 (다른 모듈에서 접근할 수 없다)
-package com.ok.member.internal;
-
-public record MemberRegisteredEvent(Long memberId) { }
-```
 
 ### 2.3 DTO 위치
 
@@ -1090,16 +1086,18 @@ class OrderServiceIntegrationTest { ... }
 | Controller → Service → Repository 방향으로만 의존하고, `domain`은 Service·Repository만 쓴다 | 2.1, 2.3 |
 | 패키지 사이에 순환 의존이 없다 (모듈 안 패키지까지) | 2.2 확장 |
 | 이벤트 리스너(`event`)는 `controller`, `repository`, `domain`을 쓰지 않는다 | 2.1 |
-| `ApplicationEventPublisher`와 이벤트 클래스(`common.event`)는 `event` 패키지만 쓴다 | 2.1 |
+| `ApplicationEventPublisher`와 기존 공통 이벤트 클래스(`common.event`)는 `event` 패키지만 쓴다 | 2.1 |
 | `service`는 `event` 패키지(`common.event` 제외)에 의존하지 않는다 | 2.1 |
 | `event`에서 `ApplicationEventPublisher`를 쓰는 클래스(발행 구현체)는 `service`의 인터페이스를 구현한다 | 2.1 |
-| `common.event`의 이벤트 클래스는 `DomainEvent`를 구현한다 (`common.event.payload` 제외) | 2.1 |
+| `common.event`의 이벤트 클래스는 `DomainEvent`를 구현한다 (`common.event.payload` 제외, 옮기는 동안만) | 2.1 |
 | `@RestController`는 `*Controller`, `@Service`는 `*Service`이고 각 레이어 패키지에 있다 | 3.2 |
 | 저장소는 `repository`, 엔티티는 `domain`, `ErrorCode` 구현체는 `exception` 패키지에 있다 | 2.1, 3.2 |
 | Swagger 문서 인터페이스는 `*Spec`, package-private이고 `spec` 패키지에 두지 않는다 | 3.3 |
 | 컨트롤러 클래스·메서드에 `@Transactional`을 붙이지 않는다 | 7.1 |
 | `System.out`, `System.err`를 쓰지 않는다 | 일반 |
 | 엔티티는 `@Table(catalog = <모듈>Schema.NAME)`으로 자기 모듈 스키마를 지정한다 | 4.3 |
+
+`common.event`를 검사하거나 검사에서 제외하는 줄은 모든 모듈이 자기 이벤트 DTO로 옮길 때까지 두고, `common.event`를 지울 때 함께 정리한다.
 
 규칙을 넣을 때 이미 있던 위반은 freeze로 그 모듈의 `src/test/resources/archunit_store/`에 기준선으로 저장한다. 기준선에 있는 위반은 통과하고, 새로 생긴 위반만 실패한다. 위반을 고치면 기준선에서 자동으로 빠지므로, 바뀐 `archunit_store` 파일도 같이 커밋한다.
 
@@ -1577,7 +1575,6 @@ docs/60    ─┘   (이슈별 브랜치)    (dev에 모인 코드)
 | 항목 | 현재 본문 | 확정할 내용 | 협의 상대 |
 |---|---|---|---|
 | `common`에 두는 코드의 기준 (2.4) | 둘 이상의 모듈이 쓰는 코드만 `common`에 둔다 | `S3Config`와 `MediaInfo`는 media만 쓰는데 `common`에 있다. 본문 초안은 "각 모듈이 S3 설정을 따로 가져가고, 공통으로 묶을 규칙이 생기면 그때 `common`으로 옮긴다"이다. 다만 이슈 #7에 "각 도메인에서 공통 API로 업로드한 미디어를 참조할 수 있도록 한다"고 적혀 있어, 다른 모듈은 S3를 직접 쓰지 않고 media의 업로드 API를 쓰고 `mediaId`만 저장하는 설계일 수 있다. media 담당에게 확인이 필요하다 | media 담당, 환불·회원 담당 |
-| 공개 이벤트의 위치 (2.2) | 공개 이벤트는 발행 모듈의 최상위 패키지에 둔다 | `OrderProductConfirmedEvent`는 `common.event`에 있다(order 모듈이 아직 없음). order 모듈이 생길 때의 위치 | order 담당, payout 담당 |
 | `DEVELOPMENT.md`의 모듈 표 | 표에 `media`가 없다 | media를 도메인 모듈로 볼지 공통 모듈로 볼지(이슈 #7의 라벨은 `domain: common`) | 팀 전체 |
 | 브랜치 유형 접두사 (11.2) | 기능은 `feature/<이슈번호>`, 나머지는 커밋 유형을 소문자로 쓴 `<유형>/<이슈번호>` | `bug` 라벨을 `fix/`로 대응하는 것, epic 통합 브랜치 이름(현재 `feature/41`) | 팀 전체 |
 | AI 봇 병합 조건 (11.3) | AI 봇의 리뷰가 OK이면 squash merge | 현재 리뷰 워크플로는 댓글만 남기고 승인·차단을 하지 않는다. OK를 병합 조건으로 쓰는 방법 | 팀 전체 |
