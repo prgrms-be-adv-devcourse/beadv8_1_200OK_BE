@@ -7,10 +7,12 @@ import com.ok.order.order.client.DeliveryApiClient;
 import com.ok.order.order.client.ProductApiClient;
 import com.ok.order.order.client.WalletApiClient;
 import com.ok.order.order.client.dto.ProductOptionInfoResponse;
+import com.ok.order.order.client.dto.SellerShippingFeeResponse;
 import com.ok.order.order.client.dto.StockAllocationItemRequest;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderLine;
+import com.ok.order.order.domain.SellerShippingFee;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.service.dto.CheckoutResult;
 import com.ok.order.order.service.dto.CreateOrderCommand;
@@ -39,9 +41,9 @@ public class OrderFacade {
     private static final int IDEMPOTENCY_KEY_MAX_LENGTH = 64;
     private static final String IDEMPOTENCY_KEY_CONSTRAINT = "uk_orders_buyer_id_idempotency_key";
 
-    // 주문서 조회
+    // 주문서 조회: 배송지를 고르기 전이라 우편번호 없이 계산한다 (도서산간 운임은 주문 생성 때 더해진다)
     public CheckoutResult getCheckout(Long memberId) {
-        return CheckoutResult.from(buildOrder(memberId));
+        return CheckoutResult.from(buildOrder(memberId, null));
     }
 
     // 주문 생성
@@ -55,15 +57,12 @@ public class OrderFacade {
             return existingOrderId.get();
         }
 
-        // 장바구니 + 최신 상품 정보로 주문 만들기
-        Order order = buildOrder(command.memberId());
+        // 장바구니 + 최신 상품 정보 + 배송지 기준 배송비·도서산간 운임으로 주문 만들기
+        Order order = buildOrder(command.memberId(), command.zipCode());
         order.assignIdempotencyKey(command.idempotencyKey());
-        order.registerShippingAddress(command.recipientName(), command.recipientPhone(), command.zipCode(), command.address(), command.addressDetail());
+        order.registerShippingAddress(command.recipientName(), command.recipientPhone(), command.zipCode(),
+                command.address(), command.addressDetail(), command.deliveryNote());
         order.agreeThirdPartyProvision(command.thirdPartyProvisionAgreed());
-
-        // 도서산간 운임 반영 -> 최종 금액 결정
-        long remoteAreaFee = deliveryApiClient.getRemoteAreaFee(command.zipCode()).additionalFee();
-        order.applyRemoteAreaFee(remoteAreaFee);
 
         // 사용자가 본 금액과 다르면 중단
         if (order.getTotalAmount() != command.expectedTotalAmount()) {
@@ -120,7 +119,8 @@ public class OrderFacade {
     }
 
     // 장바구니 선택 상품 + 상품 모듈의 최신 정보로 주문 객체 만들기 (저장 X)
-    private Order buildOrder(Long memberId) {
+    // zipCode: 배송지 우편번호, 주문서 조회처럼 아직 모르면 null
+    private Order buildOrder(Long memberId, String zipCode) {
         List<SelectedCartItem> cartItems = cartService.getSelectedCartItems(memberId);
         if (cartItems.isEmpty()) {
             throw new RestApiException(OrderErrorCode.EMPTY_ORDER_ITEMS);
@@ -143,7 +143,29 @@ public class OrderFacade {
             lines.add(toOrderLine(memberId, item, optionMap.get(item.productOptionId())));
         }
 
-        return Order.create(memberId, lines);
+        Order order = Order.create(memberId, lines);
+        applyShippingFees(order, zipCode);
+        return order;
+    }
+
+    // 판매자 묶음마다 배송비·도서산간 운임 반영
+    // 판매자 배송 설정과 지역 데이터는 배송 모듈이 가지므로 계산도 배송 모듈에 맡긴다 (주문서와 결제 금액이 같은 규칙을 쓰게)
+    // 판매자가 여럿이어도 한 번에 묻는다
+    private void applyShippingFees(Order order, String zipCode) {
+        Map<Long, SellerShippingFeeResponse> feeBySeller = new HashMap<>();
+        for (SellerShippingFeeResponse fee : deliveryApiClient.getShippingFees(zipCode, order.getProductAmountsBySeller())) {
+            feeBySeller.put(fee.sellerId(), fee);
+        }
+
+        for (Long sellerId : order.getProductAmountsBySeller().keySet()) {
+            SellerShippingFeeResponse fee = feeBySeller.get(sellerId);
+            // 응답에 빠진 판매자를 그냥 두면 배송비 0원으로 결제되므로 주문을 막는다
+            if (fee == null) {
+                throw new RestApiException(OrderErrorCode.DELIVERY_API_FAILED);
+            }
+            order.applyShippingFee(sellerId, new SellerShippingFee(
+                    fee.baseShippingFee(), fee.freeShippingThreshold(), fee.shippingFee(), fee.regionSurcharge()));
+        }
     }
 
     // 장바구니 한 줄 + 상품 정보 -> 주문서 한 줄 + 구매 가능 여부 검사

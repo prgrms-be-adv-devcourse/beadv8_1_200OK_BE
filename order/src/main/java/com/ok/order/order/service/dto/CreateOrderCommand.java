@@ -8,6 +8,7 @@ public record CreateOrderCommand(
         String zipCode,
         String address,
         String addressDetail,
+        String deliveryNote,
         boolean thirdPartyProvisionAgreed,
         long expectedTotalAmount
 ) {

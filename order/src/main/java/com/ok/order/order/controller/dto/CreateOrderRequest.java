@@ -29,6 +29,10 @@ public record CreateOrderRequest(
         @Size(max = 100, message = "상세 주소는 100자 이하여야 합니다.")
         String addressDetail,
 
+        // 선택 항목 (예: 문 앞에 놓아 주세요)
+        @Size(max = 255, message = "배송 요청사항은 255자 이하여야 합니다.")
+        String deliveryNote,
+
         @AssertTrue(message = "판매자 정보 제공에 동의해야 주문할 수 있습니다.")
         boolean thirdPartyProvisionAgreed,
 
@@ -36,8 +40,13 @@ public record CreateOrderRequest(
         @PositiveOrZero(message = "결제 금액은 0 이상이어야 합니다.")
         Long expectedTotalAmount // 주문서 합계 + 도서산간 운임 (사용자가 화면에서 본 최종 금액)
 ) {
+    // 공백만 보내면 요청사항이 없는 것으로 본다. 판매자 화면에 빈 요청사항이 찍히지 않게 null로 바꾼다
+    public CreateOrderRequest {
+        deliveryNote = (deliveryNote == null || deliveryNote.isBlank()) ? null : deliveryNote.strip();
+    }
+
     public CreateOrderCommand toCommand(Long memberId, String idempotencyKey) {
         return new CreateOrderCommand(memberId, idempotencyKey, recipientName, recipientPhone,
-                zipCode, address, addressDetail, thirdPartyProvisionAgreed, expectedTotalAmount);
+                zipCode, address, addressDetail, deliveryNote, thirdPartyProvisionAgreed, expectedTotalAmount);
     }
 }

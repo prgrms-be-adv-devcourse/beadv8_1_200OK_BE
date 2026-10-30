@@ -41,7 +41,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
                 message.zipCode(),
                 message.address(),
                 message.addressDetail(),
-                null   // TODO 배송 요청사항: 주문에 아직 없음
+                message.deliveryNote()
         );
 
         List<PaidSellerOrder> sellerOrders = new ArrayList<>();

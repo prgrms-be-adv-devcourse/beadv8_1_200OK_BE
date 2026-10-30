@@ -29,11 +29,19 @@ public class OrderSellerGroup extends BaseTime {
     @Column(nullable = false)
     private Long sellerId;
 
-    // 묶음 배송비
+    // 묶음 배송비: 무료배송을 적용한 뒤 구매자가 내는 기본 배송비 (도서산간 운임 제외)
     @Column(nullable = false)
     private long shippingFee;
 
-    // 도서산간 추가 운임, 주문서 발행 시 배송 모듈이 계산한 값
+    // 판매자 설정의 기본 배송비, 무료배송이어도 설정 값
+    // 결제 완료 이벤트로 배송에 넘겨, 배송이 결제 때와 같은 규칙으로 실제 받은 배송비를 다시 계산하게 한다
+    @Column(nullable = false)
+    private long baseShippingFee;
+
+    // 판매자 설정의 무료배송 기준 금액, null이면 무료배송 없음 (0은 항상 무료라 따로 표현)
+    private Long freeShippingThreshold;
+
+    // 도서산간 추가 운임, 배송 모듈이 배송비와 함께 계산한 값 (배송지를 정하기 전인 주문서에서는 0)
     @Column(nullable = false)
     private long remoteAreaFee;
 
@@ -46,8 +54,9 @@ public class OrderSellerGroup extends BaseTime {
         group.order = order;
         group.sellerId = sellerId;
 
-        // TODO 배송비 기준 협의 후 계산 로직 구현
+        // 배송비와 도서산간 운임은 판매자 설정·지역 데이터를 가진 배송 모듈이 계산하므로, 생성 뒤 applyShippingFee로 채운다
         group.shippingFee = 0L;
+        group.baseShippingFee = 0L;
 
         group.remoteAreaFee = 0L;
 
@@ -60,8 +69,11 @@ public class OrderSellerGroup extends BaseTime {
         return group;
     }
 
-    void applyRemoteAreaFee(long remoteAreaFee) {
-        this.remoteAreaFee = remoteAreaFee;
+    void applyShippingFee(SellerShippingFee fee) {
+        this.baseShippingFee = fee.baseShippingFee();
+        this.freeShippingThreshold = fee.freeShippingThreshold();
+        this.shippingFee = fee.shippingFee();
+        this.remoteAreaFee = fee.remoteAreaFee();
     }
 
     long productAmount() {

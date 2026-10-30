@@ -59,6 +59,10 @@ public class Order extends BaseTime {
     @Column(length = 100)
     private String addressDetail;
 
+    // 배송 요청사항 (선택), 결제 완료 이벤트로 배송에 넘긴다
+    @Column(length = 255)
+    private String deliveryNote;
+
     // 상품 금액 합계
     @Column(nullable = false)
     private long totalProductAmount;
@@ -128,13 +132,15 @@ public class Order extends BaseTime {
             String recipientPhone,
             String zipCode,
             String address,
-            String addressDetail
+            String addressDetail,
+            String deliveryNote
     ) {
         this.recipientName = recipientName;
         this.recipientPhone = recipientPhone;
         this.zipCode = zipCode;
         this.address = address;
         this.addressDetail = addressDetail;
+        this.deliveryNote = deliveryNote;
     }
 
     // 멱등키 기록: (구매자, 멱등키) 유니크 제약이 같은 요청의 중복 저장을 막는다
@@ -172,11 +178,28 @@ public class Order extends BaseTime {
         this.totalAmount = productAmount + shippingFee + remoteAreaFee;
     }
 
-    // 도서산간 추가 운임 적용
-    public void applyRemoteAreaFee(long remoteAreaFeePerShipment) {
+    // 판매자별 상품 금액 합계: 배송 모듈이 무료배송 기준과 비교하는 값
+    public Map<Long, Long> getProductAmountsBySeller() {
+        Map<Long, Long> amounts = new LinkedHashMap<>();
         for (OrderSellerGroup group : sellerGroups) {
-            group.applyRemoteAreaFee(remoteAreaFeePerShipment);
+            amounts.put(group.getSellerId(), group.productAmount());
         }
+        return amounts;
+    }
+
+    // 판매자 묶음의 배송비·도서산간 운임 적용 (배송 모듈이 계산한 값)
+    public void applyShippingFee(Long sellerId, SellerShippingFee fee) {
+        OrderSellerGroup target = null;
+        for (OrderSellerGroup group : sellerGroups) {
+            if (group.getSellerId().equals(sellerId)) {
+                target = group;
+            }
+        }
+        // 호출하는 쪽이 이 주문의 판매자로만 부르므로, 없으면 코드 버그다
+        if (target == null) {
+            throw new IllegalArgumentException("주문에 없는 판매자입니다. sellerId=" + sellerId);
+        }
+        target.applyShippingFee(fee);
         calculateAmounts();
     }
 

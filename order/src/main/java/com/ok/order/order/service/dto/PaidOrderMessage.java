@@ -17,6 +17,7 @@ public record PaidOrderMessage(
         String zipCode,
         String address,
         String addressDetail,
+        String deliveryNote,
         List<PaidSellerGroupMessage> sellerGroups
 ) {
     public static PaidOrderMessage from(Order order, LocalDateTime paidAt) {
@@ -33,6 +34,7 @@ public record PaidOrderMessage(
                 order.getZipCode(),
                 order.getAddress(),
                 order.getAddressDetail(),
+                order.getDeliveryNote(),
                 groups
         );
     }

@@ -9,8 +9,8 @@ import java.util.List;
 // 결제된 주문의 판매자 묶음 하나 (배송 1건이 된다)
 public record PaidSellerGroupMessage(
         Long sellerId,
-        Long baseShippingFee,
-        Long freeShippingThreshold,
+        Long baseShippingFee,       // 판매자 설정의 기본 배송비, 무료배송이어도 설정 값
+        Long freeShippingThreshold, // null이면 무료배송 없음
         Long regionSurcharge,
         List<PaidItemMessage> items
 ) {
@@ -21,8 +21,8 @@ public record PaidSellerGroupMessage(
         }
         return new PaidSellerGroupMessage(
                 group.getSellerId(),
-                0L,   // TODO 주문 배송비 계산이 붙으면 판매자 설정의 기본 배송비로 변경 (지금은 주문 배송비도 0원)
-                0L,   // TODO 위와 같음 (무료배송 기준 금액)
+                group.getBaseShippingFee(),
+                group.getFreeShippingThreshold(),
                 group.getRemoteAreaFee(),
                 items
         );
