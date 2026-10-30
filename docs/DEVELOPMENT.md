@@ -89,6 +89,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 - DB와 Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다.
 - 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름(`kafka-1:9092,...`)으로 덮어씁니다. `.env`의 `localhost:...`는 컨테이너 안에서 앱 자신을 가리키기 때문입니다.
+- Kafka 3대는 `kafka-net`, MySQL은 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.

@@ -4,6 +4,10 @@ networks:
   db-net:
     name: db-net
     driver: bridge
+  # Kafka는 app만 닿으면 되므로 DB 네트워크와 나눈다 (#318)
+  kafka-net:
+    name: kafka-net
+    driver: bridge
 
 # ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
 # 클러스터 1개에 브로커 3대, 브로커와 컨트롤러를 한 프로세스에서 같이 돌리는 KRaft combined 모드다
@@ -34,7 +38,7 @@ x-kafka-environment: &kafka-environment
 
 x-kafka-service: &kafka-service
   image: apache/kafka:${KAFKA_VERSION:-4.2.1}
-  networks: [db-net]
+  networks: [kafka-net]
   # 기본 10초 안에 안 꺼지면 강제 종료(137)되는데, 마지막으로 남은 브로커는 넘길 상대가 없어 정상 종료가 10초를 넘길 수 있다
   # 강제 종료되면 다음 기동 때 로그 복구로 오래 걸리므로 넉넉히 기다린다
   stop_grace_period: 30s
@@ -100,7 +104,8 @@ services:
     profiles: [app]
     build: .
     image: paldo-gotgan:local
-    networks: [db-net]
+    # db-net: mysql 접속 / kafka-net: 브로커 접속
+    networks: [db-net, kafka-net]
     depends_on:
       mysql:
         condition: service_healthy

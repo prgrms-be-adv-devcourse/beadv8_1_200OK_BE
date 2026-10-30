@@ -15,6 +15,7 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
 - app·mysql·kafka는 호스트 포트를 열지 않습니다. Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
+  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx)에 함께 붙습니다. mysql·nginx는 Kafka에 닿지 않습니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.

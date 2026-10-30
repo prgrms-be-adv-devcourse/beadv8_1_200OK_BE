@@ -38,6 +38,8 @@ x-kafka-environment: &kafka-environment
 x-kafka-service: &kafka-service
   image: apache/kafka:${KAFKA_VERSION:?KAFKA_VERSION이 필요하다}
   restart: unless-stopped
+  # Kafka는 app만 닿으면 되므로 mysql·nginx가 있는 기본 네트워크와 나눈다 (#318)
+  networks: [kafka-net]
   # 기본 10초 안에 안 꺼지면 강제 종료(137)되는데, 리더를 넘기는 정상 종료가 10초를 넘길 수 있다
   # 강제 종료되면 다음 기동 때 로그 복구로 오래 걸려 1대씩 재시작(kafka-rollout.sh)이 느려지므로 넉넉히 기다린다
   stop_grace_period: 30s
@@ -111,6 +113,9 @@ services:
   app:
     image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # default: mysql·nginx와 통신 / kafka-net: 브로커 접속
+    # mysql·nginx는 기본 네트워크에 그대로 둔다. 네트워크를 바꾸면 배포 때 mysql 컨테이너를 새로 만들어 DB가 잠깐 끊긴다
+    networks: [default, kafka-net]
     depends_on:
       mysql:
         condition: service_healthy
@@ -161,6 +166,9 @@ services:
       - "80:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+networks:
+  kafka-net:
 
 # 브로커마다 따로 둔다. 도커 볼륨이라 루트 디스크(/var/lib/docker)에 쌓인다
 # 인스턴스를 교체하면 루트 디스크와 함께 사라져 아직 안 읽힌 메시지도 사라진다. 원본 데이터는 DB에 있으므로 받아들인다
