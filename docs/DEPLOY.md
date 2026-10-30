@@ -1,22 +1,28 @@
 # 배포 가이드
 
-EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
+EC2 한 대에 nginx·앱·BFF·MySQL을 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
 서버(EC2) 자체를 만드는 방법은 [`INFRA.md`](INFRA.md)를 보세요.
 
 ## 1. 구성
 
 ```
-인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
-                 └─ 그 외 경로(/internal, /actuator 등) → 404
+브라우저 ──https──▶ Vercel(rewrite) ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
+                                             ├─ /bff/** ──▶ bff ──▶ app
+                                             └─ 그 외 경로(/internal, /actuator 등) → 404
 ```
 
-- 외부에는 `/api/v1/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
+- 외부에는 `/api/v1/**`과 `/bff/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
+- `bff`는 프론트 레포가 만든 BFF(Node)입니다. 로그인 세션(`/bff/session/**`)과 화면용 응답을 맡고, 토큰은 HttpOnly 쿠키에 둡니다(Redis 같은 세션 저장소를 쓰지 않습니다). 앱에는 `http://app:8080`으로 요청합니다.
+  - `/api/v1/**`은 기본으로 nginx가 앱에 바로 보냅니다. `.env`의 `API_UPSTREAM`으로 BFF를 거치게 바꿀 수 있습니다([9. `/api/v1/`을 BFF로 전환](#9-apiv1을-bff로-전환)).
+  - nginx는 bff를 기다리지 않고 뜹니다. bff가 죽어도 `/bff/**`만 502가 나고, `/api/v1/**`(기본값일 때)은 그대로 응답합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
-- app·mysql은 호스트 포트를 열지 않습니다.
-- 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
+- app·bff·mysql은 호스트 포트를 열지 않습니다.
+- 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`. nginx 설정은 템플릿(`nginx/templates/default.conf.template`)이고, nginx가 시작할 때 `API_UPSTREAM`만 치환해 만듭니다.
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
+  - BFF 이미지 `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff`는 프론트 레포의 Actions가 올립니다(`latest`와 커밋 SHA 7자리 태그). 이 레포는 배치만 합니다.
+- 메모리(t3.large 8GB): app `mem_limit` 2560m, bff 256m(힙 192MB). MySQL·nginx는 제한이 없고, 나머지는 MySQL과 앱 추가 인스턴스 여유로 남깁니다.
 - 앱은 1개만 띄웁니다. 배포 중 수십 초간 요청이 실패합니다. 여러 개를 띄우려면 정산 스케줄러 중복 실행 문제를 먼저 해결해야 합니다.
 
 ## 2. 최초 설정 (서버당 1회)
@@ -30,6 +36,7 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
 - 권한은 `read:packages`만 줍니다. push용 토큰을 재사용하지 않습니다. classic 토큰은 계정이 접근할 수 있는 모든 패키지를 읽을 수 있어서 권한을 최소로 둡니다.
 - 만료일을 지정하고 따로 적어 둡니다. 만료되면 `./deploy.sh`가 pull 단계에서 실패합니다.
 - 조직이 SSO를 쓰면 발급 후 Configure SSO에서 조직을 승인합니다.
+- 이 토큰으로 앱과 BFF 두 패키지를 모두 받을 수 있어야 합니다. 새로 생긴 패키지는 비공개로 생길 수 있으므로, 토큰 계정이 `paldo-gotgan-bff`를 읽을 수 있는지 아래 `docker pull`로 먼저 확인합니다. 하나라도 받지 못하면 `./deploy.sh`는 아무것도 재시작하지 않고 pull 단계에서 멈춥니다.
 
 ```bash
 # 로컬: 배포 파일 복사
@@ -39,6 +46,8 @@ scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/nginx dep
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
+docker pull ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest       # 두 패키지를 모두 받을 수 있는지 확인
+docker pull ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff:latest
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
 mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
@@ -71,7 +80,16 @@ cd /opt/paldo-gotgan && ./deploy.sh
 - 서버는 `latest`를 받고, SHA 태그는 롤백에 씁니다. 빌드는 한 번에 하나씩 실행되고 대기 중인 실행은 새 실행이 오면 취소되므로, `semi`를 연달아 올리면 중간 커밋의 SHA 태그는 없을 수 있습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다.
 - 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 실행합니다. `semi`가 아닌 브랜치를 고르면 빌드는 건너뜁니다.
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
-- `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
+- `deploy.sh`는 app·bff 이미지를 받고, app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 bff를 올려 healthy를 확인하고, nginx까지 올린 다음 `배포 성공`을 출력합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
+- bff 단계에서 실패해도 이미 떠 있는 nginx와 `/api/v1/**`(기본값일 때)은 새 app으로 계속 응답합니다.
+
+### BFF만 배포
+
+프론트가 BFF만 바꿨을 때는 앱을 건드리지 않고 BFF만 다시 띄웁니다. BFF 이미지를 받아 bff 컨테이너만 다시 만들고 healthy를 확인합니다.
+
+```bash
+cd /opt/paldo-gotgan && ./deploy.sh bff
+```
 
 ## 4. 롤백
 
@@ -82,26 +100,38 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 ```
 
 - 복구한 뒤 문제를 고쳐 다시 배포할 때 `APP_IMAGE_TAG=latest`로 되돌립니다.
+
+BFF는 `BFF_IMAGE_TAG`로 같은 방식으로 되돌립니다. 롤백할 SHA는 GHCR의 `paldo-gotgan-bff` 패키지 화면에서 확인합니다.
+
+```bash
+cd /opt/paldo-gotgan
+sed -i 's/^BFF_IMAGE_TAG=.*/BFF_IMAGE_TAG=<이전 SHA>/' .env
+./deploy.sh bff
+```
 - 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다.
 
 ## 5. 확인 명령
 
 ```bash
-docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy인지)
+docker compose -f compose.prod.yml ps                 # 상태 (app·bff가 healthy인지)
+docker compose -f compose.prod.yml logs -f bff        # BFF 로그
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
 curl -s -o /dev/null -w '%{http_code}\n' localhost/api/v1/products/categories   # 200
 curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options # 404
+curl -s -o /dev/null -w '%{http_code}\n' localhost/bff/session                    # 502가 아니면 BFF까지 닿은 것이다
 ```
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다. `compose.prod.yml`이나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
+`deploy.sh`는 앱·BFF 이미지만 새로 받습니다. `compose.prod.yml`, `deploy.sh`, nginx 템플릿(`nginx/templates/default.conf.template`)이 바뀌면 아래 순서로 반영합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
+ssh -i <키 파일> ubuntu@<EIP> mkdir -p /opt/paldo-gotgan/nginx/templates   # 템플릿 폴더가 없을 때(BFF 배치 전 서버)만
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
-scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
+scp -i <키 파일> deploy/deploy.sh ubuntu@<EIP>:/opt/paldo-gotgan/deploy.sh
+scp -i <키 파일> deploy/nginx/templates/default.conf.template ubuntu@<EIP>:/opt/paldo-gotgan/nginx/templates/default.conf.template
 
 # 서버
 cd /opt/paldo-gotgan
@@ -109,7 +139,9 @@ cd /opt/paldo-gotgan
 docker compose -f compose.prod.yml restart nginx
 ```
 
-- nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
+- nginx는 시작할 때만 템플릿을 렌더링합니다. 템플릿을 바꾸면 반드시 nginx를 재시작합니다. `compose.prod.yml`에서 nginx 설정이 바뀌었으면 `./deploy.sh`가 nginx를 다시 만들므로 재시작은 해도 되고 안 해도 됩니다.
+- 예전 설정 파일 `nginx/default.conf`는 템플릿 방식으로 바뀐 뒤로 쓰지 않습니다. 새 nginx가 정상인 것을 확인한 뒤 지웁니다.
+- `.env.prod.example`에 새 값이 생기면 서버의 `.env`에도 직접 추가합니다(BFF 배치 때는 `BFF_IMAGE_TAG`, `API_UPSTREAM`).
 
 ## 7. pull 토큰 교체
 
@@ -212,3 +244,27 @@ APP_IMAGE_TAG=<이전 SHA 태그> ./deploy.sh                                   
 - **MySQL 권한 설정**: `SELECT @@partial_revokes;`. `ON`이면 와일드카드 권한이 문자 그대로 해석되는데, 이 절차는 스키마 8개를 하나씩 명시해 권한을 주므로 영향이 없어야 합니다. `20_verify.sql`의 권한 점검이 PASS인지 확인합니다.
 - **알려진 마이그레이션 목록**: `00_preflight.sql`의 목록은 이 PR 시점의 55개입니다. 이후 병합된 마이그레이션이 운영 DB에 이미 적용돼 있으면 사전 점검이 멈추고, `migrate.sh`가 저장소의 마이그레이션 파일과 목록이 다르면 경고를 출력합니다. 그 경우 목록(`00_preflight.sql`)과 `20_verify.sql`의 행 수, `migrate.sh`의 이력 합계(54)를 새 마이그레이션까지 포함하도록 고친 뒤 실행합니다.
 - **앱 계정 권한**: 앱 계정이 모든 모듈 스키마에 `ALL` 권한을 가집니다. 모듈 단독 실행(개발)에는 모듈별 계정이 있지만([`DEVELOPMENT.md`의 모듈 DB 계정](DEVELOPMENT.md#스키마계정-생성)), 운영 `monolith`는 이 공용 계정을 씁니다.
+
+## 9. `/api/v1/`을 BFF로 전환
+
+프론트를 쿠키 방식으로 바꾸기 전에, `/api/v1/**`이 BFF를 거쳐도 응답이 같은지 운영 경로에서 확인하는 절차입니다. BFF는 `/api/v1/**`을 경로와 `Authorization`을 그대로 앱에 넘기므로 사용자 동작은 바뀌지 않아야 합니다.
+
+`.env`의 `API_UPSTREAM`이 nginx가 `/api/v1/**`을 보낼 곳입니다. 비우면 `http://app:8080`(앱 직접)입니다. 바꾼 뒤에는 nginx만 다시 만듭니다. app·bff는 재시작하지 않습니다.
+
+```bash
+# 서버: BFF로 전환
+cd /opt/paldo-gotgan
+grep -q '^API_UPSTREAM=' .env || echo 'API_UPSTREAM=' >> .env
+sed -i 's|^API_UPSTREAM=.*|API_UPSTREAM=http://bff:8787|' .env
+docker compose -f compose.prod.yml up -d --no-deps nginx
+docker compose -f compose.prod.yml exec nginx grep 'set $api_upstream' /etc/nginx/conf.d/default.conf   # http://bff:8787이 보여야 한다
+
+# 원복: 값을 비우고 nginx만 다시 만든다
+sed -i 's|^API_UPSTREAM=.*|API_UPSTREAM=|' .env
+docker compose -f compose.prod.yml up -d --no-deps nginx
+```
+
+- nginx를 다시 만드는 1~2초 동안 요청이 실패할 수 있습니다.
+- 전환한 동안에는 bff가 죽으면 `/api/v1/**`도 502가 납니다. 이상하면 바로 원복합니다.
+- `./deploy.sh`도 `.env`를 읽으므로 전환 상태는 이후 배포에도 유지됩니다.
+- nginx는 `/api/v1/**`과 `/bff/**` 모두 응답을 130초까지 기다립니다. BFF가 업로드를 최대 120초 기다리므로, 대상이 바뀌어도 nginx가 먼저 끊지 않게 하기 위함입니다.
