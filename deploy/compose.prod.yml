@@ -1,5 +1,5 @@
 # 운영 EC2(/opt/paldo-gotgan)에서 deploy.sh로 실행한다. 절차는 docs/DEPLOY.md
-# app·mysql·kafka는 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
+# app·bff·mysql·kafka는 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
 name: paldo-gotgan
 
 # ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
@@ -111,7 +111,9 @@ services:
       - kafka-3-data:/var/lib/kafka/data
 
   app:
-    image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
+    # deploy.sh가 받은 이미지를 digest(@sha256:...)로 APP_IMAGE_REF에 넣어 띄운다. 비어 있으면 .env의 태그를 쓴다
+    # APP_IMAGE_REF는 deploy.sh 전용이라 .env에 넣지 않는다
+    image: ${APP_IMAGE_REF:-ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}}
     restart: unless-stopped
     # default: mysql·nginx와 통신 / kafka-net: 브로커 접속
     # mysql·nginx는 기본 네트워크에 그대로 둔다. 네트워크를 바꾸면 배포 때 mysql 컨테이너를 새로 만들어 DB가 잠깐 끊긴다
@@ -144,8 +146,8 @@ services:
       ADMIN_BOOTSTRAP_LOGIN_ID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Kafka(3대 약 2GB)를 함께 올리면
-      # 남는 메모리(약 1.8GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Kafka(3대 약 2GB)·BFF(256m)를 함께 올리면
+      # 남는 메모리(약 1.5GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     mem_limit: 2560m
     healthcheck:
@@ -156,16 +158,40 @@ services:
       retries: 3
       start_period: 60s
 
-  nginx:
-    image: nginx:1.29-alpine
+  # 프론트 레포가 GHCR에 올리는 BFF 이미지. healthcheck(GET /health)는 이미지에 들어 있다
+  bff:
+    # app과 같이 deploy.sh가 BFF_IMAGE_REF에 digest를 넣는다. 비어 있으면 .env의 태그를 쓴다
+    image: ${BFF_IMAGE_REF:-ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff:${BFF_IMAGE_TAG:-latest}}
     restart: unless-stopped
     depends_on:
       app:
         condition: service_healthy
+    # app과 같이 env_file을 쓰지 않고 BFF가 쓰는 값만 넘긴다
+    environment:
+      BACKEND_URL: http://app:8080
+      # 상태를 바꾸는 요청의 CSRF Origin 허용 목록. 브라우저는 Vercel 주소로 요청한다
+      ALLOWED_ORIGINS: https://paldo-gotgan-fe.vercel.app
+      # 힙을 mem_limit보다 작게 잡아, 한도에 닿기 전에 V8이 GC하게 한다
+      NODE_OPTIONS: --max-old-space-size=192
+    mem_limit: 256m
+
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    # bff는 기다리지 않는다. BFF가 늦게 뜨거나 죽어도 nginx와 앱으로 가는 /api/v1/은 살아 있게 하기 위함이다
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      # 비우거나 없으면 앱으로 바로 보낸다. BFF로 돌리는 방법은 docs/DEPLOY.md 9절
+      API_UPSTREAM: ${API_UPSTREAM:-http://app:8080}
+      # envsubst가 $host 같은 nginx 변수를 건드리지 않게 이 값만 치환한다
+      NGINX_ENVSUBST_FILTER: ^API_UPSTREAM$$
     ports:
       - "80:80"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # 템플릿은 nginx가 시작할 때 conf.d로 렌더링된다. 템플릿을 바꾸면 nginx를 재시작해야 반영된다
+      - ./nginx/templates:/etc/nginx/templates:ro
 
 networks:
   kafka-net:

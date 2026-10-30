@@ -1,24 +1,29 @@
 # 배포 가이드
 
-EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
+EC2 한 대에 nginx·앱·BFF·MySQL·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
 서버(EC2) 자체를 만드는 방법은 [`INFRA.md`](INFRA.md)를 보세요.
 
 ## 1. 구성
 
 ```
-인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
-                 └─ 그 외 경로(/internal, /actuator 등) → 404
-                                       └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
+브라우저 ──https──▶ Vercel(rewrite) ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
+                                             │                     └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
+                                             ├─ /bff/** ──▶ bff ──▶ app
+                                             └─ 그 외 경로(/internal, /actuator 등) → 404
 ```
 
-- 외부에는 `/api/v1/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
+- 외부에는 `/api/v1/**`과 `/bff/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
+- `bff`는 프론트 레포가 만든 BFF(Node)입니다. 로그인 세션(`/bff/session/**`)과 화면용 응답을 맡고, 토큰은 HttpOnly 쿠키에 둡니다(Redis 같은 세션 저장소를 쓰지 않습니다). 앱에는 `http://app:8080`으로 요청합니다.
+  - `/api/v1/**`은 기본으로 nginx가 앱에 바로 보냅니다. `.env`의 `API_UPSTREAM`으로 BFF를 거치게 바꿀 수 있습니다([9. `/api/v1/`을 BFF로 전환](#9-apiv1을-bff로-전환)).
+  - nginx는 bff를 기다리지 않고 뜹니다. bff가 죽어도 `/bff/**`만 502가 나고, `/api/v1/**`(기본값일 때)은 그대로 응답합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
-- app·mysql·kafka는 호스트 포트를 열지 않습니다. Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
-  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx)에 함께 붙습니다. mysql·nginx는 Kafka에 닿지 않습니다.
-- 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
+- app·bff·mysql·kafka는 호스트 포트를 열지 않습니다. Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
+  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·bff)에 함께 붙습니다. mysql·nginx·bff는 Kafka에 닿지 않습니다.
+- 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`. nginx 설정은 템플릿(`nginx/templates/default.conf.template`)이고, nginx가 시작할 때 `API_UPSTREAM`만 치환해 만듭니다.
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
+  - BFF 이미지 `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff`는 프론트 레포의 Actions가 올립니다(`latest`와 커밋 SHA 7자리 태그). 이 레포는 배치만 합니다.
 - 앱은 1개만 띄웁니다. 배포 중 수십 초간 요청이 실패합니다. 여러 개를 띄우려면 정산 스케줄러 중복 실행 문제를 먼저 해결해야 합니다.
 
 ### Kafka (#318)
@@ -38,9 +43,10 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 |---|---|
 | app | 2560m (`mem_limit`) |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
+| bff | 256m (`mem_limit`, 힙 192MB). 로컬에서 잰 대기 사용량 약 94MiB |
 | mysql | 제한 없음, 약 0.5~1GiB |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 6.2GiB (여유 약 1.8GiB) |
+| 합계 | 약 6.5GiB (여유 약 1.5GiB) |
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -55,6 +61,7 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 - 권한은 `read:packages`만 줍니다. push용 토큰을 재사용하지 않습니다. classic 토큰은 계정이 접근할 수 있는 모든 패키지를 읽을 수 있어서 권한을 최소로 둡니다.
 - 만료일을 지정하고 따로 적어 둡니다. 만료되면 `./deploy.sh`가 pull 단계에서 실패합니다.
 - 조직이 SSO를 쓰면 발급 후 Configure SSO에서 조직을 승인합니다.
+- 이 토큰으로 앱과 BFF 두 패키지를 모두 받을 수 있어야 합니다. 새로 생긴 패키지는 비공개로 생길 수 있으므로, 토큰 계정이 `paldo-gotgan-bff`를 읽을 수 있는지 아래 `docker pull`로 먼저 확인합니다. 하나라도 받지 못하면 `./deploy.sh`는 아무것도 재시작하지 않고 pull 단계에서 멈춥니다.
 
 ```bash
 # 로컬: 배포 파일 복사
@@ -64,6 +71,8 @@ scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rol
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
+docker pull ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest       # 두 패키지를 모두 받을 수 있는지 확인
+docker pull ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff:latest
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
 mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
@@ -95,10 +104,18 @@ cd /opt/paldo-gotgan && ./deploy.sh
 ```
 
 - 패키지는 비공개로 둡니다. 서버는 [2. 최초 설정](#2-최초-설정-서버당-1회)에서 로그인한 pull 전용 토큰으로 받습니다.
-- 서버는 `latest`를 받고, SHA 태그는 롤백에 씁니다. 빌드는 한 번에 하나씩 실행되고 대기 중인 실행은 새 실행이 오면 취소되므로, `semi`를 연달아 올리면 중간 커밋의 SHA 태그는 없을 수 있습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다.
+- 서버는 `latest`를 받습니다. 받은 이미지는 digest(`@sha256:...`)로 고정해 띄우고 서비스별 이력에 남기므로, 보통의 롤백에는 SHA 태그가 필요 없습니다([4. 롤백](#4-롤백)). SHA 태그는 특정 버전을 `.env`에 고정할 때 씁니다. 빌드는 한 번에 하나씩 실행되고 대기 중인 실행은 새 실행이 오면 취소되므로, `semi`를 연달아 올리면 중간 커밋의 SHA 태그는 없을 수 있습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다.
 - 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 실행합니다. `semi`가 아닌 브랜치를 고르면 빌드는 건너뜁니다.
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
-- `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
+- `./deploy.sh`(전체 배포)는 다음 순서로 진행합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
+  1. app·bff의 지금 정상 이미지를 확인합니다([배포 이력](#배포-이력-deploy-state)).
+  2. app·bff 이미지를 받습니다. 하나라도 받지 못하면 아무것도 바꾸지 않고 멈춥니다.
+  3. Kafka를 처리합니다(아래 `kafka-rollout.sh`).
+  4. app(과 mysql)을 올려 healthy를 확인하고 app 이력을 남깁니다.
+  5. bff를 올려 healthy를 확인하고 bff 이력을 남깁니다.
+  6. nginx까지 올린 다음 `배포 성공: 전체`를 출력합니다.
+- bff 단계에서 실패해도 이미 떠 있는 nginx와 `/api/v1/**`(기본값일 때)은 새 app으로 계속 응답합니다. app 이력은 새 이미지로 남고 bff 이력은 그대로입니다.
+- 서버에서 `docker compose up -d`를 직접 실행하지 않습니다. Kafka 3대가 동시에 다시 만들어지고, app·bff도 `.env`의 태그(`latest`)로 다시 만들어져 롤백한 이미지가 풀립니다.
 - app보다 먼저 `kafka-rollout.sh`가 Kafka를 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
 
 | Kafka 상태 | 처리 |
@@ -123,21 +140,99 @@ echo "KAFKA_CLUSTER_ID=$(docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka
 ./deploy.sh
 ```
 
-## 4. 롤백
+### 서비스만 배포 (app, bff)
+
+앱만 바꿨거나 프론트가 BFF만 바꿨을 때는 그 서비스만 다시 띄웁니다.
 
 ```bash
 cd /opt/paldo-gotgan
-sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
-./deploy.sh
+./deploy.sh app   # 앱만
+./deploy.sh bff   # BFF만
 ```
 
-- 복구한 뒤 문제를 고쳐 다시 배포할 때 `APP_IMAGE_TAG=latest`로 되돌립니다.
-- 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다.
+- 그 서비스의 이미지만 받고, 그 컨테이너만 다시 만듭니다(`--no-deps`). nginx·MySQL·Kafka·다른 서비스는 받지도 다시 만들지도 않고, Kafka 처리(`kafka-rollout.sh`)도 하지 않습니다.
+- 바꾸기 전에 의존 서비스가 healthy인지 확인합니다. app은 mysql과 kafka 3대, bff는 app입니다. 하나라도 아니면 아무것도 바꾸지 않고 멈춥니다. 그때는 전체 배포(`./deploy.sh`)를 씁니다.
+- `compose.prod.yml`의 Kafka·MySQL·nginx 설정을 바꿨거나 서버를 처음 설치할 때는 전체 배포를 씁니다.
+
+## 4. 롤백
+
+서비스마다 따로 되돌립니다. 앱을 되돌려도 BFF는 받지도 바꾸지도 않고, 그 반대도 같습니다.
+
+```bash
+cd /opt/paldo-gotgan
+./deploy.sh app --rollback
+./deploy.sh bff --rollback
+```
+
+되돌릴 이미지는 [배포 이력](#배포-이력-deploy-state)의 digest로 정합니다.
+
+| 지금 컨테이너 | 되돌리는 이미지 |
+|---|---|
+| healthy이고 이력의 `current`와 같음 (새 버전이 떴지만 문제가 있음) | `previous` (직전 정상 이미지) |
+| healthy가 아님 (배포가 health 확인에서 실패함) | `current` (마지막 정상 이미지) |
+| healthy지만 이력에 없는 이미지 (누군가 직접 바꿈) | `current` |
+
+- 되돌릴 이미지가 이력에 없으면 아무것도 바꾸지 않고 실패합니다. 예: 최초 설치 뒤 한 번만 배포해 `previous`가 없을 때.
+- 그 서비스만 다시 만들고(`--no-deps`) healthy를 확인한 뒤 이력을 바꿉니다. 실패하면 이력은 그대로입니다.
+- `previous`로 되돌리면 `current`와 `previous`가 서로 바뀝니다. 그래서 `--rollback`을 다시 실행하면 되돌리기 전 이미지로 돌아갑니다(두 버전을 번갈아 오갑니다). 더 이전 버전으로 가려면 아래처럼 SHA 태그를 씁니다.
+- 롤백한 상태는 다음 배포까지만 유지됩니다. 다음 `./deploy.sh`나 `./deploy.sh app`은 `.env`의 태그(`latest`)를 다시 받아 그 이미지로 앞으로 갑니다. 문제를 고친 이미지가 `latest`로 올라온 뒤 평소처럼 배포하면 됩니다.
+- 롤백한 버전을 다음 배포에서도 유지하거나 이력에 없는 더 이전 버전으로 가려면 `.env`에 SHA 태그를 적습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다(BFF는 `paldo-gotgan-bff` 패키지).
+
+```bash
+sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<SHA 7자리>/' .env && ./deploy.sh app
+sed -i 's/^BFF_IMAGE_TAG=.*/BFF_IMAGE_TAG=<SHA 7자리>/' .env && ./deploy.sh bff
+# 다시 latest를 따라가려면 latest로 바꾸고 같은 명령을 실행한다
+```
+
+- 자동 롤백은 없습니다. 배포가 실패하면 출력에 나오는 `./deploy.sh <서비스> --rollback`을 사람이 실행합니다.
+- 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다. 앱을 되돌리기 전에도 확인합니다.
+
+### 배포 이력 (`.deploy-state`)
+
+`deploy.sh`는 서비스마다 healthy를 확인한 이미지를 `/opt/paldo-gotgan/.deploy-state/app.state`, `bff.state`에 남깁니다. 레포에는 없고(`.gitignore`) 서버에만 있습니다.
+
+```
+# deploy.sh가 관리한다. 키=값으로만 읽고 셸로 실행하지 않는다
+current_image=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest
+current_digest=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan@sha256:<64자리>
+current_sha=abc1234
+current_at=2026-10-30T14:05:12+0900
+previous_image=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest
+previous_digest=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan@sha256:<64자리>
+previous_sha=
+previous_at=2026-10-29T10:00:03+0900
+```
+
+| 키 | 뜻 |
+|---|---|
+| `current_*` | 마지막으로 healthy를 확인한 이미지 |
+| `previous_*` | 그 직전의, `current`와 다른 정상 이미지 |
+| `*_image` | 받을 때 쓴 참조(`.env`의 태그). `latest`일 수 있어 되돌릴 때는 쓰지 않습니다 |
+| `*_digest` | 레지스트리 digest 참조. 배포·롤백은 이 값으로 정확히 같은 이미지를 띄웁니다 |
+| `*_sha` | 커밋 SHA 7자리. 태그가 SHA이거나 이미지에 revision 라벨이 있을 때만 남고, 모르면 비어 있습니다. 앱 이미지는 이번 워크플로 변경 뒤 빌드부터 라벨이 있고, BFF 이미지는 라벨이 없습니다 |
+| `*_at` | healthy를 확인한 시각. 최초 도입 때 떠 있던 컨테이너를 기록한 경우는 기록한 시각이고, 이력에 없던 이미지는 `unknown`입니다 |
+
+- 새 이미지가 healthy가 된 뒤에만 이력을 바꿉니다. 받기·기동·health 확인이 실패하면 이력은 그대로입니다.
+- 같은 이미지를 다시 배포하면 `current` 시각만 바뀌고 `previous`는 그대로입니다.
+- 이력 저장이 실패하면 컨테이너가 새 이미지로 떠 있어도 `배포 실패`로 끝납니다. `.deploy-state` 권한과 디스크 여유를 확인합니다.
+- 직접 고치지 않습니다. 형식이 틀린 값이 있으면 `deploy.sh`가 아무것도 바꾸지 않고 멈춥니다.
+
+**최초 도입**: 이력 파일이 없으면 바꾸기 전에 지금 떠 있는 컨테이너를 봅니다.
+
+- healthy이고 레지스트리 digest를 알 수 있으면 그 이미지를 `current`로 기록합니다. 이번 배포가 성공하면 그 이미지가 `previous`가 되어 바로 되돌릴 수 있습니다.
+- 컨테이너가 없거나 healthy가 아니면 이력 없이 시작합니다(최초 설치). 이때는 첫 배포 뒤 `previous`가 없습니다.
+- healthy인데 digest를 알 수 없으면(로컬에서 빌드한 이미지 등) 아무것도 바꾸지 않고 멈춥니다. 그 이미지로 되돌릴 수 없다는 것을 받아들이면 빈 이력 파일을 만들고 다시 배포합니다.
+
+```bash
+mkdir -p .deploy-state && : > .deploy-state/app.state   # bff는 bff.state
+```
 
 ## 5. 확인 명령
 
 ```bash
-docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy인지)
+docker compose -f compose.prod.yml ps                 # 상태 (app·bff가 healthy인지)
+docker compose -f compose.prod.yml logs -f bff        # BFF 로그
+cat .deploy-state/app.state .deploy-state/bff.state   # 서비스별 정상 이미지 이력 (current, previous)
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
 docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
@@ -146,17 +241,19 @@ docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /
 docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions'
 curl -s -o /dev/null -w '%{http_code}\n' localhost/api/v1/products/categories   # 200
 curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options # 404
+curl -s -o /dev/null -w '%{http_code}\n' localhost/bff/session                    # 502가 아니면 BFF까지 닿은 것이다
 ```
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
+`deploy.sh`는 앱·BFF 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, nginx 템플릿(`nginx/templates/default.conf.template`)이 바뀌면 아래 순서로 반영합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
+ssh -i <키 파일> ubuntu@<EIP> mkdir -p /opt/paldo-gotgan/nginx/templates   # 템플릿 폴더가 없을 때(BFF 배치 전 서버)만
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
 scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
-scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
+scp -i <키 파일> deploy/nginx/templates/default.conf.template ubuntu@<EIP>:/opt/paldo-gotgan/nginx/templates/default.conf.template
 
 # 서버
 cd /opt/paldo-gotgan
@@ -165,7 +262,9 @@ docker compose -f compose.prod.yml restart nginx
 ```
 
 - Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
-- nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
+- nginx는 시작할 때만 템플릿을 렌더링합니다. 템플릿을 바꾸면 반드시 nginx를 재시작합니다. `compose.prod.yml`에서 nginx 설정이 바뀌었으면 `./deploy.sh`가 nginx를 다시 만들므로 재시작은 해도 되고 안 해도 됩니다.
+- 예전 설정 파일 `nginx/default.conf`는 템플릿 방식으로 바뀐 뒤로 쓰지 않습니다. 새 nginx가 정상인 것을 확인한 뒤 지웁니다.
+- `.env.prod.example`에 새 값이 생기면 서버의 `.env`에도 직접 추가합니다(BFF 배치 때는 `BFF_IMAGE_TAG`, `API_UPSTREAM`).
 
 ## 7. pull 토큰 교체
 
@@ -268,3 +367,27 @@ APP_IMAGE_TAG=<이전 SHA 태그> ./deploy.sh                                   
 - **MySQL 권한 설정**: `SELECT @@partial_revokes;`. `ON`이면 와일드카드 권한이 문자 그대로 해석되는데, 이 절차는 스키마 8개를 하나씩 명시해 권한을 주므로 영향이 없어야 합니다. `20_verify.sql`의 권한 점검이 PASS인지 확인합니다.
 - **알려진 마이그레이션 목록**: `00_preflight.sql`의 목록은 이 PR 시점의 55개입니다. 이후 병합된 마이그레이션이 운영 DB에 이미 적용돼 있으면 사전 점검이 멈추고, `migrate.sh`가 저장소의 마이그레이션 파일과 목록이 다르면 경고를 출력합니다. 그 경우 목록(`00_preflight.sql`)과 `20_verify.sql`의 행 수, `migrate.sh`의 이력 합계(54)를 새 마이그레이션까지 포함하도록 고친 뒤 실행합니다.
 - **앱 계정 권한**: 앱 계정이 모든 모듈 스키마에 `ALL` 권한을 가집니다. 모듈 단독 실행(개발)에는 모듈별 계정이 있지만([`DEVELOPMENT.md`의 모듈 DB 계정](DEVELOPMENT.md#스키마계정-생성)), 운영 `monolith`는 이 공용 계정을 씁니다.
+
+## 9. `/api/v1/`을 BFF로 전환
+
+프론트를 쿠키 방식으로 바꾸기 전에, `/api/v1/**`이 BFF를 거쳐도 응답이 같은지 운영 경로에서 확인하는 절차입니다. BFF는 `/api/v1/**`을 경로와 `Authorization`을 그대로 앱에 넘기므로 사용자 동작은 바뀌지 않아야 합니다.
+
+`.env`의 `API_UPSTREAM`이 nginx가 `/api/v1/**`을 보낼 곳입니다. 비우면 `http://app:8080`(앱 직접)입니다. 바꾼 뒤에는 nginx만 다시 만듭니다. app·bff는 재시작하지 않습니다.
+
+```bash
+# 서버: BFF로 전환
+cd /opt/paldo-gotgan
+grep -q '^API_UPSTREAM=' .env || echo 'API_UPSTREAM=' >> .env
+sed -i 's|^API_UPSTREAM=.*|API_UPSTREAM=http://bff:8787|' .env
+docker compose -f compose.prod.yml up -d --no-deps nginx
+docker compose -f compose.prod.yml exec nginx grep 'set $api_upstream' /etc/nginx/conf.d/default.conf   # http://bff:8787이 보여야 한다
+
+# 원복: 값을 비우고 nginx만 다시 만든다
+sed -i 's|^API_UPSTREAM=.*|API_UPSTREAM=|' .env
+docker compose -f compose.prod.yml up -d --no-deps nginx
+```
+
+- nginx를 다시 만드는 1~2초 동안 요청이 실패할 수 있습니다.
+- 전환한 동안에는 bff가 죽으면 `/api/v1/**`도 502가 납니다. 이상하면 바로 원복합니다.
+- `./deploy.sh`도 `.env`를 읽으므로 전환 상태는 이후 배포에도 유지됩니다.
+- nginx는 `/api/v1/**`과 `/bff/**` 모두 응답을 130초까지 기다립니다. BFF가 업로드를 최대 120초 기다리므로, 대상이 바뀌어도 nginx가 먼저 끊지 않게 하기 위함입니다.
