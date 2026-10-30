@@ -1,10 +1,10 @@
 package com.ok.delivery;
 
+import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
+import com.ok.delivery.application.dto.AddressChangeDecision;
+import com.ok.delivery.application.dto.AddressChangeDecisionCommand;
+import com.ok.delivery.application.service.ShipmentAddressChangeService;
 import com.ok.delivery.domain.ShipmentItem;
-import com.ok.delivery.repository.ShipmentRepository;
-import com.ok.delivery.service.ShipmentAddressChangeService;
-import com.ok.delivery.service.dto.AddressChangeDecision;
-import com.ok.delivery.service.dto.AddressChangeDecisionCommand;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
