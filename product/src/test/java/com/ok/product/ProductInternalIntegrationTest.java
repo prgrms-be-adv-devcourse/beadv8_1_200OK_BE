@@ -425,9 +425,11 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		// given
 		Long optionId = firstOptionId(save(onSale(option(10))));
 		Long orderId = ORDER_IDS.incrementAndGet();
-		allocate(orderId, item(optionId, 4));
+		int releasedQuantity = 4;
+		allocate(orderId, item(optionId, releasedQuantity));
 		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
-		int requests = 5;
+		int stockBeforeRelease = availableStock(optionId);
+		int requests = 10;
 		CountDownLatch start = new CountDownLatch(1);
 		List<Future<Integer>> results = new ArrayList<>();
 
@@ -448,7 +450,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 			statuses.add(result.get());
 		}
 		assertThat(statuses).containsOnly(204);
-		assertThat(availableStock(optionId)).isEqualTo(7);
+		assertThat(availableStock(optionId)).isEqualTo(stockBeforeRelease + releasedQuantity);
 	}
 
 	@Test
@@ -498,11 +500,14 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 			ProductOptionSpec.newOption("5kg", 60_000L, 52_000L, orders))));
 		Long optionA = product.getOptions().get(0).getId();
 		Long optionB = product.getOptions().get(1).getId();
+		// 동시에 잠금을 잡을 수 있는 건 DB 커넥션 수(Hikari 기본 10)만큼이다. 스레드를 그보다 늘려도 커넥션 대기만 늘어
+		// 맞물림이 더 생기지 않으므로 커넥션 수에 맞추고, 대신 주문을 여러 번 돌려 맞물릴 기회를 만든다
+		int threads = 10;
 		CountDownLatch start = new CountDownLatch(1);
 		List<Future<?>> results = new ArrayList<>();
 
 		// when: 절반은 [A,B], 절반은 [B,A] 순서로 요청한다
-		try (ExecutorService executor = Executors.newFixedThreadPool(orders)) {
+		try (ExecutorService executor = Executors.newFixedThreadPool(threads)) {
 			for (int i = 0; i < orders; i++) {
 				Long orderId = ORDER_IDS.incrementAndGet();
 				List<StockChange> changes = i % 2 == 0
