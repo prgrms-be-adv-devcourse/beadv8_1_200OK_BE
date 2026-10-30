@@ -108,10 +108,10 @@ class RefundServiceTest {
     }
 
     @Test
-    void 완료된_개수를_빼고_남은_개수보다_많으면_요청할_수_없다() {
-        // given: 양말 3개 중 2개 완료, 이번에 2개
+    void 처리_중과_완료된_개수를_빼고_남은_개수보다_많으면_요청할_수_없다() {
+        // given: 양말 3개 중 2개 처리 중·완료, 이번에 2개
         RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 2);
-        given(refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED)).willReturn(2L);
+        given(refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID, List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED))).willReturn(2L);
 
         // when & then
         assertThatThrownBy(() -> sut.request(command, socks()))
@@ -121,9 +121,9 @@ class RefundServiceTest {
 
     @Test
     void 남은_개수만큼은_요청할_수_있고_주문에서_받은_값으로_저장한다() {
-        // given: 양말 3개 중 2개 완료, 이번에 1개
+        // given: 양말 3개 중 2개 처리 중·완료, 이번에 1개
         RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
-        given(refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED)).willReturn(2L);
+        given(refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID, List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED))).willReturn(2L);
         given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when

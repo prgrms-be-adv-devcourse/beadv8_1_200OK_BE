@@ -68,8 +68,10 @@ public class RefundService {
         if (!orderItem.isCancellable()) {
             throw new RestApiException(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE);
         }
-        long completed = refundRepository.sumQuantityByOrderItemIdAndStatus(orderItem.orderItemId(), RefundStatus.COMPLETED);
-        if (command.quantity() > orderItem.quantity() - completed) {
+        // 처리 중도 뺀다. 앞 요청이 완료로 바뀌는 순간과 겹치면, 완료만 세는 경우 아직 0으로 보여 통과하고
+        // 저장 때는 앞 요청이 끝나 진행 중 UNIQUE에도 안 걸려 승인할 수 없는 요청이 남는다. 승인 때 배송비 판단과도 기준이 같다
+        long cancelled = refundRepository.sumQuantityByOrderItemIdAndStatusIn(orderItem.orderItemId(), CANCELLED_STATUSES);
+        if (command.quantity() > orderItem.quantity() - cancelled) {
             throw new RestApiException(RefundErrorCode.REFUND_QUANTITY_EXCEEDED);
         }
         Refund refund = Refund.request(orderItem.orderId(), orderItem.orderItemId(), command.quantity(), command.buyerId(),

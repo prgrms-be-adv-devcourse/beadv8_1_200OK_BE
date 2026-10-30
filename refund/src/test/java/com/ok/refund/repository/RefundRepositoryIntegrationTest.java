@@ -20,7 +20,7 @@ import static com.ok.refund.fixture.RefundFixture.requested;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-// 마이그레이션과 엔티티가 맞는지(ddl validate), 진행 중 칸 UNIQUE와 완료 수량 합 쿼리가 실제 DB에서 동작하는지 확인한다
+// 마이그레이션과 엔티티가 맞는지(ddl validate), 진행 중 칸 UNIQUE와 취소 수량 합 쿼리가 실제 DB에서 동작하는지 확인한다
 class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
@@ -56,19 +56,23 @@ class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 완료된_요청의_개수만_더한다() {
-        // given
+    void 주문_상품의_처리_중과_완료_개수만_더하고_요청됨은_세지_않는다() {
+        // given: 양말 완료 2 + 처리 중 1, 모자 요청됨 1(다른 주문 상품)
         Refund completed = requested(2);
         completed.startProcessing(0L, 0L, NOW);
         completed.complete(NOW);
         refundRepository.saveAndFlush(completed);
-        refundRepository.saveAndFlush(requested(1));
+        Refund processing = requested(1);
+        processing.startProcessing(0L, 0L, NOW);
+        refundRepository.saveAndFlush(processing);
+        refundRepository.saveAndFlush(requested(102L, 1));
 
         // when
-        long result = refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED);
+        long result = refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID,
+                List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED));
 
         // then
-        assertThat(result).isEqualTo(2L);
+        assertThat(result).isEqualTo(3L);
     }
 
     @Test
@@ -112,9 +116,10 @@ class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 완료된_요청이_없으면_0을_돌려준다() {
+    void 처리_중이나_완료된_요청이_없으면_0을_돌려준다() {
         // when
-        long result = refundRepository.sumQuantityByOrderItemIdAndStatus(ORDER_ITEM_ID, RefundStatus.COMPLETED);
+        long result = refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID,
+                List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED));
 
         // then
         assertThat(result).isZero();

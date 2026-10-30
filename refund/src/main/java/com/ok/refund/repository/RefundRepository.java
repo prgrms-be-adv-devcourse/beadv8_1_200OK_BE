@@ -57,10 +57,13 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
     );
 
     /**
-     * 주문 상품에서 이미 완료된 취소 개수 합. 요청 때 남은 취소 가능 개수를 계산한다.
+     * 주문 상품에서 주어진 상태들의 취소 개수 합. 요청 때 남은 취소 가능 개수를 계산한다.
      */
-    @Query("select coalesce(sum(r.quantity), 0) from Refund r where r.orderItemId = :orderItemId and r.status = :status")
-    long sumQuantityByOrderItemIdAndStatus(@Param("orderItemId") Long orderItemId, @Param("status") RefundStatus status);
+    @Query("select coalesce(sum(r.quantity), 0) from Refund r where r.orderItemId = :orderItemId and r.status in :statuses")
+    long sumQuantityByOrderItemIdAndStatusIn(
+            @Param("orderItemId") Long orderItemId,
+            @Param("statuses") Collection<RefundStatus> statuses
+    );
 
     Page<Refund> findAllByBuyerId(Long buyerId, Pageable pageable);
 
