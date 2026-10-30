@@ -83,7 +83,9 @@ public class RefundFacade {
             return saveFinalStatus(refundId, "승인 불가", () -> refundService.markNotApprovable(refundId));
         }
 
-        // 다시 처리할 때도 같은 금액을 보내야 지갑의 환불ID 중복 확인과 맞으므로, 승인 때 저장한 금액을 그대로 보낸다
+        // 다시 처리할 때도 같은 금액을 보내야 지갑의 환불ID 중복 확인과 맞으므로, 승인 때 저장한 금액을 그대로 보낸다.
+        // 금액이 0원이어도 건너뛰지 않는다. 지갑은 0원을 422로 거절해 여기서 멈추지만, 상품 판매가는 등록·수정 때
+        // 0원보다 커야 해서(ProductOptionRequest) 0원 환불이 생기지 않는다. 할인·증정 등으로 0원 상품이 생기면 그때 다시 정한다
         runStep(refundId, RefundFailedStep.WALLET, () -> {
             walletClient.refund(refundId, processing.orderId(), processing.buyerId(), processing.sellerId(), processing.refundAmount());
             return null;
