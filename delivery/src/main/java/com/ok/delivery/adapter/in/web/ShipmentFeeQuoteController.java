@@ -2,7 +2,7 @@ package com.ok.delivery.adapter.in.web;
 
 import com.ok.delivery.adapter.in.web.dto.ShippingFeeQuoteRequest;
 import com.ok.delivery.adapter.in.web.dto.ShippingFeeQuoteResponse;
-import com.ok.delivery.application.service.ShippingFeeQuoteService;
+import com.ok.delivery.application.port.in.ShippingFeeQuoteUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,11 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ShipmentFeeQuoteController implements ShipmentFeeQuoteControllerSpec {
 
-    private final ShippingFeeQuoteService shippingFeeQuoteService;
+    private final ShippingFeeQuoteUseCase shippingFeeQuoteUseCase;
 
     @Override
     @PostMapping("/fee-quotes")
     public ResponseEntity<ShippingFeeQuoteResponse> quote(@Valid @RequestBody ShippingFeeQuoteRequest request) {
-        return ResponseEntity.ok(ShippingFeeQuoteResponse.from(shippingFeeQuoteService.quote(request.toQuery())));
+        return ResponseEntity.ok(ShippingFeeQuoteResponse.from(shippingFeeQuoteUseCase.quote(request.toQuery())));
     }
 }

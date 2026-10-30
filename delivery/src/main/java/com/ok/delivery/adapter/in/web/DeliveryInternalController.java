@@ -2,7 +2,7 @@ package com.ok.delivery.adapter.in.web;
 
 import com.ok.delivery.adapter.in.web.dto.RemoteAreaFeeRequest;
 import com.ok.delivery.adapter.in.web.dto.RemoteAreaFeeResponse;
-import com.ok.delivery.application.service.DeliveryRegionService;
+import com.ok.delivery.application.port.in.DeliveryRegionUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,12 +17,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class DeliveryInternalController implements DeliveryInternalControllerSpec {
 
-    private final DeliveryRegionService deliveryRegionService;
+    private final DeliveryRegionUseCase deliveryRegionUseCase;
 
     @Override
     @GetMapping("/remote-area-fee")
     public ResponseEntity<RemoteAreaFeeResponse> getRemoteAreaFee(@Valid @ModelAttribute RemoteAreaFeeRequest request) {
         return ResponseEntity.ok(RemoteAreaFeeResponse.of(
-                request.zipCode(), deliveryRegionService.resolve(request.zipCode())));
+                request.zipCode(), deliveryRegionUseCase.resolve(request.zipCode())));
     }
 }

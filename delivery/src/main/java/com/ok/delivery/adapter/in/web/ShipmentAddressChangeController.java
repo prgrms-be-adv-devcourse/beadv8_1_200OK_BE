@@ -4,7 +4,7 @@ import com.ok.common.security.CurrentMemberId;
 import com.ok.delivery.adapter.in.web.dto.AddressChangeRequestResponse;
 import com.ok.delivery.adapter.in.web.dto.AddressRequest;
 import com.ok.delivery.application.dto.AddressChangeRequestCommand;
-import com.ok.delivery.application.service.ShipmentAddressChangeService;
+import com.ok.delivery.application.port.in.ShipmentAddressChangeUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ShipmentAddressChangeController implements ShipmentAddressChangeControllerSpec {
 
-    private final ShipmentAddressChangeService shipmentAddressChangeService;
+    private final ShipmentAddressChangeUseCase shipmentAddressChangeUseCase;
 
     @Override
     @PostMapping
@@ -34,6 +34,6 @@ public class ShipmentAddressChangeController implements ShipmentAddressChangeCon
     ) {
         AddressChangeRequestCommand command = new AddressChangeRequestCommand(shipmentId, buyerId, request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(AddressChangeRequestResponse.from(shipmentAddressChangeService.request(command)));
+                .body(AddressChangeRequestResponse.from(shipmentAddressChangeUseCase.request(command)));
     }
 }

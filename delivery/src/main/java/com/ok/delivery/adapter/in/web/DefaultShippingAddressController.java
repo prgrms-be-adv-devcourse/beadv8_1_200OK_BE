@@ -3,8 +3,7 @@ package com.ok.delivery.adapter.in.web;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.delivery.adapter.in.web.dto.AddressRequest;
 import com.ok.delivery.adapter.in.web.dto.AddressResponse;
-import com.ok.delivery.application.service.DefaultShippingAddressFacade;
-import com.ok.delivery.application.service.DefaultShippingAddressService;
+import com.ok.delivery.application.port.in.DefaultShippingAddressUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,13 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class DefaultShippingAddressController implements DefaultShippingAddressControllerSpec {
 
-    private final DefaultShippingAddressService defaultShippingAddressService;
-    private final DefaultShippingAddressFacade defaultShippingAddressFacade;
+    private final DefaultShippingAddressUseCase defaultShippingAddressUseCase;
 
     @Override
     @GetMapping
     public ResponseEntity<AddressResponse> getDefaultAddress(@CurrentMemberId Long memberId) {
-        return defaultShippingAddressService.getDefaultAddress(memberId)
+        return defaultShippingAddressUseCase.getDefaultAddress(memberId)
                 .map(result -> ResponseEntity.ok(AddressResponse.from(result)))
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
@@ -40,6 +38,6 @@ public class DefaultShippingAddressController implements DefaultShippingAddressC
             @Valid @RequestBody AddressRequest request
     ) {
         return ResponseEntity.ok(AddressResponse.from(
-                defaultShippingAddressFacade.saveDefaultAddress(memberId, request.toCommand())));
+                defaultShippingAddressUseCase.saveDefaultAddress(memberId, request.toCommand())));
     }
 }

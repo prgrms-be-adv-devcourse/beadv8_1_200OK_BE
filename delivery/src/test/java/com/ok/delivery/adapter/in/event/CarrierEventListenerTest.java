@@ -1,9 +1,8 @@
 package com.ok.delivery.adapter.in.event;
 
 import com.ok.common.event.ShipmentDispatchedEvent;
-import com.ok.delivery.application.dto.ShippingShipmentResult;
-import com.ok.delivery.application.port.out.CarrierClient;
-import com.ok.delivery.application.service.ShipmentService;
+import com.ok.delivery.application.port.in.CarrierTrackingUseCase;
+import com.ok.delivery.application.port.in.ShipmentUseCase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -11,19 +10,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
-import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 
 @ExtendWith(MockitoExtension.class)
 class CarrierEventListenerTest {
 
     @Mock
-    CarrierClient carrierClient;
+    CarrierTrackingUseCase carrierTrackingUseCase;
 
     @Mock
-    ShipmentService shipmentService;
+    ShipmentUseCase shipmentUseCase;
 
     @InjectMocks
     CarrierEventListener sut;
@@ -38,7 +35,7 @@ class CarrierEventListenerTest {
         sut.on(event);
 
         // then
-        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890");
+        then(carrierTrackingUseCase).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890");
     }
 
     @Test
@@ -47,21 +44,15 @@ class CarrierEventListenerTest {
         sut.on(new CarrierDeliveredEvent(1L));
 
         // then
-        then(shipmentService).should().deliver(1L);
+        then(shipmentUseCase).should().deliver(1L);
     }
 
     @Test
-    void 앱이_뜨면_배송_중인_shipment를_모두_다시_추적_요청한다() {
-        // given
-        given(shipmentService.getShippingShipments()).willReturn(List.of(
-                new ShippingShipmentResult(1L, "CJ_LOGISTICS", "1111111111"),
-                new ShippingShipmentResult(2L, "HANJIN", "2222222222")));
-
+    void 앱이_뜨면_배송_중인_shipment의_추적_재요청을_맡긴다() {
         // when
         sut.requestTrackingForShippingShipments();
 
         // then
-        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1111111111");
-        then(carrierClient).should().requestTracking(2L, "HANJIN", "2222222222");
+        then(carrierTrackingUseCase).should().requestTrackingForShippingShipments();
     }
 }

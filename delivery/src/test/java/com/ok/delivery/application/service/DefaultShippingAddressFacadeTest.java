@@ -8,6 +8,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.util.Optional;
+
 import static com.ok.delivery.fixture.ShipmentFixture.otherAddress;
 import static com.ok.delivery.fixture.ShipmentFixture.otherAddressCommand;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,5 +72,18 @@ class DefaultShippingAddressFacadeTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("회원 ID는 필수입니다.");
         then(defaultShippingAddressService).should(times(1)).saveDefaultAddress(null, otherAddressCommand());
+    }
+
+    @Test
+    void 기본_배송지_조회는_서비스에_그대로_맡긴다() {
+        // given
+        AddressResult saved = AddressResult.from(otherAddress());
+        given(defaultShippingAddressService.getDefaultAddress(MEMBER_ID)).willReturn(Optional.of(saved));
+
+        // when
+        Optional<AddressResult> sut = defaultShippingAddressFacade.getDefaultAddress(MEMBER_ID);
+
+        // then
+        assertThat(sut).contains(saved);
     }
 }

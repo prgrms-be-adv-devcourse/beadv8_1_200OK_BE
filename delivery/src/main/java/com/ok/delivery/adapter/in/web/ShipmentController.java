@@ -4,7 +4,7 @@ import com.ok.common.security.CurrentMemberId;
 import com.ok.delivery.adapter.in.web.dto.ShipmentDetailResponse;
 import com.ok.delivery.adapter.in.web.dto.ShipmentPageRequest;
 import com.ok.delivery.adapter.in.web.dto.ShipmentPageResponse;
-import com.ok.delivery.application.service.ShipmentService;
+import com.ok.delivery.application.port.in.ShipmentUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ShipmentController implements ShipmentControllerSpec {
 
-    private final ShipmentService shipmentService;
+    private final ShipmentUseCase shipmentUseCase;
 
     @Override
     @GetMapping
@@ -30,7 +30,7 @@ public class ShipmentController implements ShipmentControllerSpec {
             @CurrentMemberId Long buyerId,
             @Valid @ModelAttribute ShipmentPageRequest request
     ) {
-        return ResponseEntity.ok(ShipmentPageResponse.from(shipmentService.getBuyerShipments(buyerId, request.page())));
+        return ResponseEntity.ok(ShipmentPageResponse.from(shipmentUseCase.getBuyerShipments(buyerId, request.page())));
     }
 
     @Override
@@ -39,6 +39,6 @@ public class ShipmentController implements ShipmentControllerSpec {
             @CurrentMemberId Long buyerId,
             @PathVariable Long shipmentId
     ) {
-        return ResponseEntity.ok(ShipmentDetailResponse.from(shipmentService.getBuyerShipment(buyerId, shipmentId)));
+        return ResponseEntity.ok(ShipmentDetailResponse.from(shipmentUseCase.getBuyerShipment(buyerId, shipmentId)));
     }
 }

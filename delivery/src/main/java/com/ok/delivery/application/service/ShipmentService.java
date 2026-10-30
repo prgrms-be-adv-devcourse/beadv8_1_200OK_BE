@@ -15,6 +15,7 @@ import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestReposito
 import com.ok.delivery.application.port.out.ShipmentQueryRepository;
 import com.ok.delivery.application.port.out.ShipmentRepository;
 import com.ok.delivery.application.dto.LatestAddressChangeResult;
+import com.ok.delivery.application.port.in.ShipmentUseCase;
 import com.ok.delivery.application.port.out.DeliveryEventPublisher;
 import com.ok.delivery.application.dto.RegionResult;
 import com.ok.delivery.application.dto.SellerShipmentCommand;
@@ -47,7 +48,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ShipmentService {
+public class ShipmentService implements ShipmentUseCase {
 
     private static final String TRACKING_NUMBER_UNIQUE_CONSTRAINT = "uk_shipment_carrier_tracking_number";
     // 이슈 명세로 고정한 목록 페이지 크기. 클라이언트가 바꿀 수 없다
@@ -62,14 +63,7 @@ public class ShipmentService {
     private final DeliveryEventPublisher deliveryEventPublisher;
     private final Clock clock;
 
-    /**
-     * 결제 완료된 주문으로 판매자별 shipment를 {@code PREPARING} 상태로 만든다.
-     * 배송비 금액은 결제에 쓰인 값을 그대로 저장하고, 지역 그룹과 도착 예정일은 배송지 우편번호로 판정한다.
-     * 이미 shipment가 있는 주문이면 만들지 않는다(이벤트 재발행 대비).
-     *
-     * @throws com.ok.common.exception.RestApiException 배송지 검증 규칙은 {@link Address#of}를 따른다
-     * @throws ArithmeticException 금액이 {@code int} 범위를 넘으면
-     */
+    @Override
     @Transactional
     public void create(ShipmentCreateCommand command) {
         // 판매자 묶음 전체를 한 트랜잭션에 저장하므로 주문 단위로 확인하면 된다.
@@ -90,16 +84,7 @@ public class ShipmentService {
         shipmentRepository.saveAll(shipments);
     }
 
-    /**
-     * 판매자가 송장을 등록해 출고한다. {@code PREPARING → SHIPPING}
-     * shipment 행 잠금 아래에서 처리하므로 환불의 취소 확정 예약과 동시에 실행돼도 한쪽만 성공한다.
-     * 대기 중인 배송지 변경 요청은 송장 발행 후 바꿀 수 없으므로 고정 문구로 자동 거절한다.
-     * 출고가 확정되면 주문이 배송 중으로 바뀌도록 배송 시작 이벤트를 발행한다.
-     *
-     * @throws RestApiException 없거나 다른 판매자의 shipment면 {@code SHIPMENT_NOT_FOUND},
-     *                          같은 택배사의 송장번호가 이미 쓰였으면 {@code TRACKING_NUMBER_DUPLICATED},
-     *                          상태·송장번호 형식·취소 예약 규칙은 {@link Shipment#dispatch}를 따른다
-     */
+    @Override
     @Transactional
     public ShipmentDispatchResult dispatch(ShipmentDispatchCommand command) {
         // 다른 판매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
@@ -126,13 +111,7 @@ public class ShipmentService {
                 .toList();
     }
 
-    /**
-     * 택배사의 배송 완료 알림을 반영한다. {@code SHIPPING → DELIVERED}
-     * 같은 알림이 동시에 두 번 와도 배송 완료 이벤트가 한 번만 나가도록 shipment 행 잠금 아래에서 처리한다.
-     * 주문은 이 이벤트의 배송 완료 시각을 자동 구매확정 기준으로 쓴다.
-     *
-     * @throws RestApiException 없으면 {@code SHIPMENT_NOT_FOUND}, 상태 규칙은 {@link Shipment#deliver}를 따른다
-     */
+    @Override
     @Transactional
     public void deliver(Long shipmentId) {
         Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
@@ -142,24 +121,14 @@ public class ShipmentService {
                 shipment.getDeliveredAt());
     }
 
-    /**
-     * 구매자의 배송 목록을 최신순으로 25건씩 조회한다.
-     * 목록의 대표 상품은 페이지에 담긴 shipment들의 상품 항목을 한 번에 읽어 채운다.
-     *
-     * @param page 0부터 시작하는 페이지 번호
-     */
+    @Override
     public Page<ShipmentSummaryResult> getBuyerShipments(Long buyerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findByBuyerId(buyerId, PageRequest.of(page, PAGE_SIZE));
         Map<Long, List<ShipmentItem>> itemsByShipmentId = itemsByShipmentId(idsOf(shipments));
         return shipments.map(shipment -> ShipmentSummaryResult.of(shipment, itemsByShipmentId.get(shipment.getId())));
     }
 
-    /**
-     * 판매자의 출고 목록을 최신순으로 25건씩 조회한다.
-     * 대표 상품과 대기 중인 배송지 변경 요청 여부는 페이지에 담긴 shipment들에 대해 한 번에 읽어 채운다.
-     *
-     * @param page 0부터 시작하는 페이지 번호
-     */
+    @Override
     public Page<SellerShipmentSummaryResult> getSellerShipments(Long sellerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findBySellerId(sellerId, PageRequest.of(page, PAGE_SIZE));
         List<Long> shipmentIds = idsOf(shipments);
@@ -171,11 +140,7 @@ public class ShipmentService {
                 shipment, itemsByShipmentId.get(shipment.getId()), pendingShipmentIds.contains(shipment.getId())));
     }
 
-    /**
-     * 구매자의 배송 상세를 조회한다.
-     *
-     * @throws RestApiException 없거나 다른 구매자의 shipment면 {@code SHIPMENT_NOT_FOUND}
-     */
+    @Override
     public ShipmentDetailResult getBuyerShipment(Long buyerId, Long shipmentId) {
         // 다른 구매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
         Shipment shipment = shipmentRepository.findById(shipmentId)
@@ -184,11 +149,7 @@ public class ShipmentService {
         return toDetail(shipment);
     }
 
-    /**
-     * 판매자의 출고 상세를 조회한다. 구매자 상세와 같은 형태이고, 대기 중인 배송지 변경 요청은 가장 최근 요청으로 담긴다.
-     *
-     * @throws RestApiException 없거나 다른 판매자의 shipment면 {@code SHIPMENT_NOT_FOUND}
-     */
+    @Override
     public ShipmentDetailResult getSellerShipment(Long sellerId, Long shipmentId) {
         // 다른 판매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
         Shipment shipment = shipmentRepository.findById(shipmentId)

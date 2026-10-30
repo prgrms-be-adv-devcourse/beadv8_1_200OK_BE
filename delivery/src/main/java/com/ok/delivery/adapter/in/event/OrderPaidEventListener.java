@@ -8,7 +8,7 @@ import com.ok.delivery.application.dto.AddressCommand;
 import com.ok.delivery.application.dto.SellerShipmentCommand;
 import com.ok.delivery.application.dto.ShipmentCreateCommand;
 import com.ok.delivery.application.dto.ShipmentItemCommand;
-import com.ok.delivery.application.service.ShipmentService;
+import com.ok.delivery.application.port.in.ShipmentUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class OrderPaidEventListener {
 
-    private final ShipmentService shipmentService;
+    private final ShipmentUseCase shipmentUseCase;
 
     /**
      * 이벤트를 서비스 입력으로 바꿔 넘긴다. 같은 이벤트가 다시 와도 서비스가 주문 ID로 한 번만 만든다.
@@ -28,7 +28,7 @@ public class OrderPaidEventListener {
      */
     @ApplicationModuleListener
     void on(OrderPaidEvent event) {
-        shipmentService.create(new ShipmentCreateCommand(
+        shipmentUseCase.create(new ShipmentCreateCommand(
                 event.orderId(),
                 event.buyerId(),
                 event.paidAt(),

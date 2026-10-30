@@ -6,7 +6,7 @@ import com.ok.delivery.adapter.in.web.dto.PostalRegionPageResponse;
 import com.ok.delivery.adapter.in.web.dto.PostalRegionRegisterRequest;
 import com.ok.delivery.adapter.in.web.dto.PostalRegionResponse;
 import com.ok.delivery.adapter.in.web.dto.PostalRegionUpdateRequest;
-import com.ok.delivery.application.service.DeliveryRegionService;
+import com.ok.delivery.application.port.in.DeliveryRegionUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -28,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class PostalRegionAdminController implements PostalRegionAdminControllerSpec {
 
-    private final DeliveryRegionService deliveryRegionService;
+    private final DeliveryRegionUseCase deliveryRegionUseCase;
 
     @Override
     @PostMapping
@@ -36,7 +36,7 @@ public class PostalRegionAdminController implements PostalRegionAdminControllerS
             @CurrentMemberId Long adminId,
             @Valid @RequestBody PostalRegionRegisterRequest request
     ) {
-        PostalRegionResponse response = PostalRegionResponse.from(deliveryRegionService.register(request.toCommand(), adminId));
+        PostalRegionResponse response = PostalRegionResponse.from(deliveryRegionUseCase.register(request.toCommand(), adminId));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -48,7 +48,7 @@ public class PostalRegionAdminController implements PostalRegionAdminControllerS
             @Valid @RequestBody PostalRegionUpdateRequest request
     ) {
         PostalRegionResponse response = PostalRegionResponse.from(
-                deliveryRegionService.update(request.toCommand(postalCode), adminId));
+                deliveryRegionUseCase.update(request.toCommand(postalCode), adminId));
         return ResponseEntity.ok(response);
     }
 
@@ -58,7 +58,7 @@ public class PostalRegionAdminController implements PostalRegionAdminControllerS
             @CurrentMemberId Long adminId,
             @PathVariable String postalCode
     ) {
-        deliveryRegionService.delete(postalCode, adminId);
+        deliveryRegionUseCase.delete(postalCode, adminId);
         return ResponseEntity.noContent().build();
     }
 
@@ -68,6 +68,6 @@ public class PostalRegionAdminController implements PostalRegionAdminControllerS
             @Valid @ModelAttribute PostalRegionPageRequest request
     ) {
         return ResponseEntity.ok(PostalRegionPageResponse.from(
-                deliveryRegionService.getPostalRegions(request.page(), request.size())));
+                deliveryRegionUseCase.getPostalRegions(request.page(), request.size())));
     }
 }

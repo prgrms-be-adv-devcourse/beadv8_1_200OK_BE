@@ -8,8 +8,8 @@ import com.ok.delivery.adapter.in.web.dto.ShipmentDetailResponse;
 import com.ok.delivery.adapter.in.web.dto.ShipmentDispatchRequest;
 import com.ok.delivery.adapter.in.web.dto.ShipmentDispatchResponse;
 import com.ok.delivery.adapter.in.web.dto.ShipmentPageRequest;
-import com.ok.delivery.application.service.ShipmentAddressChangeService;
-import com.ok.delivery.application.service.ShipmentService;
+import com.ok.delivery.application.port.in.ShipmentAddressChangeUseCase;
+import com.ok.delivery.application.port.in.ShipmentUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -29,8 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerShipmentController implements SellerShipmentControllerSpec {
 
-    private final ShipmentService shipmentService;
-    private final ShipmentAddressChangeService shipmentAddressChangeService;
+    private final ShipmentUseCase shipmentUseCase;
+    private final ShipmentAddressChangeUseCase shipmentAddressChangeUseCase;
 
     @Override
     @GetMapping
@@ -38,7 +38,7 @@ public class SellerShipmentController implements SellerShipmentControllerSpec {
             @CurrentMemberId Long sellerId,
             @Valid @ModelAttribute ShipmentPageRequest request
     ) {
-        return ResponseEntity.ok(SellerShipmentPageResponse.from(shipmentService.getSellerShipments(sellerId, request.page())));
+        return ResponseEntity.ok(SellerShipmentPageResponse.from(shipmentUseCase.getSellerShipments(sellerId, request.page())));
     }
 
     @Override
@@ -47,7 +47,7 @@ public class SellerShipmentController implements SellerShipmentControllerSpec {
             @CurrentMemberId Long sellerId,
             @PathVariable Long shipmentId
     ) {
-        return ResponseEntity.ok(ShipmentDetailResponse.from(shipmentService.getSellerShipment(sellerId, shipmentId)));
+        return ResponseEntity.ok(ShipmentDetailResponse.from(shipmentUseCase.getSellerShipment(sellerId, shipmentId)));
     }
 
     @Override
@@ -58,7 +58,7 @@ public class SellerShipmentController implements SellerShipmentControllerSpec {
             @Valid @RequestBody ShipmentDispatchRequest request
     ) {
         return ResponseEntity.ok(ShipmentDispatchResponse.from(
-                shipmentService.dispatch(request.toCommand(shipmentId, sellerId))));
+                shipmentUseCase.dispatch(request.toCommand(shipmentId, sellerId))));
     }
 
     @Override
@@ -70,6 +70,6 @@ public class SellerShipmentController implements SellerShipmentControllerSpec {
             @Valid @RequestBody AddressChangeDecisionRequest request
     ) {
         return ResponseEntity.ok(AddressChangeRequestResponse.from(
-                shipmentAddressChangeService.decide(request.toCommand(shipmentId, requestId, sellerId))));
+                shipmentAddressChangeUseCase.decide(request.toCommand(shipmentId, requestId, sellerId))));
     }
 }
