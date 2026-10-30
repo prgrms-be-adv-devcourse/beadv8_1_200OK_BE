@@ -111,7 +111,9 @@ services:
       - kafka-3-data:/var/lib/kafka/data
 
   app:
-    image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
+    # deploy.sh가 받은 이미지를 digest(@sha256:...)로 APP_IMAGE_REF에 넣어 띄운다. 비어 있으면 .env의 태그를 쓴다
+    # APP_IMAGE_REF는 deploy.sh 전용이라 .env에 넣지 않는다
+    image: ${APP_IMAGE_REF:-ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}}
     restart: unless-stopped
     # default: mysql·nginx와 통신 / kafka-net: 브로커 접속
     # mysql·nginx는 기본 네트워크에 그대로 둔다. 네트워크를 바꾸면 배포 때 mysql 컨테이너를 새로 만들어 DB가 잠깐 끊긴다
@@ -158,7 +160,8 @@ services:
 
   # 프론트 레포가 GHCR에 올리는 BFF 이미지. healthcheck(GET /health)는 이미지에 들어 있다
   bff:
-    image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff:${BFF_IMAGE_TAG:-latest}
+    # app과 같이 deploy.sh가 BFF_IMAGE_REF에 digest를 넣는다. 비어 있으면 .env의 태그를 쓴다
+    image: ${BFF_IMAGE_REF:-ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan-bff:${BFF_IMAGE_TAG:-latest}}
     restart: unless-stopped
     depends_on:
       app:

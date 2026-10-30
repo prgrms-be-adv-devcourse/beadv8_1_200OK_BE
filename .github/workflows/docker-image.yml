@@ -52,5 +52,7 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.sha.outputs.short }}
+          # 운영 deploy.sh가 latest로 받은 이미지의 커밋 SHA를 배포 이력에 남길 때 읽는다
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

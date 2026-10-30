@@ -104,11 +104,18 @@ cd /opt/paldo-gotgan && ./deploy.sh
 ```
 
 - 패키지는 비공개로 둡니다. 서버는 [2. 최초 설정](#2-최초-설정-서버당-1회)에서 로그인한 pull 전용 토큰으로 받습니다.
-- 서버는 `latest`를 받고, SHA 태그는 롤백에 씁니다. 빌드는 한 번에 하나씩 실행되고 대기 중인 실행은 새 실행이 오면 취소되므로, `semi`를 연달아 올리면 중간 커밋의 SHA 태그는 없을 수 있습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다.
+- 서버는 `latest`를 받습니다. 받은 이미지는 digest(`@sha256:...`)로 고정해 띄우고 서비스별 이력에 남기므로, 보통의 롤백에는 SHA 태그가 필요 없습니다([4. 롤백](#4-롤백)). SHA 태그는 특정 버전을 `.env`에 고정할 때 씁니다. 빌드는 한 번에 하나씩 실행되고 대기 중인 실행은 새 실행이 오면 취소되므로, `semi`를 연달아 올리면 중간 커밋의 SHA 태그는 없을 수 있습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다.
 - 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 실행합니다. `semi`가 아닌 브랜치를 고르면 빌드는 건너뜁니다.
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
-- `deploy.sh`는 app·bff 이미지를 받고, app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 bff를 올려 healthy를 확인하고, nginx까지 올린 다음 `배포 성공`을 출력합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
-- bff 단계에서 실패해도 이미 떠 있는 nginx와 `/api/v1/**`(기본값일 때)은 새 app으로 계속 응답합니다.
+- `./deploy.sh`(전체 배포)는 다음 순서로 진행합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
+  1. app·bff의 지금 정상 이미지를 확인합니다([배포 이력](#배포-이력-deploy-state)).
+  2. app·bff 이미지를 받습니다. 하나라도 받지 못하면 아무것도 바꾸지 않고 멈춥니다.
+  3. Kafka를 처리합니다(아래 `kafka-rollout.sh`).
+  4. app(과 mysql)을 올려 healthy를 확인하고 app 이력을 남깁니다.
+  5. bff를 올려 healthy를 확인하고 bff 이력을 남깁니다.
+  6. nginx까지 올린 다음 `배포 성공: 전체`를 출력합니다.
+- bff 단계에서 실패해도 이미 떠 있는 nginx와 `/api/v1/**`(기본값일 때)은 새 app으로 계속 응답합니다. app 이력은 새 이미지로 남고 bff 이력은 그대로입니다.
+- 서버에서 `docker compose up -d`를 직접 실행하지 않습니다. Kafka 3대가 동시에 다시 만들어지고, app·bff도 `.env`의 태그(`latest`)로 다시 만들어져 롤백한 이미지가 풀립니다.
 - app보다 먼저 `kafka-rollout.sh`가 Kafka를 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
 
 | Kafka 상태 | 처리 |
@@ -133,38 +140,99 @@ echo "KAFKA_CLUSTER_ID=$(docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka
 ./deploy.sh
 ```
 
-### BFF만 배포
+### 서비스만 배포 (app, bff)
 
-프론트가 BFF만 바꿨을 때는 앱을 건드리지 않고 BFF만 다시 띄웁니다. BFF 이미지를 받아 bff 컨테이너만 다시 만들고 healthy를 확인합니다.
+앱만 바꿨거나 프론트가 BFF만 바꿨을 때는 그 서비스만 다시 띄웁니다.
 
 ```bash
-cd /opt/paldo-gotgan && ./deploy.sh bff
+cd /opt/paldo-gotgan
+./deploy.sh app   # 앱만
+./deploy.sh bff   # BFF만
 ```
+
+- 그 서비스의 이미지만 받고, 그 컨테이너만 다시 만듭니다(`--no-deps`). nginx·MySQL·Kafka·다른 서비스는 받지도 다시 만들지도 않고, Kafka 처리(`kafka-rollout.sh`)도 하지 않습니다.
+- 바꾸기 전에 의존 서비스가 healthy인지 확인합니다. app은 mysql과 kafka 3대, bff는 app입니다. 하나라도 아니면 아무것도 바꾸지 않고 멈춥니다. 그때는 전체 배포(`./deploy.sh`)를 씁니다.
+- `compose.prod.yml`의 Kafka·MySQL·nginx 설정을 바꿨거나 서버를 처음 설치할 때는 전체 배포를 씁니다.
 
 ## 4. 롤백
 
-```bash
-cd /opt/paldo-gotgan
-sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
-./deploy.sh
-```
-
-- 복구한 뒤 문제를 고쳐 다시 배포할 때 `APP_IMAGE_TAG=latest`로 되돌립니다.
-
-BFF는 `BFF_IMAGE_TAG`로 같은 방식으로 되돌립니다. 롤백할 SHA는 GHCR의 `paldo-gotgan-bff` 패키지 화면에서 확인합니다.
+서비스마다 따로 되돌립니다. 앱을 되돌려도 BFF는 받지도 바꾸지도 않고, 그 반대도 같습니다.
 
 ```bash
 cd /opt/paldo-gotgan
-sed -i 's/^BFF_IMAGE_TAG=.*/BFF_IMAGE_TAG=<이전 SHA>/' .env
-./deploy.sh bff
+./deploy.sh app --rollback
+./deploy.sh bff --rollback
 ```
-- 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다.
+
+되돌릴 이미지는 [배포 이력](#배포-이력-deploy-state)의 digest로 정합니다.
+
+| 지금 컨테이너 | 되돌리는 이미지 |
+|---|---|
+| healthy이고 이력의 `current`와 같음 (새 버전이 떴지만 문제가 있음) | `previous` (직전 정상 이미지) |
+| healthy가 아님 (배포가 health 확인에서 실패함) | `current` (마지막 정상 이미지) |
+| healthy지만 이력에 없는 이미지 (누군가 직접 바꿈) | `current` |
+
+- 되돌릴 이미지가 이력에 없으면 아무것도 바꾸지 않고 실패합니다. 예: 최초 설치 뒤 한 번만 배포해 `previous`가 없을 때.
+- 그 서비스만 다시 만들고(`--no-deps`) healthy를 확인한 뒤 이력을 바꿉니다. 실패하면 이력은 그대로입니다.
+- `previous`로 되돌리면 `current`와 `previous`가 서로 바뀝니다. 그래서 `--rollback`을 다시 실행하면 되돌리기 전 이미지로 돌아갑니다(두 버전을 번갈아 오갑니다). 더 이전 버전으로 가려면 아래처럼 SHA 태그를 씁니다.
+- 롤백한 상태는 다음 배포까지만 유지됩니다. 다음 `./deploy.sh`나 `./deploy.sh app`은 `.env`의 태그(`latest`)를 다시 받아 그 이미지로 앞으로 갑니다. 문제를 고친 이미지가 `latest`로 올라온 뒤 평소처럼 배포하면 됩니다.
+- 롤백한 버전을 다음 배포에서도 유지하거나 이력에 없는 더 이전 버전으로 가려면 `.env`에 SHA 태그를 적습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다(BFF는 `paldo-gotgan-bff` 패키지).
+
+```bash
+sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<SHA 7자리>/' .env && ./deploy.sh app
+sed -i 's/^BFF_IMAGE_TAG=.*/BFF_IMAGE_TAG=<SHA 7자리>/' .env && ./deploy.sh bff
+# 다시 latest를 따라가려면 latest로 바꾸고 같은 명령을 실행한다
+```
+
+- 자동 롤백은 없습니다. 배포가 실패하면 출력에 나오는 `./deploy.sh <서비스> --rollback`을 사람이 실행합니다.
+- 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다. 앱을 되돌리기 전에도 확인합니다.
+
+### 배포 이력 (`.deploy-state`)
+
+`deploy.sh`는 서비스마다 healthy를 확인한 이미지를 `/opt/paldo-gotgan/.deploy-state/app.state`, `bff.state`에 남깁니다. 레포에는 없고(`.gitignore`) 서버에만 있습니다.
+
+```
+# deploy.sh가 관리한다. 키=값으로만 읽고 셸로 실행하지 않는다
+current_image=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest
+current_digest=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan@sha256:<64자리>
+current_sha=abc1234
+current_at=2026-10-30T14:05:12+0900
+previous_image=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:latest
+previous_digest=ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan@sha256:<64자리>
+previous_sha=
+previous_at=2026-10-29T10:00:03+0900
+```
+
+| 키 | 뜻 |
+|---|---|
+| `current_*` | 마지막으로 healthy를 확인한 이미지 |
+| `previous_*` | 그 직전의, `current`와 다른 정상 이미지 |
+| `*_image` | 받을 때 쓴 참조(`.env`의 태그). `latest`일 수 있어 되돌릴 때는 쓰지 않습니다 |
+| `*_digest` | 레지스트리 digest 참조. 배포·롤백은 이 값으로 정확히 같은 이미지를 띄웁니다 |
+| `*_sha` | 커밋 SHA 7자리. 태그가 SHA이거나 이미지에 revision 라벨이 있을 때만 남고, 모르면 비어 있습니다. 앱 이미지는 이번 워크플로 변경 뒤 빌드부터 라벨이 있고, BFF 이미지는 라벨이 없습니다 |
+| `*_at` | healthy를 확인한 시각. 최초 도입 때 떠 있던 컨테이너를 기록한 경우는 기록한 시각이고, 이력에 없던 이미지는 `unknown`입니다 |
+
+- 새 이미지가 healthy가 된 뒤에만 이력을 바꿉니다. 받기·기동·health 확인이 실패하면 이력은 그대로입니다.
+- 같은 이미지를 다시 배포하면 `current` 시각만 바뀌고 `previous`는 그대로입니다.
+- 이력 저장이 실패하면 컨테이너가 새 이미지로 떠 있어도 `배포 실패`로 끝납니다. `.deploy-state` 권한과 디스크 여유를 확인합니다.
+- 직접 고치지 않습니다. 형식이 틀린 값이 있으면 `deploy.sh`가 아무것도 바꾸지 않고 멈춥니다.
+
+**최초 도입**: 이력 파일이 없으면 바꾸기 전에 지금 떠 있는 컨테이너를 봅니다.
+
+- healthy이고 레지스트리 digest를 알 수 있으면 그 이미지를 `current`로 기록합니다. 이번 배포가 성공하면 그 이미지가 `previous`가 되어 바로 되돌릴 수 있습니다.
+- 컨테이너가 없거나 healthy가 아니면 이력 없이 시작합니다(최초 설치). 이때는 첫 배포 뒤 `previous`가 없습니다.
+- healthy인데 digest를 알 수 없으면(로컬에서 빌드한 이미지 등) 아무것도 바꾸지 않고 멈춥니다. 그 이미지로 되돌릴 수 없다는 것을 받아들이면 빈 이력 파일을 만들고 다시 배포합니다.
+
+```bash
+mkdir -p .deploy-state && : > .deploy-state/app.state   # bff는 bff.state
+```
 
 ## 5. 확인 명령
 
 ```bash
 docker compose -f compose.prod.yml ps                 # 상태 (app·bff가 healthy인지)
 docker compose -f compose.prod.yml logs -f bff        # BFF 로그
+cat .deploy-state/app.state .deploy-state/bff.state   # 서비스별 정상 이미지 이력 (current, previous)
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
 docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
