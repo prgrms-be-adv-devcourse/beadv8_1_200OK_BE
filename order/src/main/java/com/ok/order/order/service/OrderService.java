@@ -45,6 +45,12 @@ public class OrderService {
         return orderRepository.save(order).getId();
     }
 
+    // 같은 멱등키로 이미 만든 주문 ID
+    public Optional<Long> findIdByIdempotencyKey(Long buyerId, String idempotencyKey) {
+        return orderRepository.findByBuyerIdAndIdempotencyKey(buyerId, idempotencyKey)
+                .map(Order::getId);
+    }
+
     // 주문 생성 이벤트 발행
     @Transactional
     public void publishCreated(Long orderId) {

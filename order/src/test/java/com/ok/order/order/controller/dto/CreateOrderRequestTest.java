@@ -15,12 +15,13 @@ class CreateOrderRequestTest {
                 "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", true, 13_000L);
 
         // when
-        CreateOrderCommand command = sut.toCommand(7L);
+        CreateOrderCommand command = sut.toCommand(7L, "idem-key-1");
 
         // then
         assertThat(command).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(command.memberId()).isEqualTo(7L);
+            softly.assertThat(command.idempotencyKey()).isEqualTo("idem-key-1");
             softly.assertThat(command.recipientName()).isEqualTo("홍길동");
             softly.assertThat(command.recipientPhone()).isEqualTo("010-1234-5678");
             softly.assertThat(command.zipCode()).isEqualTo("06236");

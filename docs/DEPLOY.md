@@ -1,6 +1,6 @@
 # 배포 가이드
 
-EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
+EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
 서버(EC2) 자체를 만드는 방법은 [`INFRA.md`](INFRA.md)를 보세요.
 
 ## 1. 구성
@@ -8,16 +8,41 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
 ```
 인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
                  └─ 그 외 경로(/internal, /actuator 등) → 404
+                                       └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
 ```
 
 - 외부에는 `/api/v1/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
-- app·mysql은 호스트 포트를 열지 않습니다.
+- app·mysql·kafka는 호스트 포트를 열지 않습니다. Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
+  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx)에 함께 붙습니다. mysql·nginx는 Kafka에 닿지 않습니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
 - 앱은 1개만 띄웁니다. 배포 중 수십 초간 요청이 실패합니다. 여러 개를 띄우려면 정산 스케줄러 중복 실행 문제를 먼저 해결해야 합니다.
+
+### Kafka (#318)
+
+- 클러스터 1개에 브로커 3대(`kafka-1`~`kafka-3`), 브로커와 컨트롤러를 한 프로세스에서 돌리는 KRaft combined 모드입니다. 이미지는 `apache/kafka:${KAFKA_VERSION}`입니다.
+- 메시지는 3대에 복사되고 2대 이상에 저장돼야 발행 성공입니다(`min.insync.replicas=2`, 앱은 `acks=all`). 그래서 **브로커 1대 고장은 버티지만, 같은 EC2라 EC2가 죽으면 3대가 함께 죽고 처리량도 늘지 않습니다.** 장애 대비용 구성입니다.
+- app은 mysql과 Kafka 3대가 모두 healthy가 된 뒤 시작합니다. 브로커가 healthy가 되지 못하면 app이 뜨지 않고 배포가 실패합니다.
+- 데이터는 루트 디스크의 도커 볼륨(`kafka-N-data`)에 둡니다. `/data`(EBS)는 MySQL 전용이라 Kafka가 디스크를 채워도 MySQL은 멈추지 않습니다.
+  - 파티션 하나당 256MB(`KAFKA_LOG_RETENTION_BYTES`)를 넘으면 오래된 메시지부터 지웁니다. 아직 읽히지 않은 메시지도 지워질 수 있습니다. 토픽이 늘면 `토픽 수 × 파티션 수 × 3벌 × 256MB`가 루트 디스크 여유(30GB 중 OS·도커 이미지 사용분 제외) 안에 드는지 다시 계산합니다.
+  - 인스턴스를 교체하면 루트 디스크와 함께 Kafka 데이터도 사라지고 새 클러스터로 시작합니다. 원본 데이터는 DB에 있습니다.
+- **`KAFKA_CLUSTER_ID`는 처음 정한 뒤 바꾸지 않습니다.** 바꾸면 기존 볼륨과 맞지 않아 브로커가 뜨지 않습니다. 꼭 바꿔야 하면 `docker compose -f compose.prod.yml down`, `docker volume rm paldo-gotgan_kafka-1-data paldo-gotgan_kafka-2-data paldo-gotgan_kafka-3-data`로 볼륨까지 지운 뒤 배포합니다(Kafka 메시지가 모두 사라집니다).
+- Kafka 상태는 앱 헬스체크(`/actuator/health`)에 들어가지 않습니다. `docker compose ps`의 kafka 컨테이너 상태로 봅니다.
+
+**메모리 예산 (t3.large 8GiB, 추정치)**
+
+| 구성 | 예산 |
+|---|---|
+| app | 2560m (`mem_limit`) |
+| kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
+| mysql | 제한 없음, 약 0.5~1GiB |
+| nginx, OS·Docker | 약 0.6GiB |
+| 합계 | 약 6.2GiB (여유 약 1.8GiB) |
+
+로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
 ## 2. 최초 설정 (서버당 1회)
 
@@ -33,17 +58,19 @@ EC2 한 대에 nginx·앱·MySQL을 Docker 컨테이너로 띄워 수동으로 �
 
 ```bash
 # 로컬: 배포 파일 복사
-scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/nginx deploy/initdb deploy/.env.prod.example ubuntu@<EIP>:/tmp/
+scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/nginx deploy/initdb deploy/.env.prod.example ubuntu@<EIP>:/tmp/
 
 # 서버
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
-mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
+mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
+chmod +x deploy.sh kafka-rollout.sh
 cp .env.prod.example .env && chmod 600 .env
-vi .env                      # 비밀번호·키 채우기
+docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka-storage.sh random-uuid   # KAFKA_CLUSTER_ID에 넣을 값
+vi .env                      # 비밀번호·키, KAFKA_CLUSTER_ID 채우기
 mountpoint /data             # "/data is a mountpoint"가 나와야 한다
 # JWT 서명 키 만들기 (아래 9절)
 ./deploy.sh
@@ -73,6 +100,29 @@ cd /opt/paldo-gotgan && ./deploy.sh
 - 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 실행합니다. `semi`가 아닌 브랜치를 고르면 빌드는 건너뜁니다.
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
 - `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
+- app보다 먼저 `kafka-rollout.sh`가 Kafka를 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
+
+| Kafka 상태 | 처리 |
+|---|---|
+| 떠 있는 브로커가 없음 (첫 배포, `down` 뒤) | 3대를 동시에 띄웁니다. 3대 중 2대가 모여야 시작하므로 1대씩 띄우면 끝없이 기다립니다 |
+| 3대 모두 healthy | 1대씩 다시 띄우고, healthy와 복사 따라잡기(복사 덜 된 파티션 0개)를 기다린 뒤 다음 브로커로 갑니다. 설정·버전이 그대로면 다시 만들지 않아 바로 지나갑니다 |
+| 켜지는 중(starting)인 브로커가 있음 (서버 재부팅 직후 등) | healthy가 될 때까지 기다린 뒤 위·아래 기준으로 판정합니다 |
+| 일부만 살아 있음 | 배포를 중단합니다. 이 상태에서 1대를 더 내리면 클러스터가 멈추기 때문입니다. `docker compose -f compose.prod.yml ps`, `logs kafka-N`으로 원인을 보고 브로커를 살린 뒤 다시 배포합니다 |
+
+- `KAFKA_VERSION`을 올릴 때도 `.env`만 바꾸고 `./deploy.sh`를 실행하면 위 순서로 1대씩 바뀝니다. 버전을 내리는 것은 Kafka가 보장하지 않으므로 하지 않습니다.
+- **Kafka가 추가된 버전을 처음 배포하는 기존 서버**는 아래 순서로 준비합니다. `.env`에 `KAFKA_VERSION`, `KAFKA_CLUSTER_ID`가 없으면 compose가 `KAFKA_CLUSTER_ID가 필요하다`로 실패합니다.
+
+```bash
+# 로컬: 새 배포 파일 복사
+scp -i <키 파일> deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
+
+# 서버
+cd /opt/paldo-gotgan
+chmod +x deploy.sh kafka-rollout.sh
+echo "KAFKA_VERSION=4.2.1" >> .env
+echo "KAFKA_CLUSTER_ID=$(docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka-storage.sh random-uuid)" >> .env
+./deploy.sh
+```
 
 ## 4. 롤백
 
@@ -91,17 +141,22 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy인지)
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
+docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
+# Kafka 클러스터 상태(투표자 3대, 리더)와 복사가 덜 된 파티션(없어야 정상). CLI도 JVM을 띄우므로 힙을 작게 준다
+docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status'
+docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions'
 curl -s -o /dev/null -w '%{http_code}\n' localhost/api/v1/products/categories   # 200
 curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options # 404
 ```
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다. `compose.prod.yml`이나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
+`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
+scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
 scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
 
 # 서버
@@ -110,6 +165,7 @@ cd /opt/paldo-gotgan
 docker compose -f compose.prod.yml restart nginx
 ```
 
+- Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
 
 ## 7. pull 토큰 교체
