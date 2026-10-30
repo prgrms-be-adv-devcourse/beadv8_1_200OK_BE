@@ -45,6 +45,10 @@ services:
       ADMIN_BOOTSTRAP_LOGIN_ID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
+      # HS256 시절 이미지로 롤백할 때만 쓴다. 지금 버전은 읽지 않는다 (키는 아래 keys 폴더의 jwt.yaml).
+      # 남겨 두는 이유: APP_IMAGE_TAG만 바꾸는 표준 롤백(docs/DEPLOY.md 4절)으로 이전 이미지가 뜨게 하기 위해서다
+      # TODO(#313): RS256 버전이 운영에서 안정된 뒤 서버 .env의 JWT_SECRET과 함께 이 줄을 지운다
+      JWT_SECRET: ${JWT_SECRET:-}
       # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL과 앱 추가 인스턴스 여유를 남긴다
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     volumes:
