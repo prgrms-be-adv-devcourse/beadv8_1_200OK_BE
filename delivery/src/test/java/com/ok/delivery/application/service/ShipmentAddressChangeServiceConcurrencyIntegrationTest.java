@@ -1,7 +1,7 @@
 package com.ok.delivery.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.domain.AddressChangeStatus;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -33,7 +33,7 @@ class ShipmentAddressChangeServiceConcurrencyIntegrationTest extends AbstractInt
     ShipmentAddressChangeService sut;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

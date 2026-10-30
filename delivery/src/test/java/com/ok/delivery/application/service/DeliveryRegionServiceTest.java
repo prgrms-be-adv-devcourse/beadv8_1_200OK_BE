@@ -1,11 +1,11 @@
 package com.ok.delivery.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.adapter.out.persistence.RegionGroupRepository;
-import com.ok.delivery.adapter.out.persistence.RemoteAreaPostalCodeHistoryRepository;
-import com.ok.delivery.adapter.out.persistence.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.application.dto.PostalRegionRegisterCommand;
 import com.ok.delivery.application.dto.RegionResult;
+import com.ok.delivery.application.port.out.RegionGroupRepository;
+import com.ok.delivery.application.port.out.RemoteAreaPostalCodeHistoryRepository;
+import com.ok.delivery.application.port.out.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.domain.RegionGroup;
 import com.ok.delivery.domain.RemoteAreaPostalCode;
 import com.ok.delivery.exception.DeliveryErrorCode;

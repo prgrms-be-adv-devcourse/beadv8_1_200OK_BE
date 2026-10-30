@@ -1,6 +1,6 @@
 package com.ok.delivery.application.service;
 
-import com.ok.delivery.adapter.out.persistence.SellerShippingProfileRepository;
+import com.ok.delivery.adapter.out.persistence.SellerShippingProfileJpaRepository;
 import com.ok.delivery.domain.SellerShippingProfile;
 import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -24,7 +24,7 @@ class SellerShippingSettingServiceIntegrationTest extends AbstractIntegrationTes
     SellerShippingSettingService sellerShippingSettingService;
 
     @Autowired
-    SellerShippingProfileRepository sellerShippingProfileRepository;
+    SellerShippingProfileJpaRepository sellerShippingProfileRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

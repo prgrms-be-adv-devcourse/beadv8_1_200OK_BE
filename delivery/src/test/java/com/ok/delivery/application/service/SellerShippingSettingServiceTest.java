@@ -1,6 +1,6 @@
 package com.ok.delivery.application.service;
 
-import com.ok.delivery.adapter.out.persistence.SellerShippingProfileRepository;
+import com.ok.delivery.application.port.out.SellerShippingProfileRepository;
 import com.ok.delivery.config.DefaultShippingProperties;
 import com.ok.delivery.domain.SellerShippingProfile;
 import com.ok.delivery.domain.SellerShippingSetting;

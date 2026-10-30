@@ -20,10 +20,10 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 class ShipmentAddressChangeRequestRepositoryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
-    ShipmentAddressChangeRequestRepository requestRepository;
+    ShipmentAddressChangeRequestJpaRepository requestRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

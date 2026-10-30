@@ -1,13 +1,13 @@
 package com.ok.delivery.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.adapter.out.persistence.RemoteAreaPostalCodeRepository;
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.application.dto.AddressCommand;
 import com.ok.delivery.application.dto.SellerShipmentCommand;
 import com.ok.delivery.application.dto.ShipmentCreateCommand;
 import com.ok.delivery.application.dto.ShipmentItemCommand;
 import com.ok.delivery.application.dto.ShippingShipmentResult;
+import com.ok.delivery.application.port.out.RemoteAreaPostalCodeRepository;
 import com.ok.delivery.domain.RemoteAreaPostalCode;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentStatus;
@@ -42,7 +42,7 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
     ShipmentService shipmentService;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     RemoteAreaPostalCodeRepository postalCodeRepository;

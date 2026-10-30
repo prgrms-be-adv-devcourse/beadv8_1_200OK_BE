@@ -1,7 +1,7 @@
 package com.ok.delivery.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.application.dto.ShipmentDispatchCommand;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -37,7 +37,7 @@ class ShipmentDispatchConcurrencyIntegrationTest extends AbstractIntegrationTest
     ShipmentService sut;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     TransactionTemplate transactionTemplate;

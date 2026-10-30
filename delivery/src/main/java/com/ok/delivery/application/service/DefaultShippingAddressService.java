@@ -1,8 +1,8 @@
 package com.ok.delivery.application.service;
 
-import com.ok.delivery.adapter.out.persistence.DefaultShippingAddressRepository;
 import com.ok.delivery.application.dto.AddressCommand;
 import com.ok.delivery.application.dto.AddressResult;
+import com.ok.delivery.application.port.out.DefaultShippingAddressRepository;
 import com.ok.delivery.domain.Address;
 import com.ok.delivery.domain.DefaultShippingAddress;
 import lombok.RequiredArgsConstructor;

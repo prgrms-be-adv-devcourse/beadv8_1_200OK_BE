@@ -1,13 +1,13 @@
 package com.ok.delivery.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.adapter.out.persistence.ShipmentAddressChangeRequestRepository;
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
 import com.ok.delivery.application.dto.AddressChangeDecision;
 import com.ok.delivery.application.dto.AddressChangeDecisionCommand;
 import com.ok.delivery.application.dto.AddressChangeRequestCommand;
 import com.ok.delivery.application.dto.AddressChangeRequestResult;
 import com.ok.delivery.application.dto.RegionResult;
+import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestRepository;
+import com.ok.delivery.application.port.out.ShipmentRepository;
 import com.ok.delivery.domain.Address;
 import com.ok.delivery.domain.AddressChangeStatus;
 import com.ok.delivery.domain.DeliveryDatePolicy;

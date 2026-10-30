@@ -26,7 +26,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 class ShipmentRepositoryIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     TransactionTemplate transactionTemplate;

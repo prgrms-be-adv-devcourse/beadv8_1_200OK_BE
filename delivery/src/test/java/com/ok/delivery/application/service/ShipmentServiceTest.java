@@ -1,9 +1,6 @@
 package com.ok.delivery.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.delivery.adapter.out.persistence.ShipmentAddressChangeRequestRepository;
-import com.ok.delivery.adapter.out.persistence.ShipmentQueryRepository;
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
 import com.ok.delivery.application.dto.AddressCommand;
 import com.ok.delivery.application.dto.RegionResult;
 import com.ok.delivery.application.dto.SellerShipmentCommand;
@@ -11,6 +8,9 @@ import com.ok.delivery.application.dto.ShipmentCreateCommand;
 import com.ok.delivery.application.dto.ShipmentDispatchCommand;
 import com.ok.delivery.application.dto.ShipmentItemCommand;
 import com.ok.delivery.application.port.out.DeliveryEventPublisher;
+import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestRepository;
+import com.ok.delivery.application.port.out.ShipmentQueryRepository;
+import com.ok.delivery.application.port.out.ShipmentRepository;
 import com.ok.delivery.domain.DeliveryDatePolicy;
 import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;

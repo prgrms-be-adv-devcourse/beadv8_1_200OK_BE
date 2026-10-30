@@ -1,7 +1,7 @@
 package com.ok.delivery;
 
 import com.jayway.jsonpath.JsonPath;
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.domain.ShipmentAddressChangeRequest;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
@@ -56,7 +56,7 @@ class ShipmentAddressChangeApiIntegrationTest extends AbstractIntegrationTest {
     TestAccessTokens tokens;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

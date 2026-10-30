@@ -1,5 +1,6 @@
 package com.ok.delivery.adapter.out.persistence;
 
+import com.ok.delivery.application.port.out.ShipmentQueryRepository;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.querydsl.core.types.dsl.BooleanExpression;
@@ -18,24 +19,20 @@ import static com.ok.delivery.domain.QShipment.shipment;
 import static com.ok.delivery.domain.QShipmentItem.shipmentItem;
 
 /**
- * 배송 목록 조회. 목록에 보여 줄 상품은 shipment마다 따로 읽지 않도록 페이지 단위로 한 번에 읽는다.
+ * {@link ShipmentQueryRepository}의 Querydsl 구현.
  */
 @Repository
 @RequiredArgsConstructor
-public class ShipmentQueryRepository {
+public class ShipmentQuerydslRepository implements ShipmentQueryRepository {
 
     private final JPAQueryFactory queryFactory;
 
-    /**
-     * 구매자의 shipment를 최신순으로 조회한다.
-     */
+    @Override
     public Page<Shipment> findByBuyerId(Long buyerId, Pageable pageable) {
         return findLatest(shipment.buyerId.eq(buyerId), pageable);
     }
 
-    /**
-     * 판매자의 shipment를 최신순으로 조회한다.
-     */
+    @Override
     public Page<Shipment> findBySellerId(Long sellerId, Pageable pageable) {
         return findLatest(shipment.sellerId.eq(sellerId), pageable);
     }
@@ -57,9 +54,7 @@ public class ShipmentQueryRepository {
                 .fetchOne(), 0L));
     }
 
-    /**
-     * 여러 shipment의 상품 항목을 한 번에 조회한다. 항목은 shipment 안에서 만든 순서(id)대로다.
-     */
+    @Override
     public List<ShipmentItem> findItemsByShipmentIds(Collection<Long> shipmentIds) {
         if (shipmentIds.isEmpty()) {
             return List.of();

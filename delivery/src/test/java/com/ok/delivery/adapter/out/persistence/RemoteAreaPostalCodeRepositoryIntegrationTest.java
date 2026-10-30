@@ -21,7 +21,7 @@ class RemoteAreaPostalCodeRepositoryIntegrationTest extends AbstractIntegrationT
     private static final String TEST_POSTAL_CODE = "99999";
 
     @Autowired
-    RemoteAreaPostalCodeRepository postalCodeRepository;
+    RemoteAreaPostalCodeJpaRepository postalCodeRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

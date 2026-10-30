@@ -1,6 +1,6 @@
 package com.ok.delivery;
 
-import com.ok.delivery.adapter.out.persistence.ShipmentRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.application.service.ShipmentAddressChangeService;
 import com.ok.delivery.domain.ShipmentAddressChangeRequest;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -49,7 +49,7 @@ class SellerShipmentApiIntegrationTest extends AbstractIntegrationTest {
     TestAccessTokens tokens;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     ShipmentAddressChangeService addressChangeService;

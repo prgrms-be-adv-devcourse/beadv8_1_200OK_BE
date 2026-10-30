@@ -1,6 +1,6 @@
 package com.ok.delivery.application.service;
 
-import com.ok.delivery.adapter.out.persistence.RemoteAreaPostalCodeRepository;
+import com.ok.delivery.adapter.out.persistence.RemoteAreaPostalCodeJpaRepository;
 import com.ok.delivery.application.dto.RegionResult;
 import com.ok.delivery.domain.RemoteAreaPostalCode;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -25,7 +25,7 @@ class DeliveryRegionServiceIntegrationTest extends AbstractIntegrationTest {
     DeliveryRegionService deliveryRegionService;
 
     @Autowired
-    RemoteAreaPostalCodeRepository postalCodeRepository;
+    RemoteAreaPostalCodeJpaRepository postalCodeRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
