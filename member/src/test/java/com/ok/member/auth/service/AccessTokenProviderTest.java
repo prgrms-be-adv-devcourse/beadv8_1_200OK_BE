@@ -1,22 +1,41 @@
 package com.ok.member.auth.service;
 
+import com.nimbusds.jose.JOSEObjectType;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.MACSigner;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.security.TokenRoles;
 import com.ok.common.config.JwtConfig;
 import com.ok.common.config.JwtProperties;
+import com.ok.common.config.RsaPemKeys;
 import com.ok.member.auth.config.JwtEncoderConfig;
+import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.member.auth.domain.AccessToken;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.security.oauth2.jwt.*;
 
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import java.util.Date;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,18 +59,18 @@ class AccessTokenProviderTest {
 
     private static final String ISSUER = "paldo-gotgan";
     private static final String AUDIENCE = "paldo-gotgan-api";
-    private static final String KEY_ID = "hs256-v1";
-    /** "test-secret-key-for-jwt-must-be-32-bytes-or-more"를 Base64로 인코딩한 값 (application-test.yml과 같은 형식) */
-    private static final String SECRET = "dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl";
-    /** "another-secret-key-for-jwt-must-be-32-bytes-long"을 Base64로 인코딩한 값 */
-    private static final String OTHER_SECRET = "YW5vdGhlci1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1sb25n";
+    private static final String KEY_ID = "rs256-v1";
+    /** 테스트 전용 키 쌍 (application-test.yml과 같은 파일) */
+    private static final Resource PUBLIC_KEY = new ClassPathResource("jwt/test-public.pem");
+    private static final Resource PRIVATE_KEY = new ClassPathResource("jwt/test-private.pem");
     private static final Duration ACCESS_EXPIRATION = Duration.ofMinutes(30);
     private static final Duration REFRESH_EXPIRATION = Duration.ofDays(14);
     private static final List<String> BUYER = List.of(TokenRoles.BUYER);
 
     private final JwtConfig jwtConfig = new JwtConfig();
     private final JwtEncoderConfig jwtEncoderConfig = new JwtEncoderConfig();
-    private final JwtProperties properties = properties(ISSUER, AUDIENCE, SECRET);
+    private final JwtProperties properties = properties(ISSUER, AUDIENCE);
+    private final JwtSigningProperties signing = new JwtSigningProperties(KEY_ID, PRIVATE_KEY);
 
     private Instant now;
     private Clock fixedClock;
@@ -63,9 +82,9 @@ class AccessTokenProviderTest {
     void setUp() {
         now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         fixedClock = Clock.fixed(now, ZoneId.of("Asia/Seoul"));
-        jwtEncoder = jwtEncoderConfig.jwtEncoder(properties);
+        jwtEncoder = jwtEncoderConfig.jwtEncoder(properties, signing);
         jwtDecoder = jwtConfig.jwtDecoder(properties, fixedClock);
-        accessTokenProvider = new AccessTokenProvider(jwtEncoder, properties, fixedClock);
+        accessTokenProvider = new AccessTokenProvider(jwtEncoder, properties, signing, fixedClock);
     }
 
     @Test
@@ -97,7 +116,7 @@ class AccessTokenProviderTest {
         Jwt jwt = jwtDecoder.decode(sut.value());
         assertThat(jwt).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(jwt.getHeaders().get("alg").toString()).isEqualTo("HS256");
+            softly.assertThat(jwt.getHeaders().get("alg").toString()).isEqualTo("RS256");
             softly.assertThat(jwt.getHeaders().get("typ").toString()).isEqualTo(JwtConfig.TOKEN_TYPE);
             softly.assertThat(jwt.getHeaders().get("kid")).isEqualTo(KEY_ID);
         });
@@ -214,16 +233,129 @@ class AccessTokenProviderTest {
     }
 
     @Test
-    void 다른_비밀키로_서명된_토큰은_거부된다() {
+    void 다른_개인키로_서명된_토큰은_거부된다() throws Exception {
         // given
-        JwtProperties otherProperties = properties(ISSUER, AUDIENCE, OTHER_SECRET);
-        AccessTokenProvider otherProvider =
-                new AccessTokenProvider(jwtEncoderConfig.jwtEncoder(otherProperties), otherProperties, fixedClock);
-        String forged = otherProvider.issue(1L, List.of(TokenRoles.ADMIN)).value();
+        // 공격자가 자기 키 쌍을 만들어, 우리 kid를 달고 ADMIN 토큰에 서명한 상황
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair attackerKeys = generator.generateKeyPair();
+        JwtEncoder attackerEncoder = rsaEncoder(
+                (RSAPublicKey) attackerKeys.getPublic(), (RSAPrivateKey) attackerKeys.getPrivate(), KEY_ID);
+        String forged = encode(attackerEncoder, validClaims().claim(TokenClaims.ROLES, List.of(TokenRoles.ADMIN)).build(),
+                validHeader());
 
         // when & then
         assertThatThrownBy(() -> jwtDecoder.decode(forged))
                 .isInstanceOf(BadJwtException.class);
+    }
+
+    @Test
+    void 공개키를_HMAC_비밀키로_써서_HS256으로_서명한_토큰은_거부된다() throws Exception {
+        // given
+        // 알고리즘 혼동 공격: 헤더의 alg를 믿는 검증기는 공개키(누구나 아는 값)를 HMAC 키로 써서 이 서명을 통과시킨다
+        JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.HS256)
+                .type(new JOSEObjectType(JwtConfig.TOKEN_TYPE))
+                .keyID(KEY_ID)
+                .build();
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(ISSUER)
+                .subject("1")
+                .audience(AUDIENCE)
+                .issueTime(Date.from(now))
+                .expirationTime(Date.from(now.plus(ACCESS_EXPIRATION)))
+                .claim(TokenClaims.ROLES, List.of(TokenRoles.ADMIN))
+                .build();
+        SignedJWT jwt = new SignedJWT(header, claims);
+        jwt.sign(new MACSigner(PUBLIC_KEY.getContentAsByteArray()));
+        String forged = jwt.serialize();
+
+        // when & then
+        assertThatThrownBy(() -> jwtDecoder.decode(forged))
+                .isInstanceOf(BadJwtException.class);
+    }
+
+    @Test
+    void 등록되지_않은_kid로_서명된_토큰은_거부된다() {
+        // given
+        // 서명 자체는 우리 개인키로 했지만, 검증 목록에 없는 kid를 단 토큰
+        JwtEncoder unknownKidEncoder = rsaEncoder(
+                RsaPemKeys.publicKey(PUBLIC_KEY), RsaPemKeys.privateKey(PRIVATE_KEY), "rs256-unknown");
+        JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
+                .type(JwtConfig.TOKEN_TYPE)
+                .keyId("rs256-unknown")
+                .build();
+        String token = encode(unknownKidEncoder, validClaims().build(), header);
+
+        // when & then
+        assertThatThrownBy(() -> jwtDecoder.decode(token))
+                .isInstanceOf(BadJwtException.class);
+    }
+
+    @Test
+    void kid가_없는_토큰은_우리_개인키로_서명했어도_거부된다() {
+        // given
+        // kid가 없으면 Nimbus는 검증 목록의 모든 키로 서명을 맞춰 보므로, 서명만으로는 거부되지 않는다
+        JwtEncoder noKidEncoder = rsaEncoder(
+                RsaPemKeys.publicKey(PUBLIC_KEY), RsaPemKeys.privateKey(PRIVATE_KEY), null);
+        JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
+                .type(JwtConfig.TOKEN_TYPE)
+                .build();
+        String token = encode(noKidEncoder, validClaims().build(), header);
+
+        // when & then
+        assertThatThrownBy(() -> jwtDecoder.decode(token))
+                .isInstanceOf(JwtValidationException.class)
+                .hasMessage("An error occurred while attempting to decode the Jwt: The kid header is missing");
+    }
+
+    @Test
+    void 서명_없는_alg_none_토큰은_거부된다() {
+        // given
+        // alg=none은 서명이 없는 토큰이다. 받아들이면 누구나 아무 클레임이나 담아 보낼 수 있다
+        String header = base64Url("{\"alg\":\"none\",\"typ\":\"%s\",\"kid\":\"%s\"}"
+                .formatted(JwtConfig.TOKEN_TYPE, KEY_ID));
+        String payload = base64Url("{\"iss\":\"%s\",\"sub\":\"1\",\"aud\":[\"%s\"],\"exp\":%d,\"roles\":[\"ADMIN\"]}"
+                .formatted(ISSUER, AUDIENCE, now.plus(ACCESS_EXPIRATION).getEpochSecond()));
+        String unsigned = header + "." + payload + ".";
+
+        // when & then
+        assertThatThrownBy(() -> jwtDecoder.decode(unsigned))
+                .isInstanceOf(BadJwtException.class);
+    }
+
+    @Test
+    void 키_교체_중에는_옛_kid와_새_kid로_서명한_토큰이_모두_검증된다() throws Exception {
+        // given
+        // 교체 기간: 검증 목록에 v1(기존)과 v2(새 키)가 함께 있고, 서명은 v2로 바뀐 상태
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        KeyPair v2Keys = generator.generateKeyPair();
+        JwtProperties rotating = new JwtProperties(ISSUER, AUDIENCE, List.of(
+                new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY),
+                new JwtProperties.VerificationKey("rs256-v2", publicKeyPem(v2Keys.getPublic().getEncoded()))),
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtDecoder rotatingDecoder = jwtConfig.jwtDecoder(rotating, fixedClock);
+        // 교체 전에 v1으로 발급된 토큰과 교체 후 v2로 발급된 토큰
+        String v1Token = accessTokenProvider.issue(1L, BUYER).value();
+        JwtEncoder v2Encoder = rsaEncoder(
+                (RSAPublicKey) v2Keys.getPublic(), (RSAPrivateKey) v2Keys.getPrivate(), "rs256-v2");
+        JwsHeader v2Header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
+                .type(JwtConfig.TOKEN_TYPE)
+                .keyId("rs256-v2")
+                .build();
+        String v2Token = encode(v2Encoder, validClaims().build(), v2Header);
+
+        // when
+        Jwt v1 = rotatingDecoder.decode(v1Token);
+        Jwt v2 = rotatingDecoder.decode(v2Token);
+
+        // then
+        assertThat(v1).isNotNull();
+        assertThat(v2).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(v1.getHeaders().get("kid")).isEqualTo(KEY_ID);
+            softly.assertThat(v2.getHeaders().get("kid")).isEqualTo("rs256-v2");
+        });
     }
 
     @Test
@@ -249,9 +381,9 @@ class AccessTokenProviderTest {
     @Test
     void 발급자가_다른_토큰은_거부된다() {
         // given
-        JwtProperties otherIssuer = properties("other-service", AUDIENCE, SECRET);
-        AccessTokenProvider otherProvider =
-                new AccessTokenProvider(jwtEncoderConfig.jwtEncoder(otherIssuer), otherIssuer, fixedClock);
+        JwtProperties otherIssuer = properties("other-service", AUDIENCE);
+        AccessTokenProvider otherProvider = new AccessTokenProvider(
+                jwtEncoderConfig.jwtEncoder(otherIssuer, signing), otherIssuer, signing, fixedClock);
         String token = otherProvider.issue(1L, BUYER).value();
 
         // when & then
@@ -271,8 +403,29 @@ class AccessTokenProviderTest {
         assertThat(sut).doesNotContain(accessToken.value()).contains("value=****");
     }
 
-    private static JwtProperties properties(String issuer, String audience, String secret) {
-        return new JwtProperties(issuer, audience, KEY_ID, secret, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+    private static JwtProperties properties(String issuer, String audience) {
+        return new JwtProperties(issuer, audience, List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)),
+                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+    }
+
+    /** 검증 목록과 상관없이 주어진 키 쌍과 kid로 서명하는 인코더. 공격자나 잘못된 설정의 발급자를 흉내 낸다. */
+    private static JwtEncoder rsaEncoder(RSAPublicKey publicKey, RSAPrivateKey privateKey, String keyId) {
+        RSAKey key = new RSAKey.Builder(publicKey).privateKey(privateKey).keyID(keyId).build();
+        return new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(key)));
+    }
+
+    private static Resource publicKeyPem(byte[] x509) {
+        String pem = "-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n"
+                .formatted(Base64.getMimeEncoder().encodeToString(x509));
+        return new ByteArrayResource(pem.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String base64Url(String json) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String encode(JwtEncoder encoder, JwtClaimsSet claims, JwsHeader header) {
+        return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }
 
     /** 실제 발급과 같은 클레임. 테스트마다 한 가지만 바꿔 검증 규칙을 확인한다. */
