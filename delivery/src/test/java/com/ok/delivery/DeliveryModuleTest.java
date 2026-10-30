@@ -8,12 +8,12 @@ import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
 import com.ok.common.config.JpaConfig;
 import com.ok.delivery.domain.ShipmentStatus;
-import com.ok.delivery.event.CarrierDeliveredEvent;
+import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.fixture.ShipmentFixture;
-import com.ok.delivery.repository.ShipmentQueryRepository;
-import com.ok.delivery.repository.ShipmentRepository;
-import com.ok.delivery.service.ShipmentService;
-import com.ok.delivery.service.dto.ShipmentDispatchCommand;
+import com.ok.delivery.application.port.out.ShipmentQueryRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
+import com.ok.delivery.application.service.ShipmentService;
+import com.ok.delivery.application.dto.ShipmentDispatchCommand;
 import com.ok.testsupport.FakeCarrierClient;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
@@ -51,7 +51,7 @@ class DeliveryModuleTest {
     ShipmentService shipmentService;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

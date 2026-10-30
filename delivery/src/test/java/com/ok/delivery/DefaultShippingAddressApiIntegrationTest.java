@@ -1,6 +1,6 @@
 package com.ok.delivery;
 
-import com.ok.delivery.repository.ShipmentRepository;
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -50,7 +50,7 @@ class DefaultShippingAddressApiIntegrationTest extends AbstractIntegrationTest {
     TestAccessTokens tokens;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
