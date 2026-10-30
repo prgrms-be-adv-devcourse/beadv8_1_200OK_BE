@@ -4,9 +4,10 @@ import com.ok.common.exception.RestApiException;
 import com.ok.wallet.exception.WalletErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.LocalDateTime;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -34,17 +35,25 @@ class ChargeTest {
     }
 
     @ParameterizedTest
-    @ValueSource(longs = {10_000, 50_000, 500_000})
-    void 만원_이상_만원_단위면_요청된다(long amount) {
+    @MethodSource("만원_이상_금액")
+    void 만원_이상이면_단위와_관계없이_요청된다(long amount) {
         assertThat(Charge.request(1L, amount).getAmount()).isEqualTo(amount);
     }
 
+    static Stream<Long> 만원_이상_금액() {
+        return Stream.of(10_000L, 10_001L, 15_000L, 500_000L);
+    }
+
     @ParameterizedTest
-    @ValueSource(longs = {0, -10_000, 5_000, 15_000, 10_001})
-    void 만원_미만이거나_만원_단위가_아니면_요청되지_않는다(long amount) {
+    @MethodSource("만원_미만_금액")
+    void 만원_미만이면_요청되지_않는다(long amount) {
         assertThatThrownBy(() -> Charge.request(1L, amount))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_CHARGE_AMOUNT));
+    }
+
+    static Stream<Long> 만원_미만_금액() {
+        return Stream.of(0L, -10_000L, 5_000L, 9_999L);
     }
 
     // 확인
