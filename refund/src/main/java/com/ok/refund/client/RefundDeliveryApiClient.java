@@ -43,6 +43,10 @@ public class RefundDeliveryApiClient implements RefundDeliveryClient {
                 .body(new CancelReservationRequest(refundId, orderItemId, quantity))
                 .retrieve()
                 // 이미 출고·수량 초과 등. 오류 응답에 코드 칸이 없어 이유는 나누지 않는다(설계 4.3)
+                // 알고 둔 위험: 수량 초과는 묶음 상자가 아직 안 나간 상태라, 이 요청의 응답을 기다리는 몇 초 사이에
+                // 같은 묶음의 다른 요청이 이 요청을 취소로 세어 배송비를 받아 갔다면 배송비가 더 나간다.
+                // 수량은 승인 때 먼저 검사하므로 배송 쪽 기록이 어긋난 버그일 때만 생겨 지금은 승인 불가로 둔다.
+                // 통신 방식(아웃박스+Kafka)을 바꿀 때 응답 대기 중 겹침 문제와 함께 다시 정한다
                 .onStatus(status -> status.value() == 409, (request, httpResponse) -> {
                 })
                 .toBodilessEntity();
