@@ -14,6 +14,18 @@ services:
     ports:
       - "${MYSQL_PORT:-3306}:3306"
 
+  redis:
+    image: redis:${REDIS_VERSION:-8.10}-alpine
+    networks: [db-net]
+    ports:
+      # 로컬 Redis는 비밀번호가 없어 loopback에만 연다(LAN 노출 방지). 컨테이너 안의 앱은 compose 네트워크로 접속한다
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   app:
     profiles: [app]
     build: .
@@ -21,6 +33,9 @@ services:
     networks: [db-net]
     depends_on:
       mysql:
+        condition: service_healthy
+      # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
+      redis:
         condition: service_healthy
     env_file:
       - path: .env
@@ -32,5 +47,8 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-paldogotgan}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER:-myuser}
       DB_PASSWORD: ${MYSQL_PASSWORD:-password}
+      # .env의 REDIS_PORT는 호스트 포트라 컨테이너 안에서는 고정값으로 덮는다 (DB_URL과 같은 이유)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "${APP_PORT:-8080}:8080"

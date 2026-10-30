@@ -1,5 +1,5 @@
 # 운영 EC2(/opt/paldo-gotgan)에서 deploy.sh로 실행한다. 절차는 docs/DEPLOY.md
-# app·mysql은 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
+# app·mysql·redis는 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
 name: paldo-gotgan
 
 services:
@@ -25,11 +25,38 @@ services:
       retries: 20
       start_period: 20s
 
+  redis:
+    image: redis:${REDIS_VERSION:-8.10}-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD가 필요하다}
+      # healthcheck의 redis-cli가 비밀번호를 인자 없이 쓰게 한다
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    # 비밀번호를 --requirepass 인자로 넘기면 호스트의 ps와 docker inspect에 보인다. 컨테이너 안 설정 파일로만 넘긴다
+    # 사용처(캐시·락)가 정해지지 않아 키를 몰래 지우지 않는 noeviction으로 두고, 다시 만들 수 있는 데이터라 영속성(RDB·AOF)은 끈다
+    command:
+      - sh
+      - -c
+      - |
+        printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
+        exec redis-server /tmp/redis.conf --maxmemory 256mb --maxmemory-policy noeviction --save '' --appendonly no
+    # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값
+    mem_limit: 384m
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   app:
     image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       mysql:
+        condition: service_healthy
+      # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
+      # 대신 Redis가 healthy가 되지 못하면(예: REDIS_PASSWORD 형식 오류) 앱이 뜨지 않고 배포가 실패한다
+      redis:
         condition: service_healthy
     # env_file을 쓰지 않고 앱이 쓰는 값만 넘긴다. MYSQL_ROOT_PASSWORD 같은 값이 앱 컨테이너에 들어가지 않게 하기 위함이다
     environment:
@@ -38,6 +65,9 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET이 필요하다}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY가 필요하다}
       AWS_REGION: ${AWS_REGION:?AWS_REGION이 필요하다}
@@ -46,7 +76,7 @@ services:
       ADMIN_BOOTSTRAP_LOGIN_ID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
       ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL과 앱 추가 인스턴스 여유를 남긴다
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(384m)와 앱 추가 인스턴스 여유를 남긴다
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     mem_limit: 2560m
     healthcheck:

@@ -4,7 +4,8 @@ spring:
   application:
     name: paldo-gotgan
   config:
-    import: optional:file:.env[.properties]
+    # Redis 설정은 common의 common-redis.yaml 한 곳에서 관리한다 (#319)
+    import: optional:file:.env[.properties],classpath:common-redis.yaml
   profiles:
     default: dev
   jackson:

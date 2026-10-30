@@ -21,7 +21,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 |---|---|
 | 언어 / 빌드 | Java 25, Gradle (Kotlin DSL) |
 | 프레임워크 | Spring Boot 4.1.1 (Web MVC, Security, Validation) |
-| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway |
+| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 (Spring Data Redis, Lettuce) |
 | 구조 | Gradle 멀티 모듈 + Spring Modulith (도메인 모듈 분리) |
 | 배치 / 문서 / 외부 | Spring Batch, springdoc-openapi (Swagger), AWS SDK v2 (S3) |
 | 테스트 | JUnit 5, AssertJ, Testcontainers, ArchUnit, JaCoCo |
@@ -31,7 +31,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 - **JDK 25** (Temurin 권장). jenv를 쓴다면 프로젝트 폴더에서 `jenv local temurin64-25.0.2`
   - Gradle은 JDK 21 이상에서 실행됩니다. `JAVA_HOME`이 17이면 빌드가 시작되지 않습니다.
   - `JAVA_HOME`이 바뀌지 않으면 `jenv enable-plugin export` 후 터미널을 다시 여세요.
-- **Docker** (로컬 MySQL과 통합 테스트에 필요)
+- **Docker** (로컬 MySQL·Redis와 통합 테스트에 필요)
 - 환경변수 파일 만들기
 
 ```bash
@@ -47,7 +47,7 @@ cp .env.example .env
 ## 3. 로컬 실행
 
 ```bash
-# 1) DB 실행 (data/mysql 에 데이터 저장)
+# 1) DB와 Redis 실행 (data/mysql 에 데이터 저장, Redis는 볼륨 없이 재시작하면 비워짐)
 docker compose up -d
 
 # 2) 앱 실행 (기본 프로파일 dev)
@@ -56,7 +56,7 @@ docker compose up -d
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
-  이때 DB(mysql)만 기동하고 앱 컨테이너는 만들지 않습니다.
+  이때 DB(mysql)와 Redis만 기동하고 앱 컨테이너는 만들지 않습니다.
 - Swagger UI: `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
 - 현재는 로그인 없이 모든 요청을 허용합니다 (`config/SecurityConfig`). 인증을 구현하면 교체하세요.
 - 로컬 DB를 처음 상태로 되돌리려면 앱과 DB를 끄고 `docker compose down` 후 `rm -rf data/mysql`
@@ -64,15 +64,15 @@ docker compose up -d
 
 ### 앱까지 컨테이너(docker compose)로 실행
 
-`docker compose up -d`는 DB만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
+`docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
 
 ```bash
-docker compose --profile app up -d --build   # 이미지 빌드 후 DB와 앱 실행
+docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
 docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ```
 
-- DB가 healthy 상태가 된 뒤에 앱이 시작됩니다.
+- DB와 Redis가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
@@ -100,6 +100,9 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 |---|---|---|
 | `MYSQL_VERSION` | MySQL 이미지 버전 (docker compose, 통합 테스트 공통) | `9.4` |
 | `MYSQL_PORT` | 호스트에 열 DB 포트 | `3306` |
+| `REDIS_VERSION` | Redis 이미지 버전 (docker compose, 통합 테스트 공통) | `8.10` |
+| `REDIS_PORT` | 호스트의 loopback(127.0.0.1)에만 여는 Redis 포트(비밀번호가 없어 외부 비공개). 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
+| `REDIS_HOST` / `REDIS_PASSWORD` | 앱의 Redis 접속 정보. 비밀번호가 비어 있으면 없이 접속(로컬). 운영은 `REDIS_PASSWORD` 필수 | `localhost` / 빈 값 |
 | `APP_PORT` | docker compose로 실행하는 앱 컨테이너의 호스트 포트 | `8080` |
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | docker compose의 MySQL 계정 | `.env.example` 참고 |
 | `DOCKER_COMPOSE_ENABLED` | 앱 실행 시 compose 자동 기동 (dev) | `false` |
@@ -153,6 +156,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `spring.flyway.out-of-order` | `${FLYWAY_OUT_OF_ORDER:false}` | 순서가 뒤바뀐 마이그레이션 허용 여부. 기본은 운영과 같게 막고, 개발 중 필요할 때만 `FLYWAY_OUT_OF_ORDER=true`로 엽니다 |
 | `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
+| `spring.data.redis.*` | `${REDIS_HOST:localhost}`, `${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
 | `jwt.secret` | `${JWT_SECRET:}` | `.env`에서 읽은 값은 OS 환경변수가 아니라 일반 프로퍼티라서 `JWT_SECRET`이 `jwt.secret`으로 자동 연결되지 않아 직접 참조합니다. 값이 비어 있으면 `JwtProperties`의 검증 메시지와 함께 기동이 실패합니다(테스트는 `application-test.yml`의 값을 씁니다) |
 | `jwt.issuer`, `audience`, `key-id`, `*-expiration` | 고정값 | 토큰 발급·검증 기준. 모듈마다 같은 값이어야 서로의 토큰을 검증할 수 있습니다 |
 | `app.problem.base-uri`, `app.s3.*` | `${PROBLEM_BASE_URI}`, `${AWS_REGION}`, `${S3_BUCKET}` | 오류 응답의 type 주소, S3 리전과 버킷 |
@@ -539,6 +543,8 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
 - MySQL 컨테이너는 서브프로젝트의 테스트 실행(JVM) 한 번에 하나만 뜨고 그 안의 모든 테스트 컨텍스트가 같은 DB를 씁니다. 컨테이너가 모듈 스키마를 모두 만들며, 모듈 테스트는 자기 모듈 스키마를, `monolith` 테스트는 기본 스키마를 접속 DB로 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
+- Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
+- Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:8080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.
 
 ### 실행 명령

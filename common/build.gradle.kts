@@ -16,6 +16,7 @@ dependencies {
     api(libs.springdoc.webmvc.ui)
     api("org.springframework.modulith:spring-modulith-starter-core")
     api("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
+    api("org.springframework.boot:spring-boot-starter-data-redis") // 캐시·락 등 Redis 연결 기반 (#319)
     api("software.amazon.awssdk:s3")
     api(libs.owasp.html.sanitizer)
 
