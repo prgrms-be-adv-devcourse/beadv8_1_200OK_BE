@@ -104,12 +104,13 @@ public class RefundFacade {
     }
 
     // 다른 모듈 호출은 끝났는데 상태 저장만 실패하면(DB 순간 장애 등) 처리 중에 실패 단계 없이 남아 진행 중인 건과 구분되지 않는다.
-    // 같은 원인이면 실패 기록도 실패하기 쉬우므로 운영에서 찾을 수 있게 WARN 로그를 남기고 다시 던진다
+    // 같은 원인이면 실패 기록도 실패하기 쉬우므로 운영에서 찾을 수 있게 refundId를 WARN으로 남기고 다시 던진다.
+    // 예외 내용은 ApiControllerAdvice가 ERROR로 한 번 남기므로 여기서는 빼서 같은 스택트레이스가 두 번 찍히지 않게 한다
     private RefundResult saveFinalStatus(Long refundId, String finalStatus, Supplier<RefundResult> save) {
         try {
             return save.get();
         } catch (RuntimeException e) {
-            log.warn("다른 모듈 처리 후 환불 상태 저장 실패. refundId={}, status={}", refundId, finalStatus, e);
+            log.warn("다른 모듈 처리 후 환불 상태 저장 실패. refundId={}, status={}", refundId, finalStatus);
             throw e;
         }
     }
