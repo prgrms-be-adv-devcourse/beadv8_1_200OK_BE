@@ -31,6 +31,9 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 | `error-code` | `*ErrorCode` 항목 추가와 `RestApiException` 사용 |
 | `commit` | 컨벤션에 맞는 커밋 (사용자 승인 후에만 커밋) |
 | `pr` | PR 제목·본문 초안 작성 (PR 생성은 요청이 있을 때만) |
+| `ok-stacked-pr` | 의존하는 PR을 스택으로 관리 (보기, 쌓기, restack, draft PR 올리기, sync) |
+
+스킬을 부르는 방법과 예시는 `docs/SKILLS.md`에 있다.
 
 ## 항상 지키는 규칙
 
