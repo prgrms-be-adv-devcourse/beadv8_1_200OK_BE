@@ -31,6 +31,10 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 | `error-code` | `*ErrorCode` 항목 추가와 `RestApiException` 사용 |
 | `commit` | 컨벤션에 맞는 커밋 (사용자 승인 후에만 커밋) |
 | `pr` | PR 제목·본문 초안 작성 (PR 생성은 요청이 있을 때만) |
+| `session-summary` | 세션의 설계 결정과 이유를 `docs/decisions/`에 ADR로 남김 (실험, #346) |
+| `session-context` | `docs/decisions/`에서 관련 ADR을 찾아 현재 대화에 불러옴 (실험, #346) |
+
+이전 작업의 결정과 이유가 필요하면 `docs/decisions/`에서 찾아본다. 위치와 작성 규칙은 `docs/decisions/README.md`이다.
 
 ## 항상 지키는 규칙
 
