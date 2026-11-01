@@ -47,6 +47,7 @@ description: 현재 브랜치의 PR 제목과 본문 초안을 이 프로젝트�
    git push -u origin <브랜치>
    env -u GITHUB_TOKEN gh pr create --base dev --title "<제목>" --body-file <본문 파일>
    ```
+   - PR을 만든 뒤 이 PR의 ADR 머리말에서 `pr`이 비어 있으면, PR 번호를 채우는 커밋을 사용자 승인 후에 올린다. ADR은 머지된 뒤에는 고치지 않으므로 머지 전에 해야 한다.
 
 ## 병합
 
