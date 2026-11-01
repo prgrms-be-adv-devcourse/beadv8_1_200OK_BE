@@ -445,6 +445,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 | `jwt.signing.key-id`, `private-key` | member, monolith | 서명용 개인키. `private-key`는 PKCS#8 PEM 파일 위치. `key-id`는 검증 목록에 있어야 하고, 개인키가 그 공개키와 짝이 아니면 기동하지 않습니다 |
 
 - 로컬은 저장소 루트의 `keys/rs256-v1-public.pem`, `keys/rs256-v1-private.pem`을 씁니다(`keys/`는 `.gitignore`에 있음). 다른 위치를 쓰려면 `.env`에 `jwt.signing.private-key=file:/절대경로.pem`처럼 설정 키를 직접 적습니다.
+- IDE에서 `main`을 바로 실행하면 `bootRun`과 달리 저장소 루트를 모르므로 키 파일을 찾지 못해 기동에 실패합니다. 실행 설정의 작업 디렉터리를 저장소 루트로 두거나, 모듈 앱은 환경 변수 `OK_ROOT_DIR`에 저장소 루트를 넣습니다.
 - 운영(monolith, `prod` 프로필)은 서버 키 폴더의 `jwt.yaml`을 반드시 읽어 위 설정을 덮어씁니다(`application-prod.yml`). 이미지를 다시 만들지 않고 키를 교체하기 위해서입니다.
 - 키 파일 이름은 `kid`를 따릅니다(`<kid>-private.pem`, `<kid>-public.pem`). 교체 중에는 옛 키와 새 키가 한 폴더에 함께 있기 때문입니다.
 - RSA 키는 2048비트 이상이어야 기동됩니다. 개발·운영 환경은 서로 다른 키를 쓰고, 개인키는 저장소에 올리지 않습니다.
