@@ -28,7 +28,7 @@ class JwtPropertiesTest {
     @Test
     void 올바른_설정값이면_생성된다() {
         // when
-        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, KEYS, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, KEYS, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // then
         assertThat(sut).isNotNull();
@@ -45,7 +45,7 @@ class JwtPropertiesTest {
     @MethodSource("비어_있는_문자열")
     void 발급자가_비어_있으면_예외가_발생한다(String issuer) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(issuer, AUDIENCE, KEYS, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(issuer, AUDIENCE, KEYS, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.issuer는 필수입니다.");
     }
@@ -58,7 +58,7 @@ class JwtPropertiesTest {
     @MethodSource("비어_있는_문자열")
     void 대상이_비어_있으면_예외가_발생한다(String audience) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, audience, KEYS, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, audience, KEYS, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.audience는 필수입니다.");
     }
@@ -67,7 +67,7 @@ class JwtPropertiesTest {
     @MethodSource("비어_있는_키_목록")
     void 검증_키가_없으면_예외가_발생한다(List<JwtProperties.VerificationKey> keys) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, keys, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, keys, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.verification-keys는 하나 이상 필요합니다.");
     }
@@ -84,7 +84,7 @@ class JwtPropertiesTest {
                 new JwtProperties.VerificationKey("rs256-v1", PUBLIC_KEY));
 
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, keys, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, keys, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.verification-keys의 key-id가 중복됩니다: rs256-v1");
     }
@@ -93,7 +93,7 @@ class JwtPropertiesTest {
     void 검증_키_목록은_생성_후_바꿀_수_없다() {
         // given
         List<JwtProperties.VerificationKey> keys = new ArrayList<>(KEYS);
-        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, keys, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, keys, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // when
         keys.add(new JwtProperties.VerificationKey("rs256-v2", PUBLIC_KEY));
@@ -123,7 +123,7 @@ class JwtPropertiesTest {
     @MethodSource("유효하지_않은_유효기간")
     void Access_Token_유효기간이_0_이하이거나_없으면_예외가_발생한다(Duration accessExpiration) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEYS, accessExpiration, REFRESH_EXPIRATION))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEYS, null, accessExpiration, REFRESH_EXPIRATION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.access-token-expiration은 0보다 커야 합니다.");
     }
@@ -136,7 +136,7 @@ class JwtPropertiesTest {
     @MethodSource("유효하지_않은_유효기간")
     void Refresh_Token_유효기간이_0_이하이거나_없으면_예외가_발생한다(Duration refreshExpiration) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEYS, ACCESS_EXPIRATION, refreshExpiration))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEYS, null, ACCESS_EXPIRATION, refreshExpiration))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.refresh-token-expiration은 0보다 커야 합니다.");
     }
@@ -145,13 +145,44 @@ class JwtPropertiesTest {
     @MethodSource("Access_Token보다_길지_않은_유효기간")
     void Refresh_Token_유효기간이_Access_Token보다_길지_않으면_예외가_발생한다(Duration refreshExpiration) {
         // when & then
-        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEYS, ACCESS_EXPIRATION, refreshExpiration))
+        assertThatThrownBy(() -> new JwtProperties(ISSUER, AUDIENCE, KEYS, null, ACCESS_EXPIRATION, refreshExpiration))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("jwt.refresh-token-expiration은 jwt.access-token-expiration보다 길어야 합니다.");
     }
 
     static Stream<Duration> Access_Token보다_길지_않은_유효기간() {
         return Stream.of(ACCESS_EXPIRATION, Duration.ofMinutes(10));
+    }
+
+    @Test
+    void JWKS_캐시_설정이_없으면_캐시_시간은_5분이다() {
+        // when
+        JwtProperties sut = new JwtProperties(ISSUER, AUDIENCE, KEYS, null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+
+        // then
+        assertThat(sut.jwkSet().cacheTtl()).isEqualTo(Duration.ofMinutes(5));
+    }
+
+    @Test
+    void JWKS_캐시_시간을_지정하지_않으면_5분이다() {
+        // when
+        JwtProperties.JwkSet sut = new JwtProperties.JwkSet(null);
+
+        // then
+        assertThat(sut.cacheTtl()).isEqualTo(Duration.ofMinutes(5));
+    }
+
+    @ParameterizedTest
+    @MethodSource("영_이하의_시간")
+    void JWKS_캐시_시간이_0_이하이면_예외가_발생한다(Duration cacheTtl) {
+        // when & then
+        assertThatThrownBy(() -> new JwtProperties.JwkSet(cacheTtl))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("jwt.jwk-set.cache-ttl은 0보다 커야 합니다.");
+    }
+
+    static Stream<Duration> 영_이하의_시간() {
+        return Stream.of(Duration.ZERO, Duration.ofMinutes(-1));
     }
 
 }

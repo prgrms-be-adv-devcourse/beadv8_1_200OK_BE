@@ -65,7 +65,9 @@ public class SecurityConfig {
             // 예외를 응답으로 바꾸는 오류 경로. 막으면 실제 오류(404 등) 대신 401이 나가 원인을 가린다
             "/error",
             // 컨테이너 헬스체크. compose와 deploy.sh가 토큰 없이 호출한다
-            "/actuator/health"
+            "/actuator/health",
+            // 토큰 검증용 공개키 목록(JWKS). 다른 모듈 앱이 토큰 없이 받아 간다. 공개키는 비밀이 아니다
+            "/.well-known/jwks.json"
     };
 
     /**

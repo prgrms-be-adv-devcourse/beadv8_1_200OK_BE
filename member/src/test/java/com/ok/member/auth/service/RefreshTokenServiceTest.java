@@ -50,6 +50,7 @@ class RefreshTokenServiceTest {
                 "paldo-gotgan",
                 "paldo-gotgan-api",
                 List.of(new JwtProperties.VerificationKey("rs256-v1", new ClassPathResource("jwt/test-public.pem"))),
+                null,
                 Duration.ofMinutes(30),
                 REFRESH_EXPIRATION);
         Clock fixedClock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);

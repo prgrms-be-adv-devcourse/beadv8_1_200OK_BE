@@ -29,7 +29,7 @@ class JwtEncoderConfigTest {
     private static final Resource PUBLIC_KEY = new ClassPathResource("jwt/test-public.pem");
     private static final Resource PRIVATE_KEY = new ClassPathResource("jwt/test-private.pem");
     private static final JwtProperties PROPERTIES = new JwtProperties("paldo-gotgan", "paldo-gotgan-api",
-            List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)), Duration.ofMinutes(30), Duration.ofDays(14));
+            List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)), null, Duration.ofMinutes(30), Duration.ofDays(14));
 
     private final JwtEncoderConfig jwtEncoderConfig = new JwtEncoderConfig();
 

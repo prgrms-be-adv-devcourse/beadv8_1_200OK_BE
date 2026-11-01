@@ -34,6 +34,8 @@ import java.util.Set;
  *                               지금은 발급·검증이 한 애플리케이션이라 값이 하나지만, 서비스가 분리되면 서비스마다 다른 값을 쓴다.
  * @param verificationKeys       검증에 쓰는 공개키 목록. 토큰 헤더의 {@code kid}로 키를 고르고, 목록에 없는 {@code kid}는 거부한다.
  *                               키를 교체할 때 옛 키와 새 키를 함께 두어, 교체 전에 발급된 토큰도 만료될 때까지 받아들인다.
+ *                               발급 모듈은 이 목록 전체를 JWKS({@code /.well-known/jwks.json})로 공개한다.
+ * @param jwkSet                 JWKS 캐시 설정. 지정하지 않으면 기본값을 쓴다. ({@link JwkSet} 참고)
  * @param accessTokenExpiration  Access Token 유효 기간. "30m", "1h"처럼 Duration 형식으로 지정한다.
  * @param refreshTokenExpiration Refresh Token 유효 기간. "14d"처럼 Duration 형식으로 지정한다.
  */
@@ -42,6 +44,7 @@ public record JwtProperties(
         String issuer,
         String audience,
         List<VerificationKey> verificationKeys,
+        JwkSet jwkSet,
         Duration accessTokenExpiration,
         Duration refreshTokenExpiration
 ) {
@@ -68,6 +71,10 @@ public record JwtProperties(
             }
         }
         verificationKeys = List.copyOf(verificationKeys);
+        // yaml에 jwt.jwk-set이 없으면 바인딩 결과가 null이다. 모든 앱의 yaml에 같은 기본값을 반복해 적지 않게 한다
+        if (jwkSet == null) {
+            jwkSet = new JwkSet(null);
+        }
         requirePositive(accessTokenExpiration, "jwt.access-token-expiration");
         requirePositive(refreshTokenExpiration, "jwt.refresh-token-expiration");
         // Refresh Token은 Access Token을 다시 발급받기 위한 토큰이므로, 더 오래 유효해야 의미가 있다.
@@ -84,6 +91,26 @@ public record JwtProperties(
         if (duration == null || duration.isZero() || duration.isNegative()) {
             throw new IllegalArgumentException(propertyName + "은 0보다 커야 합니다.");
         }
+    }
+
+    /**
+     * JWKS 캐시 설정.
+     *
+     * @param cacheTtl 공개키 목록을 캐시해도 되는 시간. 발급 모듈은 JWKS 응답의 {@code Cache-Control: max-age}로 알린다.
+     *                 길수록 발급 모듈이 잠깐 멈춰도 검증이 이어지지만, 키 교체 때 새 키를 공개한 뒤 서명 키를 바꾸기까지 이만큼 기다려야 한다.
+     *                 기본값 5분.
+     */
+    public record JwkSet(Duration cacheTtl) {
+
+        private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(5);
+
+        public JwkSet {
+            if (cacheTtl == null) {
+                cacheTtl = DEFAULT_CACHE_TTL;
+            }
+            requirePositive(cacheTtl, "jwt.jwk-set.cache-ttl");
+        }
+
     }
 
     /**
