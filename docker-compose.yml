@@ -8,6 +8,10 @@ networks:
   kafka-net:
     name: kafka-net
     driver: bridge
+  # Prometheus·Grafana끼리만 쓴다. 앱 지표는 내 PC 주소(host.docker.internal)로 가져와 DB·Kafka 네트워크에 붙지 않는다
+  monitoring-net:
+    name: monitoring-net
+    driver: bridge
 
 # ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
 # 클러스터 1개에 브로커 3대, 브로커와 컨트롤러를 한 프로세스에서 같이 돌리는 KRaft combined 모드다
@@ -132,6 +136,45 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
 
+  # ---------- 로컬 모니터링 (Prometheus·Grafana) ----------
+  # monitoring 프로파일을 줄 때만 뜬다: docker compose --profile monitoring up -d
+  # 평소 docker compose up -d 에는 뜨지 않게 해, Kafka 3대에 메모리를 더 얹지 않는다
+  prometheus:
+    profiles: [monitoring]
+    image: prom/prometheus:v3.5.0
+    networks: [monitoring-net]
+    # Windows·Mac Docker Desktop은 host.docker.internal이 원래 잡히지만 Linux는 직접 연결해야 한다
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      # 인증 없이 지표가 보이므로 Kafka처럼 127.0.0.1에만 연다
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  grafana:
+    profiles: [monitoring]
+    image: grafana/grafana:12.1.0
+    networks: [monitoring-net]
+    depends_on: [prometheus]
+    # 정산 배치 화면이 MySQL을 내 PC 포트로 읽는다(DB 네트워크에 붙이지 않으려고). Linux에서도 주소가 잡히게 연결한다
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # datasources.yml이 MySQL 접속 정보를 이 값으로 채운다. 비밀번호를 파일에 적지 않고 .env와 같은 값을 쓰려고 넘긴다
+    environment:
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-myuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+    volumes:
+      - ./monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      # 첫 로그인은 admin / admin (로컬 전용)
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+
 # 브로커마다 따로 둔다. 같은 볼륨을 나눠 쓰면 서로의 데이터를 덮어써 망가진다
 # 폴더를 직접 연결하지 않고 이름 있는 볼륨을 쓰는 이유: Windows 폴더는 컨테이너 사용자(appuser) 권한과 맞지 않아 기동에 실패하기 쉽다
 # docker compose down -v 를 하면 지워지고 새 클러스터로 다시 시작한다 (토픽·메시지도 모두 사라짐)
@@ -139,3 +182,6 @@ volumes:
   kafka-1-data:
   kafka-2-data:
   kafka-3-data:
+  # 수집한 지표와 Grafana 대시보드·계정. down -v 하면 같이 지워진다
+  prometheus-data:
+  grafana-data:

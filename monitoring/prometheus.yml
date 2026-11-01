@@ -1,0 +1,15 @@
+# 로컬 모니터링용 Prometheus 설정 (docker compose --profile monitoring)
+global:
+  # 15초마다 앱에서 지표를 가져온다
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: paldo-gotgan
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # host.docker.internal = 컨테이너 안에서 본 내 PC 주소
+      # IntelliJ로 띄운 앱과 compose app 컨테이너 모두 내 PC의 8080으로 열려 있어 주소 하나로 둘 다 잡힌다
+      - targets: ['host.docker.internal:8080']
+        labels:
+          # Grafana 공개 대시보드(JVM Micrometer 등)가 이 이름표로 앱을 고른다. 앱 설정을 바꾸지 않으려고 여기서 붙인다
+          application: paldo-gotgan

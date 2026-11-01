@@ -1,0 +1,29 @@
+# Grafana가 시작할 때 데이터 소스를 자동 등록한다
+# 화면에서 직접 만들면 grafana-data 볼륨을 지울 때마다 다시 만들어야 해서 파일로 둔다
+# uid를 고정하는 이유: 대시보드 JSON(dashboards/*.json)이 이 uid로 데이터 소스를 찾는다
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # Grafana가 처음 자동으로 붙인 값을 그대로 적었다. 다른 값으로 바꾸면 이미 등록된 연결을 못 찾아 Grafana가 시작하지 못하고,
+    # 화면에서 가져온 대시보드(4701 등)도 이 uid로 연결돼 있어 끊긴다
+    uid: PBFA97CFB590B2093
+    type: prometheus
+    # 같은 compose 네트워크(monitoring-net)라 컨테이너 이름으로 접속한다
+    url: http://prometheus:9090
+    isDefault: true
+
+  # 정산 배치 진행 화면용. Spring Batch가 남기는 실행 기록(BATCH_*)과 정산 스냅샷을 읽는다
+  # 진행 건수·단계별 시간은 Prometheus 지표에 없고(15초 수집이라 짧은 단계는 놓침) DB에만 정확히 남아서 직접 조회한다
+  - name: MySQL-payout
+    uid: mysql-payout
+    type: mysql
+    # Grafana를 DB 네트워크(db-net)에 붙이지 않으려고 내 PC에 열린 MySQL 포트로 접속한다
+    url: host.docker.internal:${MYSQL_PORT}
+    user: ${MYSQL_USER}
+    jsonData:
+      database: paldogotgan_payout
+      # 화면은 조회만 한다. 로컬 실험이라 앱 계정(myuser)을 그대로 쓰고, 운영이라면 SELECT만 있는 계정을 따로 둔다
+      maxOpenConns: 2
+    secureJsonData:
+      password: ${MYSQL_PASSWORD}

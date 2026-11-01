@@ -1,0 +1,12 @@
+# dashboards/ 폴더의 JSON을 Grafana 대시보드로 자동 등록한다
+# 볼륨을 지우고 다시 띄워도 대시보드가 다시 생긴다
+apiVersion: 1
+
+providers:
+  - name: local
+    folder: 로컬 모니터링
+    type: file
+    # 화면에서 고쳐 저장해 볼 수 있게 열어 둔다. 다만 파일이 바뀌면 파일 내용으로 덮이므로, 남길 변경은 파일에 반영한다
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
