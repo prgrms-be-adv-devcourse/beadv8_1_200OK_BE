@@ -6,13 +6,11 @@ import java.util.List;
 
 public record CheckoutSellerGroupResponse(
         Long sellerId,
-        long shippingFee,
         List<CheckoutItemResponse> items
 ) {
     public static CheckoutSellerGroupResponse from(CheckoutSellerGroupResult result) {
         return new CheckoutSellerGroupResponse(
                 result.sellerId(),
-                result.shippingFee(),
                 result.items().stream().map(CheckoutItemResponse::from).toList()
         );
     }

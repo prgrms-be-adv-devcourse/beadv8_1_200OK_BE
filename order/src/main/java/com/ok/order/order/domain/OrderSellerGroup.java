@@ -41,7 +41,7 @@ public class OrderSellerGroup extends BaseTime {
     // 판매자 설정의 무료배송 기준 금액, null이면 무료배송 없음 (0은 항상 무료라 따로 표현)
     private Long freeShippingThreshold;
 
-    // 도서산간 추가 운임, 배송 모듈이 배송비와 함께 계산한 값 (배송지를 정하기 전인 주문서에서는 0)
+    // 도서산간 추가 운임, 주문 생성 때 배송 모듈이 배송비와 함께 계산한 값
     @Column(nullable = false)
     private long remoteAreaFee;
 

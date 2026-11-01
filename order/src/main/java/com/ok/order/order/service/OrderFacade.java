@@ -41,9 +41,10 @@ public class OrderFacade {
     private static final int IDEMPOTENCY_KEY_MAX_LENGTH = 64;
     private static final String IDEMPOTENCY_KEY_CONSTRAINT = "uk_orders_buyer_id_idempotency_key";
 
-    // 주문서 조회: 배송지를 고르기 전이라 우편번호 없이 계산한다 (도서산간 운임은 주문 생성 때 더해진다)
+    // 주문서 조회: 배송비는 프론트가 배송 모듈 견적 API로 따로 받아 보여 주므로 여기서는 배송 모듈을 부르지 않는다
+    // 결제할 배송비는 주문 생성 때 서버가 배송 모듈로 다시 계산해 확인한다
     public CheckoutResult getCheckout(Long memberId) {
-        return CheckoutResult.from(buildOrder(memberId, null));
+        return CheckoutResult.from(buildOrder(memberId));
     }
 
     // 주문 생성
@@ -57,8 +58,9 @@ public class OrderFacade {
             return existingOrderId.get();
         }
 
-        // 장바구니 + 최신 상품 정보 + 배송지 기준 배송비·도서산간 운임으로 주문 만들기
-        Order order = buildOrder(command.memberId(), command.zipCode());
+        // 장바구니 + 최신 상품 정보로 주문 만들고, 배송지 기준 배송비·도서산간 운임 반영
+        Order order = buildOrder(command.memberId());
+        applyShippingFees(order, command.zipCode());
         order.assignIdempotencyKey(command.idempotencyKey());
         order.registerShippingAddress(command.recipientName(), command.recipientPhone(), command.zipCode(),
                 command.address(), command.addressDetail(), command.deliveryNote());
@@ -118,9 +120,8 @@ public class OrderFacade {
         return String.valueOf(e.getMostSpecificCause().getMessage()).contains(IDEMPOTENCY_KEY_CONSTRAINT);
     }
 
-    // 장바구니 선택 상품 + 상품 모듈의 최신 정보로 주문 객체 만들기 (저장 X)
-    // zipCode: 배송지 우편번호, 주문서 조회처럼 아직 모르면 null
-    private Order buildOrder(Long memberId, String zipCode) {
+    // 장바구니 선택 상품 + 상품 모듈의 최신 정보로 주문 객체 만들기 (저장 X, 배송비 미반영)
+    private Order buildOrder(Long memberId) {
         List<SelectedCartItem> cartItems = cartService.getSelectedCartItems(memberId);
         if (cartItems.isEmpty()) {
             throw new RestApiException(OrderErrorCode.EMPTY_ORDER_ITEMS);
@@ -143,13 +144,11 @@ public class OrderFacade {
             lines.add(toOrderLine(memberId, item, optionMap.get(item.productOptionId())));
         }
 
-        Order order = Order.create(memberId, lines);
-        applyShippingFees(order, zipCode);
-        return order;
+        return Order.create(memberId, lines);
     }
 
     // 판매자 묶음마다 배송비·도서산간 운임 반영
-    // 판매자 배송 설정과 지역 데이터는 배송 모듈이 가지므로 계산도 배송 모듈에 맡긴다 (주문서와 결제 금액이 같은 규칙을 쓰게)
+    // 판매자 배송 설정과 지역 데이터는 배송 모듈이 가지므로 계산도 배송 모듈에 맡긴다 (프론트가 본 견적과 결제 금액이 같은 규칙을 쓰게)
     // 판매자가 여럿이어도 한 번에 묻는다
     private void applyShippingFees(Order order, String zipCode) {
         Map<Long, SellerShippingFeeResponse> feeBySeller = new HashMap<>();

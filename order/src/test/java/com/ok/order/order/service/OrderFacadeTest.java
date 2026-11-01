@@ -167,7 +167,6 @@ class OrderFacadeTest {
         given(productApiClient.getOptions(List.of(11L, 12L))).willReturn(List.of(
                 onSale(11L, 10_000L),
                 onSale(12L, 5_000L)));
-        noShippingFee();
 
         // when
         CheckoutResult result = sut.getCheckout(BUYER_ID);
@@ -178,33 +177,24 @@ class OrderFacadeTest {
             softly.assertThat(result.sellerGroups()).hasSize(1);
             softly.assertThat(result.sellerGroups().get(0).items()).hasSize(2);
             softly.assertThat(result.totalProductAmount()).isEqualTo(25_000L);
-            softly.assertThat(result.totalAmount()).isEqualTo(25_000L);
         });
         then(orderService).shouldHaveNoInteractions();
     }
 
     @Test
-    void 주문서에는_배송_모듈이_판매자별_상품_금액으로_계산한_배송비를_더한다() {
-        // given: 판매자 100의 상품 25,000원 (무료배송 기준 50,000원 미만이라 배송비 3,000원)
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(
-                new SelectedCartItem(11L, 2),
-                new SelectedCartItem(12L, 1)));
-        given(productApiClient.getOptions(List.of(11L, 12L))).willReturn(List.of(
-                onSale(11L, 10_000L),
-                onSale(12L, 5_000L)));
-        shippingFee(3_000L, 0L);
+    void 주문서는_배송_모듈을_부르지_않는다() {
+        // given
+        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
 
         // when
-        CheckoutResult result = sut.getCheckout(BUYER_ID);
+        sut.getCheckout(BUYER_ID);
 
-        // then: 배송지를 고르기 전이라 우편번호 없이 판매자별 상품 금액 합계를 보내고, 받은 배송비를 반영
-        then(deliveryApiClient).should().getShippingFees(null, Map.of(SELLER_ID, 25_000L));
-        assertSoftly(softly -> {
-            softly.assertThat(result.sellerGroups().get(0).shippingFee()).isEqualTo(3_000L);
-            softly.assertThat(result.totalShippingFee()).isEqualTo(3_000L);
-            softly.assertThat(result.totalAmount()).isEqualTo(28_000L);
-        });
+        // then: 배송비는 프론트가 배송 견적 API로 받으므로 결제 확인용 호출은 주문 생성 때만 한다
+        then(deliveryApiClient).shouldHaveNoInteractions();
     }
+
+    // ---------- 주문 생성 ----------
 
     @Test
     void 배송_모듈_응답에_판매자가_빠지면_배송비_0원으로_결제되지_않게_주문을_막는다() {
@@ -215,12 +205,11 @@ class OrderFacadeTest {
                 new SellerShippingFeeResponse(999L, 3_000L, null, 3_000L, 0L)));
 
         // when & then
-        assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
                 .isInstanceOfSatisfying(RestApiException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.DELIVERY_API_FAILED));
+        then(orderService).should(never()).create(any());
     }
-
-    // ---------- 주문 생성 ----------
 
     @Test
     void 사용자가_본_금액과_다르면_주문을_저장하지_않는다() {

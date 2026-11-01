@@ -38,7 +38,7 @@ public record CreateOrderRequest(
 
         @NotNull(message = "확인한 결제 금액은 필수입니다.")
         @PositiveOrZero(message = "결제 금액은 0 이상이어야 합니다.")
-        Long expectedTotalAmount // 주문서 합계 + 도서산간 운임 (사용자가 화면에서 본 최종 금액)
+        Long expectedTotalAmount // 주문서 상품 합계 + 배송 견적의 배송비 합계(도서산간 운임 포함). 사용자가 화면에서 본 최종 금액
 ) {
     // 공백만 보내면 요청사항이 없는 것으로 본다. 판매자 화면에 빈 요청사항이 찍히지 않게 null로 바꾼다
     public CreateOrderRequest {

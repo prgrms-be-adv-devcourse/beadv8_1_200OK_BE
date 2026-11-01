@@ -11,7 +11,8 @@ import org.springframework.http.ResponseEntity;
 @Tag(name = "Order", description = "주문 API")
 interface OrderControllerSpec {
 
-    @Operation(summary = "주문서 조회", description = "장바구니에서 선택한 상품으로 판매자별 상품, 배송비, 합계를 계산합니다. 저장하지 않습니다. 보유 잔액은 지갑 API로 프론트가 따로 조회합니다.")
+    @Operation(summary = "주문서 조회", description = "장바구니에서 선택한 상품으로 판매자별 상품과 상품 금액 합계를 계산합니다. 저장하지 않습니다. "
+            + "배송비·도서산간 운임은 배송 견적 API로, 보유 잔액은 지갑 API로 프론트가 따로 조회합니다.")
     ResponseEntity<CheckoutResponse> getCheckout(Long memberId);
 
     @Operation(summary = "주문 생성", description = "배송지·동의·확인 금액을 받아 주문을 생성하고 재고를 선점합니다. "

@@ -2,6 +2,6 @@ package com.ok.order.order.client.dto;
 
 import java.util.List;
 
-// postalCode: 배송지 우편번호, 주문서 조회처럼 배송지를 정하기 전이면 null (도서산간 운임 0원으로 계산)
+// postalCode: 주문 생성 요청의 배송지 우편번호 (도서산간 운임 계산에 쓴다)
 public record ShippingFeesRequest(String postalCode, List<SellerItemAmountRequest> sellers) {
 }
