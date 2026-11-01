@@ -107,8 +107,15 @@ management:
   endpoints:
     web:
       exposure:
-        # 컨테이너 헬스체크에만 쓴다. 외부 노출은 nginx가 막고, 다른 엔드포인트는 열지 않는다
-        include: health
+        # health: 컨테이너 헬스체크 / prometheus: Prometheus가 지표를 가져가는 주소
+        # 외부 노출은 nginx가 막고(/api/v1만 공개), 그 밖의 엔드포인트는 열지 않는다
+        include: health,prometheus
   endpoint:
     health:
       show-details: never
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # 평균만으로는 가끔 크게 느린 요청이 묻혀서, 응답시간을 구간별로도 기록해 p95·p99를 볼 수 있게 한다
+        # 대신 API마다 구간 수만큼 지표가 늘어난다
+        http.server.requests: true

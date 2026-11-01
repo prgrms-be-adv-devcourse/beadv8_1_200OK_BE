@@ -65,7 +65,9 @@ public class SecurityConfig {
             // 예외를 응답으로 바꾸는 오류 경로. 막으면 실제 오류(404 등) 대신 401이 나가 원인을 가린다
             "/error",
             // 컨테이너 헬스체크. compose와 deploy.sh가 토큰 없이 호출한다
-            "/actuator/health"
+            "/actuator/health",
+            // Prometheus 지표 수집. Prometheus는 토큰을 받아 올 수 없어서 토큰 없이 호출한다
+            "/actuator/prometheus"
     };
 
     /**

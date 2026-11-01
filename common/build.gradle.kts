@@ -23,6 +23,8 @@ dependencies {
     api("org.springframework.boot:spring-boot-starter-kafka")
 
     runtimeOnly("com.mysql:mysql-connector-j")
+    // actuator가 모은 지표를 Prometheus가 읽는 형식(/actuator/prometheus)으로 내보낸다. 코드에서 직접 쓰지 않아 runtimeOnly
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
     annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
