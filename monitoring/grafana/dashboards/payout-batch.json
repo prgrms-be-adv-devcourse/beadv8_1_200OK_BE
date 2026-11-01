@@ -1,0 +1,392 @@
+{
+  "uid": "payout-batch",
+  "title": "정산 배치 진행",
+  "description": "정산 Job(payoutJob)의 현재 상태·단계·진행률과 그동안의 JVM·DB 커넥션 변화를 본다. 표는 Spring Batch 실행 기록(BATCH_*) 기준, 그래프는 Prometheus 기준",
+  "tags": ["payout", "batch"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "정산 상태 (최근 실행)",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 5 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT CASE e.STATUS WHEN 'STARTING' THEN '시작 중' WHEN 'STARTED' THEN '실행 중' WHEN 'COMPLETED' THEN '완료' WHEN 'FAILED' THEN '실패' WHEN 'STOPPED' THEN '중지' ELSE e.STATUS END AS `상태` FROM BATCH_JOB_EXECUTION e WHERE e.JOB_EXECUTION_ID = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "실행 기록 없음",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "시작 중": { "color": "blue", "index": 0 },
+                "실행 중": { "color": "blue", "index": 1 },
+                "완료": { "color": "green", "index": 2 },
+                "실패": { "color": "red", "index": 3 },
+                "중지": { "color": "orange", "index": 4 }
+              }
+            }
+          ],
+          "color": { "mode": "fixed", "fixedColor": "text" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "/.*/" },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "현재 단계",
+      "gridPos": { "x": 4, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT COALESCE(MAX(CASE se.STEP_NAME WHEN 'payoutSnapshotStep' THEN '① 스냅샷 (1/6)' WHEN 'payoutValidateStep' THEN '② 입력 검증 (2/6)' WHEN 'payoutDraftStep' THEN '③ 임시 정산 (3/6)' WHEN 'payoutVerifyStep' THEN '④ 결과 검증 (4/6)' WHEN 'payoutCommitStep' THEN '⑤ 확정 (5/6)' WHEN 'payoutPublishStep' THEN '⑥ 발행 (6/6)' ELSE se.STEP_NAME END), '실행 중인 단계 없음') AS `현재 단계` FROM BATCH_STEP_EXECUTION se WHERE se.STATUS = 'STARTED' AND se.JOB_EXECUTION_ID = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "/.*/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "시작 시각",
+      "gridPos": { "x": 10, "y": 0, "w": 4, "h": 5 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT DATE_FORMAT(e.START_TIME, '%m-%d %H:%i:%s') AS `시작 시각` FROM BATCH_JOB_EXECUTION e WHERE e.JOB_EXECUTION_ID = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "noValue": "-", "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "/.*/" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "경과 시간",
+      "description": "끝난 실행은 전체 걸린 시간",
+      "gridPos": { "x": 14, "y": 0, "w": 5, "h": 5 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT TIMESTAMPDIFF(SECOND, e.START_TIME, COALESCE(e.END_TIME, NOW())) AS `경과 시간` FROM BATCH_JOB_EXECUTION e WHERE e.JOB_EXECUTION_ID = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "dtdurations", "noValue": "-", "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "③ 임시 정산 진행률",
+      "description": "처리한 판매자(성공+실패) / 스냅샷에 든 판매자. 100명씩 한 회차가 끝날 때마다 올라간다. 다른 단계는 한 번에 처리해 중간 진행률이 없다",
+      "gridPos": { "x": 19, "y": 0, "w": 5, "h": 5 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT ROUND(100 * (se.WRITE_COUNT + se.WRITE_SKIP_COUNT) / NULLIF(t.total, 0), 1) AS `진행률` FROM BATCH_STEP_EXECUTION se CROSS JOIN (SELECT COUNT(DISTINCT c.seller_id) AS total FROM payout_snapshot ps JOIN payout_snapshot_item si ON si.snapshot_id = ps.id JOIN payout_candidate_items c ON c.id = si.candidate_id WHERE ps.job_execution_id = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')) t WHERE se.STEP_NAME = 'payoutDraftStep' AND se.JOB_EXECUTION_ID = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "noValue": "아직 시작 전",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null }, { "color": "green", "value": 100 } ] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "showThresholdMarkers": false
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "단계별 진행 (최근 실행)",
+      "description": "Spring Batch가 단계마다 남기는 실행 기록. 4초짜리 짧은 단계도 정확히 나온다. '처리' 칸의 뜻은 단계마다 다르다(오른쪽 설명 참고)",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 8 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT s.label AS `단계`, CASE se.STATUS WHEN 'STARTED' THEN '실행 중' WHEN 'COMPLETED' THEN '완료' WHEN 'FAILED' THEN '실패' WHEN 'STOPPED' THEN '중지' ELSE COALESCE(se.STATUS, '대기') END AS `상태`, DATE_FORMAT(se.START_TIME, '%H:%i:%s') AS `시작`, DATE_FORMAT(se.END_TIME, '%H:%i:%s') AS `종료`, ROUND(TIMESTAMPDIFF(MICROSECOND, se.START_TIME, COALESCE(se.END_TIME, NOW(6))) / 1000000, 1) AS `걸린 시간`, CASE WHEN se.STEP_EXECUTION_ID IS NULL THEN NULL WHEN s.name = 'payoutDraftStep' THEN CONCAT(FORMAT(se.WRITE_COUNT + se.WRITE_SKIP_COUNT, 0), ' / ', FORMAT(t.total, 0), ' 명') WHEN s.name IN ('payoutSnapshotStep', 'payoutCommitStep') THEN '-' ELSE FORMAT(se.WRITE_COUNT, 0) END AS `처리`, se.WRITE_SKIP_COUNT AS `건너뜀`, s.meaning AS `처리 칸의 뜻` FROM (SELECT 1 AS ord, 'payoutSnapshotStep' AS name, '① 스냅샷' AS label, '이번 정산 대상을 고정한다. 한 번에 처리해 건수 기록이 없다' AS meaning UNION ALL SELECT 2, 'payoutValidateStep', '② 입력 검증', '실패로 기록한 후보 수 (지갑 차감 없음·금액 불일치)' UNION ALL SELECT 3, 'payoutDraftStep', '③ 임시 정산', '처리한 판매자 / 대상 판매자. 100명씩 회차마다 올라간다. 건너뜀 = 오류로 실패한 판매자' UNION ALL SELECT 4, 'payoutVerifyStep', '④ 결과 검증', '검증을 통과한 임시 정산 항목 수. 건너뜀 = 검증에 걸린 후보' UNION ALL SELECT 5, 'payoutCommitStep', '⑤ 확정', '임시 정산을 확정한다. 한 번에 처리해 건수 기록이 없다' UNION ALL SELECT 6, 'payoutPublishStep', '⑥ 발행', '지갑으로 보낸 정산 이벤트 수') s CROSS JOIN (SELECT MAX(x.JOB_EXECUTION_ID) AS id FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob') j LEFT JOIN BATCH_STEP_EXECUTION se ON se.JOB_EXECUTION_ID = j.id AND se.STEP_NAME = s.name CROSS JOIN (SELECT COUNT(DISTINCT c.seller_id) AS total FROM payout_snapshot ps JOIN payout_snapshot_item si ON si.snapshot_id = ps.id JOIN payout_candidate_items c ON c.id = si.candidate_id WHERE ps.job_execution_id = (SELECT MAX(x.JOB_EXECUTION_ID) FROM BATCH_JOB_EXECUTION x JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = x.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob')) t ORDER BY s.ord"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "상태" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "실행 중": { "color": "blue", "index": 0 },
+                      "완료": { "color": "green", "index": 1 },
+                      "실패": { "color": "red", "index": 2 },
+                      "중지": { "color": "orange", "index": 3 },
+                      "대기": { "color": "transparent", "index": 4 }
+                    }
+                  }
+                ]
+              },
+              { "id": "custom.width", "value": 90 }
+            ]
+          },
+          { "matcher": { "id": "byName", "options": "걸린 시간" }, "properties": [ { "id": "unit", "value": "s" }, { "id": "custom.width", "value": 110 } ] },
+          { "matcher": { "id": "byName", "options": "단계" }, "properties": [ { "id": "custom.width", "value": 130 } ] },
+          { "matcher": { "id": "byName", "options": "시작" }, "properties": [ { "id": "custom.width", "value": 90 } ] },
+          { "matcher": { "id": "byName", "options": "종료" }, "properties": [ { "id": "custom.width", "value": 90 } ] },
+          { "matcher": { "id": "byName", "options": "처리" }, "properties": [ { "id": "custom.width", "value": 170 } ] },
+          { "matcher": { "id": "byName", "options": "건너뜀" }, "properties": [ { "id": "custom.width", "value": 80 } ] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm" }
+    },
+    {
+      "id": 7,
+      "type": "state-timeline",
+      "title": "단계 타임라인 (Prometheus, 15초 간격)",
+      "description": "실행 중인 단계에 색이 칠해진다. 15초마다 수집해서 그보다 짧은 단계(입력 검증·결과 검증 등)는 안 보일 수 있다. 정확한 시간은 위 표를 본다",
+      "gridPos": { "x": 0, "y": 13, "w": 24, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "max by (spring_batch_step_name) (spring_batch_step_active_seconds_count{application=\"paldo-gotgan\", spring_batch_step_job_name=\"payoutJob\"})",
+          "legendFormat": "{{spring_batch_step_name}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "transparent", "value": null }, { "color": "blue", "value": 1 } ] },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": " ", "index": 0 }, "1": { "text": "실행 중", "index": 1 } } }
+          ],
+          "custom": { "fillOpacity": 80, "lineWidth": 0 }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "alignValue": "left",
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "JVM 힙 사용량",
+      "description": "톱니처럼 오르내리면 GC가 잘 치우는 것. 바닥선이 계속 오르기만 하면 메모리 누수를 의심한다",
+      "gridPos": { "x": 0, "y": 20, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "sum(jvm_memory_used_bytes{application=\"paldo-gotgan\", area=\"heap\"})",
+          "legendFormat": "사용 중",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "sum(jvm_memory_used_bytes{application=\"paldo-gotgan\", area=\"heap\", id=\"G1 Old Gen\"})",
+          "legendFormat": "그중 Old Gen (오래 남는 객체)",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "CPU 사용률",
+      "gridPos": { "x": 8, "y": 20, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "process_cpu_usage{application=\"paldo-gotgan\"}",
+          "legendFormat": "앱 (process)",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "system_cpu_usage{application=\"paldo-gotgan\"}",
+          "legendFormat": "PC 전체 (system)",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "DB 커넥션 (HikariCP)",
+      "description": "사용 중이 최대치에 붙고 대기가 0보다 크면 커넥션이 모자란 것",
+      "gridPos": { "x": 16, "y": 20, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "sum(hikaricp_connections_active{application=\"paldo-gotgan\"})",
+          "legendFormat": "사용 중",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "sum(hikaricp_connections_pending{application=\"paldo-gotgan\"})",
+          "legendFormat": "대기",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "sum(hikaricp_connections_max{application=\"paldo-gotgan\"})",
+          "legendFormat": "최대",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "최근 정산 실행 10건",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 7 },
+      "datasource": { "type": "mysql", "uid": "mysql-payout" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "mysql", "uid": "mysql-payout" },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT e.JOB_EXECUTION_ID AS `실행 ID`, CASE e.STATUS WHEN 'STARTING' THEN '시작 중' WHEN 'STARTED' THEN '실행 중' WHEN 'COMPLETED' THEN '완료' WHEN 'FAILED' THEN '실패' WHEN 'STOPPED' THEN '중지' ELSE e.STATUS END AS `상태`, DATE_FORMAT(e.START_TIME, '%m-%d %H:%i:%s') AS `시작`, DATE_FORMAT(e.END_TIME, '%m-%d %H:%i:%s') AS `종료`, TIMESTAMPDIFF(SECOND, e.START_TIME, COALESCE(e.END_TIME, NOW())) AS `걸린 시간`, (SELECT COUNT(*) FROM payout p JOIN payout_snapshot ps ON ps.id = p.snapshot_id WHERE ps.job_execution_id = e.JOB_EXECUTION_ID AND p.is_system = 0) AS `판매자 정산 수`, LEFT(e.EXIT_MESSAGE, 200) AS `종료 메시지` FROM BATCH_JOB_EXECUTION e JOIN BATCH_JOB_INSTANCE i ON i.JOB_INSTANCE_ID = e.JOB_INSTANCE_ID WHERE i.JOB_NAME = 'payoutJob' ORDER BY e.JOB_EXECUTION_ID DESC LIMIT 10"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "상태" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "시작 중": { "color": "blue", "index": 0 },
+                      "실행 중": { "color": "blue", "index": 1 },
+                      "완료": { "color": "green", "index": 2 },
+                      "실패": { "color": "red", "index": 3 },
+                      "중지": { "color": "orange", "index": 4 }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          { "matcher": { "id": "byName", "options": "걸린 시간" }, "properties": [ { "id": "unit", "value": "dtdurations" } ] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm" }
+    }
+  ]
+}
