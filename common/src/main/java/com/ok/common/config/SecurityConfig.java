@@ -59,13 +59,15 @@ public class SecurityConfig {
     );
 
     /**
-     * API가 아니지만 로그인 없이 허용하는 경로. 외부에는 nginx가 /api/v1만 공개하므로 이 경로들은 밖에서 닿지 않는다.
+     * API가 아니지만 로그인 없이 허용하는 경로. 외부에는 nginx가 /api/v1만 공개하고 actuator는 별도 관리 포트에서만 열려 있어, 이 경로들은 밖에서 닿지 않는다.
      */
     private static final String[] PUBLIC_PATHS = {
             // 예외를 응답으로 바꾸는 오류 경로. 막으면 실제 오류(404 등) 대신 401이 나가 원인을 가린다
             "/error",
             // 컨테이너 헬스체크. compose와 deploy.sh가 토큰 없이 호출한다
-            "/actuator/health"
+            "/actuator/health",
+            // 지표 수집(Prometheus scrape). 관리 포트(자식 컨텍스트)도 이 필터 체인이 적용돼 열어 주지 않으면 401이다 (#374)
+            "/actuator/prometheus"
     };
 
     /**
