@@ -7,10 +7,13 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/cart")
+// 장바구니는 구매를 위한 것이라 주문과 같이 구매 권한(BUYER)이 있는 회원만 쓴다
+@PreAuthorize("hasRole('BUYER')")
 @RequiredArgsConstructor
 public class ApiV1CartController implements CartControllerDocs {
 
