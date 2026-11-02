@@ -35,9 +35,11 @@ GET /internal/v1/orders/{orderId}/items/{orderItemId}
   "sellerGroup": {
     "shippingFee": 3000,
     "remoteAreaFee": 3000,
+    "baseShippingFee": 3000,
+    "freeShippingThreshold": 50000,
     "items": [
-      { "orderItemId": 101, "quantity": 3 },
-      { "orderItemId": 102, "quantity": 1 }
+      { "orderItemId": 101, "unitPrice": 10000, "quantity": 3 },
+      { "orderItemId": 102, "unitPrice": 5000, "quantity": 1 }
     ]
   }
 }
@@ -53,6 +55,8 @@ GET /internal/v1/orders/{orderId}/items/{orderItemId}
 | `unitPrice`, `quantity`, `refundedQuantity` | 돌려줄 금액, 취소 가능 개수 |
 | `sellerGroup.shippingFee`, `sellerGroup.remoteAreaFee` | 판매자 묶음이 전부 취소되면 함께 돌려줄 배송비와 추가 운임 |
 | `sellerGroup.items[].quantity` | 같은 묶음의 상품별 주문 수량. "묶음 전부 취소"인지 판단할 때 씀 |
+| `sellerGroup.baseShippingFee`, `sellerGroup.freeShippingThreshold` | 주문 시점의 기본 배송비와 무료배송 기준 금액(#342). 일부 취소 뒤 무료배송 기준이 깨지는지 판단 ([아래](#일부-취소로-무료배송-기준이-깨질-때)) |
+| `sellerGroup.items[].unitPrice` | 같은 묶음의 상품별 단가. 취소 뒤 남은 묶음 금액을 구할 때 씀 |
 
 - 응답: 200, 404 주문이 없거나 주문 안에 그 주문 상품이 없음.
 
@@ -60,10 +64,11 @@ GET /internal/v1/orders/{orderId}/items/{orderItemId}
 
 ```
 POST /internal/v1/orders/items/{orderItemId}/refunds
-{ "refundId": 7, "quantity": 1 }
+{ "refundId": 7, "quantity": 1, "deductedShippingFee": 3000 }
 ```
 
 - `refundedQuantity`에 수량을 더한다. 주문 수량이 모두 취소되면 그 주문 상품은 `REFUNDED`가 된다.
+- `deductedShippingFee`는 이 취소로 환불 금액에서 뺀 배송비다. 빼지 않았으면 0이다. 주문은 이 값을 기록해 두었다가 ③에서 판매자 몫 배송비로 보낸다.
 - 같은 `refundId`로 다시 오면 더하지 않고 성공으로 답한다. 수량이 다르면 409.
 - 응답: 성공, 404 주문 상품 없음, 409 취소 수량 합계가 주문 수량 초과, 409 같은 `refundId`로 수량이 다름.
 
@@ -75,7 +80,13 @@ POST /internal/v1/orders/items/{orderItemId}/refunds
 보낼 금액 = 단가 × (수량 − refundedQuantity) = 10,000 × (3 − 1) = 20,000
 ```
 
-- 배송비는 지금처럼 묶음 배송비를 그대로 보낸다. 일부 취소에서는 배송비를 구매자에게 돌려주지 않으므로, 남은 상품이 구매확정되면 배송비는 판매자 몫이다.
+- 배송비는 묶음 배송비에 ②로 받은 `deductedShippingFee` 합계를 더해서 보낸다. 환불에서 뺀 배송비는 남은 상품을 보내는 판매자 몫이기 때문이다.
+
+```
+주문 시점 배송비 0(무료배송) + 환불에서 뺀 배송비 3,000 = 3,000
+```
+
+- 환불만 배송비를 뺐는지 안다. 주문이 같은 계산을 다시 하면 두 곳 결과가 어긋날 수 있어서, 환불이 뺀 금액을 ②로 알려 준다.
 - 전부 취소된 상품은 `REFUNDED`라 구매확정 대상이 아니다(지금 `confirmPurchase`는 `DELIVERED`일 때만 확정).
 
 ### 데이터 변경 (제안)
@@ -83,11 +94,33 @@ POST /internal/v1/orders/items/{orderItemId}/refunds
 | 변경 | 내용 |
 | --- | --- |
 | `order_item.refunded_quantity` | 취소가 끝난 개수, NOT NULL 기본 0 |
-| 반영 기록 테이블 | `refund_id`(UNIQUE), `order_item_id`, `quantity` — 같은 요청을 두 번 반영하지 않으려고 둠 |
+| 반영 기록 테이블 | `refund_id`(UNIQUE), `order_item_id`, `quantity`, `deducted_shipping_fee` — 같은 요청을 두 번 반영하지 않으려고 둠. 뺀 배송비는 ③에서 씀 |
 
 ---
 
 ## 자세한 배경
+
+### 일부 취소로 무료배송 기준이 깨질 때
+
+무료배송이던 묶음에서 일부만 취소하면 남은 묶음 금액이 무료배송 기준 아래로 내려갈 수 있다. 이때 환불은 아래처럼 처리한다. 기준은 배송 모듈의 배송비 규칙(`ShippingFeePolicy`)과 같고, 값은 주문 시점 값(①의 `baseShippingFee`, `freeShippingThreshold`)을 쓴다.
+
+- 취소 뒤 남은 묶음 금액이 무료배송 기준 아래면, 환불 금액에서 기본 배송비를 뺀다.
+- 환불 금액이 기본 배송비보다 작으면 부분 취소를 받지 않는다(전체 취소만 가능).
+- 그 뒤 남은 상품까지 모두 취소해 묶음이 전부 취소되면, 앞에서 뺀 배송비도 마지막 환불 때 함께 돌려준다. 상자가 나가지 않으니 배송비를 받을 근거가 없다. 이때 묶음이 모두 `REFUNDED`라 구매확정이 없으므로, 주문에 기록된 `deductedShippingFee`는 쓰이지 않는다.
+
+예시 (기본 배송비 3,000원, 5만 원 이상 무료배송)
+
+```
+A 30,000 + B 30,000 = 60,000원 주문(배송비 0) → B 취소 → 남은 30,000원, 기준 아래
+→ 환불 30,000 − 3,000 = 27,000원, ②에 deductedShippingFee 3,000
+→ A 구매확정 때 배송비 3,000을 판매자 몫으로 보냄(③)
+
+A 49,500 + B 1,000 = 50,500원 주문(배송비 0) → B 취소 → 남은 49,500원, 기준 아래
+→ 1,000 < 3,000 → 부분 취소 불가
+
+첫 예시에서 이어서 A도 취소 → 묶음 전부 취소
+→ 환불 30,000 + 앞에서 뺀 3,000 = 33,000원 (구매자는 60,000원을 모두 돌려받음)
+```
 
 ### #28 계획과 달라진 점
 
@@ -116,7 +149,7 @@ POST /internal/v1/orders/items/{orderItemId}/refunds
 
 - `CANCEL_REQUESTED`는 쓰이지 않게 된다. 남길지 지울지는 주문 팀 판단이다.
 - 모든 상품이 `REFUNDED`가 된 주문을 주문 단위 `CANCELED`로 바꿀지도 주문 팀 판단이다.
-- 주문의 배송비는 지금 항상 0이다(`OrderSellerGroup.java:49-50` TODO). 배송비 계산이 붙어야 배송비 환불이 실제 금액을 갖는다. 추가 운임(`remoteAreaFee`)은 지금도 실제 값이 들어간다.
+- 주문의 배송비는 #342(PR #349)에서 실제 값이 들어가게 된다. 그 전까지는 0이라 배송비 환불·차감이 실제 금액을 갖지 않는다. 추가 운임(`remoteAreaFee`)은 지금도 실제 값이 들어간다.
 - 같은 요청이 동시에 두 번 와서 반영 기록 유니크 제약에 걸리면 500이 아니라 성공으로 답해 주면 좋겠다.
 
 ### 테스트로 확인하면 좋은 것
@@ -125,6 +158,7 @@ POST /internal/v1/orders/items/{orderItemId}/refunds
 - 3개 중 1개 취소 후 남은 2개는 평소대로 배송 중 → 배송 완료 → 구매확정된다.
 - 3개 모두 취소하면 `REFUNDED`가 되고 구매확정되지 않는다.
 - 1개 취소 뒤 구매확정하면 2개 금액(20,000)이 이벤트로 나간다.
+- ②에 `deductedShippingFee` 3,000이 온 묶음은 구매확정 때 배송비가 주문 시점 배송비 + 3,000으로 나간다.
 
 ### 범위 밖
 

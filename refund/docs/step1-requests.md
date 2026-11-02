@@ -100,30 +100,36 @@ GET /internal/v1/orders/{orderId}/items/{orderItemId}
   "sellerGroup": {
     "shippingFee": 3000,
     "remoteAreaFee": 3000,
+    "baseShippingFee": 3000,
+    "freeShippingThreshold": 50000,
     "items": [
-      { "orderItemId": 101, "quantity": 3 },
-      { "orderItemId": 102, "quantity": 1 }
+      { "orderItemId": 101, "unitPrice": 10000, "quantity": 3 },
+      { "orderItemId": 102, "unitPrice": 5000, "quantity": 1 }
     ]
   }
 }
 ```
 
 - `sellerGroup`은 판매자 묶음이 전부 취소될 때 배송비와 추가 운임도 돌려주기 위해 필요하다.
+- `baseShippingFee`, `freeShippingThreshold`, `items[].unitPrice`는 일부 취소 뒤 남은 묶음 금액이 무료배송 기준 아래로 내려가는지 판단할 때 쓴다. 내려가면 환불 금액에서 기본 배송비를 빼고, 환불 금액이 기본 배송비보다 작으면 부분 취소를 받지 않는다.
+- 그 뒤 묶음이 전부 취소되면 앞에서 뺀 배송비도 마지막 환불 때 함께 돌려준다.
 - 응답: 200, 404 주문 또는 주문 상품 없음. 구매자 확인은 환불이 한다.
 
 **② 취소 수량 반영**
 
 ```
 POST /internal/v1/orders/items/{orderItemId}/refunds
-{ "refundId": 7, "quantity": 1 }
+{ "refundId": 7, "quantity": 1, "deductedShippingFee": 3000 }
 ```
 
+- `deductedShippingFee`는 이 취소로 환불 금액에서 뺀 배송비(없으면 0). 주문은 기록해 두었다가 ③에서 판매자 몫 배송비로 보낸다.
 - 취소된 수량을 기록한다. 주문 수량이 모두 취소되면 그 주문 상품은 `REFUNDED`가 된다.
 - 응답: 성공, 404 주문 상품 없음, 409 취소 수량 합계가 주문 수량 초과.
 
 **③ 구매확정 금액 조정**
 
 - 구매확정 이벤트 금액에서 취소된 수량을 빼 주길 요청한다(`OrderService.java:205`의 TODO). 예: 3개 중 1개 취소 → 2개 금액 20,000원.
+- 배송비는 묶음 배송비에 ②로 받은 `deductedShippingFee` 합계를 더해서 보낸다. 예: 주문 시점 0 + 환불에서 뺀 3,000 = 3,000.
 
 **#28 계획과 달라진 점**
 
@@ -136,7 +142,7 @@ POST /internal/v1/orders/items/{orderItemId}/refunds
 
 > **참고**
 > - `CANCEL_REQUESTED`는 쓰이지 않게 된다. 남길지는 주문 팀 판단.
-> - 주문 배송비는 지금 항상 0이다(`OrderSellerGroup.java:50` TODO). 배송비 계산이 붙어야 배송비 환불이 실제 금액을 갖는다.
+> - 주문 배송비는 #342(PR #349)에서 실제 값이 들어가게 된다. 그 전까지는 0이라 배송비 환불·차감이 실제 금액을 갖지 않는다.
 
 ---
 
