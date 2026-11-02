@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationTrustResolver;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.AuthenticationTrustResolverImpl;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
@@ -64,10 +65,18 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
      *   <li>{@code invalid-token}: 위조·형식 오류 → 토큰을 버리고 재로그인</li>
      *   <li>{@code unauthorized}: 토큰 없음 → 로그인</li>
      * </ul>
+     * 토큰이 아니라 서버 쪽 문제로 검증하지 못한 경우(검증 공개키를 받아 오지 못함)는 401이 아니라 503({@code auth-key-unavailable})이다.
+     * 클라이언트가 토큰을 버리고 재로그인시키지 않고, 토큰을 그대로 두고 다시 시도하게 하기 위해서다.
      * 보안 필터에서 난 예외도 {@code ProblemDetailAuthenticationEntryPoint}가 이 핸들러로 넘겨, 응답 형식이 같다.
      */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
+        if (ex instanceof AuthenticationServiceException) {
+            // 사용자 잘못이 아니라 서버 장애라 운영에서 보이도록 경고로 남긴다 (원인: 발급 모듈 장애, 타임아웃 등)
+            log.warn("토큰 검증 키를 가져오지 못했습니다: {}", ex.getMessage());
+            ErrorCode errorCode = CommonErrorCode.AUTH_KEY_UNAVAILABLE;
+            return ResponseEntity.status(errorCode.status()).body(toProblemDetail(errorCode, errorCode.getMessage()));
+        }
         // 위조·만료 토큰이 반복되는지 추적할 수 있도록 원인만 남긴다. 토큰 원문은 남기지 않는다.
         log.debug("인증 실패: {}", ex.getMessage());
         if (isExpiredToken(ex)) {
