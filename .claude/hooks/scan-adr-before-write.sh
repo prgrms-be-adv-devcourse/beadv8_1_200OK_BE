@@ -18,6 +18,8 @@ if ! command -v jq > /dev/null 2>&1; then
 fi
 
 file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')"
+# Windows 경로(C:\...\docs\decisions\...)도 같은 패턴으로 매칭하려고 구분자를 /로 통일한다.
+file_path="${file_path//\\//}"
 case "$file_path" in
   */docs/decisions/*.md | docs/decisions/*.md) ;;
   *) exit 0 ;;
