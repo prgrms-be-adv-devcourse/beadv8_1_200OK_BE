@@ -1,12 +1,13 @@
 # 배포 가이드
 
-EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
+EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
 서버(EC2) 자체를 만드는 방법은 [`INFRA.md`](INFRA.md)를 보세요.
 
 ## 1. 구성
 
 ```
 인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
+                 │                         └──▶ redis
                  └─ 그 외 경로(/internal, /actuator 등) → 404
                                        └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
 ```
@@ -14,8 +15,12 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 - 외부에는 `/api/v1/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
-- app·mysql·kafka는 호스트 포트를 열지 않습니다. Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
-  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx)에 함께 붙습니다. mysql·nginx는 Kafka에 닿지 않습니다.
+- app·mysql·redis·kafka는 호스트 포트를 열지 않습니다.
+  - Redis는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다.
+  - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
+  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
+- Redis는 `maxmemory 256mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성 없음(재시작하면 비워짐)입니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
+- 앱의 `/actuator/health`에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
@@ -37,10 +42,11 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 | 구성 | 예산 |
 |---|---|
 | app | 2560m (`mem_limit`) |
+| redis | 384m (`mem_limit`, 데이터 상한 256m) |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
 | mysql | 제한 없음, 약 0.5~1GiB |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 6.2GiB (여유 약 1.8GiB) |
+| 합계 | 약 6.0~6.5GiB (여유 약 1.5~2GiB, mysql 사용량에 따라 달라짐) |
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -141,6 +147,7 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy인지)
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
+docker compose -f compose.prod.yml exec redis redis-cli ping      # Redis 확인 (PONG)
 docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
 # Kafka 클러스터 상태(투표자 3대, 리더)와 복사가 덜 된 파티션(없어야 정상). CLI도 JVM을 띄우므로 힙을 작게 준다
 docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status'
@@ -164,6 +171,8 @@ cd /opt/paldo-gotgan
 ./deploy.sh
 docker compose -f compose.prod.yml restart nginx
 ```
+
+- **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). app은 Redis가 healthy가 된 뒤에 시작하므로, 형식이 틀려 Redis가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 
 - Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
