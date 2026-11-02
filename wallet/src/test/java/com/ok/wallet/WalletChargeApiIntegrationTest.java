@@ -84,6 +84,47 @@ class WalletChargeApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // 요청 본문은 검증을 통과하는 값으로 보낸다. 본문이 틀리면 역할 확인 전에 422가 나기 때문
+    @Test
+    void 관리자_토큰으로_충전을_요청하면_403() throws Exception {
+        mockMvc.perform(post(CHARGES_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount": 10000}
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 관리자_토큰으로_충전을_승인하면_403() throws Exception {
+        mockMvc.perform(post(CHARGES_URL + "/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"chargeNo": "CHG_any", "paymentKey": "%s", "amount": 10000}
+                                """.formatted(PAYMENT_KEY)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 관리자_토큰으로_결제_실패를_보내면_403() throws Exception {
+        mockMvc.perform(post(CHARGES_URL + "/fail")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"chargeNo": "CHG_any", "code": "PAY_PROCESS_CANCELED", "message": "사용자 취소"}
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 관리자_토큰으로_충전_상태를_조회하면_403() throws Exception {
+        mockMvc.perform(get(CHARGES_URL + "/{chargeNo}", "CHG_any")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void 약관에_동의한_회원이_충전을_요청하면_201과_충전_번호를_받는다() throws Exception {
         agreeAllTerms(MEMBER_ID);

@@ -14,7 +14,8 @@ interface WalletBalanceControllerSpec {
                     + "충전 가능 금액은 maxBalance - balance로 계산한다.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "잔액 조회 성공"),
-            @ApiResponse(responseCode = "401", description = "로그인 필요")
+            @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)")
     })
     ResponseEntity<BuyerBalanceResponse> getBalance(Long memberId);
 }
