@@ -33,9 +33,14 @@ app:
 admin-bootstrap:
   login-id: ""
 jwt:
-  # 테스트 전용 키. 개발·운영 환경의 JWT_SECRET으로 절대 사용하지 않는다.
-  secret: dGVzdC1zZWNyZXQta2V5LWZvci1qd3QtbXVzdC1iZS0zMi1ieXRlcy1vci1tb3Jl
-
+  # 테스트 전용 키 쌍(common/src/test/resources/jwt). 개발·운영 환경의 키로 절대 사용하지 않는다.
+  # 다른 모듈의 테스트에서도 읽히도록 classpath로 지정한다 (common의 testSupportElements가 테스트 리소스를 함께 내보낸다)
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: classpath:jwt/test-public.pem
+  signing:
+    key-id: rs256-v1
+    private-key: classpath:jwt/test-private.pem
 toss:
   # 토스 테스트 전용 키.
   payments:
