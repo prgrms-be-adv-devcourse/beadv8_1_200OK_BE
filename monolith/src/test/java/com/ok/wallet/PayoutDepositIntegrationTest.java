@@ -9,7 +9,6 @@ import com.ok.payout.service.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
@@ -58,10 +57,6 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         cleanUp();
     }
 
-    // TODO(#339): 지갑 리스너가 Kafka(payout.seller-payout-created)로 바뀌면 다시 켠다
-    //   지금은 정산만 Kafka로 보내고 지갑은 아직 Spring 이벤트로 받아서, 입금이 일어나지 않아 이 테스트가 실패한다
-    //   지갑 PR에서 이 줄과 @Disabled를 지우고, 이 테스트가 "정산 → Kafka → 지갑 입금"을 확인하게 한다
-    @Disabled("지갑 리스너 Kafka 전환 전까지 끔 (#339)")
     @Test
     void 구매확정부터_정산까지_진행되면_판매자_지갑에_정산금이_입금된다() throws Exception {
         // Given: 상품 10,000원, 배송비 3,000원 구매확정

@@ -7,7 +7,7 @@ package com.ok.payout.event;
  */
 public final class PayoutTopics {
 
-    /** 판매자 몫 정산 확정. 키는 payoutId, 값은 {@link SellerPayoutCreatedMessage} */
+    /** 판매자 몫 정산 확정. 키는 payoutId, 값은 {@link com.ok.payout.event.dto.SellerPayoutCreatedMessage} */
     public static final String SELLER_PAYOUT_CREATED = "payout.seller-payout-created";
 
     private PayoutTopics() {

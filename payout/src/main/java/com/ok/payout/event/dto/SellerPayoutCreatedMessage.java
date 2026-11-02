@@ -1,4 +1,4 @@
-package com.ok.payout.event;
+package com.ok.payout.event.dto;
 
 import java.time.LocalDateTime;
 
@@ -20,7 +20,7 @@ public record SellerPayoutCreatedMessage(
         LocalDateTime createdAt
 ) {
 
-    static SellerPayoutCreatedMessage from(SellerPayoutCreatedCommand command) {
+    public static SellerPayoutCreatedMessage from(SellerPayoutCreatedCommand command) {
         return new SellerPayoutCreatedMessage(command.payoutId(), command.payeeId(), command.amount(), command.createdAt());
     }
 }
