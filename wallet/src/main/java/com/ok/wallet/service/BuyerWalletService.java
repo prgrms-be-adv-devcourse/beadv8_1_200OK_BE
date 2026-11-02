@@ -3,6 +3,7 @@ package com.ok.wallet.service;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.domain.WalletOrderPayment;
+import com.ok.wallet.domain.WalletOrderPaymentStatus;
 import com.ok.wallet.repository.BuyerWalletLedgerRepository;
 import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.repository.WalletOrderPaymentRepository;
@@ -11,12 +12,10 @@ import com.ok.wallet.service.dto.OrderPaymentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -93,31 +92,40 @@ public class BuyerWalletService {
      * 지갑을 잠근 뒤 확인하므로, 같은 회원의 결제·충전이 동시에 와도 순서대로 처리된다.
      * 지갑이 없으면 잔액 0원인 지갑을 만든 뒤 판단하므로 잔액 부족이 된다.
      *
-     * <p>금액은 0보다 커야 한다. 호출하는 쪽이 걸러 넘기며, 0 이하가 오면 IllegalArgumentException을 던진다.
+     * <p>회원 ID·주문 ID는 null이 아니고 금액은 0보다 커야 한다. 호출하는 쪽이 걸러 넘기며, 아니면 IllegalArgumentException을 던진다.
      *
-     * <p>READ COMMITTED로 실행해, 지갑 잠금을 기다리는 사이 같은 주문으로 먼저 커밋된 결과를 최신으로 읽는다.
-     * REPEATABLE READ에서는 잠금 전에 찍힌 스냅샷을 봐서, 동시에 온 같은 주문이 이미 처리됐는지 알 수 없다.
+     * <p>같은 주문인지는 처리 기록을 먼저 넣어 보고 판단한다(#360). 일반 조회로 판단하면, 이 메서드가 이미 열린 트랜잭션(주문 생성 리스너)에
+     * 합류할 때 잠금 전에 잡힌 스냅샷 때문에 동시에 먼저 끝난 결제를 못 보고 다시 차감하려다 원장 유니크 제약에 걸려 예외로 끝났다.
+     * 넣기는 스냅샷이 아니라 유니크 제약으로 판단하므로, 호출하는 쪽의 트랜잭션·격리 수준과 상관없이 중복을 막는다.
      */
-    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Transactional
     public OrderPaymentResult payForOrder(Long memberId, Long orderId, long amount) {
-        // 호출하는 쪽(OrderPaymentService)이 금액을 걸러 넘긴다. 0 이하가 오면 시스템 값 이상이라 표준 예외로 막는다
+        // 호출하는 쪽(OrderPaymentService)이 값을 걸러 넘긴다. 처리 기록 넣기(INSERT IGNORE)는 NULL·CHECK 위반도 오류 없이 넘기므로
+        // 잘못된 값이 기록되지 않게 여기서 먼저 표준 예외로 막는다
+        if (memberId == null || orderId == null) {
+            throw new IllegalArgumentException("회원 ID와 주문 ID는 필수입니다. memberId=" + memberId + ", orderId=" + orderId);
+        }
         if (amount <= 0) {
             throw new IllegalArgumentException("결제 금액은 0보다 커야 합니다. amount=" + amount);
         }
         BuyerWallet wallet = getOrCreate(memberId);
-        Optional<WalletOrderPayment> processed = walletOrderPaymentRepository.findByOrderId(orderId);
-        if (processed.isPresent()) {
-            return processed.get().isPaid() ? OrderPaymentResult.ALREADY_PAID : OrderPaymentResult.ALREADY_FAILED;
+        boolean enoughBalance = wallet.hasEnoughBalance(amount);
+        WalletOrderPaymentStatus status = enoughBalance ? WalletOrderPaymentStatus.PAID : WalletOrderPaymentStatus.FAILED;
+        int inserted = walletOrderPaymentRepository.insertIfAbsent(
+                orderId, memberId, amount, status.name(), LocalDateTime.now(clock));
+        if (inserted == 0) {
+            // 이미 처리된 주문이다. 기록은 넣기를 거쳐 있음이 확인됐으므로 없을 수 없다. 없다면 코드·DB의 이상이라 500으로 드러낸다
+            WalletOrderPayment processed = walletOrderPaymentRepository.findForShareByOrderId(orderId)
+                    .orElseThrow(() -> new IllegalStateException("주문 결제 처리 기록 조회에 실패했습니다. orderId=" + orderId));
+            return processed.isPaid() ? OrderPaymentResult.ALREADY_PAID : OrderPaymentResult.ALREADY_FAILED;
         }
 
-        if (!wallet.hasEnoughBalance(amount)) {
-            walletOrderPaymentRepository.save(WalletOrderPayment.failed(orderId, memberId, amount));
+        if (!enoughBalance) {
             return OrderPaymentResult.INSUFFICIENT_BALANCE;
         }
         // 원장 근거 키는 마지막 안전장치로 남긴다 (같은 주문이 두 번 기록되려 하면 유니크 제약이 막는다)
         // 키 규칙은 이용 내역 조회와 같은 곳(PaymentReferenceKey)에서 만든다
         buyerWalletLedgerRepository.save(wallet.pay(amount, PaymentReferenceKey.of(orderId)));
-        walletOrderPaymentRepository.save(WalletOrderPayment.paid(orderId, memberId, amount));
         return OrderPaymentResult.PAID;
     }
 }

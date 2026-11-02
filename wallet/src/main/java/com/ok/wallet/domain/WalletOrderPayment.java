@@ -19,6 +19,7 @@ import lombok.NoArgsConstructor;
  * 주문 상태는 주문 모듈이 관리하고, 이 기록은 같은 결제 요청이 재전달되어도 예치금을 다시 차감하지 않기 위한 지갑의 처리 기록이다.
  * 잔액이 실제로 바뀐 것만 남는 원장으로는 실패를 기억할 수 없어 따로 둔다.
  * 처리 시각은 생성 시각(createdAt)으로 본다.
+ * 기록은 {@code WalletOrderPaymentRepository.insertIfAbsent}로만 넣는다. 엔티티로 저장하면 같은 주문이 동시에 올 때 일반 조회로 걸러야 해서 중복을 놓친다(#360).
  */
 @Entity
 @Table(name = "wallet_order_payment", catalog = WalletSchema.NAME)
@@ -41,21 +42,6 @@ public class WalletOrderPayment extends BaseTime {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private WalletOrderPaymentStatus status;
-
-    private WalletOrderPayment(Long orderId, Long buyerId, long amount, WalletOrderPaymentStatus status) {
-        this.orderId = orderId;
-        this.buyerId = buyerId;
-        this.amount = amount;
-        this.status = status;
-    }
-
-    public static WalletOrderPayment paid(Long orderId, Long buyerId, long amount) {
-        return new WalletOrderPayment(orderId, buyerId, amount, WalletOrderPaymentStatus.PAID);
-    }
-
-    public static WalletOrderPayment failed(Long orderId, Long buyerId, long amount) {
-        return new WalletOrderPayment(orderId, buyerId, amount, WalletOrderPaymentStatus.FAILED);
-    }
 
     public boolean isPaid() {
         return status == WalletOrderPaymentStatus.PAID;

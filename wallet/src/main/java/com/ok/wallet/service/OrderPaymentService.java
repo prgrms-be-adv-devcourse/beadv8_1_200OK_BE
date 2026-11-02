@@ -6,7 +6,6 @@ import com.ok.wallet.service.dto.OrderPaymentResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -27,10 +26,9 @@ public class OrderPaymentService {
 
     /**
      * 주문 결제 금액을 차감하고 결과 이벤트를 발행한다.
-     * payForOrder가 이 트랜잭션에 합류하므로, 같은 주문의 동시 요청을 최신으로 보려면 여기서도 READ COMMITTED여야 한다
-     * (격리 수준은 트랜잭션을 새로 시작할 때만 적용된다).
+     * 같은 주문의 동시 요청은 payForOrder가 처리 기록 넣기로 걸러내므로 격리 수준에 기대지 않는다(#360).
      */
-    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Transactional
     public void pay(OrderPaymentCommand command) {
         if (command.orderId() == null || command.buyerId() == null) {
             // 결과 이벤트는 주문 ID와 구매자 ID가 모두 필수라(이벤트 생성 시 검증), 둘 중 하나라도 없으면 실패도 알릴 수 없다.
