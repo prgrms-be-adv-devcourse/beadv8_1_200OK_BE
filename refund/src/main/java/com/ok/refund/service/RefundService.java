@@ -53,13 +53,16 @@ public class RefundService {
 
     /**
      * 구매자의 취소 요청을 "요청됨"으로 저장한다. 주문·배송·지갑·상품은 이 단계에서 아무것도 바뀌지 않는다.
-     * 남은 개수는 주문에게 받은 산 개수에서 환불 테이블의 완료 개수를 빼서 센다(취소 개수의 원래 출처가 환불이라서).
+     * 남은 개수는 주문에게 받은 산 개수에서 환불 테이블의 처리 중 + 완료 개수를 빼서 센다(취소 개수의 원래 출처가 환불이라서).
      * 진행 중인 요청은 {@code active_order_item_id} UNIQUE가 막는다.
+     * 일부 취소로 무료배송 기준이 깨지는데 취소 금액이 배송비보다 작으면 여기서 먼저 막는다. 잠그지 않은 1차 확인이고,
+     * 같은 묶음의 다른 요청이 먼저 끝나면 판단이 달라지므로 승인할 때({@link #startApproval}) 다시 확인한다.
      *
      * @param orderItem 주문 모듈에서 받은 주문 상품 정보
      * @throws RestApiException 남의 주문이면 {@code ORDER_ITEM_NOT_FOUND}, 출고 전이 아니면 {@code ORDER_ITEM_NOT_CANCELLABLE},
      *                          남은 개수보다 많으면 {@code REFUND_QUANTITY_EXCEEDED}, 진행 중인 요청이 있으면 {@code REFUND_ALREADY_IN_PROGRESS},
-     *                          개수가 1 미만이면 {@code INVALID_REFUND_QUANTITY}
+     *                          개수가 1 미만이면 {@code INVALID_REFUND_QUANTITY},
+     *                          취소 금액이 빼야 할 배송비보다 작으면 {@code PARTIAL_CANCEL_NOT_ALLOWED}
      */
     @Transactional
     public RefundResult request(RefundRequestCommand command, RefundableOrderItem orderItem) {
@@ -79,6 +82,10 @@ public class RefundService {
         Refund refund = Refund.request(orderItem.orderId(), orderItem.orderItemId(), command.quantity(), command.buyerId(),
                 orderItem.sellerId(), orderItem.productOptionId(), orderItem.productName(), orderItem.optionName(),
                 orderItem.unitPrice());
+        // 결과는 버린다. 금액은 승인할 때 잠근 뒤 다시 계산해 저장하고, 여기서는 막을 요청만 거른다
+        List<CancelledQuantity> bundleCancelled =
+                refundRepository.sumQuantityByOrderItem(orderItem.orderId(), orderItem.sellerId(), CANCELLED_STATUSES);
+        RefundShippingFeePolicy.decide(refund, toBundleShipping(orderItem), bundleCancelled, 0L);
         return RefundResult.from(saveDetectingActiveRequest(refund));
     }
 
@@ -127,7 +134,7 @@ public class RefundService {
     }
 
     /**
-     * 판매자 승인으로 "처리 중"으로 바꾸고 돌려줄 배송비·추가 운임을 저장한다(설계 4.4의 1~3번).
+     * 판매자 승인으로 "처리 중"으로 바꾸고 돌려줄 배송비·추가 운임과 뺄 배송비를 저장한다(설계 4.4의 1~3번).
      *
      * <p>같은 판매자 묶음의 승인을 한 줄로 세운다: 묶음의 환불 ID만 먼저 읽고(엔티티 아님) ID 순서로 PK를 잠근다.
      * 잠근 뒤 상품별 처리 중·완료 개수를 다시 집계해, ID를 읽은 뒤 끼어든 다른 승인의 커밋까지 본다.
@@ -139,7 +146,9 @@ public class RefundService {
      *
      * @param orderItem 승인 직전에 주문 모듈에서 받은 정보 (묶음 상품별 주문 수량, 배송비, 추가 운임)
      * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE},
-     *                          이번까지 더해 주문 수량을 넘으면 {@code REFUND_QUANTITY_EXCEEDED}
+     *                          이번까지 더해 주문 수량을 넘으면 {@code REFUND_QUANTITY_EXCEEDED},
+     *                          요청 뒤 같은 묶음의 다른 취소가 먼저 끝나 이번 취소 금액이 빼야 할 배송비보다 작아졌으면
+     *                          {@code PARTIAL_CANCEL_NOT_ALLOWED}(요청됨 그대로 남아 판매자가 거절한다)
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RefundResult startApproval(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
@@ -170,7 +179,8 @@ public class RefundService {
         // 순서가 중요하다: 이번 요청이 아직 요청됨일 때 집계해야 집계에서 빠지고, 정책이 한 번만 더한다.
         // startProcessing을 집계 앞으로 옮기면 조회 전 자동 flush로 처리 중이 반영되어 이번 요청을 두 번 세고 배송비를 아무도 못 받는다
         List<CancelledQuantity> cancelled = refundRepository.sumQuantityByOrderItem(orderItem.orderId(), sellerId, CANCELLED_STATUSES);
-        RefundShippingFee fee = RefundShippingFeePolicy.decide(target, toBundleShipping(orderItem), cancelled, 0L);
+        long previouslyDeducted = refundRepository.sumDeductedShippingFee(orderItem.orderId(), sellerId, CANCELLED_STATUSES);
+        RefundShippingFee fee = RefundShippingFeePolicy.decide(target, toBundleShipping(orderItem), cancelled, previouslyDeducted);
         target.startProcessing(fee, LocalDateTime.now(clock));
         return RefundResult.from(target);
     }

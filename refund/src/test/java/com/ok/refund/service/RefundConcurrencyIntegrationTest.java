@@ -8,6 +8,8 @@ import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundDecision;
 import com.ok.refund.service.dto.RefundDecisionCommand;
 import com.ok.refund.service.dto.RefundRequestCommand;
+import com.ok.refund.service.dto.RefundableOrderItem;
+import com.ok.refund.service.dto.SellerGroupItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeRefundDeliveryClient;
 import com.ok.testsupport.FakeRefundOrderClient;
@@ -99,6 +101,34 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @RepeatedTest(5)
+    void 같은_묶음의_일부_취소를_동시에_승인해도_무료배송이_깨질_때_배송비는_한_번만_뺀다() throws Exception {
+        // given: A(101) 30,000 + B(102) 15,000 + C(103) 15,000 = 60,000원, 무료배송(기준 5만 원, 기본 배송비 3,000원).
+        // B, C를 각각 요청 → 먼저 승인되는 쪽이 남은 45,000원으로 기준을 깨 3,000원을 빼고, 나중 쪽은 이미 깨져 빼지 않는다
+        Long cItemId = 103L;
+        List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, 30_000L, 1),
+                new SellerGroupItem(HAT_ORDER_ITEM_ID, 15_000L, 1), new SellerGroupItem(cItemId, 15_000L, 1));
+        orderClient.put(freeShippingItem(HAT_ORDER_ITEM_ID, 15_000L, bundle));
+        orderClient.put(freeShippingItem(cItemId, 15_000L, bundle));
+        deliveryClient.addShipment(cItemId);
+        Long bRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1)).refundId();
+        Long cRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, cItemId, 1)).refundId();
+
+        // when
+        List<String> results = runTogether(
+                () -> refundFacade.decide(approve(bRefund)),
+                () -> refundFacade.decide(approve(cRefund)));
+
+        // then: 15,000 + 15,000 − 3,000(한 번만) = 27,000원
+        assertThat(results).containsOnly(SUCCESS);
+        assertThat(walletClient.totalAmount()).isEqualTo(27_000L);
+        List<Long> deductedPerRefund = new ArrayList<>();
+        for (Refund refund : refundRepository.findAll()) {
+            deductedPerRefund.add(refund.getDeductedShippingFeeAmount());
+        }
+        assertThat(deductedPerRefund).containsExactlyInAnyOrder(3_000L, 0L);
+    }
+
+    @RepeatedTest(5)
     void 철회와_승인이_동시에_오면_한쪽만_성공한다() throws Exception {
         // given
         Long refundId = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1)).refundId();
@@ -134,6 +164,12 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // then
         assertThat(results).containsExactlyInAnyOrder(SUCCESS, RefundErrorCode.REFUND_ALREADY_IN_PROGRESS.name());
         assertThat(refundRepository.count()).isOne();
+    }
+
+    // 무료배송이 적용되어 배송비 0원을 낸 묶음의 한 상품(1개)
+    private static RefundableOrderItem freeShippingItem(Long orderItemId, long unitPrice, List<SellerGroupItem> bundle) {
+        return new RefundableOrderItem(ORDER_ID, orderItemId, BUYER_ID, SELLER_ID, 56L, "상품", "옵션",
+                RefundableOrderItem.CANCELLABLE_STATUS, unitPrice, 1, 0L, 0L, 3_000L, 50_000L, bundle);
     }
 
     private static RefundDecisionCommand approve(Long refundId) {

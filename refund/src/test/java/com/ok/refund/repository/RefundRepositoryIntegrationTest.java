@@ -117,6 +117,27 @@ class RefundRepositoryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 같은_묶음에서_뺀_배송비는_처리_중과_완료만_더하고_배송_잠금에서_멈춘_건은_뺀다() {
+        // given: 양말 완료(3,000원 뺌) + 모자 처리 중(배송 잠금에서 멈춤, 3,000원 뺌, 세지 않음) + 양말 요청됨(세지 않음)
+        Refund completed = requested(1);
+        completed.startProcessing(new RefundShippingFee(0L, 0L, 3_000L), NOW);
+        completed.complete(NOW);
+        refundRepository.saveAndFlush(completed);
+        Refund stuckAtReserve = requested(102L, 1);
+        stuckAtReserve.startProcessing(new RefundShippingFee(0L, 0L, 3_000L), NOW);
+        stuckAtReserve.recordFailure(RefundFailedStep.SHIPMENT_RESERVE, "DELIVERY_API_FAILED");
+        refundRepository.saveAndFlush(stuckAtReserve);
+        refundRepository.saveAndFlush(requested(1));
+
+        // when
+        long result = refundRepository.sumDeductedShippingFee(ORDER_ID, SELLER_ID,
+                List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED));
+
+        // then
+        assertThat(result).isEqualTo(3_000L);
+    }
+
+    @Test
     void 처리_중이나_완료된_요청이_없으면_0을_돌려준다() {
         // when
         long result = refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID,

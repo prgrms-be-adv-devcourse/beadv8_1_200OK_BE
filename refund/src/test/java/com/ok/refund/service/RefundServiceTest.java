@@ -306,4 +306,95 @@ class RefundServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
     }
+
+    // 일부 취소 배송비 (기본 배송비 3,000원, 5만 원 이상 무료배송, 각 상품 1개씩)
+
+    @Test
+    void 요청_때_무료배송이_깨지는데_취소_금액이_배송비보다_작으면_요청할_수_없다() {
+        // given: A(101) 49,500 + B(102) 1,000 = 50,500원, B 취소 → 남은 49,500원, 1,000 < 3,000
+        List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, 49_500L, 1), new SellerGroupItem(HAT_ORDER_ITEM_ID, 1_000L, 1));
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1);
+
+        // when & then
+        assertThatThrownBy(() -> sut.request(command, freeShippingItem(HAT_ORDER_ITEM_ID, 1_000L, bundle)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED));
+        then(refundRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 승인_때_일부_취소로_무료배송이_깨지면_뺀_배송비를_저장한다() {
+        // given: A(101) 30,000 + B(102) 30,000 = 60,000원, B 취소 → 남은 30,000원
+        List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, 30_000L, 1), new SellerGroupItem(HAT_ORDER_ITEM_ID, 30_000L, 1));
+        Refund target = withId(requestedItem(HAT_ORDER_ITEM_ID, 30_000L), REFUND_ID);
+        givenLocked(target);
+
+        // when
+        RefundResult result = sut.startApproval(REFUND_ID, SELLER_ID, freeShippingItem(HAT_ORDER_ITEM_ID, 30_000L, bundle));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.status()).isEqualTo("PROCESSING");
+            softly.assertThat(result.deductedShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(result.refundAmount()).isEqualTo(27_000L);
+        });
+    }
+
+    @Test
+    void 요청_뒤_다른_취소가_먼저_끝나_배송비를_뺄_수_없게_되면_승인하지_않고_요청됨으로_둔다() {
+        // given: A(101) 49,500 + B(102) 2,000 + C(103) 1,000 = 52,500원. 요청 때는 B, C 각각 기준을 깨지 않아 통과했지만
+        // C가 먼저 끝나 남은 51,500원에서 B를 빼면 49,500원으로 깨지고, 2,000 < 3,000
+        Long otherItemId = 103L;
+        List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, 49_500L, 1),
+                new SellerGroupItem(HAT_ORDER_ITEM_ID, 2_000L, 1), new SellerGroupItem(otherItemId, 1_000L, 1));
+        Refund target = withId(requestedItem(HAT_ORDER_ITEM_ID, 2_000L), REFUND_ID);
+        givenLocked(target);
+        given(refundRepository.sumQuantityByOrderItem(any(), any(), anyCollection()))
+                .willReturn(List.of(new CancelledQuantity(otherItemId, 1L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.startApproval(REFUND_ID, SELLER_ID, freeShippingItem(HAT_ORDER_ITEM_ID, 2_000L, bundle)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED));
+        assertThat(target.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 묶음을_전부_취소하는_승인이면_앞_요청에서_뺀_배송비도_돌려준다() {
+        // given: A(101) 30,000 + B(102) 30,000, A는 앞서 취소하며 3,000원을 뺐고 이번에 마지막 B
+        List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, 30_000L, 1), new SellerGroupItem(HAT_ORDER_ITEM_ID, 30_000L, 1));
+        Refund target = withId(requestedItem(HAT_ORDER_ITEM_ID, 30_000L), REFUND_ID);
+        givenLocked(target);
+        given(refundRepository.sumQuantityByOrderItem(any(), any(), anyCollection()))
+                .willReturn(List.of(new CancelledQuantity(ORDER_ITEM_ID, 1L)));
+        given(refundRepository.sumDeductedShippingFee(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED)))
+                .willReturn(3_000L);
+
+        // when
+        RefundResult result = sut.startApproval(REFUND_ID, SELLER_ID, freeShippingItem(HAT_ORDER_ITEM_ID, 30_000L, bundle));
+
+        // then: 묶음 배송비 0 + 앞에서 뺀 3,000
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.shippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(result.deductedShippingFeeAmount()).isZero();
+            softly.assertThat(result.refundAmount()).isEqualTo(33_000L);
+        });
+    }
+
+    private void givenLocked(Refund target) {
+        given(refundRepository.findIdsByOrderIdAndSellerId(ORDER_ID, SELLER_ID)).willReturn(List.of(REFUND_ID));
+        given(refundRepository.findAllByIdInForUpdate(List.of(REFUND_ID))).willReturn(List.of(target));
+    }
+
+    private static Refund requestedItem(Long orderItemId, long unitPrice) {
+        return Refund.request(ORDER_ID, orderItemId, 1, BUYER_ID, SELLER_ID, 56L, "상품", "옵션", unitPrice);
+    }
+
+    // 무료배송이 적용되어 배송비 0원을 낸 묶음의 한 상품(1개)
+    private static RefundableOrderItem freeShippingItem(Long orderItemId, long unitPrice, List<SellerGroupItem> bundle) {
+        return new RefundableOrderItem(ORDER_ID, orderItemId, BUYER_ID, SELLER_ID, 56L, "상품", "옵션",
+                RefundableOrderItem.CANCELLABLE_STATUS, unitPrice, 1, 0L, 0L, 3_000L, 50_000L, bundle);
+    }
 }

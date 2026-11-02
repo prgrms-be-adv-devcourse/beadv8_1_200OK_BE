@@ -57,6 +57,20 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
     );
 
     /**
+     * 같은 판매자 묶음에서 주어진 상태들의 요청이 환불에서 뺀 배송비 합. 묶음 전부 취소가 되는 마지막 요청이 이 합을 돌려준다.
+     * 개수 집계({@link #sumQuantityByOrderItem})와 같은 조건으로 센다. 배송 잠금 단계에서 멈춘 건은 지갑에 가기 전이라
+     * 실제로 뺀 돈이 아직 없고, 개수 집계에서도 빠져 남은 금액 계산과 어긋나지 않게 한다.
+     */
+    @Query("select coalesce(sum(r.deductedShippingFeeAmount), 0) from Refund r "
+            + "where r.orderId = :orderId and r.sellerId = :sellerId and r.status in :statuses "
+            + "and (r.failedStep is null or r.failedStep <> com.ok.refund.domain.RefundFailedStep.SHIPMENT_RESERVE)")
+    long sumDeductedShippingFee(
+            @Param("orderId") Long orderId,
+            @Param("sellerId") Long sellerId,
+            @Param("statuses") Collection<RefundStatus> statuses
+    );
+
+    /**
      * 주문 상품에서 주어진 상태들의 취소 개수 합. 요청 때 남은 취소 가능 개수를 계산한다.
      */
     @Query("select coalesce(sum(r.quantity), 0) from Refund r where r.orderItemId = :orderItemId and r.status in :statuses")
