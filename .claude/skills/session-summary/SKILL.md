@@ -1,6 +1,6 @@
 ---
 name: session-summary
-description: (실험, #346) 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/decisions/<모듈>/ 아래에 쓴다. PR을 올리기 전이나 직후, `/clear`나 `/compact`를 하기 전에 같은 세션에서 사용한다. 사용자 승인 후에만 작업 브랜치에 커밋한다.
+description: 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/decisions/<모듈>/ 아래에 쓴다. PR을 올리기 전이나 직후, `/clear`나 `/compact`를 하기 전에 같은 세션에서 사용한다. 사용자 승인 후에만 작업 브랜치에 커밋한다.
 ---
 
 # 설계 결정 기록(ADR) 작성
