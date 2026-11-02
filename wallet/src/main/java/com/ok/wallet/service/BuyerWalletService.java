@@ -115,8 +115,11 @@ public class BuyerWalletService {
                 orderId, memberId, amount, status.name(), LocalDateTime.now(clock));
         if (inserted == 0) {
             // 이미 처리된 주문이다. 기록은 넣기를 거쳐 있음이 확인됐으므로 없을 수 없다. 없다면 코드·DB의 이상이라 500으로 드러낸다
+            // IGNORE는 중복이 아닌 오류(CHECK 위반 등)로 넣기를 건너뛰어도 0을 돌려주므로, 원인을 좁힐 수 있게 그 가능성을 메시지에 남긴다
             WalletOrderPayment processed = walletOrderPaymentRepository.findForShareByOrderId(orderId)
-                    .orElseThrow(() -> new IllegalStateException("주문 결제 처리 기록 조회에 실패했습니다. orderId=" + orderId));
+                    .orElseThrow(() -> new IllegalStateException(
+                            "주문 결제 처리 기록 넣기 결과가 0건인데 기록이 없습니다. 중복이 아닌 이유로 넣기가 무시됐을 수 있습니다. orderId="
+                                    + orderId + ", memberId=" + memberId + ", amount=" + amount));
             return processed.isPaid() ? OrderPaymentResult.ALREADY_PAID : OrderPaymentResult.ALREADY_FAILED;
         }
 
