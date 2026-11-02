@@ -21,6 +21,8 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 새 파일을 만들기 전에 위 표에서 해당하는 규칙을 먼저 읽는다. 규칙이 로드되지 않았다면 직접 읽는다.
 사람용 원문은 `docs/CONVENTION.md`이다. 규칙을 바꿀 때는 원문을 먼저 고치고 `.claude/rules/`에 반영한다. 두 곳이 어긋나면 원문이 기준이다.
 
+`delivery` 모듈만 헥사고날 구조(`application`, `adapter/in`, `adapter/out`)라서 `structure.md`의 레이어 패키지와 발행 인터페이스 위치 규칙 대신 `docs/DEVELOPMENT.md`의 "delivery 모듈 구조(헥사고날)"와 delivery `ArchitectureTest`를 따른다. `delivery`의 `adapter/in/web`을 다룰 때는 경로가 `controller`가 아니라 자동으로 로드되지 않으므로 `.claude/rules/api.md`를 직접 읽고 따른다. 다른 모듈은 위 규칙 그대로다.
+
 ## 작업 스킬
 
 반복 절차는 `.claude/skills/`의 프로젝트 스킬을 쓴다. 해당 작업을 할 때는 직접 작성하지 말고 스킬을 따른다.

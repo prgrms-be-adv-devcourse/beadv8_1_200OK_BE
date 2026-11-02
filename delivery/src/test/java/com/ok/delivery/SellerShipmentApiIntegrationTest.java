@@ -1,8 +1,8 @@
 package com.ok.delivery;
 
+import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
+import com.ok.delivery.application.service.ShipmentAddressChangeService;
 import com.ok.delivery.domain.ShipmentAddressChangeRequest;
-import com.ok.delivery.repository.ShipmentRepository;
-import com.ok.delivery.service.ShipmentAddressChangeService;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -49,7 +49,7 @@ class SellerShipmentApiIntegrationTest extends AbstractIntegrationTest {
     TestAccessTokens tokens;
 
     @Autowired
-    ShipmentRepository shipmentRepository;
+    ShipmentJpaRepository shipmentRepository;
 
     @Autowired
     ShipmentAddressChangeService addressChangeService;
