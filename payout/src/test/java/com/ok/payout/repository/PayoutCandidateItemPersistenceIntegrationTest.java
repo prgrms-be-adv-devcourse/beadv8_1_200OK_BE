@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -29,6 +30,8 @@ class PayoutCandidateItemPersistenceIntegrationTest extends AbstractIntegrationT
 
     private static final Long SELLER_ID = 10L;
     private static final Long OTHER_SELLER_ID = 20L;
+    // 배송비 "있으면 넘어가기" 저장에 넘기는 시각 (직접 쓴 SQL이라 이 값이 그대로 저장되는지 확인)
+    private static final LocalDateTime INSERTED_AT = LocalDateTime.of(2026, 11, 2, 14, 0);
 
     // DB 제약 이름 (마이그레이션과 같아야 함). 어느 제약에 걸렸는지 확인하는 데 씀
     private static final String UK_ORDER_ITEM = "uk_payout_candidate_items_order_item_id_event_type_adjustment_id";
@@ -243,20 +246,56 @@ class PayoutCandidateItemPersistenceIntegrationTest extends AbstractIntegrationT
         assertThat(repository.findAllByOrderId(orderId)).hasSize(4);
     }
 
+    // ---------- 배송비 "있으면 넘어가기" 저장 (#309) ----------
+
     @Test
-    void 주문_판매자로_배송비_존재_여부를_조회한다() {
-        // given
+    void 같은_묶음_배송비가_이미_있으면_있으면_넘어가기_저장은_예외_없이_1건을_유지한다() {
+        // given: 같은 (주문, 판매자)의 배송비 후보가 이미 있음 (같은 묶음의 다른 상품이 먼저 저장함)
         Long orderId = nextOrderId();
         repository.save(PayoutCandidateItem.ofSaleShippingFee(orderId, SELLER_ID, 3_000L));
-        // 다른 판매자는 조정 후보만 있음 (평소 이벤트 배송비 확인에서는 빠져야 함)
-        repository.save(PayoutCandidateItem.manualAdjustment(
-                PayoutEventType.SALE_SHIPPING_FEE, orderId, null, OTHER_SELLER_ID, -500L, 1L, 99L, "배송비 차감"));
 
-        // when & then
-        assertThat(repository.existsByOrderIdAndSellerIdAndEventTypeAndAdjustmentId(
-                orderId, SELLER_ID, PayoutEventType.SALE_SHIPPING_FEE, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)).isTrue();
-        assertThat(repository.existsByOrderIdAndSellerIdAndEventTypeAndAdjustmentId(
-                orderId, OTHER_SELLER_ID, PayoutEventType.SALE_SHIPPING_FEE, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)).isFalse();
+        // when: 같은 묶음의 배송비를 다시 넣음. 예전 방식이면 유니크 키 예외로 트랜잭션이 롤백됐던 상황
+        transactionTemplate.executeWithoutResult(status ->
+                repository.insertShippingFeeIfAbsent(orderId, SELLER_ID, 3_000L, INSERTED_AT));
+
+        // then: 예외 없이 끝나고 배송비는 1건 그대로
+        assertThat(repository.findAllByOrderId(orderId))
+                .extracting(PayoutCandidateItem::getEventType)
+                .containsExactly(PayoutEventType.SALE_SHIPPING_FEE);
+    }
+
+    @Test
+    void 조정_배송비만_있으면_있으면_넘어가기_저장은_평소_배송비를_새로_넣는다() {
+        // given: 이 판매자 묶음에는 관리자 조정 배송비만 있음 (조정은 adjustment_id가 달라 유니크 키에서 겹치지 않음)
+        Long orderId = nextOrderId();
+        repository.save(PayoutCandidateItem.manualAdjustment(
+                PayoutEventType.SALE_SHIPPING_FEE, orderId, null, SELLER_ID, -500L, 1L, 99L, "배송비 차감"));
+
+        // when
+        transactionTemplate.executeWithoutResult(status ->
+                repository.insertShippingFeeIfAbsent(orderId, SELLER_ID, 3_000L, INSERTED_AT));
+
+        // then: 평소 배송비가 새로 들어가고, 직접 쓴 SQL이라 시각은 넘긴 값 그대로 저장됨
+        PayoutCandidateItem sut = normalShippingFeeOf(orderId);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getEventType()).isEqualTo(PayoutEventType.SALE_SHIPPING_FEE);
+            softly.assertThat(sut.getOrderItemId()).isNull();
+            softly.assertThat(sut.getSellerId()).isEqualTo(SELLER_ID);
+            softly.assertThat(sut.getAmount()).isEqualTo(3_000L);
+            softly.assertThat(sut.getCreatedAt()).isEqualTo(INSERTED_AT);
+        });
+    }
+
+    // 주문의 평소(조정이 아닌) 배송비 후보 하나. 없으면 null (JPA 조회)
+    private PayoutCandidateItem normalShippingFeeOf(Long orderId) {
+        for (PayoutCandidateItem item : repository.findAllByOrderId(orderId)) {
+            if (item.getEventType() == PayoutEventType.SALE_SHIPPING_FEE
+                    && item.getAdjustmentId() == PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID) {
+                return item;
+            }
+        }
+        return null;
     }
 
     // ---------- CHECK: 배송비만 order_item_id가 NULL ----------
