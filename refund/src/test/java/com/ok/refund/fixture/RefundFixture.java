@@ -21,8 +21,11 @@ public final class RefundFixture {
     public static final Long PRODUCT_OPTION_ID = 55L;
     public static final long UNIT_PRICE = 10_000L;
     public static final Long HAT_ORDER_ITEM_ID = 102L;
+    // 주문 시점 판매자 배송비 설정. 묶음 합계 35,000원이 기준 아래라 배송비 3,000원을 낸 주문과 맞춘다
+    public static final long BASE_SHIPPING_FEE = 3_000L;
+    public static final Long FREE_SHIPPING_THRESHOLD = 50_000L;
     public static final List<SellerGroupItem> BUNDLE = List.of(
-            new SellerGroupItem(ORDER_ITEM_ID, 3), new SellerGroupItem(HAT_ORDER_ITEM_ID, 1));
+            new SellerGroupItem(ORDER_ITEM_ID, UNIT_PRICE, 3), new SellerGroupItem(HAT_ORDER_ITEM_ID, 5_000L, 1));
 
     private RefundFixture() {
     }
@@ -51,13 +54,13 @@ public final class RefundFixture {
 
     public static RefundableOrderItem socks(String status) {
         return new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, PRODUCT_OPTION_ID, "양말", "흰색",
-                status, UNIT_PRICE, 3, 3_000L, 3_000L, BUNDLE);
+                status, UNIT_PRICE, 3, 3_000L, 3_000L, BASE_SHIPPING_FEE, FREE_SHIPPING_THRESHOLD, BUNDLE);
     }
 
     /** 같은 묶음의 모자 (주문 상품 102, 옵션 56, 5,000원 1개) */
     public static RefundableOrderItem hat() {
         return new RefundableOrderItem(ORDER_ID, HAT_ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 56L, "모자", "검정",
-                RefundableOrderItem.CANCELLABLE_STATUS, 5_000L, 1, 3_000L, 3_000L, BUNDLE);
+                RefundableOrderItem.CANCELLABLE_STATUS, 5_000L, 1, 3_000L, 3_000L, BASE_SHIPPING_FEE, FREE_SHIPPING_THRESHOLD, BUNDLE);
     }
 
     /** 단위 테스트에서 저장 없이 ID를 붙인다 */

@@ -31,6 +31,7 @@ import static com.ok.refund.fixture.RefundFixture.NOW;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ID;
 import static com.ok.refund.fixture.RefundFixture.ORDER_ITEM_ID;
 import static com.ok.refund.fixture.RefundFixture.SELLER_ID;
+import static com.ok.refund.fixture.RefundFixture.UNIT_PRICE;
 import static com.ok.refund.fixture.RefundFixture.hat;
 import static com.ok.refund.fixture.RefundFixture.requested;
 import static com.ok.refund.fixture.RefundFixture.requestedHat;
@@ -268,7 +269,8 @@ class RefundServiceTest {
         RefundableOrderItem mismatched = new RefundableOrderItem(socks.orderId(), socks.orderItemId(), socks.buyerId(),
                 socks.sellerId(), socks.productOptionId(), socks.productName(), socks.optionName(), socks.status(),
                 socks.unitPrice(), socks.quantity(), socks.shippingFee(), socks.remoteAreaFee(),
-                List.of(new SellerGroupItem(ORDER_ITEM_ID, 2), new SellerGroupItem(HAT_ORDER_ITEM_ID, 1)));
+                socks.baseShippingFee(), socks.freeShippingThreshold(),
+                List.of(new SellerGroupItem(ORDER_ITEM_ID, UNIT_PRICE, 2), new SellerGroupItem(HAT_ORDER_ITEM_ID, 5_000L, 1)));
         given(refundRepository.findIdsByOrderIdAndSellerId(ORDER_ID, SELLER_ID)).willReturn(List.of(REFUND_ID));
         given(refundRepository.findAllByIdInForUpdate(List.of(REFUND_ID))).willReturn(List.of(target));
 

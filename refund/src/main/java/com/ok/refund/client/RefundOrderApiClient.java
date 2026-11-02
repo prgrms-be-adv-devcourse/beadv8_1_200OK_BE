@@ -56,7 +56,7 @@ public class RefundOrderApiClient implements RefundOrderClient {
         List<SellerGroupItem> items = new ArrayList<>();
         if (response.sellerGroup().items() != null) {
             for (RefundOrderItemResponse.Item item : response.sellerGroup().items()) {
-                items.add(new SellerGroupItem(item.orderItemId(), item.quantity()));
+                items.add(new SellerGroupItem(item.orderItemId(), item.unitPrice(), item.quantity()));
             }
         }
         return new RefundableOrderItem(
@@ -72,6 +72,8 @@ public class RefundOrderApiClient implements RefundOrderClient {
                 response.quantity(),
                 response.sellerGroup().shippingFee(),
                 response.sellerGroup().remoteAreaFee(),
+                response.sellerGroup().baseShippingFee(),
+                response.sellerGroup().freeShippingThreshold(),
                 items);
     }
 }

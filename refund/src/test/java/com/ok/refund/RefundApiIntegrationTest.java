@@ -215,8 +215,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     void 한_요청으로_묶음_전부를_취소하면_배송비와_추가_운임을_함께_돌려준다() throws Exception {
         // given: 판매자 묶음에 양말 3개만 있는 주문
         orderClient.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 55L, "양말", "흰색",
-                RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 3, 3_000L, 3_000L,
-                List.of(new SellerGroupItem(ORDER_ITEM_ID, 3))));
+                RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 3, 3_000L, 3_000L, 3_000L, 50_000L,
+                List.of(new SellerGroupItem(ORDER_ITEM_ID, 10_000L, 3))));
         Long refundId = requestedId(ORDER_ITEM_ID, 3);
 
         // when
@@ -235,8 +235,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // given: 배송비·추가 운임, 단가·상품 금액이 서로 다르게 나오도록 개수 2, 배송비 3,000원, 추가 운임 2,500원으로 둔다.
         // 같은 타입 칸이 뒤바뀌어도 잡히게 하려는 것이다
         orderClient.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 55L, "양말", "흰색",
-                RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 2, 3_000L, 2_500L,
-                List.of(new SellerGroupItem(ORDER_ITEM_ID, 2))));
+                RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 2, 3_000L, 2_500L, 3_000L, 50_000L,
+                List.of(new SellerGroupItem(ORDER_ITEM_ID, 10_000L, 2))));
         Long refundId = requestedId(ORDER_ITEM_ID, 2);
 
         // when
