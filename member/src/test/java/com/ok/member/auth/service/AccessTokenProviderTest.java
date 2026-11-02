@@ -330,7 +330,7 @@ class AccessTokenProviderTest {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         KeyPair v2Keys = generator.generateKeyPair();
-        JwtProperties rotating = new JwtProperties(ISSUER, AUDIENCE, List.of(
+        JwtProperties rotating = new JwtProperties(ISSUER, AUDIENCE, null, List.of(
                 new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY),
                 new JwtProperties.VerificationKey("rs256-v2", publicKeyPem(v2Keys.getPublic().getEncoded()))),
                 null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
@@ -404,7 +404,7 @@ class AccessTokenProviderTest {
     }
 
     private static JwtProperties properties(String issuer, String audience) {
-        return new JwtProperties(issuer, audience, List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)),
+        return new JwtProperties(issuer, audience, null, List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)),
                 null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
     }
 

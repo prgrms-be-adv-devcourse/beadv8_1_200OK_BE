@@ -49,6 +49,7 @@ class RefreshTokenServiceTest {
         JwtProperties properties = new JwtProperties(
                 "paldo-gotgan",
                 "paldo-gotgan-api",
+                null,
                 List.of(new JwtProperties.VerificationKey("rs256-v1", new ClassPathResource("jwt/test-public.pem"))),
                 null,
                 Duration.ofMinutes(30),
