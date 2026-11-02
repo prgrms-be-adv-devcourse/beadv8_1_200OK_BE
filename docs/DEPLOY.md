@@ -61,7 +61,7 @@ EC2 한 대에 nginx·앱·BFF·MySQL·Kafka를 Docker 컨테이너로 띄워 �
 - 권한은 `read:packages`만 줍니다. push용 토큰을 재사용하지 않습니다. classic 토큰은 계정이 접근할 수 있는 모든 패키지를 읽을 수 있어서 권한을 최소로 둡니다.
 - 만료일을 지정하고 따로 적어 둡니다. 만료되면 `./deploy.sh`가 pull 단계에서 실패합니다.
 - 조직이 SSO를 쓰면 발급 후 Configure SSO에서 조직을 승인합니다.
-- 이 토큰으로 앱과 BFF 두 패키지를 모두 받을 수 있어야 합니다. 새로 생긴 패키지는 비공개로 생길 수 있으므로, 토큰 계정이 `paldo-gotgan-bff`를 읽을 수 있는지 아래 `docker pull`로 먼저 확인합니다. 하나라도 받지 못하면 `./deploy.sh`는 아무것도 재시작하지 않고 pull 단계에서 멈춥니다.
+- 이 토큰으로 앱과 BFF 두 패키지를 모두 받을 수 있어야 합니다. 새로 생긴 패키지는 비공개로 생길 수 있으므로, 토큰 계정이 `paldo-gotgan-bff`를 읽을 수 있는지 아래 `docker pull`로 먼저 확인합니다. 받지 못하면 `./deploy.sh bff`(와 bff가 없는 서버의 첫 `./deploy.sh`)는 아무것도 재시작하지 않고 pull 단계에서 멈춥니다.
 
 ```bash
 # 로컬: 배포 파일 복사
@@ -107,17 +107,21 @@ cd /opt/paldo-gotgan && ./deploy.sh
 - 서버는 `latest`를 받습니다. 받은 이미지는 digest(`@sha256:...`)로 고정해 띄우고 서비스별 이력에 남기므로, 보통의 롤백에는 SHA 태그가 필요 없습니다([4. 롤백](#4-롤백)). SHA 태그는 특정 버전을 `.env`에 고정할 때 씁니다. 빌드는 한 번에 하나씩 실행되고 대기 중인 실행은 새 실행이 오면 취소되므로, `semi`를 연달아 올리면 중간 커밋의 SHA 태그는 없을 수 있습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다.
 - 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 실행합니다. `semi`가 아닌 브랜치를 고르면 빌드는 건너뜁니다.
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
-- `./deploy.sh`(전체 배포)는 다음 순서로 진행합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
-  1. app·bff의 지금 정상 이미지를 확인합니다([배포 이력](#배포-이력-deploy-state)).
-  2. app·bff 이미지를 받습니다. 하나라도 받지 못하면 아무것도 바꾸지 않고 멈춥니다.
-  3. 바꾸기 전에 두 가지를 검사합니다. 하나라도 실패하면 아무것도 바꾸지 않고 멈춥니다.
-     - 받은 bff 이미지에 healthcheck가 있는지 봅니다. 없으면 healthy가 될 수 없기 때문입니다.
+- `./deploy.sh`(전체 배포)는 백엔드 배포입니다. 떠 있는 bff는 받지도 다시 만들지도 않습니다.
+  - BFF 이미지는 프론트 레포가 만들고 배포 시점도 프론트가 정합니다. 백엔드 배포가 BFF를 `latest`로 바꾸거나, 롤백해 둔 BFF를 풀면 안 되기 때문입니다.
+  - BFF를 바꾸는 방법은 `./deploy.sh bff`와 `./deploy.sh bff --rollback`뿐입니다([서비스만 배포](#서비스만-배포-app-bff)).
+  - bff 컨테이너가 아예 없을 때(최초 설치, `down` 뒤)만 전체 배포가 bff도 받아서 띄웁니다.
+- 전체 배포는 다음 순서로 진행합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
+  1. app의 지금 정상 이미지를 확인합니다([배포 이력](#배포-이력-deploy-state)).
+  2. app 이미지를 받습니다. bff가 없으면 bff 이미지도 받습니다. 하나라도 받지 못하면 아무것도 바꾸지 않고 멈춥니다.
+  3. 바꾸기 전에 검사합니다. 실패하면 아무것도 바꾸지 않고 멈춥니다.
      - 일회용 nginx 컨테이너로 템플릿을 렌더링하고 `nginx -t`를 실행합니다. 템플릿이나 `API_UPSTREAM`이 잘못되면 여기서 멈춥니다.
+     - bff를 새로 띄울 때만, 받은 bff 이미지에 healthcheck가 있는지 봅니다. 없으면 healthy가 될 수 없기 때문입니다.
   4. Kafka를 처리합니다(아래 `kafka-rollout.sh`).
   5. app(과 mysql)을 올려 healthy를 확인하고 app 이력을 남깁니다.
-  6. bff를 올려 healthy를 확인하고 bff 이력을 남깁니다.
-  7. nginx까지 올린 다음 `배포 성공: 전체`를 출력합니다.
-- bff 단계에서 실패해도 nginx는 띄우고 배포는 실패로 끝납니다. `/api/v1/**`(기본값일 때)은 새 app으로 응답합니다. app 이력은 새 이미지로 남고 bff 이력은 그대로입니다.
+  6. bff가 없었으면 bff를 올려 healthy를 확인하고 bff 이력을 남깁니다.
+  7. bff를 뺀 나머지(nginx 등)를 올린 다음 `배포 성공: 전체`를 출력합니다.
+- 최초 설치에서 bff가 실패해도 nginx는 띄우고 배포는 실패로 끝납니다. `/api/v1/**`(기본값일 때)은 새 app으로 응답합니다. app 이력은 새 이미지로 남고 bff 이력은 비어 있습니다.
 - 서버에서 `docker compose up -d`를 직접 실행하지 않습니다. Kafka 3대가 동시에 다시 만들어지고, app·bff도 `.env`의 태그(`latest`)로 다시 만들어져 롤백한 이미지가 풀립니다.
 - app보다 먼저 `kafka-rollout.sh`가 Kafka를 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
 
@@ -145,7 +149,7 @@ echo "KAFKA_CLUSTER_ID=$(docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka
 
 ### 서비스만 배포 (app, bff)
 
-앱만 바꿨거나 프론트가 BFF만 바꿨을 때는 그 서비스만 다시 띄웁니다.
+앱만 바꿨을 때는 `./deploy.sh app`을 씁니다. BFF는 전체 배포가 바꾸지 않으므로, 새 BFF를 내보낼 때는 항상 `./deploy.sh bff`를 씁니다.
 
 ```bash
 cd /opt/paldo-gotgan
@@ -179,7 +183,7 @@ cd /opt/paldo-gotgan
 - 되돌릴 이미지가 이력에 없으면 아무것도 바꾸지 않고 실패합니다. 예: 최초 설치 뒤 한 번만 배포해 `previous`가 없을 때.
 - 그 서비스만 다시 만들고(`--no-deps`) healthy를 확인한 뒤 이력을 바꿉니다. 실패하면 이력은 그대로입니다.
 - `previous`로 되돌리면 `current`와 `previous`가 서로 바뀝니다. 그래서 `--rollback`을 다시 실행하면 되돌리기 전 이미지로 돌아갑니다(두 버전을 번갈아 오갑니다). 더 이전 버전으로 가려면 아래처럼 SHA 태그를 씁니다.
-- 롤백한 상태는 다음 배포까지만 유지됩니다. 다음 `./deploy.sh`나 `./deploy.sh app`은 `.env`의 태그(`latest`)를 다시 받아 그 이미지로 앞으로 갑니다. 문제를 고친 이미지가 `latest`로 올라온 뒤 평소처럼 배포하면 됩니다.
+- 롤백한 상태는 그 서비스의 다음 배포까지만 유지됩니다. 앱은 다음 `./deploy.sh`나 `./deploy.sh app`, BFF는 다음 `./deploy.sh bff`가 `.env`의 태그(`latest`)를 다시 받아 그 이미지로 앞으로 갑니다. 전체 배포는 BFF를 바꾸지 않으므로 롤백한 BFF는 그대로 남습니다. 문제를 고친 이미지가 `latest`로 올라온 뒤 평소처럼 배포하면 됩니다.
 - 롤백한 버전을 다음 배포에서도 유지하거나 이력에 없는 더 이전 버전으로 가려면 `.env`에 SHA 태그를 적습니다. 롤백할 SHA는 GHCR 패키지 화면에서 실제 있는 태그를 확인합니다(BFF는 `paldo-gotgan-bff` 패키지).
 
 ```bash
@@ -251,7 +255,7 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost/bff/session                  
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱·BFF 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, nginx 템플릿(`nginx/templates/default.conf.template`)이 바뀌면 아래 순서로 반영합니다.
+`./deploy.sh`는 앱 이미지만 새로 받습니다(BFF는 `./deploy.sh bff`, Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, nginx 템플릿(`nginx/templates/default.conf.template`)이 바뀌면 아래 순서로 반영합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)

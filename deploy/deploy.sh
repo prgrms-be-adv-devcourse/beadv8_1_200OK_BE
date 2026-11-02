@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 앱·BFF 이미지를 받아 재시작하고 healthy가 될 때까지 기다린다. 절차는 docs/DEPLOY.md
-#   ./deploy.sh                     전체 배포 (Kafka → app → bff → 나머지)
+#   ./deploy.sh                     전체 배포 (Kafka → app → 나머지). bff는 컨테이너가 없을 때(최초 설치)만 띄운다
 #   ./deploy.sh app | bff           그 서비스만 다시 띄운다. 다른 컨테이너는 건드리지 않는다
 #   ./deploy.sh app | bff --rollback  그 서비스만 직전 정상 이미지로 되돌린다
 # 서비스마다 healthy를 확인한 이미지를 digest로 .deploy-state/<서비스>.state에 남긴다 (current, previous)
@@ -382,14 +382,23 @@ fi
 
 # ---------- 전체 배포 ----------
 
-prepare_state app "$(repo_for app)" || exit 1
-prepare_state bff "$(repo_for bff)" || exit 1
+# BFF는 프론트 레포가 만들고 배포 시점도 프론트가 정한다. 백엔드 배포가 BFF를 latest로 바꾸거나
+# 롤백해 둔 BFF를 풀지 않도록 전체 배포는 bff를 건드리지 않는다. 바꾸는 길은 ./deploy.sh bff 하나다
+# 컨테이너가 아예 없을 때(최초 설치, down 뒤)만 같이 띄운다
+BFF_NEW=false
+[ "$(service_status bff)" = none ] && BFF_NEW=true
 
-# 둘 중 하나라도 받지 못하면(예: pull 토큰 권한) 아무것도 재시작하기 전에 멈춘다
-pull_or_stop app bff
+prepare_state app "$(repo_for app)" || exit 1
+if [ "$BFF_NEW" = true ]; then
+  prepare_state bff "$(repo_for bff)" || exit 1
+  # 둘 중 하나라도 받지 못하면(예: pull 토큰 권한) 아무것도 재시작하기 전에 멈춘다
+  pull_or_stop app bff
+  resolve_pulled bff || exit 1
+  check_bff_healthcheck || exit 1
+else
+  pull_or_stop app
+fi
 resolve_pulled app || exit 1
-resolve_pulled bff || exit 1
-check_bff_healthcheck || exit 1
 check_nginx_config || exit 1
 
 # Kafka는 app보다 먼저, 클러스터가 멈추지 않게 1대씩 처리한다 (#318)
@@ -400,7 +409,7 @@ if ! ./kafka-rollout.sh; then
 fi
 
 # nginx가 app healthy를 기다리므로 전체를 한 번에 up -d 하면 app이 비정상일 때 로그를 찍기 전에 실패한다.
-# 그래서 app(과 mysql)만 먼저 올리고 healthy를 확인한 뒤 bff, 나머지 순서로 올린다
+# 그래서 app(과 mysql)만 먼저 올리고 healthy를 확인한 뒤 나머지를 올린다
 # 서비스마다 healthy가 되면 바로 이력을 남긴다. app 성공 뒤 bff가 실패해도 app의 새 정상 이력은 남는다
 if ! start_pulled app; then
   docker compose logs --tail 100 mysql >&2
@@ -408,8 +417,8 @@ if ! start_pulled app; then
 fi
 
 # bff가 실패해도 /api/v1/(API_UPSTREAM 기본값일 때)은 새 app으로 응답할 수 있다.
-# nginx가 없거나(최초 설치) 설정이 바뀌었을 수 있으므로 nginx는 띄우고, 배포 결과는 실패로 둔다
-if ! start_pulled bff; then
+# 최초 설치라 nginx가 없으므로 nginx는 띄우고, 배포 결과는 실패로 둔다
+if [ "$BFF_NEW" = true ] && ! start_pulled bff; then
   if docker compose up -d --no-deps nginx; then
     echo "bff는 실패했지만 nginx는 띄웠다" >&2
   else
@@ -418,9 +427,14 @@ if ! start_pulled bff; then
   fail_hint bff
 fi
 
-# APP_IMAGE_REF·BFF_IMAGE_REF가 위 digest로 채워져 있어 app·bff는 다시 만들지 않는다
-if ! docker compose up -d; then
-  echo "배포 실패: app·bff는 healthy지만 나머지 서비스 기동에 실패했다" >&2
+# bff는 목록에서 뺀다. 넣으면 .env의 태그(latest)로 다시 만들어 BFF가 바뀐다
+# app은 APP_IMAGE_REF가 위 digest로 채워져 있어 다시 만들지 않는다
+mapfile -t services < <(docker compose config --services | grep -vx bff)
+if [ ${#services[@]} -eq 0 ] || ! docker compose up -d "${services[@]}"; then
+  echo "배포 실패: app은 healthy지만 나머지 서비스 기동에 실패했다" >&2
   exit 1
+fi
+if [ "$BFF_NEW" = false ]; then
+  echo "bff는 바꾸지 않았다 (상태: $(service_status bff)). 바꾸려면 ./deploy.sh bff"
 fi
 echo "배포 성공: 전체"
