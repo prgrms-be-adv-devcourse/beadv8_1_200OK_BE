@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # 대시보드 JSON이 이 uid로 데이터소스를 가리키므로 바꾸지 않는다
+    uid: prometheus
+    access: proxy
+    # 로컬·운영 모두 compose 서비스 이름으로 닿는다
+    url: http://prometheus:9090
+    isDefault: true
+    # 화면에서 고쳐도 재시작하면 이 파일 값으로 돌아오게 한다
+    editable: false
+    jsonData:
+      # Prometheus scrape_interval(15s)과 맞춰야 rate() 구간이 어긋나지 않는다
+      timeInterval: 15s
