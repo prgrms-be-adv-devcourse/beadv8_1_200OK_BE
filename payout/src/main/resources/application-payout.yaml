@@ -50,8 +50,10 @@ app:
 jwt:
   issuer: paldo-gotgan
   audience: paldo-gotgan-api
-  key-id: hs256-v1
-  secret: ${JWT_SECRET:}
+  # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고른다. 키 교체 절차는 docs/DEVELOPMENT.md 8절
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem
   access-token-expiration: 30m
   refresh-token-expiration: 14d
 management:
