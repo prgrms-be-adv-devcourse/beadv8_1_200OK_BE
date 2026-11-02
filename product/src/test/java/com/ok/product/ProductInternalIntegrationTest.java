@@ -3,6 +3,7 @@ package com.ok.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,6 +16,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
@@ -23,11 +25,14 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import com.jayway.jsonpath.JsonPath;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.ok.common.exception.RestApiException;
@@ -37,6 +42,7 @@ import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
+import com.ok.product.product.domain.ProductStockAllocation;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
@@ -54,6 +60,8 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 
 	// 테스트끼리 배정 기록이 섞이지 않도록 주문 ID를 겹치지 않게 발급한다
 	private static final AtomicLong ORDER_IDS = new AtomicLong(1_000_000);
+	// 환불 ID는 전역 유니크라 테스트끼리 겹치면 다른 테스트의 해제 이력으로 판정된다
+	private static final AtomicLong REFUND_IDS = new AtomicLong(1_000_000);
 
 	@Autowired
 	MockMvc mockMvc;
@@ -530,6 +538,417 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		assertThat(availableStock(optionB)).isZero();
 	}
 
+	@Test
+	void 일부_해제하면_그_수량만큼_판매_가능_수량이_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+
+		// when
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 2)
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 같은_환불을_같은_내용으로_다시_보내도_한_번만_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		partialRelease(orderId, refundId, optionId, 2);
+
+		// when
+		partialRelease(orderId, refundId, optionId, 2)
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 같은_환불을_다른_내용으로_보내면_409이고_재고는_그대로다() throws Exception {
+		// given
+		Product product = save(onSale(List.of(
+			ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 10),
+			ProductOptionSpec.newOption("5kg", 60_000L, 52_000L, 10))));
+		Long optionA = product.getOptions().get(0).getId();
+		Long optionB = product.getOptions().get(1).getId();
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long otherOrderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionA, 5), item(optionB, 5));
+		allocate(otherOrderId, item(optionA, 3));
+		partialRelease(orderId, refundId, optionA, 2);
+
+		// when & then
+		partialRelease(orderId, refundId, optionA, 3)
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.PARTIAL_RELEASE_MISMATCH));
+		partialRelease(orderId, refundId, optionB, 2)
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.PARTIAL_RELEASE_MISMATCH));
+		partialRelease(otherOrderId, refundId, optionA, 2)
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.PARTIAL_RELEASE_MISMATCH));
+		assertThat(availableStock(optionA)).isEqualTo(4);
+		assertThat(availableStock(optionB)).isEqualTo(5);
+	}
+
+	@Test
+	void 같은_주문을_다른_환불로_나눠_해제하면_각각_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+
+		// when
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 2)
+			.andExpect(status().isNoContent());
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 1)
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(8);
+	}
+
+	@Test
+	void 주문에_그_옵션의_배정_기록이_없으면_404() throws Exception {
+		// given
+		Product product = save(onSale(List.of(
+			ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 10),
+			ProductOptionSpec.newOption("5kg", 60_000L, 52_000L, 10))));
+		Long allocated = product.getOptions().get(0).getId();
+		Long notAllocated = product.getOptions().get(1).getId();
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(allocated, 5));
+
+		// when & then
+		partialRelease(ORDER_IDS.incrementAndGet(), REFUND_IDS.incrementAndGet(), allocated, 1)
+			.andExpect(status().isNotFound())
+			.andExpect(problemType(ProductErrorCode.ALLOCATION_NOT_FOUND));
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), notAllocated, 1)
+			.andExpect(status().isNotFound())
+			.andExpect(problemType(ProductErrorCode.ALLOCATION_NOT_FOUND));
+		assertThat(availableStock(notAllocated)).isEqualTo(10);
+	}
+
+	@Test
+	void 배정_수량보다_많이_풀면_409이고_같은_환불을_맞는_수량으로_다시_보내면_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+
+		// when & then
+		partialRelease(orderId, refundId, optionId, 6)
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.RELEASE_QUANTITY_EXCEEDED));
+		assertThat(availableStock(optionId)).isEqualTo(2);
+		partialRelease(orderId, refundId, optionId, 5)
+			.andExpect(status().isNoContent());
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 전체_해제한_주문을_일부_해제하면_409이고_재고는_그대로다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		release(orderId);
+
+		// when & then
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 1)
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.RELEASE_QUANTITY_EXCEEDED));
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 일부_해제_뒤_전체_해제하면_남은_수량만_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 2);
+
+		// when
+		release(orderId)
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 일부_해제로_수량이_0이_된_주문도_전체_해제하면_204이고_재고는_맞다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 5);
+
+		// when
+		release(orderId)
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 일부_해제로_수량이_0이_된_주문을_다시_배정해도_해제한_주문으로_보지_않고_재고는_그대로다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		partialRelease(orderId, REFUND_IDS.incrementAndGet(), optionId, 5);
+
+		// when
+		allocate(orderId, item(optionId, 5))
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(10);
+	}
+
+	@Test
+	void 같은_옵션을_다른_환불로_동시에_일부_해제해도_배정_수량만큼만_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		int allocatedQuantity = 5;
+		allocate(orderId, item(optionId, allocatedQuantity));
+		// 다른 주문의 배정이 있어야 옵션 쪽 조건만으로는 초과 해제가 막히지 않는다
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		int requests = 10;
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests)) {
+			for (int i = 0; i < requests; i++) {
+				Long refundId = REFUND_IDS.incrementAndGet();
+				results.add(executor.submit(() -> {
+					start.await();
+					return partialRelease(orderId, refundId, optionId, 1).andReturn().getResponse();
+				}));
+			}
+			start.countDown();
+		}
+
+		// then
+		List<MockHttpServletResponse> responses = new ArrayList<>();
+		for (Future<MockHttpServletResponse> result : results) {
+			responses.add(result.get());
+		}
+		assertThat(responses).filteredOn(response -> response.getStatus() == 204).hasSize(allocatedQuantity);
+		assertThat(responses).filteredOn(response -> response.getStatus() != 204)
+			.allSatisfy(response -> assertProblem(response, ProductErrorCode.RELEASE_QUANTITY_EXCEEDED));
+		assertThat(availableStock(optionId)).isEqualTo(7);
+	}
+
+	@Test
+	void 같은_환불을_동시에_보내도_한_번만_돌아오고_나머지는_204나_처리_중_409다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		int requests = 10;
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests)) {
+			for (int i = 0; i < requests; i++) {
+				results.add(executor.submit(() -> {
+					start.await();
+					return partialRelease(orderId, refundId, optionId, 2).andReturn().getResponse();
+				}));
+			}
+			start.countDown();
+		}
+
+		// then
+		List<MockHttpServletResponse> responses = new ArrayList<>();
+		for (Future<MockHttpServletResponse> result : results) {
+			responses.add(result.get());
+		}
+		assertThat(responses).anyMatch(response -> response.getStatus() == 204);
+		assertThat(responses).filteredOn(response -> response.getStatus() != 204)
+			.allSatisfy(response -> assertProblem(response, ProductErrorCode.PARTIAL_RELEASE_IN_PROGRESS));
+		assertThat(availableStock(optionId)).isEqualTo(4);
+	}
+
+	@Test
+	void 같은_주문에_일부_해제와_전체_해제가_동시에_와도_배정_수량보다_많이_돌아오지_않는다() throws Exception {
+		// 전체 해제가 배정 수량을 읽은 뒤 상태를 바꾸기 전에 일부 해제가 끼어들어야 초과 해제가 드러난다.
+		// 그 틈이 좁아 일부 해제를 여러 건 함께 보내고 여러 번 반복해 맞물릴 기회를 만든다
+		int repetitions = 20;
+		for (int round = 0; round < repetitions; round++) {
+			// given
+			int totalStock = 10;
+			int allocatedQuantity = 5;
+			int otherOrderQuantity = 3;
+			Long optionId = firstOptionId(save(onSale(option(totalStock))));
+			Long orderId = ORDER_IDS.incrementAndGet();
+			allocate(orderId, item(optionId, allocatedQuantity));
+			allocate(ORDER_IDS.incrementAndGet(), item(optionId, otherOrderQuantity));
+			CountDownLatch start = new CountDownLatch(1);
+			List<Future<MockHttpServletResponse>> partials = new ArrayList<>();
+			Future<MockHttpServletResponse> whole;
+
+			// when
+			try (ExecutorService executor = Executors.newFixedThreadPool(allocatedQuantity + 1)) {
+				for (int i = 0; i < allocatedQuantity; i++) {
+					Long refundId = REFUND_IDS.incrementAndGet();
+					partials.add(executor.submit(() -> {
+						start.await();
+						return partialRelease(orderId, refundId, optionId, 1).andReturn().getResponse();
+					}));
+				}
+				long releaseDelayMillis = round % 5;
+				whole = executor.submit(() -> {
+					start.await();
+					Thread.sleep(releaseDelayMillis);
+					return release(orderId).andReturn().getResponse();
+				});
+				start.countDown();
+			}
+
+			// then
+			for (Future<MockHttpServletResponse> partial : partials) {
+				MockHttpServletResponse response = partial.get();
+				if (response.getStatus() != 204) {
+					assertProblem(response, ProductErrorCode.RELEASE_QUANTITY_EXCEEDED);
+				}
+			}
+			assertThat(whole.get().getStatus()).isEqualTo(204);
+			assertThat(availableStock(optionId)).isEqualTo(totalStock - otherOrderQuantity);
+		}
+	}
+
+	@Test
+	void 다른_주문의_배정이_진행_중일_때_전체_해제해도_데드락_없이_처리된다() throws Exception {
+		// given
+		Product product = save(onSale(List.of(
+			ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 10),
+			ProductOptionSpec.newOption("5kg", 60_000L, 52_000L, 10))));
+		Long first = product.getOptions().get(0).getId();
+		Long second = product.getOptions().get(1).getId();
+		Long optionA = Math.min(first, second);
+		Long optionB = Math.max(first, second);
+		// 주문 Y의 새 배정 기록이 배정 기록 유니크 인덱스에서 주문 X 기록 바로 앞 갭에 들어가도록 Y < X로 발급한다
+		Long orderY = ORDER_IDS.incrementAndGet();
+		Long orderX = ORDER_IDS.incrementAndGet();
+		allocate(orderX, item(optionA, 1));
+		CountDownLatch holdsOptionA = new CountDownLatch(1);
+		CountDownLatch resume = new CountDownLatch(1);
+		Future<?> allocation;
+		Future<MockHttpServletResponse> release;
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			// 주문 Y의 배정을 allocate()와 같은 순서로 옵션 A까지 진행하고 멈춰, 옵션 A 행 락을 쥔 채로 둔다
+			allocation = executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
+				allocationRepository.saveAndFlush(ProductStockAllocation.allocate(orderY, optionA, 1));
+				productOptionRepository.allocate(optionA, 1);
+				holdsOptionA.countDown();
+				await(resume);
+				allocationRepository.saveAndFlush(ProductStockAllocation.allocate(orderY, optionB, 1));
+				productOptionRepository.allocate(optionB, 1);
+			}));
+			await(holdsOptionA);
+			release = executor.submit(() -> release(orderX).andReturn().getResponse());
+			// 전체 해제가 옵션 A 행 락 대기에 들어갈 시간을 준다. 그 전에 배정이 끝나면 두 트랜잭션이 맞물리지 않는다
+			Thread.sleep(500);
+			resume.countDown();
+		}
+
+		// then
+		allocation.get();
+		assertThat(release.get().getStatus()).isEqualTo(204);
+		assertThat(availableStock(optionA)).isEqualTo(9);
+		assertThat(availableStock(optionB)).isEqualTo(9);
+	}
+
+	@Test
+	void 같은_환불로_해제_가능_수량을_넘겨_동시에_보내도_모두_수량_초과_409다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
+		int requests = 3;
+		CountDownLatch holdsAllocation = new CountDownLatch(1);
+		CountDownLatch finish = new CountDownLatch(1);
+		List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests + 1)) {
+			// 0 차감은 수량을 바꾸지 않고 배정 행 락만 잡는다. 끝에 롤백해 아무것도 남기지 않는다
+			executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
+				allocationRepository.decreaseQuantity(allocationId, 0);
+				holdsAllocation.countDown();
+				await(finish);
+				status.setRollbackOnly();
+			}));
+			await(holdsAllocation);
+			for (int i = 0; i < requests; i++) {
+				results.add(executor.submit(
+					() -> partialRelease(orderId, refundId, optionId, 6).andReturn().getResponse()));
+			}
+			// 요청들이 모두 락 대기에 들어갈 시간을 준다. 그 전에 락이 풀리면 요청이 차례로 처리돼 맞물리지 않는다
+			Thread.sleep(500);
+			finish.countDown();
+		}
+
+		// then
+		List<MockHttpServletResponse> responses = new ArrayList<>();
+		for (Future<MockHttpServletResponse> result : results) {
+			responses.add(result.get());
+		}
+		assertThat(responses)
+			.allSatisfy(response -> assertProblem(response, ProductErrorCode.RELEASE_QUANTITY_EXCEEDED));
+		assertThat(availableStock(optionId)).isEqualTo(5);
+	}
+
+	@ParameterizedTest
+	@MethodSource("잘못된_일부_해제_요청")
+	void 일부_해제_요청_형식이_잘못되면_422(String body) throws Exception {
+		mockMvc.perform(post("/internal/v1/products/stock-allocations/{orderId}/partial-release", 1L)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(body))
+			.andExpect(status().isUnprocessableContent());
+	}
+
+	static Stream<String> 잘못된_일부_해제_요청() {
+		return Stream.of(
+			"""
+				{"productOptionId": 1, "quantity": 1}""",
+			"""
+				{"refundId": 1, "quantity": 1}""",
+			"""
+				{"refundId": 1, "productOptionId": 1}""",
+			"""
+				{"refundId": 1, "productOptionId": 1, "quantity": 0}""",
+			"""
+				{"refundId": 1, "productOptionId": 1, "quantity": -1}""");
+	}
+
 	private ResultActions allocate(Long orderId, String... items) throws Exception {
 		return mockMvc.perform(post("/internal/v1/products/stock-allocations")
 			.contentType(MediaType.APPLICATION_JSON)
@@ -539,6 +958,35 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 
 	private ResultActions release(Long orderId) throws Exception {
 		return mockMvc.perform(post("/internal/v1/products/stock-allocations/{orderId}/release", orderId));
+	}
+
+	private ResultActions partialRelease(Long orderId, Long refundId, Long optionId, int quantity) throws Exception {
+		return mockMvc.perform(post("/internal/v1/products/stock-allocations/{orderId}/partial-release", orderId)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("""
+				{"refundId": %d, "productOptionId": %d, "quantity": %d}""".formatted(refundId, optionId, quantity)));
+	}
+
+	// 같은 상태 코드(409)의 원인은 problem type의 slug로만 구분된다
+	private ResultMatcher problemType(ProductErrorCode errorCode) {
+		return jsonPath("$.type").value(endsWith("/" + errorCode.slug()));
+	}
+
+	private void assertProblem(MockHttpServletResponse response, ProductErrorCode errorCode) throws Exception {
+		assertThat(response.getStatus()).isEqualTo(errorCode.status().value());
+		assertThat(JsonPath.<String>read(response.getContentAsString(), "$.type")).endsWith("/" + errorCode.slug());
+	}
+
+	// 트랜잭션 콜백 안에서도 쓰려고 검사 예외 없이 기다린다. 상대가 끝내 오지 않으면 테스트가 멈추지 않게 실패시킨다
+	private static void await(CountDownLatch latch) {
+		try {
+			if (!latch.await(10, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("기다리던 신호가 오지 않았습니다.");
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		}
 	}
 
 	private String item(Long optionId, int quantity) {
