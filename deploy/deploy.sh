@@ -15,6 +15,13 @@ flock -n 9 || { echo "이미 배포 중이다" >&2; exit 1; }
 
 docker compose pull app
 
+# Kafka는 app보다 먼저, 클러스터가 멈추지 않게 1대씩 처리한다 (#318)
+# 아래 up -d app이 kafka의 depends_on을 따라 3대를 한꺼번에 다시 만들지 않도록, 여기서 먼저 최신 상태로 맞춰 둔다
+if ! ./kafka-rollout.sh; then
+  echo "배포 실패: Kafka 브로커 처리 중 오류가 발생했다" >&2
+  exit 1
+fi
+
 # nginx가 app healthy를 기다리므로 전체를 한 번에 up -d 하면 app이 비정상일 때 로그를 찍기 전에 실패한다.
 # 그래서 app(과 mysql)만 먼저 올리고 healthy를 확인한 뒤 나머지를 올린다
 if ! docker compose up -d app; then
