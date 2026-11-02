@@ -421,6 +421,39 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 같은_주문을_동시에_해제해도_한_번만_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		int releasedQuantity = 4;
+		allocate(orderId, item(optionId, releasedQuantity));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		int stockBeforeRelease = availableStock(optionId);
+		int requests = 10;
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<Integer>> results = new ArrayList<>();
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests)) {
+			for (int i = 0; i < requests; i++) {
+				results.add(executor.submit(() -> {
+					start.await();
+					return release(orderId).andReturn().getResponse().getStatus();
+				}));
+			}
+			start.countDown();
+		}
+
+		// then
+		List<Integer> statuses = new ArrayList<>();
+		for (Future<Integer> result : results) {
+			statuses.add(result.get());
+		}
+		assertThat(statuses).containsOnly(204);
+		assertThat(availableStock(optionId)).isEqualTo(stockBeforeRelease + releasedQuantity);
+	}
+
+	@Test
 	void 남은_재고보다_많은_주문이_동시에_배정하면_남은_재고만큼만_성공한다() throws Exception {
 		// given
 		int stock = 3;
@@ -456,6 +489,45 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		}
 		assertThat(succeeded).isEqualTo(stock);
 		assertThat(availableStock(optionId)).isZero();
+	}
+
+	@Test
+	void 옵션_순서가_다른_주문이_동시에_배정해도_데드락_없이_모두_배정된다() throws Exception {
+		// given
+		int orders = 100;
+		Product product = save(onSale(List.of(
+			ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, orders),
+			ProductOptionSpec.newOption("5kg", 60_000L, 52_000L, orders))));
+		Long optionA = product.getOptions().get(0).getId();
+		Long optionB = product.getOptions().get(1).getId();
+		// 동시에 잠금을 잡을 수 있는 건 DB 커넥션 수(Hikari 기본 10)만큼이다. 스레드를 그보다 늘려도 커넥션 대기만 늘어
+		// 맞물림이 더 생기지 않으므로 커넥션 수에 맞추고, 대신 주문을 여러 번 돌려 맞물릴 기회를 만든다
+		int threads = 10;
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<?>> results = new ArrayList<>();
+
+		// when: 절반은 [A,B], 절반은 [B,A] 순서로 요청한다
+		try (ExecutorService executor = Executors.newFixedThreadPool(threads)) {
+			for (int i = 0; i < orders; i++) {
+				Long orderId = ORDER_IDS.incrementAndGet();
+				List<StockChange> changes = i % 2 == 0
+					? List.of(new StockChange(optionA, 1), new StockChange(optionB, 1))
+					: List.of(new StockChange(optionB, 1), new StockChange(optionA, 1));
+				results.add(executor.submit(() -> {
+					start.await();
+					productStockService.allocate(orderId, changes);
+					return null;
+				}));
+			}
+			start.countDown();
+		}
+
+		// then: 데드락으로 롤백된 주문이 있으면 get()이 예외를 던진다
+		for (Future<?> result : results) {
+			result.get();
+		}
+		assertThat(availableStock(optionA)).isZero();
+		assertThat(availableStock(optionB)).isZero();
 	}
 
 	private ResultActions allocate(Long orderId, String... items) throws Exception {

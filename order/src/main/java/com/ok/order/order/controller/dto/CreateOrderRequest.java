@@ -36,8 +36,8 @@ public record CreateOrderRequest(
         @PositiveOrZero(message = "결제 금액은 0 이상이어야 합니다.")
         Long expectedTotalAmount // 주문서 합계 + 도서산간 운임 (사용자가 화면에서 본 최종 금액)
 ) {
-    public CreateOrderCommand toCommand(Long memberId) {
-        return new CreateOrderCommand(memberId, recipientName, recipientPhone,
+    public CreateOrderCommand toCommand(Long memberId, String idempotencyKey) {
+        return new CreateOrderCommand(memberId, idempotencyKey, recipientName, recipientPhone,
                 zipCode, address, addressDetail, thirdPartyProvisionAgreed, expectedTotalAmount);
     }
 }

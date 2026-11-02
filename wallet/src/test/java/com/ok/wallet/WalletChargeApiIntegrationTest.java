@@ -114,11 +114,22 @@ class WalletChargeApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 충전_금액이_만원_단위가_아니면_422() throws Exception {
+    void 만원_단위가_아닌_금액도_만원_이상이면_201() throws Exception {
         agreeAllTerms(MEMBER_ID);
 
         requestCharge(MEMBER_ID, """
                 {"amount": 15000}
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.amount").value(15_000));
+    }
+
+    @Test
+    void 충전_금액이_만원_미만이면_422() throws Exception {
+        agreeAllTerms(MEMBER_ID);
+
+        requestCharge(MEMBER_ID, """
+                {"amount": 9999}
                 """)
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("wallet/invalid-charge-amount")));

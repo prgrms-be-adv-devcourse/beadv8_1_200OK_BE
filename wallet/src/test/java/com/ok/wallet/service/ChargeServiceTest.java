@@ -94,7 +94,7 @@ class ChargeServiceTest extends AbstractIntegrationTest {
     void 금액_규칙에_맞지_않으면_충전을_요청할_수_없다() {
         agreeAllTerms(MEMBER_ID);
 
-        assertErrorCode(() -> chargeService.request(MEMBER_ID, 15_000), WalletErrorCode.INVALID_CHARGE_AMOUNT);
+        assertErrorCode(() -> chargeService.request(MEMBER_ID, 9_999), WalletErrorCode.INVALID_CHARGE_AMOUNT);
         assertThat(countCharges(MEMBER_ID)).isZero();
     }
 

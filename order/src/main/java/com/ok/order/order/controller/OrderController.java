@@ -31,9 +31,10 @@ public class OrderController implements OrderControllerSpec{
     @PostMapping
     public ResponseEntity<CreateOrderResponse> createOrder(
             @CurrentMemberId Long memberId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateOrderRequest request
     ) {
-        Long orderId = orderFacade.createOrder(request.toCommand(memberId));
+        Long orderId = orderFacade.createOrder(request.toCommand(memberId, idempotencyKey));
         return ResponseEntity.status(HttpStatus.CREATED).body(new CreateOrderResponse(orderId));
     }
 
