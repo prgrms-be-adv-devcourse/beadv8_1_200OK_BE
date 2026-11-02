@@ -84,14 +84,17 @@ public class RefundFacade {
         }
 
         // 다시 처리할 때도 같은 금액을 보내야 지갑의 환불ID 중복 확인과 맞으므로, 승인 때 저장한 금액을 그대로 보낸다.
-        // 금액이 0원이어도 건너뛰지 않는다. 지갑은 0원을 422로 거절해 여기서 멈추지만, 상품 판매가는 등록·수정 때
-        // 0원보다 커야 해서(ProductOptionRequest) 0원 환불이 생기지 않는다. 할인·증정 등으로 0원 상품이 생기면 그때 다시 정한다
-        runStep(refundId, RefundFailedStep.WALLET, () -> {
-            walletClient.refund(refundId, processing.orderId(), processing.buyerId(), processing.sellerId(), processing.refundAmount());
-            return null;
-        });
+        // 0원이면 지갑을 부르지 않는다. 취소 금액이 뺀 배송비와 같으면 0원 환불이 되는데(구매자는 취소한 상품 금액으로 배송비를 내는 셈),
+        // 돌려줄 돈이 없고 지갑은 0원을 422로 거절하기로 약속했다(요청서 #327). 0원 취소 기록은 환불 테이블에 남는다
+        if (processing.refundAmount() > 0) {
+            runStep(refundId, RefundFailedStep.WALLET, () -> {
+                walletClient.refund(refundId, processing.orderId(), processing.buyerId(), processing.sellerId(), processing.refundAmount());
+                return null;
+            });
+        }
+        // 뺀 배송비도 승인 때 저장한 값을 보낸다. 주문이 같은 환불ID로 다시 받아도 값이 같아야 중복 확인과 맞는다
         runStep(refundId, RefundFailedStep.ORDER, () -> {
-            orderClient.applyRefund(refundId, processing.orderItemId(), processing.quantity());
+            orderClient.applyRefund(refundId, processing.orderItemId(), processing.quantity(), processing.deductedShippingFeeAmount());
             return null;
         });
         runStep(refundId, RefundFailedStep.PRODUCT, () -> {

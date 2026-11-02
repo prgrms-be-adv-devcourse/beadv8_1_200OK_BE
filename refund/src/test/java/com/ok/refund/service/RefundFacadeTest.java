@@ -100,7 +100,7 @@ class RefundFacadeTest {
         order.verify(refundService).startApproval(REFUND_ID, SELLER_ID, socks());
         order.verify(deliveryClient).reserveCancel(REFUND_ID, ORDER_ITEM_ID, 1);
         order.verify(walletClient).refund(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 10_000L);
-        order.verify(orderClient).applyRefund(REFUND_ID, ORDER_ITEM_ID, 1);
+        order.verify(orderClient).applyRefund(REFUND_ID, ORDER_ITEM_ID, 1, 0L);
         order.verify(productClient).releaseStock(REFUND_ID, ORDER_ID, PRODUCT_OPTION_ID, 1);
         order.verify(deliveryClient).confirmCancel(REFUND_ID);
         order.verify(refundService).complete(REFUND_ID);
@@ -122,6 +122,48 @@ class RefundFacadeTest {
 
         // then
         then(walletClient).should().refund(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 11_000L);
+    }
+
+    @Test
+    void 배송비를_뺀_금액을_지갑에_보내고_뺀_배송비를_주문에_알린다() {
+        // given: 양말 1개 10,000원에서 배송비 3,000원을 뺀 처리 중
+        Refund refund = withId(requested(1), REFUND_ID);
+        refund.startProcessing(new RefundShippingFee(0L, 0L, 3_000L), NOW);
+        givenApprovalStartsWith(RefundResult.from(refund));
+
+        // when
+        sut.decide(approve());
+
+        // then
+        then(walletClient).should().refund(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 7_000L);
+        then(orderClient).should().applyRefund(REFUND_ID, ORDER_ITEM_ID, 1, 3_000L);
+    }
+
+    @Test
+    void 환불_금액이_0원이면_지갑을_부르지_않고_나머지는_처리해_완료한다() {
+        // given: 양말 1개 10,000원에서 10,000원을 뺀 처리 중(취소 금액 = 뺀 배송비)
+        Refund refund = withId(requested(1), REFUND_ID);
+        refund.startProcessing(new RefundShippingFee(0L, 0L, 10_000L), NOW);
+        givenApprovalStartsWith(RefundResult.from(refund));
+
+        // when
+        sut.decide(approve());
+
+        // then: 지갑은 0원을 거절하므로 부르지 않는 것 자체가 요구사항이다
+        then(walletClient).should(never()).refund(any(), any(), any(), any(), anyLong());
+        then(orderClient).should().applyRefund(REFUND_ID, ORDER_ITEM_ID, 1, 10_000L);
+        then(productClient).should().releaseStock(REFUND_ID, ORDER_ID, PRODUCT_OPTION_ID, 1);
+        then(deliveryClient).should().confirmCancel(REFUND_ID);
+        then(refundService).should().complete(REFUND_ID);
+    }
+
+    // 승인까지 오는 공통 준비에서 처리 중 결과만 바꾼다
+    private void givenApprovalStartsWith(RefundResult processing) {
+        given(refundService.getForDecision(REFUND_ID, SELLER_ID)).willReturn(requestedResult());
+        given(deliveryClient.hasShipment(ORDER_ITEM_ID)).willReturn(true);
+        given(orderClient.getOrderItem(ORDER_ID, ORDER_ITEM_ID)).willReturn(socks());
+        given(refundService.startApproval(REFUND_ID, SELLER_ID, socks())).willReturn(processing);
+        given(deliveryClient.reserveCancel(REFUND_ID, ORDER_ITEM_ID, 1)).willReturn(ShipmentReserveResult.RESERVED);
     }
 
     @Test
@@ -149,7 +191,7 @@ class RefundFacadeTest {
         // then
         then(refundService).should().markNotApprovable(REFUND_ID);
         then(walletClient).should(never()).refund(any(), any(), any(), any(), anyLong());
-        then(orderClient).should(never()).applyRefund(any(), any(), anyInt());
+        then(orderClient).should(never()).applyRefund(any(), any(), anyInt(), anyLong());
         then(productClient).should(never()).releaseStock(any(), any(), any(), anyInt());
         then(deliveryClient).should(never()).confirmCancel(any());
     }
@@ -167,7 +209,7 @@ class RefundFacadeTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.WALLET_API_FAILED));
         then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.WALLET, "WALLET_API_FAILED");
-        then(orderClient).should(never()).applyRefund(any(), any(), anyInt());
+        then(orderClient).should(never()).applyRefund(any(), any(), anyInt(), anyLong());
         then(productClient).should(never()).releaseStock(any(), any(), any(), anyInt());
         then(deliveryClient).should(never()).confirmCancel(any());
         then(refundService).should(never()).complete(any());
@@ -194,7 +236,7 @@ class RefundFacadeTest {
         givenApprovalStarts();
         given(deliveryClient.reserveCancel(REFUND_ID, ORDER_ITEM_ID, 1)).willReturn(ShipmentReserveResult.RESERVED);
         willThrow(new RestApiException(RefundErrorCode.ORDER_API_FAILED))
-                .given(orderClient).applyRefund(REFUND_ID, ORDER_ITEM_ID, 1);
+                .given(orderClient).applyRefund(REFUND_ID, ORDER_ITEM_ID, 1, 0L);
         willThrow(new IllegalStateException("DB 연결 실패"))
                 .given(refundService).recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
 

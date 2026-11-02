@@ -48,10 +48,10 @@ public class FakeRefundOrderClient implements RefundOrderClient {
     }
 
     @Override
-    public void applyRefund(Long refundId, Long orderItemId, int quantity) {
-        applied.add(new Applied(refundId, orderItemId, quantity));
+    public void applyRefund(Long refundId, Long orderItemId, int quantity, long deductedShippingFee) {
+        applied.add(new Applied(refundId, orderItemId, quantity, deductedShippingFee));
     }
 
-    public record Applied(Long refundId, Long orderItemId, int quantity) {
+    public record Applied(Long refundId, Long orderItemId, int quantity, long deductedShippingFee) {
     }
 }

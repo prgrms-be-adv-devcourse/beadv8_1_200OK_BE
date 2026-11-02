@@ -44,10 +44,10 @@ public class RefundOrderApiClient implements RefundOrderClient {
     }
 
     @Override
-    public void applyRefund(Long refundId, Long orderItemId, int quantity) {
+    public void applyRefund(Long refundId, Long orderItemId, int quantity, long deductedShippingFee) {
         restClient.post()
                 .uri("/items/{orderItemId}/refunds", orderItemId)
-                .body(new OrderRefundApplyRequest(refundId, quantity))
+                .body(new OrderRefundApplyRequest(refundId, quantity, deductedShippingFee))
                 .retrieve()
                 .toBodilessEntity();
     }

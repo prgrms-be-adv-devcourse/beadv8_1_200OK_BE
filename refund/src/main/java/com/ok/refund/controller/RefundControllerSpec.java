@@ -24,7 +24,8 @@ interface RefundControllerSpec {
             @ApiResponse(responseCode = "403", description = "구매 권한(BUYER) 없음"),
             @ApiResponse(responseCode = "404", description = "없거나 남의 주문 상품 (ORDER_ITEM_NOT_FOUND)"),
             @ApiResponse(responseCode = "409", description = "출고 전이 아님 (ORDER_ITEM_NOT_CANCELLABLE), "
-                    + "남은 개수보다 많음 (REFUND_QUANTITY_EXCEEDED), 진행 중인 요청 있음 (REFUND_ALREADY_IN_PROGRESS)"),
+                    + "남은 개수보다 많음 (REFUND_QUANTITY_EXCEEDED), 진행 중인 요청 있음 (REFUND_ALREADY_IN_PROGRESS), "
+                    + "무료배송 기준이 깨지는데 취소 금액이 배송비보다 작음 (PARTIAL_CANCEL_NOT_ALLOWED)"),
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (VALIDATION_FAILED)"),
             @ApiResponse(responseCode = "503", description = "주문 정보를 확인하지 못함 (ORDER_API_FAILED)")
     })

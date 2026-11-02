@@ -203,7 +203,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(walletClient.refunded()).containsExactly(
                     new FakeRefundWalletClient.Refunded(refundId, ORDER_ID, BUYER_ID, 10_000L));
             softly.assertThat(orderClient.applied()).containsExactly(
-                    new FakeRefundOrderClient.Applied(refundId, ORDER_ITEM_ID, 1));
+                    new FakeRefundOrderClient.Applied(refundId, ORDER_ITEM_ID, 1, 0L));
             softly.assertThat(productClient.released()).containsExactly(
                     new FakeRefundProductClient.Released(refundId, ORDER_ID, 55L, 1));
             softly.assertThat(deliveryClient.confirmedRefundIds()).containsExactly(refundId);
@@ -254,6 +254,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.itemAmount", is(20000)))
                 .andExpect(jsonPath("$.shippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.remoteAreaFeeAmount", is(2500)))
+                .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.refundAmount", is(25500)))
                 .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
@@ -262,6 +263,40 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.decidedAt").exists())
                 .andExpect(jsonPath("$.completedAt").exists());
         assertThat(walletClient.totalAmount()).isEqualTo(25_500L);
+    }
+
+    @Test
+    void 일부_취소로_무료배송이_깨지면_배송비를_뺀_금액을_돌려주고_뺀_배송비를_주문에_알린다() throws Exception {
+        // given: 양말(101) 30,000 + 모자(102) 30,000 = 60,000원, 무료배송(기준 5만 원, 기본 배송비 3,000원). 모자만 취소
+        putFreeShippingBundle(30_000L, 30_000L);
+        Long refundId = requestedId(HAT_ORDER_ITEM_ID, 1);
+
+        // when
+        ResultActions sut = decide(refundId, SELLER_ID, "APPROVE", null);
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
+                .andExpect(jsonPath("$.refundAmount", is(27000)));
+        assertSoftly(softly -> {
+            softly.assertThat(walletClient.totalAmount()).isEqualTo(27_000L);
+            softly.assertThat(orderClient.applied()).containsExactly(
+                    new FakeRefundOrderClient.Applied(refundId, HAT_ORDER_ITEM_ID, 1, 3_000L));
+        });
+    }
+
+    @Test
+    void 일부_취소로_무료배송이_깨지는데_취소_금액이_배송비보다_작으면_요청은_409() throws Exception {
+        // given: 양말(101) 49,500 + 모자(102) 1,000 = 50,500원, 모자 취소 → 남은 49,500원, 1,000 < 3,000
+        putFreeShippingBundle(49_500L, 1_000L);
+
+        // when
+        ResultActions sut = request(HAT_ORDER_ITEM_ID, 1);
+
+        // then
+        sut.andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/partial-cancel-not-allowed")));
+        assertThat(refundRepository.count()).isZero();
     }
 
     @Test
@@ -454,6 +489,16 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body(orderItemId, quantity)));
+    }
+
+    // 양말(101)·모자(102) 각 1개, 무료배송이 적용되어 배송비 0원을 낸 묶음(기준 5만 원, 기본 배송비 3,000원)
+    private void putFreeShippingBundle(long socksPrice, long hatPrice) {
+        List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, socksPrice, 1),
+                new SellerGroupItem(HAT_ORDER_ITEM_ID, hatPrice, 1));
+        orderClient.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 55L, "양말", "흰색",
+                RefundableOrderItem.CANCELLABLE_STATUS, socksPrice, 1, 0L, 0L, 3_000L, 50_000L, bundle));
+        orderClient.put(new RefundableOrderItem(ORDER_ID, HAT_ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 56L, "모자", "검정",
+                RefundableOrderItem.CANCELLABLE_STATUS, hatPrice, 1, 0L, 0L, 3_000L, 50_000L, bundle));
     }
 
     private Long requestedId(Long orderItemId, int quantity) throws Exception {

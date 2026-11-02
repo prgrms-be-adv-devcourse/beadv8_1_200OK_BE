@@ -16,8 +16,11 @@ public interface RefundOrderClient {
 
     /**
      * 주문에 "N개 취소됨"을 한 번 알린다(흐름 7번). 주문은 환불ID로 중복을 막는다.
+     * 일부 취소로 환불에서 뺀 배송비도 함께 알려, 주문이 구매확정 때 판매자 몫 배송비로 보내게 한다.
+     *
+     * @param deductedShippingFee 이 취소로 환불에서 뺀 기본 배송비 (원). 없으면 0
      *
      * @throws com.ok.common.exception.RestApiException 호출 실패면 {@code ORDER_API_FAILED}
      */
-    void applyRefund(Long refundId, Long orderItemId, int quantity);
+    void applyRefund(Long refundId, Long orderItemId, int quantity, long deductedShippingFee);
 }
