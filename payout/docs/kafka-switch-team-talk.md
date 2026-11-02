@@ -68,11 +68,22 @@ flowchart LR
 - 필드는 지금 `SellerPayoutCreatedEvent`와 같아서, 지갑은 지금 받는 값을 그대로 쓸 수 있다.
 - `createdAt` 모양은 통합 테스트(`PayoutKafkaPublishIntegrationTest`)로 확인했다. 정산 시각 컬럼이 마이크로초까지 저장해서 초 아래 자리가 붙는다.
 
-### 4-2. 정산이 받는 JSON (제안)
+### 4-2. 정산이 받는 JSON
 - 지금 레코드와 같은 필드 이름으로 보내 주기를 제안한다. 그러면 정산 쪽 변환 코드가 바뀌지 않는다.
-  - `order.order-product-confirmed`: `orderId`, `orderItemId`, `sellerId`, `totalItemPrice`, `sellerShippingPrice`
-  - `wallet.wallet-payment-completed`: `orderId`, `buyerId`, `amount`, `paidAt`
 - 필드마다 단위와 null의 뜻은 보내는 쪽이 정해 4-1처럼 적어 주기를 요청한다(#307과 같은 취지).
+
+#### `order.order-product-confirmed` (주문 담당 정의, PR #344 댓글)
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `orderId` | 숫자 | 주문 ID |
+| `orderItemId` | 숫자 | 주문 상품 ID. 정산의 중복 방지 기준 |
+| `sellerId` | 숫자 | 판매자 회원 ID |
+| `totalItemPrice` | 숫자 | 판매가 × 수량(원). 환불(#327 ③) 반영 후에는 취소 수량을 뺀 금액 |
+| `sellerShippingPrice` | 숫자 | 판매자 묶음의 배송비(원). 도서산간 운임 포함(운임 구분은 주문 쪽에서만 함). 같은 묶음의 상품마다 같은 값이 감 |
+
+#### `wallet.wallet-payment-completed`
+- 필드 이름: `orderId`, `buyerId`, `amount`, `paidAt` (지갑 담당 정의 대기)
 
 ## 5. 지갑 담당께
 
