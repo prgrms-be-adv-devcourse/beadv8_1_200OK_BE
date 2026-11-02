@@ -2,6 +2,7 @@ package com.ok.common.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
@@ -25,8 +26,16 @@ class RedisConnectionTest {
     static class TestApplication {
     }
 
+    private static final String TEST_KEY = "redis-connection-test";
+
     @Autowired
     StringRedisTemplate sut;
+
+    // 컨테이너를 JVM 안의 다른 Redis 테스트와 공유하므로, 이 테스트가 넣은 키를 남기지 않는다
+    @AfterEach
+    void tearDown() {
+        sut.delete(TEST_KEY);
+    }
 
     @Test
     void Redis에_PING을_보내면_PONG을_돌려준다() {
@@ -40,10 +49,10 @@ class RedisConnectionTest {
     @Test
     void 저장한_값을_그대로_조회한다() {
         // given
-        sut.opsForValue().set("redis-connection-test", "ok");
+        sut.opsForValue().set(TEST_KEY, "ok");
 
         // when
-        String actual = sut.opsForValue().get("redis-connection-test");
+        String actual = sut.opsForValue().get(TEST_KEY);
 
         // then
         assertThat(actual).isEqualTo("ok");

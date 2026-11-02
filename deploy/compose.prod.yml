@@ -38,6 +38,7 @@ services:
       - sh
       - -c
       - |
+        umask 077
         printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
         exec redis-server /tmp/redis.conf --maxmemory 256mb --maxmemory-policy noeviction --save '' --appendonly no
     # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값
