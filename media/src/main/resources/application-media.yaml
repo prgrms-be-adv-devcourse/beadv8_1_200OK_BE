@@ -47,6 +47,9 @@ app:
 jwt:
   issuer: paldo-gotgan
   audience: paldo-gotgan-api
+  # 발급 모듈(member)의 JWKS 주소. 설정하면 공개키를 이 주소에서 받아 검증하고, 아래 verification-keys는 읽지 않는다.
+  # 비어 있으면(로컬 기본값) 아래 공개키 파일로 검증한다. 모듈을 따로 배포할 때 환경변수로 넣는다 (docs/DEVELOPMENT.md 8절)
+  jwk-set-uri: ${JWT_JWK_SET_URI:}
   # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고른다. 키 교체 절차는 docs/DEVELOPMENT.md 8절
   verification-keys:
     - key-id: rs256-v1
