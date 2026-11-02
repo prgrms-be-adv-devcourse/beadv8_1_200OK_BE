@@ -61,7 +61,6 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // 관리자 토큰에는 BUYER가 없다(관리자는 구매하지 않음). 이용 내역 API는 BUYER만 부를 수 있다(#372)
     @Test
     void 관리자_토큰으로_조회하면_403() throws Exception {
         mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN")))

@@ -84,7 +84,6 @@ class WalletChargeApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // 관리자 토큰에는 BUYER가 없다(관리자는 구매하지 않음). 충전 API는 BUYER만 부를 수 있다(#372)
     // 요청 본문은 검증을 통과하는 값으로 보낸다. 본문이 틀리면 역할 확인 전에 422가 나기 때문
     @Test
     void 관리자_토큰으로_충전을_요청하면_403() throws Exception {
