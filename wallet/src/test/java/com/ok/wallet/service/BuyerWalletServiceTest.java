@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +33,9 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    TransactionTemplate transactionTemplate;
 
     @AfterEach
     void tearDown() {
@@ -332,6 +336,46 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
 
             // Then: 지갑을 잠그고 확인하므로 한 요청만 차감하고 나머지는 이미 결제됨을 받는다
             assertThat(outcomes).containsOnlyOnce(OrderPaymentResult.PAID);
+            assertThat(balanceOf(memberId)).isEqualTo(7_000);
+            assertThat(countLedgers(memberId)).isEqualTo(2);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void 같은_주문의_결제가_이미_열린_트랜잭션_안에서_동시에_와도_예외_없이_한_번만_차감된다() throws Exception {
+        // Given
+        Long memberId = 37L;
+        buyerWalletService.chargeByPayment(memberId, "pay-37", 10_000);
+        int threadCount = 10;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<OrderPaymentResult>> results = new ArrayList<>();
+
+        try {
+            // When: 주문 생성 리스너처럼 이미 열린 트랜잭션(기본 격리 수준) 안에서 같은 주문 결제가 동시에 처리됨
+            // payForOrder가 이 트랜잭션에 합류하면 자기 격리 수준(READ COMMITTED)이 적용되지 않아,
+            // 잠금 전에 잡힌 스냅샷으로 먼저 끝난 결제를 못 보고 다시 기록하려다 예외로 끝났다(#360)
+            for (int i = 0; i < threadCount; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return transactionTemplate.execute(status -> buyerWalletService.payForOrder(memberId, 1_007L, 3_000));
+                }));
+            }
+            ready.await();
+            start.countDown();
+            List<OrderPaymentResult> outcomes = new ArrayList<>();
+            for (Future<OrderPaymentResult> result : results) {
+                outcomes.add(result.get(30, TimeUnit.SECONDS));
+            }
+
+            // Then: 예외 없이 한 요청만 차감하고 나머지는 이미 결제됨을 받는다
+            assertThat(outcomes).containsOnlyOnce(OrderPaymentResult.PAID);
+            assertThat(outcomes).filteredOn(outcome -> outcome == OrderPaymentResult.ALREADY_PAID).hasSize(threadCount - 1);
             assertThat(balanceOf(memberId)).isEqualTo(7_000);
             assertThat(countLedgers(memberId)).isEqualTo(2);
         } finally {
