@@ -20,7 +20,7 @@ description: 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/dec
    git branch --show-current
    ```
    - 브랜치가 `main`이나 `dev`이거나 `<유형>/<이슈번호>` 형식이 아니면 멈추고 알린다. 이슈 번호는 이 이름에서 얻는다.
-   - PR 번호는 인수로 받거나 `env -u GITHUB_TOKEN gh pr view --json number,title,baseRefName,url`로 찾는다. 없으면 비워 둔다(PR을 올린 뒤 채운다).
+   - PR 번호는 인수로 받거나 `env -u GITHUB_TOKEN gh pr view --json number,title,baseRefName,url`로 찾는다. 기준 브랜치를 정하는 데만 쓰고 문서에는 적지 않는다.
    - 기준 브랜치는 PR이 있으면 `baseRefName`, 없으면 `dev`다. 먼저 `git fetch origin <기준 브랜치>`로 최신을 받는다(읽기만 하는 동작이다).
    - PR이 없는데 이 브랜치가 다른 작업 브랜치 위에 쌓인 경우(`git log --oneline origin/dev..HEAD`에 이 이슈가 아닌 커밋이 보인다)에는 부모 브랜치를 기준으로 쓸지 사용자에게 묻는다. 그대로 두면 부모의 변경이 이 문서의 근거에 섞인다.
 2. **모듈을 정한다.**
@@ -28,7 +28,7 @@ description: 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/dec
    git diff --stat origin/<기준 브랜치>...HEAD
    ```
    - 변경 경로의 최상위 폴더 중 `settings.gradle.kts`의 모듈명과 같은 것이 후보다. 하나면 `module`이다.
-   - 여러 개면 결정을 주도한 모듈 하나를 사용자에게 묻고(`AskUserQuestion`), 나머지는 `modules`에 적는다. 질문할 수 없으면(`claude -p`) 변경이 가장 큰 모듈을 고르고 그렇게 골랐다고 알린다.
+   - 여러 개면 결정을 주도한 모듈 하나를 사용자에게 묻는다(`AskUserQuestion`). 나머지 모듈은 따로 적지 않는다. 질문할 수 없으면(`claude -p`) 변경이 가장 큰 모듈을 고르고 그렇게 골랐다고 알린다.
    - 모듈에 속하지 않는 구조·규칙·공통 결정은 `common`, 인프라·배포는 `infra`다.
 3. **같은 이슈의 문서가 있는지 본다.**
    ```bash
@@ -43,9 +43,9 @@ description: 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/dec
    git log origin/<기준 브랜치>..HEAD --format='%h %s'
    git diff --stat origin/<기준 브랜치>...HEAD
    ```
-   "왜"는 이 대화에서 가져온다. 사용자가 정한 결정, 검토한 대안, 시도했다가 버린 것, 부딪힌 문제와 해결, 확인한 것과 못 한 것이다.
+   "왜"는 이 대화에서 가져온다. 사용자가 정한 결정, 검토한 대안과 버린 이유, 고칠 때 다시 깨지기 쉬운 전제다. 남은 작업, 테스트 결과, 구현 중 겪은 일은 문서에 쓰지 않는다(README 참고).
 5. **템플릿으로 쓴다.** `docs/decisions/TEMPLATE.md`를 복사해 채운다.
-   - 머리말 필드의 형식과 상태 값, 작성 규칙(`(미확인)` 표시, 중복 금지, 200줄)은 `docs/decisions/README.md`가 기준이다. 여기서는 값만 정한다. `date`는 오늘이고, `paths`는 실제로 있는 경로인지 `ls`로 확인한다.
+   - 머리말 필드의 형식과 상태 값, 작성 규칙(`(미확인)` 표시, 중복 금지, 100줄)은 `docs/decisions/README.md`가 기준이다. 여기서는 값만 정한다. `date`는 오늘이고, `paths`는 실제로 있는 경로인지 `ls`로 확인한다.
    - 이 대화에서 읽거나 돌려 본 것만 "확인했다"고 쓴다.
    - 템플릿의 주석은 지운다.
 6. **저장한다.** `docs/decisions/<모듈>/<이슈번호>-<slug>.md`에 쓴다(모듈 폴더가 없으면 만든다). `slug`는 영문 소문자·숫자·하이픈 2~4단어다(예: `delivery-hexagonal`). 색인 파일은 만들지 않는다. 색인은 읽는 쪽이 `build-index.sh`로 그때그때 출력한다.
@@ -66,8 +66,7 @@ description: 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/dec
     ```bash
     git remote get-url origin   # 소유자/레포 이름을 얻는다
     ```
-    `https://github.com/<소유자>/<레포>/blob/<브랜치>/docs/decisions/<모듈>/<이슈번호>-<slug>.md`. PR 본문은 사용자가 요청하기 전에는 고치지 않는다. PR이 만들어진 뒤에는 머지 전에 머리말의 `pr` 번호를 채우는 커밋을 올린다. 머지된 문서는 고치지 않으므로 머지 뒤에는 할 수 없다(`pr` 스킬의 8단계가 이를 안내한다).
-
+    `https://github.com/<소유자>/<레포>/blob/<브랜치>/docs/decisions/<모듈>/<이슈번호>-<slug>.md`. PR 본문은 사용자가 요청하기 전에는 고치지 않는다.
 ## 쓰지 않는 것
 
 - 작성자, 머지 커밋, 기능 태그, 파일 목록은 머리말에 넣지 않는다. 리팩터링으로 바뀌거나 작성 시점에 알 수 없다.

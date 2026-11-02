@@ -59,8 +59,8 @@ while IFS= read -r f; do
   get() { printf '%s\n' "$fm" | sed -n "s/^$1:[[:space:]]*//p" | head -1 | unquote; }
 
   module="$(basename "$(dirname "$f")")"
-  issue="$(get issue)"; pr="$(get pr)"; status="$(get status)"; date="$(get date)"
-  title="$(get title)"; summary="$(get summary)"
+  issue="$(get issue)"; status="$(get status)"; date="$(get date)"
+  summary="$(get summary)"
   case "$status" in 대체됨*) [ -n "$all" ] || continue ;; esac
   raw="$(get paths)"; raw="${raw#\[}"; raw="${raw%\]}"
   rel="${f#"$root"/}"
@@ -123,15 +123,15 @@ while IFS= read -r f; do
     [ "$keep" = 1 ] || continue
   fi
 
-  printf '%s\t%s\t| %s | #%s | %s | %s | %s | %s | %s | %s | `%s` |\n' \
-    "$module" "${issue:-0}" "$module" "$issue" "$(esc "${pr:+#$pr}")" "$(esc "$status")" "$(esc "$title")" \
+  printf '%s\t%s\t| %s | #%s | %s | %s | %s | %s | `%s` |\n' \
+    "$module" "${issue:-0}" "$module" "$issue" "$(esc "$status")" \
     "$(esc "$summary")" "$date" "$overlap / $after" "$(esc "$rel")"
 done < <(find "$dir" -mindepth 2 -maxdepth 2 -type f -name '[0-9]*.md' | sort) | sort -t "$tab" -k1,1 -k2,2rn | cut -f3- > "$rows"
 
 echo "# 결정 기록 색인"
 echo
-echo "| 모듈 | 이슈 | PR | 상태 | 제목 | 한 줄 요약 | 작성일 | 겹침 / 이후 변경 | 파일 |"
-echo "|---|---|---|---|---|---|---|---|---|"
+echo "| 모듈 | 이슈 | 상태 | 한 줄 요약 | 작성일 | 겹침 / 이후 변경 | 파일 |"
+echo "|---|---|---|---|---|---|---|"
 cat "$rows"
 echo
 summary_line="총 $(wc -l < "$rows" | tr -d ' ')건. 겹침은 -c로 기준 브랜치를 줬을 때만 계산한다. 이후 변경은 문서를 마지막으로 바꾼 커밋 이후 paths를 바꾼 커밋 수다."

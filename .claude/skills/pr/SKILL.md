@@ -33,7 +33,7 @@ description: 현재 브랜치의 PR 제목과 본문 초안을 이 프로젝트�
    - 🔗 관련 이슈: `Closes #<번호>`
    - 🔄 수정 사항: 리뷰 반영 내용이 없으면 이 섹션을 삭제한다
    - 🎯 완료 조건: 체크리스트
-6. **설계 결정 기록(ADR)을 연결한다.** PR 본문은 핵심 변경과 이유만 짧게 쓰고, 설계 의도와 검토한 대안은 ADR로 링크한다. ADR 내용을 본문에 옮겨 적지 않는다.
+6. **설계 결정 기록(ADR)을 연결한다.** PR 본문은 핵심 변경과 이유만 짧게 쓰고, 결정의 이유와 검토한 대안은 ADR로 링크한다. ADR 내용을 본문에 옮겨 적지 않는다.
    ```bash
    git diff dev...HEAD --name-only | grep '^docs/decisions/'
    ```
@@ -48,7 +48,6 @@ description: 현재 브랜치의 PR 제목과 본문 초안을 이 프로젝트�
    git push -u origin <브랜치>
    env -u GITHUB_TOKEN gh pr create --base dev --title "<제목>" --body-file <본문 파일>
    ```
-   - PR을 만든 뒤 이 PR의 ADR 머리말에서 `pr`이 비어 있으면, PR 번호를 채우는 커밋을 사용자 승인 후에 올린다. ADR은 머지된 뒤에는 고치지 않으므로 머지 전에 해야 한다.
 
 ## 병합
 
