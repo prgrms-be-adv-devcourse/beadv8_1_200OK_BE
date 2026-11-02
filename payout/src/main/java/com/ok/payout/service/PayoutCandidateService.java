@@ -51,8 +51,8 @@ public class PayoutCandidateService {
         // 묶음에서 처음 구매 확정된 상품이 만들고, 이후 상품은 이미 있어 넘어감
         // 같은 묶음이 동시에 처리돼도 "있으면 넘어가기" 한 문장 저장이라 예외·롤백이 없어, 대금·수수료 후보가 함께 사라지지 않는다(#309)
         if (shippingPrice > 0) {
-            repository.insertShippingFeeIfAbsent(command.orderId(), command.sellerId(), shippingPrice,
-                    LocalDateTime.now(clock));
+            repository.insertShippingFeeIfAbsent(PayoutEventType.SALE_SHIPPING_FEE.name(),
+                    command.orderId(), command.sellerId(), shippingPrice, LocalDateTime.now(clock));
         }
     }
 

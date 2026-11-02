@@ -78,7 +78,7 @@ class PayoutCandidateServiceTest {
                         tuple(PayoutEventType.SALE_AMOUNT, ORDER_ID, ORDER_ITEM_ID, 9_700L)
                 );
         // then: 배송비는 판매자 묶음 단위라 (주문, 판매자)로 "있으면 넘어가기" 저장 (이미 있는지는 DB 유니크 키가 판단, 통합 테스트에서 확인)
-        verify(repository).insertShippingFeeIfAbsent(ORDER_ID, SELLER_ID, 3_000L, NOW);
+        verify(repository).insertShippingFeeIfAbsent(PayoutEventType.SALE_SHIPPING_FEE.name(), ORDER_ID, SELLER_ID, 3_000L, NOW);
     }
 
     @Test
@@ -95,7 +95,7 @@ class PayoutCandidateServiceTest {
         assertThat(itemsCaptor.getValue())
                 .extracting(PayoutCandidateItem::getEventType)
                 .containsExactlyInAnyOrder(PayoutEventType.SALE_FEE, PayoutEventType.SALE_AMOUNT);
-        verify(repository, never()).insertShippingFeeIfAbsent(anyLong(), anyLong(), anyLong(), any());
+        verify(repository, never()).insertShippingFeeIfAbsent(any(), anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test

@@ -256,7 +256,7 @@ class PayoutCandidateItemPersistenceIntegrationTest extends AbstractIntegrationT
 
         // when: 같은 묶음의 배송비를 다시 넣음. 예전 방식이면 유니크 키 예외로 트랜잭션이 롤백됐던 상황
         transactionTemplate.executeWithoutResult(status ->
-                repository.insertShippingFeeIfAbsent(orderId, SELLER_ID, 3_000L, INSERTED_AT));
+                repository.insertShippingFeeIfAbsent(PayoutEventType.SALE_SHIPPING_FEE.name(), orderId, SELLER_ID, 3_000L, INSERTED_AT));
 
         // then: 예외 없이 끝나고 배송비는 1건 그대로
         assertThat(repository.findAllByOrderId(orderId))
@@ -273,7 +273,7 @@ class PayoutCandidateItemPersistenceIntegrationTest extends AbstractIntegrationT
 
         // when
         transactionTemplate.executeWithoutResult(status ->
-                repository.insertShippingFeeIfAbsent(orderId, SELLER_ID, 3_000L, INSERTED_AT));
+                repository.insertShippingFeeIfAbsent(PayoutEventType.SALE_SHIPPING_FEE.name(), orderId, SELLER_ID, 3_000L, INSERTED_AT));
 
         // then: 평소 배송비가 새로 들어가고, 직접 쓴 SQL이라 시각은 넘긴 값 그대로 저장됨
         PayoutCandidateItem sut = normalShippingFeeOf(orderId);
