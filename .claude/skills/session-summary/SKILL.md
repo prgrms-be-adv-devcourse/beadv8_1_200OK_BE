@@ -49,7 +49,7 @@ description: 현재 세션의 작업을 설계 결정 기록(ADR)으로 docs/dec
    - 이 대화에서 읽거나 돌려 본 것만 "확인했다"고 쓴다.
    - 템플릿의 주석은 지운다.
 6. **저장한다.** `docs/decisions/<모듈>/<이슈번호>-<slug>.md`에 쓴다(모듈 폴더가 없으면 만든다). `slug`는 영문 소문자·숫자·하이픈 2~4단어다(예: `delivery-hexagonal`). 색인 파일은 만들지 않는다. 색인은 읽는 쪽이 `build-index.sh`로 그때그때 출력한다.
-7. **민감정보를 점검한다.**
+7. **민감정보를 점검한다.** Write·Edit로 쓸 때는 `.claude/hooks/scan-adr-before-write.sh` 훅이 쓰기 전에 한 번 검사해 걸리면 막는다. 이 단계는 훅이 못 보는 경우(Bash로 쓴 문서)와 저장된 파일 전체를 확인하려고 유지한다.
    ```bash
    bash .claude/skills/session-summary/scan-sensitive.sh docs/decisions/<모듈>/<이슈번호>-<slug>.md
    ```

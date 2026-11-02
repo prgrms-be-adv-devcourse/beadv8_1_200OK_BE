@@ -90,11 +90,11 @@ while IFS= read -r f; do
     dts="$(git -C "$root" log -1 --format=%cI -- "$rel" 2>/dev/null || true)"
     if [ -n "$dts" ]; then
       doc_commits="$(git -C "$root" log --format=%H -- "$rel")"
-      path_commits="$(git -C "$root" log --format=%H --since="$dts" -- "${paths[@]}" 2>/dev/null || true)"
+      path_commits="$(git -C "$root" log --no-merges --format=%H --since="$dts" -- "${paths[@]}" 2>/dev/null || true)"
       commits="$(comm -23 <(printf '%s\n' "$path_commits" | sort) <(printf '%s\n' "$doc_commits" | sort) | grep -c . || true)"
     elif [ -n "$date" ]; then
       # 아직 커밋하지 않은 문서는 작성일 다음 날부터 센다.
-      commits="$(git -C "$root" log --since="$date 23:59:59" --oneline -- "${paths[@]}" 2>/dev/null | wc -l | tr -d ' ')"
+      commits="$(git -C "$root" log --no-merges --since="$date 23:59:59" --oneline -- "${paths[@]}" 2>/dev/null | wc -l | tr -d ' ')"
     else
       commits=0
     fi
