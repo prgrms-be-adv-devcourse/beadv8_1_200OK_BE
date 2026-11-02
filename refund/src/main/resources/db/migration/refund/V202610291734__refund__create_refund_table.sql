@@ -34,5 +34,5 @@ CREATE INDEX idx_refund_seller_id_status ON refund (seller_id, status);
 CREATE INDEX idx_refund_buyer_id_created_at ON refund (buyer_id, created_at);
 -- 승인 때 같은 판매자 묶음의 환불 행 찾기
 CREATE INDEX idx_refund_order_id_seller_id ON refund (order_id, seller_id);
--- 요청 때 주문 상품의 완료 수량 합
+-- 요청 때 주문 상품의 처리 중+완료 수량 합(남은 개수 계산)
 CREATE INDEX idx_refund_order_item_id_status ON refund (order_item_id, status);
