@@ -249,14 +249,27 @@ class WalletModuleTest {
         buyerWalletService.chargeByPayment(buyerId, "module-50", 10_000);
 
         // When & Then: 주문 생성 → 지갑 리스너가 차감 → 결제 완료 이벤트
+        // 결제 완료 이벤트는 차감과 같은 트랜잭션 안에서 발행되어, 이벤트가 도착한 순간에는 차감이 아직 커밋되지 않았을 수 있다.
+        // 그때 잔액을 읽으면 차감 전 값(10,000원)이 보여 가끔 실패했으므로, 주문 생성 이벤트의 처리 완료(커밋 뒤 기록)를 기다린 뒤 확인한다
         scenario.publish(new OrderCreatedEvent(orderId, buyerId, 3_000L))
-                .andWaitForEventOfType(WalletPaymentCompletedEvent.class)
-                .matching(event -> event.orderId().equals(orderId))
-                .toArriveAndVerify(event -> {
-                    assertThat(event.buyerId()).isEqualTo(buyerId);
-                    assertThat(event.amount()).isEqualTo(3_000L);
+                .andWaitForStateChange(() -> countCompletedOrderCreatedEvents(orderId), count -> count == 1)
+                .andVerifyEvents(events -> {
+                    assertThat(events)
+                            .contains(WalletPaymentCompletedEvent.class)
+                            .matching(event -> event.orderId().equals(orderId))
+                            .matching(event -> event.buyerId().equals(buyerId))
+                            .matching(event -> event.amount().equals(3_000L));
                     assertThat(balanceOf(buyerId)).isEqualTo(7_000);
                 });
+    }
+
+    // 해당 주문에 대한 OrderCreatedEvent 중 리스너 처리가 완료된 건수
+    private long countCompletedOrderCreatedEvents(Long orderId) {
+        return completedEventPublications.findAll().stream()
+                .map(EventPublication::getEvent)
+                .filter(e -> e instanceof OrderCreatedEvent created
+                        && orderId.equals(created.orderId()))
+                .count();
     }
 
     @Test
