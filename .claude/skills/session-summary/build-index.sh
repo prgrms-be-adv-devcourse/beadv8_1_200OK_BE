@@ -6,11 +6,13 @@
 #   -c 기준브랜치   그 브랜치 대비 지금 브랜치에서 바뀐 파일과 문서의 paths가 겹치는지 "겹침"에 표시한다
 # "이후 변경"은 문서를 마지막으로 바꾼 커밋 이후에 paths를 바꾼 커밋 수(문서를 건드린 커밋은 제외)와 지금 없는 경로 수다.
 # 문서와 코드가 한 PR에서 squash 머지돼도 그 커밋은 세지 않는다. 낡았을 가능성을 보는 기준이다.
-# 머리말은 한 줄 값만 읽는다. paths는 [a, b] 한 줄 목록으로 쓴다.
+# 머리말은 한 줄 값만 읽는다. paths는 [a, b] 한 줄 목록으로 쓰고 경로에 쉼표를 넣지 않는다. 읽지 못하면 stderr로 경고한다.
+# 경고와 마지막 요약은 stderr로 나온다. 호출하는 쪽은 stderr를 버리지 않고 함께 읽는다.
 # 사용법: build-index.sh [-m 모듈[,모듈]] [-c 기준브랜치]
 set -euo pipefail
 
 usage() { echo "사용법: build-index.sh [-m 모듈[,모듈]] [-c 기준브랜치]" >&2; exit 2; }
+warn() { echo "경고: $*" >&2; }
 
 modules=""
 base=""
@@ -33,10 +35,14 @@ if [ -n "$base" ]; then
   changed="$(git -C "$root" diff --name-only "$base...HEAD")"
 fi
 
+if [ "$(git -C "$root" rev-parse --is-shallow-repository)" = "true" ]; then
+  warn "얕은 clone이라 이후 변경 수가 실제보다 적을 수 있다. 전체 이력을 받은 뒤 다시 확인한다."
+fi
+
 rows="$(mktemp)"
 trap 'rm -f "$rows"' EXIT
 tab="$(printf '\t')"
-esc() { printf '%s' "$1" | sed 's/|/\\|/g'; }
+esc() { printf '%s' "$1" | tr '\t' ' ' | sed 's/|/\\|/g'; }
 unquote() { sed -E "s/^\"(.*)\"\$/\\1/; s/^'(.*)'\$/\\1/"; }
 
 while IFS= read -r f; do
@@ -52,6 +58,13 @@ while IFS= read -r f; do
   raw="$(get paths)"; raw="${raw#\[}"; raw="${raw%\]}"
   rel="${f#"$root"/}"
 
+  if [ -z "$raw" ]; then
+    if printf '%s\n' "$fm" | grep -q '^paths:'; then
+      warn "paths를 읽지 못했다(비었거나 여러 줄 목록이다). [a, b] 한 줄로 쓴다: $rel"
+    else
+      warn "머리말에 paths가 없어 낡음과 겹침을 계산하지 못한다: $rel"
+    fi
+  fi
   paths=()
   if [ -n "$raw" ]; then
     IFS=',' read -r -a parts <<< "$raw"
