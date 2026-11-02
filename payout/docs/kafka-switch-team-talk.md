@@ -55,7 +55,7 @@ flowchart LR
 ### 4-1. 정산이 보내는 JSON (`payout.seller-payout-created`)
 
 ```json
-{"payoutId": 12, "payeeId": 5, "amount": 9700, "createdAt": "2026-10-30T14:00:00"}
+{"payoutId": 12, "payeeId": 5, "amount": 9700, "createdAt": "2026-10-30T14:00:00.123456"}
 ```
 
 | 필드 | 타입 | 뜻 |
@@ -63,10 +63,10 @@ flowchart LR
 | `payoutId` | 숫자 | 정산 ID. 지갑의 중복 입금 방지 기준 |
 | `payeeId` | 숫자 | 판매자 회원 ID. null 아님 (시스템 몫은 보내지 않음) |
 | `amount` | 숫자 | 원 단위, 항상 1 이상 (0원 이하는 보내지 않음, #106) |
-| `createdAt` | 문자열 (`yyyy-MM-ddTHH:mm:ss`) | 정산 확정 시각, Asia/Seoul |
+| `createdAt` | 문자열 (ISO-8601, 오프셋 없음. 초 아래 0~6자리가 붙을 수 있음) | 정산 확정 시각, Asia/Seoul 기준. `LocalDateTime`으로 읽으면 된다 |
 
 - 필드는 지금 `SellerPayoutCreatedEvent`와 같아서, 지갑은 지금 받는 값을 그대로 쓸 수 있다.
-- `createdAt`의 실제 문자열 모양은 구현할 때 통합 테스트로 확인해 이 표에 맞춘다.
+- `createdAt` 모양은 통합 테스트(`PayoutKafkaPublishIntegrationTest`)로 확인했다. 정산 시각 컬럼이 마이크로초까지 저장해서 초 아래 자리가 붙는다.
 
 ### 4-2. 정산이 받는 JSON (제안)
 - 지금 레코드와 같은 필드 이름으로 보내 주기를 제안한다. 그러면 정산 쪽 변환 코드가 바뀌지 않는다.
