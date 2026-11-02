@@ -228,13 +228,19 @@ prepare_state() {
 }
 
 # 새 이미지가 healthy가 된 뒤에만 부른다. 바꾸기 전과 같은 이미지면 previous를 그대로 둔다
+# 직전 배포가 이력 저장에만 실패했다면 바꾸기 전 이미지는 새 이미지와 같고 기록된 current는 다르다. 그 current를 previous로 옮겨 잃지 않게 한다
 record_success() {
-  local svc=$1 image=$2 digest=$3 sha=$4 b
+  local svc=$1 image=$2 digest=$3 sha=$4 b var
   read_state "$svc" || return 1
   b=BEFORE_${svc}_digest
   if [ -n "${!b}" ] && [ "${!b}" != "$digest" ]; then
     for b in image digest sha at; do
-      local var=BEFORE_${svc}_$b
+      var=BEFORE_${svc}_$b
+      printf -v "S_previous_$b" '%s' "${!var}"
+    done
+  elif [ -n "$S_current_digest" ] && [ "$S_current_digest" != "$digest" ]; then
+    for b in image digest sha at; do
+      var=S_current_$b
       printf -v "S_previous_$b" '%s' "${!var}"
     done
   fi
@@ -284,6 +290,29 @@ start_pulled() {
   shift
   image=PULLED_${svc}_image digest=PULLED_${svc}_digest sha=PULLED_${svc}_sha
   start_pinned "$svc" "${!image}" "${!digest}" "${!sha}" "$@"
+}
+
+# bff는 healthcheck가 이미지(프론트 레포 Dockerfile)에 있다. 없으면 healthy가 될 수 없는데,
+# 기존 컨테이너를 바꾼 뒤 2분을 기다려서야 실패하므로 바꾸기 전에 본다. app의 healthcheck는 compose.prod.yml에 있다
+check_bff_healthcheck() {
+  local image=PULLED_bff_image test
+  test=$(docker image inspect -f '{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{end}}' "${!image}" 2>/dev/null || true)
+  case $test in
+    '["CMD",'* | '["CMD-SHELL",'*) return 0 ;;
+  esac
+  echo "배포 중단: 받은 bff 이미지(${!image})에 healthcheck가 없다. 아무것도 바꾸지 않았다" >&2
+  echo "  deploy.sh는 healthy로 정상을 판단한다. 프론트 레포 Dockerfile의 HEALTHCHECK를 확인한다" >&2
+  return 1
+}
+
+# nginx는 시작할 때 템플릿을 렌더링한다. 템플릿이나 API_UPSTREAM이 잘못되면 nginx가 뜨지 못해 모든 경로가 멈추므로,
+# 같은 설정으로 일회용 컨테이너를 띄워 렌더링과 nginx -t를 먼저 해 본다
+check_nginx_config() {
+  if ! docker compose run --rm -T --no-deps -e NGINX_ENTRYPOINT_QUIET_LOGS=1 nginx nginx -t; then
+    echo "배포 중단: nginx 설정 검사(nginx -t)가 실패했다. 아무것도 바꾸지 않았다" >&2
+    echo "  nginx/templates와 .env의 API_UPSTREAM을 확인한다" >&2
+    return 1
+  fi
 }
 
 # 받기에 실패하면 컨테이너를 하나도 바꾸지 않은 채 멈춘다
@@ -342,6 +371,9 @@ if [ "$TARGET" != all ]; then
   else
     pull_or_stop "$svc"
     resolve_pulled "$svc" || exit 1
+    if [ "$svc" = bff ]; then
+      check_bff_healthcheck || exit 1
+    fi
     start_pulled "$svc" --no-deps || fail_hint "$svc"
   fi
   echo "배포 성공: $svc"
@@ -357,6 +389,8 @@ prepare_state bff "$(repo_for bff)" || exit 1
 pull_or_stop app bff
 resolve_pulled app || exit 1
 resolve_pulled bff || exit 1
+check_bff_healthcheck || exit 1
+check_nginx_config || exit 1
 
 # Kafka는 app보다 먼저, 클러스터가 멈추지 않게 1대씩 처리한다 (#318)
 # 아래 up -d app이 kafka의 depends_on을 따라 3대를 한꺼번에 다시 만들지 않도록, 여기서 먼저 최신 상태로 맞춰 둔다
@@ -373,8 +407,16 @@ if ! start_pulled app; then
   fail_hint app
 fi
 
-# 여기서 실패해도 이미 떠 있는 nginx와 /api/v1/(API_UPSTREAM 기본값일 때)은 새 app으로 계속 응답한다
-start_pulled bff || fail_hint bff
+# bff가 실패해도 /api/v1/(API_UPSTREAM 기본값일 때)은 새 app으로 응답할 수 있다.
+# nginx가 없거나(최초 설치) 설정이 바뀌었을 수 있으므로 nginx는 띄우고, 배포 결과는 실패로 둔다
+if ! start_pulled bff; then
+  if docker compose up -d --no-deps nginx; then
+    echo "bff는 실패했지만 nginx는 띄웠다" >&2
+  else
+    echo "nginx 기동에도 실패했다" >&2
+  fi
+  fail_hint bff
+fi
 
 # APP_IMAGE_REF·BFF_IMAGE_REF가 위 digest로 채워져 있어 app·bff는 다시 만들지 않는다
 if ! docker compose up -d; then

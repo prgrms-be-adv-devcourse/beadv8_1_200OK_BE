@@ -110,11 +110,14 @@ cd /opt/paldo-gotgan && ./deploy.sh
 - `./deploy.sh`(전체 배포)는 다음 순서로 진행합니다. 어느 서비스든 기동에 실패하거나 2분 안에 healthy가 되지 않으면 그 서비스의 로그를 출력하고 실패합니다.
   1. app·bff의 지금 정상 이미지를 확인합니다([배포 이력](#배포-이력-deploy-state)).
   2. app·bff 이미지를 받습니다. 하나라도 받지 못하면 아무것도 바꾸지 않고 멈춥니다.
-  3. Kafka를 처리합니다(아래 `kafka-rollout.sh`).
-  4. app(과 mysql)을 올려 healthy를 확인하고 app 이력을 남깁니다.
-  5. bff를 올려 healthy를 확인하고 bff 이력을 남깁니다.
-  6. nginx까지 올린 다음 `배포 성공: 전체`를 출력합니다.
-- bff 단계에서 실패해도 이미 떠 있는 nginx와 `/api/v1/**`(기본값일 때)은 새 app으로 계속 응답합니다. app 이력은 새 이미지로 남고 bff 이력은 그대로입니다.
+  3. 바꾸기 전에 두 가지를 검사합니다. 하나라도 실패하면 아무것도 바꾸지 않고 멈춥니다.
+     - 받은 bff 이미지에 healthcheck가 있는지 봅니다. 없으면 healthy가 될 수 없기 때문입니다.
+     - 일회용 nginx 컨테이너로 템플릿을 렌더링하고 `nginx -t`를 실행합니다. 템플릿이나 `API_UPSTREAM`이 잘못되면 여기서 멈춥니다.
+  4. Kafka를 처리합니다(아래 `kafka-rollout.sh`).
+  5. app(과 mysql)을 올려 healthy를 확인하고 app 이력을 남깁니다.
+  6. bff를 올려 healthy를 확인하고 bff 이력을 남깁니다.
+  7. nginx까지 올린 다음 `배포 성공: 전체`를 출력합니다.
+- bff 단계에서 실패해도 nginx는 띄우고 배포는 실패로 끝납니다. `/api/v1/**`(기본값일 때)은 새 app으로 응답합니다. app 이력은 새 이미지로 남고 bff 이력은 그대로입니다.
 - 서버에서 `docker compose up -d`를 직접 실행하지 않습니다. Kafka 3대가 동시에 다시 만들어지고, app·bff도 `.env`의 태그(`latest`)로 다시 만들어져 롤백한 이미지가 풀립니다.
 - app보다 먼저 `kafka-rollout.sh`가 Kafka를 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
 
@@ -152,6 +155,7 @@ cd /opt/paldo-gotgan
 
 - 그 서비스의 이미지만 받고, 그 컨테이너만 다시 만듭니다(`--no-deps`). nginx·MySQL·Kafka·다른 서비스는 받지도 다시 만들지도 않고, Kafka 처리(`kafka-rollout.sh`)도 하지 않습니다.
 - 바꾸기 전에 의존 서비스가 healthy인지 확인합니다. app은 mysql과 kafka 3대, bff는 app입니다. 하나라도 아니면 아무것도 바꾸지 않고 멈춥니다. 그때는 전체 배포(`./deploy.sh`)를 씁니다.
+- bff는 받은 이미지에 healthcheck가 있는지도 바꾸기 전에 봅니다. nginx 설정 검사는 하지 않습니다. 서비스 배포는 nginx를 건드리지 않기 때문입니다.
 - `compose.prod.yml`의 Kafka·MySQL·nginx 설정을 바꿨거나 서버를 처음 설치할 때는 전체 배포를 씁니다.
 
 ## 4. 롤백
@@ -215,6 +219,7 @@ previous_at=2026-10-29T10:00:03+0900
 - 새 이미지가 healthy가 된 뒤에만 이력을 바꿉니다. 받기·기동·health 확인이 실패하면 이력은 그대로입니다.
 - 같은 이미지를 다시 배포하면 `current` 시각만 바뀌고 `previous`는 그대로입니다.
 - 이력 저장이 실패하면 컨테이너가 새 이미지로 떠 있어도 `배포 실패`로 끝납니다. `.deploy-state` 권한과 디스크 여유를 확인합니다.
+- 원인을 고친 뒤 같은 이미지를 다시 배포하면, 기록돼 있던 `current`(바꾸기 전 정상 이미지)를 `previous`로 옮깁니다. 그래서 바로 `--rollback`할 수 있습니다.
 - 직접 고치지 않습니다. 형식이 틀린 값이 있으면 `deploy.sh`가 아무것도 바꾸지 않고 멈춥니다.
 
 **최초 도입**: 이력 파일이 없으면 바꾸기 전에 지금 떠 있는 컨테이너를 봅니다.
@@ -262,7 +267,7 @@ docker compose -f compose.prod.yml restart nginx
 ```
 
 - Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
-- nginx는 시작할 때만 템플릿을 렌더링합니다. 템플릿을 바꾸면 반드시 nginx를 재시작합니다. `compose.prod.yml`에서 nginx 설정이 바뀌었으면 `./deploy.sh`가 nginx를 다시 만들므로 재시작은 해도 되고 안 해도 됩니다.
+- nginx는 시작할 때만 템플릿을 렌더링합니다. 템플릿을 바꾸면 반드시 nginx를 재시작합니다. `./deploy.sh`가 먼저 새 템플릿을 `nginx -t`로 검사하므로, 배포가 성공한 뒤에 재시작합니다. `compose.prod.yml`에서 nginx 설정이 바뀌었으면 `./deploy.sh`가 nginx를 다시 만들므로 재시작은 해도 되고 안 해도 됩니다.
 - 예전 설정 파일 `nginx/default.conf`는 템플릿 방식으로 바뀐 뒤로 쓰지 않습니다. 새 nginx가 정상인 것을 확인한 뒤 지웁니다.
 - `.env.prod.example`에 새 값이 생기면 서버의 `.env`에도 직접 추가합니다(BFF 배치 때는 `BFF_IMAGE_TAG`, `API_UPSTREAM`).
 
