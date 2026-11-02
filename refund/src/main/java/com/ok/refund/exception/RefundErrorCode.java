@@ -16,6 +16,8 @@ public enum RefundErrorCode implements ErrorCode {
     REFUND_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "Refund already in progress", "이 상품에 처리 중인 환불 요청이 있습니다."),
     INVALID_REFUND_STATE(HttpStatus.CONFLICT, "Invalid refund state", "현재 환불 상태에서는 처리할 수 없습니다."),
     REJECT_REASON_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "Reject reason required", "거절 사유는 필수입니다."),
+    PARTIAL_CANCEL_NOT_ALLOWED(HttpStatus.CONFLICT, "Partial cancel not allowed",
+            "취소하면 남은 상품이 무료배송 기준보다 적어지는데, 취소 금액이 배송비보다 작아 일부만 취소할 수 없습니다. 전체 취소를 요청해 주세요."),
 
     // 주문 상품
     ORDER_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Order item not found", "주문 상품을 찾을 수 없습니다."),

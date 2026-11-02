@@ -3,6 +3,7 @@ package com.ok.refund.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.service.dto.RefundDecision;
 import com.ok.refund.service.dto.RefundDecisionCommand;
@@ -68,7 +69,7 @@ class RefundFacadeTest {
 
     private static RefundResult processingResult() {
         Refund refund = withId(requested(1), REFUND_ID);
-        refund.startProcessing(0L, 0L, NOW);
+        refund.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW);
         return RefundResult.from(refund);
     }
 
@@ -109,7 +110,7 @@ class RefundFacadeTest {
     void 묶음_전부_취소면_배송비와_추가_운임을_더한_금액을_지갑에_보낸다() {
         // given: 모자 5,000원 + 배송비 3,000원 + 추가 운임 3,000원이 저장된 처리 중
         Refund hat = withId(requestedHat(), REFUND_ID);
-        hat.startProcessing(3_000L, 3_000L, NOW);
+        hat.startProcessing(new RefundShippingFee(3_000L, 3_000L, 0L), NOW);
         given(refundService.getForDecision(REFUND_ID, SELLER_ID)).willReturn(RefundResult.from(withId(requestedHat(), REFUND_ID)));
         given(deliveryClient.hasShipment(HAT_ORDER_ITEM_ID)).willReturn(true);
         given(orderClient.getOrderItem(ORDER_ID, HAT_ORDER_ITEM_ID)).willReturn(hat());

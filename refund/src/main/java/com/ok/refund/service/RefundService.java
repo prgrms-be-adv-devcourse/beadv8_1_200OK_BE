@@ -2,10 +2,12 @@ package com.ok.refund.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
+import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundBundlePolicy;
 import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundShippingFee;
+import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
@@ -168,10 +170,8 @@ public class RefundService {
         // 순서가 중요하다: 이번 요청이 아직 요청됨일 때 집계해야 집계에서 빠지고, 정책이 한 번만 더한다.
         // startProcessing을 집계 앞으로 옮기면 조회 전 자동 flush로 처리 중이 반영되어 이번 요청을 두 번 세고 배송비를 아무도 못 받는다
         List<CancelledQuantity> cancelled = refundRepository.sumQuantityByOrderItem(orderItem.orderId(), sellerId, CANCELLED_STATUSES);
-        boolean wholeBundle = RefundBundlePolicy.cancelsWholeBundle(target, toBundleItems(orderItem), cancelled);
-        long shippingFee = wholeBundle ? orderItem.shippingFee() : 0L;
-        long remoteAreaFee = wholeBundle ? orderItem.remoteAreaFee() : 0L;
-        target.startProcessing(shippingFee, remoteAreaFee, LocalDateTime.now(clock));
+        RefundShippingFee fee = RefundShippingFeePolicy.decide(target, toBundleShipping(orderItem), cancelled, 0L);
+        target.startProcessing(fee, LocalDateTime.now(clock));
         return RefundResult.from(target);
     }
 
@@ -258,15 +258,16 @@ public class RefundService {
     }
 
     // 주문 응답의 묶음 목록과 상품 자체 수량이 다르면 어느 쪽을 믿을지 알 수 없어 판단하지 않는다(주문 모듈 응답 버그)
-    private static List<BundleItem> toBundleItems(RefundableOrderItem orderItem) {
+    private static BundleShipping toBundleShipping(RefundableOrderItem orderItem) {
         List<BundleItem> bundleItems = new ArrayList<>();
         for (SellerGroupItem item : orderItem.sellerGroupItems()) {
             if (item.orderItemId().equals(orderItem.orderItemId()) && item.quantity() != orderItem.quantity()) {
                 throw new IllegalStateException("주문 응답의 묶음 수량과 상품 수량이 다릅니다. orderItemId=" + orderItem.orderItemId());
             }
-            bundleItems.add(new BundleItem(item.orderItemId(), item.quantity()));
+            bundleItems.add(new BundleItem(item.orderItemId(), item.unitPrice(), item.quantity()));
         }
-        return bundleItems;
+        return new BundleShipping(bundleItems, orderItem.shippingFee(), orderItem.remoteAreaFee(),
+                orderItem.baseShippingFee(), orderItem.freeShippingThreshold());
     }
 
     private static List<RefundStatus> cancelledStatuses() {

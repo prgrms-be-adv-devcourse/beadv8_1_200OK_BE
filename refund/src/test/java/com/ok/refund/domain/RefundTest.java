@@ -102,7 +102,7 @@ class RefundTest {
         Refund sut = requested(3);
 
         // when
-        sut.startProcessing(3_000L, 3_000L, NOW);
+        sut.startProcessing(new RefundShippingFee(3_000L, 3_000L, 0L), NOW);
 
         // then
         assertThat(sut).isNotNull();
@@ -117,10 +117,60 @@ class RefundTest {
     }
 
     @Test
+    void 배송비를_빼면_환불_금액에서_뺀다() {
+        // given: 양말 3개 30,000원
+        Refund sut = requested(3);
+
+        // when
+        sut.startProcessing(new RefundShippingFee(0L, 0L, 3_000L), NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(sut.getRefundAmount()).isEqualTo(27_000L);
+        });
+    }
+
+    @Test
+    void 상품_금액만큼_빼면_0원_환불이다() {
+        // given: 양말 1개 10,000원
+        Refund sut = requested(1);
+
+        // when
+        sut.startProcessing(new RefundShippingFee(0L, 0L, 10_000L), NOW);
+
+        // then
+        assertThat(sut.getRefundAmount()).isZero();
+    }
+
+    @Test
+    void 상품_금액보다_많이_뺄_수_없다() {
+        // given
+        Refund refund = requested(1);
+
+        // when & then: 정책이 먼저 막아야 하므로 여기 오면 계산 버그다
+        assertThatThrownBy(() -> refund.startProcessing(new RefundShippingFee(0L, 0L, 10_001L), NOW))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("뺄 배송비가 상품 금액보다 클 수 없습니다.");
+    }
+
+    @Test
+    void 배송비를_돌려주면서_동시에_뺄_수_없다() {
+        // given
+        Refund refund = requested(1);
+
+        // when & then
+        assertThatThrownBy(() -> refund.startProcessing(new RefundShippingFee(3_000L, 0L, 3_000L), NOW))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("배송비를 돌려주면서 동시에 뺄 수 없습니다.");
+    }
+
+    @Test
     void 완료하면_완료_시각을_남기고_앞서_기록한_실패를_지운다() {
         // given
         Refund sut = requested(1);
-        sut.startProcessing(0L, 0L, NOW);
+        sut.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW);
         sut.recordFailure(RefundFailedStep.WALLET, "WALLET_API_FAILED");
 
         // when
@@ -141,7 +191,7 @@ class RefundTest {
     void 실패를_기록해도_처리_중으로_남는다() {
         // given
         Refund sut = requested(1);
-        sut.startProcessing(0L, 0L, NOW);
+        sut.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW);
 
         // when
         sut.recordFailure(RefundFailedStep.ORDER, "ORDER_API_FAILED");
@@ -160,7 +210,7 @@ class RefundTest {
     void 실패_코드가_칸보다_길면_잘라_저장한다() {
         // given
         Refund sut = requested(1);
-        sut.startProcessing(0L, 0L, NOW);
+        sut.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW);
 
         // when
         sut.recordFailure(RefundFailedStep.WALLET, "X".repeat(150));
@@ -173,7 +223,7 @@ class RefundTest {
     void 승인_불가로_끝나면_진행_중_칸을_비운다() {
         // given
         Refund sut = requested(1);
-        sut.startProcessing(0L, 0L, NOW);
+        sut.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW);
 
         // when
         sut.markNotApprovable(NOW);
@@ -192,7 +242,7 @@ class RefundTest {
     void 요청됨이_아니면_철회_거절_승인을_할_수_없다(Consumer<Refund> action) {
         // given
         Refund refund = requested(1);
-        refund.startProcessing(0L, 0L, NOW);
+        refund.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW);
 
         // when & then
         assertThatThrownBy(() -> action.accept(refund))
@@ -204,7 +254,7 @@ class RefundTest {
         return Stream.of(
                 refund -> refund.withdraw(NOW),
                 refund -> refund.reject("사유", NOW),
-                refund -> refund.startProcessing(0L, 0L, NOW));
+                refund -> refund.startProcessing(new RefundShippingFee(0L, 0L, 0L), NOW));
     }
 
     @ParameterizedTest

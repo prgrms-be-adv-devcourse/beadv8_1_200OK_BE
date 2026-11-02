@@ -15,7 +15,7 @@ class RefundBundlePolicyTest {
 
     private static final Long SOCKS = 101L;
     private static final Long HAT = 102L;
-    private static final List<BundleItem> BUNDLE = List.of(new BundleItem(SOCKS, 3), new BundleItem(HAT, 1));
+    private static final List<BundleItem> BUNDLE = List.of(new BundleItem(SOCKS, 10_000L, 3), new BundleItem(HAT, 10_000L, 1));
 
     @Test
     void 일부만_취소하면_전부_취소가_아니다() {
@@ -33,7 +33,7 @@ class RefundBundlePolicyTest {
     void 한_요청으로_묶음_전부를_취소하면_전부_취소다() {
         // given
         Refund target = requested(SOCKS, 1);
-        List<BundleItem> socksOnly = List.of(new BundleItem(SOCKS, 1));
+        List<BundleItem> socksOnly = List.of(new BundleItem(SOCKS, 10_000L, 1));
 
         // when
         boolean sut = RefundBundlePolicy.cancelsWholeBundle(target, socksOnly, List.of());
@@ -121,7 +121,7 @@ class RefundBundlePolicyTest {
     void 묶음_상품_목록에_이번_상품이_없으면_판단하지_않는다() {
         // given
         Refund target = requested(SOCKS, 1);
-        List<BundleItem> hatOnly = List.of(new BundleItem(HAT, 1));
+        List<BundleItem> hatOnly = List.of(new BundleItem(HAT, 10_000L, 1));
 
         // when & then
         assertThatThrownBy(() -> RefundBundlePolicy.cancelsWholeBundle(target, hatOnly, List.of()))
@@ -133,7 +133,7 @@ class RefundBundlePolicyTest {
     void 묶음_상품의_주문_수량이_1_미만이면_판단하지_않는다() {
         // given
         Refund target = requested(SOCKS, 1);
-        List<BundleItem> zeroHat = List.of(new BundleItem(SOCKS, 3), new BundleItem(HAT, 0));
+        List<BundleItem> zeroHat = List.of(new BundleItem(SOCKS, 10_000L, 3), new BundleItem(HAT, 10_000L, 0));
 
         // when & then
         assertThatThrownBy(() -> RefundBundlePolicy.cancelsWholeBundle(target, zeroHat, List.of()))
