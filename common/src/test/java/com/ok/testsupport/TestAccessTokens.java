@@ -1,12 +1,15 @@
 package com.ok.testsupport;
 
-import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.OctetSequenceKey;
+import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.config.JwtConfig;
 import com.ok.common.config.JwtProperties;
+import com.ok.common.config.RsaPemKeys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -44,14 +47,24 @@ public class TestAccessTokens {
 
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
+    private final String keyId;
 
-    // member의 JwtEncoder 빈을 주입받지 않고 같은 키·알고리즘으로 직접 만든다. 그래야 member가 없는 모듈의 테스트에서도 쓸 수 있다
-    public TestAccessTokens(JwtProperties jwtProperties) {
+    // member의 JwtEncoder 빈을 주입받지 않고 같은 키·알고리즘으로 직접 만든다. 그래야 member가 없는 모듈의 테스트에서도 쓸 수 있다.
+    // 개인키는 member의 JwtSigningProperties와 같은 설정(jwt.signing.*)에서 읽는다. common은 member의 타입을 쓸 수 없어 값으로 받는다
+    public TestAccessTokens(JwtProperties jwtProperties,
+                            @Value("${jwt.signing.key-id}") String keyId,
+                            @Value("${jwt.signing.private-key}") Resource privateKey) {
         this.jwtProperties = jwtProperties;
-        OctetSequenceKey signingKey = new OctetSequenceKey.Builder(JwtConfig.secretKey(jwtProperties))
-                .keyID(jwtProperties.keyId())
-                .algorithm(JWSAlgorithm.parse(JwtConfig.SIGNING_ALGORITHM.getName()))
-                .build();
+        this.keyId = keyId;
+        JWK verificationKey = JwtConfig.verificationKeys(jwtProperties).getKeyByKeyId(keyId);
+        // 그냥 두면 NPE만 나서 원인(테스트 설정의 kid 불일치)을 찾기 어렵다
+        if (verificationKey == null) {
+            throw new IllegalStateException(
+                    "jwt.signing.key-id(%s)의 공개키가 jwt.verification-keys에 없습니다. application-test.yml을 확인하세요."
+                            .formatted(keyId));
+        }
+        RSAKey publicKey = verificationKey.toRSAKey();
+        RSAKey signingKey = new RSAKey.Builder(publicKey).privateKey(RsaPemKeys.privateKey(privateKey)).build();
         this.jwtEncoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(signingKey)));
     }
 
@@ -89,10 +102,10 @@ public class TestAccessTokens {
                 .expiresAt(expiresAt)
                 .claim(TokenClaims.ROLES, roles)
                 .build();
-        // 서비스와 같은 알고리즘·타입·키 식별자를 쓴다 (값은 JwtConfig, JwtProperties 한 곳에서 관리)
+        // 서비스와 같은 알고리즘·타입·키 식별자를 쓴다 (값은 JwtConfig, application-test.yml 한 곳에서 관리)
         JwsHeader header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
                 .type(JwtConfig.TOKEN_TYPE)
-                .keyId(jwtProperties.keyId())
+                .keyId(keyId)
                 .build();
         return jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }

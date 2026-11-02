@@ -21,7 +21,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 |---|---|
 | 언어 / 빌드 | Java 25, Gradle (Kotlin DSL) |
 | 프레임워크 | Spring Boot 4.1.1 (Web MVC, Security, Validation) |
-| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway |
+| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 (Spring Data Redis, Lettuce) |
 | 메시지 브로커 | Apache Kafka 4.2 (KRaft combined, 브로커 3대), Spring for Apache Kafka |
 | 구조 | Gradle 멀티 모듈 + Spring Modulith (도메인 모듈 분리) |
 | 배치 / 문서 / 외부 | Spring Batch, springdoc-openapi (Swagger), AWS SDK v2 (S3) |
@@ -32,7 +32,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 - **JDK 25** (Temurin 권장). jenv를 쓴다면 프로젝트 폴더에서 `jenv local temurin64-25.0.2`
   - Gradle은 JDK 21 이상에서 실행됩니다. `JAVA_HOME`이 17이면 빌드가 시작되지 않습니다.
   - `JAVA_HOME`이 바뀌지 않으면 `jenv enable-plugin export` 후 터미널을 다시 여세요.
-- **Docker** (로컬 MySQL·Kafka와 통합 테스트에 필요). Kafka 브로커 3대가 약 1~2GB를 쓰므로 Docker에 줄 메모리를 여유 있게 둡니다.
+- **Docker** (로컬 MySQL·Redis·Kafka와 통합 테스트에 필요). Kafka 브로커 3대가 약 1~2GB를 쓰므로 Docker에 줄 메모리를 여유 있게 둡니다.
 - 환경변수 파일 만들기
 
 ```bash
@@ -48,7 +48,7 @@ cp .env.example .env
 ## 3. 로컬 실행
 
 ```bash
-# 1) DB·Kafka 실행 (MySQL은 data/mysql, Kafka는 도커 볼륨에 데이터 저장)
+# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka는 도커 볼륨에 데이터 저장, Redis는 볼륨 없이 재시작하면 비워짐)
 docker compose up -d
 
 # 2) 앱 실행 (기본 프로파일 dev)
@@ -57,7 +57,7 @@ docker compose up -d
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
-  이때 DB(mysql)만 기동하고 앱 컨테이너는 만들지 않습니다.
+  이때 DB(mysql)와 Redis만 기동하고 앱 컨테이너는 만들지 않습니다.
 - Swagger UI: `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
 - 현재는 로그인 없이 모든 요청을 허용합니다 (`config/SecurityConfig`). 인증을 구현하면 교체하세요.
 - 로컬 DB를 처음 상태로 되돌리려면 앱과 DB를 끄고 `docker compose down` 후 `rm -rf data/mysql`
@@ -80,17 +80,17 @@ docker compose up -d
 
 ### 앱까지 컨테이너(docker compose)로 실행
 
-`docker compose up -d`는 DB만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
+`docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
 
 ```bash
-docker compose --profile app up -d --build   # 이미지 빌드 후 DB와 앱 실행
+docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
 docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ```
 
-- DB와 Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다.
+- DB, Redis, Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).
 - 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름(`kafka-1:9092,...`)으로 덮어씁니다. `.env`의 `localhost:...`는 컨테이너 안에서 앱 자신을 가리키기 때문입니다.
-- Kafka 3대는 `kafka-net`, MySQL은 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
+- Kafka 3대는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
@@ -118,6 +118,9 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 |---|---|---|
 | `MYSQL_VERSION` | MySQL 이미지 버전 (docker compose, 통합 테스트 공통) | `9.4` |
 | `MYSQL_PORT` | 호스트에 열 DB 포트 | `3306` |
+| `REDIS_VERSION` | Redis 이미지 버전 (docker compose, 통합 테스트 공통) | `8.10` |
+| `REDIS_PORT` | 호스트의 loopback(127.0.0.1)에만 여는 Redis 포트(비밀번호가 없어 외부 비공개). 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
+| `REDIS_HOST` / `REDIS_PASSWORD` | 앱의 Redis 접속 정보. 비밀번호가 비어 있으면 없이 접속(로컬). 운영은 `REDIS_PASSWORD` 필수 | `localhost` / 빈 값 |
 | `APP_PORT` | docker compose로 실행하는 앱 컨테이너의 호스트 포트 | `8080` |
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | docker compose의 MySQL 계정 | `.env.example` 참고 |
 | `DOCKER_COMPOSE_ENABLED` | 앱 실행 시 compose 자동 기동 (dev) | `false` |
@@ -175,8 +178,9 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `spring.flyway.out-of-order` | `${FLYWAY_OUT_OF_ORDER:false}` | 순서가 뒤바뀐 마이그레이션 허용 여부. 기본은 운영과 같게 막고, 개발 중 필요할 때만 `FLYWAY_OUT_OF_ORDER=true`로 엽니다 |
 | `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
-| `jwt.secret` | `${JWT_SECRET:}` | `.env`에서 읽은 값은 OS 환경변수가 아니라 일반 프로퍼티라서 `JWT_SECRET`이 `jwt.secret`으로 자동 연결되지 않아 직접 참조합니다. 값이 비어 있으면 `JwtProperties`의 검증 메시지와 함께 기동이 실패합니다(테스트는 `application-test.yml`의 값을 씁니다) |
-| `jwt.issuer`, `audience`, `key-id`, `*-expiration` | 고정값 | 토큰 발급·검증 기준. 모듈마다 같은 값이어야 서로의 토큰을 검증할 수 있습니다 |
+| `spring.data.redis.*` | `${REDIS_HOST:localhost}`, `${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
+| `jwt.verification-keys` | `file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem` | 검증용 공개키. 저장소 루트의 `keys/`에서 읽습니다. member는 서명용 개인키 `jwt.signing`(`keys/rs256-v1-private.pem`)도 둡니다. 파일이 없으면 기동이 실패합니다(테스트는 `application-test.yml`의 테스트 키를 씁니다). 자세한 내용은 [키 관리와 교체](#키-관리와-교체) |
+| `jwt.issuer`, `audience`, `*-expiration` | 고정값 | 토큰 발급·검증 기준. 모듈마다 같은 값이어야 서로의 토큰을 검증할 수 있습니다 |
 | `app.problem.base-uri`, `app.s3.*` | `${PROBLEM_BASE_URI}`, `${AWS_REGION}`, `${S3_BUCKET}` | 오류 응답의 type 주소, S3 리전과 버킷 |
 | `management.*`, `logging.level.com.ok` | health만 노출, `${LOG_LEVEL_OK:INFO}` | 헬스체크 노출 범위와 로그 레벨 |
 
@@ -184,7 +188,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 
 #### `.env` 읽는 순서 (모듈 단독 실행)
 
-1. 루트 `.env`: `JWT_SECRET`, `AWS_*`, `TOSS_SECRET_KEY`처럼 모듈이 함께 쓰는 값입니다. 모듈 `bootRun`이 환경변수 `OK_ROOT_DIR`로 저장소 루트를 알려 줍니다(`ok.spring-module-conventions`). Gradle 밖(IDE, jar 직접 실행)에서는 이 값이 없어 현재 디렉터리의 `.env`만 읽습니다.
+1. 루트 `.env`: `AWS_*`, `TOSS_SECRET_KEY`처럼 모듈이 함께 쓰는 값입니다. 모듈 `bootRun`이 환경변수 `OK_ROOT_DIR`로 저장소 루트를 알려 줍니다(`ok.spring-module-conventions`). Gradle 밖(IDE, jar 직접 실행)에서는 이 값이 없어 현재 디렉터리의 `.env`만 읽습니다.
 2. 현재 디렉터리의 `.env`: `bootRun`의 작업 디렉터리가 모듈 폴더라서 `<모듈>/.env`, 곧 모듈의 DB 계정입니다. 나중에 읽은 값이 이기므로 모듈 값이 우선합니다.
 
 OS 환경변수는 두 파일보다 우선합니다(예: `DB_PORT=3307 ./gradlew :member:bootRun`). 어느 파일도 없으면 각 키의 기본값이 쓰입니다.
@@ -307,7 +311,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 ```
 
 - 모듈의 설정은 그 모듈의 `application-<모듈>.yaml`이 모두 갖고 `common`에는 두지 않습니다. 키별 설명과 `.env` 읽는 순서는 [모듈 설정 파일](#모듈-설정-파일-application-모듈yaml)을 봅니다.
-- 접속 DB는 모듈 자기 스키마(`paldogotgan_<모듈>`)입니다. 계정은 `<모듈>/.env`, 모듈이 함께 쓰는 값(`JWT_SECRET` 등)은 루트 `.env`에 두고, 모듈이 쓰는 값(wallet은 `TOSS_SECRET_KEY`)은 환경변수나 `.env`로 넘깁니다. `monolith`용 `DB_URL`은 읽지 않습니다.
+- 접속 DB는 모듈 자기 스키마(`paldogotgan_<모듈>`)입니다. 계정은 `<모듈>/.env`, 모듈이 함께 쓰는 값(`AWS_*` 등)은 루트 `.env`, JWT 키는 루트의 `keys/`에 두고, 모듈이 쓰는 값(wallet은 `TOSS_SECRET_KEY`)은 환경변수나 `.env`로 넘깁니다. `monolith`용 `DB_URL`은 읽지 않습니다.
 - 모듈 계정은 자기 스키마에만 권한을 갖습니다(`member` 계정은 `paldogotgan_delivery`를 읽을 수 없습니다). `./infra/mysql/sync-module-users.sh --init`이 `<모듈>/.env.example`에서 `<모듈>/.env`를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만듭니다. 이미 떠 있는 DB에도 쓸 수 있고 여러 번 실행해도 됩니다. `<모듈>/.env`가 없으면 공용 계정(`myuser`)으로 접속하는 기존 방식이 그대로 동작합니다. `monolith`는 모듈 계정을 쓰지 않고 공용 계정(루트 `.env`의 `MYSQL_*`)으로 모든 스키마에 접속합니다.
 - 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
 - 단독 실행한 모듈 스키마와 monolith는 같은 DB를 번갈아 써도 됩니다. 단독 실행은 `common` 마이그레이션(`event_publication`)을 같은 스키마의 별도 이력 테이블(`flyway_schema_history_common`)에 적용하므로 모듈 이력에는 섞이지 않습니다. 단독 실행이 common 행을 모듈 이력(`flyway_schema_history`)에 함께 기록하던 초기 개발 빌드로 만든 로컬 DB는 monolith가 `Detected applied migration not resolved locally: 202610081120`으로 멈춥니다. 모듈 스키마마다 `DELETE FROM paldogotgan_<모듈>.flyway_schema_history WHERE version = '202610081120';`로 그 행을 지우거나 볼륨을 초기화하세요(운영에는 해당 없음).
@@ -410,9 +414,9 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 
 | 위치 | 이름 | 값 | 용도 |
 |---|---|---|---|
-| 헤더 | `alg` | `HS256` | 서명 알고리즘 |
+| 헤더 | `alg` | `RS256` | 서명 알고리즘 |
 | 헤더 | `typ` | `at+jwt` | Access Token임을 표시. 이 타입만 받아 다른 용도의 JWT와 섞이지 않게 함 (RFC 9068, RFC 8725) |
-| 헤더 | `kid` | `jwt.key-id` 설정값 | 서명 키 식별자. 키를 교체할 때 어떤 키로 서명했는지 구분 |
+| 헤더 | `kid` | `jwt.signing.key-id` 설정값 | 서명 키 식별자. 검증할 공개키를 고르고, 키를 교체할 때 어떤 키로 서명했는지 구분 |
 | 클레임 | `iss` | `paldo-gotgan` | 우리가 발급한 토큰인지 검증 |
 | 클레임 | `sub` | 회원 id | `@CurrentMemberId`가 읽는 값 |
 | 클레임 | `aud` | `jwt.audience` 설정값 | 이 서비스를 위한 토큰인지 검증 |
@@ -427,12 +431,51 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 - `roles`는 회원에 저장된 값이 아니라 토큰을 발급할 때 회원 정보로 계산한 인가용 권한입니다. 권한 이름은 `TokenRoles`에 있습니다.
 
 
-### 서명 방식과 전환 기준
+### 서명 방식
 
-- **지금은 HS256(대칭키)를 씁니다.** 발급과 검증을 같은 애플리케이션에서 하므로, 비대칭키의 장점(검증하는 쪽은 위조할 수 없음)이 쓰이지 않고 키 관리가 단순합니다.
-- **비밀키 관리**: 환경 변수(`JWT_SECRET`)로만 주입하고, 디코딩한 값이 32바이트 이상이어야 기동됩니다. 개발·운영 환경은 서로 다른 키를 씁니다.
-- **키 교체**: 비밀키를 바꿀 때 `jwt.key-id`도 함께 바꿉니다. 옛 키와 새 키를 함께 받아들이는 기간이 필요하면, 디코더가 `kid`로 키를 고르도록 바꿉니다.
-- **비대칭키 전환 기준**: 토큰을 검증하는 프로그램이 둘 이상이 될 때(서비스 분리, 별도 서버) RS256 등으로 바꿉니다. 비밀키를 두 번째 서비스에 나눠주기 전에 바꿔야 합니다. 서명 알고리즘과 키는 `JwtConfig`에서만 관리하므로 각 모듈의 인가 코드는 바뀌지 않습니다.
+- **RS256(비대칭키)을 씁니다(#313).** 토큰을 발급하는 member(auth)만 개인키로 서명하고, 나머지 앱은 공개키로 검증만 합니다. 모듈마다 앱이 따로 떠서 검증하는 곳이 여럿이기 때문입니다. 대칭키(HS256)는 검증 키로 서명도 할 수 있어서, 검증만 하는 앱도 아무 회원·권한(ADMIN 포함)의 토큰을 만들 수 있었습니다.
+- **알고리즘 고정**: 디코더는 RS256만 받습니다. 헤더의 `alg`대로 검증 방식을 고르면 공개키를 HMAC 비밀키로 써서 만든 HS256 토큰(알고리즘 혼동 공격)이 통과할 수 있습니다.
+- **`kid`로 키 선택**: 디코더는 토큰 헤더의 `kid`에 해당하는 공개키(`jwt.verification-keys`)로 검증하고, `kid`가 없거나 목록에 없는 토큰은 거부합니다.
+- 서명 알고리즘과 키는 `JwtConfig`(검증), `JwtEncoderConfig`(발급)에서만 관리하므로 각 모듈의 인가 코드는 알고리즘과 무관합니다.
+- 지금은 공개키를 파일로 나눠 둡니다. member가 JWKS 엔드포인트로 공개키를 내주고 검증 쪽이 그것을 받아 쓰는 방식은 후속 작업에서 도입합니다. 그러면 키를 교체할 때 검증하는 앱을 하나하나 바꾸지 않아도 됩니다.
+
+### 키 관리와 교체
+
+**설정**
+
+| 키 | 두는 앱 | 설명 |
+|---|---|---|
+| `jwt.verification-keys[].key-id`, `public-key` | 모든 앱 | 검증용 공개키 목록. `public-key`는 X.509 PEM 파일 위치(`file:`, `classpath:`) |
+| `jwt.signing.key-id`, `private-key` | member, monolith | 서명용 개인키. `private-key`는 PKCS#8 PEM 파일 위치. `key-id`는 검증 목록에 있어야 하고, 개인키가 그 공개키와 짝이 아니면 기동하지 않습니다 |
+
+- 로컬은 저장소 루트의 `keys/rs256-v1-public.pem`, `keys/rs256-v1-private.pem`을 씁니다(`keys/`는 `.gitignore`에 있음). 다른 위치를 쓰려면 `.env`에 `jwt.signing.private-key=file:/절대경로.pem`처럼 설정 키를 직접 적습니다.
+- IDE에서 `main`을 바로 실행하면 `bootRun`과 달리 저장소 루트를 모르므로 키 파일을 찾지 못해 기동에 실패합니다. 실행 설정의 작업 디렉터리를 저장소 루트로 두거나, 모듈 앱은 환경 변수 `OK_ROOT_DIR`에 저장소 루트를 넣습니다.
+- 운영(monolith, `prod` 프로필)은 서버 키 폴더의 `jwt.yaml`을 반드시 읽어 위 설정을 덮어씁니다(`application-prod.yml`). 이미지를 다시 만들지 않고 키를 교체하기 위해서입니다.
+- 키 파일 이름은 `kid`를 따릅니다(`<kid>-private.pem`, `<kid>-public.pem`). 교체 중에는 옛 키와 새 키가 한 폴더에 함께 있기 때문입니다.
+- RSA 키는 2048비트 이상이어야 기동됩니다. 개발·운영 환경은 서로 다른 키를 쓰고, 개인키는 저장소에 올리지 않습니다.
+- 테스트는 `common/src/test/resources/jwt`의 테스트 전용 키 쌍을 씁니다(`application-test.yml`). 개발·운영에서 쓰지 않습니다.
+
+**로컬 키 만들기** (저장소 루트에서, 처음 한 번)
+
+```bash
+mkdir -p keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/rs256-v1-private.pem
+openssl pkey -in keys/rs256-v1-private.pem -pubout -out keys/rs256-v1-public.pem
+```
+
+운영 서버의 키는 [`DEPLOY.md`의 JWT 서명 키](DEPLOY.md#9-jwt-서명-키-313)를 봅니다.
+
+**키 교체** (예: `rs256-v1` → `rs256-v2`)
+
+`kid` 형식은 `{알고리즘}-v{버전}`이고, 토큰 헤더에 그대로 노출되므로 키 내용이나 추측 가능한 정보를 넣지 않습니다.
+정기 교체는 하지 않습니다. 개인키 유출이 의심되거나 서버에 접근할 수 있는 사람이 바뀌었을 때 교체합니다. 운영 서버에서의 실제 명령은 [`DEPLOY.md`의 키 교체](DEPLOY.md#키-교체)를 봅니다.
+
+1. 새 키 쌍(`rs256-v2-*.pem`)을 만들고, 검증하는 모든 앱의 `jwt.verification-keys`에 `rs256-v2` 공개키를 **추가**합니다. 서명은 아직 `rs256-v1`입니다.
+2. 1이 모든 앱에 반영된 뒤, member·monolith의 `jwt.signing`을 `rs256-v2`와 새 개인키로 바꿉니다. 새 토큰은 `rs256-v2`로 서명되고, 이전 토큰도 `rs256-v1` 공개키로 계속 검증됩니다.
+3. Access Token 유효 기간(30분)이 지나면 검증 목록에서 `rs256-v1`을 빼고 그 키 파일을 지웁니다.
+
+- 1과 2를 한 번에 반영하면 새 토큰을 아직 `rs256-v2`를 모르는 앱이 거부할 수 있습니다. 앱이 하나(운영의 monolith)일 때는 `jwt.yaml`을 한 번 고쳐 함께 반영합니다.
+- 개인키가 유출되었으면 3을 기다리지 않고 옛 키를 바로 뺍니다. 그 키로 서명된 토큰이 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다. Refresh Token은 JWT가 아니라서 영향이 없습니다.
 
 ### 토큰 재발급
 
@@ -561,6 +604,8 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
 - MySQL 컨테이너는 서브프로젝트의 테스트 실행(JVM) 한 번에 하나만 뜨고 그 안의 모든 테스트 컨텍스트가 같은 DB를 씁니다. 컨테이너가 모듈 스키마를 모두 만들며, 모듈 테스트는 자기 모듈 스키마를, `monolith` 테스트는 기본 스키마를 접속 DB로 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
+- Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
+- Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:8080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
 - 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`TestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
 - 토픽의 메시지는 테스트마다 지워지지 않습니다. 메시지를 확인하는 테스트는 자기가 만든 키(예: `payoutId`)로 걸러서 셉니다.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.

@@ -1,0 +1,15 @@
+# Redis를 쓰는 앱이 spring.config.import로 가져다 쓰는 공통 Redis 설정 (#319)
+# 지금은 monolith가 가져온다. 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 추가한다. 값을 바꿀 곳은 여기 한 곳이다
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # 비어 있으면 비밀번호 없이 접속한다 (로컬)
+      password: ${REDIS_PASSWORD:}
+      # Redis가 응답하지 않을 때 요청 스레드가 오래 묶이지 않게 짧게 둔다
+      connect-timeout: 2s
+      timeout: 1s
+      repositories:
+        # JPA와 함께 있을 때 리포지터리마다 저장소를 판정하는 로그가 쌓인다. Redis 리포지터리는 쓰지 않는다
+        enabled: false
