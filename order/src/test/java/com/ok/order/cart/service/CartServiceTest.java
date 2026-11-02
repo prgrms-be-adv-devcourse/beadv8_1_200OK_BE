@@ -13,9 +13,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,6 +37,10 @@ public class CartServiceTest {
     @Mock CartRepository cartRepository;
     @Mock CartItemRepository cartItemRepository;
 
+    // 한국 시간 2026-11-02 09:00으로 고정
+    @Spy Clock clock = Clock.fixed(Instant.parse("2026-11-02T00:00:00Z"), ZoneId.of("Asia/Seoul"));
+    static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 2, 9, 0);
+
     @InjectMocks CartService cartService;
 
     static final Long BUYER_ID = 1L;
@@ -40,26 +49,12 @@ public class CartServiceTest {
     // ---------- 장바구니 생성 ----------
 
     @Test
-    void 장바구니가_없으면_생성한다() {
-        // Given
-        given(cartRepository.existsByMemberId(BUYER_ID)).willReturn(false);
-
-        // When
+    void 회원가입하면_장바구니를_없을_때만_저장하는_쿼리로_만든다() {
+        // when
         cartService.createCart(BUYER_ID);
 
-        // Then
-        then(cartRepository).should().save(any(Cart.class));
-    }
-
-    @Test
-    void 장바구니가_이미_있으면_생성하지_않는다() {
-        // Given
-        given(cartRepository.existsByMemberId(BUYER_ID)).willReturn(true);
-
-        // When
-        cartService.createCart(BUYER_ID);
-
-        // Then
+        // then: 이미 있는지는 DB가 판단하므로 존재 확인 없이 바로 부른다 (중복 무시는 통합 테스트에서 확인)
+        then(cartRepository).should().insertIfAbsent(BUYER_ID, NOW);
         then(cartRepository).should(never()).save(any(Cart.class));
     }
 
@@ -100,14 +95,14 @@ public class CartServiceTest {
     void 장바구니가_없으면_만들고_담는다() {
         // given
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
-        given(cartRepository.save(any(Cart.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(cartRepository.findForShareByMemberId(BUYER_ID)).willReturn(Optional.of(Cart.create(BUYER_ID)));
         given(cartItemRepository.saveAndFlush(any(CartItem.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
         cartService.addItem(BUYER_ID, 100L, 1);
 
         // then
-        then(cartRepository).should().save(any(Cart.class));
+        then(cartRepository).should().insertIfAbsent(BUYER_ID, NOW);
         then(cartItemRepository).should().saveAndFlush(any(CartItem.class));
     }
 
@@ -150,7 +145,7 @@ public class CartServiceTest {
     void 장바구니가_없으면_만들고_빈_목록을_응답한다() {
         // given
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
-        given(cartRepository.save(any(Cart.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(cartRepository.findForShareByMemberId(BUYER_ID)).willReturn(Optional.of(Cart.create(BUYER_ID)));
 
         // when
         CartResponse sut = cartService.getMyCart(BUYER_ID);
@@ -158,7 +153,32 @@ public class CartServiceTest {
         // then
         assertThat(sut).isNotNull();
         assertThat(sut.items()).isEmpty();
-        then(cartRepository).should().save(any(Cart.class));
+        then(cartRepository).should().insertIfAbsent(BUYER_ID, NOW);
+    }
+
+    @Test
+    void 장바구니가_있으면_새로_만들지_않는다() {
+        // given
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(Cart.create(BUYER_ID)));
+
+        // when
+        cartService.getMyCart(BUYER_ID);
+
+        // then: 대부분의 요청은 일반 조회 한 번으로 끝난다
+        then(cartRepository).should(never()).insertIfAbsent(any(), any());
+        then(cartRepository).should(never()).findForShareByMemberId(any());
+    }
+
+    @Test
+    void 장바구니를_만든_뒤에도_조회되지_않으면_서버_오류로_드러낸다() {
+        // given
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
+        given(cartRepository.findForShareByMemberId(BUYER_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> cartService.getMyCart(BUYER_ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("장바구니 생성 후 조회에 실패했습니다. memberId=" + BUYER_ID);
     }
 
     // ---------- 수량 변경 · 선택 · 삭제 ----------
@@ -295,7 +315,7 @@ public class CartServiceTest {
 
         // then
         assertThat(sut).isEmpty();
-        then(cartRepository).should(never()).save(any(Cart.class));
+        then(cartRepository).should(never()).insertIfAbsent(any(), any());
     }
 
     // ---------- 결제 완료 후 장바구니 정리 ----------
@@ -323,6 +343,6 @@ public class CartServiceTest {
 
         // then
         then(cartItemRepository).should(never()).deleteAllByCartIdAndProductOptionIdIn(any(), any());
-        then(cartRepository).should(never()).save(any(Cart.class));
+        then(cartRepository).should(never()).insertIfAbsent(any(), any());
     }
 }
