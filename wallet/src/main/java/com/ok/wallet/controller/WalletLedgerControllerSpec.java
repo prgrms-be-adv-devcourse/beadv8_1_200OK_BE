@@ -18,6 +18,7 @@ interface WalletLedgerControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)"),
             @ApiResponse(responseCode = "422", description = "시작일이 종료일보다 늦음, 알 수 없는 유형, 페이지 값 검증 실패")
     })
     ResponseEntity<LedgerHistoryPageResponse> getHistory(Long memberId, @ParameterObject LedgerHistoryRequest request);

@@ -35,7 +35,8 @@ interface WalletTermsControllerSpec {
     @Operation(summary = "충전 약관 조회", description = "현재 버전 약관 전문과 약관별 동의 여부를 반환한다.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
-            @ApiResponse(responseCode = "401", description = "로그인 필요")
+            @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)")
     })
     ResponseEntity<TermsResponse> getTerms(Long memberId);
 
@@ -44,6 +45,7 @@ interface WalletTermsControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "동의 성공 (이미 동의한 경우 포함)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)"),
             @ApiResponse(responseCode = "409", description = "약관이 개정되어 요청한 버전이 현재 버전이 아님"),
             @ApiResponse(responseCode = "422", description = "필수 약관 누락, 알 수 없는 약관 유형, 요청 값 검증 실패")
     })

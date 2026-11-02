@@ -5,11 +5,14 @@ import com.ok.wallet.controller.dto.BuyerBalanceResponse;
 import com.ok.wallet.service.BuyerWalletService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 // 회원 ID는 @CurrentMemberId가 토큰에서 꺼낸다. 본인 잔액만 조회하므로 경로에 회원 ID를 받지 않는다.
+// 구매자만 호출한다. 관리자 토큰에는 BUYER가 없어 거절되고, 판매자 토큰은 BUYER를 함께 가져 그대로 쓴다(#372).
+@PreAuthorize("hasRole('BUYER')")
 @RestController
 @RequestMapping("/api/v1/wallets/me")
 @RequiredArgsConstructor

@@ -8,12 +8,15 @@ import com.ok.wallet.service.dto.LedgerHistoryQuery;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 // 회원 ID는 토큰에서 꺼내고, 조회 조건은 쿼리 파라미터를 @Valid로 검증한다.
+// 구매자만 호출한다. 관리자 토큰에는 BUYER가 없어 거절되고, 판매자 토큰은 BUYER를 함께 가져 그대로 쓴다(#372).
+@PreAuthorize("hasRole('BUYER')")
 @RestController
 @RequestMapping("/api/v1/wallets/me")
 @RequiredArgsConstructor

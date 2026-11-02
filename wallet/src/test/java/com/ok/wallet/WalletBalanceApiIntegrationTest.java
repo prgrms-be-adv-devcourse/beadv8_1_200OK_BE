@@ -57,6 +57,22 @@ class WalletBalanceApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // 관리자 토큰에는 BUYER가 없다(관리자는 구매하지 않음). 구매자 API는 BUYER만 부를 수 있다(#372)
+    @Test
+    void 관리자_토큰으로_잔액을_조회하면_403() throws Exception {
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
+    // 승인된 판매자 토큰은 BUYER와 SELLER를 함께 가져 구매자 API도 그대로 쓴다
+    @Test
+    void 판매자_토큰으로도_잔액을_조회할_수_있다() throws Exception {
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "BUYER", "SELLER")))
+                .andExpect(status().isOk());
+    }
+
     @Test
     void 지갑이_없으면_잔액_0원과_보유_한도를_응답한다() throws Exception {
         mockMvc.perform(get(BALANCE_URL)
