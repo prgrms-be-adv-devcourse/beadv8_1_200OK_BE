@@ -13,6 +13,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -23,14 +25,13 @@ import java.util.Optional;
 public class CartService {
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
+    private final Clock clock;
 
-    // 장바구니 생성
+    // 장바구니 생성 (회원가입 이벤트)
+    // 회원가입 직후 API 요청이 먼저 만들었을 수 있어, 존재 확인 없이 "없으면 저장" 한 번으로 처리한다
     @Transactional
     public void createCart(Long memberId) {
-        if (cartRepository.existsByMemberId(memberId)) {
-            return;
-        }
-        cartRepository.save(Cart.create(memberId));
+        cartRepository.insertIfAbsent(memberId, LocalDateTime.now(clock));
     }
 
     // 장바구니에 상품 추가
@@ -38,9 +39,7 @@ public class CartService {
     public Long addItem(Long memberId, Long productOptionId, int quantity) {
         // TODO 회원 모듈 구매 가능 여부 API 제공 후 연동 → MEMBER_CANNOT_PURCHASE
 
-
         // TODO 상품 모듈 옵션 조회 API 연동 후: 판매 중인지, 본인 상품인지 검증
-
 
         Cart cart = getOrCreateCart(memberId);
 
@@ -99,9 +98,20 @@ public class CartService {
     }
 
     // 내 장바구니 조회, 없으면 생성
+    // 회원가입 리스너나 다른 요청이 동시에 만들 수 있어 save 대신 "없으면 저장"을 쓴다 (save는 유니크 제약 위반으로 500이 난다)
+    // 다시 읽을 때는 잠금 조회를 쓴다. 일반 조회는 앞의 조회 시점 스냅샷을 봐서, 다른 트랜잭션이 방금 만든 장바구니가 보이지 않는다
     private Cart getOrCreateCart(Long memberId) {
-        return cartRepository.findByMemberId(memberId)
-                .orElseGet(() -> cartRepository.save(Cart.create(memberId)));
+        Optional<Cart> cart = cartRepository.findByMemberId(memberId);
+        if (cart.isPresent()) {
+            return cart.get();
+        }
+
+        cartRepository.insertIfAbsent(memberId, LocalDateTime.now(clock));
+
+        // 바로 앞에서 저장했거나 다른 트랜잭션이 저장했으므로 없을 수 없다.
+        // 없다면 사용자 입력이 아닌 코드·DB의 이상이므로 500으로 드러나도록 IllegalStateException을 던진다
+        return cartRepository.findForShareByMemberId(memberId)
+                .orElseThrow(() -> new IllegalStateException("장바구니 생성 후 조회에 실패했습니다. memberId=" + memberId));
     }
 
     // 동시 담기 대비 : 유니크 제약 위반을 중복 예외로 변환
