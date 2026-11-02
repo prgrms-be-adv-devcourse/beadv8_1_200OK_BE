@@ -104,6 +104,8 @@ public class ProductStockService {
 	/**
 	 * 환불 한 건만큼 주문의 옵션 배정 재고를 일부 되돌린다.
 	 * 출고 전 취소 전용이다. 같은 환불 ID로 같은 내용을 다시 보내면 아무것도 하지 않는다.
+	 * 같은 환불 ID 요청이 동시에 겹치면 뒤에 온 쪽은 수량 초과나 유니크 키 위반으로 롤백된다.
+	 * 이 경우의 재확인은 {@link ProductStockPartialReleaseFacade}가 한다.
 	 *
 	 * @throws RestApiException 같은 환불 ID로 내용이 다르면 {@code PARTIAL_RELEASE_MISMATCH},
 	 *                          주문에 그 옵션의 배정 기록이 없으면 {@code ALLOCATION_NOT_FOUND},
@@ -111,12 +113,8 @@ public class ProductStockService {
 	 */
 	@Transactional
 	public void partialRelease(StockPartialReleaseCommand command) {
-		Optional<ProductStockPartialRelease> existing = partialReleaseRepository.findByRefundId(command.refundId());
-		if (existing.isPresent()) {
-			if (existing.get().matches(command.orderId(), command.productOptionId(), command.quantity())) {
-				return;
-			}
-			throw new RestApiException(ProductErrorCode.PARTIAL_RELEASE_MISMATCH);
+		if (matchesRecordedPartialRelease(command)) {
+			return;
 		}
 		ProductStockAllocation allocation = allocationRepository
 			.findByOrderIdAndProductOptionId(command.orderId(), command.productOptionId())
@@ -134,5 +132,26 @@ public class ProductStockService {
 			throw new IllegalStateException(
 				"옵션 배정 수량이 배정 기록보다 적습니다. orderId=" + command.orderId() + ", optionId=" + command.productOptionId());
 		}
+	}
+
+	/**
+	 * 같은 환불 ID로 같은 내용의 해제가 이미 반영됐는지 확인한다.
+	 *
+	 * @return 같은 내용의 이력이 있으면 {@code true}, 이력이 없으면 {@code false}
+	 * @throws RestApiException 같은 환불 ID 이력이 있는데 내용이 다르면 {@code PARTIAL_RELEASE_MISMATCH}
+	 */
+	public boolean isPartiallyReleased(StockPartialReleaseCommand command) {
+		return matchesRecordedPartialRelease(command);
+	}
+
+	private boolean matchesRecordedPartialRelease(StockPartialReleaseCommand command) {
+		Optional<ProductStockPartialRelease> existing = partialReleaseRepository.findByRefundId(command.refundId());
+		if (existing.isEmpty()) {
+			return false;
+		}
+		if (existing.get().matches(command.orderId(), command.productOptionId(), command.quantity())) {
+			return true;
+		}
+		throw new RestApiException(ProductErrorCode.PARTIAL_RELEASE_MISMATCH);
 	}
 }

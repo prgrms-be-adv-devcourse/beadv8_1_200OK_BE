@@ -6,6 +6,7 @@ import com.ok.product.product.controller.dto.StockAllocationRequest;
 import com.ok.product.product.controller.dto.StockPartialReleaseRequest;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.service.ProductService;
+import com.ok.product.product.service.ProductStockPartialReleaseFacade;
 import com.ok.product.product.service.ProductStockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -29,6 +30,7 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 
 	private final ProductService productService;
 	private final ProductStockService productStockService;
+	private final ProductStockPartialReleaseFacade productStockPartialReleaseFacade;
 
 	@Override
 	@GetMapping("/options")
@@ -61,12 +63,7 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 	@PostMapping("/stock-allocations/{orderId}/partial-release")
 	public ResponseEntity<Void> partialReleaseStock(@PathVariable Long orderId,
 		@RequestBody StockPartialReleaseRequest request) {
-		try {
-			productStockService.partialRelease(request.toCommand(orderId));
-		} catch (DataIntegrityViolationException e) {
-			// 같은 환불 ID 요청이 동시에 와서 해제 이력의 유니크 키가 겹친 경우 409
-			throw new RestApiException(ProductErrorCode.PARTIAL_RELEASE_IN_PROGRESS);
-		}
+		productStockPartialReleaseFacade.partialRelease(request.toCommand(orderId));
 		return ResponseEntity.noContent().build();
 	}
 }

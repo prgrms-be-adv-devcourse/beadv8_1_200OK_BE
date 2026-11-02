@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -759,7 +760,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 같은_환불을_동시에_보내도_한_번만_돌아오고_나머지는_204나_처리_중_409다() throws Exception {
+	void 같은_환불을_동시에_보내도_한_번만_돌아오고_모두_204다() throws Exception {
 		// given
 		Long optionId = firstOptionId(save(onSale(option(10))));
 		Long orderId = ORDER_IDS.incrementAndGet();
@@ -786,9 +787,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		for (Future<MockHttpServletResponse> result : results) {
 			responses.add(result.get());
 		}
-		assertThat(responses).anyMatch(response -> response.getStatus() == 204);
-		assertThat(responses).filteredOn(response -> response.getStatus() != 204)
-			.allSatisfy(response -> assertProblem(response, ProductErrorCode.PARTIAL_RELEASE_IN_PROGRESS));
+		assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(204);
 		assertThat(availableStock(optionId)).isEqualTo(4);
 	}
 
@@ -892,38 +891,64 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		Long refundId = REFUND_IDS.incrementAndGet();
 		allocate(orderId, item(optionId, 5));
 		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
-		int requests = 3;
-		CountDownLatch holdsAllocation = new CountDownLatch(1);
-		CountDownLatch finish = new CountDownLatch(1);
-		List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+		Callable<MockHttpServletResponse> request =
+			() -> partialRelease(orderId, refundId, optionId, 6).andReturn().getResponse();
 
 		// when
-		try (ExecutorService executor = Executors.newFixedThreadPool(requests + 1)) {
-			// 0 차감은 수량을 바꾸지 않고 배정 행 락만 잡는다. 끝에 롤백해 아무것도 남기지 않는다
-			executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
-				allocationRepository.decreaseQuantity(allocationId, 0);
-				holdsAllocation.countDown();
-				await(finish);
-				status.setRollbackOnly();
-			}));
-			await(holdsAllocation);
-			for (int i = 0; i < requests; i++) {
-				results.add(executor.submit(
-					() -> partialRelease(orderId, refundId, optionId, 6).andReturn().getResponse()));
-			}
-			// 요청들이 모두 락 대기에 들어갈 시간을 준다. 그 전에 락이 풀리면 요청이 차례로 처리돼 맞물리지 않는다
-			Thread.sleep(500);
-			finish.countDown();
-		}
+		List<MockHttpServletResponse> responses =
+			sendWhileAllocationLocked(allocationId, List.of(request, request, request));
 
 		// then
-		List<MockHttpServletResponse> responses = new ArrayList<>();
-		for (Future<MockHttpServletResponse> result : results) {
-			responses.add(result.get());
-		}
 		assertThat(responses)
 			.allSatisfy(response -> assertProblem(response, ProductErrorCode.RELEASE_QUANTITY_EXCEEDED));
 		assertThat(availableStock(optionId)).isEqualTo(5);
+	}
+
+	@Test
+	void 같은_환불을_같은_내용으로_동시에_보내면_남은_수량이_모자라도_모두_204이고_한_번만_돌아온다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		// 다른 주문의 배정이 있어야 옵션 쪽 조건만으로는 초과 해제가 막히지 않는다
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
+		// 먼저 처리된 요청이 3을 풀면 남은 2로는 뒤 요청의 3을 차감할 수 없다
+		Callable<MockHttpServletResponse> request =
+			() -> partialRelease(orderId, refundId, optionId, 3).andReturn().getResponse();
+
+		// when
+		List<MockHttpServletResponse> responses = sendWhileAllocationLocked(allocationId, List.of(request, request));
+
+		// then
+		assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(204);
+		assertThat(availableStock(optionId)).isEqualTo(5);
+	}
+
+	@Test
+	void 같은_환불을_다른_내용으로_동시에_보내면_하나만_반영되고_나머지는_내용_불일치_409다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		Long refundId = REFUND_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5));
+		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
+		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
+		// 어느 쪽이 먼저 처리돼도 뒤 요청의 수량을 차감할 수 있어, 뒤 요청은 해제 이력의 유니크 키에서 막힌다
+		List<Integer> quantities = List.of(3, 2);
+
+		// when
+		List<MockHttpServletResponse> responses = sendWhileAllocationLocked(allocationId, quantities.stream()
+			.<Callable<MockHttpServletResponse>>map(
+				quantity -> () -> partialRelease(orderId, refundId, optionId, quantity).andReturn().getResponse())
+			.toList());
+
+		// then
+		int succeeded = responses.get(0).getStatus() == 204 ? 0 : 1;
+		assertThat(responses.get(succeeded).getStatus()).isEqualTo(204);
+		assertProblem(responses.get(1 - succeeded), ProductErrorCode.PARTIAL_RELEASE_MISMATCH);
+		assertThat(availableStock(optionId)).isEqualTo(2 + quantities.get(succeeded));
 	}
 
 	@ParameterizedTest
@@ -987,6 +1012,35 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 			Thread.currentThread().interrupt();
 			throw new IllegalStateException(e);
 		}
+	}
+
+	// 배정 행 락을 먼저 쥔 채로 요청을 보내, 모든 요청이 이력이 없다고 본 뒤 락 대기에서 맞물리게 한다
+	private List<MockHttpServletResponse> sendWhileAllocationLocked(Long allocationId,
+		List<Callable<MockHttpServletResponse>> requests) throws Exception {
+		CountDownLatch holdsAllocation = new CountDownLatch(1);
+		CountDownLatch finish = new CountDownLatch(1);
+		List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+		try (ExecutorService executor = Executors.newFixedThreadPool(requests.size() + 1)) {
+			// 0 차감은 수량을 바꾸지 않고 배정 행 락만 잡는다. 끝에 롤백해 아무것도 남기지 않는다
+			executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
+				allocationRepository.decreaseQuantity(allocationId, 0);
+				holdsAllocation.countDown();
+				await(finish);
+				status.setRollbackOnly();
+			}));
+			await(holdsAllocation);
+			for (Callable<MockHttpServletResponse> request : requests) {
+				results.add(executor.submit(request));
+			}
+			// 요청들이 모두 락 대기에 들어갈 시간을 준다. 그 전에 락이 풀리면 요청이 차례로 처리돼 맞물리지 않는다
+			Thread.sleep(500);
+			finish.countDown();
+		}
+		List<MockHttpServletResponse> responses = new ArrayList<>();
+		for (Future<MockHttpServletResponse> result : results) {
+			responses.add(result.get());
+		}
+		return responses;
 	}
 
 	private String item(Long optionId, int quantity) {
