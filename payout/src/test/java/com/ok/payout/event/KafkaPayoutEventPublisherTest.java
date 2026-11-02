@@ -81,7 +81,7 @@ class KafkaPayoutEventPublisherTest {
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(command))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("정산 지갑 이벤트 발행에 실패했습니다. payoutId=12");
-        // Kafka에서 멈추면 Spring 이벤트도 보내지 않아, 두 경로가 같은 정산에서 멈춘다
+        // Kafka에서 실패한 정산은 Spring 이벤트로도 보내지 않는다
         then(applicationEventPublisher).shouldHaveNoInteractions();
     }
 

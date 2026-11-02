@@ -49,8 +49,11 @@ class KafkaPayoutEventPublisher implements PayoutEventPublisher {
             throw publishFailed(command, e);
         }
 
-        // Kafka 저장 확인 뒤에 보낸다. Kafka에서 실패하면 예외로 여기까지 오지 않아, 두 경로가 같은 정산에서 멈춘다
-        // 지갑 리스너는 커밋 후에 받으므로(@ApplicationModuleListener) publishStep이 실패해 롤백되면 이 이벤트는 전달되지 않는다
+        // Kafka 저장 확인 뒤에 보낸다. 이 정산이 Kafka에서 실패하면 Spring 이벤트도 보내지 않는다
+        // 다만 여러 건 중 중간에서 실패하면 두 경로가 갈라진다 (옮기는 동안의 한계)
+        //   예) 100건 중 37번째 실패 → Kafka에는 1~36이 이미 저장됨(되돌릴 수 없음)
+        //       Spring 이벤트는 지갑 리스너가 커밋 후에 받으므로(@ApplicationModuleListener) publish 롤백과 함께 1~36 모두 전달되지 않음
+        //   어느 쪽이든 확정된 정산이 지갑에 안 가는 발행 누락이며, outbox(#309)에서 함께 해결한다
         applicationEventPublisher.publishEvent(new SellerPayoutCreatedEvent(
                 command.payoutId(), command.payeeId(), command.amount(), command.createdAt()));
     }
