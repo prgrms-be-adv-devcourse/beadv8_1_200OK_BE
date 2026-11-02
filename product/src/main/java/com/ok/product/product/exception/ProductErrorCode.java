@@ -27,8 +27,7 @@ public enum ProductErrorCode implements ErrorCode {
 	ALLOCATION_IN_PROGRESS(HttpStatus.CONFLICT, "Allocation in progress", "같은 주문의 재고 배정이 처리 중입니다. 잠시 후 다시 요청해주세요."),
 	ALLOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "Allocation not found", "주문에 해당 옵션의 재고 배정 기록이 없습니다."),
 	RELEASE_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Release quantity exceeded", "해제 가능한 수량보다 많이 해제할 수 없습니다."),
-	PARTIAL_RELEASE_MISMATCH(HttpStatus.CONFLICT, "Partial release mismatch", "같은 환불 ID로 다른 내용의 재고 해제를 요청했습니다."),
-	PARTIAL_RELEASE_IN_PROGRESS(HttpStatus.CONFLICT, "Partial release in progress", "같은 환불의 재고 해제가 처리 중입니다. 잠시 후 다시 요청해주세요.");
+	PARTIAL_RELEASE_MISMATCH(HttpStatus.CONFLICT, "Partial release mismatch", "같은 환불 ID로 다른 내용의 재고 해제를 요청했습니다.");
 
 	private final HttpStatus httpStatus;
 	private final String title;

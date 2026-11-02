@@ -19,28 +19,22 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ProductStockPartialReleaseFacade {
 
-	private static final String REFUND_ID_CONSTRAINT = "uk_product_stock_partial_release_refund_id";
-
 	private final ProductStockService productStockService;
 
 	/**
 	 * 환불 한 건만큼 주문의 옵션 배정 재고를 일부 되돌린다.
 	 * 실패했더라도 같은 환불 ID로 같은 내용이 이미 반영됐으면 성공으로 끝낸다.
 	 *
-	 * @throws RestApiException {@link ProductStockService#partialRelease}의 에러 코드에 더해,
-	 *                          같은 환불 ID가 유니크 키에 걸렸는데 이력이 아직 보이지 않으면 {@code PARTIAL_RELEASE_IN_PROGRESS}
+	 * @throws RestApiException {@link ProductStockService#partialRelease}의 에러 코드와 같다
 	 */
 	public void partialRelease(StockPartialReleaseCommand command) {
 		try {
 			productStockService.partialRelease(command);
 		} catch (DataIntegrityViolationException e) {
-			// 환불 ID가 아닌 제약 위반은 해제 이력을 만드는 우리 코드의 버그라 그대로 던져 500으로 드러낸다
-			if (!isRefundIdViolation(e)) {
-				throw e;
-			}
-			// 먼저 INSERT한 요청이 그 뒤 롤백돼 이력이 없으면 다시 요청하면 처리된다
+			// 어느 제약인지는 DB 오류 메시지로만 알 수 있어 보지 않고 이력으로 판단한다. 환불 ID 유니크 위반은 상대가 이력을
+			// 커밋한 뒤에만 나고(상대가 롤백하면 이쪽 INSERT가 성공한다) 이력은 지우지 않으니, 이력이 없으면 다른 제약 위반(버그)이라 그대로 던져 500으로 드러낸다
 			if (!productStockService.isPartiallyReleased(command)) {
-				throw new RestApiException(ProductErrorCode.PARTIAL_RELEASE_IN_PROGRESS);
+				throw e;
 			}
 			log.info("같은 환불의 동시 요청, 먼저 반영된 일부 해제와 같은 내용. refundId={}", command.refundId());
 		} catch (RestApiException e) {
@@ -51,10 +45,5 @@ public class ProductStockPartialReleaseFacade {
 			}
 			log.info("같은 환불의 동시 요청, 먼저 반영된 일부 해제와 같은 내용. refundId={}", command.refundId());
 		}
-	}
-
-	// 제약 이름은 DB 오류 메시지에만 담겨 있어 메시지로 구분한다 (OrderFacade와 같은 방식)
-	private boolean isRefundIdViolation(DataIntegrityViolationException e) {
-		return String.valueOf(e.getMostSpecificCause().getMessage()).contains(REFUND_ID_CONSTRAINT);
 	}
 }

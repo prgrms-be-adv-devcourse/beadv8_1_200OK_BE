@@ -50,7 +50,13 @@ public interface ProductStockAllocationRepository extends JpaRepository<ProductS
 	int release(@Param("id") Long id);
 
 	// 일부 해제 대상. (order_id, product_option_id) 유니크라 최대 1건
-	Optional<ProductStockAllocation> findByOrderIdAndProductOptionId(Long orderId, Long productOptionId);
+	// 엔티티가 아니라 id만 읽는다. 수량은 뒤의 조건부 UPDATE가 바꾸므로, 엔티티를 읽으면 1차 캐시에 낡은 수량이 남는다
+	@Query("""
+		select a.id from ProductStockAllocation a
+		where a.orderId = :orderId and a.productOptionId = :productOptionId
+		""")
+	Optional<Long> findIdByOrderIdAndProductOptionId(
+		@Param("orderId") Long orderId, @Param("productOptionId") Long productOptionId);
 
 	// ALLOCATED이고 남은 수량이 충분할 때만 줄인다. 0이면 해제 가능 수량 초과(이미 해제한 기록 포함)
 	// 0이 돼도 ALLOCATED로 둔다. allocate()가 RELEASED 기록이 있으면 이미 해제한 주문으로 보기 때문

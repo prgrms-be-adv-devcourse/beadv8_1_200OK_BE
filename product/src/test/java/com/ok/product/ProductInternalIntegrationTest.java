@@ -890,7 +890,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		Long orderId = ORDER_IDS.incrementAndGet();
 		Long refundId = REFUND_IDS.incrementAndGet();
 		allocate(orderId, item(optionId, 5));
-		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
+		Long allocationId = allocationRepository.findIdByOrderIdAndProductOptionId(orderId, optionId).orElseThrow();
 		Callable<MockHttpServletResponse> request =
 			() -> partialRelease(orderId, refundId, optionId, 6).andReturn().getResponse();
 
@@ -913,7 +913,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		allocate(orderId, item(optionId, 5));
 		// 다른 주문의 배정이 있어야 옵션 쪽 조건만으로는 초과 해제가 막히지 않는다
 		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
-		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
+		Long allocationId = allocationRepository.findIdByOrderIdAndProductOptionId(orderId, optionId).orElseThrow();
 		// 먼저 처리된 요청이 3을 풀면 남은 2로는 뒤 요청의 3을 차감할 수 없다
 		Callable<MockHttpServletResponse> request =
 			() -> partialRelease(orderId, refundId, optionId, 3).andReturn().getResponse();
@@ -934,7 +934,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		Long refundId = REFUND_IDS.incrementAndGet();
 		allocate(orderId, item(optionId, 5));
 		allocate(ORDER_IDS.incrementAndGet(), item(optionId, 3));
-		Long allocationId = allocationRepository.findByOrderIdAndProductOptionId(orderId, optionId).orElseThrow().getId();
+		Long allocationId = allocationRepository.findIdByOrderIdAndProductOptionId(orderId, optionId).orElseThrow();
 		// 어느 쪽이 먼저 처리돼도 뒤 요청의 수량을 차감할 수 있어, 뒤 요청은 해제 이력의 유니크 키에서 막힌다
 		List<Integer> quantities = List.of(3, 2);
 

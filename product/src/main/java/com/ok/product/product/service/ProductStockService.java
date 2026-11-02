@@ -94,6 +94,10 @@ public class ProductStockService {
 				throw new IllegalStateException(
 					"잠근 배정 기록을 해제하지 못했습니다. orderId=" + orderId + ", allocationId=" + allocation.getId());
 			}
+			// 일부 해제로 이미 다 되돌린 배정은 옵션에서 뺄 수량이 없다. 락을 잡고 읽은 수량이라 최신 값이다
+			if (allocation.getQuantity() == 0) {
+				continue;
+			}
 			if (productOptionRepository.release(allocation.getProductOptionId(), allocation.getQuantity()) == 0) {
 				throw new IllegalStateException(
 					"옵션 배정 수량이 배정 기록보다 적습니다. orderId=" + orderId + ", optionId=" + allocation.getProductOptionId());
@@ -116,13 +120,13 @@ public class ProductStockService {
 		if (matchesRecordedPartialRelease(command)) {
 			return;
 		}
-		ProductStockAllocation allocation = allocationRepository
-			.findByOrderIdAndProductOptionId(command.orderId(), command.productOptionId())
+		Long allocationId = allocationRepository
+			.findIdByOrderIdAndProductOptionId(command.orderId(), command.productOptionId())
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.ALLOCATION_NOT_FOUND));
 
 		// 이력 INSERT보다 차감을 먼저 한다. 같은 주문·옵션 요청은 배정 행 락에서 줄을 서고, 수량 초과로 롤백될 요청은 INSERT까지 가지 않는다.
 		// 먼저 INSERT하고 롤백하면 같은 환불 ID로 유니크 키를 기다리던 요청끼리 서로를 기다려 데드락이 난다
-		if (allocationRepository.decreaseQuantity(allocation.getId(), command.quantity()) == 0) {
+		if (allocationRepository.decreaseQuantity(allocationId, command.quantity()) == 0) {
 			throw new RestApiException(ProductErrorCode.RELEASE_QUANTITY_EXCEEDED);
 		}
 		// IDENTITY라 바로 INSERT된다. 같은 환불 ID 동시 요청 중 뒤에 온 쪽은 여기서 유니크 키에 막혀 차감까지 롤백된다
