@@ -4,7 +4,7 @@
 > 목적: 정산이 이벤트를 Kafka로 바꾸기 전에, 반대쪽 끝을 맡은 주문·지갑과 약속과 순서를 맞춘다.
 
 ## 1. 한 줄 요약
-정산은 지갑으로 보내는 정산금 이벤트 1개를 Kafka로 바꾼다. 지갑 리스너도 같은 날 바뀌어야 하고, 정산이 받는 이벤트 2개는 토픽 이름과 키를 먼저 맞춰 두자고 제안한다.
+정산은 지갑으로 보내는 정산금 이벤트를 Kafka로 보낸다. 주문·지갑이 옮기는 동안 끊기지 않도록, 정산이 보낼 때는 Kafka와 Spring 이벤트 두 곳에 보내고, 받을 때도 Spring 리스너와 Kafka 리스너를 함께 열어 둔다(11절). 토픽·키·메시지 모양은 주문·지갑과 합의했다(10절).
 
 ## 2. 배경 (회의에서 정한 것)
 - 조회는 HTTP(동기), 생성·수정·삭제는 메시지 브로커(비동기). **Spring 이벤트는 없앤다.**
@@ -27,18 +27,19 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph 이번[이번 이슈 후]
+    subgraph 이번[이번 이슈 후 - 옮기는 동안]
         P2[정산] -- "Kafka: payout.seller-payout-created" --> W2[지갑]
-        O2[주문] -. "Spring 이벤트 (제안만, 다음에 전환)" .-> P2
-        W2 -. "Spring 이벤트 (제안만, 다음에 전환)" .-> P2
+        P2 -. "Spring 이벤트도 함께 (지갑 전환 전까지)" .-> W2
+        O2[주문] -. "Spring 이벤트 (지금), Kafka (옮기면)" .-> P2
+        W2 -. "Spring 이벤트 (지금), Kafka (옮기면)" .-> P2
     end
 ```
 
 | 이벤트 | 보내는 쪽 | 받는 쪽 | 이번에 |
 |---|---|---|---|
-| `SellerPayoutCreatedEvent` | 정산 | 지갑 | **정산·지갑 둘 다 Kafka로 전환** |
-| `OrderProductConfirmedEvent` | 주문 | 정산 | 약속만 맞춤 |
-| `WalletPaymentCompletedEvent` | 지갑 | 주문, 정산 | 약속만 맞춤 |
+| `SellerPayoutCreatedEvent` | 정산 | 지갑 | **정산이 Kafka + Spring 이벤트 두 곳에 보냄.** 지갑은 언제든 Kafka 리스너로 바꾸면 됨 |
+| `OrderProductConfirmedEvent` | 주문 | 정산 | **정산이 Spring + Kafka 둘 다 받음(미리 열어 둠).** 주문은 언제든 Kafka로 옮기면 됨 |
+| `WalletPaymentCompletedEvent` | 지갑 | 주문, 정산 | **정산이 Spring + Kafka 둘 다 받음(미리 열어 둠).** 지갑은 언제든 Kafka로 옮기면 됨 |
 
 ## 4. 제안하는 메시지 약속
 
@@ -87,10 +88,11 @@ flowchart LR
 
 ## 5. 지갑 담당께
 
-**요청: `PayoutEventListener`를 Kafka 리스너로 바꾸고, 정산 PR과 같이 머지**
-- 한쪽만 머지되면 정산 배치는 "발행 완료"로 끝나는데 판매자 지갑 잔액은 그대로이고, 오류 로그도 남지 않는다.
-  - 예: 정산만 머지 → 판매자 10명 정산 확정 → 메시지는 토픽에 쌓이지만 지갑이 안 읽음
-  - 예: 지갑만 머지 → 정산은 Spring 이벤트로 보냄 → 지갑이 못 받음
+**요청: `PayoutEventListener`를 Kafka 리스너로 바꾸기 (시점은 지갑 일정대로)**
+- 정산이 Kafka와 Spring 이벤트 두 곳에 보내고 있어서(11절), 지갑은 언제 바꿔도 입금이 끊기지 않는다. 정산 PR과 같은 날 머지하지 않아도 된다.
+- 바꿀 때 Spring 리스너는 지우고 Kafka 리스너 하나만 둔다. 겹치는 순간이 있어도 `payoutId` 중복 방지가 한 번만 입금한다.
+- monolith `PayoutDepositIntegrationTest`(정산 → 지갑 입금 끝까지 확인)는 지금도 켜져 있다. 지갑이 바꾼 뒤에도 그대로 통과해야 한다.
+- 지갑이 바꾸면 알려 주세요. 정산이 Spring 발행을 지운다(`KafkaPayoutEventPublisher`의 TODO(#339)).
 - 지금 리스너의 값 검사(`payoutId`·`payeeId`·`amount` 없음, `amount` ≤ 0이면 입금하지 않고 로그만 남김)와 `payoutId` 중복 방지는 그대로 쓸 수 있다.
 
 **제안: 받는 DTO를 지갑 안에 두기**
@@ -99,7 +101,7 @@ flowchart LR
 
 **확인할 것**
 1. 토픽 `payout.seller-payout-created`, 키 `payoutId`, 4-1 JSON 약속이 괜찮은지
-2. 같이 머지할 수 있는 시점
+2. 리스너를 바꾸는 시점 (정산의 Spring 발행 삭제 시점)
 3. `WalletPaymentCompletedEvent`를 Kafka로 보낼 계획과 시점 (정산·주문이 받음)
 
 ## 6. 주문 담당께
@@ -112,7 +114,7 @@ flowchart LR
 
 **확인할 것**
 1. `OrderProductConfirmedEvent`의 토픽 `order.order-product-confirmed`, 키 `orderItemId`가 괜찮은지
-2. Kafka로 보내기 시작할 계획과 시점. 그때 정산 리스너도 같이 바꾼다.
+2. Kafka로 보내기 시작할 계획과 시점. 정산은 이미 Kafka로도 받고 있어서(11절) 주문은 언제 옮겨도 된다. 옮긴 뒤 알려 주면 정산이 Spring 리스너를 지운다.
 3. `WalletPaymentCompletedEvent`는 주문과 정산이 모두 받는다. 아래 7-1 참고
 
 ## 7. 셋이 같이 알아야 할 점 (Spring 이벤트에서 Kafka로 바뀌면서 달라지는 것)
@@ -142,7 +144,7 @@ flowchart LR
 
 ## 9. 이번에 하지 않는 것
 - outbox, 재시도(지수 백오프), DLT·Slack 알림: 다음 단계 (정산 쪽 항목은 #309에 모아 둠)
-- 정산이 받는 리스너 2개의 Kafka 전환: 주문·지갑이 Kafka로 보내기 시작할 때
+- 정산의 Spring 발행·Spring 리스너 삭제: 지갑·주문이 Kafka로 옮긴 뒤 (TODO #339, #343)
 - layered → MSA 구조 변경: 별도 이슈
 
 ## 10. 정산이 제안하는 결론 → 합의됨 (2026-11-02)
@@ -153,10 +155,22 @@ flowchart LR
 - [x] 이벤트 3개의 토픽·키는 4번 표대로, 정산이 보내는 JSON은 4-1대로, 정산이 받는 2개는 4-2처럼 지금 필드 이름을 유지하는 게 어떨까요?
 - [x] 보내는 DTO와 받는 DTO는 각 모듈의 `event` 패키지에 두는 게 어떨까요? (컨벤션 2.1)
 - [x] 컨슈머 그룹은 모듈 이름(`payout`, `order`, `wallet`)으로 나누는 게 어떨까요? (7-1)
-- [x] 정산 PR과 지갑 PR은 서로 링크해 같은 날 머지하는 게 어떨까요?
+- [x] 정산 PR과 지갑 PR은 서로 링크해 같은 날 머지하는 게 어떨까요? → 구현하며 이중 발행으로 바꿔 같은 날 머지할 필요가 없어짐(11절)
 - [x] 주문·지갑이 Kafka로 보내기 시작하는 시점은 각 팀 일정에 맞추고, 정해지면 정산에 알려 주시는 게 어떨까요? 그때 정산 리스너도 같이 바꾸겠습니다.
 - [x] 커밋 전 발송(7-2)과 재처리 방식(7-3)은 outbox·재시도 단계까지 지금 상태로 두고, 그 단계에서 함께 푸는 게 어떨까요?
 
 ## 참고: 팀 문서와 어긋나는 점
-- `docs/CONVENTION.md` 2.1과 `ArchitectureTest`는 아직 공통 클래스(`common.event`)와 Spring 이벤트 기준이다. 회의 결정에 맞춰 #340에서 고친다.
+- `docs/CONVENTION.md` 2.1과 `ArchitectureTest`는 아직 공통 클래스(`common.event`)와 Spring 이벤트 기준이다. 회의 결정에 맞춰 #340(PR #341)에서 고쳤다. `ArchitectureTest`는 `common.event`를 지울 때 함께 고친다(#343).
 - 지금 검사 규칙으로도 각 모듈 `event` 패키지에 자기 DTO를 두는 것은 막히지 않아서, #339는 #340을 기다리지 않고 진행할 수 있다.
+
+## 11. 합의 뒤 구현에서 바뀐 점 (2026-11-02)
+PR #361 리뷰에서 "지갑이 아직 Spring 이벤트로 받아, 정산 PR만 머지하면 입금이 끊긴다(`structure.md`: 한쪽만 먼저 옮기지 않는다)"는 지적을 받았다. 지갑 작업은 나중이라, 정산이 옮기는 동안 양쪽을 모두 열어 두기로 했다.
+
+| 바뀐 것 | 내용 |
+|---|---|
+| 보내는 쪽 이중 발행 | 정산은 Kafka 저장 확인 뒤 같은 정산을 Spring 이벤트로도 보낸다. 지갑이 Kafka로 바꾸면 정산이 Spring 발행을 지운다 |
+| 받는 쪽 이중 수신 | 구매확정·결제 완료를 Spring 리스너와 Kafka 리스너(그룹 `payout`) 둘 다로 받는다. 같은 메시지가 두 길로 와도 `orderItemId`·`orderId`로 한 번만 저장한다 |
+| 받는 토픽도 정산이 선언 | `order.order-product-confirmed`, `wallet.wallet-payment-completed`를 정산도 `NewTopic`으로 선언한다(있으면 그대로). 보내는 쪽이 아직 없어도 리스너 경고가 나지 않게 |
+| 배송비 방어 (#309) | 같은 묶음 배송비는 "이미 있으면 넘어가기" 한 문장 저장으로 바꿔, 동시에 처리돼도 대금·수수료 후보가 함께 지워지지 않는다 |
+
+주문·지갑은 각자 일정대로 Kafka로 옮기면 되고, 옮긴 뒤 알려 주면 정산이 Spring 쪽(발행·리스너)을 지운다.
