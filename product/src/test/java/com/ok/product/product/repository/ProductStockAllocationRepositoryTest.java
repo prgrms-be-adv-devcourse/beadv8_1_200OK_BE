@@ -3,6 +3,8 @@ package com.ok.product.product.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -52,7 +54,7 @@ class ProductStockAllocationRepositoryTest {
 		repository.save(ProductStockAllocation.allocate(100L, 11L, 1));
 		repository.saveAndFlush(ProductStockAllocation.allocate(200L, 10L, 1));
 
-		assertThat(repository.findByOrderIdAndStatusOrderByProductOptionIdAsc(100L, StockAllocationStatus.ALLOCATED))
+		assertThat(repository.findAllocatedByIdInForUpdate(repository.findAllocatedIdsByOrderId(100L)))
 			.extracting(ProductStockAllocation::getProductOptionId)
 			.containsExactly(11L, 12L);
 	}
@@ -66,7 +68,7 @@ class ProductStockAllocationRepositoryTest {
 
 		entityManager.clear();
 		assertThat(repository.findById(id).orElseThrow().getStatus()).isEqualTo(StockAllocationStatus.RELEASED);
-		assertThat(repository.findByOrderIdAndStatusOrderByProductOptionIdAsc(100L, StockAllocationStatus.ALLOCATED))
-			.isEmpty();
+		assertThat(repository.findAllocatedIdsByOrderId(100L)).isEmpty();
+		assertThat(repository.findAllocatedByIdInForUpdate(List.of(id))).isEmpty();
 	}
 }

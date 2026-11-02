@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 
 import com.ok.product.product.controller.dto.ProductOptionInfoResponse;
 import com.ok.product.product.controller.dto.StockAllocationRequest;
+import com.ok.product.product.controller.dto.StockPartialReleaseRequest;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -68,4 +69,32 @@ interface ProductInternalControllerSpec {
 		""")
 	@ApiResponse(responseCode = "204", description = "해제 성공 또는 해제할 배정 없음")
 	ResponseEntity<Void> releaseStock(@Parameter(description = "주문 ID", example = "10") Long orderId);
+
+	@Operation(summary = "재고 일부 해제", description = """
+		환불 1단계(출고 전 취소)에서 주문의 한 옵션 배정 재고를 환불 수량만큼 되돌립니다. 출고 후 반품에는 쓰지 않습니다.
+		출고해도 배정 수량이 그대로라, 출고 후에 풀면 실물 없이 판매 가능 수량이 늘어나기 때문입니다. 상품 모듈은 출고 여부를 모르므로 이 전제는 환불 흐름이 지킵니다.
+		같은 refundId로 다시 보내면 같은 내용일 때 204, 주문·옵션·수량 중 하나라도 다르면 409(partial-release-mismatch)를 응답합니다.
+		수량이 0이 돼도 배정 기록은 남고, 이후 주문 전체 해제(release)는 남은 수량만 되돌립니다.
+		409는 type으로 구분합니다: 해제 가능 수량 초과 또는 이미 전체 해제한 주문은 release-quantity-exceeded, 같은 refundId인데 내용이 다르면 partial-release-mismatch,
+		같은 refundId 요청이 동시에 겹치면 partial-release-in-progress(실패가 아니므로 다시 요청하면 됩니다).
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "204", description = "해제 성공 또는 같은 환불로 이미 해제함"),
+		@ApiResponse(
+			responseCode = "404", description = "주문에 그 옵션의 배정 기록 없음(allocation-not-found)",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "409", description = "해제 가능 수량 초과(release-quantity-exceeded), 같은 환불 다른 내용(partial-release-mismatch), 같은 환불 동시 요청(partial-release-in-progress)",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "422", description = "환불 ID·옵션 ID·수량 없음, 수량 1 미만",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<Void> partialReleaseStock(
+		@Parameter(description = "주문 ID", example = "10") Long orderId,
+		@Valid StockPartialReleaseRequest request
+	);
 }
