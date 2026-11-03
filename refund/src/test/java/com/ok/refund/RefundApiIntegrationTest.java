@@ -335,7 +335,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 배송_건이_아직_없으면_409이고_요청됨으로_남는다() throws Exception {
+    void 배송_건이_없으면_잠금_없이_돈을_돌려주고_완료한다() throws Exception {
         // given
         Long refundId = requestedId(ORDER_ITEM_ID, 1);
         deliveryClient.clear();
@@ -344,8 +344,16 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         ResultActions sut = decide(refundId, SELLER_ID, "APPROVE", null);
 
         // then
-        sut.andExpect(status().isConflict()).andExpect(jsonPath("$.type", endsWith("/refund/shipment-not-ready")));
-        assertThat(refundRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.refundAmount", is(10000)));
+        assertSoftly(softly -> {
+            softly.assertThat(walletClient.totalAmount()).isEqualTo(10_000L);
+            softly.assertThat(orderClient.applied()).hasSize(1);
+            softly.assertThat(productClient.released()).hasSize(1);
+            softly.assertThat(deliveryClient.reservedRefundIds()).isEmpty();
+            softly.assertThat(deliveryClient.confirmedRefundIds()).isEmpty();
+        });
     }
 
     @Test

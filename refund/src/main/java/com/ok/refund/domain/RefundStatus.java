@@ -4,8 +4,8 @@ package com.ok.refund.domain;
  * 환불 요청 상태.
  *
  * <p>{@code REQUESTED → REJECTED | WITHDRAWN | PROCESSING}, {@code PROCESSING → NOT_APPROVABLE | COMPLETED}.
- * 처리 중에서 요청됨으로 돌아가는 길은 없다. 배송 건이 없으면 처음부터 처리 중으로 바꾸지 않기 때문이다
- * (되돌리면 그 요청을 처리 중으로 세어 배송비를 받은 다른 요청과 어긋나 배송비가 두 번 나간다).
+ * 처리 중에서 요청됨으로 돌아가는 길은 없다. 되돌리면 그 요청을 처리 중으로 세어 배송비를 받은 다른 요청과 어긋나
+ * 배송비가 두 번 나간다. 배송 건이 없으면 잠금 없이 끝까지 진행하므로 되돌릴 일이 생기지 않는다.
  */
 public enum RefundStatus {
 

@@ -167,16 +167,25 @@ class RefundFacadeTest {
     }
 
     @Test
-    void 배송_건이_아직_없으면_처리_중으로_바꾸지_않고_409() {
-        // given
+    void 배송_건이_없으면_잠금과_잠금_해제_없이_지갑_주문_상품을_거쳐_완료한다() {
+        // given: 송장을 등록할 배송 건이 없어 잠글 것이 없다
         given(refundService.getForDecision(REFUND_ID, SELLER_ID)).willReturn(requestedResult());
         given(deliveryClient.hasShipment(ORDER_ITEM_ID)).willReturn(false);
+        given(orderClient.getOrderItem(ORDER_ID, ORDER_ITEM_ID)).willReturn(socks());
+        given(refundService.startApproval(REFUND_ID, SELLER_ID, socks())).willReturn(processingResult());
 
-        // when & then
-        assertThatThrownBy(() -> sut.decide(approve()))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.SHIPMENT_NOT_READY));
-        then(refundService).should(never()).startApproval(any(), any(), any());
+        // when
+        sut.decide(approve());
+
+        // then
+        InOrder order = inOrder(refundService, walletClient, orderClient, productClient);
+        order.verify(refundService).startApproval(REFUND_ID, SELLER_ID, socks());
+        order.verify(walletClient).refund(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 10_000L);
+        order.verify(orderClient).applyRefund(REFUND_ID, ORDER_ITEM_ID, 1, 0L);
+        order.verify(productClient).releaseStock(REFUND_ID, ORDER_ID, PRODUCT_OPTION_ID, 1);
+        order.verify(refundService).complete(REFUND_ID);
+        then(deliveryClient).should(never()).reserveCancel(anyLong(), anyLong(), anyInt());
+        then(deliveryClient).should(never()).confirmCancel(any());
     }
 
     @Test

@@ -2,7 +2,6 @@ package com.ok.refund.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.RefundFailedStep;
-import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.service.dto.RefundDecision;
 import com.ok.refund.service.dto.RefundDecisionCommand;
 import com.ok.refund.service.dto.RefundRequestCommand;
@@ -60,27 +59,30 @@ public class RefundFacade {
      * 판매자 승인을 처리한다(설계 4.4).
      * 0. 배송 건 확인 → 주문 조회 → 1~3. 줄 세우기·처리 중·금액 저장 → 4. 배송 잠금 → 5. 지갑·주문·상품·잠금 해제 → 6. 완료.
      * 배송 잠금이 맨 처음이고 잠금 해제가 맨 마지막이다. 잠긴 동안에는 출고·구매확정·정산이 일어나지 않아 중간 단계가 안전하다.
+     * 배송 건이 없으면 잠금과 잠금 해제를 건너뛰고 나머지 단계만 한다.
      *
-     * @throws RestApiException 배송 건이 아직 없으면 {@code SHIPMENT_NOT_READY}(상태 그대로),
-     *                          다른 모듈 호출 실패면 {@code *_API_FAILED}(처리 중으로 남고 실패 단계 기록),
+     * @throws RestApiException 다른 모듈 호출 실패면 {@code *_API_FAILED}(처리 중으로 남고 실패 단계 기록),
      *                          그 밖은 {@link RefundService#getForDecision}, {@link RefundService#startApproval}을 따른다
      */
     private RefundResult approve(Long refundId, Long sellerId) {
         RefundResult requested = refundService.getForDecision(refundId, sellerId);
 
-        // "처리 중"으로 바꾸기 전에 확인한다. 바꾼 뒤 "배송 건 없음"으로 되돌리면, 그 요청을 처리 중으로 세어
-        // 배송비를 받은 같은 묶음의 다른 요청과 어긋나 배송비가 두 번 나갈 수 있다(설계 12.6)
-        if (!deliveryClient.hasShipment(requested.orderItemId())) {
-            throw new RestApiException(RefundErrorCode.SHIPMENT_NOT_READY);
-        }
+        // "처리 중"으로 바꾸기 전에 확인한다. 배송 잠금은 배송 건이 없으면 404라, 처리 중으로 바꾼 뒤 알게 되면 멈춘 채 남는다.
+        // 배송 건이 없으면 송장을 등록할 곳이 없어 처리 중에 출고·구매확정·정산이 끼어들 수 없으므로 잠그지 않고 진행한다.
+        // 송장 없이 상자를 이미 보냈는지는 시스템이 알 수 없고, 그 상태로 승인한 것은 판매자 책임이다.
+        // TODO(논의 필요): 배송 건이 나중에 생기면(결제 완료 이벤트 재처리) 결제 때 수량으로 만들어져 취소한 상품까지 나갈 수 있고,
+        //                  확인 뒤 처리 중에 생기면 잠금 없이 송장을 등록할 수 있다. 배송 건을 만들 때 확정된 취소 수량을 빼도록 배송팀과 협의 필요
+        boolean hasShipment = deliveryClient.hasShipment(requested.orderItemId());
         // 묶음 수량과 배송비는 결제 뒤 바뀌지 않으므로 줄 서기 전에 읽어도 된다. 줄 선 채로 응답을 기다리면 같은 묶음이 모두 멈춘다
         RefundableOrderItem orderItem = orderClient.getOrderItem(requested.orderId(), requested.orderItemId());
         RefundResult processing = refundService.startApproval(refundId, sellerId, orderItem);
 
-        ShipmentReserveResult reserved = runStep(refundId, RefundFailedStep.SHIPMENT_RESERVE,
-                () -> deliveryClient.reserveCancel(refundId, processing.orderItemId(), processing.quantity()));
-        if (reserved == ShipmentReserveResult.REJECTED) {
-            return saveFinalStatus(refundId, "승인 불가", () -> refundService.markNotApprovable(refundId));
+        if (hasShipment) {
+            ShipmentReserveResult reserved = runStep(refundId, RefundFailedStep.SHIPMENT_RESERVE,
+                    () -> deliveryClient.reserveCancel(refundId, processing.orderItemId(), processing.quantity()));
+            if (reserved == ShipmentReserveResult.REJECTED) {
+                return saveFinalStatus(refundId, "승인 불가", () -> refundService.markNotApprovable(refundId));
+            }
         }
 
         // 다시 처리할 때도 같은 금액을 보내야 지갑의 환불ID 중복 확인과 맞으므로, 승인 때 저장한 금액을 그대로 보낸다.
@@ -101,10 +103,13 @@ public class RefundFacade {
             productClient.releaseStock(refundId, processing.orderId(), processing.productOptionId(), processing.quantity());
             return null;
         });
-        runStep(refundId, RefundFailedStep.SHIPMENT_CONFIRM, () -> {
-            deliveryClient.confirmCancel(refundId);
-            return null;
-        });
+        // 잠그지 않았으면 풀 것도 없다
+        if (hasShipment) {
+            runStep(refundId, RefundFailedStep.SHIPMENT_CONFIRM, () -> {
+                deliveryClient.confirmCancel(refundId);
+                return null;
+            });
+        }
         return saveFinalStatus(refundId, "완료", () -> refundService.complete(refundId));
     }
 

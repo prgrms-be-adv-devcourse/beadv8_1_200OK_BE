@@ -23,9 +23,6 @@ public enum RefundErrorCode implements ErrorCode {
     ORDER_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Order item not found", "주문 상품을 찾을 수 없습니다."),
     ORDER_ITEM_NOT_CANCELLABLE(HttpStatus.CONFLICT, "Order item not cancellable", "출고 전 상품만 취소할 수 있습니다."),
 
-    // 배송
-    SHIPMENT_NOT_READY(HttpStatus.CONFLICT, "Shipment not ready", "배송 준비가 아직 끝나지 않았습니다. 잠시 후 다시 시도해 주세요."),
-
     // 다른 모듈 호출 실패
     ORDER_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Order API failed", "주문 정보를 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."),
     DELIVERY_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Delivery API failed", "배송 정보를 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."),

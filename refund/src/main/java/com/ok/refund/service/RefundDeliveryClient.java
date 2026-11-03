@@ -8,7 +8,7 @@ import com.ok.refund.service.dto.ShipmentReserveResult;
 public interface RefundDeliveryClient {
 
     /**
-     * 주문 상품의 배송 건이 있는지 확인한다. 승인할 때 "처리 중"으로 바꾸기 전에 부른다.
+     * 주문 상품의 배송 건이 있는지 확인한다. 승인할 때 "처리 중"으로 바꾸기 전에 부르고, 없으면 잠금·잠금 해제를 건너뛴다.
      * 배송 건은 한 번 생기면 사라지지 않으므로, 여기서 있다고 확인하면 뒤의 배송 잠금에서 "배송 건 없음"이 나지 않는다.
      *
      * @throws com.ok.common.exception.RestApiException 호출 실패면 {@code DELIVERY_API_FAILED}
