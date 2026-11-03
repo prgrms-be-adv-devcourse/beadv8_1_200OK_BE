@@ -1,6 +1,7 @@
 package com.ok.refund;
 
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -93,11 +94,22 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.requestedAt", notNullValue()));
         Refund saved = onlyRefund();
         assertThat(saved).isNotNull();
+        // 응답은 저장한 객체로 만들어 DB 값과 다를 수 있으므로, 다시 읽은 행의 모든 칸을 따로 확인한다
         assertSoftly(softly -> {
+            softly.assertThat(saved.getOrderId()).isEqualTo(ORDER_ID);
+            softly.assertThat(saved.getOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+            softly.assertThat(saved.getQuantity()).isEqualTo(2);
             softly.assertThat(saved.getBuyerId()).isEqualTo(BUYER_ID);
             softly.assertThat(saved.getSellerId()).isEqualTo(SOCKS_SELLER_ID);
             softly.assertThat(saved.getProductOptionId()).isEqualTo(55L);
+            softly.assertThat(saved.getProductName()).isEqualTo("양말");
+            softly.assertThat(saved.getOptionName()).isEqualTo("흰색");
+            softly.assertThat(saved.getUnitPrice()).isEqualTo(10_000L);
+            softly.assertThat(saved.getItemAmount()).isEqualTo(20_000L);
+            softly.assertThat(saved.getCancelReason()).isNull();
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.REQUESTED);
             softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+            softly.assertThat(saved.getCreatedAt()).isNotNull();
         });
     }
 
@@ -121,6 +133,14 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         sut.andExpect(status().isCreated())
                 .andExpect(jsonPath("$.cancelReason", nullValue()));
         assertThat(onlyRefund().getCancelReason()).isNull();
+    }
+
+    @Test
+    void 취소_사유는_255자까지_저장한다() throws Exception {
+        // when & then: DB 칸(VARCHAR(255))과 검증 길이가 같아야 경계 값이 DB에서 잘리거나 실패하지 않는다
+        requestWithReason("\"" + "가".repeat(255) + "\"")
+                .andExpect(status().isCreated());
+        assertThat(onlyRefund().getCancelReason()).hasSize(255);
     }
 
     @Test
@@ -187,6 +207,18 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 주문_호출이_실패하면_503이고_저장하지_않는다() throws Exception {
+        // given
+        orderClient.fail();
+
+        // when & then
+        request(SOCKS_ORDER_ITEM_ID, 1)
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type", endsWith("/refund/order-api-failed")));
+        assertThat(refundRepository.count()).isZero();
+    }
+
+    @Test
     void 출고된_상품이면_409() throws Exception {
         // given
         orderClient.put(socks("SHIPPING"));
@@ -232,7 +264,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // then
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements", is(2)))
+                .andExpect(jsonPath("$.page", is(0)))
                 .andExpect(jsonPath("$.size", is(25)))
+                .andExpect(jsonPath("$.totalPages", is(1)))
                 .andExpect(jsonPath("$.content[0].orderItemId", is(102)))
                 .andExpect(jsonPath("$.content[1].orderItemId", is(101)));
     }
@@ -277,6 +311,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].status", is("REQUESTED")));
     }
 
+    // TODO(#409): 지금은 상태가 REQUESTED 하나뿐이라 거르지 않아도 결과가 같다. 거절·철회가 생기면 다른 상태 행을 섞어 실제로 걸러지는지 본다
     @Test
     void 판매자_목록을_상태로_거를_수_있다() throws Exception {
         // given

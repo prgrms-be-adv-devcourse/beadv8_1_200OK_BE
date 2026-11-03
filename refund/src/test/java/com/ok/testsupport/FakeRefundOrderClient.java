@@ -21,17 +21,27 @@ import java.util.concurrent.ConcurrentHashMap;
 public class FakeRefundOrderClient implements RefundOrderClient {
 
     private final Map<Long, RefundableOrderItem> items = new ConcurrentHashMap<>();
+    private volatile boolean failing;
 
     public void put(RefundableOrderItem item) {
         items.put(item.orderItemId(), item);
     }
 
+    /** 실제 클라이언트가 주문 서버 꺼짐·타임아웃·5xx를 바꾸는 것처럼, 이후 호출이 {@code ORDER_API_FAILED}를 던지게 한다 */
+    public void fail() {
+        failing = true;
+    }
+
     public void clear() {
         items.clear();
+        failing = false;
     }
 
     @Override
     public RefundableOrderItem getOrderItem(Long orderId, Long orderItemId) {
+        if (failing) {
+            throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        }
         // 실제 주문 API도 주문 ID와 주문 상품 ID가 맞지 않으면 404를 준다고 가정했다
         RefundableOrderItem item = items.get(orderItemId);
         if (item == null || !item.orderId().equals(orderId)) {

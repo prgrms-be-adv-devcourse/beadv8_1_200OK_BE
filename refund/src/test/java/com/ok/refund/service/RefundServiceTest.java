@@ -5,6 +5,7 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundRequestCommand;
+import com.ok.refund.service.dto.RefundResult;
 import com.ok.refund.service.dto.RefundableOrderItem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -99,10 +100,15 @@ class RefundServiceTest {
         given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
-        sut.request(command(3), socks("PREPARING", 3));
+        RefundResult result = sut.request(command(3), socks("PREPARING", 3));
 
         // then
-        then(refundRepository).should().saveAndFlush(any(Refund.class));
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.quantity()).isEqualTo(3);
+            softly.assertThat(result.itemAmount()).isEqualTo(30_000L);
+            softly.assertThat(result.status()).isEqualTo("REQUESTED");
+        });
     }
 
     @Test
