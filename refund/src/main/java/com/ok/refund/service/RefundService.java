@@ -2,6 +2,7 @@ package com.ok.refund.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundRequestCommand;
@@ -9,6 +10,10 @@ import com.ok.refund.service.dto.RefundResult;
 import com.ok.refund.service.dto.RefundableOrderItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +27,10 @@ public class RefundService {
 
     // 마이그레이션의 제약 이름과 같아야 한다. 이 이름으로 "진행 중 요청 중복"과 다른 무결성 오류를 구분한다
     private static final String ACTIVE_ORDER_ITEM_UNIQUE_CONSTRAINT = "uk_refund_active_order_item_id";
+    // 배송 목록과 같은 페이지 크기. 클라이언트가 바꿀 수 없다
+    private static final int PAGE_SIZE = 25;
+    // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
+    private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
     private final RefundRepository refundRepository;
 
@@ -53,6 +62,34 @@ public class RefundService {
                 orderItem.sellerId(), orderItem.productOptionId(), orderItem.productName(), orderItem.optionName(),
                 orderItem.unitPrice(), command.cancelReason());
         return RefundResult.from(saveDetectingActiveRequest(refund));
+    }
+
+    /**
+     * 구매자 본인의 환불 요청 목록을 최신순으로 25건씩 조회한다.
+     *
+     * @param page 0부터 시작하는 페이지 번호
+     */
+    public Page<RefundResult> getBuyerRefunds(Long buyerId, int page) {
+        return refundRepository.findAllByBuyerId(buyerId, pageOf(page)).map(RefundResult::from);
+    }
+
+    /**
+     * 판매자에게 온 환불 요청 목록을 최신순으로 25건씩 조회한다.
+     * 상태는 컨트롤러가 도메인 enum을 쓰지 않으려고 이름으로 받는다. 허용 값은 요청 DTO가 먼저 거른다.
+     *
+     * @param status 상태 이름. {@code null}이면 전체
+     * @param page   0부터 시작하는 페이지 번호
+     */
+    public Page<RefundResult> getSellerRefunds(Long sellerId, String status, int page) {
+        if (status == null) {
+            return refundRepository.findAllBySellerId(sellerId, pageOf(page)).map(RefundResult::from);
+        }
+        return refundRepository.findAllBySellerIdAndStatus(sellerId, RefundStatus.valueOf(status), pageOf(page))
+                .map(RefundResult::from);
+    }
+
+    private static Pageable pageOf(int page) {
+        return PageRequest.of(page, PAGE_SIZE, LATEST_FIRST);
     }
 
     // saveAndFlush로 INSERT를 바로 보내야 UNIQUE 위반이 이 메서드 안에서 나서 에러 코드로 바꿀 수 있다.
