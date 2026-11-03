@@ -3,17 +3,21 @@ package com.ok.product.product.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductStockAllocation;
+import com.ok.product.product.domain.ProductStockPartialRelease;
 import com.ok.product.product.domain.StockAllocationStatus;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductStockAllocationRepository;
+import com.ok.product.product.repository.ProductStockPartialReleaseRepository;
 import com.ok.product.product.service.dto.StockChange;
+import com.ok.product.product.service.dto.StockPartialReleaseCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -29,6 +33,7 @@ public class ProductStockService {
 
 	private final ProductOptionRepository productOptionRepository;
 	private final ProductStockAllocationRepository allocationRepository;
+	private final ProductStockPartialReleaseRepository partialReleaseRepository;
 
 	/**
 	 * 주문의 옵션별 수량만큼 재고를 배정한다.
@@ -79,13 +84,78 @@ public class ProductStockService {
 	 */
 	@Transactional
 	public void release(Long orderId) {
-		List<ProductStockAllocation> allocations = allocationRepository
-			.findByOrderIdAndStatusOrderByProductOptionIdAsc(orderId, StockAllocationStatus.ALLOCATED);
-		for (ProductStockAllocation allocation : allocations) {
-			// 동시에 해제 요청이 와도 기록 상태를 바꾼 한쪽만 재고를 되돌린다
-			if (allocationRepository.release(allocation.getId()) == 1) {
-				productOptionRepository.release(allocation.getProductOptionId(), allocation.getQuantity());
+		List<Long> allocationIds = allocationRepository.findAllocatedIdsByOrderId(orderId);
+		if (allocationIds.isEmpty()) {
+			return;
+		}
+		for (ProductStockAllocation allocation : allocationRepository.findAllocatedByIdInForUpdate(allocationIds)) {
+			// 락을 잡은 뒤 ALLOCATED로 거른 행이라 0이면 불변식 위반이다. 동시 해제는 잠금 조회에서 이미 걸러진다
+			if (allocationRepository.release(allocation.getId()) == 0) {
+				throw new IllegalStateException(
+					"잠근 배정 기록을 해제하지 못했습니다. orderId=" + orderId + ", allocationId=" + allocation.getId());
+			}
+			// 일부 해제로 이미 다 되돌린 배정은 옵션에서 뺄 수량이 없다. 락을 잡고 읽은 수량이라 최신 값이다
+			if (allocation.getQuantity() == 0) {
+				continue;
+			}
+			if (productOptionRepository.release(allocation.getProductOptionId(), allocation.getQuantity()) == 0) {
+				throw new IllegalStateException(
+					"옵션 배정 수량이 배정 기록보다 적습니다. orderId=" + orderId + ", optionId=" + allocation.getProductOptionId());
 			}
 		}
+	}
+
+	/**
+	 * 환불 한 건만큼 주문의 옵션 배정 재고를 일부 되돌린다.
+	 * 출고 전 취소 전용이다. 같은 환불 ID로 같은 내용을 다시 보내면 아무것도 하지 않는다.
+	 * 같은 환불 ID 요청이 동시에 겹치면 뒤에 온 쪽은 수량 초과나 유니크 키 위반으로 롤백된다.
+	 * 이 경우의 재확인은 {@link ProductStockPartialReleaseFacade}가 한다.
+	 *
+	 * @throws RestApiException 같은 환불 ID로 내용이 다르면 {@code PARTIAL_RELEASE_MISMATCH},
+	 *                          주문에 그 옵션의 배정 기록이 없으면 {@code ALLOCATION_NOT_FOUND},
+	 *                          해제 가능 수량보다 많거나 이미 전체 해제한 주문이면 {@code RELEASE_QUANTITY_EXCEEDED}
+	 */
+	@Transactional
+	public void partialRelease(StockPartialReleaseCommand command) {
+		if (matchesRecordedPartialRelease(command)) {
+			return;
+		}
+		Long allocationId = allocationRepository
+			.findIdByOrderIdAndProductOptionId(command.orderId(), command.productOptionId())
+			.orElseThrow(() -> new RestApiException(ProductErrorCode.ALLOCATION_NOT_FOUND));
+
+		// 이력 INSERT보다 차감을 먼저 한다. 같은 주문·옵션 요청은 배정 행 락에서 줄을 서고, 수량 초과로 롤백될 요청은 INSERT까지 가지 않는다.
+		// 먼저 INSERT하고 롤백하면 같은 환불 ID로 유니크 키를 기다리던 요청끼리 서로를 기다려 데드락이 난다
+		if (allocationRepository.decreaseQuantity(allocationId, command.quantity()) == 0) {
+			throw new RestApiException(ProductErrorCode.RELEASE_QUANTITY_EXCEEDED);
+		}
+		// IDENTITY라 바로 INSERT된다. 같은 환불 ID 동시 요청 중 뒤에 온 쪽은 여기서 유니크 키에 막혀 차감까지 롤백된다
+		partialReleaseRepository.save(ProductStockPartialRelease.of(
+			command.refundId(), command.orderId(), command.productOptionId(), command.quantity()));
+		if (productOptionRepository.release(command.productOptionId(), command.quantity()) == 0) {
+			throw new IllegalStateException(
+				"옵션 배정 수량이 배정 기록보다 적습니다. orderId=" + command.orderId() + ", optionId=" + command.productOptionId());
+		}
+	}
+
+	/**
+	 * 같은 환불 ID로 같은 내용의 해제가 이미 반영됐는지 확인한다.
+	 *
+	 * @return 같은 내용의 이력이 있으면 {@code true}, 이력이 없으면 {@code false}
+	 * @throws RestApiException 같은 환불 ID 이력이 있는데 내용이 다르면 {@code PARTIAL_RELEASE_MISMATCH}
+	 */
+	public boolean isPartiallyReleased(StockPartialReleaseCommand command) {
+		return matchesRecordedPartialRelease(command);
+	}
+
+	private boolean matchesRecordedPartialRelease(StockPartialReleaseCommand command) {
+		Optional<ProductStockPartialRelease> existing = partialReleaseRepository.findByRefundId(command.refundId());
+		if (existing.isEmpty()) {
+			return false;
+		}
+		if (existing.get().matches(command.orderId(), command.productOptionId(), command.quantity())) {
+			return true;
+		}
+		throw new RestApiException(ProductErrorCode.PARTIAL_RELEASE_MISMATCH);
 	}
 }
