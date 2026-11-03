@@ -24,13 +24,13 @@ Node 23.6 이상에서 `.ts`를 그대로 실행한다. 설치할 의존성은 �
 |---|---|
 | 1. 분석 명세 | `criteria.json` v0.2. 조정용 100개 사람 정답과 고급 모델 점검으로 다듬음(`criteria/CHANGELOG.md`) |
 | 2. 데이터셋·사람 정답 | 생성 1,000개, 세트 분리, 조정용 정답 완료. 평가용 정답 대기 |
-| 3. 비교 실행 도구 | 실행기·보고서 완료. Jev 요청 형식 미확인(아래) |
+| 3. 비교 실행 도구 | 실행기·보고서 완료 |
 | 4~5. 예비 실행·본 실험 | 아직 |
 
 평가용 300개는 사람 정답을 다 매긴 뒤에 모델에 돌린다. `run/bench.ts`는 `data/labels/gold-eval.csv`가 없거나, 빈칸이 있거나, 정답이 빠진 평가용 리뷰가 있으면 요청을 보내기 전에 멈춘다.
 
 **확인하지 못한 요청 형식.**
-- Jev: 요청 본문·인증 헤더·응답 형식을 문서로 확인하지 못했다. `src/providers.ts`의 `jev` 항목은 지어내지 않고 "형식 미확인" 오류를 낸다. https://docs.typesafe.ai/models.md 를 보고 채운다.
+- Jev: https://docs.typesafe.ai/api.md 의 POST /v1/systemone 형식으로 작성했다(2026-11-03 확인). 공통 지시문 자리가 없어 질문마다 앞에 붙인다.
 - OpenAI: Responses API 형식(`reasoning.effort: "none"`, strict `json_schema`)은 문서 확인 없이 작성했다. 예비 실행 첫 요청에서 응답을 보고 맞춘다.
 
 ## 실행 순서

@@ -95,7 +95,7 @@ export async function runBench(opts: RunOptions): Promise<RunSummary> {
     store.latest,
   ).map((k) => k.job);
 
-  // 요청을 모두 먼저 만들어 둔다. 형식이 검증되지 않은 제공자는 네트워크 호출 전에 멈춘다.
+  // 요청을 모두 먼저 만들어 둔다. 요청을 만들다 나는 오류는 네트워크 호출 전에 실행을 멈춘다.
   const prepared = pending.map((job) => {
     const seed = orderSeed(opts.seed, job.key.reviewId, job.key.repeat, opts.permuteOrderPerRepeat);
     const order = choiceOrder(opts.criteria, seed);

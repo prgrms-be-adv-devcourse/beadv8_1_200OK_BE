@@ -114,23 +114,63 @@ const openai: Provider = {
   },
 };
 
-// 알려진 것: Choice 질문마다 choice, probabilities, confidence를 돌려주고, Choice 질문 7개를 요청 하나에 담는다.
-// 요청 본문·인증 헤더·응답 형식은 문서로 확인하지 못해 지어내지 않는다.
-const JEV_UNVERIFIED =
-  "Jev 요청 형식이 검증되지 않았다. https://docs.typesafe.ai/models.md 를 보고 src/providers.ts의 jev buildRequest/parseResponse를 채운 뒤 실행한다.";
-
 const jev: Provider = {
   id: "jev",
   model: "jev-1.14.0",
   apiKeyEnv: "TYPESAFE_API_KEY",
   priceDate: "2026-11-03",
   price: { inputPerMillion: 0.042, outputPerMillion: 0 },
-  buildRequest() {
-    // 엔드포인트: https://api.typesafe.ai/v1/systemone
-    throw new Error(JEV_UNVERIFIED);
+  buildRequest(criteria, order, review, apiKey) {
+    const questions = Object.fromEntries(
+      criteria.questions.map((q) => [
+        q.key,
+        {
+          type: "choice",
+          // 공통 지시문 자리가 없어서, OpenAI 프롬프트 맨 위에 한 번 오는 지시문을 질문마다 앞에 붙인다.
+          instructions: `${criteria.instruction}\n${q.question}\n${q.guide}`,
+          // Jev는 criteria의 키 삽입 순서를 선택지 순서로 본다.
+          criteria: Object.fromEntries(
+            order[q.key].map((value) => {
+              const c = q.choices.find((c) => c.value === value)!;
+              return [value, `${c.label}: ${c.description}`];
+            }),
+          ),
+        },
+      ]),
+    );
+    const body = { model: this.model, state: `상품: ${review.product}\n본문: ${review.text}`, questions };
+    return {
+      url: "https://api.typesafe.ai/v1/systemone",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      },
+    };
   },
-  parseResponse() {
-    throw new Error(JEV_UNVERIFIED);
+  parseResponse(json, criteria) {
+    const res = json as {
+      model?: unknown;
+      answers?: Record<string, { type?: unknown; choice?: unknown; confidence?: unknown; probabilities?: unknown }>;
+      usage?: { input_tokens?: unknown; output_tokens?: unknown };
+    };
+    if (typeof res.answers !== "object" || res.answers === null) throw new InvalidResponseError("answers가 없다");
+    const choices: Record<string, unknown> = {};
+    const raw: Record<string, { confidence: unknown; probabilities: unknown }> = {};
+    for (const [key, a] of Object.entries(res.answers)) {
+      if (a?.type !== "choice") throw new InvalidResponseError(`${key}: choice 답이 아니다 (type: ${JSON.stringify(a?.type)})`);
+      choices[key] = a.choice;
+      raw[key] = { confidence: a.confidence, probabilities: a.probabilities };
+    }
+    const { input_tokens, output_tokens } = res.usage ?? {};
+    if (typeof input_tokens !== "number" || typeof output_tokens !== "number") {
+      throw new InvalidResponseError("usage.input_tokens/output_tokens가 없다");
+    }
+    return {
+      answers: parseAnswers(choices, criteria),
+      usage: { inputTokens: input_tokens, outputTokens: output_tokens },
+      extras: { provider: "jev", raw: { model: res.model, answers: raw } },
+    };
   },
 };
 

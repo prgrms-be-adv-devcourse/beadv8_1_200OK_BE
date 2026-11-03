@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCriteria } from "./criteria.ts";
 import { choiceOrder } from "./order.ts";
-import { PROVIDERS, type Provider } from "./providers.ts";
+import { PROVIDERS } from "./providers.ts";
 import { evalGoldErrors, runBench, type Review, type RunOptions } from "./runner.ts";
 import type { RunRecord } from "./types.ts";
 
@@ -40,6 +40,18 @@ const openaiOk = (answers: Record<string, unknown> = ANSWERS, usage = { input_to
     { status: 200 },
   );
 
+const jevOk = (answers: Record<string, unknown> = ANSWERS, usage = { input_tokens: 2000, output_tokens: 30 }) =>
+  new Response(
+    JSON.stringify({
+      model: "jev-1.14.0-20261020",
+      answers: Object.fromEntries(
+        Object.entries(answers).map(([k, choice]) => [k, { type: "choice", choice, confidence: 0.9, probabilities: { [String(choice)]: 0.9 } }]),
+      ),
+      usage,
+    }),
+    { status: 200 },
+  );
+
 type Step = Response | Error | ((body: any) => Response);
 
 // 요청마다 받은 본문을 남기고, 상품명별로 정해 둔 응답을 차례로 돌려준다. 프롬프트에는 리뷰 id가 없다.
@@ -49,9 +61,9 @@ function fakeFetch(script: (product: string) => Step[]) {
   const fn = (async (url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));
     calls.push({ url, body });
-    const product = body.input.match(/상품: (\S+)/)[1];
+    const product = (body.input ?? body.state).match(/상품: (\S+)/)[1];
     if (!queues.has(product)) queues.set(product, script(product));
-    const step = queues.get(product)!.shift() ?? openaiOk();
+    const step = queues.get(product)!.shift() ?? (body.state ? jevOk() : openaiOk());
     if (step instanceof Error) throw step;
     return typeof step === "function" ? step(body) : step;
   }) as unknown as typeof fetch;
@@ -166,14 +178,16 @@ test("다시 돌리면 실패한 키만 보내고 ok 기록은 건드리지 않�
 });
 
 test("같은 리뷰·반복이면 두 제공자의 선택지 순서가 같고, 반복마다 섞기를 켜면 반복끼리 달라진다", async () => {
-  // Jev 요청 형식이 아직 없어서, 받은 순서를 비교할 수 있게 OpenAI 형식으로 요청하는 jev를 대신 둔다.
-  const asOpenai = (id: "jev" | "openai"): Provider => ({ ...PROVIDERS.openai, id });
   const reviews = [review("R0001"), review("R0002")];
   const run = async (permute: boolean) => {
     const f = fakeFetch(() => []);
-    const o = options({ fetch: f.fn, providers: [asOpenai("jev"), asOpenai("openai")], reviews, repeats: 3, permuteOrderPerRepeat: permute });
+    const o = options({ fetch: f.fn, providers: [PROVIDERS.jev, PROVIDERS.openai], reviews, repeats: 3, permuteOrderPerRepeat: permute });
     await runBench(o);
-    return f.calls.map((c) => Object.values(c.body.text.format.schema.properties).map((p: any) => p.enum.join()));
+    return f.calls.map((c) =>
+      c.body.questions
+        ? Object.values(c.body.questions).map((q: any) => Object.keys(q.criteria).join())
+        : Object.values(c.body.text.format.schema.properties).map((p: any) => p.enum.join()),
+    );
   };
 
   const fixed = await run(false);
@@ -185,6 +199,52 @@ test("같은 리뷰·반복이면 두 제공자의 선택지 순서가 같고, �
   const permuted = await run(true);
   for (let i = 0; i < permuted.length; i += 2) assert.deepEqual(permuted[i], permuted[i + 1]);
   assert.notDeepEqual(permuted[0], permuted[2]);
+});
+
+test("Jev 요청은 7개 키 모두 choice 질문이고 선택지 순서가 기록한 orderSeed의 순서와 같다", async () => {
+  const f = fakeFetch(() => []);
+  const o = options({ fetch: f.fn, providers: [PROVIDERS.jev] });
+  await runBench(o);
+  const [r] = records(o.storePath);
+  const { url, body } = f.calls[0];
+  assert.equal(url, "https://api.typesafe.ai/v1/systemone");
+  assert.equal(body.model, "jev-1.14.0");
+  assert.ok(body.state.includes("맛있는데 배송이 늦었어요"));
+  const keys = ["overall", "taste", "freshness", "condition", "packaging", "delivery", "price"];
+  assert.deepEqual(Object.keys(body.questions), keys);
+  const order = choiceOrder(criteria, r.orderSeed);
+  for (const k of keys) {
+    const q = body.questions[k];
+    assert.equal(q.type, "choice");
+    assert.ok(q.instructions.startsWith(criteria.instruction));
+    assert.deepEqual(Object.keys(q.criteria), order[k as keyof typeof order]);
+  }
+});
+
+test("Jev 응답은 답·토큰·비용과 받은 확률을 그대로 담은 ok 기록이 된다", async () => {
+  const f = fakeFetch(() => [jevOk(ANSWERS, { input_tokens: 2000, output_tokens: 30 })]);
+  const o = options({ fetch: f.fn, providers: [PROVIDERS.jev] });
+  await runBench(o);
+  const [r] = records(o.storePath);
+  assert.equal(r.status, "ok");
+  if (r.status !== "ok") return;
+  assert.deepEqual(r.answers, ANSWERS);
+  assert.deepEqual(r.usage, { inputTokens: 2000, outputTokens: 30 });
+  // 출력 토큰은 무료라서 2000 × 0.042 / 1e6
+  assert.ok(Math.abs(r.costUsd - 0.000084) < 1e-12);
+  const raw = r.extras.raw as any;
+  assert.equal(raw.model, "jev-1.14.0-20261020");
+  assert.deepEqual(raw.answers.delivery, { confidence: 0.9, probabilities: { negative: 0.9 } });
+});
+
+test("Jev 응답에 질문 하나의 답이 빠지면 invalid_response", async () => {
+  const { price, ...partial } = ANSWERS;
+  const f = fakeFetch(() => [jevOk(partial)]);
+  const o = options({ fetch: f.fn, providers: [PROVIDERS.jev] });
+  await runBench(o);
+  const [r] = records(o.storePath);
+  assert.equal(r.status, "failed");
+  assert.equal(r.status === "failed" && r.error.kind, "invalid_response");
 });
 
 test("OpenAI 요청은 7개 키 모두 strict json_schema이고 enum 순서가 기록한 orderSeed의 순서와 같다", async () => {
