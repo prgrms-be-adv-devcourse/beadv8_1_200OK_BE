@@ -88,7 +88,7 @@ class RefundServiceTest {
     @Test
     void 남의_주문_상품이면_없는_것으로_응답한다() {
         // given
-        RefundRequestCommand command = new RefundRequestCommand(OTHER_MEMBER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(OTHER_MEMBER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null);
 
         // when & then
         assertThatThrownBy(() -> sut.request(command, socks()))
@@ -100,7 +100,7 @@ class RefundServiceTest {
     @Test
     void 출고_전이_아니면_요청할_수_없다() {
         // given
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null);
 
         // when & then
         assertThatThrownBy(() -> sut.request(command, socks("SHIPPING")))
@@ -111,7 +111,7 @@ class RefundServiceTest {
     @Test
     void 처리_중과_완료된_개수를_빼고_남은_개수보다_많으면_요청할_수_없다() {
         // given: 양말 3개 중 2개 처리 중·완료, 이번에 2개
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 2);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 2, null);
         given(refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID, List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED))).willReturn(2L);
 
         // when & then
@@ -123,7 +123,7 @@ class RefundServiceTest {
     @Test
     void 남은_개수만큼은_요청할_수_있고_주문에서_받은_값으로_저장한다() {
         // given: 양말 3개 중 2개 처리 중·완료, 이번에 1개
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null);
         given(refundRepository.sumQuantityByOrderItemIdAndStatusIn(ORDER_ITEM_ID, List.of(RefundStatus.PROCESSING, RefundStatus.COMPLETED))).willReturn(2L);
         given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
@@ -145,7 +145,7 @@ class RefundServiceTest {
     @Test
     void 진행_중인_요청이_있어_유니크_제약에_걸리면_409() {
         // given
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null);
         given(refundRepository.saveAndFlush(any(Refund.class)))
                 .willThrow(new DataIntegrityViolationException("Duplicate entry for key 'refund.uk_refund_active_order_item_id'"));
 
@@ -158,7 +158,7 @@ class RefundServiceTest {
     @Test
     void 다른_제약_위반은_그대로_던진다() {
         // given
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null);
         given(refundRepository.saveAndFlush(any(Refund.class)))
                 .willThrow(new DataIntegrityViolationException("Check constraint 'ck_refund_quantity' is violated."));
 
@@ -313,7 +313,7 @@ class RefundServiceTest {
     void 요청_때_무료배송이_깨지는데_취소_금액이_배송비보다_작으면_요청할_수_없다() {
         // given: A(101) 49,500 + B(102) 1,000 = 50,500원, B 취소 → 남은 49,500원, 1,000 < 3,000
         List<SellerGroupItem> bundle = List.of(new SellerGroupItem(ORDER_ITEM_ID, 49_500L, 1), new SellerGroupItem(HAT_ORDER_ITEM_ID, 1_000L, 1));
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1, null);
 
         // when & then
         assertThatThrownBy(() -> sut.request(command, freeShippingItem(HAT_ORDER_ITEM_ID, 1_000L, bundle)))
@@ -389,7 +389,7 @@ class RefundServiceTest {
     }
 
     private static Refund requestedItem(Long orderItemId, long unitPrice) {
-        return Refund.request(ORDER_ID, orderItemId, 1, BUYER_ID, SELLER_ID, 56L, "상품", "옵션", unitPrice);
+        return Refund.request(ORDER_ID, orderItemId, 1, BUYER_ID, SELLER_ID, 56L, "상품", "옵션", unitPrice, null);
     }
 
     // 무료배송이 적용되어 배송비 0원을 낸 묶음의 한 상품(1개)

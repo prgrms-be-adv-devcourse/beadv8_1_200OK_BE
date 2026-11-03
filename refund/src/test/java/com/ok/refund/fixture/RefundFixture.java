@@ -37,12 +37,12 @@ public final class RefundFixture {
 
     public static Refund requested(Long orderItemId, int quantity) {
         return Refund.request(ORDER_ID, orderItemId, quantity, BUYER_ID, SELLER_ID, PRODUCT_OPTION_ID,
-                "양말", "흰색", UNIT_PRICE);
+                "양말", "흰색", UNIT_PRICE, null);
     }
 
     /** 같은 묶음의 모자(주문 상품 102, 5,000원) 요청됨 */
     public static Refund requestedHat() {
-        return Refund.request(ORDER_ID, HAT_ORDER_ITEM_ID, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L);
+        return Refund.request(ORDER_ID, HAT_ORDER_ITEM_ID, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L, null);
     }
 
     /**

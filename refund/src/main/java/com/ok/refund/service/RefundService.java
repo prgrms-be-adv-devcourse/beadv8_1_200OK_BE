@@ -81,7 +81,7 @@ public class RefundService {
         }
         Refund refund = Refund.request(orderItem.orderId(), orderItem.orderItemId(), command.quantity(), command.buyerId(),
                 orderItem.sellerId(), orderItem.productOptionId(), orderItem.productName(), orderItem.optionName(),
-                orderItem.unitPrice());
+                orderItem.unitPrice(), command.cancelReason());
         // 결과는 버린다. 금액은 승인할 때 잠근 뒤 다시 계산해 저장하고, 여기서는 막을 요청만 거른다
         List<CancelledQuantity> bundleCancelled =
                 refundRepository.sumQuantityByOrderItem(orderItem.orderId(), orderItem.sellerId(), CANCELLED_STATUSES);

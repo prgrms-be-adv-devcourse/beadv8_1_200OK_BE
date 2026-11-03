@@ -17,7 +17,8 @@ interface RefundControllerSpec {
 
     @Operation(summary = "환불 요청",
             description = "출고 전(송장 등록 전) 주문 상품을 개수 단위로 취소 요청한다. 판매자가 승인해야 돈이 돌아온다. "
-                    + "한 주문 상품에 진행 중인 요청은 한 건만 받는다. 배송비와 추가 운임은 판매자 승인 때 묶음이 전부 취소될 때만 더해진다.")
+                    + "한 주문 상품에 진행 중인 요청은 한 건만 받는다. 배송비와 추가 운임은 판매자 승인 때 묶음이 전부 취소될 때만 더해진다. "
+                    + "취소 사유는 선택이며, 공백만 적으면 적지 않은 것으로 본다.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "요청 성공 (REQUESTED)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
@@ -26,7 +27,7 @@ interface RefundControllerSpec {
             @ApiResponse(responseCode = "409", description = "출고 전이 아님 (ORDER_ITEM_NOT_CANCELLABLE), "
                     + "남은 개수보다 많음 (REFUND_QUANTITY_EXCEEDED), 진행 중인 요청 있음 (REFUND_ALREADY_IN_PROGRESS), "
                     + "무료배송 기준이 깨지는데 취소 금액이 배송비보다 작음 (PARTIAL_CANCEL_NOT_ALLOWED)"),
-            @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (VALIDATION_FAILED)"),
+            @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (VALIDATION_FAILED). 개수 1 미만, 취소 사유 255자 초과 등"),
             @ApiResponse(responseCode = "503", description = "주문 정보를 확인하지 못함 (ORDER_API_FAILED)")
     })
     ResponseEntity<RefundResponse> request(Long buyerId, RefundCreateRequest request);

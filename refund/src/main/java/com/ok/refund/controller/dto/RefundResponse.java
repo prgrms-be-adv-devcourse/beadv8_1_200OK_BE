@@ -45,6 +45,9 @@ public record RefundResponse(
         @Schema(description = "돌려줄 금액 = 상품 금액 + 배송비 + 추가 운임 − 뺀 배송비 (원). 요청됨일 때는 승인 뒤 바뀔 수 있고, 거절·철회·승인 불가면 0", example = "10000")
         long refundAmount,
 
+        @Schema(description = "구매자가 적은 취소 사유 (적었을 때만)", example = "옵션을 잘못 골랐습니다.")
+        String cancelReason,
+
         @Schema(description = "상태 (REQUESTED, REJECTED, WITHDRAWN, PROCESSING, NOT_APPROVABLE, COMPLETED). "
                 + "NOT_APPROVABLE은 이미 출고되어 취소할 수 없다는 뜻이며 반품을 안내한다", example = "REQUESTED")
         String status,
@@ -79,6 +82,7 @@ public record RefundResponse(
                 result.remoteAreaFeeAmount(),
                 result.deductedShippingFeeAmount(),
                 result.refundAmount(),
+                result.cancelReason(),
                 result.status(),
                 result.rejectReason(),
                 result.failedStep(),

@@ -78,6 +78,10 @@ public class Refund extends BaseTime {
     @Column(name = "deducted_shipping_fee_amount", nullable = false)
     private long deductedShippingFeeAmount;
 
+    // 판매자가 승인·거절을 판단할 참고용이라 선택 입력이다. 안 적은 요청이 있어 NULL을 허용한다
+    @Column(name = "cancel_reason")
+    private String cancelReason;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private RefundStatus status;
@@ -112,7 +116,8 @@ public class Refund extends BaseTime {
             Long productOptionId,
             String productName,
             String optionName,
-            long unitPrice
+            long unitPrice,
+            String cancelReason
     ) {
         // 개수는 구매자 입력이라 에러 코드로, 나머지는 주문 모듈에서 받은 값이라 표준 예외로 거른다(exception.md)
         if (quantity < 1) {
@@ -136,6 +141,7 @@ public class Refund extends BaseTime {
         this.productName = productName;
         this.optionName = optionName;
         this.unitPrice = unitPrice;
+        this.cancelReason = cancelReason;
         // 단가 x 개수가 long을 넘으면 조용히 음수가 되지 않게 예외로 막는다
         this.itemAmount = Math.multiplyExact(unitPrice, quantity);
         this.shippingFeeAmount = 0L;
@@ -149,7 +155,8 @@ public class Refund extends BaseTime {
      * 구매자의 취소 요청을 "요청됨"으로 만든다.
      * 배송비·추가 운임은 0으로 시작하고, 판매자가 승인할 때 묶음 전부 취소이면 채운다.
      *
-     * @param unitPrice 주문 시점 단가 (원)
+     * @param unitPrice    주문 시점 단가 (원)
+     * @param cancelReason 구매자가 적은 취소 사유. 안 적었으면 {@code null}
      * @throws RestApiException 개수가 1 미만이면 {@code INVALID_REFUND_QUANTITY}
      */
     public static Refund request(
@@ -161,9 +168,11 @@ public class Refund extends BaseTime {
             Long productOptionId,
             String productName,
             String optionName,
-            long unitPrice
+            long unitPrice,
+            String cancelReason
     ) {
-        return new Refund(orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName, unitPrice);
+        return new Refund(orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName, unitPrice,
+                cancelReason);
     }
 
     /**

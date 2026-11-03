@@ -113,6 +113,37 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 취소_사유를_적으면_저장하고_응답에_보여준다() throws Exception {
+        // when
+        ResultActions sut = requestWithReason("\"  옵션을 잘못 골랐습니다.  \"");
+
+        // then
+        sut.andExpect(status().isCreated())
+                .andExpect(jsonPath("$.cancelReason", is("옵션을 잘못 골랐습니다.")));
+        assertThat(onlyRefund().getCancelReason()).isEqualTo("옵션을 잘못 골랐습니다.");
+    }
+
+    @Test
+    void 취소_사유가_공백뿐이면_적지_않은_것으로_저장한다() throws Exception {
+        // when
+        ResultActions sut = requestWithReason("\"   \"");
+
+        // then
+        sut.andExpect(status().isCreated())
+                .andExpect(jsonPath("$.cancelReason", nullValue()));
+        assertThat(onlyRefund().getCancelReason()).isNull();
+    }
+
+    @Test
+    void 취소_사유가_255자를_넘으면_422() throws Exception {
+        // when & then
+        requestWithReason("\"" + "가".repeat(256) + "\"")
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+        assertThat(refundRepository.count()).isZero();
+    }
+
+    @Test
     void 같은_상품에_진행_중인_요청이_있으면_409() throws Exception {
         // given
         request(ORDER_ITEM_ID, 1).andExpect(status().isCreated());
@@ -497,6 +528,15 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body(orderItemId, quantity)));
+    }
+
+    // reasonJson은 JSON 값 그대로 넣는다(따옴표 포함)
+    private ResultActions requestWithReason(String reasonJson) throws Exception {
+        return mockMvc.perform(post(BUYER_URL)
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"orderId\": " + ORDER_ID + ", \"orderItemId\": " + ORDER_ITEM_ID
+                        + ", \"quantity\": 1, \"cancelReason\": " + reasonJson + "}"));
     }
 
     // 양말(101)·모자(102) 각 1개, 무료배송이 적용되어 배송비 0원을 낸 묶음(기준 5만 원, 기본 배송비 3,000원)

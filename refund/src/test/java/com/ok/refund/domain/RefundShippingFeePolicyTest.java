@@ -130,6 +130,6 @@ class RefundShippingFeePolicyTest {
     }
 
     private static Refund requested(Long orderItemId, long unitPrice) {
-        return Refund.request(ORDER_ID, orderItemId, 1, BUYER_ID, SELLER_ID, 55L, "상품", "옵션", unitPrice);
+        return Refund.request(ORDER_ID, orderItemId, 1, BUYER_ID, SELLER_ID, 55L, "상품", "옵션", unitPrice, null);
     }
 }

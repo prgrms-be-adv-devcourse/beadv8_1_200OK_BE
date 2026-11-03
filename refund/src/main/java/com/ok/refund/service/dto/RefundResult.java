@@ -31,6 +31,7 @@ public record RefundResult(
         long remoteAreaFeeAmount,
         long deductedShippingFeeAmount,
         long refundAmount,
+        String cancelReason,
         String status,
         String rejectReason,
         String failedStep,
@@ -60,6 +61,7 @@ public record RefundResult(
                 refundsNothing ? 0L : refund.getDeductedShippingFeeAmount(),
                 // 지갑 호출은 처리 중 결과의 금액을 쓰므로, 끝난 상태만 0으로 바꿔도 실제로 돌려주는 돈은 그대로다
                 refundsNothing ? 0L : refund.getRefundAmount(),
+                refund.getCancelReason(),
                 refund.getStatus().name(),
                 refund.getRejectReason(),
                 refund.getFailedStep() == null ? null : refund.getFailedStep().name(),

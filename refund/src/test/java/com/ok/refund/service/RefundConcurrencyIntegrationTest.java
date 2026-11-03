@@ -81,8 +81,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     @RepeatedTest(5)
     void 같은_묶음을_동시에_승인하면_배송비는_한_요청만_받는다() throws Exception {
         // given: 양말 3개, 모자 1개를 각각 요청 → 둘 다 승인하면 묶음 전부 취소
-        Long socksRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 3)).refundId();
-        Long hatRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1)).refundId();
+        Long socksRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 3, null)).refundId();
+        Long hatRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1, null)).refundId();
 
         // when
         List<String> results = runTogether(
@@ -110,8 +110,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         orderClient.put(freeShippingItem(HAT_ORDER_ITEM_ID, 15_000L, bundle));
         orderClient.put(freeShippingItem(cItemId, 15_000L, bundle));
         deliveryClient.addShipment(cItemId);
-        Long bRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1)).refundId();
-        Long cRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, cItemId, 1)).refundId();
+        Long bRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, HAT_ORDER_ITEM_ID, 1, null)).refundId();
+        Long cRefund = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, cItemId, 1, null)).refundId();
 
         // when
         List<String> results = runTogether(
@@ -131,7 +131,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     @RepeatedTest(5)
     void 철회와_승인이_동시에_오면_한쪽만_성공한다() throws Exception {
         // given
-        Long refundId = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1)).refundId();
+        Long refundId = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null)).refundId();
 
         // when
         List<String> results = runTogether(
@@ -154,7 +154,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     @RepeatedTest(5)
     void 같은_주문_상품에_요청이_동시에_오면_한_건만_저장되고_나머지는_409() throws Exception {
         // given
-        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1);
+        RefundRequestCommand command = new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null);
 
         // when
         List<String> results = runTogether(
