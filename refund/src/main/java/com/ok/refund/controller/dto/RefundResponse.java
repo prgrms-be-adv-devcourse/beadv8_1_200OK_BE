@@ -33,16 +33,16 @@ public record RefundResponse(
         @Schema(description = "상품 금액 = 단가 x 개수 (원)", example = "10000")
         long itemAmount,
 
-        @Schema(description = "돌려줄 배송비 (원). 승인 때 판매자 묶음이 전부 취소되면 채워지고, 그 전에는 0", example = "0")
+        @Schema(description = "돌려줄 배송비 (원). 승인 때 판매자 묶음이 전부 취소되면 채워지고, 그 전과 거절·철회·승인 불가면 0", example = "0")
         long shippingFeeAmount,
 
-        @Schema(description = "돌려줄 도서산간 추가 운임 (원). 승인 때 판매자 묶음이 전부 취소되면 채워지고, 그 전에는 0", example = "0")
+        @Schema(description = "돌려줄 도서산간 추가 운임 (원). 승인 때 판매자 묶음이 전부 취소되면 채워지고, 그 전과 거절·철회·승인 불가면 0", example = "0")
         long remoteAreaFeeAmount,
 
-        @Schema(description = "환불에서 뺀 기본 배송비 (원). 승인 때 일부 취소로 무료배송 기준이 깨지면 채워지고, 그 전에는 0", example = "0")
+        @Schema(description = "환불에서 뺀 기본 배송비 (원). 승인 때 일부 취소로 무료배송 기준이 깨지면 채워지고, 그 전과 거절·철회·승인 불가면 0", example = "0")
         long deductedShippingFeeAmount,
 
-        @Schema(description = "돌려줄 금액 = 상품 금액 + 배송비 + 추가 운임 − 뺀 배송비 (원). 요청됨일 때는 승인 뒤 바뀔 수 있다", example = "10000")
+        @Schema(description = "돌려줄 금액 = 상품 금액 + 배송비 + 추가 운임 − 뺀 배송비 (원). 요청됨일 때는 승인 뒤 바뀔 수 있고, 거절·철회·승인 불가면 0", example = "10000")
         long refundAmount,
 
         @Schema(description = "상태 (REQUESTED, REJECTED, WITHDRAWN, PROCESSING, NOT_APPROVABLE, COMPLETED). "
