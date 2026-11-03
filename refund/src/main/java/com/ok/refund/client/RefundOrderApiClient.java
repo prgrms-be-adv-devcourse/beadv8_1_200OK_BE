@@ -33,9 +33,10 @@ public class RefundOrderApiClient implements RefundOrderClient {
                     throw new RestApiException(RefundErrorCode.ORDER_ITEM_NOT_FOUND);
                 })
                 .body(RefundOrderItemResponse.class);
-        // 200인데 본문이 비었으면 주문 쪽 이상이라 호출 실패와 같게 본다
+        // 200인데 본문이 비었으면 다시 시도해도 낫지 않는 주문 쪽 버그다. 503(잠시 후 다시 시도)이 아니라 500으로 드러내
+        // 장애로 잡히게 한다(exception.md). 본문이 깨졌거나 칸이 빠진 경우도 .body()에서 RestClientException이 나 같은 500이다
         if (response == null) {
-            throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+            throw new IllegalStateException("주문 상품 조회 응답 본문이 비었습니다. orderId=" + orderId + ", orderItemId=" + orderItemId);
         }
         return new RefundableOrderItem(
                 response.orderId(),

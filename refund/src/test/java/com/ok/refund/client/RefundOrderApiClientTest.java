@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -114,6 +115,46 @@ class RefundOrderApiClientTest {
         assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+    }
+
+    @Test
+    void 성공인데_본문이_비면_주문_쪽_버그로_표준_예외를_던진다() {
+        // given: 상태 200, 본문 없음
+        body.set("");
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("주문 상품 조회 응답 본문이 비었습니다. orderId=10, orderItemId=101");
+    }
+
+    @Test
+    void 본문이_깨졌으면_에러_코드로_바꾸지_않는다() {
+        // given: 주문 쪽 버그라 503(잠시 후 다시 시도)이 아니라 500으로 드러나야 한다
+        body.set("not json");
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(RestClientException.class);
+    }
+
+    @Test
+    void 금액_칸이_빠지면_0원으로_채우지_않고_예외를_던진다() {
+        // given: 단가 칸이 없는 응답. 기본형이라 0으로 조용히 들어가면 0원 환불이 저장된다
+        body.set("""
+                {
+                  "orderId": 10, "orderItemId": 101,
+                  "buyerId": 1, "sellerId": 5,
+                  "productOptionId": 55,
+                  "productName": "양말", "optionName": "흰색",
+                  "status": "PREPARING",
+                  "quantity": 3
+                }
+                """);
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(RestClientException.class);
     }
 
     @Test
