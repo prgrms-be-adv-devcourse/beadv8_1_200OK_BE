@@ -13,8 +13,10 @@ Node 23.6 이상에서 `.ts`를 그대로 실행한다. 설치할 의존성은 �
 | `dataset/labeling-guide.md` | 사람 정답 매기는 절차와 입력 코드 | O |
 | `dataset/*.ts` | 세트 나누기, 정답 시트 만들기·검사, 일치도(κ) | O |
 | `dataset/replacements.json` | 세트를 나눈 뒤 본문을 바꾼 리뷰와 이유 | O |
-| `src/` | 공통 코드와 단위 테스트 | O |
-| `data/` | 리뷰 원문, 사람 정답, 모델 결과 | X (`.gitignore`) |
+| `run/bench.ts` | 두 제공자 호출, `data/runs/<run-id>.jsonl` 기록, 실패분만 다시 실행 | O |
+| `run/report.ts` | 실행 기록과 사람 정답으로 품질·속도·비용·채택 판정 보고서(`data/reports/<run-id>.md`) | O |
+| `src/` | 공통 코드와 단위 테스트. 제공자별 요청 형식은 `src/providers.ts` 한 곳에 있다 | O |
+| `data/` | 리뷰 원문, 사람 정답, 모델 결과, 보고서 | X (`.gitignore`) |
 
 ## 진행 상태
 
@@ -22,9 +24,28 @@ Node 23.6 이상에서 `.ts`를 그대로 실행한다. 설치할 의존성은 �
 |---|---|
 | 1. 분석 명세 | `criteria.json` v0.2. 조정용 100개 사람 정답과 고급 모델 점검으로 다듬음(`criteria/CHANGELOG.md`) |
 | 2. 데이터셋·사람 정답 | 생성 1,000개, 세트 분리, 조정용 정답 완료. 평가용 정답 대기 |
-| 3~5. 도구·예비 실행·본 실험 | 아직 |
+| 3. 비교 실행 도구 | 실행기·보고서 완료. Jev 요청 형식 미확인(아래) |
+| 4~5. 예비 실행·본 실험 | 아직 |
 
-평가용 300개는 사람 정답을 다 매긴 뒤에 모델에 돌린다.
+평가용 300개는 사람 정답을 다 매긴 뒤에 모델에 돌린다. `run/bench.ts`는 `data/labels/gold-eval.csv`가 없거나, 빈칸이 있거나, 정답이 빠진 평가용 리뷰가 있으면 요청을 보내기 전에 멈춘다.
+
+**확인하지 못한 요청 형식.**
+- Jev: 요청 본문·인증 헤더·응답 형식을 문서로 확인하지 못했다. `src/providers.ts`의 `jev` 항목은 지어내지 않고 "형식 미확인" 오류를 낸다. https://docs.typesafe.ai/models.md 를 보고 채운다.
+- OpenAI: Responses API 형식(`reasoning.effort: "none"`, strict `json_schema`)은 문서 확인 없이 작성했다. 예비 실행 첫 요청에서 응답을 보고 맞춘다.
+
+## 실행 순서
+
+```bash
+export OPENAI_API_KEY=... TYPESAFE_API_KEY=...     # .env에 두고 커밋하지 않는다
+node --no-warnings run/bench.ts --run-id pilot --set tuning --limit 40          # 예비 실행 40개
+node --no-warnings run/report.ts --run-id pilot --gold data/labels/keunhyeok/tuning.csv --pilot
+node --no-warnings run/bench.ts --run-id main-c1 --set eval --concurrency 1     # 사람 정답을 다 매긴 뒤
+node --no-warnings run/bench.ts --run-id main-c10 --set eval --concurrency 10
+node --no-warnings run/bench.ts --run-id repeat --set eval --repeat-run-only --repeats 3 --permute-order-per-repeat
+node --no-warnings run/report.ts --run-id main-c1
+```
+
+같은 `bench.ts` 명령을 다시 돌리면 실패했거나 아직 안 돈 요청만 보낸다. 예비 실행에서 Jev 전체 감성 정확도가 0.5 미만이면 보고서가 "중단"을 출력하고, 그때는 본 실험 전에 질문을 영어로 바꾸는 방안 등을 검토한다.
 
 ## 명령
 
