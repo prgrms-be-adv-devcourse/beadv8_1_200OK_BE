@@ -8,7 +8,7 @@
 
 | 팀 | 파일 | 요청 |
 | --- | --- | --- |
-| 배송 | [delivery.md](delivery.md) | 취소 예약(잠금), 취소 확정(잠금 해제) |
+| 배송 | [delivery.md](delivery.md) | 배송 건 확인, 취소 예약(잠금), 취소 확정(잠금 해제) |
 | 상품 | [product.md](product.md) | 재고 일부 해제 |
 | 주문 | [order.md](order.md) | 환불용 조회, 취소 수량 반영, 구매확정 금액 조정 (#28 관련) |
 | 지갑 | [wallet.md](wallet.md) | 예치금 반환 (#34 관련) |
