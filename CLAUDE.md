@@ -21,6 +21,8 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 새 파일을 만들기 전에 위 표에서 해당하는 규칙을 먼저 읽는다. 규칙이 로드되지 않았다면 직접 읽는다.
 사람용 원문은 `docs/CONVENTION.md`이다. 규칙을 바꿀 때는 원문을 먼저 고치고 `.claude/rules/`에 반영한다. 두 곳이 어긋나면 원문이 기준이다.
 
+`delivery` 모듈만 헥사고날 구조(`application`, `adapter/in`, `adapter/out`)라서 `structure.md`의 레이어 패키지와 발행 인터페이스 위치 규칙 대신 `docs/DEVELOPMENT.md`의 "delivery 모듈 구조(헥사고날)"와 delivery `ArchitectureTest`를 따른다. `delivery`의 `adapter/in/web`을 다룰 때는 경로가 `controller`가 아니라 자동으로 로드되지 않으므로 `.claude/rules/api.md`를 직접 읽고 따른다. 다른 모듈은 위 규칙 그대로다.
+
 ## 작업 스킬
 
 반복 절차는 `.claude/skills/`의 프로젝트 스킬을 쓴다. 해당 작업을 할 때는 직접 작성하지 말고 스킬을 따른다.
@@ -31,6 +33,10 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 | `error-code` | `*ErrorCode` 항목 추가와 `RestApiException` 사용 |
 | `commit` | 컨벤션에 맞는 커밋 (사용자 승인 후에만 커밋) |
 | `pr` | PR 제목·본문 초안 작성 (PR 생성은 요청이 있을 때만) |
+| `session-summary` | 세션의 설계 결정과 이유를 `docs/decisions/`에 ADR로 남김 |
+| `session-context` | `docs/decisions/`에서 관련 ADR을 찾아 현재 대화에 불러옴 |
+
+이전 작업의 결정과 이유가 필요하면 `docs/decisions/`에서 찾아본다. 위치와 작성 규칙은 `docs/decisions/README.md`이다.
 
 ## 항상 지키는 규칙
 

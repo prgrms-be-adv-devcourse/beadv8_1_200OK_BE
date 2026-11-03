@@ -1,12 +1,12 @@
 package com.ok.delivery.fixture;
 
+import com.ok.delivery.application.dto.AddressChangeRequestCommand;
+import com.ok.delivery.application.dto.AddressCommand;
 import com.ok.delivery.domain.Address;
 import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
-import com.ok.delivery.service.dto.AddressChangeRequestCommand;
-import com.ok.delivery.service.dto.AddressCommand;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;

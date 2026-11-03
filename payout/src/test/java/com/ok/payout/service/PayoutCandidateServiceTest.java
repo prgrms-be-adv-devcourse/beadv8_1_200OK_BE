@@ -6,14 +6,18 @@ import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.repository.PayoutCandidateItemRepository;
 import com.ok.payout.service.dto.PurchaseConfirmedCommand;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -34,18 +39,28 @@ class PayoutCandidateServiceTest {
     private static final Long ORDER_ITEM_ID = 1L;
     private static final Long SELLER_ID = 10L;
 
+    // 배송비는 직접 쓴 SQL로 저장해 시각을 서비스가 Clock으로 넘긴다. 넘긴 시각을 확인하려고 고정한다
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+    private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-11-02T05:00:00Z"), SEOUL);
+    private static final LocalDateTime NOW = LocalDateTime.now(FIXED_CLOCK);
+
     @Mock
     private PayoutCandidateItemRepository repository;
 
-    @InjectMocks
     private PayoutCandidateService sut;
 
     // saveAll()에 넘어간 리스트를 꺼낼 공간
     @Captor
     private ArgumentCaptor<List<PayoutCandidateItem>> itemsCaptor;
 
+    // 고정 시각 Clock을 넣으려고 @InjectMocks 대신 직접 만든다
+    @BeforeEach
+    void setUp() {
+        sut = new PayoutCandidateService(repository, FIXED_CLOCK);
+    }
+
     @Test
-    void 배송비가_있으면_대금_수수료_배송비_3건을_저장한다() {
+    void 배송비가_있으면_대금_수수료는_저장하고_배송비는_있으면_넘어가기로_저장한다() {
         // given
         PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
         givenNotProcessedYet();
@@ -53,18 +68,17 @@ class PayoutCandidateServiceTest {
         // when
         sut.createFromPurchaseConfirmed(command);
 
-        // then
-        // saveAll이 불렸는지 확인하면서 넘어간 리스트를 꺼냄
+        // then: 대금·수수료는 saveAll로
         verify(repository).saveAll(itemsCaptor.capture());
-        // 배송비는 판매자 묶음 단위라 주문상품 ID 없이 (주문, 판매자)로만 만들어짐
         assertThat(itemsCaptor.getValue())
                 .extracting(PayoutCandidateItem::getEventType, PayoutCandidateItem::getOrderId,
                         PayoutCandidateItem::getOrderItemId, PayoutCandidateItem::getAmount)
                 .containsExactlyInAnyOrder(
                         tuple(PayoutEventType.SALE_FEE, ORDER_ID, ORDER_ITEM_ID, 300L),
-                        tuple(PayoutEventType.SALE_AMOUNT, ORDER_ID, ORDER_ITEM_ID, 9_700L),
-                        tuple(PayoutEventType.SALE_SHIPPING_FEE, ORDER_ID, null, 3_000L)
+                        tuple(PayoutEventType.SALE_AMOUNT, ORDER_ID, ORDER_ITEM_ID, 9_700L)
                 );
+        // then: 배송비는 판매자 묶음 단위라 (주문, 판매자)로 "있으면 넘어가기" 저장 (이미 있는지는 DB 유니크 키가 판단, 통합 테스트에서 확인)
+        verify(repository).insertShippingFeeIfAbsent(PayoutEventType.SALE_SHIPPING_FEE.name(), ORDER_ID, SELLER_ID, 3_000L, NOW);
     }
 
     @Test
@@ -81,25 +95,7 @@ class PayoutCandidateServiceTest {
         assertThat(itemsCaptor.getValue())
                 .extracting(PayoutCandidateItem::getEventType)
                 .containsExactlyInAnyOrder(PayoutEventType.SALE_FEE, PayoutEventType.SALE_AMOUNT);
-    }
-
-    @Test
-    void 같은_묶음의_배송비가_이미_있으면_배송비만_건너뛰고_대금과_수수료는_저장한다() {
-        // given: 같은 (주문, 판매자) 묶음의 다른 상품이 먼저 구매 확정되어 배송비 후보가 이미 있음
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
-        givenNotProcessedYet();
-        given(repository.existsByOrderIdAndSellerIdAndEventTypeAndAdjustmentId(
-                ORDER_ID, SELLER_ID, PayoutEventType.SALE_SHIPPING_FEE, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
-                .willReturn(true);
-
-        // when
-        sut.createFromPurchaseConfirmed(command);
-
-        // then: 이 상품의 대금·수수료만 저장되고 배송비는 다시 만들지 않음
-        verify(repository).saveAll(itemsCaptor.capture());
-        assertThat(itemsCaptor.getValue())
-                .extracting(PayoutCandidateItem::getEventType)
-                .containsExactlyInAnyOrder(PayoutEventType.SALE_FEE, PayoutEventType.SALE_AMOUNT);
+        verify(repository, never()).insertShippingFeeIfAbsent(any(), anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test

@@ -64,6 +64,22 @@ services:
     ports:
       - "${MYSQL_PORT:-3306}:3306"
 
+  redis:
+    image: redis:${REDIS_VERSION:-8.10}-alpine
+    networks: [db-net]
+    # 운영과 같은 상한으로 두어, 상한에 닿았을 때(noeviction이라 쓰기 실패) 동작을 로컬에서 먼저 볼 수 있게 한다
+    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'noeviction']
+    # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값 (운영과 동일)
+    mem_limit: 384m
+    ports:
+      # 로컬 Redis는 비밀번호가 없어 loopback에만 연다(LAN 노출 방지). 컨테이너 안의 앱은 compose 네트워크로 접속한다
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # 브로커 3대는 이름·번호·외부 포트만 다르다
   # 외부 포트는 127.0.0.1에만 열어 같은 네트워크의 다른 기기가 붙지 못하게 한다 (인증 없는 PLAINTEXT라서)
   # EXTERNAL로 알려 주는 주소(localhost:포트)가 PC에서 다시 접속하는 주소라, 열어 둔 호스트 포트와 같아야 한다
@@ -109,6 +125,9 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
+      redis:
+        condition: service_healthy
       # mysql과 같이 Kafka 3대도 healthy가 된 뒤에 앱을 띄운다 (#318)
       kafka-1:
         condition: service_healthy
@@ -126,6 +145,9 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-paldogotgan}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER:-myuser}
       DB_PASSWORD: ${MYSQL_PASSWORD:-password}
+      # .env의 REDIS_PORT는 호스트 포트라 컨테이너 안에서는 고정값으로 덮는다 (DB_URL과 같은 이유)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       # .env의 KAFKA_BOOTSTRAP_SERVERS(localhost:...)는 내 PC에서 실행하는 앱용이라 컨테이너 안에서는 자기 자신을 가리킨다
       # DB_URL과 같은 이유로 compose 네트워크의 브로커 이름으로 덮는다 (#318)
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092

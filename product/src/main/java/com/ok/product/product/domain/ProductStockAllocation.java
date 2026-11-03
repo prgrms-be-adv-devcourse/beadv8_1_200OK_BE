@@ -25,7 +25,8 @@ public class ProductStockAllocation extends BaseTime {
 	@Column(name = "product_option_id", nullable = false)
 	private Long productOptionId;
 
-	@Column(nullable = false)
+	// 일부 해제로 줄이는 것도 조건부 UPDATE 쿼리로만 한다 (1차 캐시의 낡은 엔티티가 dirty checking으로 수량을 덮어쓰지 않게)
+	@Column(nullable = false, updatable = false)
 	private int quantity;
 
 	// ALLOCATED → RELEASED 전이는 조건부 UPDATE 쿼리로만 한다 (동시 해제 시 중복 반영 방지)

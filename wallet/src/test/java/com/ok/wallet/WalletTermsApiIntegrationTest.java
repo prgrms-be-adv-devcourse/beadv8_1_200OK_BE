@@ -86,6 +86,22 @@ class WalletTermsApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 관리자_토큰으로_조회하면_403() throws Exception {
+        mockMvc.perform(get(TERMS_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void 관리자_토큰으로_동의하면_403() throws Exception {
+        mockMvc.perform(post(AGREEMENTS_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ALL_AGREE_BODY))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void 처음_조회하면_현재_버전_약관이_모두_미동의로_나온다() throws Exception {
         getTerms()
                 .andExpect(status().isOk())

@@ -8,11 +8,14 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/orders")
+// 구매 권한(BUYER)이 있는 회원만 주문한다. 판매자 토큰에도 BUYER가 담겨 판매자도 구매할 수 있고, 관리자 토큰은 403이다
+@PreAuthorize("hasRole('BUYER')")
 public class OrderController implements OrderControllerSpec{
 
     private final OrderFacade orderFacade;

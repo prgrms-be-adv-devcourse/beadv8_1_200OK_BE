@@ -1,12 +1,13 @@
 # 배포 가이드
 
-EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
+EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
 서버(EC2) 자체를 만드는 방법은 [`INFRA.md`](INFRA.md)를 보세요.
 
 ## 1. 구성
 
 ```
 인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
+                 │                         └──▶ redis
                  └─ 그 외 경로(/internal, /actuator 등) → 404
                                        └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
 ```
@@ -14,8 +15,12 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 - 외부에는 `/api/v1/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
-- app·mysql·kafka는 호스트 포트를 열지 않습니다. Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
-  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx)에 함께 붙습니다. mysql·nginx는 Kafka에 닿지 않습니다.
+- app·mysql·redis·kafka는 호스트 포트를 열지 않습니다.
+  - Redis는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다.
+  - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
+  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
+- Redis는 `maxmemory 256mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성 없음(재시작하면 비워짐)입니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
+- 앱의 `/actuator/health`에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
@@ -37,10 +42,11 @@ EC2 한 대에 nginx·앱·MySQL·Kafka를 Docker 컨테이너로 띄워 수동�
 | 구성 | 예산 |
 |---|---|
 | app | 2560m (`mem_limit`) |
+| redis | 384m (`mem_limit`, 데이터 상한 256m) |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
 | mysql | 제한 없음, 약 0.5~1GiB |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 6.2GiB (여유 약 1.8GiB) |
+| 합계 | 약 6.0~6.5GiB (여유 약 1.5~2GiB, mysql 사용량에 따라 달라짐) |
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -72,6 +78,7 @@ cp .env.prod.example .env && chmod 600 .env
 docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka-storage.sh random-uuid   # KAFKA_CLUSTER_ID에 넣을 값
 vi .env                      # 비밀번호·키, KAFKA_CLUSTER_ID 채우기
 mountpoint /data             # "/data is a mountpoint"가 나와야 한다
+# JWT 서명 키 만들기 (아래 9절)
 ./deploy.sh
 ```
 
@@ -140,6 +147,7 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy인지)
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
+docker compose -f compose.prod.yml exec redis redis-cli ping      # Redis 확인 (PONG)
 docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
 # Kafka 클러스터 상태(투표자 3대, 리더)와 복사가 덜 된 파티션(없어야 정상). CLI도 JVM을 띄우므로 힙을 작게 준다
 docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status'
@@ -163,6 +171,8 @@ cd /opt/paldo-gotgan
 ./deploy.sh
 docker compose -f compose.prod.yml restart nginx
 ```
+
+- **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). app은 Redis가 healthy가 된 뒤에 시작하므로, 형식이 틀려 Redis가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 
 - Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
@@ -268,3 +278,71 @@ APP_IMAGE_TAG=<이전 SHA 태그> ./deploy.sh                                   
 - **MySQL 권한 설정**: `SELECT @@partial_revokes;`. `ON`이면 와일드카드 권한이 문자 그대로 해석되는데, 이 절차는 스키마 8개를 하나씩 명시해 권한을 주므로 영향이 없어야 합니다. `20_verify.sql`의 권한 점검이 PASS인지 확인합니다.
 - **알려진 마이그레이션 목록**: `00_preflight.sql`의 목록은 이 PR 시점의 55개입니다. 이후 병합된 마이그레이션이 운영 DB에 이미 적용돼 있으면 사전 점검이 멈추고, `migrate.sh`가 저장소의 마이그레이션 파일과 목록이 다르면 경고를 출력합니다. 그 경우 목록(`00_preflight.sql`)과 `20_verify.sql`의 행 수, `migrate.sh`의 이력 합계(54)를 새 마이그레이션까지 포함하도록 고친 뒤 실행합니다.
 - **앱 계정 권한**: 앱 계정이 모든 모듈 스키마에 `ALL` 권한을 가집니다. 모듈 단독 실행(개발)에는 모듈별 계정이 있지만([`DEVELOPMENT.md`의 모듈 DB 계정](DEVELOPMENT.md#스키마계정-생성)), 운영 `monolith`는 이 공용 계정을 씁니다.
+
+## 9. JWT 서명 키 (#313)
+
+Access Token은 RS256(비대칭키)으로 서명합니다. 서버의 `/opt/paldo-gotgan/keys`에 키 PEM 파일과 키 설정 파일(`jwt.yaml`)을 두고, `compose.prod.yml`이 이 폴더를 앱 컨테이너의 `/run/secrets/jwt`에 읽기 전용으로 마운트합니다.
+
+```
+/opt/paldo-gotgan/keys/
+├── jwt.yaml               어떤 키로 검증·서명하는지 (예시: deploy/jwt.example.yaml)
+├── rs256-v1-private.pem   서명용 개인키
+└── rs256-v1-public.pem    검증용 공개키
+```
+
+- 앱은 `application-prod.yml`에서 `jwt.yaml`을 읽어 이미지 안의 키 설정(`jwt.verification-keys`, `jwt.signing`)을 덮어씁니다. 그래서 키를 교체·폐기할 때 새 이미지 없이 이 폴더만 바꾸고 앱을 재시작합니다.
+- `jwt.yaml`이 없거나, 키 파일이 없거나, 형식이 맞지 않거나, 개인키가 서명 `kid`의 공개키와 짝이 아니면 앱이 기동하지 않습니다.
+- 파일 이름은 키 식별자(`kid`)를 따릅니다(`<kid>-private.pem`, `<kid>-public.pem`). 교체 중에는 옛 키와 새 키가 한 폴더에 함께 있기 때문입니다.
+- 키는 백업하지 않습니다. 서버를 잃으면 새 키를 만들면 되고, 사용자는 Refresh Token으로 새 Access Token을 받습니다(Refresh Token은 JWT가 아니라 DB에 있음).
+
+### 키 만들기 (최초 설정, 또는 HS256에서 처음 전환할 때)
+
+로컬·개발 환경과 다른 키를 서버에서 직접 만듭니다. 개인키를 다른 곳으로 복사하거나 저장소에 올리지 않습니다.
+
+```bash
+# 로컬: 키 설정 예시를 서버로 올린다 (키 내용은 없고 kid와 컨테이너 경로만 있다)
+scp -i <키 파일> deploy/jwt.example.yaml ubuntu@<EIP>:/tmp/jwt.yaml
+
+# 서버
+cd /opt/paldo-gotgan
+mkdir -p keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/rs256-v1-private.pem
+openssl pkey -in keys/rs256-v1-private.pem -pubout -out keys/rs256-v1-public.pem
+mv /tmp/jwt.yaml keys/jwt.yaml
+# 컨테이너 사용자(uid 1001, Dockerfile의 appuser)만 개인키를 읽게 한다
+sudo chown -R 1001 keys && sudo chmod 500 keys && sudo chmod 400 keys/*
+```
+
+- 이후 키 폴더의 파일을 읽거나 바꾸려면 `sudo`가 필요합니다. `ubuntu` 사용자는 개인키를 읽을 수 없습니다.
+
+### HS256에서 처음 전환하는 배포
+
+0. 프론트엔드가 401을 받으면 Refresh Token으로 재발급받고 요청을 다시 보내는지 확인합니다. 배포 직후 기존 토큰이 모두 401을 받기 때문입니다.
+1. 위 절차로 키와 `jwt.yaml`을 만듭니다.
+2. [6. 배포 파일 갱신](#6-배포-파일-갱신)으로 새 `compose.prod.yml`을 서버에 올리고 `./deploy.sh`로 배포합니다.
+3. 새 버전이 안정되면 `.env`의 `JWT_SECRET` 줄과 `compose.prod.yml`의 `JWT_SECRET` 줄을 함께 지웁니다. 새 버전은 이 값을 읽지 않습니다.
+
+- 배포 전에 발급된 HS256 Access Token은 배포 직후부터 401을 받습니다. 클라이언트는 Refresh Token으로 재발급받으면 되고, Refresh Token은 JWT가 아니라서 영향이 없습니다. HS256 토큰을 함께 받아들이는 기간은 두지 않습니다(비밀키가 계속 남기 때문).
+- 이전 버전 이미지는 `JWT_SECRET`으로 기동합니다. 그래서 `compose.prod.yml`은 3번 전까지 이 값을 앱에 계속 넘기고, 그동안은 [4. 롤백](#4-롤백)처럼 `APP_IMAGE_TAG`만 바꿔 되돌릴 수 있습니다. 3번 뒤에는 이전 이미지로 롤백할 수 없으므로, 3번은 새 버전이 안정된 것을 확인한 뒤에 합니다.
+- 롤백하면 이전 이미지가 다시 HS256 토큰을 발급합니다. 그래서 고친 RS256 버전을 다시 배포할 때도 그 사이에 발급된 Access Token이 401을 받습니다(최대 30분). 처음 전환할 때와 같은 영향이므로 따로 할 일은 없습니다.
+
+### 키 교체
+
+정기 교체는 하지 않습니다. 개인키 유출이 의심되거나 서버에 접근할 수 있는 사람이 바뀌었을 때 교체합니다. 이미지 배포 없이 서버에서 끝납니다. 예: `rs256-v1` → `rs256-v2`
+
+```bash
+# 서버
+cd /opt/paldo-gotgan
+sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out keys/rs256-v2-private.pem
+sudo openssl pkey -in keys/rs256-v2-private.pem -pubout -out keys/rs256-v2-public.pem
+sudo chown 1001 keys/rs256-v2-* && sudo chmod 400 keys/rs256-v2-*
+sudo vi keys/jwt.yaml          # 아래 1번처럼 고친다
+docker compose -f compose.prod.yml restart app
+```
+
+1. `jwt.yaml`의 `verification-keys`에 `rs256-v2`를 **추가**하고, `signing`을 `rs256-v2`와 새 개인키로 바꾼 뒤 재시작합니다. 새 토큰은 `rs256-v2`로 서명되고, 이전 토큰은 `rs256-v1` 공개키로 만료될 때까지 검증됩니다.
+2. Access Token 유효 기간(30분)이 지나면 `verification-keys`에서 `rs256-v1`을 빼고 재시작한 뒤 `rs256-v1-*.pem`을 지웁니다.
+
+- 앱이 monolith 하나라 검증 목록 추가와 서명 키 변경을 한 번에 합니다. 검증하는 앱이 여럿이면 순서가 필요합니다([`DEVELOPMENT.md`의 키 교체](DEVELOPMENT.md#키-관리와-교체)).
+- 개인키가 유출되었으면 2를 기다리지 않고 1에서 `rs256-v1`을 바로 뺍니다. 그 키로 서명된 토큰은 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다.
+- 재시작 중 수십 초간 요청이 실패합니다([1. 구성](#1-구성)).

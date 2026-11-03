@@ -1,6 +1,6 @@
 package com.ok.testsupport;
 
-import com.ok.delivery.service.CarrierClient;
+import com.ok.delivery.application.port.out.CarrierClient;
 import org.springframework.stereotype.Component;
 
 /**

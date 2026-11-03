@@ -20,6 +20,7 @@ interface WalletChargeControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "충전 건 생성"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)"),
             @ApiResponse(responseCode = "409", description = "필수 약관 미동의, 잔액 보유 한도 초과"),
             @ApiResponse(responseCode = "422", description = "충전 금액 규칙 위반, 요청 값 검증 실패")
     })
@@ -32,6 +33,7 @@ interface WalletChargeControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "승인 처리 결과 (status 확인)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)"),
             @ApiResponse(responseCode = "404", description = "충전 건이 없거나 본인의 충전 건이 아님"),
             @ApiResponse(responseCode = "409", description = "다른 충전이 먼저 반영되어 잔액 보유 한도 초과"),
             @ApiResponse(responseCode = "422", description = "결제 금액이 충전 요청 금액과 다름, 요청 값 검증 실패")
@@ -44,6 +46,7 @@ interface WalletChargeControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "실패 처리 결과 (status 확인)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)"),
             @ApiResponse(responseCode = "404", description = "충전 건이 없거나 본인의 충전 건이 아님"),
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
     })
@@ -55,6 +58,7 @@ interface WalletChargeControllerSpec {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "현재 상태 (status 확인)"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매자가 아님 (관리자 토큰 등)"),
             @ApiResponse(responseCode = "404", description = "충전 건이 없거나 본인의 충전 건이 아님")
     })
     ResponseEntity<ChargeStatusResponse> getStatus(

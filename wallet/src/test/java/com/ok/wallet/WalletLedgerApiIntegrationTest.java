@@ -62,6 +62,12 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 관리자_토큰으로_조회하면_403() throws Exception {
+        mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void 지갑이_없으면_빈_목록을_응답한다() throws Exception {
         mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
                 .andExpect(status().isOk())
