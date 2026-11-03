@@ -175,6 +175,18 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 주문에_없는_상품이면_404() throws Exception {
+        // given
+        orderClient.clear();
+
+        // when & then
+        request(SOCKS_ORDER_ITEM_ID, 1)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", endsWith("/refund/order-item-not-found")));
+        assertThat(refundRepository.count()).isZero();
+    }
+
+    @Test
     void 출고된_상품이면_409() throws Exception {
         // given
         orderClient.put(socks("SHIPPING"));
