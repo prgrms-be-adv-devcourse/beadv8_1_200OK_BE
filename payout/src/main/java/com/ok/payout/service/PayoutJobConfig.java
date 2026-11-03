@@ -1,8 +1,7 @@
 package com.ok.payout.service;
 
-import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
-import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.domain.PayoutRunType;
 import com.ok.payout.service.dto.PayoutDraftResult;
 import com.ok.payout.service.dto.PayoutVerifyResult;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +9,7 @@ import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.job.parameters.DefaultJobParametersValidator;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.StepExecution;
@@ -50,6 +50,12 @@ public class PayoutJobConfig {
                          Step payoutSnapshotStep, Step payoutValidateStep, Step payoutDraftStep,
                          Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep) {
         return new JobBuilder("payoutJob", jobRepository)
+                // 필수 파라미터가 없으면 실행 기록(JobExecution)을 만들기 전에 거절함 (#389)
+                // 빠진 실행은 정산 실패가 아니라 잘못 시작된 실행이라, FAILED 기록으로 남기지 않고 시작 자체를 막음
+                // 정상 경로(스케줄러·관리자 실행·대기 건너뛰기)는 모두 PayoutJobRunner.start()를 거쳐 두 값을 항상 넣음
+                .validator(new DefaultJobParametersValidator(
+                        new String[]{PayoutJobRunner.REQUESTED_AT_KEY, PayoutJobRunner.RUN_TYPE_KEY},
+                        new String[]{}))
                 .start(payoutSnapshotStep)
                 .next(payoutValidateStep)
                 .next(payoutDraftStep)
@@ -69,17 +75,17 @@ public class PayoutJobConfig {
 
     @Bean
     @StepScope
-    public Tasklet payoutSnapshotTasklet(@Value("#{jobParameters['requestedAt']}") LocalDateTime requestedAt) {
-        // requestedAt 없이 실행됨 = 스케줄러/API가 아닌 경로(앱 시작 시 자동 실행 등) → 의도치 않은 실행이므로 실패시킴
-        if (requestedAt == null) {
-            throw new RestApiException(PayoutErrorCode.MISSING_PAYOUT_REQUESTED_AT);
-        }
+    public Tasklet payoutSnapshotTasklet(@Value("#{jobParameters['requestedAt']}") LocalDateTime requestedAt,
+                                         @Value("#{jobParameters['runType']}") String runType) {
+        // 두 값이 없는 실행은 Job 파라미터 검사기(payoutJob)가 시작 전에 막으므로 여기서 다시 검사하지 않음
+        // 모르는 실행 유형이면 valueOf가 예외를 던져 Job이 FAILED가 됨 (start()가 enum 이름만 넣으므로 코드 버그일 때만 생김)
+        PayoutRunType payoutRunType = PayoutRunType.valueOf(runType);
         return (contribution, chunkContext) -> {
             JobExecution jobExecution = contribution.getStepExecution().getJobExecution();
             LocalDateTime from = payoutService.settlementFrom();
             LocalDateTime to = payoutService.settlementTo(requestedAt.toLocalDate());
 
-            Long snapshotId = payoutService.createSnapshot(jobExecution.getId(), from, to);
+            Long snapshotId = payoutService.createSnapshot(jobExecution.getId(), payoutRunType, from, to);
             // Step 사이에 값을 넘기는 통로: 다음 Step은 #{jobExecutionContext['snapshotId']}로 꺼냄
             jobExecution.getExecutionContext().put(SNAPSHOT_ID_KEY, snapshotId);
             return RepeatStatus.FINISHED;

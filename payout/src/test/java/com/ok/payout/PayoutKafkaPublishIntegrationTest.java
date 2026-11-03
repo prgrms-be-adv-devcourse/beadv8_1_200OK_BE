@@ -106,7 +106,7 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
         insertAdjustment(orderB, 20L, -5_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 정산은 판매자 10, 판매자 20(0원), 시스템 몫 3건이 확정됨
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);

@@ -109,7 +109,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
         backdateCandidates();
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 실패 없이 정산 (A = 9,700 + 4,850 + 3,000, B = 7,777 − 233, 시스템 = 300 + 150 + 233)
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -136,8 +136,8 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
         backdateCandidates();
 
         // when: 1차 배치 → 2차 배치
-        JobExecution first = payoutJobRunner.run();
-        JobExecution second = payoutJobRunner.run();
+        JobExecution first = payoutJobRunner.runScheduled();
+        JobExecution second = payoutJobRunner.runScheduled();
 
         // then: 1차는 틀린 주문의 후보 4건(두 판매자 모두)만 금액 불일치로 빠지고, 정상 주문은 정산됨
         assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);

@@ -8,6 +8,7 @@ import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutItem;
 import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.PayoutRunType;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
@@ -31,11 +32,17 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
+import org.springframework.batch.core.job.parameters.InvalidJobParametersException;
 import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -44,6 +51,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -86,6 +94,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private Job payoutJob;
+
+    @Autowired
+    private JobRepository jobRepository;
 
     @Autowired
     private PayoutCandidateItemRepository candidateRepository;
@@ -177,10 +188,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // given: Job 실행 1회 = 스냅샷 1건 (UK job_execution_id)
         insertSaleAmount(10L, 1_000L, TO.minusDays(1));
         long jobExecutionId = JOB_EXECUTION_ID_SEQ.incrementAndGet();
-        payoutService.createSnapshot(jobExecutionId, FROM, TO);
+        payoutService.createSnapshot(jobExecutionId, PayoutRunType.SCHEDULED, FROM, TO);
 
         // when & then
-        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO))
+        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, PayoutRunType.SCHEDULED, FROM, TO))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(snapshotRepository.findAll())
                 .filteredOn(snapshot -> snapshot.getJobExecutionId().equals(jobExecutionId))
@@ -728,7 +739,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         }
 
         // when: 스케줄러/API와 같은 경로로 실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -752,7 +763,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 정산_대상이_없어도_Job은_COMPLETED로_끝나고_빈_스냅샷이_남는다() throws Exception {
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 대상이 없던 날도 "배치는 돌았다"는 기록이 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -772,7 +783,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_FEE, orderB, 20L, 600L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공하고(실패가 있어도 verify 통과), 주문 B의 후보 2건만 실패로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -801,7 +812,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertShippingFeeWithoutDeduction(orderB, 20L, 3_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 주문 단위 검사라 배송비도 같은 주문으로 걸리고, 실패 기록의 주문상품 ID는 비어 있음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -839,9 +850,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
 
         // when: 1차 배치 → 빠짐, 그 뒤 지갑 차감 기록이 늦게 들어옴 → 2차 배치
-        JobExecution first = payoutJobRunner.run();
+        JobExecution first = payoutJobRunner.runScheduled();
         givenDeduction(orderB);
-        JobExecution second = payoutJobRunner.run();
+        JobExecution second = payoutJobRunner.runScheduled();
 
         // then: 1차는 실패 기록만 있고 정산 없음 (잠그지 않아 미정산 후보로 남음)
         Long firstSnapshotId = snapshotIdOf(first);
@@ -857,24 +868,58 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(20L, 19_400L));
     }
 
-    @Test
-    void requestedAt_없이_실행하면_Job이_FAILED로_끝나고_스냅샷도_만들지_않는다() throws Exception {
-        // given: 정산 대상이 있어도 (앱 시작 시 자동 실행 등 의도치 않은 실행 방지)
+    @ParameterizedTest
+    @MethodSource("필수_파라미터가_빠진_Job_파라미터")
+    void 필수_파라미터가_빠지면_Job을_시작하지_않아_실행_기록도_스냅샷도_남지_않는다(JobParameters params) {
+        // given: 정산 대상이 있어도 (PayoutJobRunner를 거치지 않은 의도치 않은 실행 방지, #389)
         insertSaleAmount(10L, 1_000L, LocalDateTime.now().minusDays(20));
+        int executionCountBefore = payoutJobExecutionCount();
 
-        // when: 파라미터 없이 직접 실행
-        JobExecution execution = jobOperator.start(payoutJob, new JobParameters());
-
-        // then
-        assertThat(execution.getStatus()).isEqualTo(BatchStatus.FAILED);
+        // when & then: 파라미터 검사기가 실행 기록(JobExecution)을 만들기 전에 거절
+        // Spring Batch 6.0.5는 검사기보다 JobInstance를 먼저 만들어서(TaskExecutorJobLauncher.createJobExecution),
+        // 같은 식별 파라미터로 다시 시작하면 검사기 대신 "실행 없는 JobInstance" 예외가 남 (식별 파라미터가 빈 1·3번 경우)
+        // 어느 쪽이든 실행 기록은 생기지 않고 Job도 돌지 않음
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, params))
+                .isInstanceOfAny(InvalidJobParametersException.class, IllegalStateException.class);
+        assertThat(payoutJobExecutionCount()).isEqualTo(executionCountBefore);
         assertThat(snapshotRepository.findAll()).isEmpty();
         assertThat(payoutRepository.count()).isZero();
+    }
+
+    static Stream<JobParameters> 필수_파라미터가_빠진_Job_파라미터() {
+        return Stream.of(
+                new JobParameters(),   // 둘 다 없음 (앱 시작 시 자동 실행과 같은 모양)
+                new JobParametersBuilder()   // 실행 유형 없음
+                        .addLocalDateTime(PayoutJobRunner.REQUESTED_AT_KEY, LocalDateTime.now())
+                        .toJobParameters(),
+                new JobParametersBuilder()   // 실행 기준 시각 없음
+                        .addString(PayoutJobRunner.RUN_TYPE_KEY, PayoutRunType.SCHEDULED.name(), false)
+                        .toJobParameters()
+        );
+    }
+
+    @Test
+    void 실행_경로마다_스냅샷에_맞는_실행_유형이_남는다() throws Exception {
+        // when: 스케줄러·관리자 실행·대기 건너뛰기와 같은 경로로 한 번씩 실행
+        JobExecution scheduled = payoutJobRunner.runScheduled();
+        JobExecution manual = payoutJobRunner.runManual();
+        JobExecution skipWait = payoutJobRunner.runSkippingWait();
+
+        // then: 스냅샷과 배치 실행 기록(기록용 파라미터) 양쪽에 같은 값
+        assertSoftly(softly -> {
+            softly.assertThat(snapshotOf(scheduled).getRunType()).isEqualTo(PayoutRunType.SCHEDULED);
+            softly.assertThat(snapshotOf(manual).getRunType()).isEqualTo(PayoutRunType.MANUAL);
+            softly.assertThat(snapshotOf(skipWait).getRunType()).isEqualTo(PayoutRunType.SKIP_WAIT);
+            softly.assertThat(scheduled.getJobParameters().getString(PayoutJobRunner.RUN_TYPE_KEY)).isEqualTo("SCHEDULED");
+            softly.assertThat(manual.getJobParameters().getString(PayoutJobRunner.RUN_TYPE_KEY)).isEqualTo("MANUAL");
+            softly.assertThat(skipWait.getJobParameters().getString(PayoutJobRunner.RUN_TYPE_KEY)).isEqualTo("SKIP_WAIT");
+        });
     }
 
     @Test
     void Job_실행_기록이_DB에_저장된다() throws Exception {
         // when: 정산 대상 없이 실행 (대상 유무와 상관없이 실행 기록은 남아야 함)
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 반환된 실행 ID로 메타 테이블을 직접 조회 → 메모리 저장이면 행이 없어 실패
         // (Spring Batch 메타 테이블은 엔티티가 없어 JDBC로 확인)
@@ -897,7 +942,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 재실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 새 스냅샷으로 판매자 10, 20 모두 정산되고, 실패한 스냅샷의 draft는 기록으로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1072,7 +1117,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(PayoutEventType.SALE_FEE, orderY, 30L, 300L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공, 주문 X의 후보 5건은 1건씩 실패로 기록
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1106,7 +1151,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 1_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 실패 기록 UK에 걸려 롤백되지 않고 4건이 1건씩 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1349,7 +1394,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertSaleAmount(10L, 1_000L, LocalDateTime.now());
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1382,7 +1427,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 서비스 직접 호출용 스냅샷 생성 (Job 실행 ID는 테스트마다 새로 발급)
     private Long createSnapshot(LocalDateTime from, LocalDateTime to) {
-        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to);
+        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), PayoutRunType.SCHEDULED, from, to);
     }
 
     // draftStep처럼 0이 나올 때까지 회차 반복
@@ -1405,9 +1450,22 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // Job 실행 1회 = 스냅샷 1건이라, 실행 ID로 그 실행이 만든 스냅샷을 찾음 (JPA 조회)
     private Long snapshotIdOf(JobExecution execution) {
+        return snapshotOf(execution).getId();
+    }
+
+    // 정산 Job의 실행 기록(JobExecution) 수. 실패한 실행도 FAILED로 남으므로 "시작했는지"를 셀 수 있음
+    private int payoutJobExecutionCount() {
+        int count = 0;
+        for (JobInstance instance : jobRepository.findJobInstances(payoutJob.getName())) {
+            count += jobRepository.getJobExecutions(instance).size();
+        }
+        return count;
+    }
+
+    private PayoutSnapshot snapshotOf(JobExecution execution) {
         for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
             if (snapshot.getJobExecutionId().equals(execution.getId())) {
-                return snapshot.getId();
+                return snapshot;
             }
         }
         throw new IllegalStateException("실행에 해당하는 스냅샷이 없습니다. executionId=" + execution.getId());

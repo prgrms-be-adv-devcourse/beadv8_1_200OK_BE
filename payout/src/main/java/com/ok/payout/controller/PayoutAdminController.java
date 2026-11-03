@@ -83,7 +83,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     @Override
     @PostMapping("/run")
     public ResponseEntity<PayoutRunResponse> run() throws Exception {
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runManual();
         // 배치 실패는 사용자 입력이 아니라 시스템 결과라 표준 예외로 던짐 (exception.md: 값의 출처 기준)
         // 공통 처리기가 500으로 응답하고 실행 ID·상태가 담긴 메시지는 서버 로그(ERROR)에만 남김 (응답 detail에는 나가지 않음)
         // TODO(#67): 임시로 실패 여부만 알림. 정산 실패 기록이 생기면 무엇이 실패했는지와 실패 기록 ID를 함께 응답하도록 변경

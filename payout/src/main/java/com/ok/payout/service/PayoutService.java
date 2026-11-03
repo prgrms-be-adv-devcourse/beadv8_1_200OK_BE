@@ -6,6 +6,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.PayoutRunType;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
@@ -105,8 +106,8 @@ public class PayoutService {
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
     // → 하루 정산후보가 수만 건을 넘어 메모리·시간이 부담되면 HQL INSERT ... SELECT(DB 안에서 1문장 복사)로 바꾸는 것을 고려
     @Transactional
-    public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to) {
-        PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to));
+    public Long createSnapshot(Long jobExecutionId, PayoutRunType runType, LocalDateTime from, LocalDateTime to) {
+        PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, runType, from, to));
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to);
         List<PayoutSnapshotItem> items = new ArrayList<>();

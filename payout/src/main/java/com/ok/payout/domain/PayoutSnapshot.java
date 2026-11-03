@@ -4,6 +4,8 @@ import com.ok.payout.PayoutSchema;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -33,6 +35,11 @@ public class PayoutSnapshot extends BaseTime {
     @Column(nullable = false, unique = true)
     private Long jobExecutionId;
 
+    // 어느 경로로 실행됐는지 (#389). Job 파라미터 runType과 같은 값
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private PayoutRunType runType;
+
     // 조회 하한 (포함). null이면 하한 없음 (정산 이력이 없는 첫 실행)
     private LocalDateTime periodFrom;
 
@@ -40,9 +47,11 @@ public class PayoutSnapshot extends BaseTime {
     @Column(nullable = false)
     private LocalDateTime periodTo;
 
-    public static PayoutSnapshot create(Long jobExecutionId, LocalDateTime periodFrom, LocalDateTime periodTo) {
+    public static PayoutSnapshot create(Long jobExecutionId, PayoutRunType runType,
+                                        LocalDateTime periodFrom, LocalDateTime periodTo) {
         PayoutSnapshot snapshot = new PayoutSnapshot();
         snapshot.jobExecutionId = jobExecutionId;
+        snapshot.runType = runType;
         snapshot.periodFrom = periodFrom;
         snapshot.periodTo = periodTo;
         return snapshot;

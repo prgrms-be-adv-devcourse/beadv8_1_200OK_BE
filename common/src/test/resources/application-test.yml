@@ -45,3 +45,8 @@ toss:
   # 토스 테스트 전용 키.
   payments:
     secret-key: test_sk_dummy-for-test
+payout:
+  # 대기 건너뛰기 실행 API 테스트용 (#389). 운영 기본값은 꺼짐(false)
+  # 꺼짐/켜짐을 테스트마다 바꾸면 Spring 컨텍스트가 새로 떠서(testing-strategy.md), 통합 테스트는 켠 상태로 두고 꺼짐은 PayoutJobRunnerTest에서 확인
+  skip-wait-run:
+    enabled: true

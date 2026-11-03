@@ -21,7 +21,6 @@ public enum PayoutErrorCode implements ErrorCode {
     MISSING_ADMIN_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing admin id", "수동 조정에는 관리자 ID가 필수입니다."),
     MISSING_ADJUSTMENT_REASON(HttpStatus.UNPROCESSABLE_ENTITY, "Missing adjustment reason", "수동 조정에는 조정 사유가 필수입니다."),
     ADJUSTMENT_REASON_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Adjustment reason too long", "조정 사유는 255자 이하여야 합니다."),
-    MISSING_PAYOUT_REQUESTED_AT(HttpStatus.INTERNAL_SERVER_ERROR, "Missing payout requested at", "정산 Job 실행에는 requestedAt 파라미터가 필요합니다."),
     MISSING_CANDIDATE_ID(HttpStatus.INTERNAL_SERVER_ERROR, "Missing candidate id", "정산 항목은 저장된 정산후보로만 만들 수 있습니다."),
     UNSETTLED_CANDIDATES_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "Unsettled candidates not found", "정산 대상 판매자의 미정산 후보가 없습니다. 조회 조건 불일치를 확인하세요."),
     // 판매자 draft 합계(헤더)가 항목 합계와 다름 (#290). 같은 코드가 같은 순간에 만드는 값이라, 다르면 draft를 만드는 코드 자체가 망가진 상태
@@ -40,6 +39,9 @@ public enum PayoutErrorCode implements ErrorCode {
     DRAFT_INCLUDES_FAILED_CANDIDATE(HttpStatus.INTERNAL_SERVER_ERROR, "Draft includes failed candidate", "실패로 기록된 정산후보가 임시 정산에 들어갔습니다. draft 대상 조회 조건 오류이므로 최근 변경을 확인하세요."),
     PAYOUT_NOT_FOUND(HttpStatus.NOT_FOUND, "Payout not found", "정산을 찾을 수 없습니다."),
     PAYOUT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Payout access denied", "정산을 조회할 권한이 없습니다."),
+    // 대기 건너뛰기 실행(#224)은 평소 꺼 둠 (#389). 요청은 맞지만 서버 설정 상태 때문에 받을 수 없어 409
+    // 501(FEATURE_NOT_SUPPORTED)을 쓰지 않는 이유: 아직 안 만든 기능이 아니라 만들어 두고 꺼 둔 기능이라서
+    SKIP_WAIT_RUN_DISABLED(HttpStatus.CONFLICT, "Skip wait run disabled", "대기 건너뛰기 실행이 꺼져 있습니다. 설정을 켠 뒤 다시 시도하세요."),
     // 형태만 공개하고 실제 동작은 막아 둔 API(1건 수동 실행, 수동 조정)를 표시하는 임시 코드
     // 두 API가 모두 열리면 이 항목도 지움. 막아 둔 이유는 각 API의 TODO(논의 필요) 주석 참고
     FEATURE_NOT_SUPPORTED(HttpStatus.NOT_IMPLEMENTED, "Feature not supported", "아직 지원하지 않는 기능입니다.");
