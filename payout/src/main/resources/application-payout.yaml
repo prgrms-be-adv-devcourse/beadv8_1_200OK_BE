@@ -64,6 +64,11 @@ spring:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
         # 타입 헤더가 없으므로 읽을 타입은 리스너(토픽)마다 정한다
         spring.json.use.type.headers: false
+payout:
+  skip-wait-run:
+    # 대기 건너뛰기 실행 API 허용 여부 (#389). 평소 꺼 두고 발표·연동 테스트 때만 .env에서 켬
+    # monolith는 이 파일을 읽지 않아, monolith로 띄우면 코드 기본값(false)으로 항상 꺼짐
+    enabled: ${PAYOUT_SKIP_WAIT_RUN_ENABLED:false}
 app:
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
