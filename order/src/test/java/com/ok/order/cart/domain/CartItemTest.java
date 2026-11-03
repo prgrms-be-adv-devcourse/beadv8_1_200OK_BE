@@ -35,6 +35,17 @@ class CartItemTest {
     }
 
     @Test
+    void 수량을_99개_넘게_변경할_수_없다() {
+        // given
+        CartItem item = CartItem.create(Cart.create(1L), 100L, 1);
+
+        // when & then
+        assertThatThrownBy(() -> item.changeQuantity(CartItem.MAX_QUANTITY + 1))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CartErrorCode.INVALID_QUANTITY));
+    }
+
+    @Test
     void 상품을_선택_해제하고_다시_선택할_수_있다() {
         // Given
         CartItem item = CartItem.create(Cart.create(1L), 100L, 1);   // 담으면 기본 선택

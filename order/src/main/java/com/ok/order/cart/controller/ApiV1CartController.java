@@ -3,6 +3,7 @@ package com.ok.order.cart.controller;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.order.cart.controller.dto.*;
 import com.ok.order.cart.service.CartService;
+import com.ok.order.cart.service.dto.AddCartItemResult;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,8 +26,10 @@ public class ApiV1CartController implements CartControllerDocs {
             @CurrentMemberId Long memberId,
             @Valid @RequestBody AddCartItemRequest request
     ) {
-        Long cartItemId = cartService.addItem(memberId, request.productOptionId(), request.quantity());
-        return ResponseEntity.status(HttpStatus.CREATED).body(new AddCartItemResponse(cartItemId));
+        AddCartItemResult result = cartService.addItem(memberId, request.productOptionId(), request.quantity());
+        // 새로 담았으면 201(새 자원 생성), 이미 담긴 옵션의 수량만 늘었으면 200
+        HttpStatus status = result.merged() ? HttpStatus.OK : HttpStatus.CREATED;
+        return ResponseEntity.status(status).body(AddCartItemResponse.from(result));
     }
 
     @Override
