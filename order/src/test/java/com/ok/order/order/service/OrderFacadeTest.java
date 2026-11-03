@@ -7,10 +7,11 @@ import com.ok.order.order.client.DeliveryApiClient;
 import com.ok.order.order.client.ProductApiClient;
 import com.ok.order.order.client.WalletApiClient;
 import com.ok.order.order.client.dto.ProductOptionInfoResponse;
-import com.ok.order.order.client.dto.RemoteAreaFeeResponse;
+import com.ok.order.order.client.dto.SellerShippingFeeResponse;
 import com.ok.order.order.client.dto.StockAllocationItemRequest;
 import com.ok.order.order.client.dto.WalletBalanceResponse;
 import com.ok.order.order.domain.Order;
+import com.ok.order.order.domain.OrderSellerGroup;
 import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.service.dto.CheckoutResult;
@@ -27,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -36,6 +38,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -78,7 +81,19 @@ class OrderFacadeTest {
 
     private CreateOrderCommand command(String idempotencyKey, long expectedTotalAmount) {
         return new CreateOrderCommand(BUYER_ID, idempotencyKey, "홍길동", "010-1234-5678", ZIP_CODE,
-                "서울시 강남구 테헤란로 1", "101호", true, expectedTotalAmount);
+                "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요", true, expectedTotalAmount);
+    }
+
+    // 배송 모듈 응답: 기본 배송비 0원, 일반 지역이라 배송비·운임이 붙지 않음 (배송비와 상관없는 테스트용)
+    private void noShippingFee() {
+        given(deliveryApiClient.getShippingFees(any(), anyMap())).willReturn(List.of(
+                new SellerShippingFeeResponse(SELLER_ID, 0L, null, 0L, 0L)));
+    }
+
+    // 배송 모듈 응답: 판매자 설정 기본 배송비 3,000원, 5만 원 이상 무료 -> 적용된 배송비 shippingFee, 도서산간 운임 regionSurcharge
+    private void shippingFee(long shippingFee, long regionSurcharge) {
+        given(deliveryApiClient.getShippingFees(any(), anyMap())).willReturn(List.of(
+                new SellerShippingFeeResponse(SELLER_ID, 3_000L, 50_000L, shippingFee, regionSurcharge)));
     }
 
     // ---------- 주문서 조회 ----------
@@ -162,19 +177,46 @@ class OrderFacadeTest {
             softly.assertThat(result.sellerGroups()).hasSize(1);
             softly.assertThat(result.sellerGroups().get(0).items()).hasSize(2);
             softly.assertThat(result.totalProductAmount()).isEqualTo(25_000L);
-            softly.assertThat(result.totalAmount()).isEqualTo(25_000L);
         });
         then(orderService).shouldHaveNoInteractions();
     }
 
+    @Test
+    void 주문서는_배송_모듈을_부르지_않는다() {
+        // given
+        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+
+        // when
+        sut.getCheckout(BUYER_ID);
+
+        // then: 배송비는 프론트가 배송 견적 API로 받으므로 결제 확인용 호출은 주문 생성 때만 한다
+        then(deliveryApiClient).shouldHaveNoInteractions();
+    }
+
     // ---------- 주문 생성 ----------
+
+    @Test
+    void 배송_모듈_응답에_판매자가_빠지면_배송비_0원으로_결제되지_않게_주문을_막는다() {
+        // given: 판매자 100의 상품인데 배송 모듈이 다른 판매자의 배송비만 돌려줌
+        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        given(deliveryApiClient.getShippingFees(any(), anyMap())).willReturn(List.of(
+                new SellerShippingFeeResponse(999L, 3_000L, null, 3_000L, 0L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.DELIVERY_API_FAILED));
+        then(orderService).should(never()).create(any());
+    }
 
     @Test
     void 사용자가_본_금액과_다르면_주문을_저장하지_않는다() {
         // given: 실제 10,000원인데 화면에서는 9,000원을 봄 (그 사이 가격 변경)
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        noShippingFee();
 
         // when & then
         assertThatThrownBy(() -> sut.createOrder(command(9_000L)))
@@ -188,7 +230,7 @@ class OrderFacadeTest {
         // given: 결제 금액 10,000원, 잔액 5,000원
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 5_000L));
 
         // when & then
@@ -203,7 +245,7 @@ class OrderFacadeTest {
         // given: 주문 저장까지 성공, 재고 선점에서 실패
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
         given(orderService.create(any(Order.class))).willReturn(10L);
         willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
@@ -220,15 +262,19 @@ class OrderFacadeTest {
 
     @Test
     void 주문을_저장하고_재고를_선점한_뒤_생성_이벤트를_발행한다() {
-        // given: 상품 10,000원 + 도서산간 운임 3,000원 = 13,000원
+        // given: 상품 10,000원 + 배송비 3,000원 + 도서산간 운임 3,000원 = 16,000원
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, true, 3_000L));
+        shippingFee(3_000L, 3_000L);
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
         given(orderService.create(any(Order.class))).willReturn(10L);
 
         // when
-        Long orderId = sut.createOrder(command(13_000L));
+        Long orderId = sut.createOrder(command(16_000L));
+
+        // then: 배송 모듈은 배송지 우편번호와 함께 한 번만 부른다 (도서산간 운임을 따로 묻지 않음)
+        then(deliveryApiClient).should().getShippingFees(ZIP_CODE, Map.of(SELLER_ID, 10_000L));
+        then(deliveryApiClient).shouldHaveNoMoreInteractions();
 
         // then: 저장한 주문
         then(orderService).should().create(orderCaptor.capture());
@@ -240,9 +286,20 @@ class OrderFacadeTest {
             softly.assertThat(saved.getIdempotencyKey()).isEqualTo(IDEMPOTENCY_KEY);
             softly.assertThat(saved.getRecipientName()).isEqualTo("홍길동");
             softly.assertThat(saved.getZipCode()).isEqualTo(ZIP_CODE);
+            softly.assertThat(saved.getDeliveryNote()).isEqualTo("문 앞에 놓아 주세요");
+            softly.assertThat(saved.getTotalShippingFee()).isEqualTo(3_000L);
             softly.assertThat(saved.getTotalRemoteAreaFee()).isEqualTo(3_000L);
-            softly.assertThat(saved.getTotalAmount()).isEqualTo(13_000L);
+            softly.assertThat(saved.getTotalAmount()).isEqualTo(16_000L);
             softly.assertThat(saved.getThirdPartyConsents()).hasSize(1);
+        });
+
+        // then: 결제 완료 이벤트로 배송에 넘길 판매자 설정 값
+        OrderSellerGroup group = saved.getSellerGroups().get(0);
+        assertSoftly(softly -> {
+            softly.assertThat(group.getShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(group.getBaseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(group.getFreeShippingThreshold()).isEqualTo(50_000L);
+            softly.assertThat(group.getRemoteAreaFee()).isEqualTo(3_000L);
         });
 
         // then: 재고 선점 요청과 이벤트 발행
@@ -277,7 +334,7 @@ class OrderFacadeTest {
                 .willReturn(Optional.empty(), Optional.of(10L));
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
         given(orderService.create(any(Order.class))).willThrow(new DataIntegrityViolationException("uk_orders_buyer_id_idempotency_key"));
 
@@ -296,7 +353,7 @@ class OrderFacadeTest {
         given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
         given(orderService.create(any(Order.class)))
                 .willThrow(new DataIntegrityViolationException("Duplicate entry for key 'orders.uk_orders_buyer_id_idempotency_key'"));
@@ -314,7 +371,7 @@ class OrderFacadeTest {
         given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
         given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
-        given(deliveryApiClient.getRemoteAreaFee(ZIP_CODE)).willReturn(new RemoteAreaFeeResponse(ZIP_CODE, false, 0L));
+        noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
         given(orderService.create(any(Order.class))).willThrow(new DataIntegrityViolationException("other"));
 
