@@ -5,13 +5,16 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -47,7 +50,10 @@ import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
 import com.ok.product.review.repository.ReviewSentimentRepository;
 import com.ok.product.review.service.ProductReviewService;
 import com.ok.product.review.service.ReviewSentimentAnalysisFacade;
+import com.ok.product.review.service.ReviewSentimentService;
 import com.ok.product.review.service.dto.ProductReviewCreateCommand;
+import com.ok.product.review.service.dto.ReviewSentimentAnalysis;
+import com.ok.product.review.service.dto.ReviewSentimentTarget;
 import com.ok.product.review.service.dto.ReviewablePurchase;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderApiClient;
@@ -61,6 +67,7 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 	private static final Long OTHER_SELLER_ID = 11L;
 	private static final Long BUYER_ID = 1L;
 	private static final String SUMMARY_URL = "/api/v1/sellers/me/products/{productId}/review-sentiments";
+	private static final String BUCKET_URL = "https://test-mock-bucket.s3.ap-northeast-2.amazonaws.com/";
 
 	@Autowired
 	WebApplicationContext context;
@@ -85,6 +92,9 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ReviewSentimentAnalysisFacade reviewSentimentAnalysisFacade;
+
+	@Autowired
+	ReviewSentimentService reviewSentimentService;
 
 	@Autowired
 	TransactionTemplate transactionTemplate;
@@ -231,12 +241,270 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 		ResultActions sut = getSummary(SELLER_ID, productId);
 
 		// then
-		assertThat(statusOf(failedReviewId)).isEqualTo(ReviewAnalysisStatus.FAILED);
+		assertThat(requestOf(failedReviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.FAILED);
 		sut.andExpect(status().isOk())
 			.andExpect(jsonPath("$.analyzedReviewCount").value(1))
 			.andExpect(jsonPath("$.overall.positive").value(1))
 			.andExpect(jsonPath("$.overall.negative").value(0))
 			.andExpect(jsonPath("$.aspects[*].mentionedReviewCount").value(contains(1, 0, 0, 0, 0, 0)));
+	}
+
+	@Test
+	void 본문을_수정하면_재분석_전까지_감성_집계에서_빠진다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// when
+		editReview(reviewId, 9, "맛이 싱거워요");
+
+		// then
+		assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(0))
+			.andExpect(jsonPath("$.aspects[*].mentionedReviewCount").value(contains(0, 0, 0, 0, 0, 0)));
+	}
+
+	@Test
+	void 별점만_수정해도_재분석_전까지_감성_집계에서_빠진다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// when
+		editReview(reviewId, 5, "달고 맛있어요");
+
+		// then
+		assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(0));
+	}
+
+	@Test
+	void 수정한_리뷰는_작업자_실행_뒤_새_결과_하나로_세어진다() throws Exception {
+		// given: 수정 뒤 결과는 맛의 감성이 바뀌고, 배송은 언급이 사라지고, 가격은 새로 언급된다
+		analyzer.respond("달고 맛있는데 배송이 늦었어요", Sentiment.POSITIVE,
+			Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE, ReviewAspect.DELIVERY, AspectSentiment.NEGATIVE));
+		analyzer.respond("싱겁고 비싸요", Sentiment.NEGATIVE,
+			Map.of(ReviewAspect.TASTE, AspectSentiment.NEGATIVE, ReviewAspect.PRICE, AspectSentiment.NEGATIVE));
+		long reviewId = writeReview(100L, "달고 맛있는데 배송이 늦었어요");
+		reviewSentimentAnalysisFacade.analyzePending();
+		editReview(reviewId, 9, "싱겁고 비싸요");
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.COMPLETED);
+			softly.assertThat(reviewSentimentRepository.count()).isOne();
+		});
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(1))
+			.andExpect(jsonPath("$.overall.positive").value(0))
+			.andExpect(jsonPath("$.overall.negative").value(1))
+			.andExpect(jsonPath("$.aspects[*].mentionedReviewCount").value(contains(1, 0, 0, 0, 0, 1)))
+			.andExpect(jsonPath("$.aspects[*].sentiments.positive").value(contains(0, 0, 0, 0, 0, 0)))
+			.andExpect(jsonPath("$.aspects[*].sentiments.negative").value(contains(1, 0, 0, 0, 0, 1)));
+	}
+
+	@Test
+	void 최종_실패한_리뷰를_수정하면_요청이_대기_시도_0회로_돌아간다() throws Exception {
+		// given
+		analyzer.fail("맛이 없어요");
+		long reviewId = writeReview(100L, "맛이 없어요");
+		reviewSentimentAnalysisFacade.analyzePending();
+		LocalDateTime before = LocalDateTime.now();
+
+		// when
+		editReview(reviewId, 9, "다시 먹어 보니 괜찮아요");
+
+		// then
+		ReviewAnalysisRequest sut = requestOf(reviewId);
+		assertThat(sut).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(sut.getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+			softly.assertThat(sut.getAttemptCount()).isZero();
+			softly.assertThat(sut.getLastError()).isNull();
+			softly.assertThat(sut.getNextAttemptAt()).isBetween(before, LocalDateTime.now());
+		});
+	}
+
+	@Test
+	void 분석하는_동안_리뷰가_수정되면_결과를_저장하지_않고_요청을_대기로_둔다() throws Exception {
+		// given: 작업자가 요청을 꺼내 분석한 뒤 저장하기 전에 리뷰가 수정된다
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		ReviewSentimentTarget target = reviewSentimentService.findPendingTargets(20).getFirst();
+		ReviewSentimentAnalysis analysis = analyzer.analyze(target.input());
+		editReview(reviewId, 9, "맛이 싱거워요");
+
+		// when
+		reviewSentimentService.complete(target, analysis);
+
+		// then
+		ReviewAnalysisRequest request = requestOf(reviewId);
+		assertSoftly(softly -> {
+			softly.assertThat(reviewSentimentRepository.count()).isZero();
+			softly.assertThat(request.getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+			softly.assertThat(request.getAttemptCount()).isZero();
+		});
+	}
+
+	@Test
+	void 분석하는_동안_리뷰가_수정되면_분석_실패도_시도_횟수에_넣지_않는다() throws Exception {
+		// given
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		ReviewSentimentTarget target = reviewSentimentService.findPendingTargets(20).getFirst();
+		editReview(reviewId, 9, "맛이 싱거워요");
+
+		// when
+		reviewSentimentService.fail(target, "수정 전 내용의 분석 실패");
+
+		// then
+		ReviewAnalysisRequest request = requestOf(reviewId);
+		assertSoftly(softly -> {
+			softly.assertThat(request.getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+			softly.assertThat(request.getAttemptCount()).isZero();
+			softly.assertThat(request.getLastError()).isNull();
+		});
+	}
+
+	@Test
+	void 같은_리뷰를_연달아_수정해도_분석_요청은_하나다() throws Exception {
+		// given
+		long reviewId = writeReview(100L, "달고 맛있어요");
+
+		// when
+		editReview(reviewId, 8, "맛이 싱거워요");
+		editReview(reviewId, 7, "맛이 많이 싱거워요");
+
+		// then
+		List<ReviewAnalysisRequest> requests = analysisRequestRepository.findAll();
+		assertThat(requests).hasSize(1);
+		assertThat(requests.getFirst().getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+	}
+
+	@Test
+	void 삭제한_리뷰는_감성_집계에서_빠진다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// when
+		deleteReview(reviewId);
+
+		// then
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(0))
+			.andExpect(jsonPath("$.aspects[*].mentionedReviewCount").value(contains(0, 0, 0, 0, 0, 0)));
+	}
+
+	@Test
+	void 대기_중에_삭제한_리뷰의_요청은_분석기_호출_없이_취소된다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		deleteReview(reviewId);
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.CANCELLED);
+			softly.assertThat(analyzer.analyzedContents()).isEmpty();
+			softly.assertThat(reviewSentimentRepository.count()).isZero();
+		});
+	}
+
+	@Test
+	void 분석하는_동안_리뷰가_삭제되면_결과를_저장하지_않고_요청을_취소한다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요");
+		ReviewSentimentTarget target = reviewSentimentService.findPendingTargets(20).getFirst();
+		ReviewSentimentAnalysis analysis = analyzer.analyze(target.input());
+		deleteReview(reviewId);
+
+		// when
+		reviewSentimentService.complete(target, analysis);
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.CANCELLED);
+			softly.assertThat(reviewSentimentRepository.count()).isZero();
+		});
+	}
+
+	@Test
+	void 내용_없는_리뷰는_분석기를_부르지_않고_분석_안_함으로_끝나며_집계에_들지_않는다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		writeReview(100L, "달고 맛있어요");
+		long contentlessReviewId = writeReview(101L, "ㅋㅋㅋ");
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(requestOf(contentlessReviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.SKIPPED);
+			softly.assertThat(analyzer.analyzedContents()).containsExactly("달고 맛있어요");
+			softly.assertThat(reviewSentimentRepository.count()).isOne();
+		});
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(1))
+			.andExpect(jsonPath("$.aspects[*].mentionedReviewCount").value(contains(1, 0, 0, 0, 0, 0)));
+	}
+
+	@Test
+	void 내용_없는_리뷰를_본문이_있게_수정하면_분석된다() throws Exception {
+		// given
+		analyzer.respond("ㅋㅋ 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "ㅋㅋㅋ");
+		reviewSentimentAnalysisFacade.analyzePending();
+		editReview(reviewId, 9, "ㅋㅋ 맛있어요");
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.COMPLETED);
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(1))
+			.andExpect(jsonPath("$.overall.positive").value(1));
+	}
+
+	@Test
+	void 첨부만_수정하면_리뷰_수정_시각이_그대로라_기존_결과가_유효하다() throws Exception {
+		// given
+		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
+		long reviewId = writeReview(100L, "달고 맛있어요", BUCKET_URL + "product_review/a.jpg");
+		reviewSentimentAnalysisFacade.analyzePending();
+		LocalDateTime updatedAt = productReviewRepository.findById(reviewId).orElseThrow().getUpdatedAt();
+
+		// when
+		editReview(reviewId, 9, "달고 맛있어요", BUCKET_URL + "product_review/b.jpg", BUCKET_URL + "product_review/c.mp4");
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(productReviewRepository.findById(reviewId).orElseThrow().getUpdatedAt()).isEqualTo(updatedAt);
+			softly.assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.COMPLETED);
+		});
+		getSummary(SELLER_ID, productId)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(1))
+			.andExpect(jsonPath("$.overall.positive").value(1));
 	}
 
 	@Test
@@ -286,24 +554,43 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 			.header(HttpHeaders.AUTHORIZATION, tokens.bearer(sellerId, "SELLER")));
 	}
 
-	private long writeReview(long orderId, String content) throws Exception {
+	private long writeReview(long orderId, String content, String... mediaUrls) throws Exception {
 		orderApiClient.add(BUYER_ID, productId, purchase(orderId));
 		String body = mockMvc.perform(post("/api/v1/products/{productId}/reviews", productId)
 				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
-					{"orderItemId": %d, "rating": 9, "content": "%s", "mediaUrls": []}
-					""".formatted(orderItemId(orderId), content)))
+					{"orderItemId": %d, "rating": 9, "content": "%s", "mediaUrls": [%s]}
+					""".formatted(orderItemId(orderId), content, jsonArray(mediaUrls))))
 			.andExpect(status().isCreated())
 			.andReturn().getResponse().getContentAsString();
 		return ((Number)JsonPath.read(body, "$.reviewId")).longValue();
 	}
 
-	private ReviewAnalysisStatus statusOf(long reviewId) {
+	private void editReview(long reviewId, int rating, String content, String... mediaUrls) throws Exception {
+		mockMvc.perform(put("/api/v1/reviews/{reviewId}", reviewId)
+				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"rating": %d, "content": "%s", "mediaUrls": [%s]}
+					""".formatted(rating, content, jsonArray(mediaUrls))))
+			.andExpect(status().isNoContent());
+	}
+
+	private void deleteReview(long reviewId) throws Exception {
+		mockMvc.perform(delete("/api/v1/reviews/{reviewId}", reviewId)
+				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
+			.andExpect(status().isNoContent());
+	}
+
+	private String jsonArray(String... values) {
+		return String.join(",", Arrays.stream(values).map(value -> "\"" + value + "\"").toList());
+	}
+
+	private ReviewAnalysisRequest requestOf(long reviewId) {
 		return analysisRequestRepository.findAll().stream()
 			.filter(request -> request.getReviewId().equals(reviewId))
-			.findFirst().orElseThrow()
-			.getStatus();
+			.findFirst().orElseThrow();
 	}
 
 	private void clearReviews() {
