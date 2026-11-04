@@ -256,6 +256,17 @@ class RefundServiceTest {
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
+    @Test
+    void 없는_요청을_철회하면_막는다() {
+        // given
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.withdraw(REFUND_ID, BUYER_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
+    }
+
     private static Refund requested() {
         return Refund.request(10L, 101L, 2, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 10_000L, null);
     }

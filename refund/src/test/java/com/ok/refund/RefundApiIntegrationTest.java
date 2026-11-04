@@ -11,6 +11,8 @@ import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -26,6 +28,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -448,17 +451,43 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 결정_값이_승인_거절이_아니면_422() throws Exception {
+    void 거절_사유는_255자까지_저장한다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then: DB 칸(VARCHAR(255))과 검증 길이가 같아야 경계 값이 DB에서 잘리거나 실패하지 않는다
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "REJECT", "rejectReason": "%s"}
+                """.formatted("가".repeat(255)))
+                .andExpect(status().isOk());
+        assertThat(onlyRefund().getRejectReason()).hasSize(255);
+    }
+
+    // 결정 값이 없을 때 422를 내는 것은 @NotBlank뿐이다(@Pattern은 null을 통과시킨다). 빠지면 valueOf(null)로 500이 된다
+    @ParameterizedTest
+    @MethodSource("승인_거절이_아닌_결정_본문")
+    void 결정_값이_승인_거절이_아니면_422(String json) throws Exception {
         // given
         Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
 
         // when & then
-        decide(SOCKS_SELLER_ID, refundId, """
-                {"decision": "HOLD"}
-                """)
+        decide(SOCKS_SELLER_ID, refundId, json)
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
         assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    static Stream<String> 승인_거절이_아닌_결정_본문() {
+        return Stream.of(
+                """
+                {"decision": "HOLD"}
+                """,
+                """
+                {"decision": ""}
+                """,
+                """
+                {}
+                """);
     }
 
     @Test
@@ -557,6 +586,18 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         withdraw(OTHER_MEMBER_ID, refundId)
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.type", endsWith("/refund/refund-not-found")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 구매_권한이_없으면_철회는_403이고_바꾸지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        mockMvc.perform(post(BUYER_URL + "/" + refundId + "/withdraw")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "ADMIN")))
+                .andExpect(status().isForbidden());
         assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 

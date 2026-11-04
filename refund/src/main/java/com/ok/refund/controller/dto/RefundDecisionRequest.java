@@ -16,8 +16,10 @@ public record RefundDecisionRequest(
         @Pattern(regexp = "APPROVE|REJECT", message = "처리 결정은 APPROVE, REJECT 중 하나여야 합니다.")
         String decision,
 
-        // 거절일 때만 필수라 여기서는 길이만 보고, 필수 여부는 도메인(Refund.reject)이 확인한다
-        @Schema(description = "거절 사유 (REJECT일 때 필수, 255자 이하). 구매자 목록에 보인다", example = "이미 포장을 마쳤습니다.")
+        // 거절일 때만 필수라 여기서는 길이만 보고, 필수 여부는 도메인(Refund.reject)이 확인한다.
+        // 승인이면 값은 쓰지 않고 버리지만, 길이 검사는 결정 값과 상관없이 한다
+        @Schema(description = "거절 사유 (REJECT일 때 필수, 255자 이하). 구매자 목록에 보인다. "
+                + "APPROVE일 때는 보내도 저장하지 않지만 255자 제한은 똑같이 검사한다", example = "이미 포장을 마쳤습니다.")
         @Size(max = 255, message = "거절 사유는 255자 이하여야 합니다.")
         String rejectReason
 ) {
