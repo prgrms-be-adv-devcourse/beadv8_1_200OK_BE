@@ -14,6 +14,11 @@ public enum RefundErrorCode implements ErrorCode {
     REFUND_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Refund quantity exceeded", "취소할 수 있는 개수를 넘었습니다."),
     REFUND_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "Refund already in progress", "이 상품에 처리 중인 환불 요청이 있습니다."),
 
+    // 승인·거절·철회
+    REFUND_NOT_FOUND(HttpStatus.NOT_FOUND, "Refund not found", "환불 요청을 찾을 수 없습니다."),
+    INVALID_REFUND_STATE(HttpStatus.CONFLICT, "Invalid refund state", "현재 상태에서는 처리할 수 없는 환불 요청입니다."),
+    REJECT_REASON_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "Reject reason required", "거절 사유를 입력해 주세요."),
+
     // 주문 상품
     ORDER_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Order item not found", "주문 상품을 찾을 수 없습니다."),
     ORDER_ITEM_NOT_CANCELLABLE(HttpStatus.CONFLICT, "Order item not cancellable", "출고 전 상품만 취소할 수 있습니다."),
