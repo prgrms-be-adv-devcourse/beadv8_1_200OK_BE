@@ -491,7 +491,7 @@ member(auth)는 검증용 공개키 목록(`jwt.verification-keys` 전체)을 `G
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
-| `jwt.jwk-set-uri` | 비어 있음 (`${JWT_JWK_SET_URI:}`) | member의 JWKS 주소(`http`/`https`). 있으면 `verification-keys`보다 우선합니다 |
+| `jwt.jwk-set-uri` | 비어 있음 (`${JWT_JWK_SET_URI:}`) | member의 JWKS 주소(`http`/`https`). 있으면 `verification-keys`보다 우선합니다. 응답을 중간에서 바꿀 수 있으면 공개키를 바꿔 끼워 토큰을 위조할 수 있으므로, `http`는 같은 Docker 네트워크처럼 신뢰할 수 있는 내부망에서만 쓰고 다른 호스트로 나누면 `https`를 씁니다 |
 | `jwt.jwk-set.cache-ttl` | `5m` | 받아 온 키를 캐시하는 시간. member는 자기 설정값을 응답의 `Cache-Control: max-age`로 내보내지만 안내용이고, 검증 앱은 이 헤더가 아니라 자기 `cache-ttl`을 따릅니다 |
 | `jwt.jwk-set.connect-timeout`, `read-timeout` | `2s`, `2s` | member 연결·응답을 기다리는 시간. 넘으면 그 요청은 503입니다 |
 
@@ -545,6 +545,7 @@ openssl pkey -in keys/rs256-v1-private.pem -pubout -out keys/rs256-v1-public.pem
 - 1과 2를 한 번에 반영하면 새 토큰을 아직 `rs256-v2`를 모르는 앱이 거부할 수 있습니다. 앱이 하나(운영의 monolith)일 때는 `jwt.yaml`을 한 번 고쳐 함께 반영합니다.
 - 검증 앱이 JWKS를 쓰면 1은 member의 `verification-keys`에만 추가하고 member를 재시작합니다. 다른 앱은 바꾸지 않습니다. 2는 캐시 시간(기본 5분) 이상 기다린 뒤 합니다. 처음 보는 `kid`는 바로 다시 받아 오므로 기다리지 않아도 대개 동작하지만, 모든 앱이 새 키를 받은 상태에서 서명을 바꾸는 편이 안전합니다. 3도 member만 고칩니다.
 - 개인키가 유출되었으면 3을 기다리지 않고 옛 키를 바로 뺍니다. 그 키로 서명된 토큰이 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다. Refresh Token은 JWT가 아니라서 영향이 없습니다.
+  검증 앱이 JWKS를 쓰면 member에서 뺀 키도 검증 앱의 캐시 시간(기본 5분)이 끝날 때까지는 계속 통과합니다. 바로 막아야 하면 검증 앱을 재시작해 캐시를 비웁니다.
 
 ### 토큰 재발급
 

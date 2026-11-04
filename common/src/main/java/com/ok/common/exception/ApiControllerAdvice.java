@@ -72,8 +72,12 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
         if (ex instanceof AuthenticationServiceException) {
-            // 사용자 잘못이 아니라 서버 장애라 운영에서 보이도록 경고로 남긴다 (원인: 발급 모듈 장애, 타임아웃 등)
-            log.warn("토큰 검증 키를 가져오지 못했습니다: cause={}", ex.getMessage());
+            // 사용자 잘못이 아니라 서버 장애라 운영에서 보이도록 경고로 남긴다. 키 조회 실패(발급 모듈 장애, 타임아웃)가 대부분이지만
+            // 디코딩 중 다른 서버 쪽 오류도 같은 예외로 오므로, 원인을 가리지 않게 가장 안쪽 원인을 함께 남긴다.
+            // 장애 중에는 요청마다 남으므로 스택은 남기지 않는다
+            Throwable rootCause = rootCause(ex);
+            log.warn("서버 쪽 오류로 토큰을 검증하지 못했습니다: causeType={}, cause={}",
+                    rootCause.getClass().getName(), rootCause.getMessage());
             ErrorCode errorCode = CommonErrorCode.AUTH_KEY_UNAVAILABLE;
             return ResponseEntity.status(errorCode.status()).body(toProblemDetail(errorCode, errorCode.getMessage()));
         }
@@ -168,6 +172,14 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
             }
         }
         return false;
+    }
+
+    private static Throwable rootCause(Throwable ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
     private boolean isAnonymous() {
