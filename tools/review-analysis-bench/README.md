@@ -4,7 +4,7 @@
 
 | 경로 | 내용 |
 |---|---|
-| `criteria/criteria.json` | 분류 기준 원본(v0.2). 서비스 연동 때 Jev에 보낼 질문·선택지·안내문 |
+| [`product/src/main/resources/review-analysis/criteria.json`](../../product/src/main/resources/review-analysis/criteria.json) | 분류 기준 원본(v0.2). Jev에 보낼 질문·선택지·안내문. 서비스가 읽으므로 원본을 `product` 모듈 리소스에 하나만 둔다(#386) |
 | `criteria/CHANGELOG.md` | 분류 기준을 바꾼 이유와 근거 리뷰 |
 | `GLOSSARY.md` | 용어와 피할 말 |
 

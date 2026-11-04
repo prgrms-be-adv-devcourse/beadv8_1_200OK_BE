@@ -4,7 +4,7 @@ module: product
 summary: 리뷰 감성 분석 모델을 OpenAI와 같은 조건으로 비교해, 품질이 같고 훨씬 싸고 빠른 Jev를 쓰기로 했다
 status: 확정
 date: 2026-11-03
-paths: [tools/review-analysis-bench/criteria/criteria.json]
+paths: [product/src/main/resources/review-analysis/criteria.json]
 related: []
 ---
 
@@ -25,7 +25,7 @@ related: []
 | 일치도 | 항목마다 언급 여부 κ와, 둘 다 언급한 칸의 감성 κ를 따로 냄 | 언급 없음까지 한 범주로 섞으면 감성 κ가 0.2여도 전체 κ가 0.784로 나와 기준 0.6을 넘는 것을 계산으로 확인했다 |
 | 정답자 | 사람 1명 + 1주 뒤 50개 자기 재채점 (사용자 결정) | 두 번째 정답자가 없다. 모델을 두 번째 정답자로 쓰지 않는다 (버린 대안 참고) |
 | 명세 점검 | 조정용 정답을 매긴 뒤 회사가 다른 고급 모델 둘(Claude 계열, OpenAI 계열)에 돌려, 사람 답과 함께 다르게 고른 칸으로 명세를 고침 | 두 모델이 같은 방향으로 다르게 읽은 칸은 명세 문장 쪽 문제일 가능성이 크다. 모델은 정답을 정하는 데 쓰지 않는다. v0.2에서 정한 판정 규칙과 이유는 `tools/review-analysis-bench/criteria/CHANGELOG.md`에 있다 |
-| 분류 기준 원본 | `criteria.json` 하나에서 두 제공자 요청을 만듦 | 한쪽에만 예시나 다른 문구가 들어가면 비교가 공정하지 않다 |
+| 분류 기준 원본 | `criteria.json` 하나에서 두 제공자 요청을 만듦 | 한쪽에만 예시나 다른 문구가 들어가면 비교가 공정하지 않다. 서비스 연동(#386)에서 서비스도 같은 파일을 읽도록 `product/src/main/resources/review-analysis/criteria.json`으로 옮겼다 |
 | Jev 지시문 | 공통 지시문을 질문마다 앞에 붙임 | Jev API에는 공통 지시문 자리가 없다. OpenAI는 같은 문장을 프롬프트 맨 앞에 한 번 받는다 |
 | 선택지 순서 | 리뷰마다 시드로 섞고 두 제공자에 같은 순서를 줌 | Jev는 앞에 나온 선택지를 고르는 경향이 공개돼 있다 |
 | 호출 방식 | SDK 없이 `fetch`로 직접 호출 | 재시도 횟수·지연·토큰을 우리 규칙으로 세야 한다. (미확인) OpenAI SDK는 429·5xx를 스스로 재시도해 이 값이 숨는다 |
@@ -51,7 +51,7 @@ related: []
 
 ## 건드릴 때 주의
 
-- 평가용 정답을 매기기 시작한 뒤에는 `criteria.json`을 바꾸지 않는다. 바꾸면 이미 매긴 정답과 기준이 어긋난다. 바꿀 때는 `version`을 올리고 `criteria/CHANGELOG.md`, 도구 `GLOSSARY.md`, 보관 브랜치 `feature/385`의 `dataset/labeling-guide.md` 판정 요약표를 함께 고친다.
+- 평가용 정답을 매기기 시작한 뒤에는 `criteria.json`(`product/src/main/resources/review-analysis/criteria.json`)을 바꾸지 않는다. 바꾸면 이미 매긴 정답과 기준이 어긋난다. 바꿀 때는 `version`을 올리고 `tools/review-analysis-bench/criteria/CHANGELOG.md`, 도구 `GLOSSARY.md`, 보관 브랜치 `feature/385`의 `dataset/labeling-guide.md` 판정 요약표를 함께 고친다.
 - 비교 도구를 다시 쓰려면 보관 브랜치 `feature/385`를 체크아웃한다. 리뷰 원문·정답·실행 기록(`data/`)은 커밋되지 않아 따로 보관해야 한다.
 - 보관 브랜치 `feature/385`의 `dataset/split.ts`를 다시 돌리면 정답 시트의 id가 다른 리뷰를 가리킬 수 있다. 원본 배치를 고치지 말고 `replacements.json`에 교체를 적는다. 교체 항목의 `from`이 지금 본문과 다르면 분할이 멈춘다.
 - 조정용 사람 정답은 v0.1 기준이고, 매기는 동안 신선도·상품 상태 경계가 흔들렸다. 조정용 점수로 채택을 판단하지 않는다.
