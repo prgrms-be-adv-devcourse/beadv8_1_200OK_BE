@@ -16,6 +16,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 /**
  * 환불 요청 한 건. 주문 상품 한 줄을 개수 단위로 취소한다(1단계: 출고 전 취소).
  * 주문·상품·회원은 다른 모듈이라 ID 값으로만 들고 있다.
@@ -70,8 +72,16 @@ public class Refund extends BaseTime {
     @Column(name = "status", nullable = false, length = 20)
     private RefundStatus status;
 
-    // 진행 중일 때만 값이 있다. UNIQUE라 한 주문 상품에 진행 중인 요청을 두 건 받지 않는다.
-    // 끝 상태가 되면 비워 같은 상품에 새 요청을 받는다(MySQL UNIQUE는 NULL을 여러 개 허용). 비우는 일은 승인·거절·철회(#409)에서 한다
+    // 거절일 때만 값이 있다. 요청됨·처리 중·철회에는 거절 사유가 없는 게 맞아 NULL을 허용한다
+    @Column(name = "reject_reason")
+    private String rejectReason;
+
+    // 판매자가 승인·거절하거나 구매자가 철회한 시각. 요청됨인 동안에는 아직 정해지지 않아 NULL이다
+    @Column(name = "decided_at")
+    private LocalDateTime decidedAt;
+
+    // 요청됨·처리 중일 때만 값이 있다. UNIQUE라 한 주문 상품에 진행 중인 요청을 두 건 받지 않는다.
+    // 끝 상태(거절·철회)가 되면 비워 같은 상품에 새 요청을 받는다(MySQL UNIQUE는 NULL을 여러 개 허용)
     @Column(name = "active_order_item_id")
     private Long activeOrderItemId;
 
@@ -137,5 +147,65 @@ public class Refund extends BaseTime {
     ) {
         return new Refund(orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
                 unitPrice, cancelReason);
+    }
+
+    /**
+     * 판매자 승인으로 처리를 시작한다. {@code REQUESTED → PROCESSING}
+     * 아직 끝난 게 아니라 진행 중 칸은 그대로 둔다. 상품 금액은 요청 때 저장한 값을 그대로 쓰고, 배송비는 #410에서 이때 정한다.
+     *
+     * @throws RestApiException 요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void approve(LocalDateTime now) {
+        requireStatus(RefundStatus.REQUESTED);
+        this.decidedAt = now;
+        this.status = RefundStatus.PROCESSING;
+    }
+
+    /**
+     * 판매자가 거절한다. {@code REQUESTED → REJECTED}
+     * 사유는 구매자에게 보여 주므로 꼭 받는다. 형식(길이, 앞뒤 공백)은 요청 DTO가 먼저 정리한다.
+     *
+     * @throws RestApiException 사유가 비었으면 {@code REJECT_REASON_REQUIRED}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void reject(String reason, LocalDateTime now) {
+        if (reason == null || reason.isBlank()) {
+            throw new RestApiException(RefundErrorCode.REJECT_REASON_REQUIRED);
+        }
+        requireStatus(RefundStatus.REQUESTED);
+        this.rejectReason = reason;
+        this.decidedAt = now;
+        finish(RefundStatus.REJECTED);
+    }
+
+    /**
+     * 구매자가 승인 전에 요청을 거둔다. {@code REQUESTED → WITHDRAWN}
+     * 승인한 뒤에는 배송·돈 처리가 이어지므로 철회를 받지 않는다.
+     *
+     * @throws RestApiException 요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void withdraw(LocalDateTime now) {
+        requireStatus(RefundStatus.REQUESTED);
+        this.decidedAt = now;
+        finish(RefundStatus.WITHDRAWN);
+    }
+
+    public boolean isOwnedByBuyer(Long memberId) {
+        return buyerId.equals(memberId);
+    }
+
+    public boolean isOwnedBySeller(Long memberId) {
+        return sellerId.equals(memberId);
+    }
+
+    // 끝 상태로 바꾸면서 진행 중 칸을 비운다. 같은 트랜잭션에서 비워야 커밋 직후 같은 상품의 새 요청이 UNIQUE에 걸리지 않는다
+    private void finish(RefundStatus finishedStatus) {
+        this.status = finishedStatus;
+        this.activeOrderItemId = null;
+    }
+
+    private void requireStatus(RefundStatus expected) {
+        if (this.status != expected) {
+            throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
+        }
     }
 }

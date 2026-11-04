@@ -1,7 +1,9 @@
 package com.ok.refund.controller;
 
 import com.ok.common.security.CurrentMemberId;
+import com.ok.refund.controller.dto.RefundDecisionRequest;
 import com.ok.refund.controller.dto.RefundPageResponse;
+import com.ok.refund.controller.dto.RefundResponse;
 import com.ok.refund.controller.dto.SellerRefundPageRequest;
 import com.ok.refund.service.RefundService;
 import jakarta.validation.Valid;
@@ -10,6 +12,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -30,5 +35,16 @@ public class SellerRefundController implements SellerRefundControllerSpec {
     ) {
         return ResponseEntity.ok(RefundPageResponse.from(
                 refundService.getSellerRefunds(sellerId, request.status(), request.page())));
+    }
+
+    // 승인과 거절은 둘 다 "판매자가 요청 상태를 정한다"는 같은 동작이라 한 API로 받는다
+    @Override
+    @PatchMapping("/{refundId}")
+    public ResponseEntity<RefundResponse> decide(
+            @CurrentMemberId Long sellerId,
+            @PathVariable Long refundId,
+            @Valid @RequestBody RefundDecisionRequest request
+    ) {
+        return ResponseEntity.ok(RefundResponse.from(refundService.decide(request.toCommand(refundId, sellerId))));
     }
 }
