@@ -68,6 +68,21 @@ class ArchitectureTest {
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "AdapterIn", "AdapterOut")
             .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #441)");
 
+    // 레이어 규칙은 레이어에 든 패키지끼리만 본다. 레이어 밖 새 패키지(예: support)를 거치면 서비스 → adapter.out 같은 의존이 검사를 피하므로
+    // 정산 클래스가 놓일 수 있는 패키지를 정해 두고, 레이어 밖 패키지(루트·config·exception)는 바깥 레이어를 모르게 한다
+    @ArchTest
+    static final ArchRule 정산_클래스는_정해진_패키지에만_있다 = classes()
+            .that().resideInAPackage("com.ok.payout..")
+            .should().resideInAnyPackage("com.ok.payout", "com.ok.payout.domain..", "com.ok.payout.application..",
+                    "com.ok.payout.adapter..", "com.ok.payout.config..", "com.ok.payout.exception..")
+            .because("레이어 밖에 새 패키지를 만들면 레이어 규칙을 우회할 수 있다. 새 역할이 필요하면 이 목록과 레이어 규칙을 함께 고친다 (정산 헥사고날 구조, 이슈 #441)");
+
+    @ArchTest
+    static final ArchRule 레이어_밖_패키지는_application과_adapter를_모른다 = noClasses()
+            .that().resideInAnyPackage("com.ok.payout", "com.ok.payout.config..", "com.ok.payout.exception..")
+            .should().dependOnClassesThat().resideInAnyPackage("com.ok.payout.application..", "com.ok.payout.adapter..")
+            .because("루트·config·exception은 레이어 규칙이 보지 않으므로, 여기서 application·adapter를 쓰면 서비스가 이 패키지를 거쳐 어댑터에 닿을 수 있다 (정산 헥사고날 구조, 이슈 #441)");
+
     @ArchTest
     static final ArchRule 패키지_간_순환_의존이_없다 = slices()
             .matching("com.ok.payout.(**)")
