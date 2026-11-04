@@ -108,6 +108,18 @@ class JevReviewSentimentAnalyzerTest {
 	}
 
 	@Test
+	void 상품명이_없으면_상품_줄_없이_보낸다() {
+		// given
+		expectSuccess();
+
+		// when
+		analyzer.analyze(new ReviewSentimentInput(1L, null, "5kg 한 상자", "아삭하고 달아요"));
+
+		// then
+		assertThat(json(sentBodies.getFirst()).path("state").asString()).isEqualTo("옵션: 5kg 한 상자\n본문: 아삭하고 달아요");
+	}
+
+	@Test
 	void 모델과_API_키를_인증_헤더로_보낸다() {
 		// given
 		server.expect(requestTo(ANALYZE_URL))
