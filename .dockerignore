@@ -7,4 +7,6 @@ node_modules
 data
 .env
 .env.*
+# JWT 개인키가 빌드 컨텍스트와 빌드 캐시에 남지 않게 한다. 로컬 compose는 이미지에 넣지 않고 마운트한다
+keys
 HELP.md
