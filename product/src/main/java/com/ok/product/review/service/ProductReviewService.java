@@ -22,8 +22,11 @@ import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ProductReviewMedia;
 import com.ok.product.review.domain.ProductReviewMediaSpec;
+import com.ok.product.review.domain.ReviewAnalysisRequest;
+import com.ok.product.review.domain.ReviewAnalysisType;
 import com.ok.product.review.exception.ProductReviewErrorCode;
 import com.ok.product.review.repository.ProductReviewRepository;
+import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
 import com.ok.product.review.service.dto.ProductReviewCreateCommand;
 import com.ok.product.review.service.dto.ProductReviewMediaResult;
 import com.ok.product.review.service.dto.ProductReviewResult;
@@ -39,12 +42,13 @@ public class ProductReviewService {
 	private final ProductReviewRepository productReviewRepository;
 	private final ProductRepository productRepository;
 	private final ProductOptionRepository productOptionRepository;
+	private final ReviewAnalysisRequestRepository analysisRequestRepository;
 	private final ProductReviewMediaValidator mediaValidator;
 	private final MediaUrlResolver mediaUrlResolver;
 	private final Clock clock;
 
 	/**
-	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다.
+	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다. 감성 분석 요청을 대기로 남긴다.
 	 * 작성 자격 확인은 {@link ProductReviewFacade}가 하므로 여기서는 구매 건을 믿고 저장만 한다.
 	 */
 	@Transactional
@@ -64,7 +68,10 @@ public class ProductReviewService {
 		// INSERT를 먼저 하면 FK 때문에 상품 행에 공유 락이 걸리고, 같은 상품에 동시에 쓰면 서로 배타 락을 기다리다 데드락이 난다.
 		// 저장이 실패하면 트랜잭션이 롤백되어 더한 집계도 되돌아간다
 		productRepository.addReviewStats(productId, 1, command.rating());
-		return saveReview(review);
+		Long reviewId = saveReview(review);
+		// 리뷰와 같은 트랜잭션에 남겨, 저장된 리뷰는 모두 분석되고 롤백된 리뷰의 요청은 남지 않게 한다
+		analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, ReviewAnalysisType.SENTIMENT, now()));
+		return reviewId;
 	}
 
 	@Transactional
