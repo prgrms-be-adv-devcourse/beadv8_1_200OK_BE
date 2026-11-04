@@ -19,7 +19,7 @@ class AsyncPropertiesTest {
     @Test
     void 정상_값이면_그대로_담긴다() {
         // given
-        ExecutorProperties external = new ExecutorProperties(3, true, Duration.ofSeconds(30), "worker-");
+        ExecutorProperties external = new ExecutorProperties(false, 3, true, Duration.ofSeconds(30), "worker-");
 
         // when
         AsyncProperties sut = new AsyncProperties("order-external-api", Map.of("order-external-api", external));
@@ -30,6 +30,7 @@ class AsyncPropertiesTest {
         assertThat(actual).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.defaultExecutor()).isEqualTo("order-external-api");
+            softly.assertThat(actual.virtualThreads()).isFalse();
             softly.assertThat(actual.concurrencyLimit()).isEqualTo(3);
             softly.assertThat(actual.rejectTasksWhenLimitReached()).isTrue();
             softly.assertThat(actual.taskTerminationTimeout()).isEqualTo(Duration.ofSeconds(30));
@@ -47,6 +48,7 @@ class AsyncPropertiesTest {
         ExecutorProperties event = sut.executors().get("event");
         assertThat(event).isNotNull();
         assertSoftly(softly -> {
+            softly.assertThat(event.virtualThreads()).isTrue();
             softly.assertThat(event.concurrencyLimit()).isEqualTo(5);
             softly.assertThat(event.rejectTasksWhenLimitReached()).isFalse();
             softly.assertThat(event.taskTerminationTimeout()).isEqualTo(Duration.ofSeconds(10));
@@ -57,7 +59,7 @@ class AsyncPropertiesTest {
     @Test
     void event_설정이_있으면_기본값이_아니라_그_값을_쓴다() {
         // given
-        ExecutorProperties custom = new ExecutorProperties(2, false, Duration.ofSeconds(1), "e-");
+        ExecutorProperties custom = new ExecutorProperties(true, 2, false, Duration.ofSeconds(1), "e-");
 
         // when
         AsyncProperties sut = new AsyncProperties("event", Map.of("event", custom));
@@ -91,7 +93,7 @@ class AsyncPropertiesTest {
     @Test
     void 종료_대기_시간이_0이어도_만들_수_있다() {
         // when
-        ExecutorProperties sut = new ExecutorProperties(1, false, Duration.ZERO, null);
+        ExecutorProperties sut = new ExecutorProperties(true, 1, false, Duration.ZERO, null);
 
         // then
         assertThat(sut.taskTerminationTimeout()).isEqualTo(Duration.ZERO);
@@ -101,7 +103,7 @@ class AsyncPropertiesTest {
     @MethodSource("잘못된_실행기_값")
     void 실행기_값이_잘못되면_만들_때_실패한다(String name, int limit, Duration timeout, String prefix, String message) {
         // when & then
-        assertThatThrownBy(() -> new ExecutorProperties(limit, false, timeout, prefix))
+        assertThatThrownBy(() -> new ExecutorProperties(true, limit, false, timeout, prefix))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(message);
     }

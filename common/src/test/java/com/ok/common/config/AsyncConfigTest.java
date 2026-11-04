@@ -10,6 +10,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -57,6 +58,7 @@ class AsyncConfigTest {
             assertThat(event).isNotNull();
             assertSoftly(softly -> {
                 softly.assertThat(sut.defaultExecutor()).isEqualTo("event");
+                softly.assertThat(event.virtualThreads()).isTrue();
                 softly.assertThat(event.concurrencyLimit()).isEqualTo(5);
                 softly.assertThat(event.rejectTasksWhenLimitReached()).isFalse();
                 softly.assertThat(event.taskTerminationTimeout()).isEqualTo(Duration.ofSeconds(10));
@@ -118,6 +120,51 @@ class AsyncConfigTest {
                 softly.assertThat(thread.isVirtual()).isTrue();
                 softly.assertThat(thread.getName()).startsWith("event-");
             });
+        });
+    }
+
+    // 운영에서 가상 스레드에 문제가 생기면 재빌드 없이 일반 스레드로 되돌릴 수 있어야 한다. 상한과 이름 접두사는 그대로 적용된다
+    @Test
+    void 가상_스레드를_끄면_일반_스레드에서_실행되고_상한은_유지된다() {
+        runner.withPropertyValues(
+                "app.async.executors.event.virtual-threads=false",
+                "app.async.executors.event.concurrency-limit=3"
+        ).run(context -> {
+            // given
+            SimpleAsyncTaskExecutor sut = context.getBean("event", SimpleAsyncTaskExecutor.class);
+            CompletableFuture<Thread> ran = new CompletableFuture<>();
+
+            // when
+            sut.execute(() -> ran.complete(Thread.currentThread()));
+
+            // then
+            Thread thread = ran.get(WAIT_SECONDS, TimeUnit.SECONDS);
+            assertSoftly(softly -> {
+                softly.assertThat(thread.isVirtual()).isFalse();
+                softly.assertThat(thread.getName()).startsWith("event-");
+                softly.assertThat(sut.getConcurrencyLimit()).isEqualTo(3);
+            });
+        });
+    }
+
+    // 비동기 작업의 로그에도 요청의 추적 값이 남아야 한다
+    @Test
+    void Async_작업에는_호출한_스레드의_MDC가_전달된다() {
+        runner.run(context -> {
+            // given
+            AsyncProbe sut = context.getBean(AsyncProbe.class);
+            CompletableFuture<String> ran = new CompletableFuture<>();
+            MDC.put("traceId", "trace-1");
+
+            // when
+            try {
+                sut.recordMdc(ran);
+            } finally {
+                MDC.clear();
+            }
+
+            // then
+            assertThat(ran.get(WAIT_SECONDS, TimeUnit.SECONDS)).isEqualTo("trace-1");
         });
     }
 
@@ -292,6 +339,11 @@ class AsyncConfigTest {
         @Async(EXTERNAL_API)
         public void recordThreadOnExternalApi(CompletableFuture<Thread> ran) {
             ran.complete(Thread.currentThread());
+        }
+
+        @Async
+        public void recordMdc(CompletableFuture<String> ran) {
+            ran.complete(MDC.get("traceId"));
         }
     }
 }

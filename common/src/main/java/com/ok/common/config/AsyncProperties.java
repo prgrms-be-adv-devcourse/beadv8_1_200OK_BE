@@ -60,6 +60,8 @@ public record AsyncProperties(
     /**
      * 실행기 하나의 설정값
      *
+     * @param virtualThreads              true면 작업마다 가상 스레드를, false면 일반(플랫폼) 스레드를 새로 만든다.
+     *                                    운영에서 가상 스레드 문제가 생기면 재빌드 없이 false로 되돌린다. 동시 실행 상한은 어느 쪽이든 같게 적용된다.
      * @param concurrencyLimit            동시에 실행할 작업 수의 상한. 작업마다 {@code REQUIRES_NEW} 트랜잭션으로 DB 커넥션을 하나씩 쓰면
      *                                    {@code spring.datasource.hikari.maximum-pool-size}보다 작게 둔다.
      * @param rejectTasksWhenLimitReached 상한에 걸렸을 때 거절할지 여부. false면 작업을 넘기는 스레드가 빈자리가 날 때까지 기다린다.
@@ -67,6 +69,7 @@ public record AsyncProperties(
      * @param threadNamePrefix            스레드 이름의 앞부분. 비우면 "&lt;실행기 이름&gt;-"를 쓴다.
      */
     public record ExecutorProperties(
+            @DefaultValue("true") boolean virtualThreads,
             @DefaultValue("5") int concurrencyLimit,
             @DefaultValue("false") boolean rejectTasksWhenLimitReached,
             @DefaultValue("10s") Duration taskTerminationTimeout,
@@ -87,7 +90,7 @@ public record AsyncProperties(
 
         // 위 @DefaultValue와 같은 값이다. 바인딩 없이 기본 설정이 필요할 때 쓴다
         static ExecutorProperties defaults() {
-            return new ExecutorProperties(5, false, Duration.ofSeconds(10), null);
+            return new ExecutorProperties(true, 5, false, Duration.ofSeconds(10), null);
         }
     }
 }

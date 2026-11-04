@@ -32,9 +32,15 @@ import java.util.concurrent.Executor;
 @EnableConfigurationProperties(AsyncProperties.class)
 public class AsyncConfig {
 
+    // 비동기 작업의 로그에도 요청의 추적 값(MDC)이 남도록 모든 실행기에 적용한다
     @Bean
-    public AsyncExecutorFactory asyncExecutorFactory(AsyncProperties properties) {
-        return new AsyncExecutorFactory(properties);
+    public MdcTaskDecorator mdcTaskDecorator() {
+        return new MdcTaskDecorator();
+    }
+
+    @Bean
+    public AsyncExecutorFactory asyncExecutorFactory(AsyncProperties properties, MdcTaskDecorator mdcTaskDecorator) {
+        return new AsyncExecutorFactory(properties, mdcTaskDecorator);
     }
 
     // 이벤트 리스너용 공통 실행기
