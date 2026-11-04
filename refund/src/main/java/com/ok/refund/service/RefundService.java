@@ -113,9 +113,12 @@ public class RefundService {
                 .filter(found -> found.isOwnedBySeller(command.sellerId()))
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         LocalDateTime now = LocalDateTime.now(clock);
+        // enum 문장형 switch는 컴파일러가 모든 값을 다뤘는지 보지 않는다. 결정이 늘었는데 여기를 빠뜨리면
+        // 아무것도 바꾸지 않고 성공으로 응답하게 되므로, 다루지 않는 값은 버그로 보고 막는다
         switch (command.decision()) {
             case APPROVE -> refund.approve(now);
             case REJECT -> refund.reject(command.rejectReason(), now);
+            default -> throw new IllegalStateException("처리하지 않는 환불 결정입니다. decision=" + command.decision());
         }
         return RefundResult.from(refund);
     }
