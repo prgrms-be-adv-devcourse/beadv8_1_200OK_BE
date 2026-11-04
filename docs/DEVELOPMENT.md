@@ -78,6 +78,29 @@ docker compose up -d
 - 메시지 키는 문자열, 값은 JSON(Jackson)입니다. 메시지 헤더에 보내는 쪽 Java 클래스 이름(타입 헤더)을 싣지 않으므로, 받는 쪽은 리스너(토픽)마다 읽을 타입을 정합니다. 값을 JSON으로 읽지 못한 메시지 때문에 컨슈머가 멈추지 않도록 역직렬화 실패는 오류 처리로 넘깁니다(`ErrorHandlingDeserializer`). 설정은 `monolith`의 `application.yaml`의 `spring.kafka`에만 있습니다.
 - 의존성(`spring-boot-starter-kafka`)은 `common`이 `api`로 모든 모듈에 노출합니다. 모듈 yaml에는 Kafka 설정을 두지 않으므로, 모듈을 단독 실행하며 Kafka를 쓰게 되면 `monolith`의 `spring.kafka` 블록을 그대로 복사합니다. 직렬화 설정이 모듈마다 다르면 보내는 쪽과 받는 쪽이 메시지를 서로 읽지 못합니다.
 
+### 로컬 Kafka 지표 확인 (#396)
+
+`monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
+
+```bash
+docker compose --profile monitoring up -d
+# 지표 보기. 포트를 열지 않으므로 컨테이너 안에서 조회한다
+# Kafka 내부 토픽(__consumer_offsets)은 파티션이 50개라 줄이 많아 뺀다
+docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^kafka_brokers|under_replicated|consumergroup_lag_sum' | grep -v __consumer_offsets
+```
+
+- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 브로커 3대가 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 확인 명령과 헬스체크는 이미지 안의 `wget`(BusyBox)을 씁니다. `KAFKA_EXPORTER_VERSION`을 올리면 위 명령이 그대로 되는지 다시 확인합니다.
+- 주로 보는 값
+  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `3`
+  - `kafka_topic_partition_under_replicated_partition`: 복사본이 모자란 파티션이면 `1`. 평소 모두 `0`
+  - `kafka_consumergroup_lag_sum`: 그룹·토픽별 랙. 계속 커지면 받는 쪽이 따라가지 못하는 것
+- 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다.
+- 컨슈머 그룹이 하나도 없으면(앱을 띄우기 전) 랙 값은 나오지 않습니다.
+- 띄운 직후 첫 조회에서 `Cannot get consumer group: broker not connected` 로그가 나올 수 있습니다. 브로커 연결이 준비되기 전이라 다음 조회부터는 나오지 않습니다.
+- 그룹 오프셋은 조회만 하고 컨슈머 그룹에 가입하지 않으므로 앱 컨슈머에 영향을 주지 않습니다.
+- Prometheus·Grafana 대시보드 연결은 #374 이후에 추가합니다.
+
 ### 앱까지 컨테이너(docker compose)로 실행
 
 `docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
@@ -131,6 +154,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 | `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
+| `KAFKA_EXPORTER_VERSION` | Kafka 지표 수집 이미지 버전 (`monitoring` 프로파일) | `v1.11.0` |
 | `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림) | `19092` / `29092` / `39092` |
 | `KAFKA_BOOTSTRAP_SERVERS` | 앱이 접속할 브로커 3대 | `localhost:19092,localhost:29092,localhost:39092` |
 | `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`) |
