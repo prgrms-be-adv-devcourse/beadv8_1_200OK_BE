@@ -2,7 +2,7 @@ package com.ok.payout;
 
 import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +45,7 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private PayoutWalletDeductionRepository repository;
+    private PayoutWalletDeductionJpaRepository repository;
 
     // 이 테스트에서 쓴 주문 ID (정리할 때 이 주문의 행만 지움)
     private final List<Long> usedOrderIds = new ArrayList<>();

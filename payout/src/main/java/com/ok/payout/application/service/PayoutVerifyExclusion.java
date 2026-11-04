@@ -2,7 +2,7 @@ package com.ok.payout.application.service;
 
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
-import com.ok.payout.application.port.out.PayoutQueryRepository.FailureRow;
+import com.ok.payout.application.dto.FailureRow;
 
 import java.util.HashSet;
 import java.util.List;

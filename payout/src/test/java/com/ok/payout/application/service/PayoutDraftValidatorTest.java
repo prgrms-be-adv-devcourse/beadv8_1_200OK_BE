@@ -2,10 +2,10 @@ package com.ok.payout.application.service;
 
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailureReason;
-import com.ok.payout.application.port.out.PayoutQueryRepository.DraftItemRow;
-import com.ok.payout.application.port.out.PayoutQueryRepository.FailureRow;
-import com.ok.payout.application.port.out.PayoutQueryRepository.SellerTotalRow;
-import com.ok.payout.application.port.out.PayoutQueryRepository.SnapshotItemRow;
+import com.ok.payout.application.dto.DraftItemRow;
+import com.ok.payout.application.dto.FailureRow;
+import com.ok.payout.application.dto.SellerTotalRow;
+import com.ok.payout.application.dto.SnapshotItemRow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

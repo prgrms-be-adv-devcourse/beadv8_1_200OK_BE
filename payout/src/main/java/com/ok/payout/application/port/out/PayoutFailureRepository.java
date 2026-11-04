@@ -1,14 +1,13 @@
 package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.PayoutFailure;
-import org.springframework.data.repository.Repository;
 
 import java.util.List;
 
-public interface PayoutFailureRepository extends Repository<PayoutFailure, Long> {
+/**
+ * 정산 실패 기록 저장소 출력 포트. 구현은 {@code adapter.out.persistence}에 있다.
+ */
+public interface PayoutFailureRepository {
 
-    List<PayoutFailure> saveAll(Iterable<PayoutFailure> failures);
-
-    // 테스트 검증용 (운영 코드에서는 사용하지 않음): 스냅샷의 실패 기록 확인
-    List<PayoutFailure> findBySnapshotId(Long snapshotId);
+    <S extends PayoutFailure> List<S> saveAll(Iterable<S> failures);
 }

@@ -2,7 +2,6 @@ package com.ok.payout.adapter.out.persistence;
 
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +39,7 @@ class PayoutCandidateItemPersistenceIntegrationTest extends AbstractIntegrationT
     private static final String CK_ORDER_ITEM = "ck_payout_candidate_items_event_type_order_item_id";
 
     @Autowired
-    private PayoutCandidateItemRepository repository;
+    private PayoutCandidateItemJpaRepository repository;
 
     @Autowired
     private TransactionTemplate transactionTemplate;

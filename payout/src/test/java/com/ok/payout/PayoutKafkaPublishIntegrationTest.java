@@ -32,9 +32,9 @@ import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.config.PayoutTopics;
-import com.ok.payout.application.port.out.PayoutRepository;
-import com.ok.payout.application.port.out.PayoutSnapshotRepository;
-import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 
@@ -65,13 +65,13 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
     private PayoutJobRunner payoutJobRunner;
 
     @Autowired
-    private PayoutSnapshotRepository snapshotRepository;
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
+    private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
 
     // yaml(spring.kafka)과 테스트 컨테이너 주소(KafkaConnectionDetails)로 자동 설정된 컨슈머 팩토리
     @Autowired

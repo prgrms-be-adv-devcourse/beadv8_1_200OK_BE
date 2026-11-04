@@ -1,7 +1,7 @@
 package com.ok.payout.application.dto;
 
 import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.application.port.out.PayoutQueryRepository.PayoutItemRow;
+import com.ok.payout.application.dto.PayoutItemRow;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;

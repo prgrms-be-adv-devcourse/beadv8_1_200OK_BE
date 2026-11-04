@@ -8,12 +8,12 @@ import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutSnapshot;
-import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
-import com.ok.payout.application.port.out.PayoutFailureRepository;
-import com.ok.payout.application.port.out.PayoutRepository;
-import com.ok.payout.application.port.out.PayoutSnapshotItemRepository;
-import com.ok.payout.application.port.out.PayoutSnapshotRepository;
-import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutFailureJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
@@ -66,22 +66,22 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
     private PayoutJobRunner payoutJobRunner;
 
     @Autowired
-    private PayoutCandidateItemRepository candidateRepository;
+    private PayoutCandidateItemJpaRepository candidateRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository deductionRepository;
+    private PayoutWalletDeductionJpaRepository deductionRepository;
 
     @Autowired
-    private PayoutSnapshotRepository snapshotRepository;
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     @Autowired
-    private PayoutSnapshotItemRepository snapshotItemRepository;
+    private PayoutSnapshotItemJpaRepository snapshotItemRepository;
 
     @Autowired
-    private PayoutFailureRepository failureRepository;
+    private PayoutFailureJpaRepository failureRepository;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;

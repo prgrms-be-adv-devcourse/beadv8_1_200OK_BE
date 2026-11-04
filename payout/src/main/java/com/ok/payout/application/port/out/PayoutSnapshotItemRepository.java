@@ -1,14 +1,13 @@
 package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.PayoutSnapshotItem;
-import org.springframework.data.repository.Repository;
 
 import java.util.List;
 
-public interface PayoutSnapshotItemRepository extends Repository<PayoutSnapshotItem, Long> {
+/**
+ * 정산 스냅샷 항목 저장소 출력 포트. 구현은 {@code adapter.out.persistence}에 있다.
+ */
+public interface PayoutSnapshotItemRepository {
 
-    List<PayoutSnapshotItem> saveAll(Iterable<PayoutSnapshotItem> items);
-
-    // 테스트 검증용 (운영 코드에서는 사용하지 않음): 스냅샷 대상 목록 확인
-    List<PayoutSnapshotItem> findBySnapshotId(Long snapshotId);
+    <S extends PayoutSnapshotItem> List<S> saveAll(Iterable<S> items);
 }

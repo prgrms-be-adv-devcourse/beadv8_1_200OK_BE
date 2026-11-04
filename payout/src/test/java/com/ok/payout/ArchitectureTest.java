@@ -62,9 +62,7 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule 패키지_간_순환_의존이_없다 = slices()
             .matching("com.ok.payout.(**)")
-            // 1단계 임시: Result.from(Row)가 포트 쪽 Row를 받고 포트가 application.dto의 Command를 받아 생긴 순환. 5단계에서 규칙을 다시 쓸 때 정리한다
             .should().beFreeOfCycles()
-            .ignoreDependency(resideInAPackage("..application.dto.."), resideInAPackage("..application.port.out.."))
             .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다. "
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
@@ -128,7 +126,7 @@ class ArchitectureTest {
     static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .should().resideInAPackage("..application.port.out..")
+            .should().resideInAPackage("..adapter.out.persistence..")
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 
     @ArchTest
