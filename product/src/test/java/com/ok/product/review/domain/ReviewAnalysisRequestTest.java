@@ -154,6 +154,35 @@ class ReviewAnalysisRequestTest {
 		assertThat(sut.getStatus()).isEqualTo(ReviewAnalysisStatus.CANCELLED);
 	}
 
+	@Test
+	void 꺼낸_요청은_대기로_남고_다음_시도_시각이_10분_뒤로_미뤄진다() {
+		// given
+		ReviewAnalysisRequest sut = ReviewAnalysisRequest.pending(1L, ReviewAnalysisType.SENTIMENT, NOW);
+
+		// when
+		sut.claim(NOW);
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(sut.getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+			softly.assertThat(sut.getAttemptCount()).isZero();
+			softly.assertThat(sut.getNextAttemptAt()).isEqualTo(NOW.plusMinutes(10));
+		});
+	}
+
+	@Test
+	void 꺼낸_요청이_재시도할_실패를_받으면_미룬_시각_대신_백오프를_따른다() {
+		// given
+		ReviewAnalysisRequest sut = ReviewAnalysisRequest.pending(1L, ReviewAnalysisType.SENTIMENT, NOW);
+		sut.claim(NOW);
+
+		// when
+		sut.failRetryable("일시 오류", NOW);
+
+		// then
+		assertThat(sut.getNextAttemptAt()).isEqualTo(NOW.plusMinutes(1));
+	}
+
 	@ParameterizedTest
 	@MethodSource("대기가_아닌_요청을_끝내는_동작")
 	void 대기가_아닌_요청은_분석_안_함_취소_재시도할_실패로_바꿀_수_없다(Consumer<ReviewAnalysisRequest> finish) {

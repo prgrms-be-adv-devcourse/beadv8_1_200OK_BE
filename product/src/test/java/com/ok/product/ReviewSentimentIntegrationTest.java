@@ -16,6 +16,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
@@ -27,6 +33,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -104,6 +111,9 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	TransactionTemplate transactionTemplate;
+
+	@Autowired
+	JdbcTemplate jdbcTemplate;
 
 	@Autowired
 	FakeOrderApiClient orderApiClient;
@@ -479,6 +489,79 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 리뷰_행이_직접_지워진_요청은_취소되고_다른_요청은_분석된다() throws Exception {
+		// given
+		analyzer.respond("신선해요", Sentiment.POSITIVE, Map.of(ReviewAspect.FRESHNESS, AspectSentiment.POSITIVE));
+		long removedReviewId = writeReview(100L, "달고 맛있어요");
+		long reviewId = writeReview(101L, "신선해요");
+		// 운영 DB에서 외래키 검사를 끄고 리뷰 행을 지운 상황. 같은 커넥션에서 실행하려고 트랜잭션으로 묶는다
+		transactionTemplate.executeWithoutResult(status -> {
+			jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS = 0");
+			jdbcTemplate.update("DELETE FROM " + ProductSchema.NAME + ".product_review WHERE id = ?", removedReviewId);
+			jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS = 1");
+		});
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		assertSoftly(softly -> {
+			softly.assertThat(requestOf(removedReviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.CANCELLED);
+			softly.assertThat(requestOf(reviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.COMPLETED);
+			softly.assertThat(analyzer.analyzedContents()).containsExactly("신선해요");
+		});
+	}
+
+	@Test
+	void 한_작업자가_꺼낸_요청은_다른_작업자가_다시_꺼내지_않는다() throws Exception {
+		// given
+		writeReview(100L, "달고 맛있어요");
+		reviewSentimentService.findPendingTargets(20);
+
+		// when: 첫 작업자가 분석을 끝내기 전에 다른 작업자가 꺼낸다
+		List<ReviewSentimentTarget> sut = reviewSentimentService.findPendingTargets(20);
+
+		// then
+		assertThat(sut).isEmpty();
+	}
+
+	@Test
+	void 다른_작업자가_꺼내는_중인_요청은_기다리지_않고_건너뛴다() throws Exception {
+		// given: 첫 작업자가 가장 오래된 요청 하나를 잠근 채 커밋하지 않고 있다
+		long firstReviewId = writeReview(100L, "달고 맛있어요");
+		long secondReviewId = writeReview(101L, "신선해요");
+		CountDownLatch locked = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		Future<List<ReviewSentimentTarget>> first = executor.submit(() -> transactionTemplate.execute(status -> {
+			List<ReviewSentimentTarget> targets = reviewSentimentService.findPendingTargets(1);
+			locked.countDown();
+			awaitQuietly(release);
+			return targets;
+		}));
+		locked.await(5, TimeUnit.SECONDS);
+
+		try {
+			// when: 잠금을 기다리면 첫 작업자가 풀어 줄 때까지 멈춰 시간 초과가 난다
+			List<ReviewSentimentTarget> sut = CompletableFuture
+				.supplyAsync(() -> reviewSentimentService.findPendingTargets(20))
+				.get(5, TimeUnit.SECONDS);
+
+			// then
+			release.countDown();
+			List<ReviewSentimentTarget> firstTargets = first.get(5, TimeUnit.SECONDS);
+			assertSoftly(softly -> {
+				softly.assertThat(sut).extracting(target -> target.input().reviewId()).containsExactly(secondReviewId);
+				softly.assertThat(firstTargets).extracting(target -> target.input().reviewId())
+					.containsExactly(firstReviewId);
+			});
+		} finally {
+			release.countDown();
+			executor.shutdown();
+		}
+	}
+
+	@Test
 	void 분석하는_동안_리뷰가_삭제되면_결과를_저장하지_않고_요청을_취소한다() throws Exception {
 		// given
 		analyzer.respond("달고 맛있어요", Sentiment.POSITIVE, Map.of(ReviewAspect.TASTE, AspectSentiment.POSITIVE));
@@ -638,6 +721,14 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 
 	private String jsonArray(String... values) {
 		return String.join(",", Arrays.stream(values).map(value -> "\"" + value + "\"").toList());
+	}
+
+	private static void awaitQuietly(CountDownLatch latch) {
+		try {
+			latch.await(10, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	private ReviewAnalysisRequest requestOf(long reviewId) {
