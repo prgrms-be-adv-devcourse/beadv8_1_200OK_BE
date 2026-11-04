@@ -5,6 +5,7 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
+import com.ok.refund.service.dto.RefundDecisionCommand;
 import com.ok.refund.service.dto.RefundRequestCommand;
 import com.ok.refund.service.dto.RefundResult;
 import com.ok.refund.service.dto.RefundableOrderItem;
@@ -16,6 +17,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.time.LocalDateTime;
 
 /**
  * 환불 요청의 DB 작업을 맡는다. 주문 모듈 호출은 {@link RefundFacade}가 하고, 이 서비스는 짧은 트랜잭션으로 확인과 저장만 한다.
@@ -33,6 +37,7 @@ public class RefundService {
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
     private final RefundRepository refundRepository;
+    private final Clock clock;
 
     /**
      * 구매자의 취소 요청을 "요청됨"으로 저장한다. 요청만으로는 주문·배송·지갑·상품이 바뀌지 않는다.
@@ -86,6 +91,43 @@ public class RefundService {
         }
         return refundRepository.findAllBySellerIdAndStatus(sellerId, RefundStatus.valueOf(status), pageOf(page))
                 .map(RefundResult::from);
+    }
+
+    /**
+     * 판매자가 본인 상품의 요청을 승인하거나 거절한다.
+     * 승인은 "처리 중"으로 바꾸기만 하고 다른 모듈을 부르지 않는다. 이미 출고된 상품은 배송 잠금(#412)이 막는다.
+     *
+     * <p>행을 잠근 뒤 상태를 확인한다. 구매자 철회와 동시에 오면 먼저 잠근 쪽만 성공하고, 뒤에 온 쪽은 바뀐 상태를 보고 막힌다.
+     * 잠그지 않으면 둘 다 "요청됨"을 읽고 둘 다 저장해, 나중에 저장한 쪽이 앞의 결과를 덮어쓴다.
+     *
+     * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE},
+     *                          거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
+     */
+    @Transactional
+    public RefundResult decide(RefundDecisionCommand command) {
+        Refund refund = refundRepository.findByIdForUpdate(command.refundId())
+                .filter(found -> found.isOwnedBySeller(command.sellerId()))
+                .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
+        LocalDateTime now = LocalDateTime.now(clock);
+        switch (command.decision()) {
+            case APPROVE -> refund.approve(now);
+            case REJECT -> refund.reject(command.rejectReason(), now);
+        }
+        return RefundResult.from(refund);
+    }
+
+    /**
+     * 구매자가 본인 요청을 승인 전에 거둔다. 판매자 결정과 겹칠 때를 위해 {@link #decide}와 같은 방식으로 행을 잠근다.
+     *
+     * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    @Transactional
+    public RefundResult withdraw(Long refundId, Long buyerId) {
+        Refund refund = refundRepository.findByIdForUpdate(refundId)
+                .filter(found -> found.isOwnedByBuyer(buyerId))
+                .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
+        refund.withdraw(LocalDateTime.now(clock));
+        return RefundResult.from(refund);
     }
 
     private static Pageable pageOf(int page) {
