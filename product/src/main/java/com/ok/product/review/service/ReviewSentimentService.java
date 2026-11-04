@@ -125,16 +125,33 @@ public class ReviewSentimentService {
 	}
 
 	/**
-	 * 요청을 최종 실패로 끝낸다. 분석하는 동안 리뷰가 수정됐으면 수정 전 내용의 실패라 세지 않고, 삭제됐으면 요청을 취소한다.
+	 * 분석 실패를 기록한다. 재시도할 실패면 다음 시도 시각을 미루고, 아니면 바로 최종 실패로 끝낸다.
+	 * 분석하는 동안 리뷰가 수정됐으면 수정 전 내용의 실패라 세지 않고, 삭제됐으면 요청을 취소한다.
+	 * 최종 실패는 운영자가 SQL로 되돌려야 하므로 ERROR 로그를 남긴다.
 	 *
+	 * @param cause 분석기가 던진 예외. 마지막 오류와 로그에 남긴다
 	 * @throws RestApiException {@code ANALYSIS_REQUEST_NOT_PENDING} 다른 작업자가 먼저 끝낸 요청이면
 	 */
 	@Transactional
-	public void fail(ReviewSentimentTarget target, String error) {
+	public void fail(ReviewSentimentTarget target, RuntimeException cause, boolean retryable) {
 		if (!confirmReviewUnchanged(target)) {
 			return;
 		}
-		findRequest(target.requestId()).fail(error);
+		ReviewAnalysisRequest request = findRequest(target.requestId());
+		if (retryable) {
+			request.failRetryable(cause.toString(), now());
+		} else {
+			request.fail(cause.toString());
+		}
+
+		if (request.getStatus() == ReviewAnalysisStatus.FAILED) {
+			log.error("리뷰 감성 분석 최종 실패. requestId={}, reviewId={}, attemptCount={}",
+				request.getId(), request.getReviewId(), request.getAttemptCount(), cause);
+		} else {
+			// 다시 시도해 회복될 수 있어 스택 트레이스 없이 남긴다
+			log.warn("리뷰 감성 분석 실패, 나중에 다시 시도. requestId={}, reviewId={}, attemptCount={}, nextAttemptAt={}, error={}",
+				request.getId(), request.getReviewId(), request.getAttemptCount(), request.getNextAttemptAt(), cause.toString());
+		}
 	}
 
 	/**

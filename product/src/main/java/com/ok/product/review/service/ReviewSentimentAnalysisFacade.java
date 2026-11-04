@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 
+import com.ok.product.review.client.ReviewAnalysisFailedException;
 import com.ok.product.review.client.ReviewSentimentAnalyzer;
 import com.ok.product.review.service.dto.ReviewSentimentAnalysis;
 import com.ok.product.review.service.dto.ReviewSentimentTarget;
@@ -14,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 감성 분석 대기 요청을 꺼내 분석기로 분석하고 결과를 저장한다.
  * 분석기는 외부 서비스라 트랜잭션 밖(여기)에서 부르고, 꺼내기와 결과 저장은 {@link ReviewSentimentService}의 짧은 트랜잭션으로 나눈다.
+ * 분석기 실패는 {@link ReviewAnalysisFailedException}이 재시도할 실패라고 밝힌 것만 백오프로 다시 시도하고, 나머지는 바로 최종 실패다.
  */
 @Slf4j
 @Component
@@ -44,9 +46,12 @@ public class ReviewSentimentAnalysisFacade {
 		ReviewSentimentAnalysis analysis;
 		try {
 			analysis = reviewSentimentAnalyzer.analyze(target.input());
+		} catch (ReviewAnalysisFailedException e) {
+			reviewSentimentService.fail(target, e, e.isRetryable());
+			return;
 		} catch (RuntimeException e) {
-			// TODO(#386): 재시도할 실패(ReviewAnalysisFailedException#isRetryable)는 백오프로 다시 시도한다. 지금은 모두 바로 최종 실패다
-			reviewSentimentService.fail(target, e.toString());
+			// 분석기가 분류하지 못한 예외(분석기 버그 등)는 다시 보내도 같은 결과일 가능성이 커 재시도하지 않는다
+			reviewSentimentService.fail(target, e, false);
 			return;
 		}
 		reviewSentimentService.complete(target, analysis);

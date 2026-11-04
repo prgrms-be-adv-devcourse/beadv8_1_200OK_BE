@@ -1,6 +1,8 @@
 package com.ok.product.review.domain;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.common.jpa.entity.BaseTime;
@@ -22,6 +24,7 @@ import lombok.NoArgsConstructor;
 /**
  * 리뷰 하나를 분석 종류 하나로 분석해 달라는 요청이다. (리뷰, 분석 종류)마다 하나만 있다.
  * 대기에서 완료, 최종 실패, 분석 안 함(내용 없는 리뷰), 취소(삭제된 리뷰) 중 하나로 끝나고, 작업자는 다음 시도 시각이 지난 대기 요청만 꺼낸다.
+ * 재시도할 실패는 대기로 둔 채 다음 시도 시각을 1분, 5분, 30분, 2시간 뒤로 미루고, 처음 호출을 포함해 5회째도 실패하면 최종 실패로 끝낸다.
  * 리뷰를 수정하면 어느 상태에서든 처음 대기로 되돌린다.
  */
 @Entity
@@ -31,6 +34,12 @@ import lombok.NoArgsConstructor;
 public class ReviewAnalysisRequest extends BaseTime {
 
 	private static final int LAST_ERROR_MAX_LENGTH = 500;
+
+	// n번째 실패 뒤에는 n번째 값만큼 기다린다. 표를 바꾸면 최대 시도 횟수도 따라 바뀐다
+	private static final List<Duration> RETRY_DELAYS = List.of(
+		Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(30), Duration.ofHours(2));
+	// 처음 호출을 포함한다
+	private static final int MAX_ATTEMPTS = RETRY_DELAYS.size() + 1;
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -99,6 +108,21 @@ public class ReviewAnalysisRequest extends BaseTime {
 		status = ReviewAnalysisStatus.FAILED;
 		attemptCount++;
 		lastError = truncate(error);
+	}
+
+	/**
+	 * 다시 보내면 성공할 수 있는 실패를 기록하고 다음 시도 시각을 미룬다. 최대 시도 횟수를 다 쓰면 최종 실패로 끝낸다.
+	 * 재시도 중에도 마지막 오류를 남겨 운영자가 백오프 중인 요청의 원인을 볼 수 있게 한다.
+	 */
+	public void failRetryable(String error, LocalDateTime now) {
+		validatePending();
+		attemptCount++;
+		lastError = truncate(error);
+		if (attemptCount >= MAX_ATTEMPTS) {
+			status = ReviewAnalysisStatus.FAILED;
+			return;
+		}
+		nextAttemptAt = now.plus(RETRY_DELAYS.get(attemptCount - 1));
 	}
 
 	private void validatePending() {
