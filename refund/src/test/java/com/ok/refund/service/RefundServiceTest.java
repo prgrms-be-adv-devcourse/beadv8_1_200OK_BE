@@ -150,17 +150,30 @@ class RefundServiceTest {
                 .isSameAs(other);
     }
 
-    // 철회 커밋 순간 같은 상품 새 요청 둘이 겹치면 MySQL이 한쪽을 교착 상태로 되돌린다. 그 쪽도 진행 중 중복으로 본다
+    // 철회 커밋 순간 같은 상품 새 요청 둘이 겹치면 MySQL이 한쪽을 교착 상태로 되돌린다. 그 쪽도 진행 중 중복으로 본다.
+    // 원인 예외 모양은 재현 때 실제로 받은 값(CannotAcquireLockException, SQLState 40001, 1213)과 같게 만든다
     @Test
     void 저장이_교착_상태로_되돌려지면_진행_중_에러로_바꾼다() {
         // given
-        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(new CannotAcquireLockException(
-                "Deadlock found when trying to get lock; try restarting transaction"));
+        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(new CannotAcquireLockException("교착",
+                new SQLException("Deadlock found when trying to get lock; try restarting transaction", "40001", 1213)));
 
         // when & then
         assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
+    }
+
+    @Test
+    void 잠금_대기_시간_초과는_중복이_아니라_그대로_던진다() {
+        // given
+        CannotAcquireLockException timeout = new CannotAcquireLockException("대기 시간 초과",
+                new SQLException("Lock wait timeout exceeded; try restarting transaction", "HY000", 1205));
+        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(timeout);
+
+        // when & then
+        assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
+                .isSameAs(timeout);
     }
 
     @Test
