@@ -130,7 +130,8 @@ public record JwtProperties(
     /**
      * JWKS 캐시와 원격 조회 설정. 지정하지 않은 값은 기본값을 쓴다.
      *
-     * @param cacheTtl       공개키 목록을 캐시해도 되는 시간. 발급 모듈은 JWKS 응답의 {@code Cache-Control: max-age}로 알린다.
+     * @param cacheTtl       공개키 목록을 캐시해도 되는 시간. 검증 앱은 이 값으로 캐시하고 JWKS 응답의 {@code Cache-Control}은 읽지 않는다.
+     *                       발급 모듈은 자기 값을 {@code Cache-Control: max-age}로 내보내지만 안내용이라, 두 앱의 값은 따로 맞춘다.
      *                       길수록 발급 모듈이 잠깐 멈춰도 검증이 이어지지만, 키 교체 때 새 키를 공개한 뒤 서명 키를 바꾸기까지 이만큼 기다린다.
      *                       기본값 5분.
      * @param connectTimeout 원격 JWKS 연결 타임아웃. 캐시가 끝난 뒤 첫 요청은 이만큼 기다릴 수 있다. 기본값 2초.

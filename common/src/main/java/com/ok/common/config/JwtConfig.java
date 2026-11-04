@@ -150,8 +150,17 @@ public class JwtConfig {
             log.info("JWT 검증 키: 로컬 공개키 kid={}", keys.getKeys().stream().map(JWK::getKeyID).toList());
             return new ImmutableJWKSet<>(keys);
         }
-        log.info("JWT 검증 키: 원격 JWKS uri={}", properties.jwkSetUri());
+        log.info("JWT 검증 키: 원격 JWKS uri={}", withoutCredentials(properties.jwkSetUri()));
         return remoteKeySource(properties.jwkSetUri(), properties.jwkSet());
+    }
+
+    /**
+     * 로그에 남길 JWKS 주소를 만든다. 주소에 사용자 정보({@code user:pass@})나 쿼리가 들어 있어도 로그에 남지 않게 scheme, host, port, path만 남긴다.
+     */
+    private static String withoutCredentials(String jwkSetUri) {
+        URI uri = URI.create(jwkSetUri);
+        String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
+        return uri.getScheme() + "://" + uri.getHost() + port + uri.getRawPath();
     }
 
     /**

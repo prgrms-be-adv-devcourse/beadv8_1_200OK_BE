@@ -20,8 +20,8 @@ import org.springframework.security.oauth2.server.resource.web.BearerTokenResolv
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.AuthenticationEntryPointFailureHandler;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
+import org.springframework.security.web.authentication.AuthenticationEntryPointFailureHandler;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
@@ -70,7 +70,8 @@ public class SecurityConfig {
             "/error",
             // 컨테이너 헬스체크. compose와 deploy.sh가 토큰 없이 호출한다
             "/actuator/health",
-            // 토큰 검증용 공개키 목록(JWKS). 다른 모듈 앱이 토큰 없이 받아 간다. 공개키는 비밀이 아니다
+            // 토큰 검증용 공개키 목록(JWKS). 다른 모듈 앱이 토큰 없이 받아 간다. 공개키는 비밀이 아니다.
+            // 모든 앱이 같은 보안 설정을 쓰므로 member 외 앱에서도 열리지만, 핸들러가 member에만 있어 다른 앱에서는 404다
             "/.well-known/jwks.json"
     };
 
