@@ -3,7 +3,7 @@ CREATE TABLE review_analysis_request (
     id BIGINT NOT NULL AUTO_INCREMENT,
     review_id BIGINT NOT NULL,
     analysis_type VARCHAR(20) NOT NULL COMMENT 'SENTIMENT',
-    status VARCHAR(20) NOT NULL COMMENT 'PENDING, COMPLETED, FAILED(최종 실패)',
+    status VARCHAR(20) NOT NULL COMMENT 'PENDING, COMPLETED, FAILED(최종 실패), SKIPPED(내용 없는 리뷰라 분석 안 함), CANCELLED(리뷰 삭제)',
     attempt_count INT NOT NULL COMMENT '실패한 시도 횟수',
     next_attempt_at DATETIME(6) NOT NULL COMMENT '이 시각이 지난 대기 요청만 작업자가 꺼낸다',
     last_error VARCHAR(500) NULL COMMENT '마지막 실패 원인. 운영자 확인용',
