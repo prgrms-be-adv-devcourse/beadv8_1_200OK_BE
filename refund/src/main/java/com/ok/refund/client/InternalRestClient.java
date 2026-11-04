@@ -12,7 +12,7 @@ import java.time.Duration;
 /**
  * 다른 모듈 내부 API를 부를 때 쓰는 RestClient를 만든다.
  * 주문 모듈의 같은 이름 클래스와 같은 값(연결 2초, 응답 3초)과 실패 처리를 쓴다. 그 클래스는 package-private이고
- * 다른 모듈 타입이라 가져다 쓸 수 없어 따로 둔다. 배송·상품·지갑 클라이언트도 이 클래스로 만든다.
+ * 다른 모듈 타입이라 가져다 쓸 수 없어 따로 둔다. 상품 클라이언트도 이 클래스로 만든다(지갑은 Kafka라 쓰지 않는다).
  */
 final class InternalRestClient {
 
