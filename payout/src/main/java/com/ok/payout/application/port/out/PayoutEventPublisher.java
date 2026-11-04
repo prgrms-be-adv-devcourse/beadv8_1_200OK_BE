@@ -1,7 +1,5 @@
 package com.ok.payout.application.port.out;
 
-import com.ok.payout.application.dto.SellerPayoutCreatedCommand;
-
 /**
  * 정산에서 일어난 일을 다른 모듈(지갑)에 알린다.
  * 서비스는 이 인터페이스만 알고, 실제 발행 방식(지금은 Kafka, {@code KafkaPayoutEventPublisher})은 adapter/out/event의 구현체가 맡는다.

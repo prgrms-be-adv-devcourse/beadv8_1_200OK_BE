@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage;
-import com.ok.payout.application.dto.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import com.ok.payout.config.PayoutTopics;
 

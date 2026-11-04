@@ -1,5 +1,6 @@
 package com.ok.payout.application.dto;
 
+import com.ok.payout.application.port.out.PayoutItemRow;
 import com.ok.payout.domain.PayoutCandidateItem;
 
 import java.time.LocalDateTime;

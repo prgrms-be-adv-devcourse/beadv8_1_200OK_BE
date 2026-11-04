@@ -1,12 +1,5 @@
 package com.ok.payout.application.port.out;
 
-import com.ok.payout.application.dto.CandidateRow;
-import com.ok.payout.application.dto.CountAndAmount;
-import com.ok.payout.application.dto.DraftItemRow;
-import com.ok.payout.application.dto.FailureRow;
-import com.ok.payout.application.dto.PayoutItemRow;
-import com.ok.payout.application.dto.SellerTotalRow;
-import com.ok.payout.application.dto.SnapshotItemRow;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import org.springframework.data.domain.Page;

@@ -115,11 +115,13 @@ class ArchitectureTest {
 
     // 포트
 
+    // 포트가 주고받는 값(조회 결과 Row, 발행 명령 등 record)은 포트 옆에 둔다. dto에 두면 dto ↔ port.out 순환이 생긴다
     @ArchTest
     static final ArchRule 포트는_인터페이스다 = classes()
             .that().resideInAnyPackage("..application.port.in..", "..application.port.out..")
+            .and().areNotRecords()
             .should().beInterfaces()
-            .because("포트는 구현을 숨기는 경계라 인터페이스여야 한다 (정산 헥사고날 구조, 이슈 #441)");
+            .because("포트는 구현을 숨기는 경계라 인터페이스여야 한다. 포트가 주고받는 값(record)만 함께 둔다 (정산 헥사고날 구조, 이슈 #441)");
 
     @ArchTest
     static final ArchRule 출력_포트는_Spring_Data_Repository를_상속하지_않는다 = noClasses()

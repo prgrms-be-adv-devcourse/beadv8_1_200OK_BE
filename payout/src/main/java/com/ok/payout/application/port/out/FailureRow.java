@@ -1,4 +1,4 @@
-package com.ok.payout.application.dto;
+package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.PayoutFailureReason;
 

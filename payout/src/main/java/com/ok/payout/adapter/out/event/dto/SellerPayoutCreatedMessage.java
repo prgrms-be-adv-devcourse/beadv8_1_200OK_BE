@@ -2,7 +2,7 @@ package com.ok.payout.adapter.out.event.dto;
 
 import java.time.LocalDateTime;
 
-import com.ok.payout.application.dto.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
 
 /**
  * 정산이 지갑으로 보내는 정산 확정 메시지. Kafka에 JSON으로 실려 나간다.

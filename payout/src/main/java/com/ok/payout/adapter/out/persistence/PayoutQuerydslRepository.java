@@ -1,12 +1,12 @@
 package com.ok.payout.adapter.out.persistence;
 
-import com.ok.payout.application.dto.CandidateRow;
-import com.ok.payout.application.dto.CountAndAmount;
-import com.ok.payout.application.dto.DraftItemRow;
-import com.ok.payout.application.dto.FailureRow;
-import com.ok.payout.application.dto.PayoutItemRow;
-import com.ok.payout.application.dto.SellerTotalRow;
-import com.ok.payout.application.dto.SnapshotItemRow;
+import com.ok.payout.application.port.out.CandidateRow;
+import com.ok.payout.application.port.out.CountAndAmount;
+import com.ok.payout.application.port.out.DraftItemRow;
+import com.ok.payout.application.port.out.FailureRow;
+import com.ok.payout.application.port.out.PayoutItemRow;
+import com.ok.payout.application.port.out.SellerTotalRow;
+import com.ok.payout.application.port.out.SnapshotItemRow;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
