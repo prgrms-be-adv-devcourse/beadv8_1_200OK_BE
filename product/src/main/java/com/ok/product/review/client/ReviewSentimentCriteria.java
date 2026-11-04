@@ -27,20 +27,53 @@ import tools.jackson.databind.json.JsonMapper;
 @Component
 public class ReviewSentimentCriteria {
 
+	public static final String OVERALL_KEY = "overall";
+
 	private static final String LOCATION = "review-analysis/criteria.json";
 
-	private static final String OVERALL_KEY = "overall";
-
 	private final String version;
+	private final String instruction;
+	private final List<Question> questions;
 
 	public ReviewSentimentCriteria() {
 		JsonNode root = read();
 		validate(root);
 		this.version = root.path("version").asString();
+		this.instruction = root.path("instruction").asString();
+		List<Choice> aspectChoices = choices(root.path("aspectChoices"));
+		this.questions = root.path("questions").values().stream()
+			.map(question -> toQuestion(question, aspectChoices))
+			.toList();
 	}
 
 	public String version() {
 		return version;
+	}
+
+	// 모든 질문 앞에 붙이는 공통 지시문이다
+	public String instruction() {
+		return instruction;
+	}
+
+	// 전체 감성이 맨 앞이고, 이어서 분석 항목이 ReviewAspect 순서로 온다
+	public List<Question> questions() {
+		return questions;
+	}
+
+	/**
+	 * 분석기에 묻는 질문 하나다. 선택지는 파일에 적힌 순서다.
+	 *
+	 * @param key 전체 감성은 {@link #OVERALL_KEY}, 분석 항목은 {@link ReviewAspect} 이름의 소문자
+	 */
+	public record Question(String key, String question, String guide, List<Choice> choices) {
+	}
+
+	/**
+	 * 질문의 선택지 하나다.
+	 *
+	 * @param value 분석기가 답으로 고르는 값. 감성 enum 이름의 소문자다
+	 */
+	public record Choice(String value, String label, String description) {
 	}
 
 	private static JsonNode read() {
@@ -68,6 +101,20 @@ public class ReviewSentimentCriteria {
 			throw new IllegalStateException(
 				"분류 기준과 코드의 " + target + " 목록이 다릅니다. criteria=" + actual + ", code=" + expected);
 		}
+	}
+
+	// 분석 항목 질문은 선택지를 따로 적지 않고 공통 aspectChoices를 쓴다
+	private static Question toQuestion(JsonNode question, List<Choice> aspectChoices) {
+		String key = question.path("key").asString();
+		List<Choice> choices = OVERALL_KEY.equals(key) ? choices(question.path("choices")) : aspectChoices;
+		return new Question(key, question.path("question").asString(), question.path("guide").asString(), choices);
+	}
+
+	private static List<Choice> choices(JsonNode choices) {
+		return choices.values().stream()
+			.map(choice -> new Choice(
+				choice.path("value").asString(), choice.path("label").asString(), choice.path("description").asString()))
+			.toList();
 	}
 
 	private static List<String> values(JsonNode choices) {

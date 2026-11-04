@@ -70,6 +70,15 @@ app:
   s3:
     region: ${AWS_REGION}
     bucket: ${S3_BUCKET}
+  review-analysis:
+    jev:
+      base-url: https://api.typesafe.ai
+      # 키가 없어도 앱은 뜬다. 작업자는 운영 설정에서만 켜므로 로컬·CI에서는 부르지 않는다
+      api-key: ${JEV_API_KEY:}
+      # #385 실험과 같은 모델. jev-latest로 바꾸지 않는다
+      model: jev-1.14.0
+      connect-timeout: 3s
+      read-timeout: 10s
 
 # 앱 시작 시 만들 최초 관리자 계정 (member.member.config.AdminBootstrapConfig)
 # - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)

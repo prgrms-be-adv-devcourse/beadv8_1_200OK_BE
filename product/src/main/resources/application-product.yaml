@@ -40,6 +40,15 @@ app:
   s3:
     region: ${AWS_REGION:ap-northeast-2}
     bucket: ${S3_BUCKET:local-bucket}
+  review-analysis:
+    jev:
+      base-url: https://api.typesafe.ai
+      # 키가 없어도 앱은 뜬다. 작업자는 운영 설정에서만 켜므로 로컬·CI에서는 부르지 않는다
+      api-key: ${JEV_API_KEY:}
+      # #385 실험과 같은 모델. jev-latest로 바꾸지 않는다
+      model: jev-1.14.0
+      connect-timeout: 3s
+      read-timeout: 10s
 jwt:
   issuer: paldo-gotgan
   audience: paldo-gotgan-api
