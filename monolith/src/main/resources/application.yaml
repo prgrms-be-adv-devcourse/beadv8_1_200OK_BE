@@ -116,6 +116,7 @@ management:
   server:
     # 관리 엔드포인트(health, prometheus)를 서비스 포트(8080)와 분리한다. 이 포트는 호스트에 publish하지 않고 nginx도 프록시하지 않아
     # 외부에서 닿지 않는다. 8081~8088은 모듈 단독 실행이 쓰는 서버 포트라 피했다
+    # MANAGEMENT_SERVER_PORT를 빈 문자열로 주면 포트 분리가 풀려 서비스 포트에 prometheus가 열린다. 값을 비우지 않는다
     port: ${MANAGEMENT_SERVER_PORT:18080}
   endpoints:
     web:

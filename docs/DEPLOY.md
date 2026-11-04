@@ -146,6 +146,7 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 ./deploy.sh
 ```
 
+- 이전 이미지는 관리 포트 분리 전이라 `/actuator/health`를 8080에서 냅니다. 그 이미지로 롤백하면 `compose.prod.yml`의 app healthcheck(18080)가 실패하므로, 롤백할 때는 healthcheck 포트도 8080으로 되돌립니다.
 - 복구한 뒤 문제를 고쳐 다시 배포할 때 `APP_IMAGE_TAG=latest`로 되돌립니다.
 - 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다.
 
