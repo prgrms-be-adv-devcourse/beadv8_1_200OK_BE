@@ -150,7 +150,7 @@ public class JwtConfig {
             log.info("JWT 검증 키: 로컬 공개키 kid={}", keys.getKeys().stream().map(JWK::getKeyID).toList());
             return new ImmutableJWKSet<>(keys);
         }
-        log.info("JWT 검증 키: 원격 JWKS {}", properties.jwkSetUri());
+        log.info("JWT 검증 키: 원격 JWKS uri={}", properties.jwkSetUri());
         return remoteKeySource(properties.jwkSetUri(), properties.jwkSet());
     }
 

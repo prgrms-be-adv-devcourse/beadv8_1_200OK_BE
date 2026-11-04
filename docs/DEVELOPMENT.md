@@ -492,7 +492,7 @@ member(auth)는 검증용 공개키 목록(`jwt.verification-keys` 전체)을 `G
 | 키 | 기본값 | 설명 |
 |---|---|---|
 | `jwt.jwk-set-uri` | 비어 있음 (`${JWT_JWK_SET_URI:}`) | member의 JWKS 주소(`http`/`https`). 있으면 `verification-keys`보다 우선합니다 |
-| `jwt.jwk-set.cache-ttl` | `5m` | 받아 온 키를 캐시하는 시간. member의 응답 `Cache-Control: max-age`도 이 값입니다 |
+| `jwt.jwk-set.cache-ttl` | `5m` | 받아 온 키를 캐시하는 시간. member는 자기 설정값을 응답의 `Cache-Control: max-age`로 내보내지만 안내용이고, 검증 앱은 이 헤더가 아니라 자기 `cache-ttl`을 따릅니다 |
 | `jwt.jwk-set.connect-timeout`, `read-timeout` | `2s`, `2s` | member 연결·응답을 기다리는 시간. 넘으면 그 요청은 503입니다 |
 
 **로컬에서 원격 모드로 실행하기**
@@ -503,7 +503,7 @@ curl -s localhost:8082/.well-known/jwks.json                            # 공개
 JWT_JWK_SET_URI=http://localhost:8082/.well-known/jwks.json ./gradlew :order:bootRun   # 터미널 2 (8084)
 ```
 
-order 기동 로그에 `JWT 검증 키: 원격 JWKS http://localhost:8082/...`가 나오면 원격 모드입니다(로컬이면 `로컬 공개키 kid=[...]`). member에서 로그인한 토큰으로 order API를 호출합니다. `JWT_JWK_SET_URI`를 루트 `.env`에 넣으면 모든 모듈 앱이 원격 모드가 되므로, 필요한 실행에만 환경변수로 넘기세요.
+order 기동 로그에 `JWT 검증 키: 원격 JWKS uri=http://localhost:8082/...`가 나오면 원격 모드입니다(로컬이면 `로컬 공개키 kid=[...]`). member에서 로그인한 토큰으로 order API를 호출합니다. `JWT_JWK_SET_URI`를 루트 `.env`에 넣으면 모든 모듈 앱이 원격 모드가 되므로, 필요한 실행에만 환경변수로 넘기세요.
 
 운영에서 모듈을 따로 배포할 때의 설정(compose, 발급 모듈 내부 주소)과 member 장애가 캐시 시간보다 길 때의 대비는 분리 배포 작업에서 정합니다.
 

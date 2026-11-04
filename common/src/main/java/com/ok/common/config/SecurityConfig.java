@@ -114,7 +114,7 @@ public class SecurityConfig {
                 //  - oauth2ResourceServer: Bearer 토큰 검증 실패 (만료·위조 토큰)
                 //  - exceptionHandling: 토큰 없이 들어온 익명 요청의 접근 거부, 로그인한 회원의 권한 부족
                 .oauth2ResourceServer(resourceServer -> resourceServer
-                        .withObjectPostProcessor(rethrowNoAuthenticationServiceException())
+                        .withObjectPostProcessor(delegateAuthenticationServiceExceptionToEntryPoint())
                         .bearerTokenResolver(bearerTokenResolver())
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
                         .authenticationEntryPoint(authenticationEntryPoint)
@@ -146,7 +146,7 @@ public class SecurityConfig {
      * 이 예외를 진입점으로 넘기지 않고 다시 던져, 우리 응답 형식이 아닌 500이 된다. 진입점으로 넘기면 {@code ApiControllerAdvice}가
      * 503으로 응답한다. 이 실패 처리기는 {@code oauth2ResourceServer} 설정으로 바꿀 수 없어 필터를 만든 뒤 지정한다.
      */
-    private ObjectPostProcessor<BearerTokenAuthenticationFilter> rethrowNoAuthenticationServiceException() {
+    private ObjectPostProcessor<BearerTokenAuthenticationFilter> delegateAuthenticationServiceExceptionToEntryPoint() {
         return new ObjectPostProcessor<>() {
             @Override
             public <O extends BearerTokenAuthenticationFilter> O postProcess(O filter) {

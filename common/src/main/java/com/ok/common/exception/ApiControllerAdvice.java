@@ -73,7 +73,7 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
     public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
         if (ex instanceof AuthenticationServiceException) {
             // 사용자 잘못이 아니라 서버 장애라 운영에서 보이도록 경고로 남긴다 (원인: 발급 모듈 장애, 타임아웃 등)
-            log.warn("토큰 검증 키를 가져오지 못했습니다: {}", ex.getMessage());
+            log.warn("토큰 검증 키를 가져오지 못했습니다: cause={}", ex.getMessage());
             ErrorCode errorCode = CommonErrorCode.AUTH_KEY_UNAVAILABLE;
             return ResponseEntity.status(errorCode.status()).body(toProblemDetail(errorCode, errorCode.getMessage()));
         }
