@@ -78,13 +78,21 @@ public class JevReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 		return new JevRequest(properties.model(), state(input), questions);
 	}
 
-	// 옵션명은 #385 실험 조건에 없어 검증하지 않은 조건이다. 옵션이 없는 상품은 실험과 같은 모양으로 보낸다
+	// 옵션명은 #385 실험 조건에 없어 검증하지 않은 조건이다. 옵션이 없는 상품은 실험과 같은 모양으로 보낸다.
+	// 상품명은 운영 DB에서 외래키 검사를 끄고 상품 행을 지우면 없을 수 있다. "null"이라는 상품명을 보내지 않게 줄을 뺀다
 	private static String state(ReviewSentimentInput input) {
-		StringBuilder state = new StringBuilder("상품: ").append(input.productName());
-		if (input.optionName() != null && !input.optionName().isBlank()) {
-			state.append("\n옵션: ").append(input.optionName());
+		StringBuilder state = new StringBuilder();
+		if (hasText(input.productName())) {
+			state.append("상품: ").append(input.productName()).append('\n');
 		}
-		return state.append("\n본문: ").append(input.content()).toString();
+		if (hasText(input.optionName())) {
+			state.append("옵션: ").append(input.optionName()).append('\n');
+		}
+		return state.append("본문: ").append(input.content()).toString();
+	}
+
+	private static boolean hasText(String value) {
+		return value != null && !value.isBlank();
 	}
 
 	private JevResponse send(JevRequest request) {
