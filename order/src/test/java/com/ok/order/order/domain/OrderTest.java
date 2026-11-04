@@ -69,20 +69,32 @@ class OrderTest {
     }
 
     @Test
-    void 도서산간_운임은_판매자_묶음마다_붙고_총액에_더해진다() {
-        // given: 판매자 2명 → 배송 2건
+    void 배송비와_도서산간_운임은_판매자_묶음마다_붙고_총액에_더해진다() {
+        // given: 판매자 2명 → 배송 2건. 판매자 100은 배송비 3,000원, 판매자 200은 무료배송
         Order sut = Order.create(1L, List.of(
                 line(1L, 100L, 10_000L, 1),
                 line(2L, 200L, 10_000L, 1)));
 
-        // when
-        sut.applyRemoteAreaFee(3_000L);
+        // when: 두 묶음 모두 도서산간 운임 3,000원 (무료배송이어도 붙는다)
+        sut.applyShippingFee(100L, new SellerShippingFee(3_000L, 50_000L, 3_000L, 3_000L));
+        sut.applyShippingFee(200L, new SellerShippingFee(3_000L, 0L, 0L, 3_000L));
 
         // then
         assertSoftly(softly -> {
+            softly.assertThat(sut.getTotalShippingFee()).isEqualTo(3_000L);
             softly.assertThat(sut.getTotalRemoteAreaFee()).isEqualTo(6_000L);   // 묶음 2개 × 3,000
-            softly.assertThat(sut.getTotalAmount()).isEqualTo(26_000L);
+            softly.assertThat(sut.getTotalAmount()).isEqualTo(29_000L);
         });
+    }
+
+    @Test
+    void 주문에_없는_판매자의_배송비는_적용할_수_없다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.applyShippingFee(999L, new SellerShippingFee(3_000L, null, 3_000L, 0L)))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

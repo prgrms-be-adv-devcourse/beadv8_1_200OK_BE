@@ -7,6 +7,7 @@ import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.OrderStatus;
+import com.ok.order.order.domain.SellerShippingFee;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.repository.OrderRepository;
 import com.ok.order.order.service.dto.*;
@@ -482,8 +483,10 @@ class OrderServiceTest {
     @Test
     void 결제가_완료되면_배송이_받을_결제_완료_이벤트를_발행한다() {
         // given: 배송지가 등록된 결제 대기 주문 (판매자 100, 사과 1kg 10,000원 × 2)
+        // 판매자 설정은 기본 배송비 3,000원, 무료배송 없음
         Order order = savedOrder(10L);
-        order.registerShippingAddress("홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호");
+        order.registerShippingAddress("홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요");
+        order.applyShippingFee(100L, new SellerShippingFee(3_000L, null, 3_000L, 0L));
         ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
         given(orderRepository.findById(10L)).willReturn(Optional.of(order));
 
@@ -499,8 +502,11 @@ class OrderServiceTest {
             softly.assertThat(message.buyerId()).isEqualTo(1L);
             softly.assertThat(message.paidAt()).isEqualTo(NOW);
             softly.assertThat(message.addressDetail()).isEqualTo("101호");
+            softly.assertThat(message.deliveryNote()).isEqualTo("문 앞에 놓아 주세요");
             softly.assertThat(message.sellerGroups()).hasSize(1);
             softly.assertThat(message.sellerGroups().get(0).sellerId()).isEqualTo(100L);
+            softly.assertThat(message.sellerGroups().get(0).baseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(message.sellerGroups().get(0).freeShippingThreshold()).isNull();
             softly.assertThat(message.sellerGroups().get(0).regionSurcharge()).isZero();
             softly.assertThat(message.sellerGroups().get(0).items().get(0).orderItemId()).isEqualTo(1L);
             softly.assertThat(message.sellerGroups().get(0).items().get(0).productName()).isEqualTo("사과");

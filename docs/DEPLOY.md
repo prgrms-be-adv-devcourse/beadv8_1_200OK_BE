@@ -352,7 +352,7 @@ docker compose -f compose.prod.yml restart app
 1. `jwt.yaml`의 `verification-keys`에 `rs256-v2`를 **추가**하고, `signing`을 `rs256-v2`와 새 개인키로 바꾼 뒤 재시작합니다. 새 토큰은 `rs256-v2`로 서명되고, 이전 토큰은 `rs256-v1` 공개키로 만료될 때까지 검증됩니다.
 2. Access Token 유효 기간(30분)이 지나면 `verification-keys`에서 `rs256-v1`을 빼고 재시작한 뒤 `rs256-v1-*.pem`을 지웁니다.
 
-- 앱이 monolith 하나라 검증 목록 추가와 서명 키 변경을 한 번에 합니다. 검증하는 앱이 여럿이면 순서가 필요합니다([`DEVELOPMENT.md`의 키 교체](DEVELOPMENT.md#키-관리와-교체)).
+- 앱이 monolith 하나라 검증 목록 추가와 서명 키 변경을 한 번에 합니다. 검증하는 앱이 여럿이거나 monolith를 2대 이상으로 늘리면 한 번에 할 수 없고 단계를 나눠야 합니다([`DEVELOPMENT.md`의 키 교체](DEVELOPMENT.md#키-관리와-교체)).
 - 개인키가 유출되었으면 2를 기다리지 않고 1에서 `rs256-v1`을 바로 뺍니다. 그 키로 서명된 토큰은 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다.
 - 재시작 중 수십 초간 요청이 실패합니다([1. 구성](#1-구성)).
 

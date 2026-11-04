@@ -21,8 +21,11 @@ import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
@@ -41,6 +44,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
+import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -72,6 +76,10 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JwtSigningProperties signingProperties;
+
+    // 검증 공개키를 받지 못하는 상황을 만들기 위해 쓴다. 다른 테스트에서는 실제 디코더 그대로 동작한다
+    @MockitoSpyBean
+    JwtDecoder jwtDecoder;
 
     private MockMvc mockMvc;
 
@@ -125,6 +133,25 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
         result.andExpect(status().isUnauthorized())
                 .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, containsString("error_description")))
                 .andExpect(jsonPath("$.type", endsWith("/token-expired")));
+    }
+
+    @Test
+    void 검증_공개키를_받아_오지_못하면_401이_아니라_503과_auth_key_unavailable을_반환한다() throws Exception {
+        // given
+        // 원격 JWKS를 받지 못할 때(발급 모듈 장애, 타임아웃) 디코더가 던지는 예외다. 토큰 오류(BadJwtException)가 아니다
+        String bearer = tokens.bearer(MEMBER_ID, "BUYER");
+        willThrow(new JwtException("An error occurred while attempting to decode the Jwt: Couldn't retrieve JWK set"))
+                .given(jwtDecoder).decode(bearer.substring("Bearer ".length()));
+
+        // when
+        ResultActions result = mockMvc.perform(get("/test/security/me")
+                .header(HttpHeaders.AUTHORIZATION, bearer));
+
+        // then
+        // 401이면 클라이언트가 토큰을 버리고 재로그인시키므로, 토큰 문제가 아님을 상태와 type으로 알린다
+        result.andExpect(status().isServiceUnavailable())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(jsonPath("$.type", endsWith("/auth-key-unavailable")));
     }
 
     @Test

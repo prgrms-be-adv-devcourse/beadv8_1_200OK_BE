@@ -6,8 +6,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
+import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -16,8 +18,10 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
+import org.springframework.security.web.authentication.AuthenticationEntryPointFailureHandler;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
@@ -31,7 +35,7 @@ import java.util.List;
  * <p>인증은 이 설정 한 곳에서 처리하고, 인가는 각 모듈이 자기 API에 {@code @PreAuthorize}로 선언한다.
  * 중앙 설정이 모든 모듈의 URL을 알지 않기 위해서다.
  *
- * <p>토큰 검증에 쓰는 {@code JwtDecoder} 빈은 auth의 JWT 설정이 등록한다.
+ * <p>토큰 검증에 쓰는 {@code JwtDecoder} 빈은 common의 {@link JwtConfig}가 등록한다. 그래서 common에 의존하는 모든 모듈 앱이 같은 검증을 쓴다.
  */
 @Configuration
 @EnableMethodSecurity
@@ -67,7 +71,10 @@ public class SecurityConfig {
             // 컨테이너 헬스체크. compose와 deploy.sh가 토큰 없이 호출한다
             "/actuator/health",
             // 지표 수집(Prometheus scrape). 관리 포트(자식 컨텍스트)도 이 필터 체인이 적용돼 열어 주지 않으면 401이다 (#374)
-            "/actuator/prometheus"
+            "/actuator/prometheus",
+            // 토큰 검증용 공개키 목록(JWKS). 다른 모듈 앱이 토큰 없이 받아 간다. 공개키는 비밀이 아니다.
+            // 모든 앱이 같은 보안 설정을 쓰므로 member 외 앱에서도 열리지만, 핸들러가 member에만 있어 다른 앱에서는 404다
+            "/.well-known/jwks.json"
     };
 
     /**
@@ -110,6 +117,7 @@ public class SecurityConfig {
                 //  - oauth2ResourceServer: Bearer 토큰 검증 실패 (만료·위조 토큰)
                 //  - exceptionHandling: 토큰 없이 들어온 익명 요청의 접근 거부, 로그인한 회원의 권한 부족
                 .oauth2ResourceServer(resourceServer -> resourceServer
+                        .withObjectPostProcessor(delegateAuthenticationServiceExceptionToEntryPoint())
                         .bearerTokenResolver(bearerTokenResolver())
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
                         .authenticationEntryPoint(authenticationEntryPoint)
@@ -132,6 +140,26 @@ public class SecurityConfig {
                 .filter(endpoint -> endpoint.tokenUse() == TokenUse.IGNORED)
                 .toList());
         return request -> tokenIgnoredRequests.matches(request) ? null : delegate.resolve(request);
+    }
+
+    /**
+     * 토큰 검증 중 서버 쪽 오류({@link AuthenticationServiceException})도 진입점으로 넘겨 응답하게 한다.
+     *
+     * <p>검증 공개키를 받아 오지 못하면(발급 모듈 장애, 타임아웃) 이 예외가 난다. Bearer 토큰 필터의 기본 실패 처리기는
+     * 이 예외를 진입점으로 넘기지 않고 다시 던져, 우리 응답 형식이 아닌 500이 된다. 진입점으로 넘기면 {@code ApiControllerAdvice}가
+     * 503으로 응답한다. 이 실패 처리기는 {@code oauth2ResourceServer} 설정으로 바꿀 수 없어 필터를 만든 뒤 지정한다.
+     */
+    private ObjectPostProcessor<BearerTokenAuthenticationFilter> delegateAuthenticationServiceExceptionToEntryPoint() {
+        return new ObjectPostProcessor<>() {
+            @Override
+            public <O extends BearerTokenAuthenticationFilter> O postProcess(O filter) {
+                AuthenticationEntryPointFailureHandler failureHandler =
+                        new AuthenticationEntryPointFailureHandler(authenticationEntryPoint);
+                failureHandler.setRethrowAuthenticationServiceException(false);
+                filter.setAuthenticationFailureHandler(failureHandler);
+                return filter;
+            }
+        };
     }
 
     /**

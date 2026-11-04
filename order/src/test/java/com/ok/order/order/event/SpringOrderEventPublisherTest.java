@@ -31,8 +31,8 @@ class SpringOrderEventPublisherTest {
         LocalDateTime paidAt = LocalDateTime.of(2026, 10, 21, 10, 0);
         PaidOrderMessage message = new PaidOrderMessage(
                 10L, 1L, paidAt,
-                "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호",
-                List.of(new PaidSellerGroupMessage(100L, 0L, 0L, 3_000L,
+                "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요",
+                List.of(new PaidSellerGroupMessage(100L, 3_000L, 50_000L, 3_000L,
                         List.of(new PaidItemMessage(1L, "사과", "1kg", 2, 10_000L)))));
 
         // when
@@ -47,8 +47,10 @@ class SpringOrderEventPublisherTest {
             softly.assertThat(event.buyerId()).isEqualTo(1L);
             softly.assertThat(event.paidAt()).isEqualTo(paidAt);
             softly.assertThat(event.shippingAddress().addressDetail()).isEqualTo("101호");
-            softly.assertThat(event.shippingAddress().deliveryNote()).isNull();
+            softly.assertThat(event.shippingAddress().deliveryNote()).isEqualTo("문 앞에 놓아 주세요");
             softly.assertThat(event.sellerOrders().get(0).sellerId()).isEqualTo(100L);
+            softly.assertThat(event.sellerOrders().get(0).baseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(event.sellerOrders().get(0).freeShippingThreshold()).isEqualTo(50_000L);
             softly.assertThat(event.sellerOrders().get(0).regionSurcharge()).isEqualTo(3_000L);
             softly.assertThat(event.sellerOrders().get(0).items().get(0).orderItemId()).isEqualTo(1L);
             softly.assertThat(event.sellerOrders().get(0).items().get(0).quantity()).isEqualTo(2);

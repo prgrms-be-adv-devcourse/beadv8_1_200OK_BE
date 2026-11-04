@@ -330,10 +330,10 @@ class AccessTokenProviderTest {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048);
         KeyPair v2Keys = generator.generateKeyPair();
-        JwtProperties rotating = new JwtProperties(ISSUER, AUDIENCE, List.of(
+        JwtProperties rotating = new JwtProperties(ISSUER, AUDIENCE, null, List.of(
                 new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY),
                 new JwtProperties.VerificationKey("rs256-v2", publicKeyPem(v2Keys.getPublic().getEncoded()))),
-                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+                null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
         JwtDecoder rotatingDecoder = jwtConfig.jwtDecoder(rotating, fixedClock);
         // 교체 전에 v1으로 발급된 토큰과 교체 후 v2로 발급된 토큰
         String v1Token = accessTokenProvider.issue(1L, BUYER).value();
@@ -404,8 +404,8 @@ class AccessTokenProviderTest {
     }
 
     private static JwtProperties properties(String issuer, String audience) {
-        return new JwtProperties(issuer, audience, List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)),
-                ACCESS_EXPIRATION, REFRESH_EXPIRATION);
+        return new JwtProperties(issuer, audience, null, List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)),
+                null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
     }
 
     /** 검증 목록과 상관없이 주어진 키 쌍과 kid로 서명하는 인코더. 공격자나 잘못된 설정의 발급자를 흉내 낸다. */

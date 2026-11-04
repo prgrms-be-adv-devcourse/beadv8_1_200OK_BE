@@ -3,8 +3,10 @@ package com.ok.product.product.controller;
 import com.ok.common.exception.RestApiException;
 import com.ok.product.product.controller.dto.ProductOptionInfoResponse;
 import com.ok.product.product.controller.dto.StockAllocationRequest;
+import com.ok.product.product.controller.dto.StockPartialReleaseRequest;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.service.ProductService;
+import com.ok.product.product.service.ProductStockPartialReleaseFacade;
 import com.ok.product.product.service.ProductStockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -28,6 +30,7 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 
 	private final ProductService productService;
 	private final ProductStockService productStockService;
+	private final ProductStockPartialReleaseFacade productStockPartialReleaseFacade;
 
 	@Override
 	@GetMapping("/options")
@@ -53,6 +56,14 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 	@PostMapping("/stock-allocations/{orderId}/release")
 	public ResponseEntity<Void> releaseStock(@PathVariable Long orderId) {
 		productStockService.release(orderId);
+		return ResponseEntity.noContent().build();
+	}
+
+	@Override
+	@PostMapping("/stock-allocations/{orderId}/partial-release")
+	public ResponseEntity<Void> partialReleaseStock(@PathVariable Long orderId,
+		@RequestBody StockPartialReleaseRequest request) {
+		productStockPartialReleaseFacade.partialRelease(request.toCommand(orderId));
 		return ResponseEntity.noContent().build();
 	}
 }

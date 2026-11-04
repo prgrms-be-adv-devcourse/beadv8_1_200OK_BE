@@ -41,6 +41,29 @@ spring:
     jdbc:
       # 배치 메타데이터 테이블은 Flyway 마이그레이션으로 관리하므로 자동 생성 안 함
       initialize-schema: never
+  # Kafka 접속·직렬화 설정. monolith application.yaml의 spring.kafka 블록을 그대로 복사했다 (DEVELOPMENT.md "로컬 Kafka", #339)
+  # 정산을 단독으로 띄우거나 정산 모듈 테스트를 돌릴 때 쓴다. 직렬화가 monolith와 다르면 받는 쪽이 메시지를 못 읽으므로 monolith를 바꿀 때 같이 바꾼다
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}
+    producer:
+      # 브로커 min.insync.replicas=2와 짝이다. 3대 중 2대 이상에 저장돼야 발행 성공으로 본다
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      properties:
+        # 받는 쪽이 보내는 쪽 Java 클래스를 몰라도 되도록 타입 헤더를 싣지 않는다
+        spring.json.add.type.headers: false
+    consumer:
+      # 기본은 앱 이름(payout). 서비스로 나누면 서비스마다 그룹이 달라져 같은 이벤트를 각자 받는다
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:${spring.application.name}}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # JSON으로 못 읽는 메시지 하나 때문에 컨슈머가 같은 메시지에서 멈추지 않게 실패를 오류 처리로 넘긴다
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        # 타입 헤더가 없으므로 읽을 타입은 리스너(토픽)마다 정한다
+        spring.json.use.type.headers: false
 app:
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
@@ -50,6 +73,9 @@ app:
 jwt:
   issuer: paldo-gotgan
   audience: paldo-gotgan-api
+  # 발급 모듈(member)의 JWKS 주소. 설정하면 공개키를 이 주소에서 받아 검증하고, 아래 verification-keys는 읽지 않는다.
+  # 비어 있으면(로컬 기본값) 아래 공개키 파일로 검증한다. 모듈을 따로 배포할 때 환경변수로 넣는다 (docs/DEVELOPMENT.md 8절)
+  jwk-set-uri: ${JWT_JWK_SET_URI:}
   # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고른다. 키 교체 절차는 docs/DEVELOPMENT.md 8절
   verification-keys:
     - key-id: rs256-v1

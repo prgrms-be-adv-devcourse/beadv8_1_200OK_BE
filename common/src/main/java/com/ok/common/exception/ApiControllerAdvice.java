@@ -13,6 +13,7 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.AuthenticationTrustResolver;
 import org.springframework.security.authentication.AuthenticationTrustResolverImpl;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -64,10 +65,22 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
      *   <li>{@code invalid-token}: 위조·형식 오류 → 토큰을 버리고 재로그인</li>
      *   <li>{@code unauthorized}: 토큰 없음 → 로그인</li>
      * </ul>
+     * 토큰이 아니라 서버 쪽 문제로 검증하지 못한 경우(검증 공개키를 받아 오지 못함)는 401이 아니라 503({@code auth-key-unavailable})이다.
+     * 클라이언트가 토큰을 버리고 재로그인시키지 않고, 토큰을 그대로 두고 다시 시도하게 하기 위해서다.
      * 보안 필터에서 난 예외도 {@code ProblemDetailAuthenticationEntryPoint}가 이 핸들러로 넘겨, 응답 형식이 같다.
      */
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<ProblemDetail> handleAuthenticationException(AuthenticationException ex) {
+        if (ex instanceof AuthenticationServiceException) {
+            // 사용자 잘못이 아니라 서버 장애라 운영에서 보이도록 경고로 남긴다. 키 조회 실패(발급 모듈 장애, 타임아웃)가 대부분이지만
+            // 디코딩 중 다른 서버 쪽 오류도 같은 예외로 오므로, 원인을 가리지 않게 가장 안쪽 원인을 함께 남긴다.
+            // 장애 중에는 요청마다 남으므로 스택은 남기지 않는다
+            Throwable rootCause = rootCause(ex);
+            log.warn("서버 쪽 오류로 토큰을 검증하지 못했습니다: causeType={}, cause={}",
+                    rootCause.getClass().getName(), rootCause.getMessage());
+            ErrorCode errorCode = CommonErrorCode.AUTH_KEY_UNAVAILABLE;
+            return ResponseEntity.status(errorCode.status()).body(toProblemDetail(errorCode, errorCode.getMessage()));
+        }
         // 위조·만료 토큰이 반복되는지 추적할 수 있도록 원인만 남긴다. 토큰 원문은 남기지 않는다.
         log.debug("인증 실패: {}", ex.getMessage());
         if (isExpiredToken(ex)) {
@@ -159,6 +172,14 @@ public class ApiControllerAdvice extends ResponseEntityExceptionHandler {
             }
         }
         return false;
+    }
+
+    private static Throwable rootCause(Throwable ex) {
+        Throwable cause = ex;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
     private boolean isAnonymous() {

@@ -12,7 +12,7 @@ class CreateOrderRequestTest {
     void 요청을_커맨드로_변환하면_모든_필드가_같은_값으로_옮겨진다() {
         // given: 문자열 필드가 많아서 서로 다른 값을 넣어 순서가 바뀌는 실수를 잡는다
         CreateOrderRequest sut = new CreateOrderRequest(
-                "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", true, 13_000L);
+                "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요", true, 13_000L);
 
         // when
         CreateOrderCommand command = sut.toCommand(7L, "idem-key-1");
@@ -27,8 +27,29 @@ class CreateOrderRequestTest {
             softly.assertThat(command.zipCode()).isEqualTo("06236");
             softly.assertThat(command.address()).isEqualTo("서울시 강남구 테헤란로 1");
             softly.assertThat(command.addressDetail()).isEqualTo("101호");
+            softly.assertThat(command.deliveryNote()).isEqualTo("문 앞에 놓아 주세요");
             softly.assertThat(command.thirdPartyProvisionAgreed()).isTrue();
             softly.assertThat(command.expectedTotalAmount()).isEqualTo(13_000L);
         });
+    }
+
+    @Test
+    void 배송_요청사항이_공백뿐이면_없는_것으로_본다() {
+        // given & when
+        CreateOrderRequest sut = new CreateOrderRequest(
+                "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "   ", true, 13_000L);
+
+        // then
+        assertThat(sut.deliveryNote()).isNull();
+    }
+
+    @Test
+    void 배송_요청사항의_앞뒤_공백을_지운다() {
+        // given & when
+        CreateOrderRequest sut = new CreateOrderRequest(
+                "홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "  문 앞에 놓아 주세요 ", true, 13_000L);
+
+        // then
+        assertThat(sut.deliveryNote()).isEqualTo("문 앞에 놓아 주세요");
     }
 }
