@@ -12,7 +12,7 @@ import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,7 +41,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 /**
  * 정산 모듈의 헥사고날 구조(이슈 #441)를 검사한다.
  * <ul>
- *   <li>{@code domain}: 엔티티와 정책. 어느 기술에도 기대지 않는다.</li>
+ *   <li>{@code domain}: 엔티티와 정책. 바깥 레이어와 저장소·메시징·배치·웹 기술을 모른다 (엔티티라 JPA·Hibernate 애노테이션은 쓴다).</li>
  *   <li>{@code application}: {@code port.in}(유스케이스), {@code port.out}(저장소·발행 포트), {@code service}(유스케이스 구현), {@code dto}.</li>
  *   <li>{@code adapter.in}: {@code web}(컨트롤러), {@code event}(Spring·Kafka 리스너), {@code batch}(잡 설정·실행기·스케줄러).</li>
  *   <li>{@code adapter.out}: {@code persistence}(JPA·QueryDSL 구현), {@code event}(Kafka 발행 구현).</li>
@@ -75,9 +75,11 @@ class ArchitectureTest {
             .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다. "
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
+    // web·event를 나열하지 않고 adapter.in 전체에서 batch만 뺀다. 새 입구(예: adapter.in.grpc)가 생겨도 같은 규칙을 받게 한다
     @ArchTest
-    static final ArchRule 컨트롤러와_리스너는_유스케이스_포트와_dto만_안다 = noClasses()
-            .that().resideInAnyPackage("..adapter.in.web..", "..adapter.in.event..")
+    static final ArchRule 배치를_뺀_입구는_유스케이스_포트와_dto만_안다 = noClasses()
+            .that().resideInAPackage("..adapter.in..")
+            .and().resideOutsideOfPackage("..adapter.in.batch..")
             .should().dependOnClassesThat().resideInAnyPackage(
                     "com.ok.payout.application.service..", "com.ok.payout.application.port.out..",
                     "com.ok.payout.adapter.out..", "com.ok.payout.domain..")
@@ -100,7 +102,8 @@ class ArchitectureTest {
             .that().resideInAPackage("..application..")
             .should().dependOnClassesThat(assignableTo(org.springframework.data.repository.Repository.class)
                     .or(resideInAnyPackage("org.springframework.data.jpa..", "jakarta.persistence..", "com.querydsl..",
-                            "org.springframework.kafka..", "org.springframework.batch..")))
+                            "org.springframework.jdbc..", "org.springframework.kafka..", "org.apache.kafka..",
+                            "org.springframework.batch..")))
             .because("서비스는 포트에만 의존해야 영속, 메시징, 배치 기술을 바꿔도 비즈니스 코드가 바뀌지 않는다. "
                     + "Page, Pageable(org.springframework.data.domain)은 조회 결과 형식이라 허용한다 (정산 헥사고날 구조, 이슈 #441)");
 
@@ -108,8 +111,9 @@ class ArchitectureTest {
     static final ArchRule domain은_application_adapter와_프레임워크_기술에_의존하지_않는다 = noClasses()
             .that().resideInAPackage("..domain..")
             .should().dependOnClassesThat(assignableTo(org.springframework.data.repository.Repository.class)
-                    .or(resideInAnyPackage("..application..", "..adapter..",
-                            "org.springframework.kafka..", "org.springframework.batch..", "org.springframework.web..")))
+                    .or(resideInAnyPackage("..application..", "..adapter..", "org.springframework.jdbc..",
+                            "org.springframework.kafka..", "org.apache.kafka..", "org.springframework.batch..",
+                            "org.springframework.web..")))
             .because("도메인은 바깥 레이어와 저장소, 메시징, 배치, 웹 기술을 몰라야 단독으로 이해하고 테스트할 수 있다. "
                     + "JPA, Hibernate 애노테이션과 common, 정산 예외는 허용한다 (정산 헥사고날 구조, 이슈 #441)");
 
@@ -151,18 +155,28 @@ class ArchitectureTest {
 
     // 이벤트
 
+    // KafkaTemplate 대신 상위 인터페이스(KafkaOperations)로 받아도 걸리도록 KafkaOperations 기준으로 검사한다
     @ArchTest
-    static final ArchRule ApplicationEventPublisher와_KafkaTemplate은_adapter_out_event만_사용한다 = noClasses()
+    static final ArchRule 이벤트_발행_도구는_adapter_out_event만_사용한다 = noClasses()
             .that().resideOutsideOfPackage("..adapter.out.event..")
             .should().dependOnClassesThat().areAssignableTo(ApplicationEventPublisher.class)
-            .orShould().dependOnClassesThat().areAssignableTo(KafkaTemplate.class)
+            .orShould().dependOnClassesThat().areAssignableTo(KafkaOperations.class)
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out.event)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (정산 헥사고날 구조, 이슈 #441)");
 
     @ArchTest
-    static final ArchRule 이벤트_클래스는_adapter_event만_사용한다 = classes()
-            .that().resideInAPackage("com.ok.common.event..")
-            // 받는 쪽(adapter.in.event)과 보내는 쪽(adapter.out.event)만 계약 타입을 만든다. common.event 안의 상호 참조(DomainEvent, payload)는 계약 타입 내부의 일이다
-            .should().onlyBeAccessed().byAnyPackage("..adapter.in.event..", "..adapter.out.event..", "com.ok.common.event..")
+    static final ArchRule 발행_구현체는_출력_포트를_구현한다 = classes()
+            .that().resideInAPackage("..adapter.out.event..")
+            .and().haveSimpleNameEndingWith("Publisher")
+            .should().implement(resideInAPackage("..application.port.out.."))
+            .because("서비스는 출력 포트만 알고 발행 구현체가 그 포트를 구현해야 발행 방식(Spring 이벤트, Kafka, outbox)을 바꿔도 서비스가 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #441)");
+
+    // 메서드 호출뿐 아니라 필드·매개변수·상속으로 쓰는 것까지 잡도록 "의존" 기준으로 검사한다
+    // 받는 쪽(adapter.in.event)과 보내는 쪽(adapter.out.event, 지갑 전환 전 이중 발행)만 계약 타입을 쓴다. common.event 안의 상호 참조는 계약 타입 내부의 일이다
+    // TODO(#343): 지갑이 Spring 이벤트 수신을 지우면 adapter.out.event 허용을 뺀다
+    @ArchTest
+    static final ArchRule 이벤트_클래스는_이벤트_어댑터만_사용한다 = noClasses()
+            .that().resideOutsideOfPackages("..adapter.in.event..", "..adapter.out.event..", "com.ok.common.event..")
+            .should().dependOnClassesThat().resideInAPackage("com.ok.common.event..")
             .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 유스케이스를 호출하고, "
                     + "발행 포트는 값을 받는다 (정산 헥사고날 구조, 이슈 #441)");
 
