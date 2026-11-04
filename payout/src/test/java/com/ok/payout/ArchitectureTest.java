@@ -1,6 +1,8 @@
 package com.ok.payout;
 
+import static com.tngtech.archunit.base.DescribedPredicate.not;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.equivalentTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
@@ -25,6 +27,7 @@ import com.tngtech.archunit.library.GeneralCodingRules;
 
 import com.ok.common.exception.ErrorCode;
 import com.ok.payout.PayoutSchema;
+import com.ok.payout.domain.PayoutPolicy;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -51,7 +54,7 @@ class ArchitectureTest {
 
     // 배치 어댑터(PayoutJobConfig, PayoutJobRunner)는 domain.PayoutPolicy 상수를 쓰므로 AdapterIn -> Domain을 허용한다.
     // 컨트롤러 -> PayoutJobRunner는 같은 AdapterIn 안이라 이 규칙이 보지 않는다 (승인된 설계).
-    // web, event가 domain을 쓰지 못하게 하는 것은 아래 별도 규칙이 맡는다
+    // 입구가 domain을 어디까지 쓸 수 있는지는 아래 별도 규칙이 좁힌다 (web·event는 금지, batch는 PayoutPolicy만)
     @ArchTest
     static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
@@ -80,14 +83,17 @@ class ArchitectureTest {
                     "com.ok.payout.adapter.out..", "com.ok.payout.domain..")
             .because("컨트롤러와 리스너는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (정산 헥사고날 구조, 이슈 #441)");
 
-    // 배치는 PayoutPolicy 상수를 쓰므로(승인된 예외) domain은 검사하지 않는다
+    // 배치는 domain 중 정산 정책 상수(PayoutPolicy)만 쓸 수 있다: 한 번에 처리할 판매자 수(PayoutJobConfig), 대기 일수(PayoutJobRunner)
+    // 엔티티 등 나머지 domain 타입은 웹·이벤트 입구처럼 입력 포트를 거쳐야 한다
     @ArchTest
-    static final ArchRule 배치_어댑터는_서비스_출력_포트_출력_어댑터를_모른다 = noClasses()
+    static final ArchRule 배치_어댑터는_정책_상수_외_domain과_서비스_출력_포트를_모른다 = noClasses()
             .that().resideInAPackage("..adapter.in.batch..")
-            .should().dependOnClassesThat().resideInAnyPackage(
-                    "com.ok.payout.application.service..", "com.ok.payout.application.port.out..",
-                    "com.ok.payout.adapter.out..")
-            .because("배치 시작기와 Tasklet도 입력 포트로만 비즈니스를 호출해야 구현이 바뀌어도 배치 코드가 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #441)");
+            .should().dependOnClassesThat(
+                    resideInAnyPackage("com.ok.payout.application.service..", "com.ok.payout.application.port.out..",
+                            "com.ok.payout.adapter.out..")
+                            .or(resideInAPackage("com.ok.payout.domain..").and(not(equivalentTo(PayoutPolicy.class)))))
+            .because("배치 시작기와 Tasklet도 입력 포트로만 비즈니스를 호출해야 구현이 바뀌어도 배치 코드가 바뀌지 않는다. "
+                    + "배치 크기·대기 일수 같은 정책 상수만 직접 쓴다 (정산 헥사고날 구조, 이슈 #441)");
 
     @ArchTest
     static final ArchRule application은_영속_메시징_배치_기술에_의존하지_않는다 = noClasses()
