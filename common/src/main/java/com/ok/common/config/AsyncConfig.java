@@ -32,7 +32,8 @@ import java.util.concurrent.Executor;
 @EnableConfigurationProperties(AsyncProperties.class)
 public class AsyncConfig {
 
-    // 비동기 작업의 로그에도 요청의 추적 값(MDC)이 남도록 모든 실행기에 적용한다
+    // 호출한 스레드의 MDC를 비동기 작업의 스레드로 복사하도록 모든 실행기에 적용한다.
+    // MDC에 값을 넣는 쪽(TraceID 필터 등)은 아직 없어서, 지금은 복사할 값이 없다
     @Bean
     public MdcTaskDecorator mdcTaskDecorator() {
         return new MdcTaskDecorator();
