@@ -35,9 +35,13 @@ admin-bootstrap:
 jwt:
   # 테스트 전용 키 쌍(common/src/test/resources/jwt). 개발·운영 환경의 키로 절대 사용하지 않는다.
   # 다른 모듈의 테스트에서도 읽히도록 classpath로 지정한다 (common의 testSupportElements가 테스트 리소스를 함께 내보낸다)
+  # 키 교체 1단계(새 키를 공개만 하고 서명은 기존 키) 상태로 둔다. 서명하지 않는 키도 JWKS로 공개되는지 확인하기 위해서다.
+  # rs256-v2는 공개키만 있다 (이 키로 서명하는 테스트는 없다)
   verification-keys:
     - key-id: rs256-v1
       public-key: classpath:jwt/test-public.pem
+    - key-id: rs256-v2
+      public-key: classpath:jwt/test-next-public.pem
   signing:
     key-id: rs256-v1
     private-key: classpath:jwt/test-private.pem

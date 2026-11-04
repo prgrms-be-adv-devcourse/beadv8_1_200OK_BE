@@ -427,6 +427,7 @@ com.ok.delivery
 | `unauthorized` | 401 | 토큰 없음 → 로그인 (`WWW-Authenticate: Bearer`) |
 | `token-expired` | 401 | 토큰 만료 → 토큰 재발급 (`WWW-Authenticate: Bearer error="invalid_token", error_description=...`) |
 | `invalid-token` | 401 | 위조·형식 오류 토큰 → 토큰을 버리고 재로그인 (`WWW-Authenticate: Bearer error="invalid_token"`) |
+| `auth-key-unavailable` | 503 | 검증 공개키를 발급 모듈에서 받아 오지 못함 → 토큰을 그대로 두고 잠시 후 재시도 ([공개키 배포 (JWKS)](#공개키-배포-jwks)) |
 | `forbidden` | 403 | 로그인했지만 역할이 맞지 않음 (`@PreAuthorize` 등) |
 | `invalid-json` | 400 | 요청 본문을 읽을 수 없음 (깨진 JSON 등) |
 | `invalid-query-parameter` | 400 | 파라미터 타입 불일치 |
@@ -489,7 +490,46 @@ com.ok.delivery
 - **알고리즘 고정**: 디코더는 RS256만 받습니다. 헤더의 `alg`대로 검증 방식을 고르면 공개키를 HMAC 비밀키로 써서 만든 HS256 토큰(알고리즘 혼동 공격)이 통과할 수 있습니다.
 - **`kid`로 키 선택**: 디코더는 토큰 헤더의 `kid`에 해당하는 공개키(`jwt.verification-keys`)로 검증하고, `kid`가 없거나 목록에 없는 토큰은 거부합니다.
 - 서명 알고리즘과 키는 `JwtConfig`(검증), `JwtEncoderConfig`(발급)에서만 관리하므로 각 모듈의 인가 코드는 알고리즘과 무관합니다.
-- 지금은 공개키를 파일로 나눠 둡니다. member가 JWKS 엔드포인트로 공개키를 내주고 검증 쪽이 그것을 받아 쓰는 방식은 후속 작업에서 도입합니다. 그러면 키를 교체할 때 검증하는 앱을 하나하나 바꾸지 않아도 됩니다.
+- 검증 앱은 공개키를 파일로 갖거나, member가 내주는 JWKS에서 받아 씁니다(#314). 아래 [공개키 배포 (JWKS)](#공개키-배포-jwks)를 봅니다.
+
+### 공개키 배포 (JWKS)
+
+member(auth)는 검증용 공개키 목록(`jwt.verification-keys` 전체)을 `GET /.well-known/jwks.json`으로 내줍니다(RFC 7517 형식, 개인키 값은 빼고). 검증 앱에 `jwt.jwk-set-uri`를 설정하면 키 파일 없이 이 주소에서 공개키를 받아 검증합니다. 모듈을 따로 배포하면 키를 교체할 때 member만 고치고, 다른 앱은 재배포하지 않아도 새 공개키를 받아 갑니다.
+
+| 앱 | 검증 키 출처 | 이유 |
+|---|---|---|
+| monolith (운영) | 로컬 공개키 파일 | member가 같은 앱 안에 있어 HTTP로 부를 필요가 없음 |
+| member 단독 실행 | 로컬 공개키 파일 | 발급하는 앱. `jwk-set-uri`를 설정하면 기동하지 않습니다 |
+| 다른 모듈 앱 (기본) | 로컬 공개키 파일 (`keys/rs256-v1-public.pem`) | member를 띄우지 않아도 개발할 수 있게 |
+| 다른 모듈 앱 + `JWT_JWK_SET_URI` | member의 JWKS | 분리 배포용. 이때 `verification-keys`는 읽지 않아 키 파일이 없어도 됩니다 |
+
+**동작**
+
+- 앱이 뜰 때는 JWKS를 부르지 않고, 첫 검증 요청 때 받아 와 메모리에 캐시합니다(앱마다, 서버 한 대마다 따로). member가 떠 있지 않아도 다른 앱은 기동합니다.
+- 캐시 시간(기본 5분) 동안은 member를 다시 부르지 않습니다. 처음 보는 `kid`의 토큰이 오면 캐시 시간이 남아 있어도 바로 다시 받아 오고, 그래도 없는 `kid`면 401입니다.
+- member가 멈추거나 응답이 늦어 키를 받아 오지 못하면 401이 아니라 **503 `auth-key-unavailable`**입니다. 토큰에는 문제가 없으므로, 클라이언트는 토큰을 버리거나 재발급하지 말고 잠시 후 다시 보냅니다. 캐시가 남아 있는 동안(최대 5분)은 member가 멈춰도 계속 검증되고, member가 살아나면 다음 요청이 키를 받아 와 저절로 정상이 됩니다.
+- 다시 받아 오는 횟수는 제한하지 않습니다. 그래서 `kid`를 지어낸 토큰 하나마다 member 호출이 하나 생깁니다. 들어온 요청 수만큼만 생기므로 위험은 일반적인 요청 폭주와 같은 수준입니다(이유는 `JwtConfig.remoteKeySource` 주석).
+- 외부에서는 이 주소를 부를 수 없습니다. nginx는 `/api/v1/`만 앱으로 넘기고 나머지는 404입니다. nginx 설정을 바꿀 때도 `/.well-known/`을 넘기지 않습니다.
+
+**설정** (검증 앱의 `application-<모듈>.yaml`)
+
+| 키 | 기본값 | 설명 |
+|---|---|---|
+| `jwt.jwk-set-uri` | 비어 있음 (`${JWT_JWK_SET_URI:}`) | member의 JWKS 주소(`http`/`https`). 있으면 `verification-keys`보다 우선합니다. 응답을 중간에서 바꿀 수 있으면 공개키를 바꿔 끼워 토큰을 위조할 수 있으므로, `http`는 같은 Docker 네트워크처럼 신뢰할 수 있는 내부망에서만 쓰고 다른 호스트로 나누면 `https`를 씁니다 |
+| `jwt.jwk-set.cache-ttl` | `5m` | 받아 온 키를 캐시하는 시간. member는 자기 설정값을 응답의 `Cache-Control: max-age`로 내보내지만 안내용이고, 검증 앱은 이 헤더가 아니라 자기 `cache-ttl`을 따릅니다 |
+| `jwt.jwk-set.connect-timeout`, `read-timeout` | `2s`, `2s` | member 연결·응답을 기다리는 시간. 넘으면 그 요청은 503입니다 |
+
+**로컬에서 원격 모드로 실행하기**
+
+```bash
+./gradlew :member:bootRun                                               # 터미널 1 (8082)
+curl -s localhost:8082/.well-known/jwks.json                            # 공개키 목록 확인
+JWT_JWK_SET_URI=http://localhost:8082/.well-known/jwks.json ./gradlew :order:bootRun   # 터미널 2 (8084)
+```
+
+order 기동 로그에 `JWT 검증 키: 원격 JWKS uri=http://localhost:8082/...`가 나오면 원격 모드입니다(로컬이면 `로컬 공개키 kid=[...]`). member에서 로그인한 토큰으로 order API를 호출합니다. `JWT_JWK_SET_URI`를 루트 `.env`에 넣으면 모든 모듈 앱이 원격 모드가 되므로, 필요한 실행에만 환경변수로 넘기세요.
+
+운영에서 모듈을 따로 배포할 때의 설정(compose, 발급 모듈 내부 주소)과 member 장애가 캐시 시간보다 길 때의 대비는 분리 배포 작업에서 정합니다.
 
 ### 키 관리와 교체
 
@@ -497,7 +537,7 @@ com.ok.delivery
 
 | 키 | 두는 앱 | 설명 |
 |---|---|---|
-| `jwt.verification-keys[].key-id`, `public-key` | 모든 앱 | 검증용 공개키 목록. `public-key`는 X.509 PEM 파일 위치(`file:`, `classpath:`) |
+| `jwt.verification-keys[].key-id`, `public-key` | `jwk-set-uri`가 없는 모든 앱 | 검증용 공개키 목록. `public-key`는 X.509 PEM 파일 위치(`file:`, `classpath:`). member에서는 이 목록 전체가 JWKS로 공개됩니다 |
 | `jwt.signing.key-id`, `private-key` | member, monolith | 서명용 개인키. `private-key`는 PKCS#8 PEM 파일 위치. `key-id`는 검증 목록에 있어야 하고, 개인키가 그 공개키와 짝이 아니면 기동하지 않습니다 |
 
 - 로컬은 저장소 루트의 `keys/rs256-v1-public.pem`, `keys/rs256-v1-private.pem`을 씁니다(`keys/`는 `.gitignore`에 있음). 다른 위치를 쓰려면 `.env`에 `jwt.signing.private-key=file:/절대경로.pem`처럼 설정 키를 직접 적습니다.
@@ -527,7 +567,10 @@ openssl pkey -in keys/rs256-v1-private.pem -pubout -out keys/rs256-v1-public.pem
 3. Access Token 유효 기간(30분)이 지나면 검증 목록에서 `rs256-v1`을 빼고 그 키 파일을 지웁니다.
 
 - 1과 2를 한 번에 반영하면 새 토큰을 아직 `rs256-v2`를 모르는 앱이 거부할 수 있습니다. 앱이 하나(운영의 monolith)일 때는 `jwt.yaml`을 한 번 고쳐 함께 반영합니다.
+- 이 지름길은 토큰을 발급하는 인스턴스가 하나일 때만 안전합니다. member나 monolith를 2대 이상 띄우거나 롤링·카나리로 배포하면, 각 단계를 모든 인스턴스에 롤아웃한 뒤 다음 단계로 넘어가고 1과 2를 한 배포에 합치지 않습니다. 합치면 롤아웃 중 새 키로 서명한 토큰을 아직 새 키가 없는 인스턴스의 JWKS로 검증하게 되어 401이 됩니다. 다음 단계로 넘어가기 전에 인스턴스마다 `/.well-known/jwks.json`의 `kid` 목록이 같은지 확인합니다.
+- 검증 앱이 JWKS를 쓰면 1은 member의 `verification-keys`에만 추가하고 member를 재시작합니다. 다른 앱은 바꾸지 않습니다. 2는 캐시 시간(기본 5분) 이상 기다린 뒤 합니다. 처음 보는 `kid`는 바로 다시 받아 오므로 기다리지 않아도 대개 동작하지만, 모든 앱이 새 키를 받은 상태에서 서명을 바꾸는 편이 안전합니다. 3도 member만 고칩니다.
 - 개인키가 유출되었으면 3을 기다리지 않고 옛 키를 바로 뺍니다. 그 키로 서명된 토큰이 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다. Refresh Token은 JWT가 아니라서 영향이 없습니다.
+  검증 앱이 JWKS를 쓰면 member에서 뺀 키도 검증 앱의 캐시 시간(기본 5분)이 끝날 때까지는 계속 통과합니다. 바로 막아야 하면 검증 앱을 재시작해 캐시를 비웁니다.
 
 ### 토큰 재발급
 
@@ -540,6 +583,7 @@ Access Token(30분)이 만료되면 로그인 때 받은 Refresh Token으로 새
 - 같은 Refresh Token으로 동시에 요청하면 하나만 성공합니다. 여러 요청이 동시에 `token-expired`를 받아도 **재발급은 한 번만** 보내고, 나머지 요청은 그 결과를 기다렸다가 새 토큰으로 다시 보내야 합니다.
 - 재발급 요청은 Access Token 없이 보냅니다. 만료된 토큰이 붙어 있어도 무시됩니다.
 - 401의 `type`으로 다음 행동을 정합니다: `token-expired`는 재발급, `invalid-token`·`unauthorized`는 재로그인.
+- 503 `auth-key-unavailable`은 토큰 문제가 아니므로 재발급도 재로그인도 하지 않고, 토큰을 그대로 두고 잠시 후 다시 보냅니다.
 
 ### 컨트롤러에서 로그인 회원 받기
 

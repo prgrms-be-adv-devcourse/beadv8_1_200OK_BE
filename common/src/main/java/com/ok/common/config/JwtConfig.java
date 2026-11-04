@@ -1,5 +1,8 @@
 package com.ok.common.config;
 
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URL;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -13,7 +16,12 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.KeyUse;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.jwk.source.JWKSourceBuilder;
 import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
+import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jose.util.DefaultResourceRetriever;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -47,7 +55,11 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
  *
  * <p>토큰 헤더의 {@code kid}로 검증할 공개키를 고른다. 키를 교체할 때 옛 키와 새 키를 함께 등록해,
  * 교체 전에 발급된 토큰도 만료될 때까지 받아들인다.
+ *
+ * <p>공개키는 설정의 파일에서 읽거나, {@code jwt.jwk-set-uri}가 있으면 발급 모듈의 JWKS에서 받아 온다.
+ * 원격으로 받으면 키를 교체할 때 발급 모듈 설정만 바꾸면 되고, 검증하는 앱은 재배포하지 않는다.
  */
+@Slf4j
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(JwtProperties.class)
 public class JwtConfig {
@@ -106,7 +118,7 @@ public class JwtConfig {
      */
     @Bean
     public JwtDecoder jwtDecoder(JwtProperties properties, Clock clock) {
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSource(new ImmutableJWKSet<>(verificationKeys(properties)))
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSource(keySource(properties))
                 .jwsAlgorithm(SIGNING_ALGORITHM)
                 // 기본 설정은 typ가 없거나 JWT인 토큰만 받는다. Access Token 타입만 받도록 바꾼다.
                 .jwtProcessorCustomizer(processor -> processor.setJWSTypeVerifier(
@@ -126,6 +138,66 @@ public class JwtConfig {
         );
         decoder.setJwtValidator(validator);
         return decoder;
+    }
+
+    /**
+     * 검증 공개키를 가져올 곳을 정한다. {@code jwt.jwk-set-uri}가 있으면 발급 모듈의 JWKS에서, 없으면 설정의 공개키 파일에서 읽는다.
+     * 원격이면 로컬 공개키 파일은 열지 않는다. 분리 배포한 앱에는 키 파일이 없고, 모듈 yaml의 로컬 기본값은 그대로 남아 있기 때문이다.
+     */
+    private static JWKSource<SecurityContext> keySource(JwtProperties properties) {
+        if (properties.jwkSetUri() == null) {
+            JWKSet keys = verificationKeys(properties);
+            log.info("JWT 검증 키: 로컬 공개키 kid={}", keys.getKeys().stream().map(JWK::getKeyID).toList());
+            return new ImmutableJWKSet<>(keys);
+        }
+        log.info("JWT 검증 키: 원격 JWKS uri={}", withoutCredentials(properties.jwkSetUri()));
+        return remoteKeySource(properties.jwkSetUri(), properties.jwkSet());
+    }
+
+    /**
+     * 로그에 남길 JWKS 주소를 만든다. 주소에 사용자 정보({@code user:pass@})나 쿼리가 들어 있어도 로그에 남지 않게 scheme, host, port, path만 남긴다.
+     */
+    private static String withoutCredentials(String jwkSetUri) {
+        URI uri = URI.create(jwkSetUri);
+        String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
+        return uri.getScheme() + "://" + uri.getHost() + port + uri.getRawPath();
+    }
+
+    /**
+     * 발급 모듈의 JWKS를 캐시해 두고 쓰는 키 소스를 만든다.
+     *
+     * <p>Spring의 {@code NimbusJwtDecoder.withJwkSetUri}를 쓰지 않고 직접 만든다. 그 빌더는 캐시 시간을 정할 수 없고(5분 고정)
+     * 타임아웃 기본값이 30초라, 발급 모듈이 멈추면 요청이 30초씩 묶인다. 직접 만들면 디코더 설정(알고리즘·typ·검증기)도
+     * 로컬 방식과 한 경로로 공유한다.
+     *
+     * <ul>
+     *   <li>앱이 뜰 때는 JWKS를 부르지 않는다. 첫 검증 때 받아 오므로 발급 모듈이 떠 있지 않아도 앱은 기동한다.</li>
+     *   <li>처음 보는 {@code kid}가 오면 캐시 시간이 남아 있어도 바로 다시 받아 온다. 새 키로 서명을 바꾸면 재시작 없이 검증된다.</li>
+     *   <li>다시 받아 오는 횟수는 제한하지 않는다. 제한하면 제한에 걸린 요청이 키가 없어서인지 조회를 못 해서인지
+     *       구분할 수 없어 401/503 중 하나가 틀린다. 대신 {@code kid}를 지어낸 토큰 1건마다 발급 모듈 호출이 1건 생긴다.
+     *       들어온 요청만큼만 생기고 JWKS 응답은 미리 만든 값이라, 위험은 요청 폭주 일반과 같은 수준이다.
+     *       단, 재조회는 하나씩 처리되므로 폭주 중에 캐시가 만료되면 정상 요청도 갱신을 기다리다 503을 받을 수 있다.</li>
+     *   <li>받아 오지 못하면(연결 실패, 타임아웃) 토큰이 틀렸다는 401이 아니라 서버 쪽 오류로 처리된다.</li>
+     * </ul>
+     */
+    static JWKSource<SecurityContext> remoteKeySource(String jwkSetUri, JwtProperties.JwkSet settings) {
+        int connectTimeout = Math.toIntExact(settings.connectTimeout().toMillis());
+        int readTimeout = Math.toIntExact(settings.readTimeout().toMillis());
+        URL url;
+        try {
+            url = URI.create(jwkSetUri).toURL();
+        } catch (MalformedURLException e) {
+            throw new IllegalStateException("jwt.jwk-set-uri를 URL로 바꿀 수 없습니다: " + jwkSetUri, e);
+        }
+        return JWKSourceBuilder.<SecurityContext>create(url,
+                        new DefaultResourceRetriever(connectTimeout, readTimeout, JWKSourceBuilder.DEFAULT_HTTP_SIZE_LIMIT))
+                // 갱신 중인 요청을 다른 요청이 기다리는 최대 시간. 한 번의 조회가 끝날 수 있는 시간만큼 기다린다
+                .cache(settings.cacheTtl().toMillis(), (long) connectTimeout + readTimeout)
+                // Spring의 withJwkSetUri처럼 끈다. (Nimbus는 미리 갱신을 기본으로 켠다.)
+                // 켜 두면 앱마다 닫히지 않는 갱신 스레드가 생기고, 캐시 시간이 30초 + 타임아웃보다 짧으면 디코더를 만들지 못한다
+                .refreshAheadCache(false)
+                .rateLimited(false)
+                .build();
     }
 
     /**
