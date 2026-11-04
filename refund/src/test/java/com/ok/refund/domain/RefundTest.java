@@ -203,6 +203,19 @@ class RefundTest {
         return cases.stream();
     }
 
+    // 사유 검사가 상태 검사보다 먼저다. 이미 끝난 요청이어도 사유가 비면 상태 충돌(409)이 아니라 사유 없음(422)으로 막는다
+    @Test
+    void 이미_끝난_요청에_사유_없이_거절하면_사유_없음으로_막는다() {
+        // given
+        Refund refund = requested();
+        refund.withdraw(NOW);
+
+        // when & then
+        assertThatThrownBy(() -> refund.reject(" ", NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REJECT_REASON_REQUIRED));
+    }
+
     @Test
     void 구매자와_판매자_본인인지_확인한다() {
         // given

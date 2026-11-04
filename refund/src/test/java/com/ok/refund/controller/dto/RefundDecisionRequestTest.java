@@ -2,11 +2,14 @@ package com.ok.refund.controller.dto;
 
 import com.ok.refund.service.dto.RefundDecision;
 import com.ok.refund.service.dto.RefundDecisionCommand;
+import jakarta.validation.constraints.Pattern;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +56,24 @@ class RefundDecisionRequestTest {
             softly.assertThat(sut.decision()).isEqualTo(RefundDecision.REJECT);
             softly.assertThat(sut.rejectReason()).isEqualTo("이미 포장을 마쳤습니다.");
         });
+    }
+
+    // 컨트롤러는 enum으로 받지 않아 허용 값을 문자열 패턴으로 따로 적었다. 결정이 늘었는데 패턴을 안 고치면 새 결정을 보낼 수 없고,
+    // 패턴에만 있는 값은 toCommand의 valueOf에서 500이 된다. 그래서 두 목록이 같은지 확인한다
+    @Test
+    void 결정_패턴의_허용_값이_결정_종류와_같다() throws NoSuchFieldException {
+        // given
+        Pattern pattern = RefundDecisionRequest.class.getDeclaredField("decision").getAnnotation(Pattern.class);
+        List<String> decisionNames = new ArrayList<>();
+        for (RefundDecision decision : RefundDecision.values()) {
+            decisionNames.add(decision.name());
+        }
+
+        // when
+        List<String> allowed = List.of(pattern.regexp().split("\\|"));
+
+        // then
+        assertThat(allowed).containsExactlyInAnyOrderElementsOf(decisionNames);
     }
 
     @Test
