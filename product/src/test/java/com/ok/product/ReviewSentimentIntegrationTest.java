@@ -21,7 +21,10 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,6 +34,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.product.review.client.ReviewAnalysisFailedException;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
@@ -61,6 +65,8 @@ import com.ok.testsupport.FakeReviewSentimentAnalyzer;
 import com.ok.testsupport.TestAccessTokens;
 
 // 작업자 스케줄러는 설정이 없어 꺼져 있다. 테스트가 작업자 진입점(analyzePending)을 직접 부른다
+// 최종 실패의 ERROR 로그는 운영자가 원인을 찾는 유일한 알림이라 콘솔 출력으로 확인한다
+@ExtendWith(OutputCaptureExtension.class)
 class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 
 	private static final Long SELLER_ID = 10L;
@@ -240,13 +246,60 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 		// when
 		ResultActions sut = getSummary(SELLER_ID, productId);
 
-		// then
-		assertThat(requestOf(failedReviewId).getStatus()).isEqualTo(ReviewAnalysisStatus.FAILED);
+		// then: 최종 실패 오류는 첫 시도에서 바로 최종 실패다
+		ReviewAnalysisRequest failed = requestOf(failedReviewId);
+		assertThat(failed).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(failed.getStatus()).isEqualTo(ReviewAnalysisStatus.FAILED);
+			softly.assertThat(failed.getAttemptCount()).isOne();
+			softly.assertThat(failed.getLastError()).contains("Fake 분석 실패");
+		});
 		sut.andExpect(status().isOk())
 			.andExpect(jsonPath("$.analyzedReviewCount").value(1))
 			.andExpect(jsonPath("$.overall.positive").value(1))
 			.andExpect(jsonPath("$.overall.negative").value(0))
 			.andExpect(jsonPath("$.aspects[*].mentionedReviewCount").value(contains(1, 0, 0, 0, 0, 0)));
+	}
+
+	@Test
+	void 최종_실패하면_ERROR_로그가_남는다(CapturedOutput output) throws Exception {
+		// given
+		analyzer.fail("맛이 없어요");
+		long reviewId = writeReview(100L, "맛이 없어요");
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		String message = "리뷰 감성 분석 최종 실패. requestId=%d, reviewId=%d, attemptCount=1"
+			.formatted(requestOf(reviewId).getId(), reviewId);
+		List<String> sut = output.getOut().lines().filter(line -> line.contains(message)).toList();
+		assertThat(sut).singleElement().asString().contains(" ERROR ");
+	}
+
+	@Test
+	void 재시도할_실패는_대기로_남고_다음_시도_시각이_지나기_전에는_꺼내지_않는다(CapturedOutput output) throws Exception {
+		// given
+		analyzer.failRetryable("배송이 빨라요");
+		long reviewId = writeReview(100L, "배송이 빨라요");
+		LocalDateTime before = LocalDateTime.now();
+		reviewSentimentAnalysisFacade.analyzePending();
+		LocalDateTime after = LocalDateTime.now();
+
+		// when
+		reviewSentimentAnalysisFacade.analyzePending();
+
+		// then
+		ReviewAnalysisRequest sut = requestOf(reviewId);
+		assertThat(sut).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(sut.getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
+			softly.assertThat(sut.getAttemptCount()).isOne();
+			softly.assertThat(sut.getNextAttemptAt()).isBetween(before.plusMinutes(1), after.plusMinutes(1));
+			softly.assertThat(sut.getLastError()).contains("Fake 일시 오류");
+			softly.assertThat(analyzer.analyzedContents()).containsExactly("배송이 빨라요");
+			softly.assertThat(output.getOut()).doesNotContain("리뷰 감성 분석 최종 실패. requestId=" + sut.getId() + ",");
+		});
 	}
 
 	@Test
@@ -364,7 +417,7 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 		editReview(reviewId, 9, "맛이 싱거워요");
 
 		// when
-		reviewSentimentService.fail(target, "수정 전 내용의 분석 실패");
+		reviewSentimentService.fail(target, ReviewAnalysisFailedException.retryable("수정 전 내용의 분석 실패", null), true);
 
 		// then
 		ReviewAnalysisRequest request = requestOf(reviewId);
