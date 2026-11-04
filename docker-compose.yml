@@ -126,6 +126,18 @@ services:
     networks: [kafka-net]
     # 지표 수집만 하는 작은 프로세스라 작게 묶는다. 넘기면 docker stats를 보고 조정한다
     mem_limit: 64m
+    # 메모리 초과 등으로 죽어도 다시 띄운다. 직접 멈춘(docker compose stop) 경우는 다시 띄우지 않는다
+    restart: unless-stopped
+    # 지표 주소가 응답하는지 본다. docker compose ps에 healthy로 보이고, Prometheus가 depends_on으로 기다릴 수 있다
+    # 조회할 때마다 브로커에 묻기 때문에 브로커 헬스체크와 같은 30초 간격으로 둔다
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'localhost:9308/metrics']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # 브로커 3대가 healthy가 된 뒤에 뜨므로, 처음 브로커에 연결할 시간만 둔다
+      start_period: 20s
+      start_interval: 5s
     command:
       # 3대를 모두 적는다. 1대만 적으면 그 브로커를 멈췄을 때 클러스터 정보를 못 얻어, 브로커 1대 장애를 확인할 수 없다
       # 컨테이너 안이므로 브로커끼리 쓰는 INTERNAL 주소를 쓴다 (localhost:19092 같은 EXTERNAL은 컨테이너 자신을 가리킨다)

@@ -89,7 +89,8 @@ docker compose --profile monitoring up -d
 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^kafka_brokers|under_replicated|consumergroup_lag_sum' | grep -v __consumer_offsets
 ```
 
-- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 브로커 3대가 `healthy`가 된 뒤에 시작합니다.
+- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 브로커 3대가 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 확인 명령과 헬스체크는 이미지 안의 `wget`(BusyBox)을 씁니다. `KAFKA_EXPORTER_VERSION`을 올리면 위 명령이 그대로 되는지 다시 확인합니다.
 - 주로 보는 값
   - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `3`
   - `kafka_topic_partition_under_replicated_partition`: 복사본이 모자란 파티션이면 `1`. 평소 모두 `0`
