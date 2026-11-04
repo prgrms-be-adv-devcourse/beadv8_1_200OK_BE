@@ -28,8 +28,8 @@ class JwtEncoderConfigTest {
     private static final String KEY_ID = "rs256-v1";
     private static final Resource PUBLIC_KEY = new ClassPathResource("jwt/test-public.pem");
     private static final Resource PRIVATE_KEY = new ClassPathResource("jwt/test-private.pem");
-    private static final JwtProperties PROPERTIES = new JwtProperties("paldo-gotgan", "paldo-gotgan-api",
-            List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)), Duration.ofMinutes(30), Duration.ofDays(14));
+    private static final JwtProperties PROPERTIES = new JwtProperties("paldo-gotgan", "paldo-gotgan-api", null,
+            List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)), null, Duration.ofMinutes(30), Duration.ofDays(14));
 
     private final JwtEncoderConfig jwtEncoderConfig = new JwtEncoderConfig();
 
@@ -43,6 +43,21 @@ class JwtEncoderConfigTest {
 
         // then
         assertThat(sut).isNotNull();
+    }
+
+    @Test
+    void 서명_키가_있는_앱에_JWKS_주소를_지정하면_예외가_발생한다() {
+        // given
+        JwtProperties remote = new JwtProperties("paldo-gotgan", "paldo-gotgan-api",
+                "http://localhost:8080/.well-known/jwks.json",
+                List.of(new JwtProperties.VerificationKey(KEY_ID, PUBLIC_KEY)), null, Duration.ofMinutes(30), Duration.ofDays(14));
+        JwtSigningProperties signing = new JwtSigningProperties(KEY_ID, PRIVATE_KEY);
+
+        // when & then
+        assertThatThrownBy(() -> jwtEncoderConfig.jwtEncoder(remote, signing))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("서명 키(jwt.signing)가 있는 앱은 jwt.jwk-set-uri를 쓸 수 없습니다. "
+                        + "로컬 공개키(jwt.verification-keys)로 검증하세요.");
     }
 
     @Test

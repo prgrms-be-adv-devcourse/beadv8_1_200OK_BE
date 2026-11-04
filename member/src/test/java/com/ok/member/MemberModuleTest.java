@@ -5,6 +5,7 @@ import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.common.config.JpaConfig;
 import com.ok.common.config.JwtProperties;
+import com.ok.member.auth.controller.JwksController;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.MemberSignupService;
@@ -61,6 +62,10 @@ public class MemberModuleTest {
 
     @MockitoBean
     JwtEncoder jwtEncoder;
+
+    // JWKS 컨트롤러도 생성 시점에 JwtProperties로 공개키 목록을 만들어, 가짜 JwtProperties로는 만들 수 없다
+    @MockitoBean
+    JwksController jwksController;
 
     // 판매자 신청이 member를 외래키로 참조하므로 신청을 먼저 지운다
     @AfterEach

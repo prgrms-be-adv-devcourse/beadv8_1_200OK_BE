@@ -34,7 +34,8 @@ public class JwtEncoderConfig {
      * (헤더에만 {@code kid}를 넣고 키에 없으면 "서명할 키를 찾을 수 없다"며 실패한다)
      * 토큰을 발급할 때 JwsHeader에 {@link JwtConfig#SIGNING_ALGORITHM}과 {@code kid}를 반드시 지정해야 한다. → {@code AccessTokenProvider} 참고
      *
-     * @throws IllegalStateException 서명 {@code kid}의 공개키가 검증 목록에 없거나, 개인키가 그 공개키와 짝이 아닌 경우
+     * @throws IllegalStateException {@code jwt.jwk-set-uri}가 지정되었거나, 서명 {@code kid}의 공개키가 검증 목록에 없거나,
+     *                               개인키가 그 공개키와 짝이 아닌 경우
      */
     @Bean
     public JwtEncoder jwtEncoder(JwtProperties properties, JwtSigningProperties signing) {
@@ -47,6 +48,12 @@ public class JwtEncoderConfig {
      * 로그인은 성공하는데 모든 API가 401이 된다. 잘못된 키 설정을 발급 시점이 아니라 기동 시점에 잡는다.
      */
     private static RSAKey signingKey(JwtProperties properties, JwtSigningProperties signing) {
+        // 발급 모듈이 원격 JWKS로 검증하면 자기 JWKS를 HTTP로 부르게 된다. 자기 엔드포인트가 응답하지 못하는 순간(기동 직후, 과부하)
+        // 자기가 발급한 토큰까지 검증하지 못하고, 정상처럼 보여 늦게 발견되므로 기동 시점에 막는다
+        if (properties.jwkSetUri() != null) {
+            throw new IllegalStateException(
+                    "서명 키(jwt.signing)가 있는 앱은 jwt.jwk-set-uri를 쓸 수 없습니다. 로컬 공개키(jwt.verification-keys)로 검증하세요.");
+        }
         JWK verificationKey = JwtConfig.verificationKeys(properties).getKeyByKeyId(signing.keyId());
         if (verificationKey == null) {
             throw new IllegalStateException(

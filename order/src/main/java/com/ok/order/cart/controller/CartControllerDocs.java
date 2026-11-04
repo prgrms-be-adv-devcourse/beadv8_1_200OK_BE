@@ -10,15 +10,16 @@ import org.springframework.http.ResponseEntity;
 @Tag(name = "Cart", description = "장바구니 API")
 public interface CartControllerDocs {
 
-    @Operation(summary = "장바구니 상품 담기")
+    @Operation(summary = "장바구니 상품 담기", description = "이미 담긴 옵션이면 수량을 더합니다(최대 99개).")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "담기 성공"),
+            @ApiResponse(responseCode = "201", description = "새로 담음"),
+            @ApiResponse(responseCode = "200", description = "이미 담긴 옵션이라 수량을 더함"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
             @ApiResponse(responseCode = "403", description = "구매 권한 없음 (관리자 등)"),
-            @ApiResponse(responseCode = "400", description = "본인이 판매하는 상품"),
+            @ApiResponse(responseCode = "400", description = "본인이 판매하는 상품 또는 수량이 1~99가 아님"),
             @ApiResponse(responseCode = "404", description = "장바구니 또는 상품 옵션 없음"),
-            @ApiResponse(responseCode = "409", description = "판매 중이 아닌 상품 또는 이미 담긴 상품"),
-            @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
+            @ApiResponse(responseCode = "409", description = "판매 중이 아닌 상품"),
+            @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (수량 1~99 등)")
     })
     ResponseEntity<AddCartItemResponse> addItem(Long memberId, AddCartItemRequest request);
 

@@ -16,6 +16,9 @@ public enum CommonErrorCode implements ErrorCode {
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "Unauthorized", "로그인이 필요합니다."),
     TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "Token expired", "토큰이 만료되었습니다."),
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "Invalid token", "유효하지 않은 토큰입니다."),
+    // 토큰이 틀린 것이 아니라 검증할 공개키를 받아 오지 못한 경우다. 401과 구분해야 클라이언트가 재로그인으로 보내지 않는다
+    AUTH_KEY_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Auth key unavailable",
+            "일시적으로 로그인 상태를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Forbidden", "접근 권한이 없습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Internal error", "서버 내부 오류가 발생했습니다.");
 
