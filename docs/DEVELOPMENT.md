@@ -80,16 +80,20 @@ docker compose up -d
 
 ### 로컬 모니터링 (#374)
 
-앱 지표(Prometheus)와 MySQL 지표(mysqld-exporter)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 10절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
+앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 10절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
 
 ```bash
-docker compose --profile monitoring up -d       # 기본 서비스에 Prometheus, Grafana, mysqld-exporter를 더해 실행
+docker compose --profile monitoring up -d       # 기본 서비스에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
 deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를 바꿀 때도). 로컬은 아래 COMPOSE_FILE을 붙인다
 ```
 
 - 계정 스크립트는 로컬에서 `COMPOSE_FILE=../docker-compose.yml COMPOSE_PROFILES=monitoring deploy/monitoring/create-exporter-user.sh`로 실행합니다. 몇 번 실행해도 같은 결과이고, `.env`의 `MYSQL_EXPORTER_PASSWORD`로 `exporter` 계정(조회 전용)을 만들거나 비밀번호를 맞춥니다. 계정이 없으면 MySQL 지표(`mysql_up`)만 0입니다.
 - Grafana: `http://localhost:3000` (`admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`, 기본 `admin`), Prometheus: `http://localhost:9090`. 둘 다 `127.0.0.1`에만 열립니다. 대시보드 `paldo-gotgan 개요`가 자동 등록됩니다.
 - 앱 지표는 내 PC에서 `:monolith:bootRun`한 앱의 관리 포트(`localhost:18080`)를 가져옵니다. 컨테이너로 띄운 앱(`--profile app`)을 보려면 `deploy/monitoring/prometheus/targets/local/app.yml`의 대상을 `app:18080`으로 바꿉니다(재시작 없이 반영).
+- 대시보드는 위에서부터 황금 신호(트래픽·지연 P50/P95/P99·에러 4xx/5xx·포화도) 현재값과 색 임계값, API별 p95 상위 10 표, 원인 분석(JVM·커넥션 풀), 컨테이너 포화도, MySQL 순서입니다. 색 임계값은 글의 기준(CPU 80%, 풀 사용률 90%)과 시작값이라 서비스의 평소 값에 맞춰 `deploy/monitoring/grafana/dashboards/overview.json`에서 조정합니다. 앱 재시작은 그래프에 주황색 마커로 표시됩니다(`process_start_time_seconds` 변화).
+- 컨테이너 CPU 스로틀링은 cAdvisor가 모읍니다(`docker compose --profile monitoring`에 함께 뜸, 호스트 포트 없음, 대상은 `deploy/monitoring/prometheus/targets/local/cadvisor.yml`). 스로틀링은 CPU 사용률이 낮아 보여도 CPU limit에 걸려 멈춘 비율이라 P99를 키웁니다. 컨테이너 CPU limit은 서비스에 `cpus`를 주어야 생기고(기본으로는 어느 서비스에도 걸려 있지 않음), limit이 없는 컨테이너는 스로틀 비율이 0이라 대시보드에 값이 없습니다(`-`).
+- 스로틀링을 재현하려면 `docker run --rm --cpus 0.2 busybox sh -c 'while :; do :; done'`를 실행하고 대시보드의 `container` 변수에서 그 컨테이너를 고르면 스로틀 비율이 100%에 가깝게 오릅니다.
+- Docker Desktop(Mac)에서는 cAdvisor가 도커 소켓을 직접 연결해야 컨테이너를 찾습니다(compose에 이미 연결해 둠). 이렇게 하면 `name` 라벨이 채워져 컨테이너 이름으로 고를 수 있음을 확인했습니다(Docker Desktop 4.92). 그래도 `name`이 비어 나오면 대시보드의 `container` 변수에 아무것도 뜨지 않으니, `container_cpu_cfs_throttled_periods_total` 같은 지표를 Prometheus에서 `id` 라벨(`/docker/<컨테이너 ID>`)로 직접 골라 봅니다. Linux(EC2)에서의 동작은 아직 확인하지 않았습니다.
 - 슬로우 쿼리 로그(1초 이상)는 MySQL에 항상 켜져 있고(`docker compose exec mysql tail /var/lib/mysql/slow.log`), 개수는 대시보드의 MySQL 행에서 봅니다.
 - 로컬 compose의 MySQL 서비스에 슬로우 쿼리 설정이 생겨서, 이 변경을 받은 뒤 처음 `docker compose up -d`를 하면 mysql 컨테이너가 한 번 다시 만들어집니다(`data/mysql`은 그대로).
 - Grafana·Prometheus 데이터는 이름 있는 볼륨이라 `docker compose --profile monitoring down -v`를 하면 지워집니다(Kafka 볼륨도 함께 지워지니 주의).
@@ -138,6 +142,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `REDIS_PORT` | 호스트의 loopback(127.0.0.1)에만 여는 Redis 포트(비밀번호가 없어 외부 비공개). 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
 | `REDIS_HOST` / `REDIS_PASSWORD` | 앱의 Redis 접속 정보. 비밀번호가 비어 있으면 없이 접속(로컬). 운영은 `REDIS_PASSWORD` 필수 | `localhost` / 빈 값 |
 | `APP_PORT` | docker compose로 실행하는 앱 컨테이너의 호스트 포트 | `8080` |
+| `CADVISOR_VERSION` | 모니터링 프로파일의 cAdvisor 이미지 태그 | `v0.60.6` |
 | `GRAFANA_PORT` / `PROMETHEUS_PORT` | 모니터링 프로파일의 Grafana·Prometheus 호스트 포트 (`127.0.0.1`에만 열림) | `3000` / `9090` |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana 관리자(`admin`) 비밀번호. Grafana DB를 처음 만들 때만 쓰임 | `admin` |
 | `MYSQL_EXPORTER_PASSWORD` | mysqld-exporter 전용 DB 계정(`exporter`) 비밀번호. `create-exporter-user.sh`가 이 값으로 계정을 만듦 | `exporterpassword` |

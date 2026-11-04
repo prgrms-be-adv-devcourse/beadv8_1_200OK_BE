@@ -233,6 +233,30 @@ services:
         printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
         exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
 
+  # 컨테이너별 CPU 스로틀링·메모리 지표. 호스트 포트는 열지 않고 prometheus가 monitoring-net에서 cadvisor:8080으로 읽는다
+  cadvisor:
+    profiles: [monitoring]
+    image: ghcr.io/google/cadvisor:${CADVISOR_VERSION:-v0.60.6}
+    networks: [monitoring-net]
+    command:
+      # 도커 컨테이너만 본다. 호스트의 다른 cgroup(systemd 서비스 등)까지 시계열이 늘어나는 것을 막는다
+      - --docker_only=true
+      # 기본 1초는 CPU를 계속 쓰므로 prometheus 수집 주기(15s)에 맞춘다
+      - --housekeeping_interval=15s
+      # 컨테이너 라벨을 시계열마다 붙이면 container_label_* 라벨이 수십 개 생겨 지표가 무거워진다. 대시보드는 name만 쓴다
+      - --store_container_labels=false
+      # 대시보드가 쓰지 않는 지표 묶음을 꺼서 수집 비용을 줄인다. cpu·memory는 켜 둔다
+      - --disable_metrics=percpu,sched,tcp,udp,advtcp,process,hugetlb,referenced_memory,cpu_topology,resctrl,oom_event,disk,diskIO,network,memory_numa
+    # 컨테이너 20개 안팎에서 docker stats로 본 사용량은 약 17MB였다. 컨테이너가 늘어도 넘지 않을 여유를 둔 상한이다
+    mem_limit: 128m
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      # Docker Desktop(Mac)은 /var/run만 마운트하면 도커 소켓을 못 찾아 컨테이너가 하나도 안 보여서 소켓을 따로 연결한다
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
 # 브로커마다 따로 둔다. 같은 볼륨을 나눠 쓰면 서로의 데이터를 덮어써 망가진다
 # 폴더를 직접 연결하지 않고 이름 있는 볼륨을 쓰는 이유: Windows 폴더는 컨테이너 사용자(appuser) 권한과 맞지 않아 기동에 실패하기 쉽다
 # docker compose down -v 를 하면 지워지고 새 클러스터로 다시 시작한다 (토픽·메시지도 모두 사라짐)
