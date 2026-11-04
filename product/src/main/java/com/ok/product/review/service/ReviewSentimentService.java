@@ -63,12 +63,14 @@ public class ReviewSentimentService {
 	/**
 	 * 다음 시도 시각이 지난 감성 분석 대기 요청을 오래 기다린 순서로 꺼내 분석기에 넘길 리뷰 내용과 함께 돌려준다.
 	 * 리뷰가 삭제된 요청은 취소하고, 내용 없는 리뷰의 요청은 분석 안 함으로 끝내 분석기에 넘기지 않는다.
+	 * 넘기는 요청은 다음 시도 시각을 미뤄, 앱이 여러 대여도 다른 작업자가 같은 요청을 꺼내 분석기를 두 번 부르지 않게 한다.
 	 */
 	@Transactional
 	public List<ReviewSentimentTarget> findPendingTargets(int limit) {
+		LocalDateTime now = now();
 		List<ReviewAnalysisRequest> requests = analysisRequestRepository
 			.findByAnalysisTypeAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc(
-				ReviewAnalysisType.SENTIMENT, ReviewAnalysisStatus.PENDING, now(), Limit.of(limit));
+				ReviewAnalysisType.SENTIMENT, ReviewAnalysisStatus.PENDING, now, Limit.of(limit));
 		Map<Long, ProductReview> reviews = productReviewRepository.findAllById(
 				requests.stream().map(ReviewAnalysisRequest::getReviewId).toList()).stream()
 			.collect(Collectors.toMap(ProductReview::getId, Function.identity()));
@@ -76,12 +78,14 @@ public class ReviewSentimentService {
 		List<ReviewAnalysisRequest> analyzable = new ArrayList<>();
 		for (ReviewAnalysisRequest request : requests) {
 			ProductReview review = reviews.get(request.getReviewId());
-			// 리뷰를 삭제할 때는 요청을 건드리지 않으므로 여기서 끝낸다
-			if (review.isDeleted()) {
+			// 리뷰를 삭제할 때는 요청을 건드리지 않으므로 여기서 끝낸다.
+			// 운영 DB에서 외래키 검사를 끄고 리뷰 행을 직접 지우면 리뷰가 없다. 그대로 두면 이 요청이 매번 맨 앞에서 꺼내져 다른 요청까지 막힌다
+			if (review == null || review.isDeleted()) {
 				request.cancel();
 			} else if (!review.hasAnalyzableContent()) {
 				request.skip();
 			} else {
+				request.claim(now);
 				analyzable.add(request);
 			}
 		}

@@ -40,6 +40,8 @@ public class ReviewAnalysisRequest extends BaseTime {
 		Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(30), Duration.ofHours(2));
 	// 처음 호출을 포함한다
 	private static final int MAX_ATTEMPTS = RETRY_DELAYS.size() + 1;
+	// 작업자 한 번 실행의 최악(20건 모두 연결 3초 + 응답 10초 초과, 약 4분 20초)보다 길어야 처리 중인 요청을 다른 작업자가 다시 꺼내지 않는다
+	private static final Duration CLAIM_DURATION = Duration.ofMinutes(10);
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -77,6 +79,15 @@ public class ReviewAnalysisRequest extends BaseTime {
 	public void complete() {
 		validatePending();
 		status = ReviewAnalysisStatus.COMPLETED;
+	}
+
+	/**
+	 * 작업자가 꺼낸 요청을 한동안 다른 작업자가 꺼내지 못하게 다음 시도 시각을 미룬다.
+	 * 분석이 끝나면 완료나 실패 기록이 상태와 다음 시도 시각을 다시 정하고, 작업자가 도중에 멈추면 미룬 시각이 지나 다시 꺼내진다.
+	 */
+	public void claim(LocalDateTime now) {
+		validatePending();
+		nextAttemptAt = now.plus(CLAIM_DURATION);
 	}
 
 	public void skip() {
