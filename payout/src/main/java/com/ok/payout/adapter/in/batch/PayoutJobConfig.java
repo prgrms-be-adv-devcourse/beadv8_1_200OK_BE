@@ -2,7 +2,7 @@ package com.ok.payout.adapter.in.batch;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
-import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.dto.PayoutDraftResult;
 import com.ok.payout.application.dto.PayoutVerifyResult;
@@ -31,7 +31,7 @@ public class PayoutJobConfig {
     // 다음 Step들이 스냅샷 ID를 꺼내 쓰는 키 (JobExecutionContext)
     public static final String SNAPSHOT_ID_KEY = "snapshotId";
 
-    private final PayoutService payoutService;
+    private final PayoutUseCase payoutService;
 
     // 정산 배치 (Write-Audit-Publish): 스냅샷 → 입력 검증 → 임시 정산 → 검증 → 확정 → 발행
     //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션, 잠긴 주문의 후보 제외)

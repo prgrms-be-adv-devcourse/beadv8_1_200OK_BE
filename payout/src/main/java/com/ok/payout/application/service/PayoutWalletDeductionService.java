@@ -3,6 +3,7 @@ package com.ok.payout.application.service;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
 import com.ok.payout.application.dto.WalletPaymentCompletedCommand;
+import com.ok.payout.application.port.in.PayoutWalletDeductionUseCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -12,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class PayoutWalletDeductionService {
+public class PayoutWalletDeductionService implements PayoutWalletDeductionUseCase {
 
     private final PayoutWalletDeductionRepository repository;
 
@@ -20,6 +21,7 @@ public class PayoutWalletDeductionService {
     // 같은 이벤트가 이미 처리됐으면 무시한다 (재전달·재시작 시 멱등)
     // 동시에 두 번 처리되는 드문 경우는 DB UK(order_id)가 중복 저장을 막고, 실패한 쪽은 재처리 시 이 확인에서 무시됨
     @Transactional
+    @Override
     public void saveDeduction(WalletPaymentCompletedCommand command) {
         if (repository.existsByOrderId(command.orderId())) {
             log.info("이미 처리된 지갑 차감 이벤트, 무시. orderId={}", command.orderId());

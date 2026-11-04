@@ -9,7 +9,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutSellerDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSellerItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSellerSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
-import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -29,7 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class PayoutController implements PayoutControllerSpec {
 
-    private final PayoutService payoutService;
+    private final PayoutUseCase payoutService;
 
     // 본인 정산 목록 조회 (판매자 몫만)
     @Override

@@ -37,6 +37,7 @@ import com.ok.payout.application.dto.PayoutSellerSearchQuery;
 import com.ok.payout.application.dto.PayoutSummaryResult;
 import com.ok.payout.application.dto.PayoutVerifyResult;
 import com.ok.payout.application.dto.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,7 +60,7 @@ import java.util.Set;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class PayoutService {
+public class PayoutService implements PayoutUseCase {
 
     // 코드 고장으로 전체를 멈출 때 예외 메시지에 담는 항목(판매자 합계 불일치 내용, 후보 ID) 최대 개수 (메시지가 너무 길어지지 않게, 나머지는 건수로만 남김)
     private static final int MESSAGE_ITEM_LIMIT = 20;
@@ -74,16 +75,18 @@ public class PayoutService {
     private final PayoutFailureRepository payoutFailureRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
-    // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(event 패키지)가 맡는다
+    // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(adapter/out/event)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
 
     // 조회 상한: 실행일 − 대기 일수 00:00 (생성 후 대기 일수가 지난 후보만 정산)
+    @Override
     public LocalDateTime settlementTo(LocalDate runDate) {
         return runDate.minusDays(PayoutPolicy.SETTLEMENT_WAITING_DAYS).atStartOfDay();
     }
 
     // 조회 하한: 마지막 정산일 − (대기 일수 + 여유 일수) 00:00, 정산이 없으면 null(하한 없음)
     // 마지막 정산일 기준이라 배치가 밀리면 하한도 그만큼 과거로 내려가 밀린 후보까지 조회됨
+    @Override
     public LocalDateTime settlementFrom() {
         LocalDateTime last = payoutRepository.findFirstByOrderByIdDesc()
                 .map(Payout::getCreatedAt)
@@ -104,6 +107,7 @@ public class PayoutService {
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
     // → 하루 정산후보가 수만 건을 넘어 메모리·시간이 부담되면 HQL INSERT ... SELECT(DB 안에서 1문장 복사)로 바꾸는 것을 고려
+    @Override
     @Transactional
     public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to) {
         PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to));
@@ -138,6 +142,7 @@ public class PayoutService {
     //
     // 금액 검사에 걸린 주문은 잠김(AMOUNT_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
     // 잠금은 이후 Step이 실패해 Job이 FAILED로 끝나도 유지됨 (입력 금액에 대한 판정이라 재실행해도 다시 잠김)
+    @Override
     @Transactional
     public int validate(Long snapshotId) {
         List<PayoutFailure> failures = new ArrayList<>();
@@ -221,6 +226,7 @@ public class PayoutService {
     //   (INSERT 수는 예전과 같음: IDENTITY라 원래도 행마다 INSERT. 늘어나는 건 커밋할 때의 디스크 로그 확정 시간)
     //   예) 판매자 10만 명이면 커밋 1,000번 → 100,000번, 커밋 1번 1~5ms로 어림하면 약 2~8분 늘어남 (실측 아님)
     //   수정안 후보: 판매자 N명을 한 트랜잭션으로 묶어 저장해 보고, 실패한 묶음만 판매자 한 명씩 다시 저장 (평소 커밋 수는 예전 수준, 실패 때만 판매자 단위 격리)
+    @Override
     @Transactional(readOnly = true)
     public PayoutDraftResult draft(Long snapshotId, int limit) {
         List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);
@@ -280,6 +286,7 @@ public class PayoutService {
     //   예) 같은 스냅샷을 실수로 다시 commit → 시스템 몫 (12, NULL)이 또 저장되는 것은 UK가 못 막음
     // 대신 같은 트랜잭션 안에서 payout_item을 저장할 때 UK(candidate_id) 위반으로 실패 → 시스템 몫까지 전체 롤백되어 중복이 남지 않음
     // 트랜잭션을 나누면 시스템 몫이 먼저 커밋되어 중복이 조용히 남음
+    @Override
     @Transactional
     public void commit(Long snapshotId) {
         PayoutVerifyExclusion exclusion = PayoutVerifyExclusion.from(payoutQueryRepository.findFailureRows(snapshotId));
@@ -335,6 +342,7 @@ public class PayoutService {
     //   EXIT_MESSAGE의 payoutId(멈춘 정산)부터 그 스냅샷의 판매자 몫 payout을 다시 발행 (지갑은 payoutId로 중복 반영을 막음)
     //   해결 방향: outbox. 보낼 메시지를 commitStep 트랜잭션에서 payout과 함께 DB에 저장하고, 별도 발행기가 보내고 실패하면 다시 보냄
     //   현재는 이슈 #69 설계(확정과 발행을 Step으로 분리)를 따름
+    @Override
     @Transactional
     public int publish(Long snapshotId) {
         List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
@@ -380,6 +388,7 @@ public class PayoutService {
     // 실패 기록은 verifyStep 트랜잭션 안에서 저장해 Step이 끝날 때 함께 커밋됨
     //   저장한 뒤 이 Step이 실패로 끝나는 경로가 없어서 따로 커밋할 필요가 없음 (전부 걸린 경우는 저장 전에 멈춤)
     // 1)·2)의 조회가 같은 시점의 데이터를 봄: MySQL 기본 격리 수준(REPEATABLE READ)에서 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
+    @Override
     @Transactional
     public PayoutVerifyResult verify(Long snapshotId) {
         // 1) 코드 고장 검사
@@ -562,6 +571,7 @@ public class PayoutService {
      *
      * @throws RestApiException 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
      */
+    @Override
     public void runOrderItem(Long orderItemId) {
         // TODO(논의 필요): 1건 수동 실행은 재처리 정책(이미 정산된 건 처리, 실패 건 재시도 범위)이 정해지지 않아 막아 둠
         throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
@@ -575,6 +585,7 @@ public class PayoutService {
      * @param adminId 요청한 관리자 ID. 조정 기능을 열면 정산후보의 adminId로 기록함 (#65 리뷰 후속: 요청 바디가 아닌 인증 정보에서 받음)
      * @throws RestApiException 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
      */
+    @Override
     public void createAdjustment(Long adminId, PayoutAdjustmentCreateCommand command) {
         // TODO(논의 필요): 조정 번호(adjustmentId) 발급 방식(조정 요청 테이블에서 서버 발급 vs 클라이언트 전달)이 정해지지 않아 막아 둠
         throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
@@ -584,6 +595,7 @@ public class PayoutService {
     /**
      * 관리자가 정산 목록을 조회한다. 보낸 조건을 그대로 쓴다({@code payeeId}를 생략하면 전체).
      */
+    @Override
     @Transactional(readOnly = true)
     public Page<PayoutSummaryResult> searchForAdmin(PayoutSearchQuery query) {
         return searchPayouts(query.payeeId(), query.system(), query.from(), query.to(), query.page(), query.size());
@@ -594,6 +606,7 @@ public class PayoutService {
      *
      * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값)
      */
+    @Override
     @Transactional(readOnly = true)
     public Page<PayoutSummaryResult> searchForSeller(Long sellerId, PayoutSellerSearchQuery query) {
         // 판매자 목록은 요청에 대상 ID가 없음: 토큰의 회원 ID로만 조회해서 URL·파라미터를 바꿔도 남의 정산을 요청할 수 없음
@@ -615,6 +628,7 @@ public class PayoutService {
      * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}
      * @throws IllegalStateException 정산의 스냅샷이 없으면 (외래키라 정상이면 생길 수 없는 데이터 손상)
      */
+    @Override
     @Transactional(readOnly = true)
     public PayoutDetailResult getDetailForAdmin(Long payoutId) {
         return loadDetail(findPayout(payoutId));
@@ -628,6 +642,7 @@ public class PayoutService {
      * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}, 본인 정산이 아니거나 시스템 몫이면 {@code PAYOUT_ACCESS_DENIED}
      * @throws IllegalStateException 정산의 스냅샷이 없으면 (외래키라 정상이면 생길 수 없는 데이터 손상)
      */
+    @Override
     @Transactional(readOnly = true)
     public PayoutDetailResult getDetailForSeller(Long sellerId, Long payoutId) {
         Payout payout = findPayout(payoutId);
@@ -670,6 +685,7 @@ public class PayoutService {
      *
      * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}
      */
+    @Override
     @Transactional(readOnly = true)
     public Page<PayoutItemResult> getItemsForAdmin(Long payoutId, PayoutItemSearchQuery query) {
         // 정산이 없으면 빈 목록이 아니라 404로 알려 주려고 먼저 조회
@@ -684,6 +700,7 @@ public class PayoutService {
      * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값). 이 정산의 수취인이 본인인지 확인하는 데 씀
      * @throws RestApiException 정산이 없으면 {@code PAYOUT_NOT_FOUND}, 본인 정산이 아니거나 시스템 몫이면 {@code PAYOUT_ACCESS_DENIED}
      */
+    @Override
     @Transactional(readOnly = true)
     public Page<PayoutItemResult> getItemsForSeller(Long sellerId, Long payoutId, PayoutItemSearchQuery query) {
         Payout payout = findPayout(payoutId);
@@ -700,6 +717,7 @@ public class PayoutService {
     /**
      * 관리자가 정산후보 목록을 조회한다. {@code sellerId}를 생략하면 전체 판매자, {@code unsettledOnly}면 아직 정산 전인 후보만 조회한다.
      */
+    @Override
     @Transactional(readOnly = true)
     public Page<PayoutCandidateResult> searchCandidatesForAdmin(PayoutCandidateSearchQuery query) {
         return searchCandidates(query.sellerId(), query.from(), query.to(), query.unsettledOnly(), false,
@@ -713,6 +731,7 @@ public class PayoutService {
      *
      * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값)
      */
+    @Override
     @Transactional(readOnly = true)
     public Page<PayoutCandidateResult> searchCandidatesForSeller(Long sellerId, PayoutSellerCandidateSearchQuery query) {
         // 판매자 목록은 요청에 대상 ID가 없음: 토큰의 회원 ID로만 조회해서 URL·파라미터를 바꿔도 남의 후보를 요청할 수 없음

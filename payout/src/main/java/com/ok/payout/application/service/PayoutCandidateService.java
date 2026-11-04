@@ -7,6 +7,7 @@ import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.dto.PurchaseConfirmedCommand;
+import com.ok.payout.application.port.in.PayoutCandidateUseCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,11 +22,12 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class PayoutCandidateService {
+public class PayoutCandidateService implements PayoutCandidateUseCase {
 
     private final PayoutCandidateItemRepository repository;
     private final Clock clock;
 
+    @Override
     public void createFromPurchaseConfirmed(PurchaseConfirmedCommand command) {
         validate(command);
         // 같은 이벤트가 이미 처리됐으면 무시한다 (재발행·재시작 시 멱등).

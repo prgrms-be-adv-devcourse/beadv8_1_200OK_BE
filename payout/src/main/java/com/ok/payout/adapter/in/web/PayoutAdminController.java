@@ -12,7 +12,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
-import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.BatchStatus;
@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     private final PayoutJobRunner payoutJobRunner;
-    private final PayoutService payoutService;
+    private final PayoutUseCase payoutService;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
     @Override

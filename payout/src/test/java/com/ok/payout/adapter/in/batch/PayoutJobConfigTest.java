@@ -3,7 +3,7 @@ package com.ok.payout.adapter.in.batch;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.application.dto.PayoutDraftResult;
 import com.ok.payout.application.dto.PayoutVerifyResult;
-import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutUseCase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -29,7 +29,7 @@ class PayoutJobConfigTest {
     private static final Long SNAPSHOT_ID = 12L;
 
     @Mock
-    private PayoutService payoutService;
+    private PayoutUseCase payoutService;
 
     @Test
     void draft_회차에서_성공한_판매자는_write_count_실패한_판매자는_write_skip_count로_남기고_다음_회차를_부른다() throws Exception {
