@@ -7,9 +7,9 @@ import com.ok.order.cart.domain.CartItem;
 import com.ok.order.cart.exception.CartErrorCode;
 import com.ok.order.cart.repository.CartItemRepository;
 import com.ok.order.cart.repository.CartRepository;
+import com.ok.order.cart.service.dto.AddCartItemResult;
 import com.ok.order.cart.service.dto.SelectedCartItem;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,21 +34,25 @@ public class CartService {
         cartRepository.insertIfAbsent(memberId, LocalDateTime.now(clock));
     }
 
-    // 장바구니에 상품 추가
+    // 장바구니에 상품 추가. 이미 담긴 옵션이면 수량을 더한다(최대 CartItem.MAX_QUANTITY)
     @Transactional
-    public Long addItem(Long memberId, Long productOptionId, int quantity) {
+    public AddCartItemResult addItem(Long memberId, Long productOptionId, int quantity) {
         // TODO 회원 모듈 구매 가능 여부 API 제공 후 연동 → MEMBER_CANNOT_PURCHASE
 
         // TODO 상품 모듈 옵션 조회 API 연동 후: 판매 중인지, 본인 상품인지 검증
 
+        CartItem.validateQuantity(quantity);
         Cart cart = getOrCreateCart(memberId);
 
-        if (cartItemRepository.existsByCartIdAndProductOptionId(cart.getId(), productOptionId)) {
-            throw new RestApiException(CartErrorCode.CART_ITEM_ALREADY_EXISTS);
-        }
+        // 응답 구분(새로 담음 201 / 수량 더함 200)에만 쓴다. 동시에 처음 담으면 둘 다 false일 수 있지만 수량은 아래 쿼리가 맞춘다
+        boolean merged = cartItemRepository.existsByCartIdAndProductOptionId(cart.getId(), productOptionId);
+        cartItemRepository.insertOrAddQuantity(cart.getId(), productOptionId, quantity, LocalDateTime.now(clock));
 
-        CartItem cartItem = CartItem.create(cart, productOptionId, quantity);
-        return saveItem(cartItem).getId();
+        // 바로 앞에서 넣거나 더한 행이라 일반 조회로도 보인다(내 트랜잭션이 쓴 행). 없다면 코드·DB 이상이라 500으로 드러낸다
+        CartItem item = cartItemRepository.findByCartIdAndProductOptionId(cart.getId(), productOptionId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "장바구니 담기 후 조회에 실패했습니다. cartId=" + cart.getId() + ", productOptionId=" + productOptionId));
+        return new AddCartItemResult(item.getId(), item.getQuantity(), merged);
     }
 
     // 장바구니 리스트 조회
@@ -112,15 +116,6 @@ public class CartService {
         // 없다면 사용자 입력이 아닌 코드·DB의 이상이므로 500으로 드러나도록 IllegalStateException을 던진다
         return cartRepository.findForShareByMemberId(memberId)
                 .orElseThrow(() -> new IllegalStateException("장바구니 생성 후 조회에 실패했습니다. memberId=" + memberId));
-    }
-
-    // 동시 담기 대비 : 유니크 제약 위반을 중복 예외로 변환
-    private CartItem saveItem(CartItem cartItem) {
-        try {
-            return cartItemRepository.saveAndFlush(cartItem);
-        } catch (DataIntegrityViolationException e) {
-            throw new RestApiException(CartErrorCode.CART_ITEM_ALREADY_EXISTS);
-        }
     }
 
     // 내 장바구니 안의 상품 조회

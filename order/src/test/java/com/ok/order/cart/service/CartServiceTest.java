@@ -7,6 +7,7 @@ import com.ok.order.cart.domain.CartItem;
 import com.ok.order.cart.exception.CartErrorCode;
 import com.ok.order.cart.repository.CartItemRepository;
 import com.ok.order.cart.repository.CartRepository;
+import com.ok.order.cart.service.dto.AddCartItemResult;
 import com.ok.order.cart.service.dto.SelectedCartItem;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -26,7 +26,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -77,47 +79,83 @@ public class CartServiceTest {
     void 내가_판매하는_상품은_담을_수_없다() { }
 
     @Test
-    void 이미_담긴_상품은_담을_수_없다() {
-        // Given
-        Cart cart = Cart.create(BUYER_ID);
-        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
-        given(cartItemRepository.existsByCartIdAndProductOptionId(cart.getId(), 100L)).willReturn(true);
-
-        // When & Then
-        assertThatThrownBy(() -> cartService.addItem(BUYER_ID, 100L, 1))
-                .isInstanceOf(RestApiException.class)
-                .extracting("errorCode")
-                .isEqualTo(CartErrorCode.CART_ITEM_ALREADY_EXISTS);
-        then(cartItemRepository).should(never()).saveAndFlush(any(CartItem.class));
-    }
-
-    @Test
     void 장바구니가_없으면_만들고_담는다() {
         // given
+        Cart cart = Cart.create(BUYER_ID);
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.empty());
-        given(cartRepository.findForShareByMemberId(BUYER_ID)).willReturn(Optional.of(Cart.create(BUYER_ID)));
-        given(cartItemRepository.saveAndFlush(any(CartItem.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(cartRepository.findForShareByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByCartIdAndProductOptionId(cart.getId(), 100L))
+                .willReturn(Optional.of(CartItem.create(cart, 100L, 1)));
 
         // when
         cartService.addItem(BUYER_ID, 100L, 1);
 
         // then
         then(cartRepository).should().insertIfAbsent(BUYER_ID, NOW);
-        then(cartItemRepository).should().saveAndFlush(any(CartItem.class));
+        then(cartItemRepository).should().insertOrAddQuantity(cart.getId(), 100L, 1, NOW);
     }
 
     @Test
-    void 동시에_같은_상품을_담아_유니크_제약을_위반하면_이미_담긴_상품_예외로_바꾼다() {
+    void 처음_담는_옵션이면_새로_담은_것으로_돌려준다() {
         // given
         Cart cart = Cart.create(BUYER_ID);
         given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
-        given(cartItemRepository.saveAndFlush(any(CartItem.class)))
-                .willThrow(new DataIntegrityViolationException("uk_cart_item_cart_option"));
+        given(cartItemRepository.existsByCartIdAndProductOptionId(cart.getId(), 100L)).willReturn(false);
+        given(cartItemRepository.findByCartIdAndProductOptionId(cart.getId(), 100L))
+                .willReturn(Optional.of(CartItem.create(cart, 100L, 2)));
+
+        // when
+        AddCartItemResult sut = cartService.addItem(BUYER_ID, 100L, 2);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.quantity()).isEqualTo(2);
+            softly.assertThat(sut.merged()).isFalse();
+        });
+        then(cartItemRepository).should().insertOrAddQuantity(cart.getId(), 100L, 2, NOW);
+    }
+
+    @Test
+    void 이미_담긴_옵션을_다시_담으면_수량을_더한_것으로_돌려준다() {
+        // given: 이미 3개 담김 → 2개 더 담아 쿼리가 5개로 바꾼 상태
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.existsByCartIdAndProductOptionId(cart.getId(), 100L)).willReturn(true);
+        given(cartItemRepository.findByCartIdAndProductOptionId(cart.getId(), 100L))
+                .willReturn(Optional.of(CartItem.create(cart, 100L, 5)));
+
+        // when
+        AddCartItemResult sut = cartService.addItem(BUYER_ID, 100L, 2);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.quantity()).isEqualTo(5);
+            softly.assertThat(sut.merged()).isTrue();
+        });
+    }
+
+    @Test
+    void 수량이_99개를_넘으면_담을_수_없다() {
+        // when & then
+        assertThatThrownBy(() -> cartService.addItem(BUYER_ID, 100L, CartItem.MAX_QUANTITY + 1))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(CartErrorCode.INVALID_QUANTITY));
+        then(cartItemRepository).should(never()).insertOrAddQuantity(any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void 담은_뒤에도_조회되지_않으면_서버_오류로_드러낸다() {
+        // given
+        Cart cart = Cart.create(BUYER_ID);
+        given(cartRepository.findByMemberId(BUYER_ID)).willReturn(Optional.of(cart));
+        given(cartItemRepository.findByCartIdAndProductOptionId(cart.getId(), 100L)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> cartService.addItem(BUYER_ID, 100L, 1))
-                .isInstanceOfSatisfying(RestApiException.class, e ->
-                        assertThat(e.getErrorCode()).isEqualTo(CartErrorCode.CART_ITEM_ALREADY_EXISTS));
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("장바구니 담기 후 조회에 실패했습니다. cartId=null, productOptionId=100");
     }
 
     // ---------- 조회 ----------
