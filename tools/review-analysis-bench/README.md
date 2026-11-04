@@ -23,11 +23,11 @@ Node 23.6 이상에서 `.ts`를 그대로 실행한다. 설치할 의존성은 �
 | 단계 | 상태 |
 |---|---|
 | 1. 분석 명세 | `criteria.json` v0.2. 조정용 100개 사람 정답과 고급 모델 점검으로 다듬음(`criteria/CHANGELOG.md`) |
-| 2. 데이터셋·사람 정답 | 생성 1,000개, 세트 분리, 조정용 정답 완료. 평가용 정답 대기 |
+| 2. 데이터셋·사람 정답 | 생성 1,000개, 세트 분리, 조정용 100개·평가용 앞 50개 정답 완료 |
 | 3. 비교 실행 도구 | 실행기·보고서 완료 |
-| 4~5. 예비 실행·본 실험 | 아직 |
+| 4~5. 예비 실행·본 실험 | 완료. 평가용 앞 50개로 Jev 채택(결정과 한계는 ADR `docs/decisions/product/385-review-sentiment-bench.md`) |
 
-평가용 300개는 사람 정답을 다 매긴 뒤에 모델에 돌린다. `run/bench.ts`는 `data/labels/gold-eval.csv`가 없거나, 빈칸이 있거나, 정답이 빠진 평가용 리뷰가 있으면 요청을 보내기 전에 멈춘다.
+평가용 리뷰는 사람 정답을 매긴 뒤에만 모델에 돌린다. 이번에는 시간 때문에 앞 50개만 매겨 `--limit 50`으로 돌렸다. `run/bench.ts`는 `data/labels/gold-eval.csv`가 없거나, 빈칸이 있거나, 정답이 빠진 평가용 리뷰가 있으면 요청을 보내기 전에 멈춘다.
 
 **확인하지 못한 요청 형식.**
 - Jev: https://docs.typesafe.ai/api.md 의 POST /v1/systemone 형식으로 작성했다(2026-11-03 확인). 공통 지시문 자리가 없어 질문마다 앞에 붙인다.
@@ -39,8 +39,8 @@ Node 23.6 이상에서 `.ts`를 그대로 실행한다. 설치할 의존성은 �
 export OPENAI_API_KEY=... TYPESAFE_API_KEY=...     # .env에 두고 커밋하지 않는다
 node --no-warnings run/bench.ts --run-id pilot --set tuning --limit 40          # 예비 실행 40개
 node --no-warnings run/report.ts --run-id pilot --gold data/labels/keunhyeok/tuning.csv --pilot
-node --no-warnings run/bench.ts --run-id main-c1 --set eval --concurrency 1     # 사람 정답을 다 매긴 뒤
-node --no-warnings run/bench.ts --run-id main-c10 --set eval --concurrency 10
+node --no-warnings run/bench.ts --run-id main-c1 --set eval --limit 50 --concurrency 1     # 정답을 매긴 앞 50개
+node --no-warnings run/bench.ts --run-id main-c10 --set eval --limit 50 --concurrency 10
 node --no-warnings run/bench.ts --run-id repeat --set eval --repeat-run-only --repeats 3 --permute-order-per-repeat
 node --no-warnings run/report.ts --run-id main-c1
 ```
