@@ -15,9 +15,9 @@ import org.springframework.kafka.core.KafkaTemplate;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.event.PayoutTopics;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
+import com.ok.payout.config.PayoutTopics;
+import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
+import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 import static org.assertj.core.api.Assertions.assertThat;

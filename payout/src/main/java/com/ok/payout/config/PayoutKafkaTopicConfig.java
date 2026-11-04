@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
 
-import com.ok.payout.event.PayoutTopics;
+import com.ok.payout.config.PayoutTopics;
 
 /**
  * 정산이 보내고 받는 Kafka 토픽을 앱이 시작할 때 만든다. 이미 있으면 그대로 둔다.

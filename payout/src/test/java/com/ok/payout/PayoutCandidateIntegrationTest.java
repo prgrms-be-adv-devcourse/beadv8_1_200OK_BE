@@ -3,7 +3,7 @@ package com.ok.payout;
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

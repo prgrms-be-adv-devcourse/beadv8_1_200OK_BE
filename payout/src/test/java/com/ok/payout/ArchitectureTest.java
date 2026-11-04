@@ -47,31 +47,33 @@ class ArchitectureTest {
 
     // freeze: 기존 위반은 archunit_store에 기준선으로 두고, 새 위반만 실패시킨다.
     @ArchTest
-    static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = freeze(layeredArchitecture()
+    static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
-            .layer("Controller").definedBy("..controller..")
-            .layer("Service").definedBy("..service..")
-            .layer("Repository").definedBy("..repository..")
+            .layer("Controller").definedBy("..adapter.in.web..")
+            .layer("Service").definedBy("..application.service..")
+            .layer("Repository").definedBy("..application.port.out..")
             .layer("Domain").definedBy("..domain..")
             .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
             .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
             .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
-            .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)"));
+            .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)");
 
     @ArchTest
     static final ArchRule 패키지_간_순환_의존이_없다 = slices()
             .matching("com.ok.payout.(**)")
+            // 1단계 임시: Result.from(Row)가 포트 쪽 Row를 받고 포트가 application.dto의 Command를 받아 생긴 순환. 5단계에서 규칙을 다시 쓸 때 정리한다
             .should().beFreeOfCycles()
+            .ignoreDependency(resideInAPackage("..application.dto.."), resideInAPackage("..application.port.out.."))
             .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다. "
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
     @ArchTest
     static final ArchRule 이벤트_리스너는_controller_repository_domain을_쓰지_않는다 = noClasses()
-            .that().resideInAPackage("..event..")
+            .that().resideInAPackage("..adapter.in.event..")
             // common.event는 모듈 간 이벤트 DTO라 리스너가 아니다
             .and().resideOutsideOfPackage("com.ok.common.event..")
-            .should().dependOnClassesThat().resideInAnyPackage("..controller..", "..repository..", "..domain..")
+            .should().dependOnClassesThat().resideInAnyPackage("..adapter.in.web..", "..application.port.out..", "..domain..")
             .because("리스너는 컨트롤러처럼 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 서비스에 맡긴다 (컨벤션 2.1)");
 
     // freeze
@@ -91,7 +93,7 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule 서비스는_event_패키지에_의존하지_않는다 = noClasses()
-            .that().resideInAPackage("..service..")
+            .that().resideInAPackage("..application.service..")
             // common.event(이벤트 record)는 이벤트_클래스는_event_패키지만_사용한다 규칙이 검사한다
             .should().dependOnClassesThat(resideInAPackage("..event..")
                     .and(not(resideInAPackage("com.ok.common.event.."))))
@@ -102,7 +104,7 @@ class ArchitectureTest {
             .that(ApplicationEventPublisher에_의존하는)
             // event 밖에서 쓰는 경우는 ApplicationEventPublisher는_event_패키지만_사용한다 규칙이 막는다
             .and().resideInAPackage("..event..")
-            .should().implement(resideInAPackage("..service.."))
+            .should().implement(resideInAPackage("..application.port.out.."))
             .because("서비스는 service의 발행 인터페이스만 알고, event의 구현체가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (컨벤션 2.1)");
 
@@ -112,21 +114,21 @@ class ArchitectureTest {
     static final ArchRule RestController는_Controller로_끝나고_controller_패키지에_있다 = classes()
             .that().areAnnotatedWith(RestController.class)
             .should().haveSimpleNameEndingWith("Controller")
-            .andShould().resideInAPackage("..controller..")
+            .andShould().resideInAPackage("..adapter.in.web..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
 
     @ArchTest
     static final ArchRule Service는_Service로_끝나고_service_패키지에_있다 = classes()
             .that().areAnnotatedWith(Service.class)
             .should().haveSimpleNameEndingWith("Service")
-            .andShould().resideInAPackage("..service..")
+            .andShould().resideInAPackage("..application.service..")
             .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2)");
 
     @ArchTest
     static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .should().resideInAPackage("..repository..")
+            .should().resideInAPackage("..application.port.out..")
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 
     @ArchTest

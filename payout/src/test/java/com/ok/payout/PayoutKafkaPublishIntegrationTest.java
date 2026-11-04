@@ -31,11 +31,11 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.event.PayoutTopics;
-import com.ok.payout.repository.PayoutRepository;
-import com.ok.payout.repository.PayoutSnapshotRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
-import com.ok.payout.service.PayoutJobRunner;
+import com.ok.payout.config.PayoutTopics;
+import com.ok.payout.application.port.out.PayoutRepository;
+import com.ok.payout.application.port.out.PayoutSnapshotRepository;
+import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 import tools.jackson.databind.JsonNode;

@@ -1,7 +1,7 @@
 package com.ok.payout;
 
-import com.ok.payout.repository.PayoutCandidateItemRepository;
-import com.ok.payout.repository.PayoutRepository;
+import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
+import com.ok.payout.application.port.out.PayoutRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;

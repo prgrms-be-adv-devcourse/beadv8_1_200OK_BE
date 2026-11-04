@@ -2,7 +2,7 @@ package com.ok.payout;
 
 import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
+import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
