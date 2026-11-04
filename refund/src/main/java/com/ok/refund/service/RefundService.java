@@ -11,6 +11,7 @@ import com.ok.refund.service.dto.RefundResult;
 import com.ok.refund.service.dto.RefundableOrderItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -144,6 +145,11 @@ public class RefundService {
                 throw new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS);
             }
             throw e;
+        } catch (PessimisticLockingFailureException e) {
+            // 철회·거절이 진행 중 칸을 비우고 커밋하는 순간 같은 상품의 새 요청이 둘 이상 오면, 두 INSERT가 비워지는 UNIQUE 항목의
+            // 잠금을 함께 얻은 뒤 서로를 기다려 MySQL이 한쪽을 교착 상태로 되돌린다(직접 재현함). 되돌려진 쪽은 다른 요청이
+            // 먼저 들어간 경우라 중복과 같게 409로 돌려준다. 이 트랜잭션은 INSERT 하나뿐이라 다른 잠금 실패가 섞이지 않는다
+            throw new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS);
         }
     }
 }

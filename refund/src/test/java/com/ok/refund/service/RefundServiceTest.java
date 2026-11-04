@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.sql.SQLException;
@@ -147,6 +148,19 @@ class RefundServiceTest {
         // when & then
         assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
                 .isSameAs(other);
+    }
+
+    // 철회 커밋 순간 같은 상품 새 요청 둘이 겹치면 MySQL이 한쪽을 교착 상태로 되돌린다. 그 쪽도 진행 중 중복으로 본다
+    @Test
+    void 저장이_교착_상태로_되돌려지면_진행_중_에러로_바꾼다() {
+        // given
+        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(new CannotAcquireLockException(
+                "Deadlock found when trying to get lock; try restarting transaction"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
     }
 
     @Test
