@@ -125,6 +125,25 @@ class JwtConfigTest {
     }
 
     @Test
+    void 캐시_시간이_짧아도_디코더가_만들어지고_만료_뒤_요청에서_JWKS를_다시_받는다() throws Exception {
+        // given
+        // 미리 갱신을 켜 두면 캐시 시간이 30초 + 타임아웃보다 짧을 때 디코더를 만들지 못한다
+        RSAKey v1 = rsaKey("rs256-v1");
+        publishedKeys = List.of(v1.toPublicJWK());
+        JwtProperties.JwkSet shortTtl = new JwtProperties.JwkSet(Duration.ofMillis(300), null, null);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(shortTtl), clock);
+        String token = sign(v1);
+        decoder.decode(token);
+        Thread.sleep(500);
+
+        // when
+        decoder.decode(token);
+
+        // then
+        assertThat(jwksRequests).hasValue(2);
+    }
+
+    @Test
     void JWKS에_새_키를_공개하면_디코더를_다시_만들지_않아도_새_kid로_서명한_토큰을_검증한다() throws Exception {
         // given
         // 키 교체: 검증 앱이 v1만 캐시한 상태에서 발급 모듈이 v2를 공개하고 v2로 서명을 바꾼다

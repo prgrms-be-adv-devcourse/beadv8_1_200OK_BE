@@ -184,6 +184,9 @@ public class JwtConfig {
                         new DefaultResourceRetriever(connectTimeout, readTimeout, JWKSourceBuilder.DEFAULT_HTTP_SIZE_LIMIT))
                 // 갱신 중인 요청을 다른 요청이 기다리는 최대 시간. 한 번의 조회가 끝날 수 있는 시간만큼 기다린다
                 .cache(settings.cacheTtl().toMillis(), (long) connectTimeout + readTimeout)
+                // Spring의 withJwkSetUri처럼 끈다. (Nimbus는 미리 갱신을 기본으로 켠다.)
+                // 켜 두면 앱마다 닫히지 않는 갱신 스레드가 생기고, 캐시 시간이 30초 + 타임아웃보다 짧으면 디코더를 만들지 못한다
+                .refreshAheadCache(false)
                 .rateLimited(false)
                 .build();
     }
