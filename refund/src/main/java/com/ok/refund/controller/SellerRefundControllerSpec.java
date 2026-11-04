@@ -32,7 +32,8 @@ interface SellerRefundControllerSpec {
             @ApiResponse(responseCode = "403", description = "판매자가 아님"),
             @ApiResponse(responseCode = "404", description = "없거나 남의 상품 요청 (REFUND_NOT_FOUND)"),
             @ApiResponse(responseCode = "409", description = "요청됨이 아님. 이미 승인·거절됐거나 구매자가 철회함 (INVALID_REFUND_STATE)"),
-            @ApiResponse(responseCode = "422", description = "거절 사유 없음 (REJECT_REASON_REQUIRED), "
+            @ApiResponse(responseCode = "422", description = "거절 사유 없음 (REJECT_REASON_REQUIRED). 사유를 상태보다 먼저 보므로 "
+                    + "이미 처리된 요청이어도 사유 없이 거절하면 409가 아니라 이 응답이다. "
                     + "요청 값 검증 실패 (VALIDATION_FAILED). 결정 값 오류, 사유 255자 초과 등")
     })
     ResponseEntity<RefundResponse> decide(Long sellerId, Long refundId, RefundDecisionRequest request);

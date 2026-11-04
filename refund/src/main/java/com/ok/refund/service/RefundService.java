@@ -113,12 +113,13 @@ public class RefundService {
                 .filter(found -> found.isOwnedBySeller(command.sellerId()))
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         LocalDateTime now = LocalDateTime.now(clock);
-        // enum 문장형 switch는 컴파일러가 모든 값을 다뤘는지 보지 않는다. 결정이 늘었는데 여기를 빠뜨리면
-        // 아무것도 바꾸지 않고 성공으로 응답하게 되므로, 다루지 않는 값은 버그로 보고 막는다
+        // 예전 방식 enum switch는 컴파일러가 모든 값을 다뤘는지 보지 않아, 결정이 늘었는데 여기를 빠뜨리면 아무것도 바꾸지 않고
+        // 성공으로 응답한다. case null을 두면 새 방식 switch가 되어 모든 값을 다루지 않으면 컴파일 오류가 난다(default를 두지 않는 이유).
+        // null은 요청 DTO가 막으므로 여기 오면 버그다
         switch (command.decision()) {
             case APPROVE -> refund.approve(now);
             case REJECT -> refund.reject(command.rejectReason(), now);
-            default -> throw new IllegalStateException("처리하지 않는 환불 결정입니다. decision=" + command.decision());
+            case null -> throw new IllegalArgumentException("환불 결정은 필수입니다.");
         }
         return RefundResult.from(refund);
     }
