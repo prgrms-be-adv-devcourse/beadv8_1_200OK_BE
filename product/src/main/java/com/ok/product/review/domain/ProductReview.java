@@ -17,6 +17,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -93,6 +94,16 @@ public class ProductReview extends BaseTime {
 		return deletedAt != null;
 	}
 
+	/**
+	 * 감성 분석할 내용이 있는지 본다. 한글 자모가 아닌 글자가 하나라도 있어야 내용이 있다고 본다.
+	 * 공백, 기호, 이모지, 숫자, "ㅋㅋㅋ"·"ㅠㅠ" 같은 자음·모음만 있는 본문은 분석기를 불러도 감성을 판단할 근거가 없다.
+	 * 음절을 자모로 풀어 보내는 입력기(NFD)도 있어, 자모를 음절로 합친 뒤 본다.
+	 */
+	public boolean hasAnalyzableContent() {
+		return Normalizer.normalize(content, Normalizer.Form.NFC).codePoints()
+			.anyMatch(codePoint -> Character.isLetter(codePoint) && !isHangulJamo(codePoint));
+	}
+
 	public List<ProductReviewMedia> getMedia() {
 		return Collections.unmodifiableList(media);
 	}
@@ -106,6 +117,11 @@ public class ProductReview extends BaseTime {
 		if (videoCount > 1) {
 			throw new RestApiException(ProductReviewErrorCode.REVIEW_MEDIA_LIMIT_EXCEEDED);
 		}
+	}
+
+	// 호환용 한글 자모(ㄱ~ㆎ)와 한글 자모 블록
+	private static boolean isHangulJamo(int codePoint) {
+		return (codePoint >= 0x3131 && codePoint <= 0x318E) || (codePoint >= 0x1100 && codePoint <= 0x11FF);
 	}
 
 	private void replaceMedia(List<ProductReviewMediaSpec> mediaSpecs) {

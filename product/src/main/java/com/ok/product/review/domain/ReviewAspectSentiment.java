@@ -49,4 +49,8 @@ public class ReviewAspectSentiment extends BaseTime {
 		aspectSentiment.sentiment = sentiment;
 		return aspectSentiment;
 	}
+
+	void changeSentiment(Sentiment sentiment) {
+		this.sentiment = sentiment;
+	}
 }

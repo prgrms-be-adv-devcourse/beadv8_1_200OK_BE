@@ -3,6 +3,7 @@ package com.ok.product.review.domain;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
@@ -72,14 +73,34 @@ public class ReviewSentiment extends BaseTime {
 	) {
 		ReviewSentiment sentiment = new ReviewSentiment();
 		sentiment.reviewId = reviewId;
-		sentiment.reviewUpdatedAt = reviewUpdatedAt;
-		sentiment.overall = overall;
-		sentiment.criteriaVersion = criteriaVersion;
-		sentiment.model = model;
-		sentiment.analyzedAt = analyzedAt;
-		aspects.forEach((aspect, aspectSentiment) -> aspectSentiment.mentioned()
-				.ifPresent(mentioned -> sentiment.aspects.add(ReviewAspectSentiment.create(sentiment, aspect, mentioned))));
+		sentiment.replace(reviewUpdatedAt, overall, aspects, criteriaVersion, model, analyzedAt);
 		return sentiment;
+	}
+
+	/**
+	 * 수정된 리뷰를 다시 분석한 결과로 바꾼다. 리뷰마다 결과는 한 행이라 새 행을 만들지 않고 이 행을 고친다.
+	 *
+	 * @param aspects 여섯 분석 항목 모두의 감성
+	 */
+	public void replace(
+			LocalDateTime reviewUpdatedAt, Sentiment overall, Map<ReviewAspect, AspectSentiment> aspects,
+			String criteriaVersion, String model, LocalDateTime analyzedAt
+	) {
+		this.reviewUpdatedAt = reviewUpdatedAt;
+		this.overall = overall;
+		this.criteriaVersion = criteriaVersion;
+		this.model = model;
+		this.analyzedAt = analyzedAt;
+
+		Map<ReviewAspect, Sentiment> mentioned = new EnumMap<>(ReviewAspect.class);
+		aspects.forEach((aspect, aspectSentiment) -> aspectSentiment.mentioned()
+				.ifPresent(sentiment -> mentioned.put(aspect, sentiment)));
+		// 이미 있는 항목은 행을 고쳐 쓴다. 지우고 새로 넣으면 Hibernate가 INSERT를 DELETE보다 먼저 내보내 (결과, 항목) UNIQUE에 걸린다
+		this.aspects.removeIf(row -> !mentioned.containsKey(row.getAspect()));
+		for (ReviewAspectSentiment row : this.aspects) {
+			row.changeSentiment(mentioned.remove(row.getAspect()));
+		}
+		mentioned.forEach((aspect, sentiment) -> this.aspects.add(ReviewAspectSentiment.create(this, aspect, sentiment)));
 	}
 
 	public List<ReviewAspectSentiment> getAspects() {

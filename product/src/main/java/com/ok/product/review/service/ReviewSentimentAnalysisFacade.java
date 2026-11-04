@@ -46,7 +46,7 @@ public class ReviewSentimentAnalysisFacade {
 			analysis = reviewSentimentAnalyzer.analyze(target.input());
 		} catch (RuntimeException e) {
 			// TODO(#386): 재시도할 실패(ReviewAnalysisFailedException#isRetryable)는 백오프로 다시 시도한다. 지금은 모두 바로 최종 실패다
-			reviewSentimentService.fail(target.requestId(), e.toString());
+			reviewSentimentService.fail(target, e.toString());
 			return;
 		}
 		reviewSentimentService.complete(target, analysis);

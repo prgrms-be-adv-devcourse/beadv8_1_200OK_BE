@@ -21,7 +21,8 @@ import lombok.NoArgsConstructor;
 
 /**
  * 리뷰 하나를 분석 종류 하나로 분석해 달라는 요청이다. (리뷰, 분석 종류)마다 하나만 있다.
- * 대기에서 완료나 최종 실패로만 바뀌고, 작업자는 다음 시도 시각이 지난 대기 요청만 꺼낸다.
+ * 대기에서 완료, 최종 실패, 분석 안 함(내용 없는 리뷰), 취소(삭제된 리뷰) 중 하나로 끝나고, 작업자는 다음 시도 시각이 지난 대기 요청만 꺼낸다.
+ * 리뷰를 수정하면 어느 상태에서든 처음 대기로 되돌린다.
  */
 @Entity
 @Table(name = "review_analysis_request", catalog = ProductSchema.NAME)
@@ -67,6 +68,27 @@ public class ReviewAnalysisRequest extends BaseTime {
 	public void complete() {
 		validatePending();
 		status = ReviewAnalysisStatus.COMPLETED;
+	}
+
+	public void skip() {
+		validatePending();
+		status = ReviewAnalysisStatus.SKIPPED;
+	}
+
+	public void cancel() {
+		validatePending();
+		status = ReviewAnalysisStatus.CANCELLED;
+	}
+
+	/**
+	 * 수정된 리뷰를 새로 분석하도록 처음 대기로 되돌린다.
+	 * 이전 시도는 수정 전 내용에 대한 것이라, 백오프 중이거나 최종 실패한 요청도 시도 횟수와 마지막 오류를 지우고 바로 꺼내지게 한다.
+	 */
+	public void reset(LocalDateTime now) {
+		status = ReviewAnalysisStatus.PENDING;
+		attemptCount = 0;
+		nextAttemptAt = now;
+		lastError = null;
 	}
 
 	/**
