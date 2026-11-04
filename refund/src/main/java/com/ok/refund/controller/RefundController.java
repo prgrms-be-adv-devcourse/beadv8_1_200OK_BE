@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -47,5 +48,15 @@ public class RefundController implements RefundControllerSpec {
             @Valid @ModelAttribute RefundPageRequest request
     ) {
         return ResponseEntity.ok(RefundPageResponse.from(refundService.getBuyerRefunds(buyerId, request.page())));
+    }
+
+    // 새로 만드는 게 아니라 있는 요청의 상태를 바꾸므로 201이 아니라 200이다
+    @Override
+    @PostMapping("/{refundId}/withdraw")
+    public ResponseEntity<RefundResponse> withdraw(
+            @CurrentMemberId Long buyerId,
+            @PathVariable Long refundId
+    ) {
+        return ResponseEntity.ok(RefundResponse.from(refundService.withdraw(refundId, buyerId)));
     }
 }

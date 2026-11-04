@@ -1,5 +1,6 @@
 package com.ok.refund;
 
+import com.jayway.jsonpath.JsonPath;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.repository.RefundRepository;
@@ -18,7 +19,13 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -28,6 +35,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -91,7 +99,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.itemAmount", is(20000)))
                 .andExpect(jsonPath("$.cancelReason", nullValue()))
                 .andExpect(jsonPath("$.status", is("REQUESTED")))
-                .andExpect(jsonPath("$.requestedAt", notNullValue()));
+                .andExpect(jsonPath("$.rejectReason", nullValue()))
+                .andExpect(jsonPath("$.requestedAt", notNullValue()))
+                .andExpect(jsonPath("$.decidedAt", nullValue()));
         Refund saved = onlyRefund();
         assertThat(saved).isNotNull();
         // 응답은 저장한 객체로 만들어 DB 값과 다를 수 있으므로, 다시 읽은 행의 모든 칸을 따로 확인한다
@@ -108,6 +118,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(saved.getItemAmount()).isEqualTo(20_000L);
             softly.assertThat(saved.getCancelReason()).isNull();
             softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(saved.getRejectReason()).isNull();
+            softly.assertThat(saved.getDecidedAt()).isNull();
             softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
             softly.assertThat(saved.getCreatedAt()).isNotNull();
         });
@@ -311,17 +323,24 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].status", is("REQUESTED")));
     }
 
-    // TODO(#409): 지금은 상태가 REQUESTED 하나뿐이라 거르지 않아도 결과가 같다. 거절·철회가 생기면 다른 상태 행을 섞어 실제로 걸러지는지 본다
     @Test
     void 판매자_목록을_상태로_거를_수_있다() throws Exception {
-        // given
-        request(SOCKS_ORDER_ITEM_ID, 1).andExpect(status().isCreated());
+        // given: 양말 요청을 철회하고 다시 요청해, 같은 판매자에게 철회 1건과 요청됨 1건이 있다
+        Long withdrawnId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        withdraw(BUYER_ID, withdrawnId).andExpect(status().isOk());
+        Long requestedId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
 
         // when & then
         mockMvc.perform(get(SELLER_URL).param("status", "REQUESTED")
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SOCKS_SELLER_ID, "BUYER", "SELLER")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements", is(1)));
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].refundId", is(requestedId.intValue())));
+        mockMvc.perform(get(SELLER_URL).param("status", "WITHDRAWN")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SOCKS_SELLER_ID, "BUYER", "SELLER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].refundId", is(withdrawnId.intValue())));
     }
 
     @Test
@@ -341,6 +360,245 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    // 판매자 승인·거절
+
+    @Test
+    void 승인하면_200과_처리_중을_돌려주고_같은_상품의_새_요청은_계속_막는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when
+        ResultActions sut = decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "APPROVE"}
+                """);
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.refundId", is(refundId.intValue())))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.rejectReason", nullValue()))
+                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+        Refund saved = onlyRefund();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(saved.getDecidedAt()).isNotNull();
+            softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+            softly.assertThat(saved.getItemAmount()).isEqualTo(10_000L);
+        });
+        // 처리 중은 아직 끝나지 않았으므로 같은 상품에 두 번째 요청을 받지 않는다
+        request(SOCKS_ORDER_ITEM_ID, 1)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/refund-already-in-progress")));
+    }
+
+    @Test
+    void 거절하면_사유를_저장하고_같은_상품에_다시_요청할_수_있다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when
+        ResultActions sut = decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "REJECT", "rejectReason": "  이미 포장을 마쳤습니다.  "}
+                """);
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("REJECTED")))
+                .andExpect(jsonPath("$.rejectReason", is("이미 포장을 마쳤습니다.")))
+                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+        Refund saved = refundRepository.findById(refundId).orElseThrow();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(saved.getRejectReason()).isEqualTo("이미 포장을 마쳤습니다.");
+            softly.assertThat(saved.getDecidedAt()).isNotNull();
+            softly.assertThat(saved.getActiveOrderItemId()).isNull();
+        });
+        request(SOCKS_ORDER_ITEM_ID, 1).andExpect(status().isCreated());
+        assertThat(refundRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void 거절_사유가_공백뿐이면_422이고_바꾸지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "REJECT", "rejectReason": "   "}
+                """)
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.type", endsWith("/refund/reject-reason-required")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 거절_사유가_255자를_넘으면_422() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "REJECT", "rejectReason": "%s"}
+                """.formatted("가".repeat(256)))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 결정_값이_승인_거절이_아니면_422() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "HOLD"}
+                """)
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 남의_상품_요청을_결정하면_404이고_바꾸지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then: 모자 판매자가 양말 요청을 승인하려 한다
+        decide(HAT_SELLER_ID, refundId, """
+                {"decision": "APPROVE"}
+                """)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", endsWith("/refund/refund-not-found")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 이미_거절한_요청을_승인하면_409() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "REJECT", "rejectReason": "재고 확인 필요"}
+                """).andExpect(status().isOk());
+
+        // when & then
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "APPROVE"}
+                """)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/invalid-refund-state")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REJECTED);
+    }
+
+    @Test
+    void 판매자가_아니면_결정은_403() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        mockMvc.perform(patch(SELLER_URL + "/" + refundId)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SOCKS_SELLER_ID, "BUYER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"decision": "APPROVE"}
+                                """))
+                .andExpect(status().isForbidden());
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    // 구매자 철회
+
+    @Test
+    void 철회하면_200과_철회를_돌려주고_같은_상품에_다시_요청할_수_있다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when
+        ResultActions sut = withdraw(BUYER_ID, refundId);
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("WITHDRAWN")))
+                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+        Refund saved = refundRepository.findById(refundId).orElseThrow();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.WITHDRAWN);
+            softly.assertThat(saved.getDecidedAt()).isNotNull();
+            softly.assertThat(saved.getActiveOrderItemId()).isNull();
+        });
+        request(SOCKS_ORDER_ITEM_ID, 1).andExpect(status().isCreated());
+        assertThat(refundRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void 승인된_뒤에는_철회할_수_없다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        decide(SOCKS_SELLER_ID, refundId, """
+                {"decision": "APPROVE"}
+                """).andExpect(status().isOk());
+
+        // when & then
+        withdraw(BUYER_ID, refundId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/invalid-refund-state")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+    }
+
+    @Test
+    void 남의_요청을_철회하면_404이고_바꾸지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        withdraw(OTHER_MEMBER_ID, refundId)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type", endsWith("/refund/refund-not-found")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    // 동시 처리
+
+    // 행 잠금이 없으면 두 요청이 모두 "요청됨"을 읽고 둘 다 성공해, 나중에 저장한 쪽이 앞의 결과를 덮어쓴다
+    @Test
+    void 승인과_철회가_동시에_오면_하나만_성공한다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        CountDownLatch start = new CountDownLatch(1);
+        Callable<Integer> approve = () -> {
+            start.await();
+            return decide(SOCKS_SELLER_ID, refundId, """
+                    {"decision": "APPROVE"}
+                    """).andReturn().getResponse().getStatus();
+        };
+        Callable<Integer> withdraw = () -> {
+            start.await();
+            return withdraw(BUYER_ID, refundId).andReturn().getResponse().getStatus();
+        };
+
+        // when
+        List<Integer> statuses = new ArrayList<>();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Integer> approveResult = executor.submit(approve);
+            Future<Integer> withdrawResult = executor.submit(withdraw);
+            start.countDown();
+            statuses.add(approveResult.get());
+            statuses.add(withdrawResult.get());
+        } finally {
+            executor.shutdownNow();
+        }
+
+        // then
+        assertThat(statuses).containsExactlyInAnyOrder(200, 409);
+        // 성공한 쪽의 결과가 남아야 한다. 승인이 이겼으면 처리 중, 철회가 이겼으면 철회다
+        RefundStatus expected = statuses.getFirst() == 200 ? RefundStatus.PROCESSING : RefundStatus.WITHDRAWN;
+        assertThat(onlyRefund().getStatus()).isEqualTo(expected);
+    }
+
     private ResultActions request(Long orderItemId, int quantity) throws Exception {
         return mockMvc.perform(post(BUYER_URL)
                 .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
@@ -355,6 +613,26 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .content("""
                         {"orderId": %d, "orderItemId": %d, "quantity": 1, "cancelReason": %s}
                         """.formatted(ORDER_ID, SOCKS_ORDER_ITEM_ID, reasonJson)));
+    }
+
+    // 요청을 하나 만들고 응답의 환불 ID를 돌려준다
+    private Long requestedRefundId(Long orderItemId) throws Exception {
+        String response = request(orderItemId, 1)
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return ((Number) JsonPath.read(response, "$.refundId")).longValue();
+    }
+
+    private ResultActions decide(Long sellerId, Long refundId, String json) throws Exception {
+        return mockMvc.perform(patch(SELLER_URL + "/" + refundId)
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(sellerId, "BUYER", "SELLER"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json));
+    }
+
+    private ResultActions withdraw(Long buyerId, Long refundId) throws Exception {
+        return mockMvc.perform(post(BUYER_URL + "/" + refundId + "/withdraw")
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(buyerId, "BUYER")));
     }
 
     private static String body(Long orderItemId, int quantity) {

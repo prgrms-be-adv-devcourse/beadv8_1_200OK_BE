@@ -37,4 +37,15 @@ interface RefundControllerSpec {
             @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (VALIDATION_FAILED)")
     })
     ResponseEntity<RefundPageResponse> getMyRefunds(Long buyerId, @ParameterObject RefundPageRequest request);
+
+    @Operation(summary = "환불 요청 철회",
+            description = "판매자가 승인하기 전(요청됨)에 본인 요청을 거둔다. 철회하면 같은 상품에 다시 요청할 수 있다.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "철회 성공 (WITHDRAWN)"),
+            @ApiResponse(responseCode = "401", description = "로그인 필요"),
+            @ApiResponse(responseCode = "403", description = "구매 권한(BUYER) 없음"),
+            @ApiResponse(responseCode = "404", description = "없거나 남의 요청 (REFUND_NOT_FOUND)"),
+            @ApiResponse(responseCode = "409", description = "요청됨이 아님. 이미 승인·거절됐거나 철회함 (INVALID_REFUND_STATE)")
+    })
+    ResponseEntity<RefundResponse> withdraw(Long buyerId, Long refundId);
 }
