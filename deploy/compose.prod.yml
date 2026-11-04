@@ -197,22 +197,16 @@ services:
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped
-    # BFF는 프론트 레포가 따로 띄우므로 기다리지 않는다. BFF가 없거나 죽어도 nginx와 /api/v1/은 살아 있다
+    # BFF는 프론트 레포가 따로 띄우므로 기다리지 않는다. BFF가 없거나 죽어도 nginx는 뜨고 요청만 502가 난다
     depends_on:
       app:
         condition: service_healthy
-    # edge: 프론트 compose의 bff(8787)로 /bff/를 보낸다
+    # edge: 프론트 compose의 bff(8787)로 /api/v1/과 /bff/를 보낸다
     networks: [default, edge]
-    environment:
-      # 비우거나 없으면 앱으로 바로 보낸다. BFF로 돌리는 방법은 docs/DEPLOY.md 10절
-      API_UPSTREAM: ${API_UPSTREAM:-http://app:8080}
-      # envsubst가 $host 같은 nginx 변수를 건드리지 않게 이 값만 치환한다
-      NGINX_ENVSUBST_FILTER: ^API_UPSTREAM$$
     ports:
       - "80:80"
     volumes:
-      # 템플릿은 nginx가 시작할 때 conf.d로 렌더링된다. 템플릿을 바꾸면 nginx를 재시작해야 반영된다
-      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
 
 networks:
   kafka-net:

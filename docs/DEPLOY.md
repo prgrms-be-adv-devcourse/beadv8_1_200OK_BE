@@ -6,14 +6,13 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 ## 1. 구성
 
 ```
-인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
-                 │                         └──▶ redis
-                 ├─ /bff/** ──▶ bff ──▶ app   (프론트 레포가 배포, paldo-edge 네트워크)
+인터넷 ──80──▶ nginx ──/api/v1/**, /bff/**──▶ bff ──/api/v1/**──▶ app ──▶ mysql
+                 │                              (프론트 레포가 배포)        └──▶ redis
                  └─ 그 외 경로(/internal, /actuator 등) → 404
-                                       └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
+                                                                    └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
 ```
 
-- BFF(프론트 BFF)는 같은 EC2에 있지만 프론트 레포의 별도 compose 프로젝트(`/opt/paldo-gotgan-bff`)로 뜹니다. 배포·롤백은 프론트 레포 `deploy/README.md`를 따르고, 이 레포의 `deploy.sh`는 BFF를 건드리지 않습니다. 이 레포에는 nginx 경로와 공유 네트워크만 있습니다([10. BFF 경로와 `/api/v1/` 전환](#10-bff-경로와-apiv1-전환)).
+- 외부 요청은 모두 프론트 BFF를 거쳐 앱에 닿습니다. BFF는 같은 EC2에 있지만 프론트 레포의 별도 compose 프로젝트(`/opt/paldo-gotgan-bff`)로 뜹니다. 배포·롤백은 프론트 레포 `deploy/README.md`를 따르고, 이 레포의 `deploy.sh`는 BFF를 건드리지 않습니다. 이 레포에는 nginx 경로와 공유 네트워크만 있습니다([10. BFF](#10-bff)).
 
 - 외부에는 `/api/v1/**`과 `/bff/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
@@ -162,14 +161,13 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options 
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`나 `nginx/templates/default.conf.template`이 바뀌면 아래 순서로 반영합니다.
+`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
 scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
-ssh -i <키 파일> ubuntu@<EIP> mkdir -p /opt/paldo-gotgan/nginx/templates
-scp -i <키 파일> deploy/nginx/templates/default.conf.template ubuntu@<EIP>:/opt/paldo-gotgan/nginx/templates/default.conf.template
+scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
 
 # 서버
 cd /opt/paldo-gotgan
@@ -180,8 +178,7 @@ docker compose -f compose.prod.yml restart nginx
 - **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). app은 Redis가 healthy가 된 뒤에 시작하므로, 형식이 틀려 Redis가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 
 - Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
-- nginx는 `nginx/templates` 디렉터리를 bind mount하고, 시작할 때 템플릿을 `conf.d/default.conf`로 렌더링합니다. 템플릿만 바꿨다면 nginx를 재시작해야 반영됩니다. `.env`의 `API_UPSTREAM`을 바꿨다면 재시작으로는 안 되고 컨테이너를 다시 만들어야 합니다([10절](#10-bff-경로와-apiv1-전환)).
-- **템플릿 방식(#433)을 처음 배포하는 기존 서버**는 `compose.prod.yml`보다 템플릿을 먼저 올립니다. 템플릿 디렉터리가 없으면 docker가 빈 디렉터리를 만들어 nginx가 기본 설정(환영 페이지)으로 뜨고 `/api/v1/`이 404가 됩니다. 옛 `nginx/default.conf`는 더 쓰지 않으니 지워도 됩니다.
+- nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
 
 ## 7. pull 토큰 교체
 
@@ -353,37 +350,16 @@ docker compose -f compose.prod.yml restart app
 - 개인키가 유출되었으면 2를 기다리지 않고 1에서 `rs256-v1`을 바로 뺍니다. 그 키로 서명된 토큰은 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다.
 - 재시작 중 수십 초간 요청이 실패합니다([1. 구성](#1-구성)).
 
-## 10. BFF 경로와 `/api/v1/` 전환
+## 10. BFF
 
 BFF 컨테이너는 프론트 레포가 배포합니다(프론트 레포 `deploy/README.md`). 이 레포가 맡는 것은 두 가지입니다.
 
 - **공유 네트워크 `paldo-edge`**: `compose.prod.yml`이 고정 이름으로 만들고 app·nginx를 붙입니다. 프론트 compose의 `bff`가 이 네트워크에 `external`로 붙어, nginx는 `bff:8787`로, BFF는 `app:8080`으로 닿습니다. 이름은 두 레포의 계약이라 한쪽만 바꾸면 BFF가 끊깁니다.
   - BFF가 붙어 있으면 `docker compose down`이 이 네트워크를 지우지 못하고 `Resource is still in use`를 출력합니다. 정상이고, 다시 올리면 app·nginx가 같은 네트워크에 붙습니다.
-- **nginx `/bff/` 경로**: `/bff/**`을 접두어 그대로 `http://bff:8787`로 보냅니다(BFF 라우트가 `/bff/*`입니다). 주소를 요청마다 다시 찾으므로 BFF가 없거나 죽어 있어도 nginx는 뜨고 `/bff/**`만 502가 납니다.
+- **nginx 경로**: `/api/v1/**`과 `/bff/**`을 접두어 그대로 `http://bff:8787`로 보냅니다. BFF가 `/api/v1/**`을 경로와 `Authorization` 그대로 앱에 넘기므로 사용자 동작은 앱으로 바로 갈 때와 같습니다. 응답은 130초까지 기다립니다(BFF가 업로드를 최대 120초 기다림).
 
-처음 올리는 순서는 ① 이 레포 배포(네트워크·nginx) ② 프론트 레포에서 BFF 배포 ③ Vercel 주소를 거쳐 `/bff/session/login`이 쿠키를 주는지 확인 ④ 아래 `/api/v1/` 전환입니다.
+주의할 점:
 
-### `/api/v1/`을 BFF로 전환
-
-프론트를 쿠키 방식으로 바꾸기 전에, `/api/v1/**`이 BFF를 거쳐도 응답이 같은지 운영 경로에서 확인하는 절차입니다. BFF는 `/api/v1/**`을 경로와 `Authorization`을 그대로 앱에 넘기므로 사용자 동작은 바뀌지 않아야 합니다.
-
-`.env`의 `API_UPSTREAM`이 nginx가 `/api/v1/**`을 보낼 곳입니다. 비우면 `http://app:8080`(앱 직접)입니다. 바꾼 뒤에는 nginx만 다시 만듭니다. app은 재시작하지 않습니다.
-
-```bash
-# 서버: BFF로 전환
-cd /opt/paldo-gotgan
-grep -q '^API_UPSTREAM=' .env || echo 'API_UPSTREAM=' >> .env
-sed -i 's|^API_UPSTREAM=.*|API_UPSTREAM=http://bff:8787|' .env
-docker compose -f compose.prod.yml up -d --no-deps nginx
-docker compose -f compose.prod.yml exec nginx grep 'set $api_upstream' /etc/nginx/conf.d/default.conf   # http://bff:8787이 보여야 한다
-
-# 원복: 값을 비우고 nginx만 다시 만든다
-sed -i 's|^API_UPSTREAM=.*|API_UPSTREAM=|' .env
-docker compose -f compose.prod.yml up -d --no-deps nginx
-```
-
-- 값은 `http://호스트:포트` 형식으로만 씁니다. 뒤에 `/`나 경로를 붙이면 nginx가 경로를 다르게 넘겨 요청이 깨집니다.
-- nginx를 다시 만드는 1~2초 동안 요청이 실패할 수 있습니다.
-- 전환한 동안에는 BFF가 죽으면 `/api/v1/**`도 502가 납니다. 이상하면 바로 원복합니다.
-- `./deploy.sh`도 `.env`를 읽으므로 전환 상태는 이후 배포에도 유지됩니다.
-- nginx는 `/api/v1/**`과 `/bff/**` 모두 응답을 130초까지 기다립니다. BFF가 업로드를 최대 120초 기다리므로, 대상이 바뀌어도 nginx가 먼저 끊지 않게 하기 위함입니다.
+- **BFF가 없거나 죽으면 `/api/v1/**`도 502가 납니다.** nginx는 주소를 요청마다 다시 찾으므로 BFF 없이도 뜨지만, 외부 요청은 모두 실패합니다. BFF 이상은 프론트 레포에서 이미지 태그로 롤백합니다.
+- **처음 배포할 때는 이 레포를 배포한 직후 프론트 레포의 BFF를 배포합니다.** 이 레포가 `paldo-edge`를 만들어야 BFF가 붙을 수 있고, 그 사이 몇 분은 `/api/v1/**`이 502입니다.
+- 서비스 운영 전이라 앱으로 바로 보내는 전환 스위치는 두지 않았습니다. BFF를 빼고 앱으로 바로 보내야 하면 `nginx/default.conf`의 `$bff_upstream`을 `http://app:8080`으로 바꾸고 nginx를 재시작합니다. 이때 `/bff/**`은 쓸 수 없습니다.
