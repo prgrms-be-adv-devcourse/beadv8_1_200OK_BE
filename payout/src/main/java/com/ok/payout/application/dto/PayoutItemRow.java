@@ -5,7 +5,7 @@ import com.ok.payout.domain.PayoutEventType;
 import java.time.LocalDateTime;
 
 // 정산 항목 한 줄 + 그 항목의 정산후보 정보 (항목 조회용)
-// 저장소 어댑터(adapter/out/persistence)가 서비스 쪽 타입을 쓰면 레이어 규칙에 걸려서, 조회 결과용 record를 application/dto에 둠 (CandidateRow·PayoutItemRow 같은 이유)
+// 저장소 어댑터(adapter/out/persistence)가 서비스 쪽 타입을 쓰면 레이어 규칙에 걸려서, 조회 결과용 record를 application/dto에 둠 (CandidateRow와 같은 이유)
 public record PayoutItemRow(
         Long payoutItemId,
         Long candidateId,
