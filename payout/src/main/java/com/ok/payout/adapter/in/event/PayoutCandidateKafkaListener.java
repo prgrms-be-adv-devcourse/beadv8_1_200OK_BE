@@ -3,14 +3,19 @@ package com.ok.payout.adapter.in.event;
 import com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage;
 import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.application.port.in.PayoutCandidateUseCase;
+import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+
+import java.util.Optional;
 
 /**
  * 주문 구매확정을 Kafka로 받는 입구다.
  * Spring 이벤트 입구({@link PayoutCandidateEventListener})는 #343에서 지워질 예정이라 따로 분리했고, 두 입구는 같은 입력 포트를 호출한다.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PayoutCandidateKafkaListener {
@@ -25,6 +30,16 @@ public class PayoutCandidateKafkaListener {
             groupId = PayoutTopics.CONSUMER_GROUP,
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage")
     void onKafka(OrderProductConfirmedMessage message) {
-        payoutCandidateUseCase.createFromPurchaseConfirmed(message.toCommand());
+        PurchaseConfirmedCommand command = message.toCommand();
+        // 값이 잘못된 메시지는 다시 받아도 결과가 같으므로, 정산후보를 만들지 않고 기록만 남긴 뒤 정상 종료해 재시도 대상에서 뺀다.
+        // 확인은 트랜잭션이 걸린 서비스를 부르기 전에 끝낸다. 서비스 안에서 예외가 나면 트랜잭션이 롤백 전용이 되어 정상 종료할 수 없다.
+        Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);
+        if (invalidReason.isPresent()) {
+            log.error("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 이벤트라 정산후보를 만들지 않습니다. reason={}, command={}",
+                    invalidReason.get(), command);
+            return;
+        }
+        // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 재시도 대상으로 남긴다.
+        payoutCandidateUseCase.createFromPurchaseConfirmed(command);
     }
 }

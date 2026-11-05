@@ -19,7 +19,7 @@ public record OrderProductConfirmedMessage(
         Long sellerShippingPrice
 ) {
 
-    // 값 검사(null, 음수)는 Spring 이벤트로 받을 때와 똑같이 서비스(PayoutCandidateService)가 한다
+    // 값 검사(null, 음수)는 Spring 이벤트로 받을 때와 똑같이 입구(PayoutInboundEventValidator)가 한다
     public PurchaseConfirmedCommand toCommand() {
         return new PurchaseConfirmedCommand(orderId, orderItemId, sellerId, totalItemPrice, sellerShippingPrice);
     }

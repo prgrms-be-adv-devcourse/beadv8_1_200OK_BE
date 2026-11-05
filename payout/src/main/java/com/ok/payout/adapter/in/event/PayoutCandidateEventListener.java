@@ -4,13 +4,17 @@ import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.application.port.in.PayoutCandidateUseCase;
 import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
+
+import java.util.Optional;
 
 /**
  * 주문 구매확정을 Spring 이벤트로 받는 입구다.
  * Kafka 입구({@link PayoutCandidateKafkaListener})와 같은 입력 포트를 호출한다.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PayoutCandidateEventListener {
@@ -22,12 +26,23 @@ public class PayoutCandidateEventListener {
     // TODO(#343): 주문이 Spring 발행을 지우면 이 클래스(Spring 입구)를 통째로 지운다. 그때 정산에서 common.event를 받는 곳이 없어진다
     @ApplicationModuleListener
     void on(OrderProductConfirmedEvent event) {
-        payoutCandidateUseCase.createFromPurchaseConfirmed(new PurchaseConfirmedCommand(
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(
                 event.orderId(),
                 event.orderItemId(),
                 event.sellerId(),
                 event.totalItemPrice(),
                 event.sellerShippingPrice()
-        ));
+        );
+        // 값이 잘못된 이벤트는 다시 처리해도 결과가 같으므로, 정산후보를 만들지 않고 기록만 남긴 뒤 정상 종료해 재처리 대상에서 뺀다.
+        // 확인은 트랜잭션이 걸린 서비스를 부르기 전에 끝낸다. 서비스 안에서 예외가 나면 트랜잭션이 롤백 전용이 되어,
+        // 이 리스너(REQUIRES_NEW)가 정상 종료할 수 없다.
+        Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);
+        if (invalidReason.isPresent()) {
+            log.error("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 이벤트라 정산후보를 만들지 않습니다. reason={}, command={}",
+                    invalidReason.get(), command);
+            return;
+        }
+        // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 재처리 대상으로 남긴다.
+        payoutCandidateUseCase.createFromPurchaseConfirmed(command);
     }
 }
