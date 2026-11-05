@@ -1,7 +1,6 @@
 package com.ok.common.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 import java.lang.reflect.Method;
@@ -9,10 +8,15 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.ok.common.config.AsyncProperties.ExecutorType;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -20,14 +24,15 @@ import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
-import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /**
- * 비동기 실행기 설정을 검증한다. DB 없이 컨텍스트만 띄워 실행기의 성격(가상 스레드, 상한, 거절)과
+ * 비동기 실행기 설정을 검증한다. DB 없이 컨텍스트만 띄워 실행기의 종류(일반 스레드 풀, 가상 스레드), 대기열, 가득 찼을 때의 동작,
  * 이름별 설정, 기본 실행기 선택을 확인한다.
  */
 class AsyncConfigTest {
@@ -47,7 +52,7 @@ class AsyncConfigTest {
     static class OrderAsyncConfig {
 
         @Bean(EXTERNAL_API)
-        SimpleAsyncTaskExecutor orderExternalApiExecutor(AsyncExecutorFactory factory) {
+        AsyncTaskExecutor orderExternalApiExecutor(AsyncExecutorFactory factory) {
             return factory.create(EXTERNAL_API);
         }
     }
@@ -65,9 +70,9 @@ class AsyncConfigTest {
             assertThat(event).isNotNull();
             assertSoftly(softly -> {
                 softly.assertThat(sut.defaultExecutor()).isEqualTo("event");
-                softly.assertThat(event.virtualThreads()).isTrue();
-                softly.assertThat(event.concurrencyLimit()).isEqualTo(5);
-                softly.assertThat(event.rejectTasksWhenLimitReached()).isFalse();
+                softly.assertThat(event.type()).isEqualTo(ExecutorType.PLATFORM);
+                softly.assertThat(event.poolSize()).isEqualTo(8);
+                softly.assertThat(event.queueCapacity()).isEqualTo(1000);
                 softly.assertThat(event.taskTerminationTimeout()).isEqualTo(Duration.ofSeconds(10));
                 softly.assertThat(event.threadNamePrefix()).isEqualTo("event-");
             });
@@ -79,7 +84,7 @@ class AsyncConfigTest {
     void 모듈_설정은_같은_이름의_필드만_덮어쓰고_나머지는_유지한다() {
         runner.withPropertyValues(
                 "app.async.executors." + EXTERNAL_API + ".concurrency-limit=3",
-                "app.async.executors.event.concurrency-limit=2"
+                "app.async.executors.event.pool-size=2"
         ).run(context -> {
             // when
             AsyncProperties sut = context.getBean(AsyncProperties.class);
@@ -91,54 +96,40 @@ class AsyncConfigTest {
             assertThat(event).isNotNull();
             assertThat(external).isNotNull();
             assertSoftly(softly -> {
-                softly.assertThat(event.concurrencyLimit()).isEqualTo(2);
+                softly.assertThat(event.poolSize()).isEqualTo(2);
+                softly.assertThat(event.type()).isEqualTo(ExecutorType.PLATFORM);
                 softly.assertThat(event.threadNamePrefix()).isEqualTo("event-");
                 softly.assertThat(event.taskTerminationTimeout()).isEqualTo(Duration.ofSeconds(10));
                 softly.assertThat(external.concurrencyLimit()).isEqualTo(3);
+                softly.assertThat(external.type()).isEqualTo(ExecutorType.VIRTUAL);
                 softly.assertThat(external.threadNamePrefix()).isNull();
             });
         });
     }
 
     @Test
-    void 기본_실행기는_event_빈이고_상한은_설정값이다() {
-        runner.withPropertyValues("app.async.executors.event.concurrency-limit=3").run(context -> {
+    void event_실행기는_설정한_크기의_대기열이_있는_일반_스레드_풀이다() {
+        runner.withPropertyValues(
+                "app.async.executors.event.pool-size=3",
+                "app.async.executors.event.queue-capacity=50"
+        ).run(context -> {
             // when
-            SimpleAsyncTaskExecutor sut = context.getBean("event", SimpleAsyncTaskExecutor.class);
+            ThreadPoolTaskExecutor sut = context.getBean("event", ThreadPoolTaskExecutor.class);
 
             // then
-            assertThat(sut.getConcurrencyLimit()).isEqualTo(3);
-        });
-    }
-
-    @Test
-    void 작업은_접두사가_붙은_가상_스레드에서_실행된다() {
-        runner.run(context -> {
-            // given
-            SimpleAsyncTaskExecutor sut = context.getBean("event", SimpleAsyncTaskExecutor.class);
-            CompletableFuture<Thread> ran = new CompletableFuture<>();
-
-            // when
-            sut.execute(() -> ran.complete(Thread.currentThread()));
-
-            // then
-            Thread thread = ran.get(WAIT_SECONDS, TimeUnit.SECONDS);
             assertSoftly(softly -> {
-                softly.assertThat(thread.isVirtual()).isTrue();
-                softly.assertThat(thread.getName()).startsWith("event-");
+                softly.assertThat(sut.getCorePoolSize()).isEqualTo(3);
+                softly.assertThat(sut.getMaxPoolSize()).isEqualTo(3);
+                softly.assertThat(sut.getThreadPoolExecutor().getQueue().remainingCapacity()).isEqualTo(50);
             });
         });
     }
 
-    // 운영에서 가상 스레드에 문제가 생기면 재빌드 없이 일반 스레드로 되돌릴 수 있어야 한다. 상한과 이름 접두사는 그대로 적용된다
     @Test
-    void 가상_스레드를_끄면_일반_스레드에서_실행되고_상한은_유지된다() {
-        runner.withPropertyValues(
-                "app.async.executors.event.virtual-threads=false",
-                "app.async.executors.event.concurrency-limit=3"
-        ).run(context -> {
+    void event_작업은_접두사가_붙은_일반_스레드에서_실행된다() {
+        runner.run(context -> {
             // given
-            SimpleAsyncTaskExecutor sut = context.getBean("event", SimpleAsyncTaskExecutor.class);
+            AsyncTaskExecutor sut = context.getBean("event", AsyncTaskExecutor.class);
             CompletableFuture<Thread> ran = new CompletableFuture<>();
 
             // when
@@ -149,68 +140,66 @@ class AsyncConfigTest {
             assertSoftly(softly -> {
                 softly.assertThat(thread.isVirtual()).isFalse();
                 softly.assertThat(thread.getName()).startsWith("event-");
-                softly.assertThat(sut.getConcurrencyLimit()).isEqualTo(3);
             });
         });
     }
 
-    // 비동기 작업의 로그에도 요청의 추적 값이 남아야 한다
+    // 가득 찼을 때 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가고 같은 커밋의 다른 콜백이 실행되지 않는다.
+    // 그래서 거절하거나 버리지 않고, 작업을 넘긴 스레드가 기다렸다가 작업이 모두 실행되어야 한다
     @Test
-    void Async_작업에는_호출한_스레드의_MDC가_전달된다() {
-        runner.run(context -> {
-            // given
-            AsyncProbe sut = context.getBean(AsyncProbe.class);
-            CompletableFuture<String> ran = new CompletableFuture<>();
-            MDC.put("traceId", "trace-1");
+    void 대기열이_가득_차면_작업을_넘긴_스레드가_기다리고_거절하지_않는다() {
+        runner.withPropertyValues(
+                "app.async.executors.event.pool-size=1",
+                "app.async.executors.event.queue-capacity=1"
+        ).run(context -> {
+            // given: 스레드 1개는 실행 중이고 대기열 1칸도 찬 상태
+            AsyncTaskExecutor sut = context.getBean("event", AsyncTaskExecutor.class);
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            AtomicInteger executed = new AtomicInteger();
+            sut.execute(() -> {
+                started.countDown();
+                awaitQuietly(release);
+                executed.incrementAndGet();
+            });
+            assertThat(started.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+            sut.execute(executed::incrementAndGet);
 
-            // when
-            try {
-                sut.recordMdc(ran);
-            } finally {
-                MDC.clear();
-            }
+            // when: 가득 찬 상태에서 세 번째 작업을 넘긴다
+            AtomicBoolean returned = new AtomicBoolean();
+            AtomicReference<Throwable> thrown = new AtomicReference<>();
+            Thread caller = new Thread(() -> {
+                try {
+                    sut.execute(executed::incrementAndGet);
+                    returned.set(true);
+                } catch (Throwable e) {
+                    thrown.set(e);
+                }
+            });
+            caller.start();
+            Thread.sleep(500);
+            boolean returnedWhileFull = returned.get();
+            release.countDown();
+            caller.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+            waitUntil(() -> executed.get() == 3);
 
             // then
-            assertThat(ran.get(WAIT_SECONDS, TimeUnit.SECONDS)).isEqualTo("trace-1");
-        });
-    }
-
-    // 이벤트에는 수령인 이름·전화번호·주소 같은 개인정보가 담길 수 있어, 예외 로그에 이벤트 값이 찍히면 안 된다
-    @Test
-    void 비동기_예외_로그에는_파라미터_값이_아니라_타입_이름만_남는다() {
-        runner.run(context -> {
-            // given
-            AsyncUncaughtExceptionHandler sut = context.getBean(AsyncConfigurer.class).getAsyncUncaughtExceptionHandler();
-            Method method = AsyncProbe.class.getMethod("recordMdc", CompletableFuture.class);
-            Logger logger = (Logger) LoggerFactory.getLogger(AsyncConfig.class);
-            ListAppender<ILoggingEvent> appender = new ListAppender<>();
-            appender.start();
-            logger.addAppender(appender);
-
-            // when
-            try {
-                sut.handleUncaughtException(new IllegalStateException("실패"), method, new Object[]{new SecretEvent("010-1234-5678")});
-            } finally {
-                logger.detachAppender(appender);
-            }
-
-            // then
-            assertThat(appender.list).hasSize(1);
-            String message = appender.list.get(0).getFormattedMessage();
             assertSoftly(softly -> {
-                softly.assertThat(message).contains("SecretEvent");
-                softly.assertThat(message).doesNotContain("010-1234-5678");
+                softly.assertThat(returnedWhileFull).isFalse();
+                softly.assertThat(thrown.get()).isNull();
+                softly.assertThat(returned.get()).isTrue();
+                softly.assertThat(executed.get()).isEqualTo(3);
             });
         });
     }
 
     @Test
-    void 모듈이_선언한_실행기는_yml_설정과_이름으로_만들어진다() {
+    void 모듈이_선언한_virtual_실행기는_접두사가_붙은_가상_스레드에서_실행되고_상한을_가진다() {
         runner.withUserConfiguration(OrderAsyncConfig.class)
                 .withPropertyValues("app.async.executors." + EXTERNAL_API + ".concurrency-limit=3")
                 .run(context -> {
                     // given
-                    SimpleAsyncTaskExecutor sut = context.getBean(EXTERNAL_API, SimpleAsyncTaskExecutor.class);
+                    AsyncTaskExecutor sut = context.getBean(EXTERNAL_API, AsyncTaskExecutor.class);
                     CompletableFuture<Thread> ran = new CompletableFuture<>();
 
                     // when
@@ -218,12 +207,74 @@ class AsyncConfigTest {
 
                     // then
                     Thread thread = ran.get(WAIT_SECONDS, TimeUnit.SECONDS);
+                    assertThat(sut).isInstanceOf(SimpleAsyncTaskExecutor.class);
                     assertSoftly(softly -> {
-                        softly.assertThat(sut.getConcurrencyLimit()).isEqualTo(3);
+                        softly.assertThat(((SimpleAsyncTaskExecutor) sut).getConcurrencyLimit()).isEqualTo(3);
                         softly.assertThat(thread.isVirtual()).isTrue();
                         // 접두사를 지정하지 않으면 실행기 이름으로 만든다
                         softly.assertThat(thread.getName()).startsWith(EXTERNAL_API + "-");
                     });
+                });
+    }
+
+    // virtual은 대기열이 없다. 상한이 차면 거절하지 않고 작업을 넘긴 스레드가 자리가 날 때까지 기다린다
+    @Test
+    void virtual_실행기는_상한이_차면_작업을_넘긴_스레드가_기다리고_거절하지_않는다() {
+        runner.withUserConfiguration(OrderAsyncConfig.class)
+                .withPropertyValues("app.async.executors." + EXTERNAL_API + ".concurrency-limit=1")
+                .run(context -> {
+                    // given: 상한 1개가 찬 상태
+                    AsyncTaskExecutor sut = context.getBean(EXTERNAL_API, AsyncTaskExecutor.class);
+                    CountDownLatch started = new CountDownLatch(1);
+                    CountDownLatch release = new CountDownLatch(1);
+                    sut.execute(() -> {
+                        started.countDown();
+                        awaitQuietly(release);
+                    });
+                    assertThat(started.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+                    // when
+                    AtomicBoolean returned = new AtomicBoolean();
+                    AtomicReference<Throwable> thrown = new AtomicReference<>();
+                    Thread caller = new Thread(() -> {
+                        try {
+                            sut.execute(() -> { });
+                            returned.set(true);
+                        } catch (Throwable e) {
+                            thrown.set(e);
+                        }
+                    });
+                    caller.start();
+                    Thread.sleep(500);
+                    boolean returnedWhileFull = returned.get();
+                    release.countDown();
+                    caller.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                    // then
+                    assertSoftly(softly -> {
+                        softly.assertThat(returnedWhileFull).isFalse();
+                        softly.assertThat(thrown.get()).isNull();
+                        softly.assertThat(returned.get()).isTrue();
+                    });
+                });
+    }
+
+    @Test
+    void type을_platform으로_바꾸면_일반_스레드_풀이_된다() {
+        runner.withUserConfiguration(OrderAsyncConfig.class)
+                .withPropertyValues("app.async.executors." + EXTERNAL_API + ".type=platform")
+                .run(context -> {
+                    // given
+                    AsyncTaskExecutor sut = context.getBean(EXTERNAL_API, AsyncTaskExecutor.class);
+                    CompletableFuture<Thread> ran = new CompletableFuture<>();
+
+                    // when
+                    sut.execute(() -> ran.complete(Thread.currentThread()));
+
+                    // then
+                    Thread thread = ran.get(WAIT_SECONDS, TimeUnit.SECONDS);
+                    assertThat(sut).isInstanceOf(ThreadPoolTaskExecutor.class);
+                    assertThat(thread.isVirtual()).isFalse();
                 });
     }
 
@@ -258,7 +309,7 @@ class AsyncConfigTest {
         });
     }
 
-    // @ApplicationModuleListener 안의 @Async가 이 실행기를 쓴다. 호출한 스레드와 다른 가상 스레드에서 실행돼야 한다
+    // @ApplicationModuleListener 안의 @Async가 기본 실행기를 쓴다. 호출한 스레드와 다른 event- 스레드에서 실행돼야 한다
     @Test
     void 이름_없는_Async_메서드는_기본_실행기_스레드에서_실행된다() {
         runner.run(context -> {
@@ -273,7 +324,7 @@ class AsyncConfigTest {
             Thread thread = ran.get(WAIT_SECONDS, TimeUnit.SECONDS);
             assertSoftly(softly -> {
                 softly.assertThat(thread).isNotSameAs(Thread.currentThread());
-                softly.assertThat(thread.isVirtual()).isTrue();
+                softly.assertThat(thread.isVirtual()).isFalse();
                 softly.assertThat(thread.getName()).startsWith("event-");
             });
         });
@@ -327,33 +378,57 @@ class AsyncConfigTest {
         runner.withBean("taskScheduler", ThreadPoolTaskScheduler.class).run(context -> {
             // then
             assertThat(context).hasNotFailed();
-            assertThat(context.getBeansOfType(SimpleAsyncTaskExecutor.class)).hasSize(1);
+            assertThat(context.getBean("event")).isInstanceOf(ThreadPoolTaskExecutor.class);
         });
     }
 
+    // MDC에 있는 값을 비동기 스레드로 그대로 복사한다 (값을 넣는 쪽은 별도 작업)
     @Test
-    void 거절을_켜면_상한에_걸린_작업은_거절된다() {
-        runner.withPropertyValues(
-                "app.async.executors.event.concurrency-limit=1",
-                "app.async.executors.event.reject-tasks-when-limit-reached=true"
-        ).run(context -> {
+    void Async_작업에는_호출한_스레드의_MDC가_전달된다() {
+        runner.run(context -> {
             // given
-            SimpleAsyncTaskExecutor sut = context.getBean("event", SimpleAsyncTaskExecutor.class);
-            CountDownLatch started = new CountDownLatch(1);
-            CountDownLatch release = new CountDownLatch(1);
-            sut.execute(() -> {
-                started.countDown();
-                awaitQuietly(release);
-            });
-            assertThat(started.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+            AsyncProbe sut = context.getBean(AsyncProbe.class);
+            CompletableFuture<String> ran = new CompletableFuture<>();
+            MDC.put("traceId", "trace-1");
 
-            // when & then
+            // when
             try {
-                assertThatThrownBy(() -> sut.execute(() -> { }))
-                        .isInstanceOf(TaskRejectedException.class);
+                sut.recordMdc(ran);
             } finally {
-                release.countDown();
+                MDC.clear();
             }
+
+            // then
+            assertThat(ran.get(WAIT_SECONDS, TimeUnit.SECONDS)).isEqualTo("trace-1");
+        });
+    }
+
+    // 이벤트에는 수령인 이름·전화번호·주소 같은 개인정보가 담길 수 있어, 예외 로그에 이벤트 값이 찍히면 안 된다
+    @Test
+    void 비동기_예외_로그에는_파라미터_값이_아니라_타입_이름만_남는다() {
+        runner.run(context -> {
+            // given
+            AsyncUncaughtExceptionHandler sut = context.getBean(AsyncConfigurer.class).getAsyncUncaughtExceptionHandler();
+            Method method = AsyncProbe.class.getMethod("recordMdc", CompletableFuture.class);
+            Logger logger = (Logger) LoggerFactory.getLogger(AsyncConfig.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+
+            // when
+            try {
+                sut.handleUncaughtException(new IllegalStateException("실패"), method, new Object[]{new SecretEvent("010-1234-5678")});
+            } finally {
+                logger.detachAppender(appender);
+            }
+
+            // then
+            assertThat(appender.list).hasSize(1);
+            String message = appender.list.get(0).getFormattedMessage();
+            assertSoftly(softly -> {
+                softly.assertThat(message).contains("SecretEvent");
+                softly.assertThat(message).doesNotContain("010-1234-5678");
+            });
         });
     }
 
@@ -362,6 +437,13 @@ class AsyncConfigTest {
             latch.await(WAIT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void waitUntil(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(20);
         }
     }
 

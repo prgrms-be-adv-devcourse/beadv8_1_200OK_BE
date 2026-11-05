@@ -8,7 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 비동기 실행기(가상 스레드)의 설정값. 실행기는 이름을 붙여 여러 개 둘 수 있다.
+ * 비동기 실행기의 설정값. 실행기는 이름을 붙여 여러 개 둘 수 있다.
  *
  * <p>application.yaml의 {@code app.async.*} 값이 이 record에 바인딩된다. 기본값과 설명은 common-async.yaml에 있다.
  * <pre>
@@ -17,8 +17,11 @@ import java.util.Map;
  *     default-executor: event
  *     executors:
  *       event:
- *         concurrency-limit: 5
+ *         type: platform
+ *         pool-size: 8
+ *         queue-capacity: 1000
  *       order-external-api:
+ *         type: virtual
  *         concurrency-limit: 3
  * </pre>
  *
@@ -47,7 +50,7 @@ public record AsyncProperties(
         }
         // event 실행기는 설정이 없어도 있어야 한다. yaml을 가져오지 않는 테스트·단독 실행도 기동되도록 기본값으로 채우고, 설정이 있으면 그 값이 이긴다
         Map<String, ExecutorProperties> merged = new HashMap<>();
-        merged.put(EVENT_EXECUTOR, ExecutorProperties.defaults());
+        merged.put(EVENT_EXECUTOR, ExecutorProperties.eventDefaults());
         if (executors != null) {
             merged.putAll(executors);
         }
@@ -57,28 +60,46 @@ public record AsyncProperties(
         }
     }
 
+    /** 실행기 종류 */
+    public enum ExecutorType {
+        /** 작업마다 가상 스레드를 만든다. 대기열이 없고, 상한({@code concurrencyLimit})을 넘으면 작업을 넘기는 스레드가 기다린다. */
+        VIRTUAL,
+        /** 정해진 수의 일반 스레드(풀)와 대기열을 쓴다. 대기열이 가득 차면 작업을 넘기는 스레드가 기다린다. */
+        PLATFORM
+    }
+
     /**
-     * 실행기 하나의 설정값
+     * 실행기 하나의 설정값. {@code type}에 따라 쓰는 값이 다르고, 쓰지 않는 값은 무시한다.
      *
-     * @param virtualThreads              true면 작업마다 가상 스레드를, false면 일반(플랫폼) 스레드를 새로 만든다.
-     *                                    운영에서 가상 스레드 문제가 생기면 재빌드 없이 false로 되돌린다. 동시 실행 상한은 어느 쪽이든 같게 적용된다.
-     * @param concurrencyLimit            동시에 실행할 작업 수의 상한. 작업마다 {@code REQUIRES_NEW} 트랜잭션으로 DB 커넥션을 하나씩 쓰면
-     *                                    {@code spring.datasource.hikari.maximum-pool-size}보다 작게 둔다.
-     * @param rejectTasksWhenLimitReached 상한에 걸렸을 때 거절할지 여부. false면 작업을 넘기는 스레드가 빈자리가 날 때까지 기다린다.
-     * @param taskTerminationTimeout      앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. "10s"처럼 Duration 형식으로 지정한다.
-     * @param threadNamePrefix            스레드 이름의 앞부분. 비우면 "&lt;실행기 이름&gt;-"를 쓴다.
+     * @param type                   실행기 종류. 요청 스레드가 막히면 안 되는 곳(이벤트 리스너 등)은 대기열이 있는 {@code platform}을 쓴다.
+     * @param concurrencyLimit       {@code virtual}에서 동시에 실행할 작업 수의 상한. 작업마다 {@code REQUIRES_NEW} 트랜잭션으로 DB 커넥션을 하나씩 쓰면
+     *                               {@code spring.datasource.hikari.maximum-pool-size}보다 작게 둔다.
+     * @param poolSize               {@code platform}의 스레드 수. 대기열이 가득 차기 전에는 스레드가 늘지 않으므로 코어와 최대를 같게 쓴다.
+     * @param queueCapacity          {@code platform}의 대기열 크기. 가득 차면 작업을 넘기는 스레드가 자리가 날 때까지 기다린다(거절하거나 버리지 않는다).
+     * @param taskTerminationTimeout 앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. "10s"처럼 Duration 형식으로 지정한다.
+     * @param threadNamePrefix       스레드 이름의 앞부분. 비우면 "&lt;실행기 이름&gt;-"를 쓴다.
      */
     public record ExecutorProperties(
-            @DefaultValue("true") boolean virtualThreads,
+            @DefaultValue("virtual") ExecutorType type,
             @DefaultValue("5") int concurrencyLimit,
-            @DefaultValue("false") boolean rejectTasksWhenLimitReached,
+            @DefaultValue("8") int poolSize,
+            @DefaultValue("1000") int queueCapacity,
             @DefaultValue("10s") Duration taskTerminationTimeout,
             String threadNamePrefix
     ) {
 
         public ExecutorProperties {
+            if (type == null) {
+                throw new IllegalArgumentException("type은 필수입니다. virtual 또는 platform 중 하나여야 합니다.");
+            }
             if (concurrencyLimit < 1) {
                 throw new IllegalArgumentException("concurrency-limit는 1 이상이어야 합니다. 입력값: " + concurrencyLimit);
+            }
+            if (poolSize < 1) {
+                throw new IllegalArgumentException("pool-size는 1 이상이어야 합니다. 입력값: " + poolSize);
+            }
+            if (queueCapacity < 1) {
+                throw new IllegalArgumentException("queue-capacity는 1 이상이어야 합니다. 입력값: " + queueCapacity);
             }
             if (taskTerminationTimeout == null || taskTerminationTimeout.isNegative()) {
                 throw new IllegalArgumentException("task-termination-timeout은 0 이상이어야 합니다. 입력값: " + taskTerminationTimeout);
@@ -88,9 +109,9 @@ public record AsyncProperties(
             }
         }
 
-        // 위 @DefaultValue와 같은 값이다. 바인딩 없이 기본 설정이 필요할 때 쓴다
-        static ExecutorProperties defaults() {
-            return new ExecutorProperties(true, 5, false, Duration.ofSeconds(10), null);
+        // yaml이 없을 때 event 실행기의 기본 설정. 리스너가 요청 스레드를 막지 않도록 대기열이 있는 platform이다
+        static ExecutorProperties eventDefaults() {
+            return new ExecutorProperties(ExecutorType.PLATFORM, 5, 8, 1000, Duration.ofSeconds(10), null);
         }
     }
 }

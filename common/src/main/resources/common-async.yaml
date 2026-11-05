@@ -1,4 +1,4 @@
-# 비동기 실행기(가상 스레드)의 공통 설정. 앱이 spring.config.import로 가져다 쓴다
+# 비동기 실행기의 공통 설정. 앱이 spring.config.import로 가져다 쓴다
 # import한 파일의 값은 import한 앱 yml보다 우선한다(Boot 규칙). 그래서 앱 yml에 event 값을 써도 적용되지 않는다.
 # event 값을 바꾸려면 이 파일을 고치거나 환경 변수(.env)로 덮어쓴다. 앱 yml에는 새 이름의 실행기 항목만 추가한다
 # 운영에서는 재빌드 없이 환경 변수(.env)로 바꾼다. 값은 기동할 때 한 번 읽으므로 바꾸면 재시작해야 한다
@@ -12,14 +12,15 @@ app:
     executors:
       # 이벤트 리스너용 공통 실행기
       event:
-        # true: 작업마다 가상 스레드를 만든다. false: 작업마다 일반 스레드를 만든다. 가상 스레드에 문제가 생기면 재빌드 없이 false로 되돌린다 (동시 실행 상한은 같게 적용된다)
-        virtual-threads: ${ASYNC_EVENT_VIRTUAL_THREADS:true}
-        # 동시에 실행할 리스너 수 상한. 리스너마다 DB 커넥션을 하나씩 쓰므로 spring.datasource.hikari.maximum-pool-size(기본 10)보다 작게 둔다.
+        # platform: 정해진 수의 일반 스레드와 대기열을 쓴다. 리스너가 요청 스레드를 막지 않도록 대기열이 있는 이 방식을 쓴다
+        # virtual: 작업마다 가상 스레드를 만든다. 대기열이 없어 상한(concurrency-limit)이 차면 작업을 넘기는 스레드가 기다린다
+        type: platform
+        # 일반 스레드 수. 리스너마다 DB 커넥션을 하나씩 쓰므로 spring.datasource.hikari.maximum-pool-size(기본 10)보다 작게 둔다.
         # 같거나 크면 리스너가 커넥션을 다 차지해 HTTP 요청이 커넥션을 얻지 못한다
-        concurrency-limit: ${ASYNC_EVENT_CONCURRENCY_LIMIT:5}
-        # false: 상한에 걸리면 이벤트를 넘기는 쪽(요청 스레드)이 빈자리가 날 때까지 기다린다. 이벤트는 유실되지 않고 응답만 늦어진다
-        # true: 기다리지 않고 거절한다. 커밋은 이미 끝난 뒤라 거절 예외가 요청 쪽으로 올라가 응답이 500이 될 수 있다. 쓰기 전에 동작을 확인한다
-        reject-tasks-when-limit-reached: ${ASYNC_EVENT_REJECT_WHEN_LIMIT_REACHED:false}
+        pool-size: ${ASYNC_EVENT_POOL_SIZE:8}
+        # 대기열 크기. 가득 차면 거절하거나 버리지 않고, 작업을 넘긴 스레드가 자리가 날 때까지 기다린다.
+        # 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 응답이 오류가 되고 같은 커밋의 다른 리스너가 실행되지 않는다(확인함). 1000은 측정 근거 없는 임시값이다
+        queue-capacity: ${ASYNC_EVENT_QUEUE_CAPACITY:1000}
         # 앱 종료 때 실행 중인 리스너를 기다리는 시간. 끝나지 못한 이벤트는 미완료로 남아 재시작 때 재발행된다(republish-outstanding-events-on-restart)
         task-termination-timeout: ${ASYNC_EVENT_TERMINATION_TIMEOUT:10s}
         # 로그에서 리스너 스레드를 구분하는 이름 앞부분

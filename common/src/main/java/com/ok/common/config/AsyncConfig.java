@@ -6,7 +6,7 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 
@@ -20,9 +20,10 @@ import java.util.concurrent.Executor;
  * <p>앱이 {@code @EnableAsync}를 켜지 않아도 Spring Modulith가 자동으로 켜 주므로({@code EventPublicationAutoConfiguration}),
  * {@code @ApplicationModuleListener}는 원래도 비동기로 실행된다. 다만 이름을 지정하지 않은 {@code @Async}는 모두
  * Boot의 기본 실행기({@code applicationTaskExecutor}: 코어 8, 대기열 무제한) 하나를 공유한다. 그러면 느린 작업이 다른 비동기 작업을 지연시키고,
- * 밀린 작업이 대기열에 메모리로 쌓인다. 이 설정은 그 공유 풀을 용도별 전용 실행기로 나누고 동시 실행 상한을 yml로 관리하게 한다.
+ * 밀린 작업이 대기열에 메모리로 쌓인다. 이 설정은 그 공유 풀을 용도별 전용 실행기로 나누고, 스레드 수·대기열·동시 실행 상한을 yml로 관리하게 한다.
  *
- * <p>가상 스레드 실행기에만 적용하려고 {@code spring.threads.virtual.enabled}(Tomcat 요청 스레드와 {@code @Scheduled}까지 바꾸는 전역 설정)는 쓰지 않는다.
+ * <p>실행기는 {@code type}에 따라 대기열이 있는 일반 스레드 풀({@code platform}) 또는 가상 스레드({@code virtual})다.
+ * 가상 스레드는 {@code spring.threads.virtual.enabled}(Tomcat 요청 스레드와 {@code @Scheduled}까지 바꾸는 전역 설정) 대신 {@code virtual} 실행기에만 적용한다.
  * 이 실행기를 직접 등록하면 Boot의 {@code applicationTaskExecutor} 자동 구성은 물러난다.
  * 그래서 {@code spring.task.execution.*} 설정은 적용되지 않고, 값은 {@link AsyncProperties}({@code app.async.*})로 받는다.
  *
@@ -47,9 +48,9 @@ public class AsyncConfig {
         return new AsyncExecutorFactory(properties, mdcTaskDecorator);
     }
 
-    // 이벤트 리스너용 공통 실행기
+    // 이벤트 리스너용 공통 실행기. 리스너가 요청 스레드를 막지 않도록 기본은 대기열이 있는 platform이다
     @Bean(AsyncProperties.EVENT_EXECUTOR)
-    public SimpleAsyncTaskExecutor eventTaskExecutor(AsyncExecutorFactory factory) {
+    public AsyncTaskExecutor eventTaskExecutor(AsyncExecutorFactory factory) {
         return factory.create(AsyncProperties.EVENT_EXECUTOR);
     }
 
