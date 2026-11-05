@@ -207,6 +207,8 @@ public class RefundService {
     // 1) 스프링이 READ COMMITTED 지정을 경고 없이 무시한다(바깥이 기본 격리 수준이면 잠금 뒤에도 옛 값을 읽음)
     // 2) 바깥이 READ COMMITTED여도, 바깥에서 같은 환불을 먼저 읽어 뒀다면 잠금 조회가 그 옛 엔티티를 돌려줘 잠그기 전 상태로 판단한다
     // 격리 수준만 검사하면 2)를 놓쳐서 "새로 시작했는지"를 본다. 새로 시작했으면 격리 수준도 적용되고 영속성 컨텍스트도 새것이다.
+    // 단, "영속성 컨텍스트도 새것"은 OSIV(open-in-view)가 꺼져 있다는 전제다. 켜면 Facade가 앞서 읽은 환불이 승인 트랜잭션까지 남아
+    // 잠금 조회가 그 옛 객체를 돌려주고, 이 검사로는 막지 못한다(지금은 refund·monolith 설정 모두 open-in-view: false)
     // 트랜잭션이 아예 없을 때(스프링 없이 부르는 단위 테스트)는 검사하지 않는다. 운영에서 트랜잭션 없이 불리면 잠금 쿼리가 바로 예외를 낸다
     private static void requireNewTransaction() {
         if (TransactionSynchronizationManager.isActualTransactionActive()
