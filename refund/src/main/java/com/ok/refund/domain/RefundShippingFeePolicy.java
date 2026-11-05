@@ -12,7 +12,7 @@ import java.util.Map;
  *   <li>이번 취소로 판매자 묶음이 전부 취소되면: 묶음 배송비 + 앞선 환불에서 뺀 배송비와 도서산간 운임을 돌려준다. 상자가 나가지 않으니 받을 근거가 없다</li>
  *   <li>일부 취소로 남은 묶음 금액이 무료배송 기준 아래로 처음 내려가면: 기본 배송비를 뺀다. 판매자가 남은 상품의 택배비를 떠안지 않게 하려는 것이다</li>
  *   <li>그때 취소 금액이 기본 배송비보다 작으면: 받을 수 없다(돌려줄 금액이 음수가 된다)</li>
- *   <li>그 밖(기준 없음, 처음부터 기준 아래, 취소 뒤에도 기준 이상): 0</li>
+ *   <li>그 밖(기준 없음, 구매자가 배송비를 냄, 처음부터 기준 아래, 취소 뒤에도 기준 이상): 0</li>
  * </ul>
  */
 public final class RefundShippingFeePolicy {
@@ -61,8 +61,10 @@ public final class RefundShippingFeePolicy {
         }
 
         Long threshold = bundle.freeShippingThreshold();
-        // 기준이 없으면 처음부터 배송비를 냈고, 이미 기준 아래면 배송비를 냈거나 앞선 환불에서 뺐다. 어느 쪽이든 이번에 더 뺄 것이 없다
-        if (threshold == null || remainingBefore < threshold) {
+        // 기준이 없으면 처음부터 배송비를 냈고, 이미 기준 아래면 배송비를 냈거나 앞선 환불에서 뺐다. 어느 쪽이든 이번에 더 뺄 것이 없다.
+        // 구매자가 배송비를 냈으면(shippingFee > 0) 무료배송 묶음이 아니었다. 단가 합이 기준 이상으로 보여도(주문 쪽 계산이 할인 등으로
+        // 달라진 경우) 이미 낸 배송비를 한 번 더 빼지 않도록, 낸 배송비를 기준 판단보다 먼저 믿는다
+        if (threshold == null || bundle.shippingFee() > 0 || remainingBefore < threshold) {
             return RefundShippingFee.none();
         }
         long remainingAfter = remainingBefore - target.getItemAmount();

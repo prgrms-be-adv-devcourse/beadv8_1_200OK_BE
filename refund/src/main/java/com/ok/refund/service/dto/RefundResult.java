@@ -15,8 +15,8 @@ import java.time.LocalDateTime;
  * @param deductedShippingFeeAmount 환불 금액에서 뺀 배송비 (원). 승인 때 정해지고 그 전에는 0
  * @param refundAmount              돌려줄 금액 = 상품 금액 + 돌려줄 배송비 + 도서산간 운임 − 뺀 배송비 (원)
  * @param rejectReason              판매자가 적은 거절 사유(자동 거절이면 시스템 사유). 거절이 아니면 {@code null}
- * @param requestedAt  요청한 시각 (행을 만든 시각)
- * @param decidedAt    승인·거절·철회한 시각. 요청됨이면 {@code null}
+ * @param requestedAt               요청한 시각 (행을 만든 시각)
+ * @param decidedAt                 승인·거절·철회한 시각. 요청됨이면 {@code null}
  */
 public record RefundResult(
         Long refundId,
