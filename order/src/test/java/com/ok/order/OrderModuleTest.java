@@ -11,10 +11,10 @@ import com.ok.order.cart.application.service.CartService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.SellerShippingFee;
-import com.ok.order.order.repository.OrderRepository;
-import com.ok.testsupport.FakeDeliveryApiClient;
-import com.ok.testsupport.FakeProductApiClient;
-import com.ok.testsupport.FakeWalletApiClient;
+import com.ok.order.order.application.port.out.OrderRepository;
+import com.ok.testsupport.FakeDeliveryPort;
+import com.ok.testsupport.FakeProductPort;
+import com.ok.testsupport.FakeWalletPort;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
@@ -45,7 +45,7 @@ import static org.assertj.core.groups.Tuple.tuple;
 // 주문 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
 @ActiveProfiles("test")
 @Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class,
-        FakeProductApiClient.class, FakeDeliveryApiClient.class, FakeWalletApiClient.class})
+        FakeProductPort.class, FakeDeliveryPort.class, FakeWalletPort.class})
 class OrderModuleTest {
 
     // 다른 테스트와 데이터가 겹치지 않게 이 클래스 전용 번호를 쓴다
@@ -70,7 +70,7 @@ class OrderModuleTest {
     CartService cartService;
 
     @Autowired
-    FakeProductApiClient fakeProductApiClient;
+    FakeProductPort fakeProductPort;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -90,7 +90,7 @@ class OrderModuleTest {
     // 모듈 테스트는 롤백되지 않아 이 클래스가 만든 주문·장바구니를 지운다
     @AfterEach
     void tearDown() {
-        fakeProductApiClient.clear();
+        fakeProductPort.clear();
         String orders = "SELECT id FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?";
         jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_third_party_consent WHERE order_id IN ("
                 + orders + ")", BUYER_ID);
@@ -136,7 +136,7 @@ class OrderModuleTest {
     void 결제_실패를_받으면_주문이_결제_실패되고_재고를_풀고_장바구니는_그대로다(Scenario scenario) {
         // when & then
         scenario.publish(new WalletPaymentFailedEvent(orderId, BUYER_ID, WalletPaymentFailedEvent.INSUFFICIENT_BALANCE))
-                .andWaitForStateChange(() -> fakeProductApiClient.releasedOrderIds().contains(orderId), released -> released)
+                .andWaitForStateChange(() -> fakeProductPort.releasedOrderIds().contains(orderId), released -> released)
                 .andVerify(released -> assertSoftly(softly -> {
                     softly.assertThat(orderStatus()).isEqualTo("PAYMENT_FAILED");
                     softly.assertThat(itemStatuses()).containsOnly("PAYMENT_FAILED");
