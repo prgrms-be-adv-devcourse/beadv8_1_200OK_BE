@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.CannotAcquireLockException;
@@ -35,6 +36,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
@@ -48,6 +50,7 @@ class RefundServiceTest {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-04T01:00:00Z"), SEOUL);
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 4, 10, 0);
+    private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
 
     @Mock
     RefundRepository refundRepository;
@@ -275,7 +278,7 @@ class RefundServiceTest {
     void 남의_상품_요청을_승인하면_없는_요청처럼_막고_바꾸지_않는다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findIdsByOrderIdAndSellerId(10L, OTHER_SELLER_ID)).willReturn(List.of());
+        given(refundRepository.findLockTargetIds(10L, OTHER_SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of());
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, OTHER_SELLER_ID, socks("PREPARING", 2)))
@@ -287,32 +290,37 @@ class RefundServiceTest {
     @Test
     void 없는_요청을_승인하면_막는다() {
         // given
-        given(refundRepository.findIdsByOrderIdAndSellerId(10L, SELLER_ID)).willReturn(List.of(99L));
+        given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of(99L));
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
-        then(refundRepository).should(never()).findAllByIdInForUpdate(any());
+        then(refundRepository).should(never()).findByIdForUpdate(any());
     }
 
-    // 이번 환불 행만 잠그면 같은 묶음의 동시 승인이 서로를 못 본다(#411). 묶음의 모든 행을 잠그는 것이 요구사항이라 호출을 검증한다
+    // 이번 환불 행만 잠그면 같은 묶음의 동시 승인이 서로를 못 본다(#411). 묶음의 진행 중 행을 ID 오름차순으로 한 건씩 잠그는 것이
+    // 요구사항이라(순서가 다르면 교착 상태) 호출 순서를 검증한다
     @Test
-    void 승인하면_같은_묶음의_환불을_모두_잠근다() {
+    void 승인하면_같은_묶음의_진행_중_환불을_ID_순서로_한_건씩_잠근다() {
         // given
         Refund refund = requested();
         ReflectionTestUtils.setField(refund, "id", REFUND_ID);
         Refund other = Refund.request(10L, 102L, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L, null);
         ReflectionTestUtils.setField(other, "id", 3L);
-        given(refundRepository.findIdsByOrderIdAndSellerId(10L, SELLER_ID)).willReturn(List.of(3L, REFUND_ID));
-        given(refundRepository.findAllByIdInForUpdate(List.of(3L, REFUND_ID))).willReturn(List.of(other, refund));
+        given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
+                .willReturn(List.of(3L, REFUND_ID));
+        given(refundRepository.findByIdForUpdate(3L)).willReturn(Optional.of(other));
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
 
         // then
         assertThat(result.refundId()).isEqualTo(REFUND_ID);
-        then(refundRepository).should().findAllByIdInForUpdate(List.of(3L, REFUND_ID));
+        InOrder lockOrder = inOrder(refundRepository);
+        lockOrder.verify(refundRepository).findByIdForUpdate(3L);
+        lockOrder.verify(refundRepository).findByIdForUpdate(REFUND_ID);
     }
 
     @Test
@@ -401,11 +409,12 @@ class RefundServiceTest {
         return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "양말", "흰색", status, 10_000L, boughtQuantity, bundle);
     }
 
-    // 승인은 묶음 ID를 읽고 묶음 행을 잠가 이번 환불을 ID로 찾는다. 저장 전 엔티티라 ID를 직접 넣는다
+    // 승인은 잠글 ID를 읽고 한 건씩 잠가 이번 환불을 ID로 찾는다. 저장 전 엔티티라 ID를 직접 넣는다
     private void givenLockedBundle(Refund refund) {
         ReflectionTestUtils.setField(refund, "id", REFUND_ID);
-        given(refundRepository.findIdsByOrderIdAndSellerId(10L, SELLER_ID)).willReturn(List.of(REFUND_ID));
-        given(refundRepository.findAllByIdInForUpdate(List.of(REFUND_ID))).willReturn(List.of(refund));
+        given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
+                .willReturn(List.of(REFUND_ID));
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
     }
 
     private static RefundableOrderItem cheapItemInFreeBundle() {

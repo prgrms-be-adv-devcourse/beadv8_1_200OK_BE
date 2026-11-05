@@ -115,6 +115,61 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThat(deductedPerRefund).containsExactlyInAnyOrder(3_000L, 0L);
     }
 
+    // 셋 이상이 동시에 승인해도 잠금 순서가 같아 교착 상태 없이 한 줄로 서고, 배송비는 마지막 한 건만 받는다
+    @RepeatedTest(5)
+    void 같은_묶음_셋을_동시에_승인해도_교착_상태_없이_배송비는_한_요청만_받는다() throws Exception {
+        // given: A·B·C 각 10,000원 = 30,000원(기준 50,000원 미만). 배송비 3,000원과 도서산간 운임 2,000원을 냈다(총 35,000원)
+        BundleShipping bundle = new BundleShipping(3_000L, 2_000L, 3_000L, 50_000L,
+                List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1), new BundleItem(C, 10_000L, 1)));
+        orderClient.put(orderItem(A, 10_000L, bundle));
+        orderClient.put(orderItem(B, 10_000L, bundle));
+        orderClient.put(orderItem(C, 10_000L, bundle));
+        Long refundA = request(A);
+        Long refundB = request(B);
+        Long refundC = request(C);
+
+        // when
+        List<String> results = runTogether(() -> approve(refundA), () -> approve(refundB), () -> approve(refundC));
+
+        // then: 교착 상태면 500 예외로 결과를 못 받는다
+        assertThat(results).containsOnly(SUCCESS);
+        List<Long> feesPerRefund = new ArrayList<>();
+        long total = 0;
+        for (Refund refund : refundRepository.findAll()) {
+            feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
+            total += refund.getRefundAmount();
+        }
+        long refundedTotal = total;
+        assertSoftly(softly -> {
+            softly.assertThat(feesPerRefund).containsExactlyInAnyOrder(5_000L, 0L, 0L);
+            softly.assertThat(refundedTotal).isEqualTo(35_000L);
+        });
+    }
+
+    // 끝난 행(거절·철회)은 다시 처리 중이 될 수 없어 잠그지 않는다. 다만 이번 환불은 끝났어도 넣어야 잠근 뒤 409로 막힌다
+    @Test
+    void 승인_때_잠글_행은_진행_중_행과_이번_환불뿐이다() {
+        // given: A 요청됨, B 철회 뒤 다시 요청(철회 행 + 요청됨 행), C 철회
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1), new BundleItem(C, 10_000L, 1)));
+        orderClient.put(orderItem(A, 10_000L, bundle));
+        orderClient.put(orderItem(B, 10_000L, bundle));
+        orderClient.put(orderItem(C, 10_000L, bundle));
+        Long refundA = request(A);
+        Long withdrawnB = request(B);
+        refundService.withdraw(withdrawnB, BUYER_ID);
+        Long refundB = request(B);
+        Long withdrawnC = request(C);
+        refundService.withdraw(withdrawnC, BUYER_ID);
+        List<RefundStatus> active = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
+
+        // when
+        List<Long> sut = refundRepository.findLockTargetIds(ORDER_ID, SELLER_ID, withdrawnC, active);
+
+        // then: 철회된 B는 빠지고, 철회됐어도 이번 환불인 C는 들어간다. ID 오름차순이다
+        assertThat(sut).containsExactly(refundA, refundB, withdrawnC);
+    }
+
     // 위 두 테스트는 동시에 출발시킬 뿐이라 어느 쪽이 먼저 잠글지 정할 수 없다. 여기서는 순서를 고정한다:
     // 다른 트랜잭션이 묶음을 잠그고 A를 처리 중으로 바꾼 채 커밋하지 않은 동안 B를 승인하면, B는 잠금에서 기다렸다가
     // 커밋 뒤의 최신 값(A 처리 중)을 보고 마지막 환불로 배송비를 받아야 한다
@@ -133,11 +188,9 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<?> holding = executor.submit(() -> first.executeWithoutResult(status -> {
-                for (Refund refund : refundRepository.findAllByIdInForUpdate(List.of(refundA, refundB))) {
-                    if (refund.getId().equals(refundA)) {
-                        refund.approve(LocalDateTime.of(2026, 11, 5, 10, 0), RefundShippingFee.none());
-                    }
-                }
+                Refund lockedA = refundRepository.findByIdForUpdate(refundA).orElseThrow();
+                refundRepository.findByIdForUpdate(refundB).orElseThrow();
+                lockedA.approve(LocalDateTime.of(2026, 11, 5, 10, 0), RefundShippingFee.none());
                 locked.countDown();
                 await(release);
             }));
@@ -191,12 +244,12 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
                 RefundableOrderItem.CANCELLABLE_STATUS, unitPrice, 1, bundle);
     }
 
-    // 두 작업을 래치로 동시에 출발시키고, 각 결과를 SUCCESS 또는 에러 코드 이름으로 돌려준다
-    private static List<String> runTogether(Runnable first, Runnable second) throws Exception {
+    // 작업들을 래치로 동시에 출발시키고, 각 결과를 SUCCESS 또는 에러 코드 이름으로 돌려준다
+    private static List<String> runTogether(Runnable... tasks) throws Exception {
         CountDownLatch start = new CountDownLatch(1);
-        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+        try (ExecutorService executor = Executors.newFixedThreadPool(tasks.length)) {
             List<Future<String>> futures = new ArrayList<>();
-            for (Runnable task : List.of(first, second)) {
+            for (Runnable task : tasks) {
                 Callable<String> waiting = () -> {
                     start.await();
                     return resultOf(task);

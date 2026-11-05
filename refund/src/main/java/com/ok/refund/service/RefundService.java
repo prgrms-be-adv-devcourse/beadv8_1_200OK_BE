@@ -28,6 +28,7 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 환불 요청의 DB 작업을 맡는다. 주문 모듈 호출은 {@link RefundFacade}가 하고, 이 서비스는 짧은 트랜잭션으로 확인과 저장만 한다.
@@ -46,9 +47,10 @@ public class RefundService {
     // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
     // 배송비 판단에서 "이미 취소된 것"으로 보는 상태. 승인된 요청은 되돌리지 않으므로 취소된 것으로 센다
-    // TODO(#414): 완료 상태가 생기면 함께 센다. 완료로 바꾸는 처리도 집계에 영향을 주므로 승인처럼 묶음 잠금(lockBundleAndFind)을 거쳐야 한다.
-    //  끝난 행(거절·철회·완료)은 다시 처리 중이 될 수 없으니 잠금 대상에서 빼, 같은 상품을 여러 번 다시 요청해 행이 쌓여도 잠금이 늘지 않게 한다
+    // TODO(#414): 완료 상태가 생기면 함께 센다. 처리 중을 완료로 바꾸는 처리도 승인처럼 묶음 잠금(lockBundleAndFind)을 거쳐야 한다
     private static final List<RefundStatus> CANCELLING_STATUSES = List.of(RefundStatus.PROCESSING);
+    // 승인 때 잠글 상태. 이 상태의 행만 처리 중으로 바뀌거나 이미 처리 중이라 집계를 바꿀 수 있다. 끝난 행(거절·철회)은 잠그지 않는다
+    private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
 
     private final RefundRepository refundRepository;
     private final Clock clock;
@@ -211,18 +213,20 @@ public class RefundService {
         }
     }
 
-    // 묶음(주문 + 판매자)의 환불을 ID 순서로 모두 잠그고 그중 이번 환불을 돌려준다. 판매자 ID로 묶음을 찾으므로
-    // 남의 요청이나 없는 요청은 묶음에 들어 있지 않아 없는 것과 같게 막는다
+    // 묶음(주문 + 판매자)의 진행 중 환불과 이번 환불을 ID 오름차순으로 한 건씩 잠그고 그중 이번 환불을 돌려준다.
+    // 판매자 ID로 묶음을 찾으므로 남의 요청이나 없는 요청은 목록에 들어 있지 않아 없는 것과 같게 막는다
     private Refund lockBundleAndFind(Long refundId, Long sellerId, Long orderId) {
-        List<Long> bundleIds = refundRepository.findIdsByOrderIdAndSellerId(orderId, sellerId);
-        // 묶음에 없으면(빈 목록 포함) 잠그기 전에 막는다. 빈 IN 조건으로 잠금 쿼리를 보내지 않게 하는 것도 겸한다
-        if (!bundleIds.contains(refundId)) {
+        List<Long> lockTargetIds = refundRepository.findLockTargetIds(orderId, sellerId, refundId, LOCK_TARGET_STATUSES);
+        if (!lockTargetIds.contains(refundId)) {
             throw new RestApiException(RefundErrorCode.REFUND_NOT_FOUND);
         }
+        // 한 번의 IN 조회로 잠그면 잠금 순서가 DB 실행 계획에 달려 보장되지 않는다. 한 건씩 ID 오름차순으로 잠가야
+        // 승인끼리 항상 같은 순서로 기다려 서로 반대 순서로 기다리는 교착 상태가 생기지 않는다. 묶음 행은 많지 않아 쿼리 수는 문제되지 않는다
         Refund target = null;
-        for (Refund locked : refundRepository.findAllByIdInForUpdate(bundleIds)) {
-            if (locked.getId().equals(refundId)) {
-                target = locked;
+        for (Long id : lockTargetIds) {
+            Optional<Refund> locked = refundRepository.findByIdForUpdate(id);
+            if (id.equals(refundId)) {
+                target = locked.orElse(null);
             }
         }
         // 환불 행은 지우지 않아 ID를 읽은 뒤 잠그는 사이에 사라질 일은 없다. 그래도 사라지면 NPE 대신 없는 요청으로 막는 방어다
