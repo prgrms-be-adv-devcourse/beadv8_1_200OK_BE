@@ -5,7 +5,6 @@ import com.ok.common.security.TokenRoles;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
-import com.ok.member.auth.service.dto.LoginCommand;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
 import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
@@ -20,9 +19,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
-
 
 import java.time.Duration;
 import java.time.Instant;
@@ -35,7 +32,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -44,15 +40,11 @@ import static org.mockito.Mockito.never;
 class AuthServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-10-12T05:00:00Z");
-    private static final String DUMMY_HASH = "{bcrypt}dummy";
     private static final String ENCODED_PASSWORD = "{bcrypt}encoded";
     private static final Long MEMBER_ID = 1L;
 
     @Mock
     MemberRepository memberRepository;
-
-    @Mock
-    PasswordEncoder passwordEncoder;
 
     @Mock
     AccessTokenProvider accessTokenProvider;
@@ -68,19 +60,13 @@ class AuthServiceTest {
 
     @BeforeEach
     void setUp() {
-        // 생성자에서 아이디가 없을 때 비교할 더미 해시를 만든다
-        given(passwordEncoder.encode(anyString())).willReturn(DUMMY_HASH);
-        authService = new AuthService(memberRepository, passwordEncoder, accessTokenProvider, refreshTokenService,
+        authService = new AuthService(memberRepository, accessTokenProvider, refreshTokenService,
                 sellerApplicationService);
     }
 
     @Test
-    void 아이디와_비밀번호가_맞으면_Access_Token과_Refresh_Token을_발급한다() {
+    void 토큰을_발급하면_Access_Token과_Refresh_Token을_함께_반환한다() {
         // given
-        Member member = member(MemberStatus.ACTIVE);
-        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member));
-        given(passwordEncoder.matches("password1!", ENCODED_PASSWORD)).willReturn(true);
-
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
@@ -89,7 +75,7 @@ class AuthServiceTest {
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));
 
         // when
-        TokenResult sut = authService.login(new LoginCommand("tester01", "password1!"));
+        TokenResult sut = authService.issueTokens(member(MemberStatus.ACTIVE));
 
         // then
         assertThat(sut).isNotNull();
@@ -99,65 +85,22 @@ class AuthServiceTest {
             softly.assertThat(sut.refreshToken()).isEqualTo("refresh-token");
             softly.assertThat(sut.refreshTokenExpiresAt()).isEqualTo(refreshExpiresAt);
         });
-        then(refreshTokenService).should().issue(MEMBER_ID);
     }
 
     @Test
-    void 아이디가_없으면_INVALID_CREDENTIALS가_발생하고_응답_시간을_맞추려고_더미_해시와_비교한다() {
+    void 승인된_판매자에게는_구매자와_판매자_권한으로_Access_Token을_발급한다() {
         // given
-        given(memberRepository.findByLoginId("unknown01")).willReturn(Optional.empty());
+        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+                .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID))
+                .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
 
-        // when & then
-        assertThatThrownBy(() -> authService.login(new LoginCommand("unknown01", "password1!")))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
-        then(passwordEncoder).should().matches("password1!", DUMMY_HASH);
-        then(accessTokenProvider).shouldHaveNoInteractions();
-        then(refreshTokenService).shouldHaveNoInteractions();
-    }
+        // when
+        TokenResult sut = authService.issueTokens(member(MemberStatus.ACTIVE));
 
-    @Test
-    void 비밀번호가_틀리면_INVALID_CREDENTIALS가_발생하고_토큰을_발급하지_않는다() {
-        // given
-        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
-        given(passwordEncoder.matches("wrong-pass1!", ENCODED_PASSWORD)).willReturn(false);
-
-        // when & then
-        assertThatThrownBy(() -> authService.login(new LoginCommand("tester01", "wrong-pass1!")))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
-        then(accessTokenProvider).shouldHaveNoInteractions();
-        then(refreshTokenService).shouldHaveNoInteractions();
-    }
-
-    @ParameterizedTest
-    @MethodSource("로그인할_수_없는_회원_상태")
-    void 로그인할_수_없는_상태의_회원은_비밀번호가_맞아도_예외가_발생하고_토큰을_발급하지_않는다(
-            MemberStatus status, AuthErrorCode expected) {
-        // given
-        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member(status)));
-        given(passwordEncoder.matches("password1!", ENCODED_PASSWORD)).willReturn(true);
-
-        // when & then
-        assertThatThrownBy(() -> authService.login(new LoginCommand("tester01", "password1!")))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(expected));
-        then(accessTokenProvider).shouldHaveNoInteractions();
-        then(refreshTokenService).shouldHaveNoInteractions();
-    }
-
-    @Test
-    void 탈퇴한_회원이_틀린_비밀번호로_로그인하면_INVALID_CREDENTIALS가_발생한다() {
-        // given
-        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member(MemberStatus.WITHDRAWN)));
-        given(passwordEncoder.matches("wrong-pass1!", ENCODED_PASSWORD)).willReturn(false);
-
-        // when & then
-        assertThatThrownBy(() -> authService.login(new LoginCommand("tester01", "wrong-pass1!")))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
-        then(accessTokenProvider).shouldHaveNoInteractions();
-        then(refreshTokenService).shouldHaveNoInteractions();
+        // then
+        assertThat(sut.accessToken()).isEqualTo("seller-access-token");
     }
 
     @Test
@@ -184,24 +127,6 @@ class AuthServiceTest {
             softly.assertThat(sut.refreshToken()).isEqualTo("new-refresh-token");
             softly.assertThat(sut.refreshTokenExpiresAt()).isEqualTo(refreshExpiresAt);
         });
-    }
-
-    @Test
-    void 승인된_판매자가_로그인하면_구매자와_판매자_권한으로_Access_Token을_발급한다() {
-        // given
-        given(memberRepository.findByLoginId("tester01")).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
-        given(passwordEncoder.matches("password1!", ENCODED_PASSWORD)).willReturn(true);
-        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
-        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
-                .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
-        given(refreshTokenService.issue(MEMBER_ID))
-                .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
-
-        // when
-        TokenResult sut = authService.login(new LoginCommand("tester01", "password1!"));
-
-        // then
-        assertThat(sut.accessToken()).isEqualTo("seller-access-token");
     }
 
     @Test
@@ -254,13 +179,6 @@ class AuthServiceTest {
         return Stream.of(
                 // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급한다
                 Arguments.of(MemberStatus.WITHDRAWN, AuthErrorCode.INVALID_REFRESH_TOKEN),
-                Arguments.of(MemberStatus.SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
-        );
-    }
-
-    static Stream<Arguments> 로그인할_수_없는_회원_상태() {
-        return Stream.of(
-                Arguments.of(MemberStatus.WITHDRAWN, AuthErrorCode.INVALID_CREDENTIALS),
                 Arguments.of(MemberStatus.SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
         );
     }
