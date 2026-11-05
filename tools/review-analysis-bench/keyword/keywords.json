@@ -1,0 +1,391 @@
+{
+  "version": "v0.3",
+  "status": "draft",
+  "note": "구매자 화면 긍정 키워드 목록(#387). categories는 그 키워드를 묻는 하위 분류이고 ALL은 전체다. 적용 분류는 목록용 추출, 측정용 판정, 네이버 칩에서 그 분류에 나온 근거로 정했다(v0.3). id는 식별자일 뿐이고 앞 글자는 v0.2까지의 범위 흔적이다. guide는 사람 정답과 Jev 질문이 함께 쓰는 판정 기준이다. 키워드 정답을 매기기 시작한 뒤에는 guide를 바꾸지 않는다. 바꾸면 version을 올린다. aspect의 other는 여섯 분석 항목에 없는 장점(기타)이다.",
+  "instruction": "다음은 농산물·식품 쇼핑몰의 상품 리뷰다. 리뷰 본문만으로 판단한다. 리뷰가 이 키워드의 장점을 좋다고 말했을 때만 '말함'이다. 아쉽다·나쁘다고 했거나, 평가 없이 사실만 적었거나, '다행히 ~는 괜찮았다'처럼 걱정한 문제가 없었다는 안도만 있으면 '안 말함'이다.",
+  "keywords": [
+    {
+      "id": "C01",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "맛있어요",
+      "aspect": "taste",
+      "guide": "맛이 좋다는 전반적인 칭찬. '맛있어요', '밥맛이 좋아요', '찌개에 넣으니 맛있어요'. 단맛·향·고소함만 말하면 그 키워드이고 여기는 아니다. '맛이 괜찮아요'처럼 약한 칭찬도 포함한다"
+    },
+    {
+      "id": "C02",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "VEGETABLE",
+        "ROOT_CROP",
+        "NUT"
+      ],
+      "phrase": "달아요",
+      "aspect": "taste",
+      "guide": "단맛·당도를 칭찬. '달아요', '당도가 높아요', '달콤해요', '은은하게 달아요'. '너무 달아서 별로'는 안 말함이다. 가공품의 '너무 달지 않아서 좋아요'는 '너무 달지 않아요'다"
+    },
+    {
+      "id": "C03",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "향이 좋아요",
+      "aspect": "taste",
+      "guide": "향·냄새를 칭찬. '향이 좋아요', '향이 진해요', '향긋해요', '밥 냄새가 좋아요'. 나쁜 냄새가 없다는 말('잡내가 없어요')은 '무른 것 없이 왔어요'다"
+    },
+    {
+      "id": "C04",
+      "categories": [
+        "PROCESSED_AGRI",
+        "VEGETABLE",
+        "GRAIN",
+        "ROOT_CROP",
+        "NUT"
+      ],
+      "phrase": "고소해요",
+      "aspect": "taste",
+      "guide": "고소한 맛·구수한 맛을 칭찬. '고소해요', '구수해요', '씹을수록 고소해요'"
+    },
+    {
+      "id": "C05",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "신선해요",
+      "aspect": "freshness",
+      "guide": "싱싱하다·신선하다는 칭찬. '싱싱해요', '잎이 안 시들었어요', '도정일자가 최근이에요'. 상하거나 무른 것이 없다는 말은 '무른 것 없이 왔어요'다"
+    },
+    {
+      "id": "C06",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "무른 것 없이 왔어요",
+      "aspect": "freshness",
+      "guide": "변질이 없거나 오래 둬도 멀쩡하다는 칭찬. '무른 것이 없어요', '열흘 지나도 멀쩡해요', '쩐내·잡내가 안 나요'. 불만 리뷰 속 '다행히 ~는 괜찮았어요'는 안 말함이다"
+    },
+    {
+      "id": "C07",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "크기가 커요",
+      "aspect": "condition",
+      "guide": "크다·굵다·실하다는 칭찬. '알이 커요', '굵어요', '실해요', '두툼해요'. 알맞다는 말은 '크기가 적당해요', 고르다는 말은 '크기가 고르고 깨끗해요'다"
+    },
+    {
+      "id": "C08",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "크기가 고르고 깨끗해요",
+      "aspect": "condition",
+      "guide": "크기가 고르거나, 흠·상처·벌레 먹은 곳 없이 깨끗하고 보기 좋다는 칭찬. '크기가 일정해요', '흠집 없이 예뻐요', '윤기가 나요'. 크기가 크다는 말만 있으면 '크기가 커요'다"
+    },
+    {
+      "id": "C09",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "양이 넉넉해요",
+      "aspect": "condition",
+      "guide": "양이 많거나 속·내용물이 꽉 찼다는 칭찬. '양이 많아요', '속이 꽉 찼어요', '과육이 듬뿍 들어 있어요'. '혼자 먹기 적당한 양'은 넉넉하다는 말이 아니라 안 말함이다"
+    },
+    {
+      "id": "C10",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "포장이 꼼꼼해요",
+      "aspect": "packaging",
+      "guide": "포장이 꼼꼼하거나 튼튼하거나 깔끔하다는 칭찬. '박스가 튼튼해요', '뽁뽁이로 감싸 왔어요'. 포장이 고급스러워 선물하기 좋다는 말은 '선물하기 좋아요'다"
+    },
+    {
+      "id": "C12",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "가격이 괜찮아요",
+      "aspect": "price",
+      "guide": "가격이 싸거나 값어치를 한다는 칭찬. '가성비가 좋아요', '마트보다 저렴해요', '비싸지만 아깝지 않아요'. 비싸다는 불만만 있으면 안 말함이다"
+    },
+    {
+      "id": "C13",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "MUSHROOM"
+      ],
+      "phrase": "선물하기 좋아요",
+      "aspect": "other",
+      "guide": "선물용으로 좋다는 칭찬. '선물했더니 좋아하셨어요', '명절 선물로 좋아요', '상자가 고급스러워요'"
+    },
+    {
+      "id": "C14",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "간편해요",
+      "aspect": "other",
+      "guide": "손질·조리·보관·먹기가 편하다는 칭찬. '손질이 돼 있어 편해요', '껍질이 잘 까져요', '소분돼 있어요', '전자레인지로 바로 먹어요'"
+    },
+    {
+      "id": "C15",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "VEGETABLE",
+        "GRAIN",
+        "ROOT_CROP",
+        "NUT"
+      ],
+      "phrase": "아이들이 잘 먹어요",
+      "aspect": "other",
+      "guide": "아이가 잘 먹는다거나 좋아한다는 말. '애들이 잘 먹어요', '아이 간식으로 좋아요'"
+    },
+    {
+      "id": "C17",
+      "categories": [
+        "ALL"
+      ],
+      "phrase": "요리에 쓰기 좋아요",
+      "aspect": "other",
+      "guide": "특정 요리나 먹는 방법에 잘 맞는다는 칭찬. '찌개용으로 좋아요', '샐러드에 잘 어울려요', '구워 먹기 좋아요', '주스 갈기 좋아요'. 간식·안주로 좋다는 말은 '간식으로 좋아요'다"
+    },
+    {
+      "id": "C18",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "VEGETABLE",
+        "GRAIN",
+        "WILD_GREENS"
+      ],
+      "phrase": "부드러워요",
+      "aspect": "taste",
+      "guide": "식감이 부드럽거나 연하다는 칭찬. '연해요', '질기지 않아요', '섬유질이 적어요', '식어도 딱딱해지지 않아요'. '물렁해요'처럼 잘 익음과 무름이 구분되지 않으면 안 말함이다"
+    },
+    {
+      "id": "C19",
+      "categories": [
+        "PROCESSED_AGRI",
+        "GRAIN",
+        "ROOT_CROP",
+        "MUSHROOM",
+        "NUT"
+      ],
+      "phrase": "쫀득해요",
+      "aspect": "taste",
+      "guide": "쫀득·쫄깃·찰지다는 칭찬. '쫄깃해요', '찰기가 있어요', '밥이 찰져요'. 탄력 있게 터지는 느낌은 '탱글탱글해요'다"
+    },
+    {
+      "id": "C20",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "VEGETABLE",
+        "ROOT_CROP",
+        "MUSHROOM"
+      ],
+      "phrase": "단단해요",
+      "aspect": "taste",
+      "guide": "과육·조직이 단단하다는 칭찬. '단단해요', '익혀도 퍼지지 않아요', '모양이 잘 유지돼요'. 덜 익어 딱딱하다는 불만은 안 말함이다"
+    },
+    {
+      "id": "C21",
+      "categories": [
+        "PROCESSED_AGRI",
+        "NUT"
+      ],
+      "phrase": "바삭해요",
+      "aspect": "taste",
+      "guide": "바삭하거나 눅눅하지 않다는 칭찬. '바삭해요', '바삭함이 오래가요'. 생과일·채소의 아삭함은 '아삭해요'다"
+    },
+    {
+      "id": "C22",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "VEGETABLE"
+      ],
+      "phrase": "아삭해요",
+      "aspect": "taste",
+      "guide": "씹을 때 아삭하다는 칭찬. 과일, 채소, 김치에 쓴다. '아삭해요', '아삭하고 시원해요'"
+    },
+    {
+      "id": "C23",
+      "categories": [
+        "PROCESSED_AGRI",
+        "GRAIN",
+        "ROOT_CROP"
+      ],
+      "phrase": "촉촉해요",
+      "aspect": "taste",
+      "guide": "촉촉하거나 말랑하다는 칭찬. 떡, 고구마, 밥 등. '촉촉해요', '말랑해요', '떡이 굳지 않았어요'"
+    },
+    {
+      "id": "C24",
+      "categories": [
+        "FRUIT",
+        "VEGETABLE",
+        "GRAIN",
+        "ROOT_CROP",
+        "MUSHROOM",
+        "NUT"
+      ],
+      "phrase": "크기가 적당해요",
+      "aspect": "condition",
+      "guide": "크기가 쓰기 알맞다는 칭찬. '크기가 딱 좋아요', '한 손에 들어오는 크기예요'. 크다는 칭찬은 '크기가 커요', 고르다는 칭찬은 '크기가 고르고 깨끗해요'다. 크기가 고르기만 하면 안 말함이다"
+    },
+    {
+      "id": "C25",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI",
+        "VEGETABLE",
+        "GRAIN",
+        "MUSHROOM"
+      ],
+      "phrase": "식감이 좋아요",
+      "aspect": "taste",
+      "guide": "식감을 칭찬했지만 쫀득·아삭·부드러움·바삭함 중 하나로 말하지 않은 경우. '식감이 좋아요', '오독오독 씹혀요', '씨가 톡톡 씹혀서 재밌어요'. 쫄깃하다고 했으면 '쫀득해요'만 말함이다"
+    },
+    {
+      "id": "C26",
+      "categories": [
+        "FRUIT",
+        "MUSHROOM"
+      ],
+      "phrase": "탱글탱글해요",
+      "aspect": "taste",
+      "guide": "알·과육·버섯이 탱글하고 탄력 있다는 칭찬. '탱글탱글해요', '탱탱해요'. 쫄깃하다는 말만 있으면 안 말함이다"
+    },
+    {
+      "id": "C27",
+      "categories": [
+        "PROCESSED_AGRI",
+        "ROOT_CROP",
+        "NUT"
+      ],
+      "phrase": "간식으로 좋아요",
+      "aspect": "other",
+      "guide": "간식·안주·아침 대용으로 먹기 좋다는 칭찬. '간식으로 좋아요', '맥주 안주로 딱이에요', '아침 대용으로 먹어요', '등산 갈 때 챙겨요'"
+    },
+    {
+      "id": "F02",
+      "categories": [
+        "FRUIT"
+      ],
+      "phrase": "과즙이 많아요",
+      "aspect": "taste",
+      "guide": "과즙·수분이 많다는 칭찬. '즙이 많아요', '물이 많아요', '시원해요'(수박·배 등 과즙이 시원하다는 뜻일 때). 즙이 흘러 무르다는 불만은 안 말함이다"
+    },
+    {
+      "id": "F03",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "새콤달콤해요",
+      "aspect": "taste",
+      "guide": "새콤함·상큼함을 칭찬. '새콤달콤해요', '산미가 좋아요', '상큼해요'. 너무 시다는 불만은 안 말함이다"
+    },
+    {
+      "id": "F04",
+      "categories": [
+        "FRUIT"
+      ],
+      "phrase": "시지 않아요",
+      "aspect": "taste",
+      "guide": "신맛·떫은맛이 적다는 칭찬. '시지 않아요', '떫은맛이 없어요', '신맛이 덜해요'"
+    },
+    {
+      "id": "F05",
+      "categories": [
+        "FRUIT",
+        "ROOT_CROP"
+      ],
+      "phrase": "껍질이 얇아요",
+      "aspect": "condition",
+      "guide": "껍질이 얇거나 껍질째 먹기 좋다는 칭찬. '껍질이 얇아요', '껍질째 먹어도 부드러워요'"
+    },
+    {
+      "id": "P01",
+      "categories": [
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "너무 달지 않아요",
+      "aspect": "taste",
+      "guide": "단맛이 과하지 않아 좋다는 칭찬. '많이 달지 않아요', '설탕이 적어요', '단맛이 은은해요'. 짜지·맵지 않다는 말은 '양념이 맛있어요'다"
+    },
+    {
+      "id": "P04",
+      "categories": [
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "국물이 시원해요",
+      "aspect": "taste",
+      "guide": "국물·김치 맛이 시원하다는 칭찬. '국물이 시원해요', '시원하고 깔끔해요'"
+    },
+    {
+      "id": "P05",
+      "categories": [
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "맛이 진해요",
+      "aspect": "taste",
+      "guide": "맛이 진하거나 원재료 맛이 살아 있다는 칭찬. '진해요', '딸기맛이 진해요', '감칠맛이 나요', '배 맛이 많이 나요', '시판 주스와 달라요'"
+    },
+    {
+      "id": "P06",
+      "categories": [
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "양념이 맛있어요",
+      "aspect": "taste",
+      "guide": "양념·간을 칭찬. '양념이 맛있어요', '간이 딱 맞아요', '짜지 않아요', '맵지 않아요', '자극적이지 않아요', '밥도둑이에요'"
+    },
+    {
+      "id": "C28",
+      "categories": [
+        "ROOT_CROP",
+        "NUT"
+      ],
+      "phrase": "포슬포슬해요",
+      "aspect": "taste",
+      "guide": "감자·고구마·밤이 포슬포슬하거나 분이 난다는 칭찬. '포슬포슬해요', '분질감이 좋아요', '포근해요'. 촉촉하다는 말은 '촉촉해요'다"
+    },
+    {
+      "id": "C29",
+      "categories": [
+        "FRUIT",
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "씨가 적어요",
+      "aspect": "condition",
+      "guide": "씨가 적거나 작거나 없어 먹기 좋다는 칭찬. '씨가 거의 없어요', '씨가 작아요'"
+    },
+    {
+      "id": "C30",
+      "categories": [
+        "FRUIT"
+      ],
+      "phrase": "잘 익었어요",
+      "aspect": "taste",
+      "guide": "알맞게 잘 익었다는 칭찬. '잘 익었어요', '속까지 빨갛게 익었어요', '말랑하게 잘 익어요'. 덜 익었다·너무 익었다는 불만은 안 말함이다"
+    },
+    {
+      "id": "C31",
+      "categories": [
+        "GRAIN",
+        "VEGETABLE",
+        "PROCESSED_AGRI"
+      ],
+      "phrase": "구성이 다양해요",
+      "aspect": "other",
+      "guide": "여러 종류가 함께 들어 있어 좋다는 칭찬. '종류가 다양해요', '여러 가지가 골고루 들어 있어요'"
+    }
+  ]
+}
