@@ -4,19 +4,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
+import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /**
@@ -165,6 +172,35 @@ class AsyncConfigTest {
 
             // then
             assertThat(ran.get(WAIT_SECONDS, TimeUnit.SECONDS)).isEqualTo("trace-1");
+        });
+    }
+
+    // 이벤트에는 수령인 이름·전화번호·주소 같은 개인정보가 담길 수 있어, 예외 로그에 이벤트 값이 찍히면 안 된다
+    @Test
+    void 비동기_예외_로그에는_파라미터_값이_아니라_타입_이름만_남는다() {
+        runner.run(context -> {
+            // given
+            AsyncUncaughtExceptionHandler sut = context.getBean(AsyncConfigurer.class).getAsyncUncaughtExceptionHandler();
+            Method method = AsyncProbe.class.getMethod("recordMdc", CompletableFuture.class);
+            Logger logger = (Logger) LoggerFactory.getLogger(AsyncConfig.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+
+            // when
+            try {
+                sut.handleUncaughtException(new IllegalStateException("실패"), method, new Object[]{new SecretEvent("010-1234-5678")});
+            } finally {
+                logger.detachAppender(appender);
+            }
+
+            // then
+            assertThat(appender.list).hasSize(1);
+            String message = appender.list.get(0).getFormattedMessage();
+            assertSoftly(softly -> {
+                softly.assertThat(message).contains("SecretEvent");
+                softly.assertThat(message).doesNotContain("010-1234-5678");
+            });
         });
     }
 
@@ -327,6 +363,10 @@ class AsyncConfigTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    // 개인정보가 든 이벤트를 흉내 낸다
+    record SecretEvent(String phone) {
     }
 
     static class AsyncProbe {
