@@ -4,7 +4,7 @@ module: product
 summary: 구매자 리뷰 키워드는 서비스에서 자유 추출하지 않고, 자유 추출로 만든 긍정 키워드 목록을 Jev가 리뷰마다 판정해 확률 0.9 이상만 센다
 status: 진행 중
 date: 2026-11-05
-paths: [product/src/main/java/com/ok/product/review/domain/ReviewAnalysisType.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/controller/ProductReviewController.java, product/src/main/java/com/ok/product/review/client/UnavailableReviewKeywordAnalyzer.java, product/src/main/java/com/ok/product/review/service/ReviewKeywordAnalysisScheduler.java]
+paths: [product/src/main/java/com/ok/product/review/domain/ReviewAnalysisType.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/controller/ProductReviewController.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewKeywordAnalyzer.java, product/src/main/java/com/ok/product/review/service/ReviewKeywordAnalysisScheduler.java]
 related: [385, 386, 422]
 ---
 
@@ -30,8 +30,8 @@ related: [385, 386, 422]
 | 판정 기준 문장 | 키워드마다 `guide`를 두고 정답과 Jev 질문이 같이 쓴다 | 리뷰 5개에서 "크기가 적당해요"·"탱글탱글해요" 오탐이 사라지고 "양념이 맛있어요"를 잡았다. 요청당 입력은 약 5,400토큰에서 약 9,600토큰으로 늘었다 |
 | 정답자 | gpt-6-astra high (사용자 결정) | 사람이 판정할 시간이 없었다. #385는 모델을 정답자로 쓰지 않았는데 이번에는 다르게 갔다. OpenAI 계열이라 합성 리뷰(Claude), Jev와 계열이 다르다. 이슈 완료 조건도 이 판정 기준으로 고쳤다 |
 | Jev 판정 설정 | "말함" 확률 0.9 이상만 쓰고, 구체적인 식감 키워드(C18·C19·C20·C21·C22·C23·C26·C28)가 있으면 "식감이 좋아요"(C25)를 뺀다 | Jev가 고른 답 그대로는 정밀도 0.675였다. 조정용 100개에서 0.9를 넘는 가장 낮은 기준을 골랐다. 식감 규칙은 판정 기준에 있던 것을 코드로 옮긴 것이다. 설정을 고정한 뒤 평가용 100개로 한 번 재어 정밀도 0.942(65/69), 재현율 0.684였다. 칩은 리뷰 3개 이상이 말해야 뜨므로 재현율을 내주고 정밀도를 택했다 |
-| #460 전까지의 분석기 | 늘 분석기 사용 불가(`ReviewAnalyzerUnavailableException`)를 던지는 임시 구현 `UnavailableReviewKeywordAnalyzer`를 운영 코드에 두고, 운영에서도 키워드 작업자를 켜지 않는다 (사용자 결정) | 실제 Jev 키워드 분석기는 #460 범위다. (미확인) 분석기 빈이 없으면 키워드 퍼사드를 만들 수 없어 앱이 뜨지 않는다. 사용 불가로 알리면 작업자를 켜도 요청을 실패로 기록하지 않고 쉬므로, 그동안 백필한 키워드 요청은 대기로 남았다가 #460 뒤에 처리된다 |
-| 키워드 작업자 켜는 설정 | `app.review-analysis.keyword-worker.enabled`를 감성의 `app.review-analysis.worker.enabled`와 따로 둔다 (사용자 결정) | 운영자가 한쪽 작업자만 끄고 운영할 수 있게 한다. 이름은 감성 쪽 이름에 맞췄다 |
+| 키워드 분석기 | `JevReviewKeywordAnalyzer`가 리뷰 하나에 상품 분류의 키워드 질문(12~30개)을 요청 1회로 보내고, 키워드마다 `probabilities.mentioned`를 돌려준다. 답이나 확률이 없으면 최종 실패다. HTTP 호출과 오류 분류는 감성 분석기와 함께 `JevClient` 하나를 쓴다 | 정밀도 0.942를 잰 실험(`list.ts`의 `buildJevBody`)과 같은 요청을 보낸다. 지시문·질문·판정 기준 문장과 선택지 설명을 목록 파일 그대로 쓰고, 상품명과 본문만 보낸다. 확률이 없을 때 0으로 두면 응답 형식이 바뀌어도 "키워드 0개"로 조용히 완료되므로 실패로 남긴다. 오류 분류를 한 곳에 두어 두 분석기의 분류가 어긋나지 않게 한다 |
+| 키워드 작업자 켜는 설정 | `app.review-analysis.keyword-worker.enabled`를 감성의 `app.review-analysis.worker.enabled`와 따로 두고, 운영 설정에서만 켠다 (사용자 결정) | 운영자가 한쪽 작업자만 끄고 운영할 수 있게 한다. 이름은 감성 쪽 이름에 맞췄다 |
 
 ## 버린 대안
 
@@ -42,7 +42,6 @@ related: [385, 386, 422]
 - **"품질이 좋아요"·"재구매했어요" 같은 일반 칩:** 네이버 상위 칩이지만 장점을 알려 주지 않고 상위 10개 자리를 차지한다.
 - **상한 25개에 맞춰 키워드 4개 더 빼기:** 근거로 보강한 목록을 숫자에 맞춰 줄일 이유가 약했다.
 - **gpt-5.4-mini 추출:** 반어("메추리알 만해요")와 불만("양이 적어요")을 칭찬으로 뽑았다(30개 중 4건).
-- **지금 운영에서 키워드 작업자를 켜기:** 임시 분석기 때문에 인스턴스마다 5분에 한 번 사용 불가 ERROR 로그를 남기고 아무것도 처리하지 못한다.
 - **감성 설정 속성 이름을 `sentiment-worker`로 바꾸고 짝을 맞추기:** 이미 운영 설정이 `worker.enabled`를 쓰고 있어 두 설정을 함께 바꿔야 한다.
 
 ## 건드릴 때 주의
