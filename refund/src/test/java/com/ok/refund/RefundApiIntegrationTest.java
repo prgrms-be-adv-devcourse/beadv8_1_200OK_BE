@@ -1,6 +1,8 @@
 package com.ok.refund;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.refund.domain.BundleItem;
+import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.repository.RefundRepository;
@@ -688,13 +690,18 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         return refunds.getFirst();
     }
 
+    // 판매자가 달라 양말과 모자는 각자 한 상품짜리 묶음이다. 둘 다 무료배송 기준(50,000원) 아래라 배송비 3,000원을 냈다
     private static RefundableOrderItem socks(String status) {
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(SOCKS_ORDER_ITEM_ID, 10_000L, 3)));
         return new RefundableOrderItem(ORDER_ID, SOCKS_ORDER_ITEM_ID, BUYER_ID, SOCKS_SELLER_ID, 55L, "양말", "흰색", status,
-                10_000L, 3);
+                10_000L, 3, bundle);
     }
 
     private static RefundableOrderItem hat() {
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(HAT_ORDER_ITEM_ID, 5_000L, 1)));
         return new RefundableOrderItem(ORDER_ID, HAT_ORDER_ITEM_ID, BUYER_ID, HAT_SELLER_ID, 66L, "모자", "검정", "PREPARING",
-                5_000L, 1);
+                5_000L, 1, bundle);
     }
 }

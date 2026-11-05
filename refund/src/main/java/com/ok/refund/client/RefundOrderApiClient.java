@@ -2,12 +2,17 @@ package com.ok.refund.client;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.client.dto.RefundOrderItemResponse;
+import com.ok.refund.domain.BundleItem;
+import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.service.RefundOrderClient;
 import com.ok.refund.service.dto.RefundableOrderItem;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 주문 모듈 내부 API를 HTTP로 부른다. 경로와 응답 모양은 주문 팀 API가 나오기 전까지 요청서 기준 가정이다.
@@ -38,6 +43,10 @@ public class RefundOrderApiClient implements RefundOrderClient {
         if (response == null) {
             throw new IllegalStateException("주문 상품 조회 응답 본문이 비었습니다. orderId=" + orderId + ", orderItemId=" + orderItemId);
         }
+        // 묶음이 없으면 배송비를 판단할 수 없다. 0원으로 넘기면 돌려줄 배송비를 조용히 빠뜨리므로 본문 누락과 같게 500으로 드러낸다
+        if (response.sellerGroup() == null) {
+            throw new IllegalStateException("주문 상품 조회 응답에 판매자 묶음이 없습니다. orderId=" + orderId + ", orderItemId=" + orderItemId);
+        }
         return new RefundableOrderItem(
                 response.orderId(),
                 response.orderItemId(),
@@ -48,6 +57,23 @@ public class RefundOrderApiClient implements RefundOrderClient {
                 response.optionName(),
                 response.status(),
                 response.unitPrice(),
-                response.quantity());
+                response.quantity(),
+                toBundle(response.sellerGroup()));
+    }
+
+    // 값 검사(음수, 빈 목록, 중복 상품)는 BundleShipping·BundleItem 생성자가 한다
+    private static BundleShipping toBundle(RefundOrderItemResponse.SellerGroup sellerGroup) {
+        if (sellerGroup.items() == null) {
+            throw new IllegalStateException("주문 상품 조회 응답의 판매자 묶음에 상품 목록이 없습니다.");
+        }
+        List<BundleItem> items = new ArrayList<>();
+        for (RefundOrderItemResponse.Item item : sellerGroup.items()) {
+            if (item == null) {
+                throw new IllegalStateException("주문 상품 조회 응답의 판매자 묶음 상품 목록에 빈 값이 있습니다.");
+            }
+            items.add(new BundleItem(item.orderItemId(), item.unitPrice(), item.quantity()));
+        }
+        return new BundleShipping(sellerGroup.shippingFee(), sellerGroup.remoteAreaFee(), sellerGroup.baseShippingFee(),
+                sellerGroup.freeShippingThreshold(), items);
     }
 }

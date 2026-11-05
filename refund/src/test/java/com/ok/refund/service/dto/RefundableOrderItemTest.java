@@ -1,10 +1,13 @@
 package com.ok.refund.service.dto;
 
+import com.ok.refund.domain.BundleItem;
+import com.ok.refund.domain.BundleShipping;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +39,7 @@ class RefundableOrderItemTest {
     }
 
     private static RefundableOrderItem orderItemWithStatus(String status) {
-        return new RefundableOrderItem(10L, 101L, 1L, 5L, 55L, "양말", "흰색", status, 10_000L, 3);
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(101L, 10_000L, 3)));
+        return new RefundableOrderItem(10L, 101L, 1L, 5L, 55L, "양말", "흰색", status, 10_000L, 3, bundle);
     }
 }
