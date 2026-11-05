@@ -25,6 +25,21 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
     @Query("select r from Refund r where r.id = :id")
     Optional<Refund> findByIdForUpdate(@Param("id") Long id);
 
+    /**
+     * 같은 판매자 묶음(주문 ID + 판매자 ID)의 환불 ID만 조회한다. 묶음 승인을 줄 세울 때 잠글 대상을 정하려고 쓴다.
+     * 엔티티가 아니라 ID만 읽는 이유: 뒤이은 잠금 조회가 이 행들의 첫 로딩이어야 영속성 컨텍스트에 잠금 전 상태가 남지 않는다.
+     */
+    @Query("select r.id from Refund r where r.orderId = :orderId and r.sellerId = :sellerId")
+    List<Long> findIdsByOrderIdAndSellerId(@Param("orderId") Long orderId, @Param("sellerId") Long sellerId);
+
+    /**
+     * 주어진 환불 행들을 ID 순서로 쓰기 잠금({@code SELECT ... FOR UPDATE})한다. 같은 묶음 승인을 한 줄로 세울 때 쓴다.
+     * 항상 ID 순서로 잠가야 같은 묶음을 동시에 승인해도 서로 반대 순서로 기다리는 교착 상태가 생기지 않는다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from Refund r where r.id in :ids order by r.id")
+    List<Refund> findAllByIdInForUpdate(@Param("ids") Collection<Long> ids);
+
     Page<Refund> findAllByBuyerId(Long buyerId, Pageable pageable);
 
     Page<Refund> findAllBySellerId(Long sellerId, Pageable pageable);
@@ -35,7 +50,7 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
      * 같은 판매자 묶음(주문 ID + 판매자 ID)에서 주어진 상태인 요청의 취소 개수와 뺀 배송비를 주문 상품별로 더한다.
      * 묶음 전부 취소인지, 남은 묶음 금액이 얼마인지, 앞에서 뺀 배송비가 얼마인지 한 번의 조회로 판단하려고 쓴다.
      */
-    // TODO(#411): 같은 묶음의 다른 환불을 동시에 승인하면 서로의 처리 중 개수를 못 보고 배송비를 틀리게 정할 수 있다. 묶음 단위로 줄 세우기 필요
+    // 승인할 때는 묶음 잠금(findAllByIdInForUpdate)을 얻은 뒤 READ COMMITTED로 불러야, 먼저 끝난 다른 승인의 커밋까지 보인다
     @Query("""
             select new com.ok.refund.domain.CancelledQuantity(r.orderItemId, sum(r.quantity), sum(r.deductedShippingFeeAmount))
             from Refund r

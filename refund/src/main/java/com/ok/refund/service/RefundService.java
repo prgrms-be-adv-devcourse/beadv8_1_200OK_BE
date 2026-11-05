@@ -19,8 +19,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -129,16 +132,23 @@ public class RefundService {
      * 판매자가 승인한다. 같은 묶음의 처리 중 요청을 모아 배송비를 판단하고, 받을 수 있으면 "처리 중"으로 바꾸며 배송비를 저장한다.
      * 받을 수 없으면(취소 금액이 뺄 배송비보다 작음) 사유를 넣어 자동 거절한다. 요청됨으로 남기면 구매자가 이유를 모르고 요청도 쌓이기 때문이다.
      *
-     * <p>행을 잠근 뒤 상태를 확인한다. 구매자 철회와 동시에 오면 먼저 잠근 쪽만 성공하고, 뒤에 온 쪽은 바뀐 상태를 보고 막힌다.
-     * 잠그지 않으면 둘 다 "요청됨"을 읽고 둘 다 저장해, 나중에 저장한 쪽이 앞의 결과를 덮어쓴다.
+     * <p>같은 판매자 묶음의 승인을 한 줄로 세운다(#411). 묶음의 환불 ID만 먼저 읽고, ID 순서로 묶음의 모든 행을 잠근 뒤 집계한다.
+     * 이번 환불 행만 잠그면 같은 묶음의 다른 환불을 동시에 승인할 때 서로를 "아직 요청됨"으로 읽어,
+     * 아무도 배송비를 못 받거나 기본 배송비를 두 번 뺀다. 묶음을 통째로 잠그면 뒤에 온 승인은 앞 승인이 커밋할 때까지 기다린다.
+     * 구매자 철회와 겹쳐도 같은 행 잠금이라 먼저 잠근 쪽만 성공한다.
+     *
+     * <p>READ COMMITTED로 실행한다. 기본(REPEATABLE READ)은 트랜잭션의 첫 조회(묶음 ID 읽기) 때 모습을 끝까지 보여 주므로,
+     * 잠금을 기다리는 동안 앞 승인이 저장한 "처리 중"이 집계에 보이지 않아 줄을 세워도 배송비가 틀린다.
+     * 이미 열린 트랜잭션에 합류하면 격리 수준이 적용되지 않으므로 트랜잭션 밖(Facade)에서만 부른다.
      *
      * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 배송비 값만 쓴다(출고 확인은 #412)
      * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
-     * @throws IllegalStateException 주문 정보가 다른 주문 상품이면 (부르는 쪽 버그)
+     * @throws IllegalStateException 주문 정보가 다른 주문 상품이면, 또는 다른 트랜잭션 안에서 부르면 (부르는 쪽 버그)
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
-        Refund refund = findSellerRefundForUpdate(refundId, sellerId);
+        requireReadCommitted();
+        Refund refund = lockBundleAndFind(refundId, sellerId, orderItem.orderId());
         // 엔티티의 approve도 상태를 보지만, 배송비 판단보다 먼저 막아야 한다. 이미 처리 중인 요청은 자기 개수가 집계에 들어가
         // 판단이 "개수 초과"(500)로 깨지므로 그 전에 409로 돌려준다
         if (refund.getStatus() != RefundStatus.REQUESTED) {
@@ -147,6 +157,8 @@ public class RefundService {
         if (!refund.getOrderItemId().equals(orderItem.orderItemId())) {
             throw new IllegalStateException("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=" + refundId);
         }
+        // 집계는 이 환불을 처리 중으로 바꾸기 전에 해야 한다. 바꾼 뒤에 조회하면 자동 flush로 이번 환불이 집계에 들어가고,
+        // 정책이 이번 개수를 또 더해 "개수 초과"(500)가 난다
         RefundShippingFee fee = decideShippingFee(refund, orderItem);
         LocalDateTime now = LocalDateTime.now(clock);
         if (fee.allowed()) {
@@ -184,6 +196,36 @@ public class RefundService {
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         refund.withdraw(LocalDateTime.now(clock));
         return RefundResult.from(refund);
+    }
+
+    // 바깥 트랜잭션에 합류하면 스프링은 격리 수준 지정을 경고 없이 무시한다. 그러면 테스트는 통과해도 배송비가 조용히 틀리므로 바로 실패시킨다.
+    // 트랜잭션이 아예 없을 때(스프링 없이 부르는 단위 테스트)는 격리 수준이 의미가 없어 검사하지 않는다
+    private static void requireReadCommitted() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
+                .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+            throw new IllegalStateException("환불 승인은 READ COMMITTED 트랜잭션에서만 실행해야 합니다.");
+        }
+    }
+
+    // 묶음(주문 + 판매자)의 환불을 ID 순서로 모두 잠그고 그중 이번 환불을 돌려준다. 판매자 ID로 묶음을 찾으므로
+    // 남의 요청이나 없는 요청은 묶음에 들어 있지 않아 없는 것과 같게 막는다
+    private Refund lockBundleAndFind(Long refundId, Long sellerId, Long orderId) {
+        List<Long> bundleIds = refundRepository.findIdsByOrderIdAndSellerId(orderId, sellerId);
+        // 묶음에 없으면(빈 목록 포함) 잠그기 전에 막는다. 빈 IN 조건으로 잠금 쿼리를 보내지 않게 하는 것도 겸한다
+        if (!bundleIds.contains(refundId)) {
+            throw new RestApiException(RefundErrorCode.REFUND_NOT_FOUND);
+        }
+        Refund target = null;
+        for (Refund locked : refundRepository.findAllByIdInForUpdate(bundleIds)) {
+            if (locked.getId().equals(refundId)) {
+                target = locked;
+            }
+        }
+        if (target == null) {
+            throw new RestApiException(RefundErrorCode.REFUND_NOT_FOUND);
+        }
+        return target;
     }
 
     // 판매자 결정은 트랜잭션의 첫 조회로 잠근다(findByIdForUpdate 설명 참고). 남의 요청은 있는지도 알려 주지 않으려고 없는 것과 같게 막는다

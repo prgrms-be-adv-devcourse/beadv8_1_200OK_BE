@@ -19,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.sql.SQLException;
 import java.time.Clock;
@@ -205,7 +206,7 @@ class RefundServiceTest {
     void 승인하면_지금_시각으로_처리_중이_되고_배송비_판단을_저장한다() {
         // given: 산 2개를 모두 취소해 묶음 전부 취소다. 낸 배송비 3,000원을 돌려준다
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        givenLockedBundle(refund);
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
@@ -225,7 +226,7 @@ class RefundServiceTest {
     void 승인_때_배송비가_모자라면_사유와_함께_자동_거절한다() {
         // given
         Refund refund = Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 1_000L, null);
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        givenLockedBundle(refund);
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, cheapItemInFreeBundle());
@@ -247,7 +248,7 @@ class RefundServiceTest {
         // given
         Refund refund = requested();
         refund.approve(NOW, RefundShippingFee.none());
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        givenLockedBundle(refund);
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
@@ -259,7 +260,7 @@ class RefundServiceTest {
     void 환불과_다른_주문_상품_정보로_승인하면_예외를_던지고_바꾸지_않는다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        givenLockedBundle(refund);
         RefundableOrderItem otherItem = orderItem(102L, 10_000L, 2,
                 new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(102L, 10_000L, 2))));
 
@@ -274,7 +275,7 @@ class RefundServiceTest {
     void 남의_상품_요청을_승인하면_없는_요청처럼_막고_바꾸지_않는다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundRepository.findIdsByOrderIdAndSellerId(10L, OTHER_SELLER_ID)).willReturn(List.of());
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, OTHER_SELLER_ID, socks("PREPARING", 2)))
@@ -286,12 +287,32 @@ class RefundServiceTest {
     @Test
     void 없는_요청을_승인하면_막는다() {
         // given
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+        given(refundRepository.findIdsByOrderIdAndSellerId(10L, SELLER_ID)).willReturn(List.of(99L));
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
+        then(refundRepository).should(never()).findAllByIdInForUpdate(any());
+    }
+
+    // 이번 환불 행만 잠그면 같은 묶음의 동시 승인이 서로를 못 본다(#411). 묶음의 모든 행을 잠그는 것이 요구사항이라 호출을 검증한다
+    @Test
+    void 승인하면_같은_묶음의_환불을_모두_잠근다() {
+        // given
+        Refund refund = requested();
+        ReflectionTestUtils.setField(refund, "id", REFUND_ID);
+        Refund other = Refund.request(10L, 102L, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L, null);
+        ReflectionTestUtils.setField(other, "id", 3L);
+        given(refundRepository.findIdsByOrderIdAndSellerId(10L, SELLER_ID)).willReturn(List.of(3L, REFUND_ID));
+        given(refundRepository.findAllByIdInForUpdate(List.of(3L, REFUND_ID))).willReturn(List.of(other, refund));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
+
+        // then
+        assertThat(result.refundId()).isEqualTo(REFUND_ID);
+        then(refundRepository).should().findAllByIdInForUpdate(List.of(3L, REFUND_ID));
     }
 
     @Test
@@ -378,6 +399,13 @@ class RefundServiceTest {
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(101L, 10_000L, boughtQuantity)));
         return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "양말", "흰색", status, 10_000L, boughtQuantity, bundle);
+    }
+
+    // 승인은 묶음 ID를 읽고 묶음 행을 잠가 이번 환불을 ID로 찾는다. 저장 전 엔티티라 ID를 직접 넣는다
+    private void givenLockedBundle(Refund refund) {
+        ReflectionTestUtils.setField(refund, "id", REFUND_ID);
+        given(refundRepository.findIdsByOrderIdAndSellerId(10L, SELLER_ID)).willReturn(List.of(REFUND_ID));
+        given(refundRepository.findAllByIdInForUpdate(List.of(REFUND_ID))).willReturn(List.of(refund));
     }
 
     private static RefundableOrderItem cheapItemInFreeBundle() {

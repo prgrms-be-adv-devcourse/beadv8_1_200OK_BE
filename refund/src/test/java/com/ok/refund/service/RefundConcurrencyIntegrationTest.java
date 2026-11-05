@@ -1,0 +1,174 @@
+package com.ok.refund.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.refund.domain.BundleItem;
+import com.ok.refund.domain.BundleShipping;
+import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.repository.RefundRepository;
+import com.ok.refund.service.dto.RefundDecision;
+import com.ok.refund.service.dto.RefundDecisionCommand;
+import com.ok.refund.service.dto.RefundRequestCommand;
+import com.ok.refund.service.dto.RefundableOrderItem;
+import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.FakeRefundOrderClient;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+
+// 같은 판매자 묶음의 서로 다른 환불을 동시에 승인해도 배송비를 한 번만 돌려주고 한 번만 빼는지 실제 DB 잠금으로 확인한다(#411).
+// 실행마다 어느 쪽이 먼저 잠금을 얻을지 달라지므로 여러 번 돌려 두 순서를 모두 거치게 한다
+class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
+
+    private static final String SUCCESS = "SUCCESS";
+    private static final Long BUYER_ID = 1L;
+    private static final Long SELLER_ID = 7L;
+    private static final Long ORDER_ID = 50L;
+    private static final Long A = 501L;
+    private static final Long B = 502L;
+    private static final Long C = 503L;
+
+    @Autowired
+    RefundFacade refundFacade;
+    @Autowired
+    RefundService refundService;
+    @Autowired
+    RefundRepository refundRepository;
+    @Autowired
+    PlatformTransactionManager transactionManager;
+    @Autowired
+    FakeRefundOrderClient orderClient;
+
+    @AfterEach
+    void tearDown() {
+        refundRepository.deleteAllInBatch();
+        orderClient.clear();
+    }
+
+    @RepeatedTest(5)
+    void 같은_묶음을_동시에_승인해도_배송비는_마지막_한_요청만_받는다() throws Exception {
+        // given: A 10,000 + B 10,000 = 20,000원(무료배송 기준 50,000원 미만). 배송비 3,000원과 도서산간 운임 2,000원을 냈다(총 25,000원)
+        BundleShipping bundle = new BundleShipping(3_000L, 2_000L, 3_000L, 50_000L,
+                List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1)));
+        orderClient.put(orderItem(A, 10_000L, bundle));
+        orderClient.put(orderItem(B, 10_000L, bundle));
+        Long refundA = request(A);
+        Long refundB = request(B);
+
+        // when
+        List<String> results = runTogether(() -> approve(refundA), () -> approve(refundB));
+
+        // then: 둘이 서로를 "아직 남음"으로 보면 아무도 배송비를 못 받아 20,000원이 된다
+        assertThat(results).containsOnly(SUCCESS);
+        List<Long> feesPerRefund = new ArrayList<>();
+        long total = 0;
+        for (Refund refund : refundRepository.findAll()) {
+            feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
+            total += refund.getRefundAmount();
+        }
+        long refundedTotal = total;
+        assertSoftly(softly -> {
+            softly.assertThat(feesPerRefund).containsExactlyInAnyOrder(5_000L, 0L);
+            softly.assertThat(refundedTotal).isEqualTo(25_000L);
+        });
+    }
+
+    @RepeatedTest(5)
+    void 같은_묶음의_일부_취소를_동시에_승인해도_무료배송이_깨질_때_배송비는_한_번만_뺀다() throws Exception {
+        // given: A 30,000 + B 15,000 + C 15,000 = 60,000원 무료배송(기준 50,000원, 기본 배송비 3,000원).
+        // B·C를 각각 요청하면 먼저 승인되는 쪽이 45,000원으로 기준을 깨 3,000원을 빼고, 나중 쪽은 이미 깨져 빼지 않는다
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(A, 30_000L, 1), new BundleItem(B, 15_000L, 1), new BundleItem(C, 15_000L, 1)));
+        orderClient.put(orderItem(B, 15_000L, bundle));
+        orderClient.put(orderItem(C, 15_000L, bundle));
+        Long refundB = request(B);
+        Long refundC = request(C);
+
+        // when
+        List<String> results = runTogether(() -> approve(refundB), () -> approve(refundC));
+
+        // then: 둘 다 "처음 깨짐"으로 보면 3,000원을 두 번 뺀다
+        assertThat(results).containsOnly(SUCCESS);
+        List<Long> deductedPerRefund = new ArrayList<>();
+        for (Refund refund : refundRepository.findAll()) {
+            deductedPerRefund.add(refund.getDeductedShippingFeeAmount());
+        }
+        assertThat(deductedPerRefund).containsExactlyInAnyOrder(3_000L, 0L);
+    }
+
+    // 바깥 트랜잭션에 합류하면 READ COMMITTED가 적용되지 않아, 위 두 테스트가 지키는 동작이 조용히 깨진다. 그래서 바로 실패해야 한다
+    @Test
+    void 다른_트랜잭션_안에서_승인하면_바로_실패하고_바꾸지_않는다() {
+        // given
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L, List.of(new BundleItem(A, 10_000L, 1)));
+        RefundableOrderItem item = orderItem(A, 10_000L, bundle);
+        orderClient.put(item);
+        Long refundId = request(A);
+        TransactionTemplate outer = new TransactionTemplate(transactionManager);
+
+        // when & then
+        assertThatThrownBy(() -> outer.executeWithoutResult(status -> refundService.approve(refundId, SELLER_ID, item)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불 승인은 READ COMMITTED 트랜잭션에서만 실행해야 합니다.");
+        assertThat(refundRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    private Long request(Long orderItemId) {
+        return refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, orderItemId, 1, null)).refundId();
+    }
+
+    private void approve(Long refundId) {
+        refundFacade.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
+    }
+
+    private static RefundableOrderItem orderItem(Long orderItemId, long unitPrice, BundleShipping bundle) {
+        return new RefundableOrderItem(ORDER_ID, orderItemId, BUYER_ID, SELLER_ID, 77L, "상품", "옵션",
+                RefundableOrderItem.CANCELLABLE_STATUS, unitPrice, 1, bundle);
+    }
+
+    // 두 작업을 래치로 동시에 출발시키고, 각 결과를 SUCCESS 또는 에러 코드 이름으로 돌려준다
+    private static List<String> runTogether(Runnable first, Runnable second) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            List<Future<String>> futures = new ArrayList<>();
+            for (Runnable task : List.of(first, second)) {
+                Callable<String> waiting = () -> {
+                    start.await();
+                    return resultOf(task);
+                };
+                futures.add(executor.submit(waiting));
+            }
+            start.countDown();
+            List<String> results = new ArrayList<>();
+            for (Future<String> future : futures) {
+                results.add(future.get(30, TimeUnit.SECONDS));
+            }
+            return results;
+        }
+    }
+
+    private static String resultOf(Runnable task) {
+        try {
+            task.run();
+            return SUCCESS;
+        } catch (RestApiException e) {
+            return e.getErrorCode().name();
+        }
+    }
+}
