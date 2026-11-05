@@ -3,8 +3,8 @@ issue: 386
 module: product
 summary: 리뷰 등록과 분석을 분석 요청 표로 떼어 내 Jev로 분석하고, 수정·삭제·일시 오류를 반영해 판매자에게 분석 완료 리뷰만 센 감성 집계를 보여 준다
 status: 확정
-date: 2026-11-04
-paths: [product/src/main/java/com/ok/product/review/service/ReviewSentimentAnalysisFacade.java, product/src/main/java/com/ok/product/review/service/ReviewSentimentService.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/client/ReviewSentimentCriteria.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewSentimentAnalyzer.java, product/src/main/resources/review-analysis/criteria.json]
+date: 2026-11-05
+paths: [product/src/main/java/com/ok/product/review/service/ReviewSentimentAnalysisFacade.java, product/src/main/java/com/ok/product/review/service/ReviewSentimentService.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/client/ReviewSentimentCriteria.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewSentimentAnalyzer.java, product/src/main/resources/review-analysis/criteria.json, product/src/main/resources/db/migration/product/V202611041145__product__create_review_analysis_tables.sql]
 related: [385, 422]
 ---
 
@@ -28,7 +28,7 @@ related: [385, 422]
 | 결과의 모델 | 응답의 `model`이 아니라 설정의 모델을 저장 | 응답 모델을 읽으면 해석 실패 경로가 하나 늘어난다. #385에서 요청 모델과 응답 모델이 같은 것을 확인했다 |
 | API 키 | 기동 검사에 넣지 않고, 운영 compose가 `JEV_API_KEY`를 요구함 | 로컬·CI가 키 없이 떠야 한다. 토스 키와 같은 방식이다 |
 | 실패 구분 | 분석기가 `retryable`로 밝힌 실패(429·5xx·네트워크 오류·시간 초과)만 재시도. 401·403을 뺀 그 밖의 4xx, 읽을 수 없는 응답, 분석기가 분류하지 못한 예외는 바로 최종 실패 | 다시 보내도 같은 답이 올 실패를 재시도하지 않는다. 분류 못 한 예외까지 대기로 두면 5초마다 다시 꺼내진다 |
-| 인증 거절(401·403) | 분석기가 `ReviewAnalyzerUnavailableException`을 던지면 작업자가 이번 실행의 남은 요청을 부르지 않고 5분 쉼. 실패로 기록하지 않아 시도 횟수와 상태가 그대로 | 키가 없거나 폐기·교체된 설정 오류라 리뷰와 상관없고, 키를 고치면 같은 요청이 성공한다. 최종 실패로 두면 키 하나가 틀려도 백필 요청이 몇 분 만에 모두 최종 실패가 되어 SQL로 되돌려야 한다. 감수하는 것은 인스턴스마다 5분에 한 번 401 호출과 ERROR 로그가 남고, 꺼내 둔 요청이 임대(10분)가 끝날 때까지 늦어지는 점이다. 쉬는 시간은 인스턴스마다 따로이고 임대보다 짧다(PR 리뷰 반영) |
+| 인증 거절(401·403) | 분석기가 `ReviewAnalyzerUnavailableException`을 던지면 작업자가 이번 실행의 남은 요청을 부르지 않고 5분 쉼. 실패로 기록하지 않아 시도 횟수와 상태가 그대로 | 키가 없거나 폐기·교체된 설정 오류라 리뷰와 상관없고, 키를 고치면 같은 요청이 성공한다. 최종 실패로 두면 키 하나가 틀려도 백필 요청이 몇 분 만에 모두 최종 실패가 되어 SQL로 되돌려야 한다. 감수하는 것은 인스턴스마다 5분에 한 번 401 호출과 ERROR 로그가 남고, 꺼내 둔 요청이 임대(10분)가 끝날 때까지 늦어지는 점이다. 쉬는 시간은 인스턴스마다 따로이고 임대보다 짧다. 한 대만 거절받아도 그 대가 꺼낸 요청은 임대 중이라 다른 대가 건드리지 않고, 임대가 끝나면 정상인 대가 처리한다 (사용자 결정, PR 리뷰 반영) |
 | 백오프 | 요청 엔티티의 대기 시간 표(1분, 5분, 30분, 2시간)로 두고, 백오프 중에도 상태는 대기 | 표를 바꾸면 최대 시도 횟수도 따라간다. 작업자는 이미 다음 시도 시각이 지난 대기만 꺼낸다 |
 | 실패 기록 | 시도 횟수는 실패할 때만 올리고, 재시도할 실패에도 마지막 오류를 덮어씀. 실패 메시지에는 상태 코드만 담음 | 백오프 중인 요청도 운영자가 원인을 본다. 응답 본문과 키를 `last_error`에 남기지 않는다 |
 | 상태 | 대기·완료·최종 실패에 분석 안 함(SKIPPED), 취소(CANCELLED)를 더하고, 표 생성 마이그레이션의 칼럼 주석에 다섯 상태를 모두 적음 | 다시 돌리는 API 없이 운영자가 SQL로 상태를 되돌리므로, 칼럼 주석에서 상태 목록을 보게 한다. 주석만 바꾸는 마이그레이션을 따로 두었다가, 아직 어디에도 적용되지 않아 표 생성 파일에 합쳤다(PR 리뷰 반영) |
@@ -40,6 +40,7 @@ related: [385, 422]
 | 백필 위치 | 표 생성 마이그레이션과 백필 마이그레이션을 두 파일로 나눔 | 백필 파일만 다시 실행해야 실제 SQL을 통합 테스트로 확인할 수 있다 |
 | 표 이름 | `product_` 접두사 없이 `review_*` | 접두사를 붙이면 항목 감성 표의 UNIQUE 제약 이름이 69자가 되어 MySQL 식별자 한도 64자를 넘는 것을 확인했다 |
 | 작업자 여러 대 | 꺼내기에서 대기 요청을 `FOR UPDATE SKIP LOCKED`로 잠그고, 넘기는 요청의 다음 시도 시각을 10분 미룸(임대) (사용자 결정, PR 리뷰 반영) | 운영은 지금 앱 한 대지만, 두 대 이상이면 대기 요청이 밀릴 때(백필, 장애 복구, 일괄 재분석) 두 대가 같은 20건을 꺼내 Jev를 대부분 두 번 부른다. 잠금만 쓰면 꺼내기가 분석 전에 커밋되어 다시 꺼내지고, 시각만 미루면 같은 순간의 두 꺼내기가 겹친다. 둘을 하나씩 빼면 각각 실패하는 것을 통합 테스트로 확인했다. 10분은 한 번 실행의 최악(20건 모두 시간 초과, 약 4분 20초)보다 길게 잡았다 |
+| 꺼내기 인덱스 | `(analysis_type, status, next_attempt_at)`. 아직 적용된 환경이 없어 표 생성 마이그레이션을 고침 (사용자 결정, PR 리뷰 반영) | 꺼내기는 분석 종류로 거른다. (미확인) InnoDB의 `FOR UPDATE`는 훑은 인덱스 레코드를 모두 잠그므로, 분석 종류가 앞에 없으면 종류가 늘 때(#387) 다른 종류의 행까지 잠근다. `id` 정렬은 InnoDB가 보조 인덱스 끝에 기본 키를 붙여 따로 넣지 않았다 |
 | 모델명 길이 | 칼럼 50자를 유지하고 주석으로만 남김 (사용자 결정) | 모델이 고정 값이라 50자를 넘을 가능성이 낮다는 판단을 받아들였다 |
 | 기준 변경 시 일괄 재분석 | 하지 않고 #422로 미룸 (사용자 결정) | 이슈 01이 범위 밖으로 둔 일이다. 결과에 기준 버전을 남겨 두어 나중에 대상을 고를 수 있다 |
 
@@ -53,6 +54,9 @@ related: [385, 422]
 - **결과 행을 지우고 새로 넣기:** 엔티티 규칙이 `repository.delete(...)`를 막는다.
 - **ShedLock으로 작업자를 한 대에서만 돌리기:** 라이브러리와 잠금 표가 늘고, 앱을 늘려도 처리량이 그대로다. 임대는 기존 `next_attempt_at` 칼럼만 쓴다. 감수하는 것은 작업자가 도중에 멈추면 꺼낸 요청이 최대 10분 늦게 다시 처리되는 점이다.
 - **서비스가 예외 타입을 보고 재시도 여부를 정하기:** "분류 못 한 예외는 최종 실패" 규칙이 두 곳으로 흩어진다.
+- **401·403을 재시도할 실패로 보기:** 배치의 20건이 모두 Jev를 부르고, 다섯 번 시도한 뒤(약 2시간 36분) 결국 모두 최종 실패가 된다.
+- **작업자가 켜져 있으면 기동할 때 키가 비었는지 검사:** 키가 만료되거나 교체된 경우를 막지 못하고, "API 키" 결정과 어긋난다.
+- **중단할 때 남은 요청의 임대를 풀어 다른 대가 바로 가져가게 하기:** 쓰기 트랜잭션과 "아직 내 임대인지" 조건이 늘어난다. 앱마다 키가 다른 상황은 키 교체 중 잠깐이라, 감수하는 것은 그동안 꺼내 둔 요청이 최대 10분 늦는 점이다.
 - **재시도 5회 소진 통합 테스트:** 통합 테스트의 Clock이 시스템 시계라 시간을 넘길 수 없다. 도메인 테스트가 고정 시각으로 확인한다.
 
 ## 건드릴 때 주의
@@ -66,4 +70,6 @@ related: [385, 422]
 - ERROR 로그는 커밋 전에 남는다. 커밋이 실패하면 로그는 최종 실패인데 행은 대기로 남는다.
 - monolith에는 `RestClient` 빈이 둘(토스, Jev) 있고 필드 이름으로 고른다. 필드 이름을 바꾸면 주입이 모호해진다.
 - API 키 없이 작업자를 켜면 401로 5분마다 쉬기를 되풀이하고 요청은 대기로 남는다. 운영 compose는 막지만 jar를 직접 실행하면 막지 못한다.
+- 쉬는 상태는 퍼사드 빈이 메모리에 든다. 통합 테스트에서 인증 거절을 일으키면 같은 컨텍스트를 쓰는 뒤 테스트의 `analyzePending()`이 아무것도 하지 않으므로, 쉬기는 퍼사드 단위 테스트에서 시계를 넘겨 확인한다.
+- 쉬는 시간(5분)은 임대(10분)보다 짧아야 한다. 길면 키를 고친 뒤에도 임대가 끝난 요청을 쉬는 동안 처리하지 못한다.
 - 분석 요청과 결과 표가 `product_review`를 FK로 가리킨다. 테스트에서 리뷰 행을 지우려면 둘을 먼저 지운다. 통합 테스트는 스케줄러를 켜지 않고 `analyzePending()`을 직접 부르고, Fake 분석기는 `testsupport`에 한 번만 등록되어 있다.
