@@ -38,8 +38,8 @@ class PayoutCandidateKafkaListenerTest {
         // when & then: 규칙대로 표준 예외를 던진다. 메시지에 검색용 태그와 걸린 이유가 들어간다
         assertThatThrownBy(() -> sut.onKafka(message))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("[PAYOUT_CANDIDATE_SKIPPED]")
-                .hasMessageContaining("reason=orderItemId 없음");
+                .hasMessage("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 메시지입니다. reason=orderItemId 없음, "
+                        + "command=PurchaseConfirmedCommand[orderId=100, orderItemId=null, sellerId=10, totalItemPrice=10000, sellerShippingPrice=3000]");
         // 정산후보 생성은 요청하지 않는다 (요구사항 자체가 "부르지 않는다")
         then(payoutCandidateUseCase).shouldHaveNoInteractions();
     }

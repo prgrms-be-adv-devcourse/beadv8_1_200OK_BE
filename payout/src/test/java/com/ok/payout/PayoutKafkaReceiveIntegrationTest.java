@@ -10,7 +10,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.AbstractMessageListenerContainer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.MessageListenerContainer;
 
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
@@ -46,6 +50,9 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private KafkaListenerEndpointRegistry listenerRegistry;
 
     // 이 테스트에서 쓴 주문 번호 (정리할 때 이 주문의 행만 지움)
     private final List<Long> usedOrderIds = new ArrayList<>();
@@ -142,7 +149,7 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
         kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, "same-key", goodMessage);
 
         // then: 정상 메시지가 처리되면, 잘못된 메시지는 저장되지 않고 뒤 메시지를 막지 않은 것이다
-        // (입구가 IllegalArgumentException을 던지면 기본 오류 처리기가 몇 번 다시 시도한 뒤 넘긴다. 예외를 던지는지는 입구 단위 테스트가 확인한다)
+        // (입구가 IllegalArgumentException을 던지면 정산 오류 처리기가 다시 시도하지 않고 넘긴다. 예외를 던지는지는 입구 단위 테스트가 확인한다)
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(candidateRepository.findAllByOrderId(goodOrderId)).hasSize(2));
         assertThat(candidateRepository.findAllByOrderId(badOrderId)).isEmpty();
@@ -168,10 +175,29 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
         kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, "same-key", goodMessage);
 
         // then: 정상 메시지가 처리되면, 잘못된 메시지는 기록되지 않고 뒤 메시지를 막지 않은 것이다
-        // (입구가 IllegalArgumentException을 던지면 기본 오류 처리기가 몇 번 다시 시도한 뒤 넘긴다. 예외를 던지는지는 입구 단위 테스트가 확인한다)
+        // (입구가 IllegalArgumentException을 던지면 정산 오류 처리기가 다시 시도하지 않고 넘긴다. 예외를 던지는지는 입구 단위 테스트가 확인한다)
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(deductionRepository.findByOrderId(goodOrderId)).isPresent());
         assertThat(deductionRepository.findByOrderId(badOrderId)).isEmpty();
+    }
+
+    @Test
+    void 정산_Kafka_리스너는_정산_오류_처리기를_쓴다() {
+        // given: 정산 그룹으로 받는 리스너 (구매확정, 결제 완료)
+        List<MessageListenerContainer> payoutContainers = new ArrayList<>();
+        for (MessageListenerContainer container : listenerRegistry.getListenerContainers()) {
+            if (PayoutTopics.CONSUMER_GROUP.equals(container.getGroupId())) {
+                payoutContainers.add(container);
+            }
+        }
+
+        // when & then: 기본 설정(오류 처리기 없음 → 간격 0으로 10번)이 아니라 정산 설정의 오류 처리기가 붙어 있다
+        // 규칙 내용(다시 시도하지 않는 예외, 간격)은 PayoutKafkaConsumerConfigTest가 확인한다
+        assertThat(payoutContainers).hasSize(2);
+        for (MessageListenerContainer container : payoutContainers) {
+            assertThat(((AbstractMessageListenerContainer<?, ?>) container).getCommonErrorHandler())
+                    .isInstanceOf(DefaultErrorHandler.class);
+        }
     }
 
     // 주문이 보낼 구매확정 JSON. 키는 orderItemId (#339 합의). 이 테스트는 주문 하나에 상품 하나라 주문 상품 번호 = 주문 번호

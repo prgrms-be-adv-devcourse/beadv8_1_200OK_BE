@@ -11,7 +11,7 @@ import java.util.Optional;
  * <p>
  * 입구마다 끝내는 방식이 다르다.
  * - Kafka 입구: 규칙(exception.md, "다른 모듈이 보낸 값의 오류는 표준 예외를 던진다")대로 IllegalArgumentException을 던진다.
- *   Kafka에는 실패 기록이 쌓이는 곳이 없어(기본 오류 처리기가 몇 번 다시 시도한 뒤 ERROR 로그를 남기고 넘김),
+ *   Kafka에는 실패 기록이 쌓이는 곳이 없어(정산 오류 처리기 {@code PayoutKafkaConsumerConfig}가 다시 시도하지 않고 ERROR 로그를 남긴 뒤 넘김),
  *   멘토 지적("재처리해도 안 되는 이벤트로 실패가 쌓이지 않게")도 함께 지킨다. 팀 DLT가 들어오면 이 예외로 원본이 DLT에 보관된다.
  * - Spring 이벤트 입구: 태그 로그를 남기고 정상 종료한다. 규칙과 다르다는 것을 알고 둔 구조다.
  *   여기서 예외를 던지면 실패 기록(event_publication)이 남고, 운영은 재시작 때 실패 건을 다시 보내므로 재시작마다 같은 이벤트가 또 실패한다.
