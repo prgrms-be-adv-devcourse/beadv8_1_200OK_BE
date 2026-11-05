@@ -670,6 +670,26 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // 요청은 출고 전에 했지만 판매자가 승인하기 전에 출고했다
+    @Test
+    void 승인_때_출고된_상품이면_409이고_요청됨으로_남는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        orderClient.put(socks("SHIPPING"));
+
+        // when & then
+        approve(SOCKS_SELLER_ID, refundId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/order-item-not-cancellable")));
+        Refund saved = onlyRefund();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(saved.getDecidedAt()).isNull();
+            softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+        });
+    }
+
     @Test
     void 승인_때_주문에_상품이_없으면_404이고_요청됨으로_남는다() throws Exception {
         // given

@@ -260,6 +260,37 @@ class RefundServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
     }
 
+    // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고된 상품은 취소로 돌려줄 수 없다
+    @Test
+    void 승인_때_이미_출고됐으면_409이고_요청됨_그대로다() {
+        // given
+        Refund refund = requested();
+        givenLockedBundle(refund);
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("SHIPPING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE));
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(refund.getDecidedAt()).isNull();
+        });
+    }
+
+    // 이미 끝난 요청은 출고 여부와 상관없이 처리할 수 없다는 것이 진짜 이유라, 판매자에게 상태 충돌을 먼저 알린다
+    @Test
+    void 철회됐고_출고도_됐으면_상태_충돌이_먼저다() {
+        // given
+        Refund refund = requested();
+        refund.withdraw(NOW);
+        givenLockedBundle(refund);
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("SHIPPING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
     @Test
     void 환불과_다른_주문_상품_정보로_승인하면_예외를_던지고_바꾸지_않는다() {
         // given

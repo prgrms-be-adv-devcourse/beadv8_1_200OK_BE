@@ -147,10 +147,11 @@ public class RefundService {
      * 잠금을 기다리는 동안 앞 승인이 저장한 "처리 중"이 집계에 보이지 않아 줄을 세워도 배송비가 틀린다.
      * 반드시 이 메서드가 트랜잭션을 새로 시작해야 하므로 트랜잭션 밖(Facade)에서만 부른다.
      *
-     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 배송비 값만 쓴다(출고 확인은 #412).
+     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 출고 여부와 배송비 값을 쓴다.
      *                  묶음을 이 값의 주문 ID로 찾으므로 환불의 주문 ID로 조회한 값이어야 한다. 다른 주문 값이면 묶음에 이 환불이 없어
      *                  {@code REFUND_NOT_FOUND}가 된다(Facade가 환불의 주문 ID로 조회한다)
-     * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE},
+     *                               이미 출고됐으면 {@code ORDER_ITEM_NOT_CANCELLABLE}
      * @throws IllegalStateException 주문 정보가 다른 주문 상품이면, 또는 이미 열린 트랜잭션 안에서 부르면 (부르는 쪽 버그)
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -164,6 +165,12 @@ public class RefundService {
         }
         if (!refund.getOrderItemId().equals(orderItem.orderItemId())) {
             throw new IllegalStateException("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=" + refundId);
+        }
+        // 요청 때 출고 전이었어도 승인 사이에 판매자가 출고했을 수 있다. 출고된 상품은 취소로 돌려줄 수 없어 승인을 막는다.
+        // 상태 확인 뒤에 보는 이유: 이미 철회·거절·승인된 요청은 출고 여부와 상관없이 처리할 수 없다는 것이 진짜 이유라 그 응답(409 INVALID_REFUND_STATE)이 먼저다.
+        // 아무것도 바꾸지 않고 던지므로 환불은 요청됨 그대로 남는다. 판매자는 거절로 끝내면 된다
+        if (!orderItem.isCancellable()) {
+            throw new RestApiException(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE);
         }
         // 집계는 이 환불을 처리 중으로 바꾸기 전에 해야 한다. 바꾼 뒤에 조회하면 자동 flush로 이번 환불이 집계에 들어가고,
         // 정책이 이번 개수를 또 더해 "개수 초과"(500)가 난다
