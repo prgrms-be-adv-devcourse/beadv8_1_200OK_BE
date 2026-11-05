@@ -14,10 +14,15 @@ import com.ok.refund.service.dto.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeRefundOrderClient;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -30,6 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -146,7 +152,9 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
-    // 끝난 행(거절·철회)은 다시 처리 중이 될 수 없어 잠그지 않는다. 다만 이번 환불은 끝났어도 넣어야 잠근 뒤 409로 막힌다
+    // 끝난 행(거절·철회)은 다시 처리 중이 될 수 없어 잠그지 않는다. 다만 이번 환불은 끝났어도 넣어야 잠근 뒤 409로 막힌다.
+    // 저장소를 따로 테스트하지 않는 규칙(testing-strategy.md)의 예외다. 어떤 행을 잠갔는지는 승인 결과에 드러나지 않아
+    // 서비스 경로로는 끝난 행이 빠졌는지 확인할 수 없고, 잠금 범위가 #411의 핵심 동작이라 쿼리 결과를 직접 본다
     @Test
     void 승인_때_잠글_행은_진행_중_행과_이번_환불뿐이다() {
         // given: A 요청됨, B 철회 뒤 다시 요청(철회 행 + 요청됨 행), C 철회
@@ -170,7 +178,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThat(sut).containsExactly(refundA, refundB, withdrawnC);
     }
 
-    // 위 두 테스트는 동시에 출발시킬 뿐이라 어느 쪽이 먼저 잠글지 정할 수 없다. 여기서는 순서를 고정한다:
+    // 위의 동시 승인 테스트들은 동시에 출발시킬 뿐이라 어느 쪽이 먼저 잠글지 정할 수 없다. 여기서는 순서를 고정한다:
     // 다른 트랜잭션이 묶음을 잠그고 A를 처리 중으로 바꾼 채 커밋하지 않은 동안 B를 승인하면, B는 잠금에서 기다렸다가
     // 커밋 뒤의 최신 값(A 처리 중)을 보고 마지막 환불로 배송비를 받아야 한다
     @Test
@@ -214,21 +222,30 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
-    // 바깥 트랜잭션에 합류하면 READ COMMITTED가 적용되지 않아, 위 두 테스트가 지키는 동작이 조용히 깨진다. 그래서 바로 실패해야 한다
-    @Test
-    void 다른_트랜잭션_안에서_승인하면_바로_실패하고_바꾸지_않는다() {
+    // 바깥 트랜잭션에 합류하면 위의 동시 승인 테스트들이 지키는 동작이 조용히 깨진다. 바깥이 기본 격리 수준이면 READ COMMITTED가
+    // 무시되고, 바깥이 READ COMMITTED여도 바깥에서 먼저 읽은 옛 엔티티로 판단할 수 있다. 그래서 격리 수준과 상관없이 바로 실패해야 한다
+    @ParameterizedTest
+    @MethodSource("바깥_트랜잭션_격리_수준")
+    void 다른_트랜잭션_안에서_승인하면_격리_수준과_상관없이_바로_실패하고_바꾸지_않는다(int isolationLevel) {
         // given
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L, List.of(new BundleItem(A, 10_000L, 1)));
         RefundableOrderItem item = orderItem(A, 10_000L, bundle);
         orderClient.put(item);
         Long refundId = request(A);
         TransactionTemplate outer = new TransactionTemplate(transactionManager);
+        outer.setIsolationLevel(isolationLevel);
 
         // when & then
         assertThatThrownBy(() -> outer.executeWithoutResult(status -> refundService.approve(refundId, SELLER_ID, item)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("환불 승인은 READ COMMITTED 트랜잭션에서만 실행해야 합니다.");
+                .hasMessage("환불 승인은 이미 열린 트랜잭션 안에서 부를 수 없습니다. 새 트랜잭션으로 실행해야 합니다.");
         assertThat(refundRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    static Stream<Arguments> 바깥_트랜잭션_격리_수준() {
+        return Stream.of(
+                Arguments.of(Named.of("기본 격리 수준", TransactionDefinition.ISOLATION_DEFAULT)),
+                Arguments.of(Named.of("READ COMMITTED", TransactionDefinition.ISOLATION_READ_COMMITTED)));
     }
 
     private Long request(Long orderItemId) {

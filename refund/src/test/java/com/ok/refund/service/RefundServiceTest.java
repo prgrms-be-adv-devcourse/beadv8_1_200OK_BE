@@ -274,17 +274,17 @@ class RefundServiceTest {
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
+    // 남의 요청은 판매자 ID로 찾는 잠글 목록에 들어오지 않는다. 잠그지도 않아야 남의 행을 건드리지 않는다
     @Test
-    void 남의_상품_요청을_승인하면_없는_요청처럼_막고_바꾸지_않는다() {
+    void 남의_상품_요청을_승인하면_없는_요청처럼_막고_잠그지도_않는다() {
         // given
-        Refund refund = requested();
         given(refundRepository.findLockTargetIds(10L, OTHER_SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of());
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, OTHER_SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
-        assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        then(refundRepository).should(never()).findByIdForUpdate(any());
     }
 
     @Test
