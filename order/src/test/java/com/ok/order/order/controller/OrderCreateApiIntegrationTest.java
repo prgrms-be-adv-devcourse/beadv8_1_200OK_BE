@@ -3,7 +3,7 @@ package com.ok.order.order.controller;
 import com.jayway.jsonpath.JsonPath;
 import com.ok.common.event.OrderCreatedEvent;
 import com.ok.order.OrderSchema;
-import com.ok.order.cart.service.CartService;
+import com.ok.order.cart.application.service.CartService;
 import com.ok.order.order.client.dto.ProductOptionInfoResponse;
 import com.ok.order.order.client.dto.SellerShippingFeeResponse;
 import com.ok.order.order.exception.OrderErrorCode;

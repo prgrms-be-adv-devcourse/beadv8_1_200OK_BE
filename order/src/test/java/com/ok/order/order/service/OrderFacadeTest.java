@@ -1,8 +1,8 @@
 package com.ok.order.order.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.order.cart.service.CartService;
-import com.ok.order.cart.service.dto.SelectedCartItem;
+import com.ok.order.cart.application.dto.SelectedCartItem;
+import com.ok.order.cart.application.port.in.GetSelectedCartItemsUseCase;
 import com.ok.order.order.client.DeliveryApiClient;
 import com.ok.order.order.client.ProductApiClient;
 import com.ok.order.order.client.WalletApiClient;
@@ -48,7 +48,7 @@ import static org.mockito.Mockito.never;
 @ExtendWith(MockitoExtension.class)
 class OrderFacadeTest {
 
-    @Mock CartService cartService;
+    @Mock GetSelectedCartItemsUseCase getSelectedCartItems;
     @Mock OrderService orderService;
     @Mock ProductApiClient productApiClient;
     @Mock WalletApiClient walletApiClient;
@@ -101,7 +101,7 @@ class OrderFacadeTest {
     @Test
     void 선택한_장바구니_상품이_없으면_주문서를_만들_수_없다() {
         // given
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of());
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of());
 
         // when & then
         assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
@@ -113,7 +113,7 @@ class OrderFacadeTest {
     @Test
     void 상품_모듈에_없는_옵션이면_주문할_수_없다() {
         // given: 상품 모듈 응답에서 빠짐 (삭제된 옵션)
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of());
 
         // when & then
@@ -125,7 +125,7 @@ class OrderFacadeTest {
     @Test
     void 판매_중이_아닌_상품은_주문할_수_없다() {
         // given
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(option(11L, SELLER_ID, 10_000L, 100, false)));
 
         // when & then
@@ -137,7 +137,7 @@ class OrderFacadeTest {
     @Test
     void 담은_수량보다_재고가_적으면_주문할_수_없다() {
         // given: 2개 담았는데 재고 1개
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 2)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 2)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(option(11L, SELLER_ID, 10_000L, 1, true)));
 
         // when & then
@@ -149,7 +149,7 @@ class OrderFacadeTest {
     @Test
     void 본인이_판매하는_상품은_주문할_수_없다() {
         // given: 판매자 ID가 주문하는 회원 ID와 같음
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(option(11L, BUYER_ID, 10_000L, 100, true)));
 
         // when & then
@@ -161,7 +161,7 @@ class OrderFacadeTest {
     @Test
     void 주문서는_상품_모듈의_최신_가격으로_계산하고_저장하지_않는다() {
         // given: 같은 판매자 상품 2종
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(
                 new SelectedCartItem(11L, 2),
                 new SelectedCartItem(12L, 1)));
         given(productApiClient.getOptions(List.of(11L, 12L))).willReturn(List.of(
@@ -184,7 +184,7 @@ class OrderFacadeTest {
     @Test
     void 주문서는_배송_모듈을_부르지_않는다() {
         // given
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
 
         // when
@@ -199,7 +199,7 @@ class OrderFacadeTest {
     @Test
     void 배송_모듈_응답에_판매자가_빠지면_배송비_0원으로_결제되지_않게_주문을_막는다() {
         // given: 판매자 100의 상품인데 배송 모듈이 다른 판매자의 배송비만 돌려줌
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         given(deliveryApiClient.getShippingFees(any(), anyMap())).willReturn(List.of(
                 new SellerShippingFeeResponse(999L, 3_000L, null, 3_000L, 0L)));
@@ -214,7 +214,7 @@ class OrderFacadeTest {
     @Test
     void 사용자가_본_금액과_다르면_주문을_저장하지_않는다() {
         // given: 실제 10,000원인데 화면에서는 9,000원을 봄 (그 사이 가격 변경)
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         noShippingFee();
 
@@ -228,7 +228,7 @@ class OrderFacadeTest {
     @Test
     void 잔액이_부족하면_주문을_저장하지_않는다() {
         // given: 결제 금액 10,000원, 잔액 5,000원
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 5_000L));
@@ -243,7 +243,7 @@ class OrderFacadeTest {
     @Test
     void 재고_선점에_실패하면_선점을_해제하고_주문을_삭제한다() {
         // given: 주문 저장까지 성공, 재고 선점에서 실패
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
@@ -263,7 +263,7 @@ class OrderFacadeTest {
     @Test
     void 주문을_저장하고_재고를_선점한_뒤_생성_이벤트를_발행한다() {
         // given: 상품 10,000원 + 배송비 3,000원 + 도서산간 운임 3,000원 = 16,000원
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         shippingFee(3_000L, 3_000L);
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
@@ -320,7 +320,7 @@ class OrderFacadeTest {
 
         // then: 다시 만들지 않는 것 자체가 요구사항이라 호출하지 않았는지 확인
         assertThat(orderId).isEqualTo(10L);
-        then(cartService).should(never()).getSelectedCartItems(anyLong());
+        then(getSelectedCartItems).should(never()).getSelectedCartItems(anyLong());
         then(walletApiClient).should(never()).getBalance(anyLong());
         then(orderService).should(never()).create(any(Order.class));
         then(productApiClient).should(never()).allocateStock(anyLong(), anyList());
@@ -332,7 +332,7 @@ class OrderFacadeTest {
         // given: 조회 시점에는 없었지만, 저장할 때 다른 요청이 먼저 저장해 유니크 제약에 걸림
         given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY))
                 .willReturn(Optional.empty(), Optional.of(10L));
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
@@ -351,7 +351,7 @@ class OrderFacadeTest {
     void 멱등키_제약에_걸렸는데_먼저_저장된_주문이_사라졌으면_다시_시도하라고_알린다() {
         // given: 먼저 저장한 요청이 재고 선점에 실패해 주문을 지운 뒤라 키로 찾아도 없음
         given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
@@ -369,7 +369,7 @@ class OrderFacadeTest {
     void 멱등키가_아닌_제약에_걸려_저장에_실패하면_예외를_그대로_던진다() {
         // given: 저장은 실패했는데 같은 키의 주문이 없음 = 다른 원인
         given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
-        given(cartService.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productApiClient.getOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
         noShippingFee();
         given(walletApiClient.getBalance(BUYER_ID)).willReturn(new WalletBalanceResponse(BUYER_ID, 50_000L));
@@ -407,7 +407,7 @@ class OrderFacadeTest {
 
         // then
         then(productApiClient).should().releaseStock(10L);
-        then(cartService).shouldHaveNoInteractions();
+        then(getSelectedCartItems).shouldHaveNoInteractions();
     }
 
     @Test

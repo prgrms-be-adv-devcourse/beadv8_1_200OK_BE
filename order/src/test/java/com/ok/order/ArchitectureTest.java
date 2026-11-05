@@ -1,7 +1,9 @@
 package com.ok.order;
 
 import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
@@ -43,6 +45,9 @@ class ArchitectureTest {
             javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
                     .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
 
+    // 장바구니는 헥사고날 구조(#439), 주문은 아직 레이어드 구조다. 주문을 옮기면(#440) 아래 장바구니 규칙을 order 모듈 전체로 넓힌다
+    private static final String CART = "com.ok.order.cart..";
+
     // 레이어
 
     // freeze: 기존 위반은 archunit_store에 기준선으로 두고, 새 위반만 실패시킨다.
@@ -58,6 +63,63 @@ class ArchitectureTest {
             .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
             .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)"));
+
+    // 장바구니 (헥사고날 구조, delivery ArchitectureTest와 같은 규칙)
+
+    @ArchTest
+    static final ArchRule 장바구니_헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
+            .consideringOnlyDependenciesInLayers()
+            .layer("Domain").definedBy("com.ok.order.cart.domain..")
+            .layer("Application").definedBy("com.ok.order.cart.application..")
+            .layer("AdapterIn").definedBy("com.ok.order.cart.adapter.in..")
+            .layer("AdapterOut").definedBy("com.ok.order.cart.adapter.out..")
+            .whereLayer("AdapterIn").mayNotBeAccessedByAnyLayer()
+            .whereLayer("AdapterOut").mayNotBeAccessedByAnyLayer()
+            .whereLayer("Application").mayOnlyBeAccessedByLayers("AdapterIn", "AdapterOut")
+            .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "AdapterOut")
+            .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (헥사고날 구조 #438)");
+
+    @ArchTest
+    static final ArchRule 장바구니_입력_어댑터는_유스케이스_포트와_dto만_안다 = noClasses()
+            .that().resideInAPackage("com.ok.order.cart.adapter.in..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "com.ok.order.cart.application.service..", "com.ok.order.cart.application.port.out..",
+                    "com.ok.order.cart.adapter.out..", "com.ok.order.cart.domain..")
+            .because("컨트롤러와 리스너는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (헥사고날 구조 #438)");
+
+    @ArchTest
+    static final ArchRule 주문은_장바구니를_유스케이스_포트와_dto로만_쓴다 = noClasses()
+            .that().resideInAPackage("com.ok.order.order..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "com.ok.order.cart.application.service..", "com.ok.order.cart.application.port.out..",
+                    "com.ok.order.cart.adapter..", "com.ok.order.cart.domain..")
+            .because("주문은 장바구니의 다른 진입점(컨트롤러, 리스너)과 같이 유스케이스만 알아야 장바구니 구현이 바뀌어도 주문이 바뀌지 않는다 (헥사고날 구조 #438)");
+
+    @ArchTest
+    static final ArchRule 장바구니_application은_영속_기술에_의존하지_않는다 = noClasses()
+            .that().resideInAPackage("com.ok.order.cart.application..")
+            .should().dependOnClassesThat(assignableTo(org.springframework.data.repository.Repository.class)
+                    .or(resideInAnyPackage("org.springframework.data.jpa..", "jakarta.persistence..")))
+            .because("서비스는 저장소 포트에만 의존해야 영속 기술을 바꿔도 비즈니스 코드가 바뀌지 않는다 (헥사고날 구조 #438)");
+
+    @ArchTest
+    static final ArchRule 장바구니_포트는_인터페이스다 = classes()
+            .that().resideInAnyPackage("com.ok.order.cart.application.port.in..", "com.ok.order.cart.application.port.out..")
+            .should().beInterfaces()
+            .because("포트는 구현을 숨기는 경계라 인터페이스여야 한다 (헥사고날 구조 #438)");
+
+    @ArchTest
+    static final ArchRule 장바구니_출력_포트는_Spring_Data_Repository를_상속하지_않는다 = noClasses()
+            .that().resideInAPackage("com.ok.order.cart.application.port.out..")
+            .should().beAssignableTo(org.springframework.data.repository.Repository.class)
+            .because("포트가 Repository를 상속하면 Spring Data가 포트 자체로 저장소를 하나 더 만들어 빈이 둘이 된다 (헥사고날 구조 #438)");
+
+    @ArchTest
+    static final ArchRule 장바구니_출력_포트의_구현은_adapter_out에_있다 = classes()
+            .that().areAssignableTo(resideInAPackage("com.ok.order.cart.application.port.out.."))
+            .and().resideOutsideOfPackage("com.ok.order.cart.application.port.out..")
+            .should().resideInAPackage("com.ok.order.cart.adapter.out..")
+            .because("외부 시스템과 닿는 구현은 adapter.out에 모아 바뀌는 범위가 경로로 드러나게 한다 (헥사고날 구조 #438)");
 
     @ArchTest
     static final ArchRule 패키지_간_순환_의존이_없다 = slices()
@@ -111,9 +173,19 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule RestController는_Controller로_끝나고_controller_패키지에_있다 = classes()
             .that().areAnnotatedWith(RestController.class)
+            // 장바구니는 헥사고날 구조라 아래 규칙이 본다. 주문도 옮기면(#440) 이 규칙을 헥사고날 규칙으로 바꾼다
+            .and().resideOutsideOfPackage(CART)
             .should().haveSimpleNameEndingWith("Controller")
             .andShould().resideInAPackage("..controller..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
+
+    @ArchTest
+    static final ArchRule 장바구니_RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = classes()
+            .that().areAnnotatedWith(RestController.class)
+            .and().resideInAPackage(CART)
+            .should().haveSimpleNameEndingWith("Controller")
+            .andShould().resideInAPackage("com.ok.order.cart.adapter.in.web..")
+            .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2, 헥사고날 구조 #438)");
 
     @ArchTest
     static final ArchRule Service는_Service로_끝나고_service_패키지에_있다 = classes()
@@ -126,8 +198,17 @@ class ArchitectureTest {
     static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
+            // 장바구니는 헥사고날 구조라 아래 규칙이 본다 (조건은 왼쪽부터 차례로 묶인다: (A 또는 B) 그리고 C)
+            .and().resideOutsideOfPackage(CART)
             .should().resideInAPackage("..repository..")
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
+
+    @ArchTest
+    static final ArchRule 장바구니_리포지토리는_adapter_out_persistence_패키지에_있다 = classes()
+            .that().areAssignableTo(org.springframework.data.repository.Repository.class)
+            .and().resideInAPackage(CART)
+            .should().resideInAPackage("com.ok.order.cart.adapter.out.persistence..")
+            .because("영속성 구현은 adapter.out.persistence에 모아 역할별로 찾기 쉽게 한다 (헥사고날 구조 #438)");
 
     @ArchTest
     static final ArchRule 엔티티는_domain_패키지에_있다 = classes()
