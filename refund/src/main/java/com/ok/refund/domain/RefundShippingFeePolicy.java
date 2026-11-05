@@ -23,18 +23,12 @@ public final class RefundShippingFeePolicy {
     /**
      * 이번 환불의 배송비를 판단한다.
      *
-     * @param target             판단할 환불. 상품 금액과 개수를 쓴다
-     * @param bundle             주문 모듈이 알려 준 판매자 묶음 값
-     * @param cancelled          같은 묶음에서 이미 취소가 진행 중인 개수 (이번 환불은 빼고)
-     * @param previouslyDeducted 같은 묶음의 앞선 환불에서 이미 뺀 배송비 합 (원)
+     * @param target    판단할 환불. 상품 금액과 개수를 쓴다
+     * @param bundle    주문 모듈이 알려 준 판매자 묶음 값
+     * @param cancelled 같은 묶음에서 이미 취소가 진행 중인 개수와 뺀 배송비 (이번 환불은 빼고)
      * @throws IllegalStateException 묶음에 이번 상품이 없거나, 진행 중 개수가 묶음과 맞지 않으면. 주문 값과 환불 기록이 어긋난 버그라 500으로 드러낸다
      */
-    public static RefundShippingFee decide(
-            Refund target,
-            BundleShipping bundle,
-            List<CancelledQuantity> cancelled,
-            long previouslyDeducted
-    ) {
+    public static RefundShippingFee decide(Refund target, BundleShipping bundle, List<CancelledQuantity> cancelled) {
         Map<Long, Long> cancelledBefore = cancelledByOrderItem(bundle, cancelled);
         if (!cancelledBefore.containsKey(target.getOrderItemId())) {
             throw new IllegalStateException("주문 묶음에 환불할 주문 상품이 없습니다. orderItemId=" + target.getOrderItemId());
@@ -57,7 +51,8 @@ public final class RefundShippingFeePolicy {
         }
 
         if (allCancelled) {
-            return RefundShippingFee.refund(Math.addExact(bundle.shippingFee(), previouslyDeducted), bundle.remoteAreaFee());
+            return RefundShippingFee.refund(Math.addExact(bundle.shippingFee(), previouslyDeducted(cancelled)),
+                    bundle.remoteAreaFee());
         }
 
         Long threshold = bundle.freeShippingThreshold();
@@ -76,6 +71,15 @@ public final class RefundShippingFeePolicy {
             return RefundShippingFee.notAllowed();
         }
         return RefundShippingFee.deduct(bundle.baseShippingFee());
+    }
+
+    // 묶음이 결국 전부 취소되면 상자가 나가지 않으므로 앞선 환불에서 뺀 배송비도 마지막 환불에서 돌려준다
+    private static long previouslyDeducted(List<CancelledQuantity> cancelled) {
+        long sum = 0;
+        for (CancelledQuantity each : cancelled) {
+            sum = Math.addExact(sum, each.deductedShippingFeeAmount());
+        }
+        return sum;
     }
 
     // 묶음의 모든 상품을 0으로 채운 뒤 진행 중 개수를 더한다. 묶음에 없는 상품의 진행 중 요청은 주문 값과 환불 기록이 어긋난 것이다

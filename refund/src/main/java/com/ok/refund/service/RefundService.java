@@ -196,11 +196,9 @@ public class RefundService {
     // 같은 묶음(주문 + 판매자)에서 처리 중인 요청만 센다. 요청됨은 아직 승인될지 모르고, 거절·철회는 취소되지 않는다.
     // 판단할 환불은 요청됨이라 집계에 들어가지 않는다
     private RefundShippingFee decideShippingFee(Refund refund, RefundableOrderItem orderItem) {
-        List<CancelledQuantity> cancelled = refundRepository.sumQuantityByOrderItem(
+        List<CancelledQuantity> cancelled = refundRepository.sumCancelledByOrderItem(
                 refund.getOrderId(), refund.getSellerId(), CANCELLING_STATUSES);
-        long previouslyDeducted = refundRepository.sumDeductedShippingFee(
-                refund.getOrderId(), refund.getSellerId(), CANCELLING_STATUSES);
-        return RefundShippingFeePolicy.decide(refund, orderItem.bundle(), cancelled, previouslyDeducted);
+        return RefundShippingFeePolicy.decide(refund, orderItem.bundle(), cancelled);
     }
 
     private static Pageable pageOf(int page) {

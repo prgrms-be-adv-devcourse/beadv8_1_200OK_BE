@@ -170,6 +170,8 @@ public class Refund extends BaseTime {
      * @throws IllegalArgumentException 받을 수 없는 판단을 넘기면 (부르는 쪽 버그)
      */
     public void approve(LocalDateTime now, RefundShippingFee fee) {
+        // 판단 검사를 상태 검사보다 먼저 한다. 받을 수 없는 판단이 여기 오는 것은 상태와 상관없이 부르는 쪽 버그라 500으로 먼저 드러낸다.
+        // API 경로에서는 서비스가 상태를 먼저 확인하고(409), 받을 수 없으면 승인 대신 자동 거절하므로 이 순서가 응답에 드러나지 않는다
         if (fee == null || !fee.allowed()) {
             throw new IllegalArgumentException("받을 수 없는 배송비 판단으로는 승인할 수 없습니다.");
         }
