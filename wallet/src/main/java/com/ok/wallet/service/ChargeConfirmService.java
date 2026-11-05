@@ -1,7 +1,7 @@
 package com.ok.wallet.service;
 
-import com.ok.wallet.client.toss.TossConfirmResult;
-import com.ok.wallet.client.toss.TossPaymentsClient;
+import com.ok.wallet.application.dto.TossConfirmResult;
+import com.ok.wallet.application.port.out.TossPaymentsClient;
 import com.ok.wallet.domain.ChargeStatus;
 import com.ok.wallet.service.dto.ChargeConfirmResult;
 import lombok.RequiredArgsConstructor;

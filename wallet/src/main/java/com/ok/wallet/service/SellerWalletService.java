@@ -1,9 +1,9 @@
 package com.ok.wallet.service;
 
+import com.ok.wallet.application.port.out.SellerWalletLedgerRepository;
+import com.ok.wallet.application.port.out.SellerWalletRepository;
 import com.ok.wallet.domain.SellerWallet;
 import com.ok.wallet.domain.SellerWalletLedger;
-import com.ok.wallet.repository.SellerWalletLedgerRepository;
-import com.ok.wallet.repository.SellerWalletRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

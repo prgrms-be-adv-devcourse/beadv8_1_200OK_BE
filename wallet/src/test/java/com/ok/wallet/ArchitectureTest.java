@@ -51,7 +51,7 @@ class ArchitectureTest {
             .consideringOnlyDependenciesInLayers()
             .layer("Controller").definedBy("..adapter.in.web..")
             .layer("Service").definedBy("..service..")
-            .layer("Repository").definedBy("..repository..")
+            .layer("Repository").definedBy("..application.port.out..", "..adapter.out.persistence..")
             .layer("Domain").definedBy("..domain..")
             .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
             .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
@@ -123,11 +123,11 @@ class ArchitectureTest {
             .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2)");
 
     @ArchTest
-    static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
+    static final ArchRule 리포지토리는_adapter_out_persistence_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .should().resideInAPackage("..repository..")
-            .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
+            .should().resideInAPackage("..adapter.out.persistence..")
+            .because("영속성 구현은 adapter.out.persistence에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 
     @ArchTest
     static final ArchRule 엔티티는_domain_패키지에_있다 = classes()

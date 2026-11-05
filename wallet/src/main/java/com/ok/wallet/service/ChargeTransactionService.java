@@ -1,11 +1,11 @@
 package com.ok.wallet.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.wallet.application.port.out.ChargeRepository;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.Charge;
 import com.ok.wallet.domain.ChargeStatus;
 import com.ok.wallet.exception.WalletErrorCode;
-import com.ok.wallet.repository.ChargeRepository;
 import com.ok.wallet.service.dto.ChargeConfirmResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -2,8 +2,8 @@ package com.ok.wallet.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.testsupport.AbstractIntegrationTest;
-import com.ok.wallet.client.toss.TossConfirmResult;
-import com.ok.wallet.client.toss.TossPaymentsClient;
+import com.ok.wallet.application.dto.TossConfirmResult;
+import com.ok.wallet.application.port.out.TossPaymentsClient;
 import com.ok.wallet.domain.TermsType;
 import com.ok.wallet.exception.WalletErrorCode;
 import com.ok.wallet.service.dto.ChargeConfirmResult;

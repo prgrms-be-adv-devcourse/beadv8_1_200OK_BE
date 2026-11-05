@@ -1,11 +1,11 @@
 package com.ok.wallet.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.wallet.application.port.out.BuyerWalletLedgerQueryRepository;
+import com.ok.wallet.application.port.out.BuyerWalletRepository;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.domain.BuyerWalletLedgerType;
 import com.ok.wallet.exception.WalletErrorCode;
-import com.ok.wallet.repository.BuyerWalletLedgerQueryRepository;
-import com.ok.wallet.repository.BuyerWalletRepository;
 import com.ok.wallet.service.dto.LedgerHistoryQuery;
 import com.ok.wallet.service.dto.LedgerHistoryResult;
 import lombok.RequiredArgsConstructor;

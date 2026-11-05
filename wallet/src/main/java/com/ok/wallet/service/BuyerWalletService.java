@@ -1,12 +1,12 @@
 package com.ok.wallet.service;
 
+import com.ok.wallet.application.port.out.BuyerWalletLedgerRepository;
+import com.ok.wallet.application.port.out.BuyerWalletRepository;
+import com.ok.wallet.application.port.out.WalletOrderPaymentRepository;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.domain.WalletOrderPayment;
 import com.ok.wallet.domain.WalletOrderPaymentStatus;
-import com.ok.wallet.repository.BuyerWalletLedgerRepository;
-import com.ok.wallet.repository.BuyerWalletRepository;
-import com.ok.wallet.repository.WalletOrderPaymentRepository;
 import com.ok.wallet.service.dto.BuyerBalanceResult;
 import com.ok.wallet.service.dto.OrderPaymentResult;
 import lombok.RequiredArgsConstructor;

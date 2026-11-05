@@ -1,8 +1,8 @@
 package com.ok.wallet.service;
 
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.wallet.adapter.out.persistence.SellerWalletJpaRepository;
 import com.ok.wallet.domain.SellerWallet;
-import com.ok.wallet.repository.SellerWalletRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +31,7 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
     SellerWalletService sellerWalletService;
 
     @Autowired
-    SellerWalletRepository sellerWalletRepository;
+    SellerWalletJpaRepository sellerWalletRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
