@@ -46,7 +46,8 @@ public class RefundService {
     // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
     // 배송비 판단에서 "이미 취소된 것"으로 보는 상태. 승인된 요청은 되돌리지 않으므로 취소된 것으로 센다
-    // TODO(#414): 완료 상태가 생기면 함께 센다
+    // TODO(#414): 완료 상태가 생기면 함께 센다. 완료로 바꾸는 처리도 집계에 영향을 주므로 승인처럼 묶음 잠금(lockBundleAndFind)을 거쳐야 한다.
+    //  끝난 행(거절·철회·완료)은 다시 처리 중이 될 수 없으니 잠금 대상에서 빼, 같은 상품을 여러 번 다시 요청해 행이 쌓여도 잠금이 늘지 않게 한다
     private static final List<RefundStatus> CANCELLING_STATUSES = List.of(RefundStatus.PROCESSING);
 
     private final RefundRepository refundRepository;
@@ -224,6 +225,7 @@ public class RefundService {
                 target = locked;
             }
         }
+        // 환불 행은 지우지 않아 ID를 읽은 뒤 잠그는 사이에 사라질 일은 없다. 그래도 사라지면 NPE 대신 없는 요청으로 막는 방어다
         if (target == null) {
             throw new RestApiException(RefundErrorCode.REFUND_NOT_FOUND);
         }

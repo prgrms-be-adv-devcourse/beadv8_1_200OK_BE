@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.repository.RefundRepository;
 import com.ok.refund.service.dto.RefundDecision;
@@ -19,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -27,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -112,6 +115,52 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThat(deductedPerRefund).containsExactlyInAnyOrder(3_000L, 0L);
     }
 
+    // 위 두 테스트는 동시에 출발시킬 뿐이라 어느 쪽이 먼저 잠글지 정할 수 없다. 여기서는 순서를 고정한다:
+    // 다른 트랜잭션이 묶음을 잠그고 A를 처리 중으로 바꾼 채 커밋하지 않은 동안 B를 승인하면, B는 잠금에서 기다렸다가
+    // 커밋 뒤의 최신 값(A 처리 중)을 보고 마지막 환불로 배송비를 받아야 한다
+    @Test
+    void 앞_승인이_묶음을_잠근_동안_뒤_승인은_기다렸다가_최신_값으로_판단한다() throws Exception {
+        // given: 배송비 3,000원과 도서산간 운임 2,000원을 낸 묶음 A 10,000 + B 10,000
+        BundleShipping bundle = new BundleShipping(3_000L, 2_000L, 3_000L, 50_000L,
+                List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1)));
+        orderClient.put(orderItem(A, 10_000L, bundle));
+        orderClient.put(orderItem(B, 10_000L, bundle));
+        Long refundA = request(A);
+        Long refundB = request(B);
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        TransactionTemplate first = new TransactionTemplate(transactionManager);
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<?> holding = executor.submit(() -> first.executeWithoutResult(status -> {
+                for (Refund refund : refundRepository.findAllByIdInForUpdate(List.of(refundA, refundB))) {
+                    if (refund.getId().equals(refundA)) {
+                        refund.approve(LocalDateTime.of(2026, 11, 5, 10, 0), RefundShippingFee.none());
+                    }
+                }
+                locked.countDown();
+                await(release);
+            }));
+            assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+
+            // when: 앞 트랜잭션이 잠금을 쥔 동안 B를 승인한다
+            Future<String> approvingB = executor.submit(() -> resultOf(() -> approve(refundB)));
+
+            // then: 잠금 때문에 끝나지 못하고 기다린다
+            assertThatThrownBy(() -> approvingB.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+            release.countDown();
+            holding.get(30, TimeUnit.SECONDS);
+            assertThat(approvingB.get(30, TimeUnit.SECONDS)).isEqualTo(SUCCESS);
+        }
+        Refund savedB = refundRepository.findById(refundB).orElseThrow();
+        assertThat(savedB).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(savedB.getShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(savedB.getRemoteAreaFeeAmount()).isEqualTo(2_000L);
+            softly.assertThat(savedB.getRefundAmount()).isEqualTo(15_000L);
+        });
+    }
+
     // 바깥 트랜잭션에 합류하면 READ COMMITTED가 적용되지 않아, 위 두 테스트가 지키는 동작이 조용히 깨진다. 그래서 바로 실패해야 한다
     @Test
     void 다른_트랜잭션_안에서_승인하면_바로_실패하고_바꾸지_않는다() {
@@ -160,6 +209,18 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
                 results.add(future.get(30, TimeUnit.SECONDS));
             }
             return results;
+        }
+    }
+
+    // 람다 안에서 기다리려고 InterruptedException을 바꿔 던진다
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(30, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("테스트 래치를 30초 안에 풀지 못했습니다.");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
         }
     }
 
