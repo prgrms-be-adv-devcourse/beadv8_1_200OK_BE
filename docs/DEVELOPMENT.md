@@ -351,7 +351,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 
 ### delivery 모듈 구조(헥사고날)
 
-`delivery`는 모듈별 서버 배포와 브로커 연동 전환에 대비해 진입점과 외부 연결을 패키지로 나눈 헥사고날 구조입니다. 다른 모듈은 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 구조 그대로입니다.
+`delivery`는 모듈별 서버 배포와 브로커 연동 전환에 대비해 진입점과 외부 연결을 패키지로 나눈 헥사고날 구조입니다. `order`도 같은 구조입니다(아래 "order 모듈 구조(헥사고날)"). 다른 모듈은 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 구조 그대로입니다.
 
 ```
 com.ok.delivery
@@ -376,6 +376,41 @@ com.ok.delivery
 - 출력 포트 이름은 `*Repository`(조회 전용은 `*QueryRepository`)이고, 구현은 `adapter/out/persistence`에 있습니다. Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로이고, 잠금·트랜잭션·쿼리 동작은 서비스가 JPA 저장소를 직접 쓸 때와 같습니다. 포트에는 Spring Data `Repository` 상속과 JPA 어노테이션을 두지 않고, 잠금 조회(`@Lock`, `@Query`)는 JPA 저장소에서 다시 선언합니다. 포트는 Spring Data의 `Page`, `Pageable`은 씁니다.
 - 모듈 간 연동은 지금처럼 Spring 이벤트와 `/internal` 호출입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
+
+### order 모듈 구조(헥사고날)
+
+`order`는 하위 도메인 `cart`(장바구니), `order`(주문)로 나뉘고, 두 하위 도메인 모두 `delivery`와 같은 헥사고날 구조입니다. 규칙은 위 delivery 구조와 같고, 아래만 다릅니다.
+
+```
+com.ok.order
+├── config/                    모듈 전용 설정
+├── cart/
+│   ├── domain/, exception/
+│   ├── application/           port/in, port/out(저장소), service, dto
+│   └── adapter/               in/web, in/event, out/persistence
+└── order/
+    ├── domain/, exception/
+    ├── application/
+    │   ├── port/in/           주문서·주문 생성·조회·구매확정·결제 결과·배송 상태·리뷰 후보 유스케이스
+    │   ├── port/out/          OrderRepository, OrderEventPublisher, ProductPort, DeliveryPort, WalletPort
+    │   ├── service/           OrderFacade(외부 호출 조율), OrderService(트랜잭션)
+    │   └── dto/
+    └── adapter/
+        ├── in/web/            컨트롤러, *Spec, 요청·응답 DTO
+        ├── in/event/          지갑·배송 이벤트 리스너
+        ├── in/scheduler/      자동 구매확정 스케줄러
+        ├── out/persistence/   OrderJpaRepository
+        ├── out/event/         스프링 이벤트 발행 구현체
+        ├── out/product/       상품 모듈 내부 API 호출 (ProductPort 구현)
+        ├── out/delivery/      배송 모듈 내부 API 호출 (DeliveryPort 구현)
+        ├── out/wallet/        지갑 모듈 내부 API 호출 (WalletPort 구현)
+        └── out/http/          내부 API 호출용 RestClient 공통 설정
+```
+
+- 다른 모듈 호출은 대상 모듈마다 출력 포트(`ProductPort`, `DeliveryPort`, `WalletPort`) 하나를 두고, 구현은 `adapter/out/<대상>`에 둡니다. 상대 모듈의 요청·응답 모양(`*Request`, `*Response`)은 어댑터 안에만 두고, 포트는 주문의 DTO(`ProductOption`, `StockItem`)나 도메인 값(`SellerShippingFee`)을 주고받습니다. HTTP를 메시지 브로커나 다른 방식으로 바꿔도 어댑터만 바뀝니다.
+- 주문은 같은 모듈의 장바구니를 어댑터 없이 장바구니의 `port.in` 유스케이스와 `application.dto`로만 씁니다. 같은 프로세스 안의 호출이라 어댑터를 두면 변환만 늘기 때문입니다. 장바구니의 서비스, 출력 포트, 어댑터, 도메인은 쓰지 않습니다.
+- 테스트에서 상품·배송·지갑 호출은 `testsupport`의 Fake 출력 포트(`FakeProductPort` 등)가 대신합니다. HTTP 응답 변환은 어댑터 DTO 단위 테스트로 확인합니다.
+- 이 구조는 `order`의 `ArchitectureTest`가 두 하위 도메인에 같은 규칙으로 검사합니다(`com.ok.order.*.<레이어>`).
 
 ## 7. 예외 처리 (ProblemDetail)
 
