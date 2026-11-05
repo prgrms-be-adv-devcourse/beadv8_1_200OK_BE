@@ -21,6 +21,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.orm.jpa.support.OpenEntityManagerInViewInterceptor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -61,6 +63,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     RefundRepository refundRepository;
     @Autowired
     PlatformTransactionManager transactionManager;
+    @Autowired
+    ApplicationContext applicationContext;
     @Autowired
     FakeRefundOrderClient orderClient;
 
@@ -240,6 +244,17 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불 승인은 이미 열린 트랜잭션 안에서 부를 수 없습니다. 새 트랜잭션으로 실행해야 합니다.");
         assertThat(refundRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    // 승인 검사(새 트랜잭션인지)는 영속성 컨텍스트도 새것이라는 전제에 기댄다. OSIV(open-in-view)를 켜면 요청 하나 동안 영속성 컨텍스트가
+    // 이어져 Facade가 앞서 읽은 환불이 승인까지 남고, 잠금 조회가 그 옛 객체를 돌려줘도 검사로 막지 못한다. 설정이 바뀌면 여기서 드러나게 한다
+    @Test
+    void OSIV가_꺼져_있어_승인이_새_영속성_컨텍스트로_시작한다() {
+        // when
+        String[] sut = applicationContext.getBeanNamesForType(OpenEntityManagerInViewInterceptor.class);
+
+        // then
+        assertThat(sut).isEmpty();
     }
 
     static Stream<Arguments> 바깥_트랜잭션_격리_수준() {

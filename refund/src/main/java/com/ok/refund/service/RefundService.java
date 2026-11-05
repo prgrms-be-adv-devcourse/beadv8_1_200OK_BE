@@ -47,6 +47,8 @@ public class RefundService {
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
     // 배송비 판단에서 "이미 취소된 것"으로 보는 상태. 승인된 요청은 되돌리지 않으므로 취소된 것으로 센다
     // TODO(#414): 완료 상태가 생기면 함께 센다. 처리 중을 완료로 바꾸는 처리도 승인처럼 묶음 잠금(lockBundleAndFind)을 거쳐야 한다
+    // 묶음 잠금은 잠글 ID를 읽은 뒤 새로 들어온 요청을 잠그지 않는다. 그래도 되는 건 새 요청이 요청됨이고 요청됨은 여기서 세지 않기 때문이다.
+    // 이 목록에 요청됨을 넣으면 그 전제가 깨져, 잠그지 않은 행이 집계를 바꿀 수 있다
     private static final List<RefundStatus> CANCELLING_STATUSES = List.of(RefundStatus.PROCESSING);
     // 승인 때 잠글 상태. 이 상태의 행만 처리 중으로 바뀌거나 이미 처리 중이라 집계를 바꿀 수 있다. 끝난 행(거절·철회)은 잠그지 않는다
     private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
@@ -208,7 +210,9 @@ public class RefundService {
     // 2) 바깥이 READ COMMITTED여도, 바깥에서 같은 환불을 먼저 읽어 뒀다면 잠금 조회가 그 옛 엔티티를 돌려줘 잠그기 전 상태로 판단한다
     // 격리 수준만 검사하면 2)를 놓쳐서 "새로 시작했는지"를 본다. 새로 시작했으면 격리 수준도 적용되고 영속성 컨텍스트도 새것이다.
     // 단, "영속성 컨텍스트도 새것"은 OSIV(open-in-view)가 꺼져 있다는 전제다. 켜면 Facade가 앞서 읽은 환불이 승인 트랜잭션까지 남아
-    // 잠금 조회가 그 옛 객체를 돌려주고, 이 검사로는 막지 못한다(지금은 refund·monolith 설정 모두 open-in-view: false)
+    // 잠금 조회가 그 옛 객체를 돌려주고, 이 검사로는 막지 못한다(지금은 refund·monolith 설정 모두 open-in-view: false, 통합 테스트로 확인).
+    // 같은 클래스 안에서 this.approve()로 부르면 프록시를 거치지 않아 @Transactional도 이 검사의 판단도 부르는 메서드 기준이 된다.
+    // 그런 호출은 service.md가 금지하므로 이 검사로 따로 막지 않는다
     // 트랜잭션이 아예 없을 때(스프링 없이 부르는 단위 테스트)는 검사하지 않는다. 운영에서 트랜잭션 없이 불리면 잠금 쿼리가 바로 예외를 낸다
     private static void requireNewTransaction() {
         if (TransactionSynchronizationManager.isActualTransactionActive()
