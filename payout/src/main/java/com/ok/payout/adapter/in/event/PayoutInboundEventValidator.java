@@ -13,7 +13,10 @@ import java.util.Optional;
  * 팀 규칙과 다르다는 것을 알고 둔 구조다. 규칙(exception.md, "다른 모듈이 보낸 값의 오류는 표준 예외를 던진다")대로라면
  * 여기서 IllegalArgumentException을 던져야 하지만, 멘토 리뷰("재처리해도 안 되는 이벤트는 기록 후 정상 종료")를 반영하다
  * 규칙과 어긋나는 것을 발견했다. 규칙대로 던지면 Spring 이벤트 입구에서는 실패 기록이 쌓이는데,
- * 이 입구는 주문·지갑이 Kafka로 옮기면 지울 예정(#343)이라 지금 구조로 남겨 둔다. 규칙에 맞출지는 팀이 정한다.
+ * 이 입구는 주문·지갑이 Kafka로 옮기면 지울 예정(#343)이라 지금 구조로 남겨 둔다.
+ * TODO(#343): Spring 입구를 지울 때 Kafka 입구도 규칙대로 IllegalArgumentException을 던지게 바꾼다.
+ *   Kafka는 예외를 던져도 몇 번 다시 시도한 뒤 넘어갈 뿐 실패 기록이 쌓이지 않아,
+ *   그때는 멘토 지적(쌓이지 않게)과 규칙(예외를 던진다)을 둘 다 지킬 수 있다.
  */
 final class PayoutInboundEventValidator {
 
