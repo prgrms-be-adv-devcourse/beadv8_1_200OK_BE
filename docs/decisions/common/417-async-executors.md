@@ -1,7 +1,7 @@
 ---
 issue: 417
 module: common
-summary: 비동기 리스너가 요청 스레드에서 동기로 돌던 문제를, 이름 붙인 가상 스레드 실행기를 yml로 설정하는 구조로 해결한다
+summary: 비동기 작업이 Boot 기본 실행기 하나를 공유하던 것을, 이름 붙인 전용 가상 스레드 실행기를 yml로 설정하는 구조로 나눈다
 status: 확정
 date: 2026-11-05
 paths: [common/src/main/java/com/ok/common/config/AsyncConfig.java, common/src/main/java/com/ok/common/config/AsyncExecutorFactory.java, common/src/main/java/com/ok/common/config/AsyncProperties.java, common/src/main/java/com/ok/common/config/MdcTaskDecorator.java, common/src/main/resources/common-async.yaml]
@@ -12,7 +12,9 @@ related: []
 
 ## 배경
 
-`@EnableAsync`가 없어서 `@ApplicationModuleListener`(안의 `@Async`)가 무시되고, 리스너가 커밋 직후 HTTP 요청 스레드에서 동기로 실행됐다. 리스너 처리 시간이 응답 시간에 그대로 더해진다. 리스너를 별도 스레드로 옮기되, 실행기 설정을 코드에 박지 않고 yml과 환경변수로 바꿀 수 있게 하는 것이 목표다. 모듈마다 비동기 실행기가 늘어날 예정이라 실행기를 추가하는 비용도 낮춰야 했다.
+Spring Modulith가 앱에 `@EnableAsync`가 없으면 자동으로 켜 주므로(`EventPublicationAutoConfiguration`의 `@EnableAsync` 설정을 jar에서 확인) `@ApplicationModuleListener`는 원래 비동기로 실행된다. 그런데 이름 없는 `@Async`는 모두 Boot의 기본 실행기(`applicationTaskExecutor`, 코어 8·대기열 무제한. Boot 메타데이터로 확인) 하나를 공유한다. 느린 작업이 다른 비동기 작업을 지연시키고, 밀린 작업이 대기열에 메모리로 쌓인다. (미확인) 실제 앱에서 리스너가 이 풀의 스레드에서 도는지는 앱을 띄워 확인하지 않았다.
+
+공유 풀을 용도별 전용 실행기로 나누고, 실행기 설정을 코드에 박지 않고 yml과 환경변수로 바꿀 수 있게 하는 것이 목표다. 모듈마다 비동기 실행기가 늘어날 예정이라 실행기를 추가하는 비용도 낮춰야 했다.
 
 범위 밖: 미완료 이벤트의 주기적 재발행, TraceID를 만들어 MDC에 넣는 필터와 로그 패턴, 이벤트 재발행·Kafka 경계의 MDC 전파, `SecurityContext` 전파, 리스너별 실행기 지정.
 
@@ -35,7 +37,7 @@ related: []
 - **설정 방식:** Boot의 `spring.task.execution.*`는 실행기 하나만 설정할 수 있어 모듈별 여러 실행기를 못 만든다.
 - **이름 등록:** yml만으로 이름까지 정해 `BeanRegistrar`와 `Binder`로 동적 등록하는 방식(Micronaut 방식)은 이름이 문자열로만 남아 `@Async` 오타가 처음 호출될 때 발견되고, 직접 만든 등록 코드와 Boot 자동 구성의 순서를 팀이 관리해야 한다. 실행기가 크게 늘면 다시 검토한다.
 - **모듈별 코드 복사:** 실행기마다 설정 클래스와 빈 코드를 복사하면 중복이 쌓인다.
-- **`type: platform`(core/max/queue):** 지금은 필요가 확인되지 않아 만들지 않았다. 감수하는 것은 큐가 없어 상한을 넘으면 요청 스레드가 기다리는 점이다.
+- **`type: platform`(core/max/queue):** 지금은 필요가 확인되지 않아 만들지 않았다. 감수하는 것은 큐가 없어 상한을 넘으면 요청 스레드가 기다리는 점이다. 이전 기본 풀은 대기열이 있어 요청 스레드가 기다리지 않았으므로 요청 쪽 지연이 이전보다 커질 수 있는 지점이고, 리뷰에서도 지적되어 다시 검토한다.
 
 ## 건드릴 때 주의
 

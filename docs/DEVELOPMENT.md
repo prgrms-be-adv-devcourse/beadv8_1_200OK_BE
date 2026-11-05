@@ -685,10 +685,11 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 ## 11. 비동기 처리 (이벤트 리스너와 `@Async`)
 
-모듈 간 이벤트를 받는 `@ApplicationModuleListener`와 `@Async`는 요청 스레드가 아니라 별도 실행기의 스레드에서 실행됩니다. 실행기는 이름을 붙여 여러 개 둘 수 있고, 동시 실행 상한 같은 값은 코드가 아니라 yml과 환경변수로 바꿉니다. 구현은 `common`의 [`AsyncConfig`](../common/src/main/java/com/ok/common/config/AsyncConfig.java), [`AsyncExecutorFactory`](../common/src/main/java/com/ok/common/config/AsyncExecutorFactory.java), [`AsyncProperties`](../common/src/main/java/com/ok/common/config/AsyncProperties.java)에 있습니다.
+모듈 간 이벤트를 받는 `@ApplicationModuleListener`와 `@Async`는 요청 스레드가 아니라 별도 실행기의 스레드에서 실행됩니다. 이 구조는 모든 비동기 작업이 Boot 기본 실행기 하나를 공유하던 것을 용도별 전용 실행기로 나눕니다. 실행기는 이름을 붙여 여러 개 둘 수 있고, 동시 실행 상한 같은 값은 코드가 아니라 yml과 환경변수로 바꿉니다. 구현은 `common`의 [`AsyncConfig`](../common/src/main/java/com/ok/common/config/AsyncConfig.java), [`AsyncExecutorFactory`](../common/src/main/java/com/ok/common/config/AsyncExecutorFactory.java), [`AsyncProperties`](../common/src/main/java/com/ok/common/config/AsyncProperties.java)에 있습니다.
 
 ### 기본 동작
 
+- Spring Modulith가 `@EnableAsync`를 켜 주므로 리스너는 원래 비동기입니다. 이름 없는 `@Async`가 쓰는 Boot 기본 실행기(`applicationTaskExecutor`)는 코어 8, 대기열 무제한이고 모든 비동기 작업이 공유합니다. 그래서 느린 작업이 다른 작업을 지연시킬 수 있고, 밀린 작업은 대기열에 메모리로 쌓입니다. 아래 구조는 이 공유 풀을 용도별 실행기로 나눕니다.
 - 이름을 지정하지 않은 `@Async`와 `@ApplicationModuleListener`는 `app.async.default-executor`(기본 `event`)의 실행기로 갑니다. 기존 리스너 코드는 바꿀 필요가 없습니다. `@ApplicationModuleListener`는 실행기를 지정할 수 없어서 모든 리스너가 이 기본 실행기 하나를 씁니다.
 - 실행기는 작업마다 새 스레드를 만듭니다(기본은 가상 스레드). 가상 스레드는 만드는 비용이 거의 없어 풀에 담아 재사용하지 않으므로 `corePoolSize`, `maxPoolSize`, `queueCapacity` 같은 설정이 없습니다. 대신 부족한 자원인 DB 커넥션을 기준으로 **동시 실행 상한**(`concurrency-limit`)을 둡니다.
 - `spring.threads.virtual.enabled`는 쓰지 않습니다. 이 설정은 Tomcat 요청 스레드와 `@Scheduled`까지 바꾸는 전역 설정이라, 실행기에만 가상 스레드를 적용했습니다.
@@ -700,7 +701,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
-| `virtual-threads` | `true` | `true`면 가상 스레드, `false`면 일반 스레드를 작업마다 만듭니다. 가상 스레드에 문제가 생기면 재빌드 없이 `false`로 되돌립니다. 동시 실행 상한은 어느 쪽이든 같게 적용됩니다 |
+| `virtual-threads` | `true` | `true`면 가상 스레드, `false`면 일반 스레드를 작업마다 만듭니다. 가상 스레드에 문제가 생기면 재빌드 없이 `false`로 되돌립니다. 동시 실행 상한은 어느 쪽이든 같게 적용됩니다. 일반 스레드는 작업마다 새로 만들어 상한이 크면 스레드가 늘어 OOM이 날 수 있으므로, `false`로 끌 때는 상한을 작게 유지합니다 |
 | `concurrency-limit` | `5` | 동시에 실행할 작업 수의 상한 |
 | `reject-tasks-when-limit-reached` | `false` | `false`면 상한에 걸렸을 때 작업을 넘기는 스레드(요청 스레드)가 빈자리가 날 때까지 기다리고, `true`면 거절합니다. `true`일 때 커밋 뒤에 거절 예외가 요청 쪽으로 어떻게 전달되는지는 확인하지 않았으므로, 켜기 전에 동작을 확인합니다 |
 | `task-termination-timeout` | `10s` | 앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. 끝나지 못한 이벤트는 미완료로 남아 재시작 때 재발행됩니다(`MODULITH_REPUBLISH_ON_RESTART`, 운영은 `true`) |
@@ -758,6 +759,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 ### 주의할 점
 
 - **DB 커넥션은 실행기가 나눠 씁니다.** 상한은 실행기마다 따로 적용되지만 커넥션 풀(Hikari 기본 10)은 앱 전체가 공유합니다. DB를 쓰는 실행기들의 상한 합계가 풀 크기보다 작아야 HTTP 요청이 커넥션을 얻지 못하는 일이 없습니다. 이 합계는 앱이 검사하지 않으니 실행기를 추가할 때 직접 확인합니다.
+- **모든 리스너는 `event` 실행기 하나를 공유합니다.** `@ApplicationModuleListener`는 실행기를 지정할 수 없어서, 느린 외부 호출을 하는 리스너가 상한을 차지하면 다른 리스너가 기다릴 수 있습니다. 리스너끼리의 격리는 아직 없습니다.
 - **`@Async` 이름 오타는 처음 호출될 때 실패합니다.** `@Async("이름")`에 문자열을 직접 쓰지 않고 위처럼 상수를 씁니다.
 - **같은 클래스 안에서 `@Async` 메서드를 부르면 비동기가 되지 않습니다.** 프록시를 거치지 않아 오류 없이 동기로 실행됩니다. 다른 빈에서 호출합니다.
 - **리스너는 처리 순서가 보장되지 않고, 같은 이벤트를 두 번 받을 수 있습니다.** 재시작 때 미완료 이벤트가 재발행되기 때문에 같은 이벤트를 여러 번 처리해도 결과가 같아야 합니다.
