@@ -20,10 +20,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -66,13 +69,14 @@ import com.ok.testsupport.FakeReviewSentimentAnalyzer;
 import com.ok.testsupport.TestAccessTokens;
 
 // 작업자 스케줄러는 설정이 없어 꺼져 있다. 테스트가 작업자 진입점(analyzePending)을 직접 부른다.
-// 키워드 집계는 공개 API라 토큰 없이 부른다.
+// 키워드 집계와 리뷰 목록은 공개 API라 토큰 없이 부른다.
 // 상품은 과일이라 C01(맛있어요)·C02(달아요)·C22(아삭해요)·C25(식감이 좋아요)를 모두 묻는다. 쌀·잡곡은 C02·C22를 묻지 않는다
 class ReviewKeywordIntegrationTest extends AbstractIntegrationTest {
 
 	private static final Long SELLER_ID = 10L;
 	private static final Long BUYER_ID = 1L;
 	private static final String KEYWORDS_URL = "/api/v1/products/{productId}/review-keywords";
+	private static final String REVIEWS_URL = "/api/v1/products/{productId}/reviews";
 	private static final double EXPRESSED = 0.95;
 
 	@Autowired
@@ -434,6 +438,103 @@ class ReviewKeywordIntegrationTest extends AbstractIntegrationTest {
 			softly.assertThat(reviewSentimentRepository.findByReviewId(reviewId)).isPresent();
 			softly.assertThat(reviewKeywordRepository.count()).isZero();
 		});
+	}
+
+	@Test
+	void 키워드로_거른_리뷰_목록은_칩의_리뷰_수와_같은_리뷰를_최신순으로_내린다() throws Exception {
+		// given: 12개 리뷰 모두 C01, 앞 5개가 C02. C02 리뷰 하나는 수정 뒤 재분석 전이고 하나는 삭제된다
+		List<Long> reviewIds = new ArrayList<>();
+		for (int i = 0; i < 12; i++) {
+			reviewIds.add(writeAnalyzableReview(100L + i,
+				i < 5 ? Map.of("C01", EXPRESSED, "C02", EXPRESSED) : Map.of("C01", EXPRESSED)));
+		}
+		reviewKeywordAnalysisFacade.analyzePending();
+		editReview(reviewIds.get(0), 9, "다시 먹어 보니 싱거워요");
+		deleteReview(reviewIds.get(1));
+		String keywords = getKeywords(productId).andReturn().getResponse().getContentAsString();
+		List<Integer> chipReviewCount = JsonPath.read(keywords, "$.keywords[?(@.keywordId == 'C02')].reviewCount");
+
+		// when
+		ResultActions sut = mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "C02").param("size", "2"));
+
+		// then
+		sut.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalElements").value(chipReviewCount.getFirst()))
+			.andExpect(jsonPath("$.totalElements").value(3))
+			.andExpect(jsonPath("$.totalPages").value(2))
+			.andExpect(jsonPath("$.content[*].reviewId").value(contains(
+				reviewIds.get(4).intValue(), reviewIds.get(3).intValue())));
+		mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "C02").param("size", "2").param("page", "1"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content[*].reviewId").value(contains(reviewIds.get(2).intValue())));
+	}
+
+	@Test
+	void 칩에_뜨지_않는_키워드로도_리뷰를_거른다() throws Exception {
+		// given: 분석 완료 리뷰가 10개 미만이고 C03을 표현한 리뷰는 하나뿐이라 칩이 없다
+		long expressedId = writeAnalyzableReview(100L, Map.of("C01", EXPRESSED, "C03", EXPRESSED));
+		writeAnalyzableReview(101L, Map.of("C01", EXPRESSED));
+		reviewKeywordAnalysisFacade.analyzePending();
+
+		// when
+		ResultActions sut = mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "C03"));
+
+		// then
+		sut.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalElements").value(1))
+			.andExpect(jsonPath("$.content[*].reviewId").value(contains((int)expressedId)));
+	}
+
+	@Test
+	void 상품의_현재_분류에_묻지_않는_키워드로_거르면_빈_페이지다() throws Exception {
+		// given: 과일일 때 C22를 표현했는데 상품 분류가 쌀·잡곡으로 바뀐다
+		writeAnalyzableReview(100L, Map.of("C22", EXPRESSED));
+		reviewKeywordAnalysisFacade.analyzePending();
+		jdbcTemplate.update("UPDATE " + ProductSchema.NAME + ".product SET category = ? WHERE id = ?",
+			ProductCategory.GRAIN.name(), productId);
+
+		// when & then
+		mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "C22"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalElements").value(0))
+			.andExpect(jsonPath("$.content").value(empty()));
+	}
+
+	@ParameterizedTest
+	@MethodSource("빈_키워드")
+	void 빈_키워드로_부르면_거르지_않고_전체_목록을_내린다(String keyword) throws Exception {
+		// given: 분석 전 리뷰도 나와야 한다
+		long analyzedId = writeAnalyzableReview(100L, Map.of("C01", EXPRESSED));
+		reviewKeywordAnalysisFacade.analyzePending();
+		long pendingId = writeReview(101L, "아직 분석 전이에요");
+
+		// when
+		ResultActions sut = mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", keyword));
+
+		// then
+		sut.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalElements").value(2))
+			.andExpect(jsonPath("$.content[*].reviewId").value(contains((int)pendingId, (int)analyzedId)));
+	}
+
+	static Stream<String> 빈_키워드() {
+		return Stream.of("", " ");
+	}
+
+	@Test
+	void 목록에_없는_키워드로_거르면_400이다() throws Exception {
+		// when & then
+		mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "Z99"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.type", endsWith("/product/review-keyword-not-found")));
+	}
+
+	@Test
+	void 없는_상품의_리뷰를_키워드로_거르면_404다() throws Exception {
+		// when & then
+		mockMvc.perform(get(REVIEWS_URL, productId + 1_000).param("keyword", "C02"))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.type", endsWith("/product/product-not-found")));
 	}
 
 	@Test
