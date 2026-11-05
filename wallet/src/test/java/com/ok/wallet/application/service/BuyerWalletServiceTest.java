@@ -13,6 +13,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -382,6 +383,80 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }
+    }
+
+    @Test
+    void 다른_회원들의_결제가_이미_열린_트랜잭션_안에서_동시에_와도_교착_없이_모두_처리된다() throws Exception {
+        // given: 회원마다 10,000원을 충전하고 주문 하나(3,000원)를 이미 결제함. 이미 결제한 주문 번호는 10씩 띄워
+        // 그 사이 빈 구간에 다른 회원의 새 주문이 들어가게 한다
+        int memberCount = 10;
+        List<Long> memberIds = new ArrayList<>();
+        for (int i = 0; i < memberCount; i++) {
+            Long memberId = 600L + i;
+            memberIds.add(memberId);
+            buyerWalletService.chargeByPayment(memberId, "pay-600-" + i, 10_000);
+            buyerWalletService.payForOrder(memberId, paidOrderId(i), 3_000);
+        }
+        List<Callable<OrderPaymentResult>> payments = new ArrayList<>();
+        for (int i = 0; i < memberCount; i++) {
+            Long owner = memberIds.get(i);
+            long paidOrderId = paidOrderId(i);
+            // 이미 결제한 주문의 재전달: 중복 넣기의 확인 잠금이 그 주문 앞 빈 구간까지 잡을 수 있다
+            payments.add(() -> buyerWalletService.payForOrder(owner, paidOrderId, 3_000));
+            payments.add(() -> buyerWalletService.payForOrder(owner, paidOrderId, 3_000));
+            // 같은 빈 구간에 서로 다른 두 회원의 새 주문이 동시에 들어간다. 없는 행을 잠금 읽기로 확인했다면
+            // 두 트랜잭션이 같은 빈 구간을 잠근 뒤 서로의 넣기를 기다려 교착이 나는 조합이다
+            Long nextMember = memberIds.get((i + 1) % memberCount);
+            Long secondNextMember = memberIds.get((i + 2) % memberCount);
+            payments.add(() -> buyerWalletService.payForOrder(nextMember, paidOrderId - 5, 1_000));
+            payments.add(() -> buyerWalletService.payForOrder(secondNextMember, paidOrderId - 3, 1_000));
+        }
+        ExecutorService executor = Executors.newFixedThreadPool(payments.size());
+        CountDownLatch ready = new CountDownLatch(payments.size());
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<OrderPaymentResult>> results = new ArrayList<>();
+
+        try {
+            // when: 주문 생성 리스너처럼 이미 열린 트랜잭션(기본 격리 수준) 안에서 모두 동시에 처리됨
+            for (Callable<OrderPaymentResult> payment : payments) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return transactionTemplate.execute(status -> {
+                        try {
+                            return payment.call();
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    });
+                }));
+            }
+            ready.await();
+            start.countDown();
+            List<OrderPaymentResult> outcomes = new ArrayList<>();
+            for (Future<OrderPaymentResult> result : results) {
+                // 교착이 나면 한쪽이 예외로 끝나 여기서 ExecutionException이 난다
+                outcomes.add(result.get(30, TimeUnit.SECONDS));
+            }
+
+            // then: 새 주문은 모두 차감되고 재전달은 이미 결제됨을 받는다
+            assertThat(outcomes).filteredOn(outcome -> outcome == OrderPaymentResult.PAID).hasSize(memberCount * 2);
+            assertThat(outcomes).filteredOn(outcome -> outcome == OrderPaymentResult.ALREADY_PAID).hasSize(memberCount * 2);
+            // 회원마다 3,000원(기존) + 1,000원 × 2건(다른 빈 구간의 새 주문)이 빠진다
+            assertThat(memberIds).allSatisfy(memberId -> {
+                assertThat(balanceOf(memberId)).isEqualTo(5_000);
+                assertThat(countLedgers(memberId)).isEqualTo(4);
+            });
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM wallet_order_payment", Long.class))
+                    .isEqualTo(memberCount * 3L);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private static long paidOrderId(int index) {
+        return 6_010L + index * 10L;
     }
 
     @Test
