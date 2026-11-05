@@ -20,6 +20,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import com.ok.product.review.client.ReviewAnalysisFailedException;
+import com.ok.product.review.client.ReviewAnalyzerUnavailableException;
 import com.ok.product.review.client.ReviewSentimentAnalyzer;
 import com.ok.product.review.client.ReviewSentimentCriteria;
 import com.ok.product.review.client.ReviewSentimentCriteria.Choice;
@@ -104,6 +105,9 @@ public class JevReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 				.body(request)
 				.retrieve()
 				.body(JevResponse.class);
+		} catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden e) {
+			// 키가 없거나 폐기·교체된 설정 오류다. 키를 고치면 같은 요청이 성공하므로 요청의 최종 실패로 보지 않는다
+			throw new ReviewAnalyzerUnavailableException("Jev가 인증을 거절했습니다. status=" + e.getStatusCode().value(), e);
 		} catch (HttpClientErrorException e) {
 			String message = "Jev가 요청을 거절했습니다. status=" + e.getStatusCode().value();
 			if (e.getStatusCode().isSameCodeAs(HttpStatus.TOO_MANY_REQUESTS)) {
