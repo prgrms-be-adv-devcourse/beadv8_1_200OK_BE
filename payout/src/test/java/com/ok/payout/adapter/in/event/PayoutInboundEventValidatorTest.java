@@ -18,14 +18,14 @@ class PayoutInboundEventValidatorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("구매확정_틀린_값")
-    void 구매확정_값이_틀리면_이유를_돌려준다(String 경우, PurchaseConfirmedCommand command, String 기대_이유) {
+    void 구매확정_값이_틀리면_이유를_돌려준다(String caseName, PurchaseConfirmedCommand command, String expectedReason) {
         // given: 인자로 받은 틀린 커맨드
 
         // when
         Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
-        assertThat(reason).contains(기대_이유);
+        assertThat(reason).contains(expectedReason);
     }
 
     static Stream<Arguments> 구매확정_틀린_값() {
@@ -69,14 +69,14 @@ class PayoutInboundEventValidatorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("지갑_차감_틀린_값")
-    void 지갑_차감_값이_틀리면_이유를_돌려준다(String 경우, WalletPaymentCompletedCommand command, String 기대_이유) {
+    void 지갑_차감_값이_틀리면_이유를_돌려준다(String caseName, WalletPaymentCompletedCommand command, String expectedReason) {
         // given: 인자로 받은 틀린 커맨드
 
         // when
         Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
-        assertThat(reason).contains(기대_이유);
+        assertThat(reason).contains(expectedReason);
     }
 
     static Stream<Arguments> 지갑_차감_틀린_값() {
