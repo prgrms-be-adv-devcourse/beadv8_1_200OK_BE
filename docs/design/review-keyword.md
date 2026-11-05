@@ -219,7 +219,7 @@ WHERE deleted_at IS NULL;
 | `review/domain` | `ReviewAnalysisType.KEYWORD`, `ReviewKeyword`(결과), `ReviewExpressedKeyword`(표현한 키워드), `ReviewKeywordAspect`(TASTE·FRESHNESS·CONDITION·PACKAGING·DELIVERY·PRICE·OTHER) |
 | `review/client` | `ReviewKeywordAnalyzer`(계약), `ReviewKeywordList`(목록 로더) |
 | `review/client/jev` | `JevReviewKeywordAnalyzer`, `JevResponse.Answer`에 `probabilities` 추가 |
-| `review/repository` | `ReviewKeywordRepository`(결과 저장, 집계 쿼리), `ReviewKeywordCount`, `ProductReviewRepository`에 키워드 필터 조회 |
+| `review/repository` | `ReviewKeywordRepository`(결과 저장, 집계 쿼리, 키워드 필터 조회), `ReviewKeywordCount` |
 | `review/service` | `ReviewKeywordAnalysisScheduler`, `ReviewKeywordAnalysisFacade`, `ReviewKeywordService`, `ProductReviewService` 수정 |
 | `review/controller` | `ProductReviewKeywordController` + `Spec`, `ProductReviewController.getProductReviews`에 `keyword` 파라미터 |
 
@@ -287,6 +287,7 @@ WHERE deleted_at IS NULL;
 1. `keyword`가 현재 목록에 없으면 400.
 2. 상품 분류에 적용되지 않는 키워드면 빈 페이지.
 3. 상품의 삭제되지 않은 리뷰 중, 결과가 현재 수정 시각으로 낸 것이고 그 결과에 해당 키워드 행이 있는 리뷰를 ID 내림차순으로 페이지 조회한다. ③의 4단계와 같은 조건이라 전체 개수가 칩의 표현한 리뷰 수와 같다.
+4. 필터 조회는 집계 쿼리와 함께 `ReviewKeywordRepository`에 두고, 분석 완료 리뷰 조건(JPQL 조각)을 상수 하나로 같이 쓴다. 조건을 두 곳에 따로 쓰면 한쪽만 고쳐 칩 수와 필터 결과 수가 어긋나기 쉽다.
 
 ### 5.4 모듈 간 연동
 
@@ -325,7 +326,7 @@ WHERE deleted_at IS NULL;
 2. **리소스**: `review-analysis/keywords.json` (v0.3 + `choices`)
 3. **도메인**: `ReviewAnalysisType`(KEYWORD), `ReviewKeyword`, `ReviewExpressedKeyword`, `ReviewKeywordAspect`
 4. **클라이언트**: `ReviewKeywordList`, `ReviewKeywordAnalyzer`, `JevReviewKeywordAnalyzer`, `JevResponse`(확률)
-5. **리포지토리**: `ReviewKeywordRepository`, `ReviewKeywordCount`, `ProductReviewRepository`(필터 조회)
+5. **리포지토리**: `ReviewKeywordRepository`(집계·필터 조회), `ReviewKeywordCount`
 6. **서비스**: `ReviewKeywordService`, `ReviewKeywordAnalysisFacade`, `ReviewKeywordAnalysisScheduler`, `ProductReviewService`(요청 생성·재분석), DTO(`ReviewKeywordTarget`, `ReviewKeywordAnalysis`, `ProductReviewKeywordsResult`)
 7. **컨트롤러**: `ProductReviewKeywordController` + `Spec`, 응답 DTO, `ProductReviewController`(필터 파라미터)
 8. **설정**: 작업자 켜기 속성, `SecurityConfig` 공개 엔드포인트 추가

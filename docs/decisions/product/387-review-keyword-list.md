@@ -2,9 +2,9 @@
 issue: 387
 module: product
 summary: 구매자 리뷰 키워드는 서비스에서 자유 추출하지 않고, 자유 추출로 만든 긍정 키워드 목록을 Jev가 리뷰마다 판정해 확률 0.9 이상만 센다
-status: 진행 중
+status: 확정
 date: 2026-11-05
-paths: [product/src/main/java/com/ok/product/review/domain/ReviewAnalysisType.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/controller/ProductReviewController.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewKeywordAnalyzer.java, product/src/main/java/com/ok/product/review/service/ReviewKeywordAnalysisScheduler.java]
+paths: [product/src/main/java/com/ok/product/review/domain/ReviewAnalysisType.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/controller/ProductReviewController.java, product/src/main/java/com/ok/product/review/repository/ReviewKeywordRepository.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewKeywordAnalyzer.java, product/src/main/java/com/ok/product/review/service/ReviewKeywordAnalysisScheduler.java]
 related: [385, 386, 422]
 ---
 
@@ -12,7 +12,7 @@ related: [385, 386, 422]
 
 ## 배경
 
-구매자가 리뷰를 다 읽지 않고 상품의 장점을 알 수 있게, 여러 구매자가 반복해 칭찬한 표현을 상품 상세에 칩으로 보여 준다. 이번 결정은 구현 전 단계다. 키워드를 뽑는 방식, 키워드 목록, 판정 모델의 설정을 정하고 #385 생성 리뷰로 검증했다. 서비스 구현(저장, 집계, API, 칩 필터)은 아직이라 상태를 `진행 중`으로 둔다. 실험 코드는 머지하지 않고 보관 브랜치 `feature/385`의 `tools/review-analysis-bench/keyword/`에 두었고, 서비스로 옮길 목록은 그 안의 `keywords.json`이다. 판매자 센터 노출, 관리자 목록 편집, 목록 변경 시 일괄 재분석(#422)은 범위 밖이다.
+구매자가 리뷰를 다 읽지 않고 상품의 장점을 알 수 있게, 여러 구매자가 반복해 칭찬한 표현을 상품 상세에 칩으로 보여 준다. 키워드를 뽑는 방식, 키워드 목록, 판정 모델의 설정을 정하고 #385 생성 리뷰로 검증한 뒤, 서비스 구현을 티켓 세 개로 나눠 했다. #459는 분석 요청·작업자·결과 저장·집계 API, #460은 Jev 키워드 분석기, #461은 리뷰 목록의 키워드 필터다. 실험 코드는 머지하지 않고 보관 브랜치 `feature/385`의 `tools/review-analysis-bench/keyword/`에 두었고, 서비스로 옮길 목록은 그 안의 `keywords.json`이다. 판매자 센터 노출, 관리자 목록 편집, 목록 변경 시 일괄 재분석(#422)은 범위 밖이다.
 
 ## 결정과 이유
 
@@ -32,6 +32,7 @@ related: [385, 386, 422]
 | Jev 판정 설정 | "말함" 확률 0.9 이상만 쓰고, 구체적인 식감 키워드(C18·C19·C20·C21·C22·C23·C26·C28)가 있으면 "식감이 좋아요"(C25)를 뺀다 | Jev가 고른 답 그대로는 정밀도 0.675였다. 조정용 100개에서 0.9를 넘는 가장 낮은 기준을 골랐다. 식감 규칙은 판정 기준에 있던 것을 코드로 옮긴 것이다. 설정을 고정한 뒤 평가용 100개로 한 번 재어 정밀도 0.942(65/69), 재현율 0.684였다. 칩은 리뷰 3개 이상이 말해야 뜨므로 재현율을 내주고 정밀도를 택했다 |
 | 키워드 분석기 | `JevReviewKeywordAnalyzer`가 리뷰 하나에 상품 분류의 키워드 질문(12~30개)을 요청 1회로 보내고, 키워드마다 `probabilities.mentioned`를 돌려준다. 답이나 확률이 없으면 최종 실패다. HTTP 호출과 오류 분류는 감성 분석기와 함께 `JevClient` 하나를 쓴다 | 정밀도 0.942를 잰 실험(`list.ts`의 `buildJevBody`)과 같은 요청을 보낸다. 지시문·질문·판정 기준 문장과 선택지 설명을 목록 파일 그대로 쓰고, 상품명과 본문만 보낸다. 확률이 없을 때 0으로 두면 응답 형식이 바뀌어도 "키워드 0개"로 조용히 완료되므로 실패로 남긴다. 오류 분류를 한 곳에 두어 두 분석기의 분류가 어긋나지 않게 한다 |
 | 키워드 작업자 켜는 설정 | `app.review-analysis.keyword-worker.enabled`를 감성의 `app.review-analysis.worker.enabled`와 따로 두고, 운영 설정에서만 켠다 (사용자 결정) | 운영자가 한쪽 작업자만 끄고 운영할 수 있게 한다. 이름은 감성 쪽 이름에 맞췄다 |
+| 리뷰 목록 키워드 필터 | `?keyword=<ID>`로 받는다. 빈 값은 필터 없음이고, 목록에 없는 ID는 400(`REVIEW_KEYWORD_NOT_FOUND`), 상품 분류에 묻지 않는 키워드는 빈 페이지다. 필터 조회는 집계 쿼리와 함께 `ReviewKeywordRepository`에 두고 분석 완료 리뷰 조건(JPQL 조각)을 상수 하나로 같이 쓴다. 칩의 노출 기준(분모 10, 리뷰 3개)은 필터에 적용하지 않는다 | 칩 수와 필터 결과 수가 같아야 구매자가 화면을 믿는다. 조건을 두 쿼리에 따로 쓰면 한쪽만 고쳐 어긋나기 쉽다. 노출 기준을 필터에도 걸면 링크로 들어온 칩 밖 키워드가 빈 목록이 된다 |
 
 ## 버린 대안
 
