@@ -141,7 +141,9 @@ public class RefundService {
      * 잠금을 기다리는 동안 앞 승인이 저장한 "처리 중"이 집계에 보이지 않아 줄을 세워도 배송비가 틀린다.
      * 이미 열린 트랜잭션에 합류하면 격리 수준이 적용되지 않으므로 트랜잭션 밖(Facade)에서만 부른다.
      *
-     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 배송비 값만 쓴다(출고 확인은 #412)
+     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 배송비 값만 쓴다(출고 확인은 #412).
+     *                  묶음을 이 값의 주문 ID로 찾으므로 환불의 주문 ID로 조회한 값이어야 한다. 다른 주문 값이면 묶음에 이 환불이 없어
+     *                  {@code REFUND_NOT_FOUND}가 된다(Facade가 환불의 주문 ID로 조회한다)
      * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
      * @throws IllegalStateException 주문 정보가 다른 주문 상품이면, 또는 다른 트랜잭션 안에서 부르면 (부르는 쪽 버그)
      */

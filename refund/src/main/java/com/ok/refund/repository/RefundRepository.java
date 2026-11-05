@@ -33,8 +33,9 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
     List<Long> findIdsByOrderIdAndSellerId(@Param("orderId") Long orderId, @Param("sellerId") Long sellerId);
 
     /**
-     * 주어진 환불 행들을 ID 순서로 쓰기 잠금({@code SELECT ... FOR UPDATE})한다. 같은 묶음 승인을 한 줄로 세울 때 쓴다.
-     * 항상 ID 순서로 잠가야 같은 묶음을 동시에 승인해도 서로 반대 순서로 기다리는 교착 상태가 생기지 않는다.
+     * 주어진 환불 행들을 쓰기 잠금({@code SELECT ... FOR UPDATE})한다. 같은 묶음 승인을 한 줄로 세울 때 쓴다.
+     * PK IN 조회라 InnoDB가 PK 오름차순으로 잠근다. 승인끼리 항상 같은 순서로 잠가 서로 반대 순서로 기다리는 교착 상태가 생기지 않는다.
+     * {@code order by}는 돌려받는 목록의 순서를 맞출 뿐이고 잠금 순서를 정하지는 않는다.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from Refund r where r.id in :ids order by r.id")
