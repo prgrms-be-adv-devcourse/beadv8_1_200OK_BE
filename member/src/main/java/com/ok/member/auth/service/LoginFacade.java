@@ -10,12 +10,9 @@ import org.springframework.stereotype.Component;
 
 /**
  * 로그인 아이디와 비밀번호로 회원을 인증하고 Access Token과 Refresh Token을 발급한다.
- * bcrypt 비교 동안 DB 커넥션을 잡지 않도록 트랜잭션 없이 실행하고, DB 작업은 {@link AuthService}의
- * 짧은 트랜잭션에 맡긴다. 그래서 한 요청이 동시에 쥐는 커넥션은 최대 1개다.
- * 컨벤션(Facade에는 {@code @Transactional}을 붙이지 않고 DB 작업은 서비스로 한다)을 이 클래스에서 특히 지켜야 한다.
- * {@code @Transactional}을 붙이면 bcrypt 동안 커넥션을 잡고, 이 경우 데드락이 아니라서 회귀 테스트로도 드러나지 않는다.
- * 리포지토리를 직접 부르지 않는다. 수정 전에는 {@code NOT_SUPPORTED} 범위에서 리포지토리를 직접 조회해 그 커넥션이
- * 메서드 끝까지 남았고, 뒤의 트랜잭션과 합쳐 요청 하나가 커넥션 2개를 쥐어 동시 로그인이 풀 크기에 닿으면 멈췄다(#425).
+ * bcrypt 비교 동안 DB 커넥션을 잡지 않도록 트랜잭션 없이 실행하고, DB 작업은 {@link AuthService}의 짧은 트랜잭션에 맡긴다.
+ * 그래서 이 클래스에 {@code @Transactional}을 붙이지 않고, 리포지토리를 직접 부르지 않는다.
+ * 배경과 어겼을 때의 영향은 {@code docs/decisions/member/425-login-connection-deadlock.md}에 있다.
  */
 @Component
 public class LoginFacade {
