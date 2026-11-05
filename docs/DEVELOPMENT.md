@@ -691,19 +691,21 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 - Spring Modulith가 `@EnableAsync`를 켜 주므로 리스너는 원래 비동기입니다. 이름 없는 `@Async`가 쓰는 Boot 기본 실행기(`applicationTaskExecutor`)는 코어 8, 대기열 무제한이고 모든 비동기 작업이 공유합니다. 그래서 느린 작업이 다른 작업을 지연시킬 수 있고, 밀린 작업은 대기열에 메모리로 쌓입니다. 아래 구조는 이 공유 풀을 용도별 실행기로 나눕니다.
 - 이름을 지정하지 않은 `@Async`와 `@ApplicationModuleListener`는 `app.async.default-executor`(기본 `event`)의 실행기로 갑니다. 기존 리스너 코드는 바꿀 필요가 없습니다. `@ApplicationModuleListener`는 실행기를 지정할 수 없어서 모든 리스너가 이 기본 실행기 하나를 씁니다.
-- 실행기는 작업마다 새 스레드를 만듭니다(기본은 가상 스레드). 가상 스레드는 만드는 비용이 거의 없어 풀에 담아 재사용하지 않으므로 `corePoolSize`, `maxPoolSize`, `queueCapacity` 같은 설정이 없습니다. 대신 부족한 자원인 DB 커넥션을 기준으로 **동시 실행 상한**(`concurrency-limit`)을 둡니다.
-- `spring.threads.virtual.enabled`는 쓰지 않습니다. 이 설정은 Tomcat 요청 스레드와 `@Scheduled`까지 바꾸는 전역 설정이라, 실행기에만 가상 스레드를 적용했습니다.
+- 실행기는 두 종류입니다. **`platform`**(`event`의 기본)은 정해진 수의 일반 스레드와 대기열을 씁니다. 대기열이 차기 전에는 작업을 넘기는 스레드가 기다리지 않아서 리스너가 요청 스레드를 막지 않습니다. **`virtual`**은 작업마다 가상 스레드를 새로 만듭니다(풀도 대기열도 없습니다). 부족한 자원인 DB 커넥션을 기준으로 **동시 실행 상한**(`concurrency-limit`)을 두고, 상한이 차면 작업을 넘기는 스레드가 기다립니다.
+- 두 종류 모두 가득 찼을 때 작업을 거절하거나 버리지 않고 넘기는 스레드가 자리가 날 때까지 기다립니다. 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 이미 커밋된 요청이 오류가 되고, 같은 커밋의 다른 리스너가 실행되지 않는 것을 확인했기 때문입니다.
+- `spring.threads.virtual.enabled`는 쓰지 않습니다. 이 설정은 Tomcat 요청 스레드와 `@Scheduled`까지 바꾸는 전역 설정이라, `virtual` 실행기에만 가상 스레드를 적용합니다.
 - 실행기를 직접 등록하므로 Boot의 `spring.task.execution.*` 설정은 적용되지 않습니다.
 
 ### 설정 키
 
-`app.async.default-executor`는 이름 없는 `@Async`가 쓸 실행기 이름이고, `app.async.executors.<이름>`에 실행기마다 아래 값을 적습니다. 생략한 값은 기본값을 씁니다. 값이 잘못되면(상한 0 이하 등) 앱이 시작되지 않습니다.
+`app.async.default-executor`는 이름 없는 `@Async`가 쓸 실행기 이름이고, `app.async.executors.<이름>`에 실행기마다 아래 값을 적습니다. 생략한 값은 기본값을 씁니다. 값이 잘못되면(상한 0 이하 등) 앱이 시작되지 않습니다. `type`에 따라 쓰는 값이 다르고, 쓰지 않는 값은 무시합니다.
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
-| `virtual-threads` | `true` | `true`면 가상 스레드, `false`면 일반 스레드를 작업마다 만듭니다. 가상 스레드에 문제가 생기면 재빌드 없이 `false`로 되돌립니다. 동시 실행 상한은 어느 쪽이든 같게 적용됩니다. 일반 스레드는 작업마다 새로 만들어 상한이 크면 스레드가 늘어 OOM이 날 수 있으므로, `false`로 끌 때는 상한을 작게 유지합니다 |
-| `concurrency-limit` | `5` | 동시에 실행할 작업 수의 상한 |
-| `reject-tasks-when-limit-reached` | `false` | `false`면 상한에 걸렸을 때 작업을 넘기는 스레드(요청 스레드)가 빈자리가 날 때까지 기다리고, `true`면 거절합니다. `true`일 때 커밋 뒤에 거절 예외가 요청 쪽으로 어떻게 전달되는지는 확인하지 않았으므로, 켜기 전에 동작을 확인합니다 |
+| `type` | `virtual` (`event`는 `platform`) | `platform`은 일반 스레드 풀과 대기열, `virtual`은 작업마다 가상 스레드입니다. 요청 스레드가 막히면 안 되는 곳(이벤트 리스너 등)은 대기열이 있는 `platform`을 씁니다. 가상 스레드에 문제가 생기면 재빌드 없이 `platform`으로 되돌릴 수 있습니다 |
+| `concurrency-limit` | `5` | `virtual`에서 동시에 실행할 작업 수의 상한. 상한이 차면 작업을 넘기는 스레드가 기다립니다 |
+| `pool-size` | `8` | `platform`의 스레드 수. 대기열이 차기 전에는 스레드가 늘지 않아 코어와 최대를 같게 씁니다 |
+| `queue-capacity` | `1000` | `platform`의 대기열 크기. 가득 차면 작업을 넘기는 스레드가 기다립니다. 1000은 측정 근거 없는 임시값입니다 |
 | `task-termination-timeout` | `10s` | 앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. 끝나지 못한 이벤트는 미완료로 남아 재시작 때 재발행됩니다(`MODULITH_REPUBLISH_ON_RESTART`, 운영은 `true`) |
 | `thread-name-prefix` | `<이름>-` | 스레드 이름의 앞부분. 로그에서 어느 실행기의 스레드인지 구분합니다 |
 
@@ -712,7 +714,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 ### 값 바꾸기
 
 - 값은 앱이 시작할 때 한 번 읽습니다. 바꾸면 **재시작**해야 하고, 재빌드는 필요 없습니다.
-- `event` 값은 환경변수로 바꿉니다: `ASYNC_EVENT_VIRTUAL_THREADS`, `ASYNC_EVENT_CONCURRENCY_LIMIT`, `ASYNC_EVENT_REJECT_WHEN_LIMIT_REACHED`, `ASYNC_EVENT_TERMINATION_TIMEOUT`.
+- `event` 값은 환경변수로 바꿉니다: `ASYNC_EVENT_POOL_SIZE`, `ASYNC_EVENT_QUEUE_CAPACITY`, `ASYNC_EVENT_TERMINATION_TIMEOUT`.
 - **앱 yml(`application.yaml` 등)에 `event` 값을 써도 적용되지 않습니다.** `spring.config.import`로 가져온 파일의 값이 가져온 앱 yml의 값보다 우선하기 때문입니다. `event` 값은 환경변수로 바꾸거나 `common-async.yaml`을 고칩니다.
 - 새 이름의 실행기 항목은 앱 yml에 추가할 수 있습니다. 이름이 다른 항목은 서로 합쳐지고, 같은 이름의 항목은 필드 단위로 합쳐집니다.
 - 새 이름 항목에서 환경변수로 바꿀 값은 yml에 `${ORDER_EXTERNAL_API_CONCURRENCY_LIMIT:3}`처럼 자리표시자를 직접 적습니다. 키 이름의 `-`는 환경변수 이름으로 표현할 수 없어서, 자리표시자 없이는 일부 값만 환경변수로 덮어쓰기가 어렵습니다.
@@ -730,7 +732,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
         public static final String EXTERNAL_API_EXECUTOR = "order-external-api";
 
         @Bean(EXTERNAL_API_EXECUTOR)
-        SimpleAsyncTaskExecutor orderExternalApiExecutor(AsyncExecutorFactory factory) {
+        AsyncTaskExecutor orderExternalApiExecutor(AsyncExecutorFactory factory) {
             return factory.create(EXTERNAL_API_EXECUTOR);
         }
     }
@@ -758,8 +760,9 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 ### 주의할 점
 
-- **DB 커넥션은 실행기가 나눠 씁니다.** 상한은 실행기마다 따로 적용되지만 커넥션 풀(Hikari 기본 10)은 앱 전체가 공유합니다. DB를 쓰는 실행기들의 상한 합계가 풀 크기보다 작아야 HTTP 요청이 커넥션을 얻지 못하는 일이 없습니다. 이 합계는 앱이 검사하지 않으니 실행기를 추가할 때 직접 확인합니다.
-- **모든 리스너는 `event` 실행기 하나를 공유합니다.** `@ApplicationModuleListener`는 실행기를 지정할 수 없어서, 느린 외부 호출을 하는 리스너가 상한을 차지하면 다른 리스너가 기다릴 수 있습니다. 리스너끼리의 격리는 아직 없습니다.
+- **DB 커넥션은 실행기가 나눠 씁니다.** `pool-size`와 `concurrency-limit`은 실행기마다 따로 적용되지만 커넥션 풀(Hikari 기본 10)은 앱 전체가 공유합니다. DB를 쓰는 실행기들의 스레드 수·상한 합계가 풀 크기보다 작아야 HTTP 요청이 커넥션을 얻지 못하는 일이 없습니다. 이 합계는 앱이 검사하지 않으니 실행기를 추가할 때 직접 확인합니다.
+- **모든 리스너는 `event` 실행기 하나를 공유합니다.** `@ApplicationModuleListener`는 실행기를 지정할 수 없어서, 느린 외부 호출을 하는 리스너가 스레드를 다 차지하면 다른 리스너가 대기열에서 기다릴 수 있습니다. 리스너끼리의 격리는 아직 없습니다.
+- **가득 차면 작업을 넘긴 스레드가 기다립니다.** `platform`은 대기열이 다 찰 때만, `virtual`은 상한이 차면 바로 기다립니다. 요청 스레드가 직접 부르는 `@Async`는 대기열이 있는 `platform`이 안전합니다. 작업을 거절하는 옵션은 두지 않았습니다. 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 이미 커밋된 요청이 오류가 되고, 같은 커밋의 다른 리스너가 실행되지 않는 것을 확인했기 때문입니다.
 - **`@Async` 이름 오타는 처음 호출될 때 실패합니다.** `@Async("이름")`에 문자열을 직접 쓰지 않고 위처럼 상수를 씁니다.
 - **같은 클래스 안에서 `@Async` 메서드를 부르면 비동기가 되지 않습니다.** 프록시를 거치지 않아 오류 없이 동기로 실행됩니다. 다른 빈에서 호출합니다.
 - **리스너는 처리 순서가 보장되지 않고, 같은 이벤트를 두 번 받을 수 있습니다.** 재시작 때 미완료 이벤트가 재발행되기 때문에 같은 이벤트를 여러 번 처리해도 결과가 같아야 합니다.
