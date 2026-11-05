@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -98,8 +99,14 @@ class AuthLoginConcurrencyIntegrationTest extends AbstractIntegrationTest {
             List<Future<Integer>> futures = tasks.stream().map(executor::submit).toList();
             ready.await();
             start.countDown();
-            for (Future<Integer> future : futures) {
-                sut.add(future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            try {
+                for (Future<Integer> future : futures) {
+                    sut.add(future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                }
+            } catch (TimeoutException e) {
+                // close()는 남은 작업이 끝날 때까지 기다리므로, 멈춘 요청을 먼저 중단해 실패를 바로 알린다
+                executor.shutdownNow();
+                throw e;
             }
         }
 
