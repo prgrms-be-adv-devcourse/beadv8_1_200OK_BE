@@ -37,6 +37,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import com.ok.product.review.client.ReviewAnalysisFailedException;
+import com.ok.product.review.client.ReviewAnalyzerUnavailableException;
 import com.ok.product.review.client.ReviewSentimentCriteria;
 import com.ok.product.review.domain.AspectSentiment;
 import com.ok.product.review.domain.ReviewAspect;
@@ -271,7 +272,7 @@ class JevReviewSentimentAnalyzerTest {
 
 	@ParameterizedTest
 	@MethodSource("최종_실패할_상태_코드")
-	void 요청_제한이_아닌_4xx는_최종_실패다(HttpStatus status) {
+	void 요청_제한과_인증_거절이_아닌_4xx는_최종_실패다(HttpStatus status) {
 		// given
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withStatus(status));
 
@@ -281,7 +282,23 @@ class JevReviewSentimentAnalyzerTest {
 	}
 
 	static Stream<HttpStatus> 최종_실패할_상태_코드() {
-		return Stream.of(HttpStatus.BAD_REQUEST, HttpStatus.UNAUTHORIZED);
+		return Stream.of(HttpStatus.BAD_REQUEST, HttpStatus.NOT_FOUND);
+	}
+
+	@ParameterizedTest
+	@MethodSource("인증_거절_상태_코드")
+	void 인증_거절은_분석기를_쓸_수_없는_실패다(HttpStatus status) {
+		// given
+		server.expect(requestTo(ANALYZE_URL)).andRespond(withStatus(status));
+
+		// when & then
+		assertThatThrownBy(() -> analyzer.analyze(input(1L)))
+			.isInstanceOf(ReviewAnalyzerUnavailableException.class)
+			.hasMessage("Jev가 인증을 거절했습니다. status=" + status.value());
+	}
+
+	static Stream<HttpStatus> 인증_거절_상태_코드() {
+		return Stream.of(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
 	}
 
 	@ParameterizedTest
