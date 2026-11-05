@@ -120,7 +120,7 @@ class RefundTest {
         Refund sut = requested();
 
         // when
-        sut.approve(NOW);
+        sut.approve(NOW, RefundShippingFee.none());
 
         // then
         assertThat(sut).isNotNull();
@@ -267,11 +267,11 @@ class RefundTest {
     static Stream<Arguments> 결정된_요청과_동작() {
         // 이름을 붙여야 실패했을 때 어느 상태에서 어느 동작이 통과했는지 보인다
         List<Named<Consumer<Refund>>> decisions = List.of(
-                Named.of("처리 중", refund -> refund.approve(NOW)),
+                Named.of("처리 중", refund -> refund.approve(NOW, RefundShippingFee.none())),
                 Named.of("거절", refund -> refund.reject("사유", NOW)),
                 Named.of("철회", refund -> refund.withdraw(NOW)));
         List<Named<Consumer<Refund>>> actions = List.of(
-                Named.of("승인", refund -> refund.approve(NOW)),
+                Named.of("승인", refund -> refund.approve(NOW, RefundShippingFee.none())),
                 Named.of("거절", refund -> refund.reject("사유", NOW)),
                 Named.of("철회", refund -> refund.withdraw(NOW)));
         List<Arguments> cases = new ArrayList<>();

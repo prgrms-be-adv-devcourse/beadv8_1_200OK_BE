@@ -4,11 +4,10 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
-import com.ok.refund.service.dto.RefundDecision;
-import com.ok.refund.service.dto.RefundDecisionCommand;
 import com.ok.refund.service.dto.RefundRequestCommand;
 import com.ok.refund.service.dto.RefundResult;
 import com.ok.refund.service.dto.RefundableOrderItem;
@@ -179,22 +178,120 @@ class RefundServiceTest {
                 .isSameAs(timeout);
     }
 
+    // 무료배송(50,000원 이상) 묶음에서 1,000원짜리만 취소하면 49,500원이 남아 기준이 깨지고, 뺄 배송비 3,000원이 취소 금액보다 크다
     @Test
-    void 승인하면_지금_시각으로_처리_중이_된다() {
+    void 요청_때_배송비가_모자라면_409로_막는다() {
         // given
+        given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+
+        // when & then
+        assertThatThrownBy(() -> sut.request(new RefundRequestCommand(BUYER_ID, 10L, 101L, 1, null), cheapItemInFreeBundle()))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED));
+    }
+
+    @Test
+    void 남의_상품_요청은_조회해도_없는_요청처럼_막는다() {
+        // given
+        given(refundRepository.findById(REFUND_ID)).willReturn(Optional.of(requested()));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getSellerRefund(REFUND_ID, OTHER_SELLER_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
+    }
+
+    @Test
+    void 승인하면_지금_시각으로_처리_중이_되고_배송비_판단을_저장한다() {
+        // given: 산 2개를 모두 취소해 묶음 전부 취소다. 낸 배송비 3,000원을 돌려준다
         Refund refund = requested();
         given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
-        RefundResult result = sut.decide(new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.APPROVE, null));
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
 
         // then
         assertThat(result).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(result.status()).isEqualTo("PROCESSING");
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
-            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(refund.getShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(refund.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
         });
+    }
+
+    @Test
+    void 승인_때_배송비가_모자라면_사유와_함께_자동_거절한다() {
+        // given
+        Refund refund = Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 1_000L, null);
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, cheapItemInFreeBundle());
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.status()).isEqualTo("REJECTED");
+            softly.assertThat(result.rejectReason()).isEqualTo(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED.getMessage());
+            softly.assertThat(result.decidedAt()).isEqualTo(NOW);
+            softly.assertThat(refund.getActiveOrderItemId()).isNull();
+            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+        });
+    }
+
+    // 이미 처리 중인 요청은 자기 개수가 집계에 들어가 배송비 판단이 깨지므로, 판단 전에 상태로 막아야 한다
+    @Test
+    void 요청됨이_아니면_배송비를_판단하기_전에_막는다() {
+        // given
+        Refund refund = requested();
+        refund.approve(NOW, RefundShippingFee.none());
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
+    @Test
+    void 환불과_다른_주문_상품_정보로_승인하면_예외를_던지고_바꾸지_않는다() {
+        // given
+        Refund refund = requested();
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        RefundableOrderItem otherItem = orderItem(102L, 10_000L, 2,
+                new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(102L, 10_000L, 2))));
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, otherItem))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
+        assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 남의_상품_요청을_승인하면_없는_요청처럼_막고_바꾸지_않는다() {
+        // given
+        Refund refund = requested();
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, OTHER_SELLER_ID, socks("PREPARING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
+        assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 없는_요청을_승인하면_막는다() {
+        // given
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
     }
 
     @Test
@@ -204,8 +301,7 @@ class RefundServiceTest {
         given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
-        RefundResult result = sut.decide(
-                new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.REJECT, "이미 포장을 마쳤습니다."));
+        RefundResult result = sut.reject(REFUND_ID, SELLER_ID, "이미 포장을 마쳤습니다.");
 
         // then
         assertThat(result).isNotNull();
@@ -217,29 +313,16 @@ class RefundServiceTest {
     }
 
     @Test
-    void 남의_상품_요청을_결정하면_없는_요청처럼_막고_바꾸지_않는다() {
+    void 남의_상품_요청을_거절하면_없는_요청처럼_막고_바꾸지_않는다() {
         // given
         Refund refund = requested();
         given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when & then
-        assertThatThrownBy(() -> sut.decide(
-                new RefundDecisionCommand(REFUND_ID, OTHER_SELLER_ID, RefundDecision.APPROVE, null)))
+        assertThatThrownBy(() -> sut.reject(REFUND_ID, OTHER_SELLER_ID, "사유"))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
-    }
-
-    @Test
-    void 없는_요청을_결정하면_막는다() {
-        // given
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
-
-        // when & then
-        assertThatThrownBy(() -> sut.decide(
-                new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.APPROVE, null)))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
     }
 
     @Test
@@ -295,5 +378,16 @@ class RefundServiceTest {
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(101L, 10_000L, boughtQuantity)));
         return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "양말", "흰색", status, 10_000L, boughtQuantity, bundle);
+    }
+
+    private static RefundableOrderItem cheapItemInFreeBundle() {
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(101L, 1_000L, 1), new BundleItem(102L, 49_500L, 1)));
+        return orderItem(101L, 1_000L, 1, bundle);
+    }
+
+    private static RefundableOrderItem orderItem(Long orderItemId, long unitPrice, int quantity, BundleShipping bundle) {
+        return new RefundableOrderItem(10L, orderItemId, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", "PREPARING", unitPrice,
+                quantity, bundle);
     }
 }

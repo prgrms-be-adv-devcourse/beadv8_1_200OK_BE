@@ -161,20 +161,9 @@ public class Refund extends BaseTime {
     }
 
     /**
-     * 판매자 승인으로 처리를 시작한다. {@code REQUESTED → PROCESSING}
-     * 아직 끝난 게 아니라 진행 중 칸은 그대로 둔다. 상품 금액은 요청 때 저장한 값을 그대로 쓰고, 배송비는 #410에서 이때 정한다.
-     *
-     * @throws RestApiException 요청됨이 아니면 {@code INVALID_REFUND_STATE}
-     */
-    public void approve(LocalDateTime now) {
-        requireStatus(RefundStatus.REQUESTED);
-        this.decidedAt = now;
-        this.status = RefundStatus.PROCESSING;
-    }
-
-    /**
      * 판매자 승인으로 처리를 시작하고 배송비 판단을 저장한다. {@code REQUESTED → PROCESSING}
      * 판단은 같은 묶음의 처리 중 요청을 본 결과라 승인 시점에만 정할 수 있다. 한 번 정하면 다시 계산하지 않는다.
+     * 아직 끝난 게 아니라 진행 중 칸은 그대로 둔다. 상품 금액은 요청 때 저장한 값을 그대로 쓴다.
      *
      * @param fee 배송비 판단 결과. 받을 수 없는 판단이면 승인하지 말고 자동 거절해야 한다
      * @throws RestApiException         요청됨이 아니면 {@code INVALID_REFUND_STATE}
@@ -184,7 +173,9 @@ public class Refund extends BaseTime {
         if (fee == null || !fee.allowed()) {
             throw new IllegalArgumentException("받을 수 없는 배송비 판단으로는 승인할 수 없습니다.");
         }
-        approve(now);
+        requireStatus(RefundStatus.REQUESTED);
+        this.decidedAt = now;
+        this.status = RefundStatus.PROCESSING;
         this.shippingFeeAmount = fee.shippingFeeAmount();
         this.remoteAreaFeeAmount = fee.remoteAreaFeeAmount();
         this.deductedShippingFeeAmount = fee.deductedShippingFeeAmount();

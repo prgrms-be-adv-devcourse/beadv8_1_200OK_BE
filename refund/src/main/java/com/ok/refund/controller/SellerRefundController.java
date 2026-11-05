@@ -5,6 +5,7 @@ import com.ok.refund.controller.dto.RefundDecisionRequest;
 import com.ok.refund.controller.dto.RefundPageResponse;
 import com.ok.refund.controller.dto.RefundResponse;
 import com.ok.refund.controller.dto.SellerRefundPageRequest;
+import com.ok.refund.service.RefundFacade;
 import com.ok.refund.service.RefundService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerRefundController implements SellerRefundControllerSpec {
 
+    private final RefundFacade refundFacade;
     private final RefundService refundService;
 
     @Override
@@ -45,6 +47,6 @@ public class SellerRefundController implements SellerRefundControllerSpec {
             @PathVariable Long refundId,
             @Valid @RequestBody RefundDecisionRequest request
     ) {
-        return ResponseEntity.ok(RefundResponse.from(refundService.decide(request.toCommand(refundId, sellerId))));
+        return ResponseEntity.ok(RefundResponse.from(refundFacade.decide(request.toCommand(refundId, sellerId))));
     }
 }

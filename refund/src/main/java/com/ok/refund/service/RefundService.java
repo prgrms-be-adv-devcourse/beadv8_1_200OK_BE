@@ -1,11 +1,13 @@
 package com.ok.refund.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundShippingFee;
+import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.repository.RefundRepository;
-import com.ok.refund.service.dto.RefundDecisionCommand;
 import com.ok.refund.service.dto.RefundRequestCommand;
 import com.ok.refund.service.dto.RefundResult;
 import com.ok.refund.service.dto.RefundableOrderItem;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 환불 요청의 DB 작업을 맡는다. 주문 모듈 호출은 {@link RefundFacade}가 하고, 이 서비스는 짧은 트랜잭션으로 확인과 저장만 한다.
@@ -39,6 +42,9 @@ public class RefundService {
     private static final int PAGE_SIZE = 25;
     // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+    // 배송비 판단에서 "이미 취소된 것"으로 보는 상태. 승인된 요청은 되돌리지 않으므로 취소된 것으로 센다
+    // TODO(#414): 완료 상태가 생기면 함께 센다
+    private static final List<RefundStatus> CANCELLING_STATUSES = List.of(RefundStatus.PROCESSING);
 
     private final RefundRepository refundRepository;
     private final Clock clock;
@@ -51,7 +57,8 @@ public class RefundService {
      * @param orderItem 주문 모듈에서 받은 주문 상품 정보
      * @throws RestApiException 남의 주문이면 {@code ORDER_ITEM_NOT_FOUND}, 출고 전이 아니면 {@code ORDER_ITEM_NOT_CANCELLABLE},
      *                          산 개수보다 많으면 {@code REFUND_QUANTITY_EXCEEDED}, 개수가 1 미만이면 {@code INVALID_REFUND_QUANTITY},
-     *                          진행 중인 요청이 있으면 {@code REFUND_ALREADY_IN_PROGRESS}
+     *                          진행 중인 요청이 있으면 {@code REFUND_ALREADY_IN_PROGRESS},
+     *                          무료배송 기준이 깨져 뺄 배송비보다 취소 금액이 작으면 {@code PARTIAL_CANCEL_NOT_ALLOWED}
      */
     @Transactional
     public RefundResult request(RefundRequestCommand command, RefundableOrderItem orderItem) {
@@ -70,7 +77,15 @@ public class RefundService {
         Refund refund = Refund.request(orderItem.orderId(), orderItem.orderItemId(), command.quantity(), command.buyerId(),
                 orderItem.sellerId(), orderItem.productOptionId(), orderItem.productName(), orderItem.optionName(),
                 orderItem.unitPrice(), command.cancelReason());
-        return RefundResult.from(saveDetectingActiveRequest(refund));
+        Refund saved = saveDetectingActiveRequest(refund);
+        // 배송비는 승인 때 정하지만, 지금 승인해도 받을 수 없는 요청은 판매자에게 보내지 않고 미리 막는다.
+        // 저장 뒤에 판단하는 이유: 같은 상품에 처리 중 요청이 있으면 그 개수까지 더해져 판단이 "개수 초과"(500)로 깨지므로,
+        // UNIQUE가 먼저 409로 막게 한다. 여기서 던지면 트랜잭션이 되돌려져 저장한 행도 남지 않는다
+        RefundShippingFee fee = decideShippingFee(saved, orderItem);
+        if (!fee.allowed()) {
+            throw new RestApiException(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED);
+        }
+        return RefundResult.from(saved);
     }
 
     /**
@@ -98,34 +113,67 @@ public class RefundService {
     }
 
     /**
-     * 판매자가 본인 상품의 요청을 승인하거나 거절한다.
-     * 승인은 "처리 중"으로 바꾸기만 하고 다른 모듈을 부르지 않는다. 요청 뒤 출고된 상품은 #412에서 승인 때 주문을 다시 조회해 막는다.
+     * 판매자 본인 상품의 환불 요청 한 건을 조회한다. 승인 전에 주문을 조회할 주문 ID를 얻으려고 쓴다.
+     * 잠그지 않는다. 주문 호출 동안 행을 잠가 두지 않으려는 것이고, 상태는 {@link #approve}가 잠근 뒤 다시 확인한다.
+     *
+     * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}
+     */
+    public RefundResult getSellerRefund(Long refundId, Long sellerId) {
+        return refundRepository.findById(refundId)
+                .filter(found -> found.isOwnedBySeller(sellerId))
+                .map(RefundResult::from)
+                .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
+    }
+
+    /**
+     * 판매자가 승인한다. 같은 묶음의 처리 중 요청을 모아 배송비를 판단하고, 받을 수 있으면 "처리 중"으로 바꾸며 배송비를 저장한다.
+     * 받을 수 없으면(취소 금액이 뺄 배송비보다 작음) 사유를 넣어 자동 거절한다. 요청됨으로 남기면 구매자가 이유를 모르고 요청도 쌓이기 때문이다.
      *
      * <p>행을 잠근 뒤 상태를 확인한다. 구매자 철회와 동시에 오면 먼저 잠근 쪽만 성공하고, 뒤에 온 쪽은 바뀐 상태를 보고 막힌다.
      * 잠그지 않으면 둘 다 "요청됨"을 읽고 둘 다 저장해, 나중에 저장한 쪽이 앞의 결과를 덮어쓴다.
      *
-     * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE},
-     *                          거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
+     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 배송비 값만 쓴다(출고 확인은 #412)
+     * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalStateException 주문 정보가 다른 주문 상품이면 (부르는 쪽 버그)
      */
     @Transactional
-    public RefundResult decide(RefundDecisionCommand command) {
-        Refund refund = refundRepository.findByIdForUpdate(command.refundId())
-                .filter(found -> found.isOwnedBySeller(command.sellerId()))
-                .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
+    public RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
+        Refund refund = findSellerRefundForUpdate(refundId, sellerId);
+        // 엔티티의 approve도 상태를 보지만, 배송비 판단보다 먼저 막아야 한다. 이미 처리 중인 요청은 자기 개수가 집계에 들어가
+        // 판단이 "개수 초과"(500)로 깨지므로 그 전에 409로 돌려준다
+        if (refund.getStatus() != RefundStatus.REQUESTED) {
+            throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
+        }
+        if (!refund.getOrderItemId().equals(orderItem.orderItemId())) {
+            throw new IllegalStateException("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=" + refundId);
+        }
+        RefundShippingFee fee = decideShippingFee(refund, orderItem);
         LocalDateTime now = LocalDateTime.now(clock);
-        // 예전 방식 enum switch는 컴파일러가 모든 값을 다뤘는지 보지 않아, 결정이 늘었는데 여기를 빠뜨리면 아무것도 바꾸지 않고
-        // 성공으로 응답한다. case null을 두면 새 방식 switch가 되어 모든 값을 다루지 않으면 컴파일 오류가 난다(default를 두지 않는 이유).
-        // null은 요청 DTO가 막으므로 여기 오면 버그다
-        switch (command.decision()) {
-            case APPROVE -> refund.approve(now);
-            case REJECT -> refund.reject(command.rejectReason(), now);
-            case null -> throw new IllegalArgumentException("환불 결정은 필수입니다.");
+        if (fee.allowed()) {
+            refund.approve(now, fee);
+        } else {
+            // 판매자 거절과 같은 상태로 남긴다. 상태를 따로 두지 않는 이유: 구매자에게는 "거절, 사유"로 충분하고 다시 요청할 수 있다
+            refund.reject(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED.getMessage(), now);
         }
         return RefundResult.from(refund);
     }
 
     /**
-     * 구매자가 본인 요청을 승인 전에 거둔다. 판매자 결정과 겹칠 때를 위해 {@link #decide}와 같은 방식으로 행을 잠근다.
+     * 판매자가 거절한다. 거절은 쓸 주문 값이 없어 주문을 부르지 않는다. 주문이 느리거나 장애여도 거절은 막히지 않는다.
+     * 승인과 같은 이유로 행을 잠근다.
+     *
+     * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 사유가 비었으면 {@code REJECT_REASON_REQUIRED},
+     *                          요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    @Transactional
+    public RefundResult reject(Long refundId, Long sellerId, String rejectReason) {
+        Refund refund = findSellerRefundForUpdate(refundId, sellerId);
+        refund.reject(rejectReason, LocalDateTime.now(clock));
+        return RefundResult.from(refund);
+    }
+
+    /**
+     * 구매자가 본인 요청을 승인 전에 거둔다. 판매자 결정과 겹칠 때를 위해 {@link #approve}와 같은 방식으로 행을 잠근다.
      *
      * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
      */
@@ -136,6 +184,23 @@ public class RefundService {
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         refund.withdraw(LocalDateTime.now(clock));
         return RefundResult.from(refund);
+    }
+
+    // 판매자 결정은 트랜잭션의 첫 조회로 잠근다(findByIdForUpdate 설명 참고). 남의 요청은 있는지도 알려 주지 않으려고 없는 것과 같게 막는다
+    private Refund findSellerRefundForUpdate(Long refundId, Long sellerId) {
+        return refundRepository.findByIdForUpdate(refundId)
+                .filter(found -> found.isOwnedBySeller(sellerId))
+                .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
+    }
+
+    // 같은 묶음(주문 + 판매자)에서 처리 중인 요청만 센다. 요청됨은 아직 승인될지 모르고, 거절·철회는 취소되지 않는다.
+    // 판단할 환불은 요청됨이라 집계에 들어가지 않는다
+    private RefundShippingFee decideShippingFee(Refund refund, RefundableOrderItem orderItem) {
+        List<CancelledQuantity> cancelled = refundRepository.sumQuantityByOrderItem(
+                refund.getOrderId(), refund.getSellerId(), CANCELLING_STATUSES);
+        long previouslyDeducted = refundRepository.sumDeductedShippingFee(
+                refund.getOrderId(), refund.getSellerId(), CANCELLING_STATUSES);
+        return RefundShippingFeePolicy.decide(refund, orderItem.bundle(), cancelled, previouslyDeducted);
     }
 
     private static Pageable pageOf(int page) {
