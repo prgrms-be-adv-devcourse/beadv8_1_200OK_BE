@@ -31,7 +31,7 @@ public class PayoutJobConfig {
     // 다음 Step들이 스냅샷 ID를 꺼내 쓰는 키 (JobExecutionContext)
     public static final String SNAPSHOT_ID_KEY = "snapshotId";
 
-    private final PayoutUseCase payoutService;
+    private final PayoutUseCase payoutUseCase;
 
     // 정산 배치 (Write-Audit-Publish): 스냅샷 → 입력 검증 → 임시 정산 → 검증 → 확정 → 발행
     //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션, 잠긴 주문의 후보 제외)
@@ -77,10 +77,10 @@ public class PayoutJobConfig {
         }
         return (contribution, chunkContext) -> {
             JobExecution jobExecution = contribution.getStepExecution().getJobExecution();
-            LocalDateTime from = payoutService.settlementFrom();
-            LocalDateTime to = payoutService.settlementTo(requestedAt.toLocalDate());
+            LocalDateTime from = payoutUseCase.settlementFrom();
+            LocalDateTime to = payoutUseCase.settlementTo(requestedAt.toLocalDate());
 
-            Long snapshotId = payoutService.createSnapshot(jobExecution.getId(), from, to);
+            Long snapshotId = payoutUseCase.createSnapshot(jobExecution.getId(), from, to);
             // Step 사이에 값을 넘기는 통로: 다음 Step은 #{jobExecutionContext['snapshotId']}로 꺼냄
             jobExecution.getExecutionContext().put(SNAPSHOT_ID_KEY, snapshotId);
             return RepeatStatus.FINISHED;
@@ -101,7 +101,7 @@ public class PayoutJobConfig {
     @StepScope
     public Tasklet payoutValidateTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         return (contribution, chunkContext) -> {
-            int failed = payoutService.validate(snapshotId);
+            int failed = payoutUseCase.validate(snapshotId);
             contribution.incrementWriteCount(failed); // write count = 실패로 기록한 후보 수
             return RepeatStatus.FINISHED;
         };
@@ -127,7 +127,7 @@ public class PayoutJobConfig {
     public Tasklet payoutDraftTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         // 1회 호출에 판매자 N명 draft, 남으면 CONTINUABLE로 다시 호출, 없으면 FINISHED
         return (contribution, chunkContext) -> {
-            PayoutDraftResult result = payoutService.draft(snapshotId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
+            PayoutDraftResult result = payoutUseCase.draft(snapshotId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
             if (result.sellerCount() == 0) {
                 failIfEverySellerFailed(contribution.getStepExecution(), snapshotId);
                 return RepeatStatus.FINISHED;
@@ -175,7 +175,7 @@ public class PayoutJobConfig {
     @StepScope
     public Tasklet payoutVerifyTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         return (contribution, chunkContext) -> {
-            PayoutVerifyResult result = payoutService.verify(snapshotId);
+            PayoutVerifyResult result = payoutUseCase.verify(snapshotId);
             contribution.incrementWriteCount(result.remainingItemCount());
             contribution.incrementWriteSkipCount(result.recordedFailureCount());
             return RepeatStatus.FINISHED;
@@ -196,7 +196,7 @@ public class PayoutJobConfig {
     @StepScope
     public Tasklet payoutCommitTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         return (contribution, chunkContext) -> {
-            payoutService.commit(snapshotId);
+            payoutUseCase.commit(snapshotId);
             return RepeatStatus.FINISHED;
         };
     }
@@ -215,7 +215,7 @@ public class PayoutJobConfig {
     @StepScope
     public Tasklet payoutPublishTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         return (contribution, chunkContext) -> {
-            int published = payoutService.publish(snapshotId);
+            int published = payoutUseCase.publish(snapshotId);
             contribution.incrementWriteCount(published); // write count = 발행한 이벤트 수
             return RepeatStatus.FINISHED;
         };

@@ -29,7 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class PayoutController implements PayoutControllerSpec {
 
-    private final PayoutUseCase payoutService;
+    private final PayoutUseCase payoutUseCase;
 
     // 본인 정산 목록 조회 (판매자 몫만)
     @Override
@@ -39,7 +39,7 @@ public class PayoutController implements PayoutControllerSpec {
             @Valid @ModelAttribute PayoutSellerSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.searchForSeller(memberId, request.toQuery()).map(PayoutSummaryResponse::from)));
+                payoutUseCase.searchForSeller(memberId, request.toQuery()).map(PayoutSummaryResponse::from)));
     }
 
     // 본인 정산 상세 조회. 이 판매자의 수수료 합계도 함께 보여 줌. 항목 목록은 /{payoutId}/items에서 따로 조회
@@ -49,7 +49,7 @@ public class PayoutController implements PayoutControllerSpec {
             @CurrentMemberId Long memberId,
             @PathVariable Long payoutId
     ) {
-        return ResponseEntity.ok(PayoutSellerDetailResponse.from(payoutService.getDetailForSeller(memberId, payoutId)));
+        return ResponseEntity.ok(PayoutSellerDetailResponse.from(payoutUseCase.getDetailForSeller(memberId, payoutId)));
     }
 
     // 본인 정산 항목 조회. 조정 건이면 조정 사유만 보여 줌
@@ -61,7 +61,7 @@ public class PayoutController implements PayoutControllerSpec {
             @Valid @ModelAttribute PayoutItemSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.getItemsForSeller(memberId, payoutId, request.toQuery()).map(PayoutSellerItemResponse::from)));
+                payoutUseCase.getItemsForSeller(memberId, payoutId, request.toQuery()).map(PayoutSellerItemResponse::from)));
     }
 
     // 본인 정산후보 조회 (정산 대기·완료). 수수료 후보의 정산 ID와 조정 번호·관리자 ID는 판매자 응답에서 뺌
@@ -73,6 +73,6 @@ public class PayoutController implements PayoutControllerSpec {
             @Valid @ModelAttribute PayoutSellerCandidateSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.searchCandidatesForSeller(memberId, request.toQuery()).map(PayoutSellerCandidateResponse::from)));
+                payoutUseCase.searchCandidatesForSeller(memberId, request.toQuery()).map(PayoutSellerCandidateResponse::from)));
     }
 }

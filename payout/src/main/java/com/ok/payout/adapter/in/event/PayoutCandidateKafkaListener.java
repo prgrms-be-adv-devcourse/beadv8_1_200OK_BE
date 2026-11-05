@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class PayoutCandidateKafkaListener {
-    private final PayoutCandidateUseCase payoutCandidateService;
+    private final PayoutCandidateUseCase payoutCandidateUseCase;
 
     // Kafka로 받는 길. 주문이 아직 Kafka로 보내지 않아도 미리 열어 둔다(#339)
     // 받는 타입은 정산 DTO. 메시지에 보내는 쪽 클래스 이름이 없어서(타입 헤더 없음) 리스너마다 읽을 타입을 정한다
@@ -25,6 +25,6 @@ public class PayoutCandidateKafkaListener {
             groupId = PayoutTopics.CONSUMER_GROUP,
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage")
     void onKafka(OrderProductConfirmedMessage message) {
-        payoutCandidateService.createFromPurchaseConfirmed(message.toCommand());
+        payoutCandidateUseCase.createFromPurchaseConfirmed(message.toCommand());
     }
 }

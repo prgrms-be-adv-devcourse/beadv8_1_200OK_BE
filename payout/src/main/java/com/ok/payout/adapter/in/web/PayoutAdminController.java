@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     private final PayoutJobRunner payoutJobRunner;
-    private final PayoutUseCase payoutService;
+    private final PayoutUseCase payoutUseCase;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
     @Override
@@ -46,7 +46,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
             @Valid @ModelAttribute PayoutSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.searchForAdmin(request.toQuery()).map(PayoutSummaryResponse::from)));
+                payoutUseCase.searchForAdmin(request.toQuery()).map(PayoutSummaryResponse::from)));
     }
 
     // 정산 상세 조회. 판매자 정산이면 그 판매자의 수수료 합계와 시스템 몫 정산 ID도 함께 보여 줌
@@ -54,7 +54,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     @Override
     @GetMapping("/{payoutId}")
     public ResponseEntity<PayoutDetailResponse> getDetail(@PathVariable Long payoutId) {
-        return ResponseEntity.ok(PayoutDetailResponse.from(payoutService.getDetailForAdmin(payoutId)));
+        return ResponseEntity.ok(PayoutDetailResponse.from(payoutUseCase.getDetailForAdmin(payoutId)));
     }
 
     // 정산 항목 조회. 항목마다 정산후보 생성 시각과, 조정 건이면 조정 정보(번호, 관리자 ID, 사유)를 함께 보여 줌
@@ -65,7 +65,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
             @Valid @ModelAttribute PayoutItemSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.getItemsForAdmin(payoutId, request.toQuery()).map(PayoutItemResponse::from)));
+                payoutUseCase.getItemsForAdmin(payoutId, request.toQuery()).map(PayoutItemResponse::from)));
     }
 
     // 정산후보 조회 (정산 대기·완료, 전체 또는 sellerId로 특정 판매자)
@@ -76,7 +76,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
             @Valid @ModelAttribute PayoutCandidateSearchRequest request
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
-                payoutService.searchCandidatesForAdmin(request.toQuery()).map(PayoutCandidateResponse::from)));
+                payoutUseCase.searchCandidatesForAdmin(request.toQuery()).map(PayoutCandidateResponse::from)));
     }
 
     // 정산 전체 수동 실행 (개발 중 수동 실행용. 실패 응답은 #67에서 처리)
@@ -99,7 +99,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     @Override
     @PostMapping("/run/order-items/{orderItemId}")
     public ResponseEntity<Void> runOrderItem(@PathVariable Long orderItemId) {
-        payoutService.runOrderItem(orderItemId);
+        payoutUseCase.runOrderItem(orderItemId);
         return ResponseEntity.noContent().build();
     }
 
@@ -111,7 +111,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
             @CurrentMemberId Long memberId,
             @Valid @RequestBody PayoutAdjustmentCreateRequest request
     ) {
-        payoutService.createAdjustment(memberId, request.toCommand());
+        payoutUseCase.createAdjustment(memberId, request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 }
