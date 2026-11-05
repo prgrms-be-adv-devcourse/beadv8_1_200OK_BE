@@ -1,4 +1,4 @@
-package com.ok.wallet.controller.dto;
+package com.ok.wallet.adapter.in.web.dto;
 
 import com.ok.wallet.service.dto.TermsResult;
 import io.swagger.v3.oas.annotations.media.Schema;

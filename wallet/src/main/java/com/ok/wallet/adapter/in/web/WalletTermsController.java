@@ -1,8 +1,8 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.wallet.controller.dto.TermsAgreeRequest;
-import com.ok.wallet.controller.dto.TermsResponse;
+import com.ok.wallet.adapter.in.web.dto.TermsAgreeRequest;
+import com.ok.wallet.adapter.in.web.dto.TermsResponse;
 import com.ok.wallet.service.TermsService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

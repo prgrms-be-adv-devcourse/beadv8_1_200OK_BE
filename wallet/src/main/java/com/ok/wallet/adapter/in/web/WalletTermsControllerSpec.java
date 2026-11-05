@@ -1,7 +1,7 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
-import com.ok.wallet.controller.dto.TermsAgreeRequest;
-import com.ok.wallet.controller.dto.TermsResponse;
+import com.ok.wallet.adapter.in.web.dto.TermsAgreeRequest;
+import com.ok.wallet.adapter.in.web.dto.TermsResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;

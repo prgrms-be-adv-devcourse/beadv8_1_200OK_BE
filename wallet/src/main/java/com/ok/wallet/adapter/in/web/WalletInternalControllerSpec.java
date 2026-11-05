@@ -1,6 +1,6 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
-import com.ok.wallet.controller.dto.InternalBuyerBalanceResponse;
+import com.ok.wallet.adapter.in.web.dto.InternalBuyerBalanceResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;

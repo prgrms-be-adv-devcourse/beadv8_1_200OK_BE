@@ -1,11 +1,11 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.wallet.controller.dto.ChargeConfirmRequest;
-import com.ok.wallet.controller.dto.ChargeFailRequest;
-import com.ok.wallet.controller.dto.ChargeRequest;
-import com.ok.wallet.controller.dto.ChargeResponse;
-import com.ok.wallet.controller.dto.ChargeStatusResponse;
+import com.ok.wallet.adapter.in.web.dto.ChargeConfirmRequest;
+import com.ok.wallet.adapter.in.web.dto.ChargeFailRequest;
+import com.ok.wallet.adapter.in.web.dto.ChargeRequest;
+import com.ok.wallet.adapter.in.web.dto.ChargeResponse;
+import com.ok.wallet.adapter.in.web.dto.ChargeStatusResponse;
 import com.ok.wallet.service.ChargeConfirmService;
 import com.ok.wallet.service.ChargeService;
 import jakarta.validation.Valid;

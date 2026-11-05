@@ -1,4 +1,4 @@
-package com.ok.wallet.controller.dto;
+package com.ok.wallet.adapter.in.web.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;

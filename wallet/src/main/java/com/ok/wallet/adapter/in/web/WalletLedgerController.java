@@ -1,8 +1,8 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.wallet.controller.dto.LedgerHistoryPageResponse;
-import com.ok.wallet.controller.dto.LedgerHistoryRequest;
+import com.ok.wallet.adapter.in.web.dto.LedgerHistoryPageResponse;
+import com.ok.wallet.adapter.in.web.dto.LedgerHistoryRequest;
 import com.ok.wallet.service.WalletLedgerService;
 import com.ok.wallet.service.dto.LedgerHistoryQuery;
 import jakarta.validation.Valid;

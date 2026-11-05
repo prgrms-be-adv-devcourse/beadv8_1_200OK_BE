@@ -1,7 +1,7 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
-import com.ok.wallet.controller.dto.LedgerHistoryPageResponse;
-import com.ok.wallet.controller.dto.LedgerHistoryRequest;
+import com.ok.wallet.adapter.in.web.dto.LedgerHistoryPageResponse;
+import com.ok.wallet.adapter.in.web.dto.LedgerHistoryRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;

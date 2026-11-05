@@ -49,7 +49,7 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = freeze(layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
-            .layer("Controller").definedBy("..controller..")
+            .layer("Controller").definedBy("..adapter.in.web..")
             .layer("Service").definedBy("..service..")
             .layer("Repository").definedBy("..repository..")
             .layer("Domain").definedBy("..domain..")
@@ -109,10 +109,10 @@ class ArchitectureTest {
     // 이름과 위치
 
     @ArchTest
-    static final ArchRule RestController는_Controller로_끝나고_controller_패키지에_있다 = classes()
+    static final ArchRule RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = classes()
             .that().areAnnotatedWith(RestController.class)
             .should().haveSimpleNameEndingWith("Controller")
-            .andShould().resideInAPackage("..controller..")
+            .andShould().resideInAPackage("..adapter.in.web..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
 
     @ArchTest

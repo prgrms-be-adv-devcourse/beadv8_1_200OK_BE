@@ -1,7 +1,7 @@
-package com.ok.wallet.controller;
+package com.ok.wallet.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.wallet.controller.dto.SellerBalanceResponse;
+import com.ok.wallet.adapter.in.web.dto.SellerBalanceResponse;
 import com.ok.wallet.service.SellerWalletService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
