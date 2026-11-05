@@ -6,13 +6,15 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 ## 1. 구성
 
 ```
-인터넷 ──80──▶ nginx ──/api/v1/**──▶ app ──▶ mysql
-                 │                         └──▶ redis
+인터넷 ──80──▶ nginx ──/api/v1/**, /bff/**──▶ bff ──/api/v1/**──▶ app ──▶ mysql
+                 │                              (프론트 레포가 배포)        └──▶ redis
                  └─ 그 외 경로(/internal, /actuator 등) → 404
-                                       └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
+                                                                    └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
 ```
 
-- 외부에는 `/api/v1/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
+- 외부 요청은 모두 프론트 BFF를 거쳐 앱에 닿습니다. BFF는 같은 EC2에 있지만 프론트 레포의 별도 compose 프로젝트(`/opt/paldo-gotgan-bff`)로 뜹니다. 배포·롤백은 프론트 레포 `deploy/README.md`를 따르고, 이 레포의 `deploy.sh`는 BFF를 건드리지 않습니다. 이 레포에는 nginx 경로와 공유 네트워크만 있습니다([10. BFF](#10-bff)).
+
+- 외부에는 `/api/v1/**`과 `/bff/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
 - app·mysql·redis·kafka는 호스트 포트를 열지 않습니다.
@@ -45,8 +47,9 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 | redis | 384m (`mem_limit`, 데이터 상한 256m) |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
 | mysql | 제한 없음, 약 0.5~1GiB |
+| bff (프론트 레포 compose) | 256m (`mem_limit`, 힙 192m) |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 6.0~6.5GiB (여유 약 1.5~2GiB, mysql 사용량에 따라 달라짐) |
+| 합계 | 약 6.3~6.8GiB (여유 약 1.2~1.7GiB, mysql 사용량에 따라 달라짐) |
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -346,3 +349,17 @@ docker compose -f compose.prod.yml restart app
 - 앱이 monolith 하나라 검증 목록 추가와 서명 키 변경을 한 번에 합니다. 검증하는 앱이 여럿이거나 monolith를 2대 이상으로 늘리면 한 번에 할 수 없고 단계를 나눠야 합니다([`DEVELOPMENT.md`의 키 교체](DEVELOPMENT.md#키-관리와-교체)).
 - 개인키가 유출되었으면 2를 기다리지 않고 1에서 `rs256-v1`을 바로 뺍니다. 그 키로 서명된 토큰은 모두 거부되고, 사용자는 Refresh Token으로 재발급받습니다.
 - 재시작 중 수십 초간 요청이 실패합니다([1. 구성](#1-구성)).
+
+## 10. BFF
+
+BFF 컨테이너는 프론트 레포가 배포합니다(프론트 레포 `deploy/README.md`). 이 레포가 맡는 것은 두 가지입니다.
+
+- **공유 네트워크 `paldo-edge`**: `compose.prod.yml`이 고정 이름으로 만들고 app·nginx를 붙입니다. 프론트 compose의 `bff`가 이 네트워크에 `external`로 붙어, nginx는 `bff:8787`로, BFF는 `app:8080`으로 닿습니다. 이름은 두 레포의 계약이라 한쪽만 바꾸면 BFF가 끊깁니다.
+  - BFF가 붙어 있으면 `docker compose down`이 이 네트워크를 지우지 못하고 `Resource is still in use`를 출력합니다. 정상이고, 다시 올리면 app·nginx가 같은 네트워크에 붙습니다.
+- **nginx 경로**: `/api/v1/**`과 `/bff/**`을 접두어 그대로 `http://bff:8787`로 보냅니다. BFF가 `/api/v1/**`을 경로와 `Authorization` 그대로 앱에 넘기므로 사용자 동작은 앱으로 바로 갈 때와 같습니다. 응답은 130초까지 기다립니다(BFF가 업로드를 최대 120초 기다림).
+
+주의할 점:
+
+- **BFF가 없거나 죽으면 `/api/v1/**`도 502가 납니다.** nginx는 주소를 요청마다 다시 찾으므로 BFF 없이도 뜨지만, 외부 요청은 모두 실패합니다. BFF 이상은 프론트 레포에서 이미지 태그로 롤백합니다.
+- **처음 배포할 때는 이 레포를 배포한 직후 프론트 레포의 BFF를 배포합니다.** 이 레포가 `paldo-edge`를 만들어야 BFF가 붙을 수 있고, 그 사이 몇 분은 `/api/v1/**`이 502입니다.
+- 서비스 운영 전이라 앱으로 바로 보내는 전환 스위치는 두지 않았습니다. BFF를 빼고 앱으로 바로 보내야 하면 `nginx/default.conf`의 `$bff_upstream`을 `http://app:8080`으로 바꾸고 nginx를 재시작합니다. 이때 `/bff/**`은 쓸 수 없습니다.

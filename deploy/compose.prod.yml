@@ -137,9 +137,9 @@ services:
   app:
     image: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
-    # default: mysql·nginx와 통신 / kafka-net: 브로커 접속
+    # default: mysql·nginx와 통신 / kafka-net: 브로커 접속 / edge: 프론트 BFF가 app:8080으로 부른다
     # mysql·nginx는 기본 네트워크에 그대로 둔다. 네트워크를 바꾸면 배포 때 mysql 컨테이너를 새로 만들어 DB가 잠깐 끊긴다
-    networks: [default, kafka-net]
+    networks: [default, kafka-net, edge]
     depends_on:
       mysql:
         condition: service_healthy
@@ -197,9 +197,12 @@ services:
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped
+    # BFF는 프론트 레포가 따로 띄우므로 기다리지 않는다. BFF가 없거나 죽어도 nginx는 뜨고 요청만 502가 난다
     depends_on:
       app:
         condition: service_healthy
+    # edge: 프론트 compose의 bff(8787)로 /api/v1/과 /bff/를 보낸다
+    networks: [default, edge]
     ports:
       - "80:80"
     volumes:
@@ -207,6 +210,10 @@ services:
 
 networks:
   kafka-net:
+  # 프론트 레포의 BFF compose(/opt/paldo-gotgan-bff)가 external로 붙는 네트워크다.
+  # 이름은 두 레포의 계약이라 프로젝트 이름이 붙지 않게 고정한다. 바꾸면 프론트 deploy/compose.prod.yml도 같이 바꾼다
+  edge:
+    name: paldo-edge
 
 # 브로커마다 따로 둔다. 도커 볼륨이라 루트 디스크(/var/lib/docker)에 쌓인다
 # 인스턴스를 교체하면 루트 디스크와 함께 사라져 아직 안 읽힌 메시지도 사라진다. 원본 데이터는 DB에 있으므로 받아들인다
