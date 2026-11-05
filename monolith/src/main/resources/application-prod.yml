@@ -21,6 +21,11 @@ spring:
 logging:
   level:
     com.ok: INFO
+app:
+  review-analysis:
+    worker:
+      # 리뷰 감성 분석 작업자는 운영에서만 켠다. 로컬·CI에서는 Jev를 부르지 않는다
+      enabled: true
 springdoc:
   api-docs:
     enabled: false

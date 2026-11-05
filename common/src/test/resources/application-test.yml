@@ -30,6 +30,13 @@ app:
     # 에러 응답의 type(slug)을 통합 테스트에서 검증할 수 있도록 실제 URI 형태로 둔다 (about:blank이면 slug가 응답에 나오지 않음)
   problem:
     base-uri: https://api.example.com/problems
+  # 작업자가 꺼져 있어 Jev를 부르지 않는다. 기동할 때 설정 값 검사만 통과시킨다
+  review-analysis:
+    jev:
+      base-url: https://api.jev.test
+      model: jev-1.14.0
+      connect-timeout: 3s
+      read-timeout: 10s
 admin-bootstrap:
   login-id: ""
 jwt:

@@ -80,7 +80,7 @@ docker compose up -d
 
 ### 로컬 모니터링 (#374)
 
-앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 10절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
+앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
 
 ```bash
 docker compose --profile monitoring up -d       # 기본 서비스에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
@@ -125,6 +125,8 @@ docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^
 
 `docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
 
+먼저 JWT 키(`keys/`)를 만들어야 합니다. 앱이 기동할 때 키 파일을 읽는데, 이미지에는 키가 없고 compose가 저장소 루트의 `keys/`를 컨테이너의 `/app/keys`에 읽기 전용으로 연결합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
+
 ```bash
 docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
@@ -138,6 +140,8 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
 - 프로파일을 지정하지 않으면 `dev`로 실행됩니다.
+- `keys/`가 없으면 앱이 `JWT 키 파일을 읽을 수 없습니다: URL [file:keys/rs256-v1-public.pem]` 오류로 기동에 실패합니다(`docker compose --profile app logs app`으로 확인). 8절의 명령으로 키를 만든 뒤 `docker compose --profile app up -d`로 다시 실행하면 됩니다. `keys/`가 없는 채로 실행하면 Docker가 빈 `keys/` 폴더를 만들 수 있으니 키 파일이 `keys/` 안에 있는지 확인합니다.
+- `keys/`는 이미지에 들어가지 않습니다. `.dockerignore`가 빌드 컨텍스트에서도 제외합니다.
 
 ## 4. 설정 구조
 
@@ -227,6 +231,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
 | `spring.data.redis.*` | `${REDIS_HOST:localhost}`, `${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
+| `app.async.*` | `default-executor`, `executors.<이름>.*` | 비동기 실행기(가상 스레드)의 설정. `event` 실행기의 값은 `common`의 `common-async.yaml` 한 곳에 있고, 모듈이 쓰는 실행기는 이름을 붙여 추가합니다. 자세한 내용은 [11. 비동기 처리](#11-비동기-처리-이벤트-리스너와-async) |
 | `jwt.verification-keys` | `file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem` | 검증용 공개키. 저장소 루트의 `keys/`에서 읽습니다. member는 서명용 개인키 `jwt.signing`(`keys/rs256-v1-private.pem`)도 둡니다. 파일이 없으면 기동이 실패합니다(테스트는 `application-test.yml`의 테스트 키를 씁니다). 자세한 내용은 [키 관리와 교체](#키-관리와-교체) |
 | `jwt.issuer`, `audience`, `*-expiration` | 고정값 | 토큰 발급·검증 기준. 모듈마다 같은 값이어야 서로의 토큰을 검증할 수 있습니다 |
 | `app.problem.base-uri`, `app.s3.*` | `${PROBLEM_BASE_URI}`, `${AWS_REGION}`, `${S3_BUCKET}` | 오류 응답의 type 주소, S3 리전과 버킷 |
@@ -773,3 +778,89 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 - 태그에는 영문, 숫자, `_`, `.`, `-`만 쓸 수 있고 저장소 이름은 소문자여야 합니다.
 - 이미지 안에는 `.env`가 들어가지 않습니다(`.dockerignore`). 접속 정보는 실행할 때 환경변수로 넘기세요.
 - 컨테이너에서 DB가 같은 compose 네트워크(`db-net`)에 있다면 호스트 이름은 `mysql`입니다.
+
+## 11. 비동기 처리 (이벤트 리스너와 `@Async`)
+
+모듈 간 이벤트를 받는 `@ApplicationModuleListener`와 `@Async`는 요청 스레드가 아니라 별도 실행기의 스레드에서 실행됩니다. 이 구조는 모든 비동기 작업이 Boot 기본 실행기 하나를 공유하던 것을 용도별 전용 실행기로 나눕니다. 실행기는 이름을 붙여 여러 개 둘 수 있고, 동시 실행 상한 같은 값은 코드가 아니라 yml과 환경변수로 바꿉니다. 구현은 `common`의 [`AsyncConfig`](../common/src/main/java/com/ok/common/config/AsyncConfig.java), [`AsyncExecutorFactory`](../common/src/main/java/com/ok/common/config/AsyncExecutorFactory.java), [`AsyncProperties`](../common/src/main/java/com/ok/common/config/AsyncProperties.java)에 있습니다.
+
+### 기본 동작
+
+- Spring Modulith가 `@EnableAsync`를 켜 주므로 리스너는 원래 비동기입니다. 이름 없는 `@Async`가 쓰는 Boot 기본 실행기(`applicationTaskExecutor`)는 코어 8, 대기열 무제한이고 모든 비동기 작업이 공유합니다. 그래서 느린 작업이 다른 작업을 지연시킬 수 있고, 밀린 작업은 대기열에 메모리로 쌓입니다. 아래 구조는 이 공유 풀을 용도별 실행기로 나눕니다.
+- 이름을 지정하지 않은 `@Async`와 `@ApplicationModuleListener`는 `app.async.default-executor`(기본 `event`)의 실행기로 갑니다. 기존 리스너 코드는 바꿀 필요가 없습니다. `@ApplicationModuleListener`는 실행기를 지정할 수 없어서 모든 리스너가 이 기본 실행기 하나를 씁니다.
+- 실행기는 두 종류입니다. **`platform`**(`event`의 기본)은 정해진 수의 일반 스레드와 대기열을 씁니다. 대기열이 차기 전에는 작업을 넘기는 스레드가 기다리지 않아서 리스너가 요청 스레드를 막지 않습니다. **`virtual`**은 작업마다 가상 스레드를 새로 만듭니다(풀도 대기열도 없습니다). 부족한 자원인 DB 커넥션을 기준으로 **동시 실행 상한**(`concurrency-limit`)을 두고, 상한이 차면 작업을 넘기는 스레드가 기다립니다.
+- 두 종류 모두 가득 찼을 때 작업을 거절하거나 버리지 않고 넘기는 스레드가 자리가 날 때까지 기다립니다. 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 이미 커밋된 요청이 오류가 되고, 같은 커밋의 다른 리스너가 실행되지 않는 것을 확인했기 때문입니다.
+- `spring.threads.virtual.enabled`는 쓰지 않습니다. 이 설정은 Tomcat 요청 스레드와 `@Scheduled`까지 바꾸는 전역 설정이라, `virtual` 실행기에만 가상 스레드를 적용합니다.
+- 실행기를 직접 등록하므로 Boot의 `spring.task.execution.*` 설정은 적용되지 않습니다.
+
+### 설정 키
+
+`app.async.default-executor`는 이름 없는 `@Async`가 쓸 실행기 이름이고, `app.async.executors.<이름>`에 실행기마다 아래 값을 적습니다. 생략한 값은 기본값을 씁니다. 값이 잘못되면(상한 0 이하 등) 앱이 시작되지 않습니다. `type`에 따라 쓰는 값이 다르고, 쓰지 않는 값은 무시합니다.
+
+| 키 | 기본값 | 설명 |
+|---|---|---|
+| `type` | `virtual` (`event`는 `platform`) | `platform`은 일반 스레드 풀과 대기열, `virtual`은 작업마다 가상 스레드입니다. 요청 스레드가 막히면 안 되는 곳(이벤트 리스너 등)은 대기열이 있는 `platform`을 씁니다. 가상 스레드에 문제가 생기면 재빌드 없이 `platform`으로 되돌릴 수 있습니다 |
+| `concurrency-limit` | `5` | `virtual`에서 동시에 실행할 작업 수의 상한. 상한이 차면 작업을 넘기는 스레드가 기다립니다 |
+| `pool-size` | `8` | `platform`의 스레드 수. 대기열이 차기 전에는 스레드가 늘지 않아 코어와 최대를 같게 씁니다 |
+| `queue-capacity` | `1000` | `platform`의 대기열 크기. 가득 차면 작업을 넘기는 스레드가 기다립니다. 1000은 측정 근거 없는 임시값입니다 |
+| `task-termination-timeout` | `10s` | 앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. 끝나지 못한 이벤트는 미완료로 남아 재시작 때 재발행됩니다(`MODULITH_REPUBLISH_ON_RESTART`, 운영은 `true`) |
+| `thread-name-prefix` | `<이름>-` | 스레드 이름의 앞부분. 로그에서 어느 실행기의 스레드인지 구분합니다 |
+
+`event` 실행기는 설정이 없어도 기본값으로 항상 있고, 값은 `common-async.yaml`에 있습니다.
+
+### 값 바꾸기
+
+- 값은 앱이 시작할 때 한 번 읽습니다. 바꾸면 **재시작**해야 하고, 재빌드는 필요 없습니다.
+- `event` 값은 환경변수로 바꿉니다: `ASYNC_EVENT_POOL_SIZE`, `ASYNC_EVENT_QUEUE_CAPACITY`, `ASYNC_EVENT_TERMINATION_TIMEOUT`.
+- **앱 yml(`application.yaml` 등)에 `event` 값을 써도 적용되지 않습니다.** `spring.config.import`로 가져온 파일의 값이 가져온 앱 yml의 값보다 우선하기 때문입니다. `event` 값은 환경변수로 바꾸거나 `common-async.yaml`을 고칩니다.
+- 새 이름의 실행기 항목은 앱 yml에 추가할 수 있습니다. 이름이 다른 항목은 서로 합쳐지고, 같은 이름의 항목은 필드 단위로 합쳐집니다.
+- 새 이름 항목에서 환경변수로 바꿀 값은 yml에 `${ORDER_EXTERNAL_API_CONCURRENCY_LIMIT:3}`처럼 자리표시자를 직접 적습니다. 키 이름의 `-`는 환경변수 이름으로 표현할 수 없어서, 자리표시자 없이는 일부 값만 환경변수로 덮어쓰기가 어렵습니다.
+
+### 모듈에서 실행기 추가하기
+
+리스너가 아닌 외부 호출처럼 `event`와 따로 상한을 두고 싶은 작업이 있을 때만 추가합니다. 이름은 모듈 이름을 앞에 붙입니다(`order-external-api`). `monolith`는 빈 이름 공간이 하나라 이름이 겹치면 앱이 시작되지 않습니다.
+
+1. 모듈의 `config` 패키지에서 실행기를 한 줄로 선언합니다. 빈 이름, yml 키, `@Async` 이름을 같은 상수로 맞춥니다.
+
+    ```java
+    @Configuration
+    public class OrderAsyncConfig {
+
+        public static final String EXTERNAL_API_EXECUTOR = "order-external-api";
+
+        @Bean(EXTERNAL_API_EXECUTOR)
+        AsyncTaskExecutor orderExternalApiExecutor(AsyncExecutorFactory factory) {
+            return factory.create(EXTERNAL_API_EXECUTOR);
+        }
+    }
+    ```
+
+2. yml에 같은 이름의 항목을 추가합니다. 항목이 없으면 앱이 시작할 때 실패합니다(`app.async.executors.order-external-api 설정이 없습니다`).
+
+    ```yaml
+    app:
+      async:
+        executors:
+          order-external-api:
+            concurrency-limit: ${ORDER_EXTERNAL_API_CONCURRENCY_LIMIT:3}
+            thread-name-prefix: order-api-
+    ```
+
+    `monolith`는 `application-<모듈>.yaml`을 읽지 않으므로, 모듈 yaml과 `monolith`의 `application.yaml`에 같은 항목을 둡니다. 한쪽에 빠지면 그 앱이 시작할 때 실패해서 바로 드러납니다.
+
+3. 다른 빈에서 부르는 메서드에 이름을 지정합니다.
+
+    ```java
+    @Async(OrderAsyncConfig.EXTERNAL_API_EXECUTOR)
+    public void notifyShipped(Long orderId) { ... }
+    ```
+
+### 주의할 점
+
+- **DB 커넥션은 실행기가 나눠 씁니다.** `pool-size`와 `concurrency-limit`은 실행기마다 따로 적용되지만 커넥션 풀(Hikari 기본 10)은 앱 전체가 공유합니다. DB를 쓰는 실행기들의 스레드 수·상한 합계가 풀 크기보다 작아야 HTTP 요청이 커넥션을 얻지 못하는 일이 없습니다. 이 합계는 앱이 검사하지 않으니 실행기를 추가할 때 직접 확인합니다.
+- **모든 리스너는 `event` 실행기 하나를 공유합니다.** `@ApplicationModuleListener`는 실행기를 지정할 수 없어서, 느린 외부 호출을 하는 리스너가 스레드를 다 차지하면 다른 리스너가 대기열에서 기다릴 수 있습니다. 리스너끼리의 격리는 아직 없습니다.
+- **가득 차면 작업을 넘긴 스레드가 기다립니다.** `platform`은 대기열이 다 찰 때만, `virtual`은 상한이 차면 바로 기다립니다. 요청 스레드가 직접 부르는 `@Async`는 대기열이 있는 `platform`이 안전합니다. 작업을 거절하는 옵션은 두지 않았습니다. 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 이미 커밋된 요청이 오류가 되고, 같은 커밋의 다른 리스너가 실행되지 않는 것을 확인했기 때문입니다.
+- **`@Async` 이름 오타는 처음 호출될 때 실패합니다.** `@Async("이름")`에 문자열을 직접 쓰지 않고 위처럼 상수를 씁니다.
+- **같은 클래스 안에서 `@Async` 메서드를 부르면 비동기가 되지 않습니다.** 프록시를 거치지 않아 오류 없이 동기로 실행됩니다. 다른 빈에서 호출합니다.
+- **리스너는 처리 순서가 보장되지 않고, 같은 이벤트를 두 번 받을 수 있습니다.** 재시작 때 미완료 이벤트가 재발행되기 때문에 같은 이벤트를 여러 번 처리해도 결과가 같아야 합니다.
+- **비동기 작업의 예외는 호출한 쪽으로 전달되지 않습니다.** `[ASYNC_LISTENER_FAILED]` 로그로 남고, 이벤트는 미완료로 남습니다.
+- **MDC는 있는 값을 그대로 복사합니다**(`MdcTaskDecorator`). MDC에 값을 넣는 TraceID 필터와 로그 패턴은 아직 없어서 지금은 복사할 값이 없고, 재발행이나 Kafka 경계에서는 전달되지 않습니다. `SecurityContext`는 전달하지 않습니다.
