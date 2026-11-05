@@ -219,7 +219,8 @@ public class RefundService {
      * 이 기록은 호출과 따로 저장되고, 호출이 실패해도 기록은 남는다.
      *
      * @param failureCode 에러 코드 이름, 없으면 예외 클래스 이름
-     * @throws RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws RestApiException      처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalStateException 환불이 없으면 (시스템이 넘긴 ID라 부르는 쪽 버그)
      */
     @Transactional
     public void recordFailure(Long refundId, RefundFailedStep step, String failureCode) {

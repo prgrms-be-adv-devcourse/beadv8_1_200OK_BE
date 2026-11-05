@@ -96,7 +96,7 @@ public class Refund extends BaseTime {
     @Column(name = "failed_step", length = 30)
     private RefundFailedStep failedStep;
 
-    // 멈춘 이유. 에러 코드 이름이나 예외 클래스 이름만 둔다. 내부 메시지는 주소·값이 섞일 수 있어 남기지 않는다(로그에는 남음)
+    // 멈춘 이유. 에러 코드 이름이나 예외 클래스 이름만 둔다. 내부 메시지는 다른 모듈의 주소·응답 내용이 섞일 수 있어 남기지 않는다
     @Column(name = "failure_code", length = 100)
     private String failureCode;
 

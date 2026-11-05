@@ -17,8 +17,11 @@ import com.ok.testsupport.FakeRefundOrderClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,6 +43,8 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     RefundRepository refundRepository;
     @Autowired
     FakeRefundOrderClient orderClient;
+    @Autowired
+    PlatformTransactionManager transactionManager;
 
     @AfterEach
     void tearDown() {
@@ -60,7 +65,8 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         // when
         assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundFailedStep.ORDER, () -> {
             throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
-        })).isInstanceOf(RestApiException.class);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
 
         // then
         Refund sut = refundRepository.findById(refundId).orElseThrow();
@@ -70,5 +76,23 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
             softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
         });
+    }
+
+    // 바깥 트랜잭션 안에서 부르면 기록이 거기에 합류해 원래 예외로 롤백될 때 함께 사라진다. 다른 모듈을 부르기 전에 막아야 한다
+    @Test
+    void 트랜잭션_안에서_부르면_다른_모듈을_부르기_전에_막는다() {
+        // given
+        TransactionTemplate outer = new TransactionTemplate(transactionManager);
+        AtomicBoolean called = new AtomicBoolean(false);
+
+        // when & then
+        assertThatThrownBy(() -> outer.executeWithoutResult(status ->
+                refundStepRunner.run(1L, RefundFailedStep.ORDER, () -> {
+                    called.set(true);
+                    return null;
+                })))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불 단계 실행은 트랜잭션 밖에서 불러야 합니다. 실패 기록이 바깥 트랜잭션과 함께 롤백됩니다.");
+        assertThat(called).isFalse();
     }
 }

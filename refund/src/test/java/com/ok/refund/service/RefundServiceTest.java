@@ -271,6 +271,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("SHIPPING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE));
+        assertThat(refund).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
             softly.assertThat(refund.getDecidedAt()).isNull();
@@ -438,6 +439,7 @@ class RefundServiceTest {
         sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
 
         // then
+        assertThat(refund).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(refund.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
