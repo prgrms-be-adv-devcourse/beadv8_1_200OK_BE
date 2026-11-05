@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
+import com.ok.member.auth.service.dto.LoginCredential;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
 import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
@@ -40,19 +41,33 @@ public class AuthService {
     }
 
     /**
-     * 로그인 아이디로 회원을 조회한다.
-     * 호출하는 쪽은 트랜잭션이 끝난 엔티티를 읽는다. {@link Member}는 연관관계가 없어 지연 로딩 문제가 생기지 않는다.
+     * 로그인 아이디로 비밀번호 확인에 필요한 값을 조회한다.
+     * 탈퇴 회원도 그대로 돌려준다. 탈퇴 여부는 비밀번호를 확인한 뒤 {@link #issueLoginTokens}에서 판단해,
+     * 틀린 비밀번호에는 회원 상태와 관계없이 같은 응답을 준다.
      */
-    public Optional<Member> findMemberByLoginId(String loginId) {
-        return memberRepository.findByLoginId(loginId);
+    public Optional<LoginCredential> findLoginCredential(String loginId) {
+        return memberRepository.findByLoginId(loginId)
+                .map(member -> new LoginCredential(member.getId(), member.getPassword()));
     }
 
     /**
-     * 회원의 현재 권한으로 Access Token과 Refresh Token을 발급한다.
-     * 판매자 승인 조회와 Refresh Token 저장을 한 트랜잭션에서 처리해, 커넥션을 한 번만 받는다.
+     * 로그인한 회원에게 Access Token과 Refresh Token을 발급한다.
+     * 비밀번호 확인은 하지 않으므로 {@link LoginFacade}처럼 비밀번호를 확인한 뒤에만 호출한다.
+     * 회원을 이 트랜잭션 안에서 다시 읽어 탈퇴·정지를 확인하므로, 비밀번호 확인과 발급 사이에 상태가 바뀌어도
+     * 바뀐 상태로 판단한다. 판매자 승인 조회와 Refresh Token 저장도 같은 트랜잭션에서 처리한다.
+     *
+     * @throws RestApiException 회원이 없거나 탈퇴했으면 {@code INVALID_CREDENTIALS}, 정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
     @Transactional
-    public TokenResult issueTokens(Member member) {
+    public TokenResult issueLoginTokens(Long memberId) {
+        // 탈퇴 회원은 아이디가 익명화될 예정이라 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다.
+        // 정지 회원은 비밀번호까지 맞은 본인이므로, 왜 로그인이 안 되는지 알 수 있게 별도 코드로 알린다.
+        Member member = memberRepository.findById(memberId)
+                .filter(found -> !found.isWithdrawn())
+                .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_CREDENTIALS));
+        if (member.getStatus() == MemberStatus.SUSPENDED) {
+            throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
+        }
         return createTokens(member);
     }
 
@@ -89,7 +104,6 @@ public class AuthService {
 
     // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.
     // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다
-    // 같은 클래스의 @Transactional 메서드(issueTokens)를 reissue에서 부르지 않도록 공통 부분을 private으로 둔다
     private TokenResult createTokens(Member member) {
         boolean approvedSeller = sellerApplicationService.isApprovedSeller(member.getId());
         List<String> roles = TokenRoleMapper.toTokenRoles(member.getType(), approvedSeller);

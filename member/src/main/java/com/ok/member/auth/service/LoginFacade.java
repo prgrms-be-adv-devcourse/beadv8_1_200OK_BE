@@ -3,9 +3,8 @@ package com.ok.member.auth.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.service.dto.LoginCommand;
+import com.ok.member.auth.service.dto.LoginCredential;
 import com.ok.member.auth.service.dto.TokenResult;
-import com.ok.member.member.domain.Member;
-import com.ok.member.member.domain.MemberStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -47,33 +46,23 @@ public class LoginFacade {
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
     public TokenResult login(LoginCommand command) {
-        Member member = authenticate(command);
-        validateLoginable(member);
-        return authService.issueTokens(member);
+        Long memberId = authenticate(command);
+        // 탈퇴·정지 확인은 발급 트랜잭션 안에서 최신 상태로 한다. 비밀번호가 틀리면 여기까지 오지 않으므로
+        // 틀린 비밀번호에는 회원 상태와 관계없이 INVALID_CREDENTIALS가 나간다
+        return authService.issueLoginTokens(memberId);
     }
 
-    private Member authenticate(LoginCommand command) {
-        Member member = authService.findMemberByLoginId(command.loginId()).orElse(null);
+    private Long authenticate(LoginCommand command) {
+        LoginCredential credential = authService.findLoginCredential(command.loginId()).orElse(null);
 
         // 회원이 없어도 더미 해시로 비교를 한 번 수행한다. 비교를 한 곳에서만 하면 두 경로의 비용이 구조적으로 같아진다.
-        String passwordHash = member != null ? member.getPassword() : dummyPasswordHash;
+        String passwordHash = credential != null ? credential.passwordHash() : dummyPasswordHash;
         boolean matches = passwordEncoder.matches(command.password(), passwordHash);
 
-        if (member == null || !matches) {
+        if (credential == null || !matches) {
             throw new RestApiException(AuthErrorCode.INVALID_CREDENTIALS);
         }
-        return member;
-    }
-
-    private void validateLoginable(Member member) {
-        // 탈퇴 회원은 아이디가 익명화될 예정이라 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다.
-        // 정지 회원은 비밀번호까지 맞은 본인이므로, 왜 로그인이 안 되는지 알 수 있게 별도 코드로 알린다.
-        if (member.isWithdrawn()) {
-            throw new RestApiException(AuthErrorCode.INVALID_CREDENTIALS);
-        }
-        if (member.getStatus() == MemberStatus.SUSPENDED) {
-            throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
-        }
+        return credential.memberId();
     }
 
 }

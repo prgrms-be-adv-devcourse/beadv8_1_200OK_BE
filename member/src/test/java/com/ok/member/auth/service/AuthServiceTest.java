@@ -65,8 +65,9 @@ class AuthServiceTest {
     }
 
     @Test
-    void 토큰을_발급하면_Access_Token과_Refresh_Token을_함께_반환한다() {
+    void 로그인_토큰을_발급하면_Access_Token과_Refresh_Token을_함께_반환한다() {
         // given
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
@@ -75,7 +76,7 @@ class AuthServiceTest {
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));
 
         // when
-        TokenResult sut = authService.issueTokens(member(MemberStatus.ACTIVE));
+        TokenResult sut = authService.issueLoginTokens(MEMBER_ID);
 
         // then
         assertThat(sut).isNotNull();
@@ -88,8 +89,9 @@ class AuthServiceTest {
     }
 
     @Test
-    void 승인된_판매자에게는_구매자와_판매자_권한으로_Access_Token을_발급한다() {
+    void 승인된_판매자가_로그인하면_구매자와_판매자_권한으로_Access_Token을_발급한다() {
         // given
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
         given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
@@ -97,10 +99,44 @@ class AuthServiceTest {
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
 
         // when
-        TokenResult sut = authService.issueTokens(member(MemberStatus.ACTIVE));
+        TokenResult sut = authService.issueLoginTokens(MEMBER_ID);
 
         // then
         assertThat(sut.accessToken()).isEqualTo("seller-access-token");
+    }
+
+    @Test
+    void 로그인_토큰을_발급할_때_회원이_없으면_INVALID_CREDENTIALS가_발생하고_토큰을_발급하지_않는다() {
+        // given
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> authService.issueLoginTokens(MEMBER_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
+        then(refreshTokenService).should(never()).issue(any());
+    }
+
+    @ParameterizedTest
+    @MethodSource("로그인할_수_없는_회원_상태")
+    void 로그인_토큰을_발급할_때_회원_상태를_다시_읽어_로그인할_수_없으면_예외가_발생하고_토큰을_발급하지_않는다(
+            MemberStatus status, AuthErrorCode expected) {
+        // given: 비밀번호를 확인한 뒤 발급 직전에 탈퇴·정지된 경우도 이 상태로 판단한다
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(status)));
+
+        // when & then
+        assertThatThrownBy(() -> authService.issueLoginTokens(MEMBER_ID))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(expected));
+        then(refreshTokenService).should(never()).issue(any());
+    }
+
+    static Stream<Arguments> 로그인할_수_없는_회원_상태() {
+        return Stream.of(
+                // 탈퇴 회원은 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다
+                Arguments.of(MemberStatus.WITHDRAWN, AuthErrorCode.INVALID_CREDENTIALS),
+                Arguments.of(MemberStatus.SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
+        );
     }
 
     @Test
