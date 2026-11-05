@@ -1,6 +1,6 @@
 package com.ok.wallet.adapter.in.web.dto;
 
-import com.ok.wallet.service.dto.ChargeRequestResult;
+import com.ok.wallet.application.dto.ChargeRequestResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "충전 요청 결과. 프론트는 chargeNo를 토스 결제창의 orderId로 넘긴다.")

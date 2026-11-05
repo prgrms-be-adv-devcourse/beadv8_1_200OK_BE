@@ -1,6 +1,6 @@
 package com.ok.wallet.adapter.in.web.dto;
 
-import com.ok.wallet.service.dto.ChargeConfirmResult;
+import com.ok.wallet.application.dto.ChargeConfirmResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "충전 건의 현재 상태")

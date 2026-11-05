@@ -2,7 +2,7 @@ package com.ok.wallet.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.wallet.adapter.in.web.dto.SellerBalanceResponse;
-import com.ok.wallet.service.SellerWalletService;
+import com.ok.wallet.application.port.in.SellerWalletUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -17,11 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class WalletSellerBalanceController implements WalletSellerBalanceControllerSpec {
 
-    private final SellerWalletService sellerWalletService;
+    private final SellerWalletUseCase sellerWalletUseCase;
 
     @Override
     @GetMapping("/balance")
     public ResponseEntity<SellerBalanceResponse> getBalance(@CurrentMemberId Long memberId) {
-        return ResponseEntity.ok(new SellerBalanceResponse(sellerWalletService.getBalance(memberId)));
+        return ResponseEntity.ok(new SellerBalanceResponse(sellerWalletUseCase.getBalance(memberId)));
     }
 }

@@ -1,7 +1,7 @@
 package com.ok.wallet.adapter.in.web;
 
 import com.ok.wallet.adapter.in.web.dto.InternalBuyerBalanceResponse;
-import com.ok.wallet.service.BuyerWalletService;
+import com.ok.wallet.application.port.in.BuyerWalletUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,11 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class WalletInternalController implements WalletInternalControllerSpec {
 
-    private final BuyerWalletService buyerWalletService;
+    private final BuyerWalletUseCase buyerWalletUseCase;
 
     @Override
     @GetMapping("/buyers/{memberId}/balance")
     public ResponseEntity<InternalBuyerBalanceResponse> getBuyerBalance(@PathVariable Long memberId) {
-        return ResponseEntity.ok(new InternalBuyerBalanceResponse(memberId, buyerWalletService.getBalance(memberId)));
+        return ResponseEntity.ok(new InternalBuyerBalanceResponse(memberId, buyerWalletUseCase.getBalance(memberId)));
     }
 }

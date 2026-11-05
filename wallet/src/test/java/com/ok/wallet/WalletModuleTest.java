@@ -12,7 +12,7 @@ import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
 import com.ok.wallet.adapter.out.persistence.SellerWalletJpaRepository;
 import com.ok.wallet.application.port.out.BuyerWalletLedgerQueryRepository;
-import com.ok.wallet.service.BuyerWalletService;
+import com.ok.wallet.application.service.BuyerWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

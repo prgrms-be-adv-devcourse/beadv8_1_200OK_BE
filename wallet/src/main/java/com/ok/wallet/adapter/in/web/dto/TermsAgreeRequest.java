@@ -1,6 +1,6 @@
 package com.ok.wallet.adapter.in.web.dto;
 
-import com.ok.wallet.service.dto.TermsAgreeCommand;
+import com.ok.wallet.application.dto.TermsAgreeCommand;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;

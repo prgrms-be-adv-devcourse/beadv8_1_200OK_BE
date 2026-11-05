@@ -1,6 +1,6 @@
 package com.ok.wallet.adapter.in.web.dto;
 
-import com.ok.wallet.service.dto.LedgerHistoryResult;
+import com.ok.wallet.application.dto.LedgerHistoryResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 import org.springframework.data.domain.Page;
 

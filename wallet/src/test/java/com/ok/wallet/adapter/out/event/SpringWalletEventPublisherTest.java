@@ -2,7 +2,7 @@ package com.ok.wallet.adapter.out.event;
 
 import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.common.event.WalletPaymentFailedEvent;
-import com.ok.wallet.service.dto.OrderPaymentFailureReason;
+import com.ok.wallet.application.dto.OrderPaymentFailureReason;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;

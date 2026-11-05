@@ -1,6 +1,6 @@
 package com.ok.wallet.adapter.in.web.dto;
 
-import com.ok.wallet.service.dto.TermsResult;
+import com.ok.wallet.application.dto.TermsResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "현재 버전 약관 한 건과 동의 여부")

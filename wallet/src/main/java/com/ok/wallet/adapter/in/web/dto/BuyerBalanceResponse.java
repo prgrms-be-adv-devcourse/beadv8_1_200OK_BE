@@ -1,6 +1,6 @@
 package com.ok.wallet.adapter.in.web.dto;
 
-import com.ok.wallet.service.dto.BuyerBalanceResult;
+import com.ok.wallet.application.dto.BuyerBalanceResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "구매자 잔액 조회 응답")

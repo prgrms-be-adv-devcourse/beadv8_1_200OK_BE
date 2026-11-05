@@ -3,8 +3,8 @@ package com.ok.wallet.adapter.in.web;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.wallet.adapter.in.web.dto.LedgerHistoryPageResponse;
 import com.ok.wallet.adapter.in.web.dto.LedgerHistoryRequest;
-import com.ok.wallet.service.WalletLedgerService;
-import com.ok.wallet.service.dto.LedgerHistoryQuery;
+import com.ok.wallet.application.dto.LedgerHistoryQuery;
+import com.ok.wallet.application.port.in.WalletLedgerUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class WalletLedgerController implements WalletLedgerControllerSpec {
 
-    private final WalletLedgerService walletLedgerService;
+    private final WalletLedgerUseCase walletLedgerUseCase;
 
     @Override
     @GetMapping("/ledgers")
@@ -31,6 +31,6 @@ public class WalletLedgerController implements WalletLedgerControllerSpec {
     ) {
         LedgerHistoryQuery query = new LedgerHistoryQuery(
                 memberId, request.from(), request.to(), request.type(), request.page(), request.size());
-        return ResponseEntity.ok(LedgerHistoryPageResponse.from(walletLedgerService.getHistory(query)));
+        return ResponseEntity.ok(LedgerHistoryPageResponse.from(walletLedgerUseCase.getHistory(query)));
     }
 }

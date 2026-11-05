@@ -1,8 +1,8 @@
 package com.ok.wallet.adapter.in.event;
 
 import com.ok.common.event.OrderCreatedEvent;
-import com.ok.wallet.service.OrderPaymentService;
-import com.ok.wallet.service.dto.OrderPaymentCommand;
+import com.ok.wallet.application.dto.OrderPaymentCommand;
+import com.ok.wallet.application.port.in.OrderPaymentUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class OrderEventListener {
-    private final OrderPaymentService orderPaymentService;
+    private final OrderPaymentUseCase orderPaymentUseCase;
 
     /**
      * 주문이 생성되면 결제 금액만큼 예치금을 차감하고, 결과를 결제 완료·실패 이벤트로 주문에 알린다.
@@ -25,6 +25,6 @@ public class OrderEventListener {
      */
     @ApplicationModuleListener
     void on(OrderCreatedEvent event) {
-        orderPaymentService.pay(new OrderPaymentCommand(event.orderId(), event.buyerId(), event.totalAmount()));
+        orderPaymentUseCase.pay(new OrderPaymentCommand(event.orderId(), event.buyerId(), event.totalAmount()));
     }
 }

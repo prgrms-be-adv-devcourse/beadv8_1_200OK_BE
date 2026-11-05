@@ -3,7 +3,7 @@ package com.ok.wallet.adapter.in.web;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.wallet.adapter.in.web.dto.TermsAgreeRequest;
 import com.ok.wallet.adapter.in.web.dto.TermsResponse;
-import com.ok.wallet.service.TermsService;
+import com.ok.wallet.application.port.in.TermsUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,12 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/wallets/me/terms")
 @RequiredArgsConstructor
 class WalletTermsController implements WalletTermsControllerSpec {
-    private final TermsService termsService;
+    private final TermsUseCase termsUseCase;
 
     @Override
     @GetMapping
     public ResponseEntity<TermsResponse> getTerms(@CurrentMemberId Long memberId) {
-        return ResponseEntity.ok(TermsResponse.from(termsService.getTerms(memberId)));
+        return ResponseEntity.ok(TermsResponse.from(termsUseCase.getTerms(memberId)));
     }
 
     @Override
@@ -35,7 +35,7 @@ class WalletTermsController implements WalletTermsControllerSpec {
             @CurrentMemberId Long memberId,
             @Valid @RequestBody TermsAgreeRequest request
     ) {
-        termsService.agree(memberId, request.toCommands());
+        termsUseCase.agree(memberId, request.toCommands());
         return ResponseEntity.noContent().build();
     }
 }

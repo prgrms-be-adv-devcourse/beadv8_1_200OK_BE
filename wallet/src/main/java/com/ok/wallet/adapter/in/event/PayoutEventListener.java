@@ -1,7 +1,7 @@
 package com.ok.wallet.adapter.in.event;
 
 import com.ok.common.event.SellerPayoutCreatedEvent;
-import com.ok.wallet.service.SellerWalletService;
+import com.ok.wallet.application.port.in.SellerWalletUseCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.modulith.events.ApplicationModuleListener;
@@ -16,7 +16,7 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class PayoutEventListener {
-    private final SellerWalletService sellerWalletService;
+    private final SellerWalletUseCase sellerWalletUseCase;
 
     /**
      * 판매자 몫 정산이 생성되면 판매자 지갑에 정산금을 입금한다.
@@ -35,7 +35,7 @@ public class PayoutEventListener {
             return;
         }
         // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 재처리 대상으로 남긴다.
-        sellerWalletService.depositPayout(event.payeeId(), event.payoutId(), event.amount());
+        sellerWalletUseCase.depositPayout(event.payeeId(), event.payoutId(), event.amount());
     }
 
     // 정산 이벤트 계약(세미 범위): 모든 값이 있고 amount는 0보다 크다.

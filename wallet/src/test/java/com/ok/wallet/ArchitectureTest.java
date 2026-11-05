@@ -98,12 +98,12 @@ class ArchitectureTest {
             .because("서비스는 service의 발행 인터페이스에만 의존하고, 구현체(event)를 바꿔도 서비스가 바뀌지 않게 한다 (컨벤션 2.1)");
 
     @ArchTest
-    static final ArchRule 이벤트_발행_구현체는_service의_발행_인터페이스를_구현한다 = classes()
+    static final ArchRule 이벤트_발행_구현체는_출력_포트를_구현한다 = classes()
             .that(ApplicationEventPublisher에_의존하는)
             // event 밖에서 쓰는 경우는 ApplicationEventPublisher는_event_패키지만_사용한다 규칙이 막는다
             .and().resideInAPackage("..event..")
-            .should().implement(resideInAPackage("..service.."))
-            .because("서비스는 service의 발행 인터페이스만 알고, event의 구현체가 발행 방식을 맡는다. "
+            .should().implement(resideInAPackage("..application.port.out.."))
+            .because("서비스는 출력 포트만 알고, event의 구현체가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (컨벤션 2.1)");
 
     // 이름과 위치

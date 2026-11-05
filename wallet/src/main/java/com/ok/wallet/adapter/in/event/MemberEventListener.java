@@ -2,8 +2,8 @@ package com.ok.wallet.adapter.in.event;
 
 import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
-import com.ok.wallet.service.BuyerWalletService;
-import com.ok.wallet.service.SellerWalletService;
+import com.ok.wallet.application.port.in.BuyerWalletUseCase;
+import com.ok.wallet.application.port.in.SellerWalletUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class MemberEventListener {
-    private final BuyerWalletService buyerWalletService;
-    private final SellerWalletService sellerWalletService;
+    private final BuyerWalletUseCase buyerWalletUseCase;
+    private final SellerWalletUseCase sellerWalletUseCase;
 
     /**
      * 회원가입 시 구매자 지갑을 생성한다. 모든 회원은 구매자로 가입하며,
@@ -24,7 +24,7 @@ public class MemberEventListener {
      */
     @ApplicationModuleListener
     void on(MemberRegisteredEvent event) {
-        buyerWalletService.getOrCreate(event.memberId());
+        buyerWalletUseCase.getOrCreate(event.memberId());
     }
 
     /**
@@ -34,6 +34,6 @@ public class MemberEventListener {
      */
     @ApplicationModuleListener
     void on(SellerApprovedEvent event) {
-        sellerWalletService.getOrCreate(event.memberId());
+        sellerWalletUseCase.getOrCreate(event.memberId());
     }
 }
