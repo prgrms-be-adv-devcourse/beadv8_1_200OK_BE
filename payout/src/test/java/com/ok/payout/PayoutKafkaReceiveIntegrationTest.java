@@ -120,6 +120,58 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    @Test
+    void 필드가_빠진_구매확정_메시지는_정산후보를_만들지_않고_다음_메시지를_처리한다() {
+        // given: orderItemId가 빠진 JSON (record는 빠진 필드를 null로 읽는다)
+        long badOrderId = nextOrderId();
+        long goodOrderId = nextOrderId();
+        Map<String, Object> badMessage = Map.of(
+                "orderId", badOrderId,
+                "sellerId", 10L,
+                "totalItemPrice", 10_000L,
+                "sellerShippingPrice", 0L);
+
+        // when: 같은 키(같은 파티션)로 잘못된 메시지 뒤에 정상 메시지를 보냄
+        kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, "same-key", badMessage);
+        Map<String, Object> goodMessage = Map.of(
+                "orderId", goodOrderId,
+                "orderItemId", goodOrderId,
+                "sellerId", 10L,
+                "totalItemPrice", 10_000L,
+                "sellerShippingPrice", 0L);
+        kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, "same-key", goodMessage);
+
+        // then: 정상 메시지가 처리됐다면 잘못된 메시지는 막히지 않고 건너뛴 것이다
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(candidateRepository.findAllByOrderId(goodOrderId)).hasSize(2));
+        assertThat(candidateRepository.findAllByOrderId(badOrderId)).isEmpty();
+    }
+
+    @Test
+    void 필드가_빠진_지갑_결제_메시지는_차감_기록을_남기지_않고_다음_메시지를_처리한다() {
+        // given: buyerId가 빠진 JSON
+        long badOrderId = nextOrderId();
+        long goodOrderId = nextOrderId();
+        Map<String, Object> badMessage = Map.of(
+                "orderId", badOrderId,
+                "amount", 13_000L,
+                "paidAt", "2026-10-30T14:00:00");
+        Map<String, Object> goodMessage = Map.of(
+                "orderId", goodOrderId,
+                "buyerId", 5L,
+                "amount", 13_000L,
+                "paidAt", "2026-10-30T14:00:00");
+
+        // when
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, "same-key", badMessage);
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, "same-key", goodMessage);
+
+        // then
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(deductionRepository.findByOrderId(goodOrderId)).isPresent());
+        assertThat(deductionRepository.findByOrderId(badOrderId)).isEmpty();
+    }
+
     // 주문이 보낼 구매확정 JSON. 키는 orderItemId (#339 합의). 이 테스트는 주문 하나에 상품 하나라 주문 상품 번호 = 주문 번호
     private void sendPurchaseConfirmed(long orderId, Long sellerId, Long totalItemPrice, Long sellerShippingPrice) {
         Map<String, Object> message = Map.of(
