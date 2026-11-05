@@ -43,7 +43,7 @@ public class PayoutWalletDeduction extends BaseTime {
     @Column(nullable = false)
     private LocalDateTime deductedAt;
 
-    // 값 검증은 하지 않음: 이벤트(WalletPaymentCompletedEvent) 생성자가 필수값을 이미 확인함
+    // 값 검증은 하지 않음: 저장하기 전에 입구(PayoutInboundEventValidator)가 값을 확인함 (Spring·Kafka 두 입구 모두)
     public static PayoutWalletDeduction create(Long orderId, Long buyerId, Long amount, LocalDateTime deductedAt) {
         PayoutWalletDeduction deduction = new PayoutWalletDeduction();
         deduction.orderId = orderId;
