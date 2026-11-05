@@ -33,4 +33,15 @@ class RedisSettingsTest {
         assertThat(actual).isEqualTo(Duration.ofSeconds(1));
     }
 
+    // import 줄이 빠지면 앱이 단일 Redis(localhost:6379) 설정으로 돌아가, 클러스터에 접속하지 못한다
+    @Test
+    void common의_클러스터_접속_설정을_가져온다() {
+        // when
+        DataRedisProperties.Cluster actual = sut.getCluster();
+
+        // then
+        assertThat(actual).isNotNull();
+        assertThat(actual.getNodes()).hasSize(6);
+    }
+
 }
