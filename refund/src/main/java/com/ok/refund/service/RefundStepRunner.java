@@ -58,7 +58,7 @@ public class RefundStepRunner {
             refundService.recordFailure(refundId, step, failureCode);
         } catch (RuntimeException recordError) {
             cause.addSuppressed(recordError);
-            log.error("환불 실패 단계 기록 실패. 처리 중에 기록 없이 남음. refundId={}, step={}, failureCode={}",
+            log.error("환불 실패 단계 기록 실패. 멈춘 단계가 환불에 남지 않음. refundId={}, step={}, failureCode={}",
                     refundId, step, failureCode, recordError);
         }
     }

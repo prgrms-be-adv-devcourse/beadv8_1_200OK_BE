@@ -15,6 +15,8 @@ import com.ok.refund.service.dto.RefundableOrderItem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -30,6 +32,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -260,15 +263,17 @@ class RefundServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
     }
 
-    // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고된 상품은 취소로 돌려줄 수 없다
-    @Test
-    void 승인_때_이미_출고됐으면_409이고_요청됨_그대로다() {
+    // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고된 상품은 취소로 돌려줄 수 없다.
+    // "배송 중"만 막는 게 아니라 출고 전(PREPARING)이 아닌 모든 상태를 막는지 여러 상태로 확인한다
+    @ParameterizedTest
+    @MethodSource("출고_전이_아닌_주문_상태")
+    void 승인_때_이미_출고됐으면_409이고_요청됨_그대로다(String orderItemStatus) {
         // given
         Refund refund = requested();
         givenLockedBundle(refund);
 
         // when & then
-        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("SHIPPING", 2)))
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE));
         assertThat(refund).isNotNull();
@@ -276,6 +281,10 @@ class RefundServiceTest {
             softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
             softly.assertThat(refund.getDecidedAt()).isNull();
         });
+    }
+
+    static Stream<String> 출고_전이_아닌_주문_상태() {
+        return Stream.of("SHIPPING", "DELIVERED", "REFUNDED");
     }
 
     // 이미 끝난 요청은 출고 여부와 상관없이 처리할 수 없다는 것이 진짜 이유라, 판매자에게 상태 충돌을 먼저 알린다

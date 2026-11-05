@@ -8,6 +8,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.CannotAcquireLockException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,7 +20,7 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 // 기록 여부와 기록한 값이 이 클래스의 요구사항이라 서비스 호출을 검증한다
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class RefundStepRunnerTest {
 
     private static final Long REFUND_ID = 7L;
@@ -76,5 +78,24 @@ class RefundStepRunnerTest {
             throw failure;
         })).isSameAs(failure)
                 .satisfies(e -> assertThat(e.getSuppressed()).containsExactly(recordError));
+    }
+
+    // 원래 예외가 RestApiException이면 ApiControllerAdvice는 로그를 남기지 않아, 이 ERROR 로그가 기록 실패의 유일한 흔적이다.
+    // 운영자가 refundId로 찾을 수 있어야 하므로 식별자가 들어간 줄이 실제로 찍히는지 본다
+    @Test
+    void 기록마저_실패하면_환불_ID와_단계를_ERROR로_남긴다(CapturedOutput output) {
+        // given
+        RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        willThrow(new CannotAcquireLockException("잠금 대기 시간 초과"))
+                .given(refundService).recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+
+        // when
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
+            throw failure;
+        })).isSameAs(failure);
+
+        // then
+        assertThat(output.getOut()).contains(
+                "ERROR", "환불 실패 단계 기록 실패. 멈춘 단계가 환불에 남지 않음. refundId=7, step=ORDER, failureCode=ORDER_API_FAILED");
     }
 }
