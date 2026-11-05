@@ -18,11 +18,11 @@ class PayoutInboundEventValidatorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("구매확정_틀린_값")
-    void 구매확정_값이_틀리면_이유를_돌려준다(String 경우, PurchaseConfirmedCommand sut, String 기대_이유) {
+    void 구매확정_값이_틀리면_이유를_돌려준다(String 경우, PurchaseConfirmedCommand command, String 기대_이유) {
         // given: 인자로 받은 틀린 커맨드
 
         // when
-        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(sut);
+        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
         assertThat(reason).contains(기대_이유);
@@ -46,10 +46,10 @@ class PayoutInboundEventValidatorTest {
     @Test
     void 구매확정_금액이_0원이어도_통과한다() {
         // given: 사고 1, 무료 상품에 무료배송
-        PurchaseConfirmedCommand sut = new PurchaseConfirmedCommand(1L, 2L, 3L, 0L, 0L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(1L, 2L, 3L, 0L, 0L);
 
         // when
-        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(sut);
+        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
         assertThat(reason).isEmpty();
@@ -58,10 +58,10 @@ class PayoutInboundEventValidatorTest {
     @Test
     void 구매확정_값이_모두_맞으면_비어_있다() {
         // given
-        PurchaseConfirmedCommand sut = new PurchaseConfirmedCommand(1L, 2L, 3L, 10000L, 3000L);
+        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(1L, 2L, 3L, 10000L, 3000L);
 
         // when
-        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(sut);
+        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
         assertThat(reason).isEmpty();
@@ -69,11 +69,11 @@ class PayoutInboundEventValidatorTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("지갑_차감_틀린_값")
-    void 지갑_차감_값이_틀리면_이유를_돌려준다(String 경우, WalletPaymentCompletedCommand sut, String 기대_이유) {
+    void 지갑_차감_값이_틀리면_이유를_돌려준다(String 경우, WalletPaymentCompletedCommand command, String 기대_이유) {
         // given: 인자로 받은 틀린 커맨드
 
         // when
-        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(sut);
+        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
         assertThat(reason).contains(기대_이유);
@@ -95,10 +95,10 @@ class PayoutInboundEventValidatorTest {
     @Test
     void 지갑_차감_금액이_0원이어도_통과한다() {
         // given: 사고 2
-        WalletPaymentCompletedCommand sut = new WalletPaymentCompletedCommand(1L, 2L, 0L, PAID_AT);
+        WalletPaymentCompletedCommand command = new WalletPaymentCompletedCommand(1L, 2L, 0L, PAID_AT);
 
         // when
-        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(sut);
+        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
         assertThat(reason).isEmpty();
@@ -107,10 +107,10 @@ class PayoutInboundEventValidatorTest {
     @Test
     void 지갑_차감_값이_모두_맞으면_비어_있다() {
         // given
-        WalletPaymentCompletedCommand sut = new WalletPaymentCompletedCommand(1L, 2L, 5000L, PAID_AT);
+        WalletPaymentCompletedCommand command = new WalletPaymentCompletedCommand(1L, 2L, 5000L, PAID_AT);
 
         // when
-        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(sut);
+        Optional<String> reason = PayoutInboundEventValidator.findInvalidReason(command);
 
         // then
         assertThat(reason).isEmpty();

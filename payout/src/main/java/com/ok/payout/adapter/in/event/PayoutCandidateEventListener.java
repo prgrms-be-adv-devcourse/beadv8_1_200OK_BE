@@ -38,7 +38,7 @@ public class PayoutCandidateEventListener {
         // 이 리스너(REQUIRES_NEW)가 정상 종료할 수 없다.
         Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);
         if (invalidReason.isPresent()) {
-            log.error("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 이벤트라 정산후보를 만들지 않습니다. reason={}, command={}",
+            log.warn("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 이벤트라 정산후보를 만들지 않습니다. reason={}, command={}",
                     invalidReason.get(), command);
             return;
         }

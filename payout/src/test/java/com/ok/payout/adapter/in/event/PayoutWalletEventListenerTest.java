@@ -13,7 +13,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 
 // 단위 테스트: Spring 없이, 입력 포트는 Mockito 가짜 객체로 대체
 @ExtendWith(MockitoExtension.class)
@@ -55,5 +58,17 @@ class PayoutWalletEventListenerTest {
         ArgumentCaptor<WalletPaymentCompletedCommand> captor = ArgumentCaptor.forClass(WalletPaymentCompletedCommand.class);
         then(payoutWalletDeductionUseCase).should().saveDeduction(captor.capture());
         assertThat(captor.getValue()).isEqualTo(new WalletPaymentCompletedCommand(100L, 1L, 13_000L, PAID_AT));
+    }
+
+    @Test
+    void 입력_포트에서_예외가_나면_그대로_던진다() {
+        // given: 값은 맞지만 입력 포트가 DB 오류로 실패
+        WalletPaymentCompletedEvent event = new WalletPaymentCompletedEvent(100L, 1L, 13_000L, PAID_AT);
+        RuntimeException failure = new RuntimeException("DB 오류");
+        willThrow(failure).given(payoutWalletDeductionUseCase).saveDeduction(any());
+
+        // when & then: 삼키지 않고 그대로 던져 재처리 대상으로 남긴다
+        assertThatThrownBy(() -> sut.on(event))
+                .isSameAs(failure);
     }
 }

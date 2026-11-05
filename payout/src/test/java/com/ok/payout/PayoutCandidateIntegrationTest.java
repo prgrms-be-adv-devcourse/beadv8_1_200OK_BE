@@ -152,7 +152,7 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
         await().atMost(TIMEOUT).until(() -> countPublications(orderItemId, "COMPLETED") == 1);
         // 2) 이 주문의 정산 후보는 저장되지 않음
         assertThat(repository.findAllByOrderId(orderId)).isEmpty();
-        // 3) 값이 틀린 이벤트는 다시 처리해도 결과가 같으므로 실패로 남아 재처리되지 않음
+        // 3) 값이 틀린 이벤트는 다시 처리해도 결과가 같으므로 FAILED로 남지 않아 재처리 대상이 아님
         assertThat(countPublications(orderItemId, "FAILED")).isZero();
     }
 

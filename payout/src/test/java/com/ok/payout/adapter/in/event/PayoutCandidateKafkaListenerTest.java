@@ -11,7 +11,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 
 // 단위 테스트: Spring·Kafka 없이, 입력 포트는 Mockito 가짜 객체로 대체
 @ExtendWith(MockitoExtension.class)
@@ -51,5 +54,17 @@ class PayoutCandidateKafkaListenerTest {
         ArgumentCaptor<PurchaseConfirmedCommand> captor = ArgumentCaptor.forClass(PurchaseConfirmedCommand.class);
         then(payoutCandidateUseCase).should().createFromPurchaseConfirmed(captor.capture());
         assertThat(captor.getValue()).isEqualTo(new PurchaseConfirmedCommand(100L, 1L, 10L, 10_000L, 3_000L));
+    }
+
+    @Test
+    void 입력_포트에서_예외가_나면_그대로_던진다() {
+        // given: 값은 맞지만 입력 포트가 DB 오류로 실패
+        OrderProductConfirmedMessage message = new OrderProductConfirmedMessage(100L, 1L, 10L, 10_000L, 3_000L);
+        RuntimeException failure = new RuntimeException("DB 오류");
+        willThrow(failure).given(payoutCandidateUseCase).createFromPurchaseConfirmed(any());
+
+        // when & then: 삼키지 않고 그대로 던져 재처리 대상으로 남긴다
+        assertThatThrownBy(() -> sut.onKafka(message))
+                .isSameAs(failure);
     }
 }

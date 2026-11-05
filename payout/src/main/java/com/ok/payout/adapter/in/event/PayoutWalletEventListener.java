@@ -40,7 +40,7 @@ public class PayoutWalletEventListener {
         // 이 리스너(REQUIRES_NEW)가 정상 종료할 수 없다.
         Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);
         if (invalidReason.isPresent()) {
-            log.error("[PAYOUT_WALLET_DEDUCTION_SKIPPED] 처리할 수 없는 지갑 결제 이벤트라 차감 기록을 남기지 않습니다. reason={}, command={}",
+            log.warn("[PAYOUT_WALLET_DEDUCTION_SKIPPED] 처리할 수 없는 지갑 결제 이벤트라 차감 기록을 남기지 않습니다. reason={}, command={}",
                     invalidReason.get(), command);
             return;
         }
