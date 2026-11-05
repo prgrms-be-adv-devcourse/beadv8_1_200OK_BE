@@ -234,7 +234,6 @@ public class RefundService {
         // 요청 저장(#409)과 같은 기준이다: 승인 트랜잭션에는 외부 호출이 없어 정상이면 잠금을 짧게 쥐므로, 오래 기다렸다면
         // 사용자 잘못이 아니라 DB나 다른 트랜잭션의 이상이다. 저장된 것이 없어 환불은 요청됨 그대로 남고 다시 승인하면 된다
         // 환불 행은 지우지 않아 ID를 읽은 뒤 잠그는 사이에 사라질 일은 없다. 그래도 사라지면 없는 요청으로 막는다.
-        // 위에서 목록에 이번 환불이 있는 것을 확인했으므로 반복이 끝나면 target은 항상 채워져 있다
         Refund target = null;
         for (Long id : lockTargetIds) {
             Refund locked = refundRepository.findByIdForUpdate(id)
@@ -242,6 +241,12 @@ public class RefundService {
             if (id.equals(refundId)) {
                 target = locked;
             }
+        }
+        // 위에서 목록에 이번 환불이 있는 것을 확인했으므로 여기서 target은 항상 채워져 있다.
+        // 그 전제를 주석에만 맡기지 않고 확인한다. 나중에 위 코드를 고치다 전제가 깨지면 approve 안쪽 깊은 곳의 NPE 대신
+        // 여기서 바로 원인이 드러나게 한다. 사용자 입력과 무관한 코드 버그라 표준 예외(500)로 던진다(exception.md)
+        if (target == null) {
+            throw new IllegalStateException("잠근 환불 목록에서 이번 환불을 찾지 못했습니다. refundId=" + refundId);
         }
         return target;
     }

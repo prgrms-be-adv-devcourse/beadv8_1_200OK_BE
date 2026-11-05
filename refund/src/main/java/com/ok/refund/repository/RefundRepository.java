@@ -31,6 +31,9 @@ public interface RefundRepository extends JpaRepository<Refund, Long> {
      * 그래야 같은 상품을 거절·철회 뒤 여러 번 다시 요청해 행이 쌓여도 잠글 행이 늘지 않는다.
      * 이번 환불은 상태와 상관없이 넣는다. 그사이 철회됐으면 잠근 뒤 상태 확인에서 409로 막아야 하는데, 빠지면 404가 된다.
      * 엔티티가 아니라 ID만 읽는 이유: 뒤이은 잠금 조회가 이 행들의 첫 로딩이어야 영속성 컨텍스트에 잠금 전 상태가 남지 않는다.
+     * 인덱스: (order_id, seller_id) 인덱스 {@code idx_refund_order_id_seller_id}(마이그레이션 V202611050900, #410)로 묶음 행만 읽는다.
+     * 묶음 행은 주문 상품 수 정도라 상태 조건과 정렬은 그 몇 행 안에서 끝나고, 테이블 전체를 훑지 않는다.
+     * 이 조회는 잠그지 않는 읽기라 범위 잠금도 걸지 않는다. 잠금은 뒤이은 findByIdForUpdate가 행마다 건다
      */
     @Query("""
             select r.id
