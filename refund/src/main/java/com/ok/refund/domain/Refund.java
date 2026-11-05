@@ -64,6 +64,17 @@ public class Refund extends BaseTime {
     @Column(name = "item_amount", nullable = false)
     private long itemAmount;
 
+    // 배송비 세 칸은 판매자 승인 때 같은 묶음의 다른 요청을 함께 보고 정한다(#410). 요청됨·거절·철회에서는 0이다.
+    // 요청 때 정하지 않는 이유: 한 묶음을 나눠 요청하면 어느 요청이 "마지막(묶음 전부 취소)"인지 승인 순서로만 알 수 있다
+    @Column(name = "shipping_fee_amount", nullable = false)
+    private long shippingFeeAmount;
+
+    @Column(name = "remote_area_fee_amount", nullable = false)
+    private long remoteAreaFeeAmount;
+
+    @Column(name = "deducted_shipping_fee_amount", nullable = false)
+    private long deductedShippingFeeAmount;
+
     // 판매자가 승인·거절을 판단할 참고용이라 선택 입력이다. 안 적은 요청이 있어 NULL을 허용한다
     @Column(name = "cancel_reason")
     private String cancelReason;
@@ -159,6 +170,33 @@ public class Refund extends BaseTime {
         requireStatus(RefundStatus.REQUESTED);
         this.decidedAt = now;
         this.status = RefundStatus.PROCESSING;
+    }
+
+    /**
+     * 판매자 승인으로 처리를 시작하고 배송비 판단을 저장한다. {@code REQUESTED → PROCESSING}
+     * 판단은 같은 묶음의 처리 중 요청을 본 결과라 승인 시점에만 정할 수 있다. 한 번 정하면 다시 계산하지 않는다.
+     *
+     * @param fee 배송비 판단 결과. 받을 수 없는 판단이면 승인하지 말고 자동 거절해야 한다
+     * @throws RestApiException         요청됨이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalArgumentException 받을 수 없는 판단을 넘기면 (부르는 쪽 버그)
+     */
+    public void approve(LocalDateTime now, RefundShippingFee fee) {
+        if (fee == null || !fee.allowed()) {
+            throw new IllegalArgumentException("받을 수 없는 배송비 판단으로는 승인할 수 없습니다.");
+        }
+        approve(now);
+        this.shippingFeeAmount = fee.shippingFeeAmount();
+        this.remoteAreaFeeAmount = fee.remoteAreaFeeAmount();
+        this.deductedShippingFeeAmount = fee.deductedShippingFeeAmount();
+    }
+
+    /**
+     * 돌려줄 금액을 계산한다. 상품 금액 + 돌려줄 배송비 + 도서산간 운임 − 뺀 배송비 (원)
+     * 칸마다 따로 저장하고 합계는 저장하지 않는다. 합계까지 저장하면 어긋날 수 있는 칸이 하나 늘어난다.
+     */
+    public long getRefundAmount() {
+        long added = Math.addExact(Math.addExact(itemAmount, shippingFeeAmount), remoteAreaFeeAmount);
+        return Math.subtractExact(added, deductedShippingFeeAmount);
     }
 
     /**

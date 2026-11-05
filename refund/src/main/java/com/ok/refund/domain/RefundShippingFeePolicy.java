@@ -1,0 +1,94 @@
+package com.ok.refund.domain;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 환불 한 건에서 배송비를 돌려줄지, 뺄지, 이 취소를 받을 수 있는지 판단한다.
+ * 무료배송 기준은 배송 모듈의 배송비 규칙과 같게 "남은 상품 금액 합 >= 기준이면 무료"로 본다. 값은 주문 시점 값을 쓴다.
+ *
+ * <ul>
+ *   <li>이번 취소로 판매자 묶음이 전부 취소되면: 묶음 배송비 + 앞선 환불에서 뺀 배송비와 도서산간 운임을 돌려준다. 상자가 나가지 않으니 받을 근거가 없다</li>
+ *   <li>일부 취소로 남은 묶음 금액이 무료배송 기준 아래로 처음 내려가면: 기본 배송비를 뺀다. 판매자가 남은 상품의 택배비를 떠안지 않게 하려는 것이다</li>
+ *   <li>그때 취소 금액이 기본 배송비보다 작으면: 받을 수 없다(돌려줄 금액이 음수가 된다)</li>
+ *   <li>그 밖(기준 없음, 처음부터 기준 아래, 취소 뒤에도 기준 이상): 0</li>
+ * </ul>
+ */
+public final class RefundShippingFeePolicy {
+
+    private RefundShippingFeePolicy() {
+    }
+
+    /**
+     * 이번 환불의 배송비를 판단한다.
+     *
+     * @param target             판단할 환불. 상품 금액과 개수를 쓴다
+     * @param bundle             주문 모듈이 알려 준 판매자 묶음 값
+     * @param cancelled          같은 묶음에서 이미 취소가 진행 중인 개수 (이번 환불은 빼고)
+     * @param previouslyDeducted 같은 묶음의 앞선 환불에서 이미 뺀 배송비 합 (원)
+     * @throws IllegalStateException 묶음에 이번 상품이 없거나, 진행 중 개수가 묶음과 맞지 않으면. 주문 값과 환불 기록이 어긋난 버그라 500으로 드러낸다
+     */
+    public static RefundShippingFee decide(
+            Refund target,
+            BundleShipping bundle,
+            List<CancelledQuantity> cancelled,
+            long previouslyDeducted
+    ) {
+        Map<Long, Long> cancelledBefore = cancelledByOrderItem(bundle, cancelled);
+        if (!cancelledBefore.containsKey(target.getOrderItemId())) {
+            throw new IllegalStateException("주문 묶음에 환불할 주문 상품이 없습니다. orderItemId=" + target.getOrderItemId());
+        }
+
+        // 앞선 취소를 뺀 남은 묶음 금액(이번 취소 전)과, 이번까지 취소하면 모든 상품이 다 취소되는지 함께 본다
+        long remainingBefore = 0;
+        boolean allCancelled = true;
+        for (BundleItem item : bundle.items()) {
+            long before = cancelledBefore.get(item.orderItemId());
+            long after = item.orderItemId().equals(target.getOrderItemId()) ? before + target.getQuantity() : before;
+            if (after > item.orderedQuantity()) {
+                throw new IllegalStateException("취소 개수 합이 주문 개수를 넘습니다. orderItemId=" + item.orderItemId());
+            }
+            if (after < item.orderedQuantity()) {
+                allCancelled = false;
+            }
+            remainingBefore = Math.addExact(remainingBefore,
+                    Math.multiplyExact(item.unitPrice(), item.orderedQuantity() - before));
+        }
+
+        if (allCancelled) {
+            return RefundShippingFee.refund(Math.addExact(bundle.shippingFee(), previouslyDeducted), bundle.remoteAreaFee());
+        }
+
+        Long threshold = bundle.freeShippingThreshold();
+        // 기준이 없으면 처음부터 배송비를 냈고, 이미 기준 아래면 배송비를 냈거나 앞선 환불에서 뺐다. 어느 쪽이든 이번에 더 뺄 것이 없다
+        if (threshold == null || remainingBefore < threshold) {
+            return RefundShippingFee.none();
+        }
+        long remainingAfter = remainingBefore - target.getItemAmount();
+        if (remainingAfter >= threshold) {
+            return RefundShippingFee.none();
+        }
+        // 취소 금액 == 기본 배송비면 0원 환불이지만 받는다. 구매자는 상품을 안 받고 판매자는 택배비를 받아 손해 보는 사람이 없다
+        if (target.getItemAmount() < bundle.baseShippingFee()) {
+            return RefundShippingFee.notAllowed();
+        }
+        return RefundShippingFee.deduct(bundle.baseShippingFee());
+    }
+
+    // 묶음의 모든 상품을 0으로 채운 뒤 진행 중 개수를 더한다. 묶음에 없는 상품의 진행 중 요청은 주문 값과 환불 기록이 어긋난 것이다
+    private static Map<Long, Long> cancelledByOrderItem(BundleShipping bundle, List<CancelledQuantity> cancelled) {
+        Map<Long, Long> result = new HashMap<>();
+        for (BundleItem item : bundle.items()) {
+            result.put(item.orderItemId(), 0L);
+        }
+        for (CancelledQuantity each : cancelled) {
+            Long current = result.get(each.orderItemId());
+            if (current == null) {
+                throw new IllegalStateException("주문 묶음에 없는 상품의 진행 중 환불이 있습니다. orderItemId=" + each.orderItemId());
+            }
+            result.put(each.orderItemId(), current + each.quantity());
+        }
+        return result;
+    }
+}
