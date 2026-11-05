@@ -1,4 +1,4 @@
-package com.ok.wallet.event;
+package com.ok.wallet.adapter.in.event;
 
 import com.ok.common.event.OrderCreatedEvent;
 import com.ok.wallet.service.OrderPaymentService;

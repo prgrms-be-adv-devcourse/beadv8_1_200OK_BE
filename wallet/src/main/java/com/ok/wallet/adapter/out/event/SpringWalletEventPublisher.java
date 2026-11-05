@@ -1,4 +1,4 @@
-package com.ok.wallet.event;
+package com.ok.wallet.adapter.out.event;
 
 import com.ok.common.event.DomainEvent;
 import com.ok.common.event.WalletPaymentCompletedEvent;
