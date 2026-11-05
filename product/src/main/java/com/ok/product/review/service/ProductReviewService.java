@@ -48,7 +48,7 @@ public class ProductReviewService {
 	private final Clock clock;
 
 	/**
-	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다. 감성 분석 요청을 대기로 남긴다.
+	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다. 분석 종류(감성, 키워드)마다 분석 요청을 대기로 남긴다.
 	 * 작성 자격 확인은 {@link ProductReviewFacade}가 하므로 여기서는 구매 건을 믿고 저장만 한다.
 	 */
 	@Transactional
@@ -70,12 +70,14 @@ public class ProductReviewService {
 		productRepository.addReviewStats(productId, 1, command.rating());
 		Long reviewId = saveReview(review);
 		// 리뷰와 같은 트랜잭션에 남겨, 저장된 리뷰는 모두 분석되고 롤백된 리뷰의 요청은 남지 않게 한다
-		analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, ReviewAnalysisType.SENTIMENT, now()));
+		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
+			analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, analysisType, now()));
+		}
 		return reviewId;
 	}
 
 	/**
-	 * 내 리뷰를 수정한다. 별점이나 본문이 바뀌면 같은 트랜잭션에서 감성 분석 요청을 처음 대기로 되돌린다.
+	 * 내 리뷰를 수정한다. 별점이나 본문이 바뀌면 같은 트랜잭션에서 모든 분석 종류의 요청을 처음 대기로 되돌린다.
 	 * 첨부만 바꾸면 리뷰 행이 바뀌지 않아 수정 시각이 그대로이고 기존 분석 결과도 유효하므로 다시 분석하지 않는다.
 	 */
 	@Transactional
@@ -141,10 +143,12 @@ public class ProductReviewService {
 
 	// 요청이 없는 리뷰도 수정하면 분석되도록 새로 만든다. 요청은 (리뷰, 분석 종류)마다 하나라 연달아 수정해도 같은 행을 되돌린다
 	private void requestReanalysis(Long reviewId) {
-		analysisRequestRepository.findByReviewIdAndAnalysisType(reviewId, ReviewAnalysisType.SENTIMENT)
-			.ifPresentOrElse(
-				request -> request.reset(now()),
-				() -> analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, ReviewAnalysisType.SENTIMENT, now())));
+		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
+			analysisRequestRepository.findByReviewIdAndAnalysisType(reviewId, analysisType)
+				.ifPresentOrElse(
+					request -> request.reset(now()),
+					() -> analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, analysisType, now())));
+		}
 	}
 
 	// 개수는 그대로 두고 별점 차이만 합계에 반영한다

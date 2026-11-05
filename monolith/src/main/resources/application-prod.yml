@@ -26,6 +26,7 @@ app:
     worker:
       # 리뷰 감성 분석 작업자는 운영에서만 켠다. 로컬·CI에서는 Jev를 부르지 않는다
       enabled: true
+    # 리뷰 키워드 분석 작업자(keyword-worker.enabled)는 Jev 키워드 분석기를 넣는 #460에서 켠다
 springdoc:
   api-docs:
     enabled: false
