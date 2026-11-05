@@ -5,6 +5,7 @@ import com.ok.common.security.TokenRoles;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
+import com.ok.member.auth.service.dto.LoginCredential;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
 import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
@@ -42,6 +43,8 @@ class AuthServiceTest {
     private static final Instant NOW = Instant.parse("2026-10-12T05:00:00Z");
     private static final String ENCODED_PASSWORD = "{bcrypt}encoded";
     private static final Long MEMBER_ID = 1L;
+    // Facade가 비밀번호 확인에 쓴 값. 저장된 회원 해시(ENCODED_PASSWORD)와 같다
+    private static final LoginCredential CREDENTIAL = new LoginCredential(MEMBER_ID, ENCODED_PASSWORD);
 
     @Mock
     MemberRepository memberRepository;
@@ -76,7 +79,7 @@ class AuthServiceTest {
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));
 
         // when
-        TokenResult sut = authService.issueLoginTokens(MEMBER_ID);
+        TokenResult sut = authService.issueLoginTokens(CREDENTIAL);
 
         // then
         assertThat(sut).isNotNull();
@@ -99,7 +102,7 @@ class AuthServiceTest {
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
 
         // when
-        TokenResult sut = authService.issueLoginTokens(MEMBER_ID);
+        TokenResult sut = authService.issueLoginTokens(CREDENTIAL);
 
         // then
         assertThat(sut.accessToken()).isEqualTo("seller-access-token");
@@ -111,7 +114,20 @@ class AuthServiceTest {
         given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.empty());
 
         // when & then
-        assertThatThrownBy(() -> authService.issueLoginTokens(MEMBER_ID))
+        assertThatThrownBy(() -> authService.issueLoginTokens(CREDENTIAL))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
+        then(refreshTokenService).should(never()).issue(any());
+    }
+
+    @Test
+    void 비밀번호를_확인한_뒤_비밀번호가_바뀌었으면_INVALID_CREDENTIALS가_발생하고_토큰을_발급하지_않는다() {
+        // given: Facade는 옛 해시로 비밀번호를 확인했는데, 발급 직전에 읽은 회원의 해시는 바뀌어 있다
+        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        LoginCredential staleCredential = new LoginCredential(MEMBER_ID, "{bcrypt}old-encoded");
+
+        // when & then
+        assertThatThrownBy(() -> authService.issueLoginTokens(staleCredential))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
         then(refreshTokenService).should(never()).issue(any());
@@ -125,7 +141,7 @@ class AuthServiceTest {
         given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(status)));
 
         // when & then
-        assertThatThrownBy(() -> authService.issueLoginTokens(MEMBER_ID))
+        assertThatThrownBy(() -> authService.issueLoginTokens(CREDENTIAL))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(expected));
         then(refreshTokenService).should(never()).issue(any());

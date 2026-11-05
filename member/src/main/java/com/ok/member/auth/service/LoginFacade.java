@@ -12,9 +12,10 @@ import org.springframework.stereotype.Component;
  * 로그인 아이디와 비밀번호로 회원을 인증하고 Access Token과 Refresh Token을 발급한다.
  * bcrypt 비교 동안 DB 커넥션을 잡지 않도록 트랜잭션 없이 실행하고, DB 작업은 {@link AuthService}의
  * 짧은 트랜잭션에 맡긴다. 그래서 한 요청이 동시에 쥐는 커넥션은 최대 1개다.
- * {@code @Transactional(propagation = NOT_SUPPORTED)}로 대신하면 안 된다. 그 범위 안에서 처음 조회한 커넥션이
- * 메서드가 끝날 때까지 반환되지 않아, 뒤의 트랜잭션과 합쳐 요청 하나가 커넥션 2개를 쥐게 된다.
- * 동시 로그인이 풀 크기에 닿으면 모든 요청이 서로를 기다리며 connectionTimeout까지 멈춘다(#425).
+ * 컨벤션(Facade에는 {@code @Transactional}을 붙이지 않고 DB 작업은 서비스로 한다)을 이 클래스에서 특히 지켜야 한다.
+ * {@code @Transactional}을 붙이면 bcrypt 동안 커넥션을 잡고, 이 경우 데드락이 아니라서 회귀 테스트로도 드러나지 않는다.
+ * 리포지토리를 직접 부르지 않는다. 수정 전에는 {@code NOT_SUPPORTED} 범위에서 리포지토리를 직접 조회해 그 커넥션이
+ * 메서드 끝까지 남았고, 뒤의 트랜잭션과 합쳐 요청 하나가 커넥션 2개를 쥐어 동시 로그인이 풀 크기에 닿으면 멈췄다(#425).
  */
 @Component
 public class LoginFacade {
@@ -46,13 +47,13 @@ public class LoginFacade {
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
     public TokenResult login(LoginCommand command) {
-        Long memberId = authenticate(command);
+        LoginCredential credential = authenticate(command);
         // 탈퇴·정지 확인은 발급 트랜잭션 안에서 최신 상태로 한다. 비밀번호가 틀리면 여기까지 오지 않으므로
         // 틀린 비밀번호에는 회원 상태와 관계없이 INVALID_CREDENTIALS가 나간다
-        return authService.issueLoginTokens(memberId);
+        return authService.issueLoginTokens(credential);
     }
 
-    private Long authenticate(LoginCommand command) {
+    private LoginCredential authenticate(LoginCommand command) {
         LoginCredential credential = authService.findLoginCredential(command.loginId()).orElse(null);
 
         // 회원이 없어도 더미 해시로 비교를 한 번 수행한다. 비교를 한 곳에서만 하면 두 경로의 비용이 구조적으로 같아진다.
@@ -62,7 +63,7 @@ public class LoginFacade {
         if (credential == null || !matches) {
             throw new RestApiException(AuthErrorCode.INVALID_CREDENTIALS);
         }
-        return credential.memberId();
+        return credential;
     }
 
 }

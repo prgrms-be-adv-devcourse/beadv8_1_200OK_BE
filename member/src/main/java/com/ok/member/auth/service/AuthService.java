@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -44,26 +45,34 @@ public class AuthService {
      * 로그인 아이디로 비밀번호 확인에 필요한 값을 조회한다.
      * 탈퇴 회원도 그대로 돌려준다. 탈퇴 여부는 비밀번호를 확인한 뒤 {@link #issueLoginTokens}에서 판단해,
      * 틀린 비밀번호에는 회원 상태와 관계없이 같은 응답을 준다.
+     * {@link #issueLoginTokens}와 이어 부르면 비밀번호 없이 토큰을 받을 수 있어,
+     * 같은 패키지의 {@link LoginFacade}만 부를 수 있게 한다.
      */
-    public Optional<LoginCredential> findLoginCredential(String loginId) {
+    Optional<LoginCredential> findLoginCredential(String loginId) {
         return memberRepository.findByLoginId(loginId)
                 .map(member -> new LoginCredential(member.getId(), member.getPassword()));
     }
 
     /**
-     * 로그인한 회원에게 Access Token과 Refresh Token을 발급한다.
-     * 비밀번호 확인은 하지 않으므로 {@link LoginFacade}처럼 비밀번호를 확인한 뒤에만 호출한다.
-     * 회원을 이 트랜잭션 안에서 다시 읽어 탈퇴·정지를 확인하므로, 비밀번호 확인과 발급 사이에 상태가 바뀌어도
-     * 바뀐 상태로 판단한다. 판매자 승인 조회와 Refresh Token 저장도 같은 트랜잭션에서 처리한다.
+     * 비밀번호를 확인한 회원에게 Access Token과 Refresh Token을 발급한다.
+     * bcrypt 비교는 트랜잭션 밖에서 해야 해서 이 메서드는 비밀번호를 비교하지 않는다. 비밀번호 확인 없이 부르면
+     * 토큰이 나가므로, 확인을 마친 {@link LoginFacade}만 부를 수 있다.
+     * 회원을 이 트랜잭션 안에서 다시 읽어 탈퇴·정지를 확인하고, 해시가 확인에 쓴 값과 같은지 본다. 해시 비교는
+     * 권한 확인이 아니라 비밀번호 확인 뒤 비밀번호가 바뀐 경우만 잡는다. 판매자 승인 조회와 Refresh Token 저장도
+     * 같은 트랜잭션에서 처리한다.
      *
-     * @throws RestApiException 회원이 없거나 탈퇴했으면 {@code INVALID_CREDENTIALS}, 정지된 회원이면 {@code MEMBER_SUSPENDED}
+     * @param credential 비밀번호 확인에 쓴 값. 해시가 지금 저장된 값과 다르면 발급하지 않는다
+     * @throws RestApiException 회원이 없거나 탈퇴했거나 비밀번호가 그사이 바뀌었으면 {@code INVALID_CREDENTIALS},
+     *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
     @Transactional
-    public TokenResult issueLoginTokens(Long memberId) {
+    TokenResult issueLoginTokens(LoginCredential credential) {
         // 탈퇴 회원은 아이디가 익명화될 예정이라 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다.
+        // 확인한 해시와 지금 해시가 다르면 bcrypt 비교 중에 비밀번호가 바뀐 것이므로 옛 비밀번호로는 발급하지 않는다.
         // 정지 회원은 비밀번호까지 맞은 본인이므로, 왜 로그인이 안 되는지 알 수 있게 별도 코드로 알린다.
-        Member member = memberRepository.findById(memberId)
+        Member member = memberRepository.findById(credential.memberId())
                 .filter(found -> !found.isWithdrawn())
+                .filter(found -> Objects.equals(found.getPassword(), credential.passwordHash()))
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_CREDENTIALS));
         if (member.getStatus() == MemberStatus.SUSPENDED) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);

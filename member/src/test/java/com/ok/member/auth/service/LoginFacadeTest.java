@@ -55,7 +55,7 @@ class LoginFacadeTest {
         given(passwordEncoder.matches("password1!", ENCODED_PASSWORD)).willReturn(true);
         TokenResult issued = new TokenResult("access-token", NOW.plus(Duration.ofMinutes(30)),
                 "refresh-token", NOW.plus(Duration.ofDays(14)));
-        given(authService.issueLoginTokens(MEMBER_ID)).willReturn(issued);
+        given(authService.issueLoginTokens(new LoginCredential(MEMBER_ID, ENCODED_PASSWORD))).willReturn(issued);
 
         // when
         TokenResult sut = loginFacade.login(new LoginCommand("tester01", "password1!"));
