@@ -105,6 +105,8 @@ docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^
 
 `docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
 
+먼저 JWT 키(`keys/`)를 만들어야 합니다. 앱이 기동할 때 키 파일을 읽는데, 이미지에는 키가 없고 compose가 저장소 루트의 `keys/`를 컨테이너의 `/app/keys`에 읽기 전용으로 연결합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
+
 ```bash
 docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
@@ -118,6 +120,8 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
 - 프로파일을 지정하지 않으면 `dev`로 실행됩니다.
+- `keys/`가 없으면 앱이 `JWT 키 파일을 읽을 수 없습니다: URL [file:keys/rs256-v1-public.pem]` 오류로 기동에 실패합니다(`docker compose --profile app logs app`으로 확인). 8절의 명령으로 키를 만든 뒤 `docker compose --profile app up -d`로 다시 실행하면 됩니다. `keys/`가 없는 채로 실행하면 Docker가 빈 `keys/` 폴더를 만들 수 있으니 키 파일이 `keys/` 안에 있는지 확인합니다.
+- `keys/`는 이미지에 들어가지 않습니다. `.dockerignore`가 빌드 컨텍스트에서도 제외합니다.
 
 ## 4. 설정 구조
 
