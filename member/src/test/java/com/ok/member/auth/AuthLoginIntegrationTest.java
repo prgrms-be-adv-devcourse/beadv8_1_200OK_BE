@@ -163,6 +163,19 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 정지된_회원이_틀린_비밀번호로_로그인하면_정지_여부를_드러내지_않고_401을_반환한다() throws Exception {
+        // given: 정지 여부는 비밀번호가 맞은 본인에게만 알린다
+        saveMember(MemberStatus.SUSPENDED);
+
+        // when
+        ResultActions result = performLogin(LOGIN_ID, "wrong-pass1!");
+
+        // then
+        result.andExpect(status().isUnauthorized());
+        assertThat(refreshTokenRepository.count()).isZero();
+    }
+
+    @Test
     void 아이디와_비밀번호가_비어_있으면_422와_필드별_오류를_반환한다() throws Exception {
         // when
         ResultActions result = performLogin(" ", "");
