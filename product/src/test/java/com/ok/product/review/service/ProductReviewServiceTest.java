@@ -42,6 +42,7 @@ import com.ok.product.review.domain.ProductReviewMediaSpec;
 import com.ok.product.review.domain.ProductReviewMediaType;
 import com.ok.product.review.exception.ProductReviewErrorCode;
 import com.ok.product.review.repository.ProductReviewRepository;
+import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
 import com.ok.product.review.service.dto.ProductReviewCreateCommand;
 import com.ok.product.review.service.dto.ProductReviewResult;
 import com.ok.product.review.service.dto.ProductReviewUpdateCommand;
@@ -68,6 +69,9 @@ class ProductReviewServiceTest {
 	@Mock
 	ProductOptionRepository productOptionRepository;
 
+	@Mock
+	ReviewAnalysisRequestRepository analysisRequestRepository;
+
 	ProductReviewService sut;
 
 	@BeforeEach
@@ -75,7 +79,7 @@ class ProductReviewServiceTest {
 		MediaUrlResolver mediaUrlResolver = new MediaUrlResolver("bucket", "ap-northeast-2");
 		Clock clock = Clock.fixed(Instant.parse("2026-10-16T00:00:00Z"), ZoneOffset.UTC);
 		sut = new ProductReviewService(productReviewRepository, productRepository, productOptionRepository,
-			new ProductReviewMediaValidator(mediaUrlResolver), mediaUrlResolver, clock);
+			analysisRequestRepository, new ProductReviewMediaValidator(mediaUrlResolver), mediaUrlResolver, clock);
 	}
 
 	@Test

@@ -44,6 +44,7 @@ import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.repository.ProductRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.repository.ProductReviewRepository;
+import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
 import com.ok.product.review.service.dto.ReviewablePurchase;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderApiClient;
@@ -70,6 +71,9 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	ProductReviewRepository productReviewRepository;
 
 	@Autowired
+	ReviewAnalysisRequestRepository analysisRequestRepository;
+
+	@Autowired
 	TransactionTemplate transactionTemplate;
 
 	@Autowired
@@ -83,6 +87,7 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	void setUp() {
 		// @CurrentMemberId가 토큰을 읽으려면 보안 필터가 적용돼야 한다
 		mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+		analysisRequestRepository.deleteAll();
 		productReviewRepository.deleteAll();
 
 		Product product = Product.create(10L, "청송 꿀사과", "<p>설명</p>", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
@@ -102,6 +107,7 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	// 다른 상품 통합 테스트가 상품을 지울 때 리뷰의 외래 키에 걸리지 않게 리뷰를 남기지 않는다
 	@AfterEach
 	void tearDown() {
+		analysisRequestRepository.deleteAll();
 		productReviewRepository.deleteAll();
 		orderApiClient.clear();
 	}
