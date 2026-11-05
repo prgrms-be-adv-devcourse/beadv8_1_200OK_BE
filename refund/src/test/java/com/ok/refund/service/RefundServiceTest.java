@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
@@ -393,6 +394,36 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.withdraw(REFUND_ID, BUYER_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
+    }
+
+    @Test
+    void 실패를_기록하면_처리_중_그대로_단계와_이유가_남는다() {
+        // given
+        Refund refund = requested();
+        refund.approve(NOW, RefundShippingFee.none());
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+
+        // when
+        sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(refund.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(refund.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+        });
+    }
+
+    // refundId는 승인을 마친 시스템이 넘기는 값이라 없으면 사용자 잘못이 아닌 버그다. 404가 아니라 표준 예외(500)로 드러나야 한다
+    @Test
+    void 없는_환불에_실패를_기록하면_예외를_던진다() {
+        // given
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("실패를 기록할 환불이 없습니다. refundId=7");
     }
 
     private static Refund requested() {

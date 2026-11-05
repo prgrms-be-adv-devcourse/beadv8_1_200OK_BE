@@ -91,6 +91,15 @@ public class Refund extends BaseTime {
     @Column(name = "decided_at")
     private LocalDateTime decidedAt;
 
+    // 처리 중에 다른 모듈 호출이 실패했을 때만 값이 있다(#412). 실패가 없는 것이 정상이라 NULL을 허용한다
+    @Enumerated(EnumType.STRING)
+    @Column(name = "failed_step", length = 30)
+    private RefundFailedStep failedStep;
+
+    // 멈춘 이유. 에러 코드 이름이나 예외 클래스 이름만 둔다. 내부 메시지는 주소·값이 섞일 수 있어 남기지 않는다(로그에는 남음)
+    @Column(name = "failure_code", length = 100)
+    private String failureCode;
+
     // 요청됨·처리 중일 때만 값이 있다. UNIQUE라 한 주문 상품에 진행 중인 요청을 두 건 받지 않는다.
     // 끝 상태(거절·철회)가 되면 비워 같은 상품에 새 요청을 받는다(MySQL UNIQUE는 NULL을 여러 개 허용)
     @Column(name = "active_order_item_id")
@@ -218,6 +227,23 @@ public class Refund extends BaseTime {
         requireStatus(RefundStatus.REQUESTED);
         this.decidedAt = now;
         finish(RefundStatus.WITHDRAWN);
+    }
+
+    /**
+     * 처리 중에 다른 모듈 호출이 실패해 멈춘 단계와 이유를 남긴다. 상태는 처리 중 그대로다.
+     * 같은 환불이 다시 실패하면 마지막 실패로 덮어쓴다. 다시 처리하는 방법은 후속이라 지우는 메서드는 아직 두지 않는다.
+     *
+     * @param failureCode 에러 코드 이름 또는 예외 클래스 이름
+     * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalArgumentException 단계나 이유가 비었으면 (부르는 쪽 버그)
+     */
+    public void recordFailure(RefundFailedStep step, String failureCode) {
+        if (step == null || failureCode == null || failureCode.isBlank()) {
+            throw new IllegalArgumentException("실패 단계와 이유는 필수입니다.");
+        }
+        requireStatus(RefundStatus.PROCESSING);
+        this.failedStep = step;
+        this.failureCode = failureCode;
     }
 
     public boolean isOwnedByBuyer(Long memberId) {

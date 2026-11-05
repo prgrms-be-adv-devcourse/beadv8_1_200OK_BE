@@ -3,6 +3,7 @@ package com.ok.refund.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
@@ -203,6 +204,23 @@ public class RefundService {
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         refund.withdraw(LocalDateTime.now(clock));
         return RefundResult.from(refund);
+    }
+
+    /**
+     * 승인 뒤 다른 모듈 호출이 실패한 단계와 이유를 남긴다. 상태는 처리 중 그대로 둔다.
+     * {@link RefundStepRunner}가 호출이 실패했을 때 부른다. 다른 모듈 호출은 트랜잭션 밖(Facade)에서 하므로
+     * 이 기록은 호출과 따로 저장되고, 호출이 실패해도 기록은 남는다.
+     *
+     * @param failureCode 에러 코드 이름, 없으면 예외 클래스 이름
+     * @throws RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    @Transactional
+    public void recordFailure(Long refundId, RefundFailedStep step, String failureCode) {
+        // 같은 환불을 동시에 결정·기록하는 다른 트랜잭션과 섞이지 않게 다른 결정 메서드처럼 잠근 뒤 고친다.
+        // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)
+        Refund refund = refundRepository.findByIdForUpdate(refundId)
+                .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
+        refund.recordFailure(step, failureCode);
     }
 
     // 승인은 이 메서드가 트랜잭션을 새로 시작했을 때만 진행한다. 바깥 트랜잭션에 합류하면 두 가지가 조용히 깨진다.

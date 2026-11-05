@@ -297,6 +297,81 @@ class RefundTest {
     }
 
     @Test
+    void 처리_중이면_멈춘_단계와_실패_이유를_기록하고_상태는_그대로다() {
+        // given
+        Refund sut = requested();
+        sut.approve(NOW, RefundShippingFee.none());
+
+        // when
+        sut.recordFailure(RefundFailedStep.WALLET, "WALLET_API_FAILED");
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(sut.getFailureCode()).isEqualTo("WALLET_API_FAILED");
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
+        });
+    }
+
+    @Test
+    void 요청하면_실패_기록은_비어_있다() {
+        // when
+        Refund sut = requested();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getFailedStep()).isNull();
+            softly.assertThat(sut.getFailureCode()).isNull();
+        });
+    }
+
+    // 실패 기록은 다른 모듈을 부르는 처리 중에만 생긴다. 요청됨·거절·철회에 기록하려는 건 상태가 맞지 않는 요청이다
+    @ParameterizedTest
+    @MethodSource("처리_중이_아닌_요청")
+    void 처리_중이_아니면_실패를_기록하지_않는다(Consumer<Refund> toState) {
+        // given
+        Refund refund = requested();
+        toState.accept(refund);
+
+        // when & then
+        assertThatThrownBy(() -> refund.recordFailure(RefundFailedStep.WALLET, "WALLET_API_FAILED"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+        assertThat(refund.getFailedStep()).isNull();
+    }
+
+    static Stream<Named<Consumer<Refund>>> 처리_중이_아닌_요청() {
+        return Stream.of(
+                Named.of("요청됨", refund -> {
+                }),
+                Named.of("거절", refund -> refund.reject("사유", NOW)),
+                Named.of("철회", refund -> refund.withdraw(NOW)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("비어_있는_실패_정보")
+    void 실패_단계나_이유가_비면_표준_예외로_막는다(RefundFailedStep step, String failureCode) {
+        // given
+        Refund refund = requested();
+        refund.approve(NOW, RefundShippingFee.none());
+
+        // when & then
+        assertThatThrownBy(() -> refund.recordFailure(step, failureCode))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("실패 단계와 이유는 필수입니다.");
+    }
+
+    static Stream<Arguments> 비어_있는_실패_정보() {
+        return Stream.of(
+                Arguments.of(null, "WALLET_API_FAILED"),
+                Arguments.of(RefundFailedStep.WALLET, null),
+                Arguments.of(RefundFailedStep.WALLET, " "));
+    }
+
+    @Test
     void 구매자와_판매자_본인인지_확인한다() {
         // given
         Refund sut = requested();
