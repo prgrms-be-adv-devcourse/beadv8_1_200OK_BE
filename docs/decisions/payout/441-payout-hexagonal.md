@@ -29,7 +29,7 @@ Kafka 전환(#339) 뒤 정산이 바깥과 닿는 세 곳(받기·보내기·저
 | Spring·Kafka 입구 | 리스너를 `*EventListener`(Spring)와 `*KafkaListener`로 분리 | #343에서 Spring 입구 클래스만 지우면 된다 |
 | 저장소 포트 | 포트는 순수 인터페이스(이름은 기존 리포지토리 그대로), `*JpaRepository`가 `JpaRepository`와 포트를 함께 상속 | delivery와 같다. 실행 객체가 기존 Spring Data 프록시라 쿼리·트랜잭션이 그대로이고, 서비스 코드는 import만 바뀐다 |
 | 쿼리 애노테이션 | 포트에는 메서드 모양만, `@Modifying @Query`·`@EntityGraph`는 어댑터에서 `@Override`로 다시 선언 | 포트가 Spring Data를 몰라야 한다. `insertShippingFeeIfAbsent`의 네이티브 쿼리가 같은 묶음 배송비 동시 처리 방어다 |
-| 조회 Row·발행 명령 위치 | Row 7개와 `SellerPayoutCreatedCommand`를 `application/port/out`에 둠 (사용자 결정) | `application/dto`에 두면 결과 DTO(`Result.from(Row)`)와 발행 포트(명령 사용) 때문에 dto ↔ port.out 순환이 생긴다. 포트가 주고받는 값을 포트 옆에 두면 방향이 dto → port.out 하나다 |
+| 포트가 주고받는 값의 위치 | 입력 포트의 Command·Query·Result 15개는 `application/port/in`, 조회 Row 7개와 `SellerPayoutCreatedCommand`는 `application/port/out` (사용자 결정) | 값을 한곳(`application/dto`)에 모으면 결과 값(`Result.from(Row)`)과 발행 포트(명령 사용) 때문에 dto ↔ port.out 순환이 생긴다. 값을 그 포트 옆에 두면 방향이 port.in → port.out 하나이고, 어떤 값이 어느 포트를 지나는지 위치로 보인다. delivery는 `application/dto`를 쓴다 |
 | 페이징 타입 | 포트·서비스에서 `Page`·`Pageable`·`PageRequest` 허용 (사용자 결정) | 저장 기술이 아닌 값 묶음이다. delivery도 허용한다 |
 | `common.event` 사용 위치 | `adapter/in/event`와 `adapter/out/event` | 지갑 전환 전까지 발행 어댑터가 Spring 이벤트도 함께 보낸다(이중 발행). #343에서 out 허용을 뺀다 |
 | 구조 검사 | `ArchitectureTest`를 `freeze` 없이 다시 씀(25개) | 기존 위반이 0건이었다. 위반 코드를 넣는 변이 시험으로 규칙마다 실제로 걸리는지 확인했고, 그때 찾은 우회(새 `adapter.in` 하위 패키지, `JdbcTemplate`·Kafka 클라이언트, `KafkaOperations`, `common.event` 필드 사용, 레이어 밖 패키지 경유)를 막았다 |
