@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -28,6 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -80,16 +82,17 @@ class AuthLoginConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // given
         int poolSize = dataSource.unwrap(HikariDataSource.class).getMaximumPoolSize();
         int requestCount = poolSize * 2;
-        List<String> loginIds = saveMembers(requestCount);
+        List<Member> members = saveMembers(requestCount);
+        Set<Long> memberIds = members.stream().map(Member::getId).collect(Collectors.toSet());
 
         CountDownLatch ready = new CountDownLatch(requestCount);
         CountDownLatch start = new CountDownLatch(1);
         List<Callable<Integer>> tasks = new ArrayList<>();
-        for (String loginId : loginIds) {
+        for (Member member : members) {
             tasks.add(() -> {
                 ready.countDown();
                 start.await();
-                return performLogin(loginId);
+                return performLogin(member.getLoginId());
             });
         }
 
@@ -110,22 +113,26 @@ class AuthLoginConcurrencyIntegrationTest extends AbstractIntegrationTest {
             }
         }
 
-        // then
+        // then: 응답만 200이고 저장이 빠지는 경우도 잡도록 Refresh Token이 회원마다 저장됐는지 함께 본다.
+        // 공유 DB에 다른 테스트의 행이 있어도 흔들리지 않게 이 테스트가 만든 회원의 토큰만 센다
         assertThat(sut).hasSize(requestCount).containsOnly(200);
+        long issuedTokenCount = refreshTokenRepository.findAll().stream()
+                .filter(token -> memberIds.contains(token.getMemberId()))
+                .count();
+        assertThat(issuedTokenCount).isEqualTo(requestCount);
     }
 
-    private List<String> saveMembers(int count) {
+    private List<Member> saveMembers(int count) {
         // bcrypt 인코딩은 비싸므로 한 번만 하고 모든 회원이 같은 해시를 쓴다
         String encodedPassword = passwordEncoder.encode(PASSWORD);
-        List<String> loginIds = new ArrayList<>();
+        List<Member> members = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             String loginId = "tester" + i;
-            memberRepository.save(Member.createUser(loginId, encodedPassword, loginId + "@example.com",
-                    "홍길동", "길동이" + i, LocalDateTime.of(2026, 10, 1, 12, 0)));
-            loginIds.add(loginId);
+            members.add(memberRepository.save(Member.createUser(loginId, encodedPassword, loginId + "@example.com",
+                    "홍길동", "길동이" + i, LocalDateTime.of(2026, 10, 1, 12, 0))));
         }
         memberRepository.flush();
-        return loginIds;
+        return members;
     }
 
     private int performLogin(String loginId) throws Exception {
