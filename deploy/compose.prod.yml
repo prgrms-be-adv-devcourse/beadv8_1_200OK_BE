@@ -59,6 +59,48 @@ x-kafka-service: &kafka-service
     start_period: 60s
     start_interval: 5s
 
+# ---------- Redis 노드 6대가 같이 쓰는 설정 (#366) ----------
+# 마스터 3 + 복제본 3의 클러스터다. 마스터가 죽으면 복제본이 마스터가 되고(장애 조치), 앱은 새 마스터를 스스로 찾아간다
+# 로컬 docker-compose.yml과 같은 구성이고, 다른 점은 비밀번호(requirepass·masterauth), 호스트 포트를 열지 않는 것, 모든 노드가 컨테이너 포트 6379를 쓰는 것이다
+# 6대가 EC2 1대에 있어서 노드 1대 고장·리더 변경은 버티지만, EC2가 죽거나 다시 시작하면 6대가 함께 내려간다 (docs/DEPLOY.md)
+x-redis-environment: &redis-environment
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD가 필요하다}
+  # healthcheck와 초기화의 redis-cli가 비밀번호를 인자 없이 쓰게 한다
+  REDISCLI_AUTH: ${REDIS_PASSWORD}
+
+x-redis-service: &redis-service
+  image: redis:${REDIS_VERSION:-8.10}-alpine
+  restart: unless-stopped
+  # 비밀번호를 인자로 넘기면 호스트의 ps에 보이므로, 인자 대신 컨테이너 안 설정 파일로 넘긴다
+  # 복제본이 마스터에 붙으려면 masterauth가 필요하고, 장애 조치로 복제본이 마스터가 되므로 노드 6대가 같은 비밀번호를 쓴다
+  # - cluster-config-file: 노드 ID가 담겨, 볼륨에 두어야 재시작해도 같은 노드로 돌아온다
+  # - cluster-node-timeout 5000: 기본 15초는 장애 감지가 느리다
+  # - cluster-require-full-coverage no: 마스터 1대가 죽어도 나머지 슬롯은 계속 서비스한다
+  # - cluster-announce-hostname: 컨테이너를 다시 띄워 IP가 바뀌어도 이름(redis-N)으로 찾는다
+  # - noeviction은 #319 그대로(사용처가 정해지지 않아 키를 몰래 지우지 않는다, 정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
+  # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
+  #   기본값(replica 256mb)이 mem_limit(160m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다(배포 때 복제본을 다시 띄울 때마다 지나는 경로)
+  #   상한을 넘으면 느린 복제본의 연결이 끊기고 다시 동기화하지만 마스터는 살아남는다
+  command:
+    - sh
+    - -c
+    - |
+      umask 077
+      printf 'requirepass "%s"\nmasterauth "%s"\n' "$$REDIS_PASSWORD" "$$REDIS_PASSWORD" > /tmp/redis.conf
+      exec redis-server /tmp/redis.conf --cluster-enabled yes --cluster-config-file /data/nodes.conf \
+        --cluster-node-timeout 5000 --cluster-require-full-coverage no \
+        --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname \
+        --maxmemory 96mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no \
+        --repl-backlog-size 4mb --client-output-buffer-limit "replica 32mb 16mb 60"
+  # maxmemory 96mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 약 1GiB이므로 EC2 실측 후 조정한다 (docs/DEPLOY.md)
+  mem_limit: 160m
+  healthcheck:
+    # 클러스터가 아직 만들어지지 않았거나 슬롯이 비면 fail이라 unhealthy다. app은 6대 모두 healthy여야 시작한다
+    test: ['CMD-SHELL', 'redis-cli cluster info | grep -q cluster_state:ok']
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
 services:
   mysql:
     image: mysql:${MYSQL_VERSION:-9.4}
@@ -82,29 +124,78 @@ services:
       retries: 20
       start_period: 20s
 
-  redis:
-    image: redis:${REDIS_VERSION:-8.10}-alpine
-    restart: unless-stopped
+  redis-1:
+    <<: *redis-service
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD가 필요하다}
-      # healthcheck의 redis-cli가 비밀번호를 인자 없이 쓰게 한다
-      REDISCLI_AUTH: ${REDIS_PASSWORD}
-    # 비밀번호를 --requirepass 인자로 넘기면 호스트의 ps에 보이므로, 인자 대신 컨테이너 안 설정 파일로 넘긴다
-    # 사용처(캐시·락)가 정해지지 않아 키를 몰래 지우지 않는 noeviction으로 두고, 다시 만들 수 있는 데이터라 영속성(RDB·AOF)은 끈다
-    command:
-      - sh
-      - -c
-      - |
-        umask 077
-        printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
-        exec redis-server /tmp/redis.conf --maxmemory 256mb --maxmemory-policy noeviction --save '' --appendonly no
-    # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값
-    mem_limit: 384m
-    healthcheck:
-      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      <<: *redis-environment
+      NODE_HOSTNAME: redis-1
+    volumes:
+      - redis-1-data:/data
+
+  redis-2:
+    <<: *redis-service
+    environment:
+      <<: *redis-environment
+      NODE_HOSTNAME: redis-2
+    volumes:
+      - redis-2-data:/data
+
+  redis-3:
+    <<: *redis-service
+    environment:
+      <<: *redis-environment
+      NODE_HOSTNAME: redis-3
+    volumes:
+      - redis-3-data:/data
+
+  redis-4:
+    <<: *redis-service
+    environment:
+      <<: *redis-environment
+      NODE_HOSTNAME: redis-4
+    volumes:
+      - redis-4-data:/data
+
+  redis-5:
+    <<: *redis-service
+    environment:
+      <<: *redis-environment
+      NODE_HOSTNAME: redis-5
+    volumes:
+      - redis-5-data:/data
+
+  redis-6:
+    <<: *redis-service
+    environment:
+      <<: *redis-environment
+      NODE_HOSTNAME: redis-6
+    volumes:
+      - redis-6-data:/data
+
+  # 노드 6대를 클러스터로 묶고 끝나는 1회성 서비스. 이미 묶여 있으면 아무것도 하지 않는다 (redis-cluster-init.sh)
+  # 노드의 healthcheck가 cluster_state:ok라 클러스터를 만들기 전에는 healthy가 될 수 없으므로, 노드가 healthy가 아니라 started이면 시작한다
+  redis-cluster-init:
+    image: redis:${REDIS_VERSION:-8.10}-alpine
+    restart: "no"
+    depends_on:
+      redis-1:
+        condition: service_started
+      redis-2:
+        condition: service_started
+      redis-3:
+        condition: service_started
+      redis-4:
+        condition: service_started
+      redis-5:
+        condition: service_started
+      redis-6:
+        condition: service_started
+    environment:
+      REDIS_NODES: redis-1:6379 redis-2:6379 redis-3:6379 redis-4:6379 redis-5:6379 redis-6:6379
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD가 필요하다}
+    volumes:
+      - ./redis-cluster-init.sh:/redis-cluster-init.sh:ro
+    command: ['sh', '/redis-cluster-init.sh']
 
   # 브로커 3대는 이름·번호만 다르다. 1대씩 다시 띄우는 순서는 deploy.sh가 맡는다
   kafka-1:
@@ -143,10 +234,22 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
-      # 대신 Redis가 healthy가 되지 못하면(예: REDIS_PASSWORD 형식 오류) 앱이 뜨지 않고 배포가 실패한다
-      redis:
+      # mysql과 같이 Redis 6대도 healthy(cluster_state:ok)가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다 (#366)
+      # 대신 Redis가 healthy가 되지 못하면(예: REDIS_PASSWORD 형식 오류, 클러스터 초기화 실패) 앱이 뜨지 않고 배포가 실패한다
+      redis-1:
         condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+      redis-4:
+        condition: service_healthy
+      redis-5:
+        condition: service_healthy
+      redis-6:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
       # mysql과 같이 Kafka 3대도 healthy가 된 뒤에 앱을 띄운다 (#318)
       # 대신 브로커가 healthy가 되지 못하면 앱이 뜨지 않고 배포가 실패한다. 헬스체크 오판으로 배포가 자주 막히면 service_started로 바꾼다
       kafka-1:
@@ -162,8 +265,8 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      # 노드 6대를 모두 적어, 1대가 죽어 있어도 나머지로 처음 접속한다. 이후 토폴로지는 앱이 스스로 읽는다 (#366)
+      REDIS_CLUSTER_NODES: redis-1:6379,redis-2:6379,redis-3:6379,redis-4:6379,redis-5:6379,redis-6:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       # 브로커 3대를 모두 적어, 1대가 죽어 있어도 나머지로 처음 접속한다
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
@@ -179,8 +282,8 @@ services:
       # 남겨 두는 이유: APP_IMAGE_TAG만 바꾸는 표준 롤백(docs/DEPLOY.md 4절)으로 이전 이미지가 뜨게 하기 위해서다
       # TODO(#313): RS256 버전이 운영에서 안정된 뒤 서버 .env의 JWT_SECRET과 함께 이 줄을 지운다
       JWT_SECRET: ${JWT_SECRET:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(384m)·Kafka(3대 약 2GB)를 함께 올리면
-      # 남는 메모리(약 1.5~2GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(6대 합계 960m)·Kafka(3대 약 2GB)를 함께 올리면
+      # 남는 메모리(약 0.6~1.1GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     volumes:
       # 서버의 /opt/paldo-gotgan/keys. JWT 키 PEM과 그 설정(jwt.yaml)을 둔다. 앱은 application-prod.yml에서 jwt.yaml을 읽는다
@@ -218,7 +321,14 @@ networks:
 
 # 브로커마다 따로 둔다. 도커 볼륨이라 루트 디스크(/var/lib/docker)에 쌓인다
 # 인스턴스를 교체하면 루트 디스크와 함께 사라져 아직 안 읽힌 메시지도 사라진다. 원본 데이터는 DB에 있으므로 받아들인다
+# Redis도 노드마다 따로 둔다. 볼륨에는 노드 ID(nodes.conf)와 RDB가 들어 있어, 지우면 6대를 모두 지워 새 클러스터로 시작해야 한다 (#366)
 volumes:
+  redis-1-data:
+  redis-2-data:
+  redis-3-data:
+  redis-4-data:
+  redis-5-data:
+  redis-6-data:
   kafka-1-data:
   kafka-2-data:
   kafka-3-data:
