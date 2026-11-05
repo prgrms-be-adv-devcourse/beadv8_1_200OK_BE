@@ -31,14 +31,16 @@ class PayoutCandidateKafkaListenerTest {
     }
 
     @Test
-    void 값이_틀린_구매확정이면_입력_포트를_부르지_않는다() {
+    void 값이_틀린_구매확정이면_예외를_던지고_입력_포트를_부르지_않는다() {
         // given: 주문상품 ID가 없음
         OrderProductConfirmedMessage message = new OrderProductConfirmedMessage(100L, null, 10L, 10_000L, 3_000L);
 
-        // when
-        sut.onKafka(message);
-
-        // then: 예외 없이 끝나고 정산후보 생성은 요청하지 않는다 (요구사항 자체가 "부르지 않는다")
+        // when & then: 규칙대로 표준 예외를 던진다. 메시지에 검색용 태그와 걸린 이유가 들어간다
+        assertThatThrownBy(() -> sut.onKafka(message))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("[PAYOUT_CANDIDATE_SKIPPED]")
+                .hasMessageContaining("reason=orderItemId 없음");
+        // 정산후보 생성은 요청하지 않는다 (요구사항 자체가 "부르지 않는다")
         then(payoutCandidateUseCase).shouldHaveNoInteractions();
     }
 

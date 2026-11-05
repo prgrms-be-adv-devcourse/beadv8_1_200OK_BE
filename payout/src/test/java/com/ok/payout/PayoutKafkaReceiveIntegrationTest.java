@@ -142,7 +142,7 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
         kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, "same-key", goodMessage);
 
         // then: 정상 메시지가 처리되면, 잘못된 메시지는 저장되지 않고 뒤 메시지를 막지 않은 것이다
-        // (이 결과는 #421 전에도 같았다. 다시 시도하지 않고 바로 넘기는지는 입구 단위 테스트가 확인한다)
+        // (입구가 IllegalArgumentException을 던지면 기본 오류 처리기가 몇 번 다시 시도한 뒤 넘긴다. 예외를 던지는지는 입구 단위 테스트가 확인한다)
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(candidateRepository.findAllByOrderId(goodOrderId)).hasSize(2));
         assertThat(candidateRepository.findAllByOrderId(badOrderId)).isEmpty();
@@ -168,7 +168,7 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
         kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, "same-key", goodMessage);
 
         // then: 정상 메시지가 처리되면, 잘못된 메시지는 기록되지 않고 뒤 메시지를 막지 않은 것이다
-        // (이 결과는 #421 전에도 같았다. 다시 시도하지 않고 바로 넘기는지는 입구 단위 테스트가 확인한다)
+        // (입구가 IllegalArgumentException을 던지면 기본 오류 처리기가 몇 번 다시 시도한 뒤 넘긴다. 예외를 던지는지는 입구 단위 테스트가 확인한다)
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(deductionRepository.findByOrderId(goodOrderId)).isPresent());
         assertThat(deductionRepository.findByOrderId(badOrderId)).isEmpty();

@@ -40,6 +40,7 @@ public class PayoutCandidateEventListener {
         if (invalidReason.isPresent()) {
             log.warn("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 이벤트라 정산후보를 만들지 않습니다. reason={}, command={}",
                     invalidReason.get(), command);
+            // Spring 입구만 규칙(표준 예외)과 달리 정상 종료한다. Kafka 입구는 예외를 던진다. 이유와 위험은 PayoutInboundEventValidator 주석에 있다
             return;
         }
         // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 재처리 대상으로 남긴다.
