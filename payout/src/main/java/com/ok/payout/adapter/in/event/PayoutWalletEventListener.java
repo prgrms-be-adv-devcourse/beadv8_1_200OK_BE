@@ -35,7 +35,7 @@ public class PayoutWalletEventListener {
                 event.paidAt()
         );
         // 공용 이벤트(WalletPaymentCompletedEvent, common)의 생성자가 이미 null을 막으므로, 이 길에서는 음수 금액만 검사에 걸린다
-        // 값이 잘못된 이벤트는 다시 처리해도 결과가 같으므로, 차감 기록을 남기지 않고 기록만 남긴 뒤 정상 종료해 재처리 대상에서 뺀다.
+        // 값이 잘못된 이벤트는 다시 처리해도 결과가 같으므로, 차감 기록을 만들지 않고 로그만 남긴 뒤 정상 종료해 재처리 대상에서 뺀다.
         // 확인은 트랜잭션이 걸린 서비스를 부르기 전에 끝낸다. 서비스 안에서 예외가 나면 트랜잭션이 롤백 전용이 되어,
         // 이 리스너(REQUIRES_NEW)가 정상 종료할 수 없다.
         Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);

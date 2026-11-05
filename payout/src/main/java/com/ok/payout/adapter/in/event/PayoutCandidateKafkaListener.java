@@ -31,7 +31,7 @@ public class PayoutCandidateKafkaListener {
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage")
     void onKafka(OrderProductConfirmedMessage message) {
         PurchaseConfirmedCommand command = message.toCommand();
-        // 값이 잘못된 메시지는 다시 받아도 결과가 같으므로, 정산후보를 만들지 않고 기록만 남긴 뒤 정상 종료해 재시도 대상에서 뺀다.
+        // 값이 잘못된 메시지는 다시 받아도 결과가 같으므로, 정산후보를 만들지 않고 로그만 남긴 뒤 정상 종료해 재시도 대상에서 뺀다.
         // 확인은 서비스를 부르기 전에 입구에서 끝낸다. Spring 이벤트 입구와 같은 규칙을 지키기 위해서다.
         Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);
         if (invalidReason.isPresent()) {

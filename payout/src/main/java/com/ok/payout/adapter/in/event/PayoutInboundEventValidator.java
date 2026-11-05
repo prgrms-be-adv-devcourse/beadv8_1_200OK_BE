@@ -10,6 +10,10 @@ import java.util.Optional;
  * 로그만 남기고 정상 종료하기 위해 둔다(#421).
  * Spring·Kafka 두 입구가 같은 기준을 쓰도록 한곳에 모았다. 로그는 부르는 입구가 남긴다.
  * <p>
+ * 걸러낸 이벤트는 태그 로그({@code [PAYOUT_CANDIDATE_SKIPPED]}, {@code [PAYOUT_WALLET_DEDUCTION_SKIPPED]})로만 남고 DB에는 남지 않는다.
+ * 실패 메시지 보관(DLT·테이블)과 다시 처리는 outbox 등 팀 공통 방식이 생길 때 그 방식으로 붙인다(이슈 #421 범위).
+ * 정산만 따로 보관 테이블을 만들면 공통 방식이 생긴 뒤 두 곳에 나뉘어 남기 때문에 지금은 만들지 않는다.
+ * <p>
  * 팀 규칙과 다르다는 것을 알고 둔 구조다. 규칙(exception.md, "다른 모듈이 보낸 값의 오류는 표준 예외를 던진다")대로라면
  * 여기서 IllegalArgumentException을 던져야 하지만, 멘토 리뷰("재처리해도 안 되는 이벤트는 기록 후 정상 종료")를 반영하다
  * 규칙과 어긋나는 것을 발견했다. 규칙대로 던지면 Spring 이벤트 입구에서는 실패 기록이 쌓이는데,
@@ -26,7 +30,7 @@ final class PayoutInboundEventValidator {
     /**
      * 구매확정 값이 틀렸으면 먼저 걸린 이유 하나를 돌려준다. 0원은 정상이다(무료 상품·무료배송).
      */
-    public static Optional<String> findInvalidReason(PurchaseConfirmedCommand command) {
+    static Optional<String> findInvalidReason(PurchaseConfirmedCommand command) {
         if (command.orderId() == null) {
             return Optional.of("orderId 없음");
         }
@@ -54,7 +58,7 @@ final class PayoutInboundEventValidator {
     /**
      * 지갑 차감 값이 틀렸으면 먼저 걸린 이유 하나를 돌려준다. 0원은 정상이다.
      */
-    public static Optional<String> findInvalidReason(WalletPaymentCompletedCommand command) {
+    static Optional<String> findInvalidReason(WalletPaymentCompletedCommand command) {
         if (command.orderId() == null) {
             return Optional.of("orderId 없음");
         }
