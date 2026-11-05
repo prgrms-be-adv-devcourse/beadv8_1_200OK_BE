@@ -26,11 +26,11 @@ Spring Modulith가 앱에 `@EnableAsync`가 없으면 자동으로 켜 주므로
 | 설정 받는 방법 | 실행기 빈을 직접 등록하고 `app.async.*`를 자체 `@ConfigurationProperties`로 받는다 | 실행기에만 가상 스레드를 쓰려면 직접 만들어야 하고, Boot의 `applicationTaskExecutor`가 물러나 `spring.task.execution.*`는 적용되지 않는다. (미확인) 실제 앱에서 Boot 기본 실행기가 물러나는지는 앱을 띄워 확인하지 않았다 |
 | 설정 구조 | `executors`를 이름을 키로 하는 Map으로 두고 `default-executor`를 따로 둔다 | List는 모듈 yml로 덮어쓸 때 통째로 바뀌고 환경변수를 순서 번호로 지정해야 한다. Map은 같은 이름의 항목만 필드 단위로 합쳐진다 (테스트로 확인) |
 | 실행기 이름과 빈 | 하이브리드: 이름은 코드(`@Bean` 한 줄, 상수), 값은 yml, 만드는 로직은 공용 `AsyncExecutorFactory` (사용자 결정) | 모듈마다 늘어날 예정이라 설정을 읽고 옵션을 채우는 로직의 중복을 없앤다. 이름이 코드에 있어 IDE로 추적되고, 선언한 이름이 yml에 없으면 기동 때 실패한다 |
-| 실행기 종류 | 실행기별 `type`: `platform`(대기열이 있는 일반 스레드 풀, `pool-size`·`queue-capacity`)과 `virtual`(작업마다 가상 스레드, `concurrency-limit`). `event`는 `platform` (사용자 결정) | 대기열이 없는 `virtual`은 상한이 차면 작업을 넘긴 요청 스레드가 기다린다(테스트로 확인). 대기열이 있는 풀은 가득 차기 전까지 즉시 반환한다(테스트로 확인). 리스너가 요청 스레드를 막지 않게 하려고 `event`는 `platform`으로 한다 |
-| 가득 찼을 때 | 거절하거나 버리지 않고 작업을 넘긴 스레드가 자리가 날 때까지 기다린다. 거절 옵션은 두지 않는다 (사용자 결정) | 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 `TaskRejectedException`이 올라가 이미 커밋된 요청이 오류가 되고 같은 커밋의 다른 콜백이 실행되지 않는다(테스트로 확인). 재시도는 비즈니스 로직과 무관하게 별도로 한다. 대기열 크기 1000은 측정 근거 없는 임시값이다 |
+| 실행기 종류 | 실행기별 `type`: `platform`(대기열이 있는 일반 스레드 풀, `pool-size`·`queue-capacity`)과 `virtual`(작업마다 가상 스레드, `concurrency-limit`). `event`는 `platform` (사용자 결정) | 대기열이 없는 `virtual`은 상한이 차면 작업을 넘긴 요청 스레드가 기다린다(테스트로 확인). 대기열이 있는 풀은 가득 차기 전까지 즉시 반환한다(임시 테스트로 확인, 저장소에는 남기지 않음). 리스너가 요청 스레드를 막지 않게 하려고 `event`는 `platform`으로 한다 |
+| 가득 찼을 때 | 거절하거나 버리지 않고 작업을 넘긴 스레드가 자리가 날 때까지 기다린다. 거절 옵션은 두지 않는다 (사용자 결정) | 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 `TaskRejectedException`이 올라가 이미 커밋된 요청이 오류가 되고 같은 커밋의 다른 콜백이 실행되지 않는다(`RejectedAfterCommitTest`로 확인). 재시도는 비즈니스 로직과 무관하게 별도로 한다. 대기열 크기 1000은 측정 근거 없는 임시값이다 |
 | 가상 스레드 되돌리기 | 별도 `virtual-threads` 토글 없이 `type`을 `platform`으로 바꾼다 | 작업마다 일반 스레드를 만드는 방식은 상한이 크면 스레드 OOM 위험이 있어, 되돌릴 때는 풀을 쓴다 |
 | MDC | `MdcTaskDecorator`를 모든 실행기에 적용하고, MDC에 있는 값을 그대로 복사하기만 한다 (사용자 결정) | 값을 넣는 쪽(TraceID 필터)이 아직 없어 지금은 전파되는 값이 없다. 통로를 먼저 만들어 두고 TraceID 구현에서 채운다 |
-| `event` 값 변경 | 환경변수(`ASYNC_EVENT_*`) 또는 `common-async.yaml` | `spring.config.import`한 파일의 값이 import한 앱 yml보다 우선한다 (테스트로 확인) |
+| `event` 값 변경 | 환경변수(`ASYNC_EVENT_*`) 또는 `common-async.yaml` | `spring.config.import`한 파일의 값이 import한 앱 yml보다 우선한다 (임시 테스트로 확인, 저장소에는 남기지 않음) |
 
 ## 버린 대안
 
