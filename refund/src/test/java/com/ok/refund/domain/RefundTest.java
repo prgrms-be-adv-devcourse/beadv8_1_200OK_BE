@@ -47,6 +47,21 @@ class RefundTest {
     }
 
     @Test
+    void 요청하면_배송비_세_칸은_0이고_돌려줄_금액은_상품_금액이다() {
+        // when
+        Refund sut = requested();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getRefundAmount()).isEqualTo(20_000L);
+        });
+    }
+
+    @Test
     void 취소_사유는_없어도_된다() {
         // when
         Refund sut = Refund.request(10L, 101L, 1, 1L, 2L, 55L, "양말", "흰색", 10_000L, null);
@@ -105,7 +120,7 @@ class RefundTest {
         Refund sut = requested();
 
         // when
-        sut.approve(NOW);
+        sut.approve(NOW, RefundShippingFee.none());
 
         // then
         assertThat(sut).isNotNull();
@@ -116,6 +131,71 @@ class RefundTest {
             softly.assertThat(sut.getRejectReason()).isNull();
             softly.assertThat(sut.getItemAmount()).isEqualTo(20_000L);
         });
+    }
+
+    @Test
+    void 승인하면_배송비_세_칸을_저장하고_처리_중이_된다() {
+        // given
+        Refund sut = requested();
+
+        // when: 칸마다 다른 값을 넣어 칸이 뒤바뀌어 저장되지 않는지 본다
+        sut.approve(NOW, new RefundShippingFee(3_000L, 2_000L, 1_000L, true));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(sut.getRemoteAreaFeeAmount()).isEqualTo(2_000L);
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isEqualTo(1_000L);
+            softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
+        });
+    }
+
+    // 돌려줄 금액 = 상품 금액 + 돌려줄 배송비 + 도서산간 운임 − 뺀 배송비
+    @ParameterizedTest
+    @MethodSource("배송비_판단과_돌려줄_금액")
+    void 돌려줄_금액은_상품_금액에_배송비를_더하고_뺀_배송비를_뺀다(RefundShippingFee fee, long expected) {
+        // given
+        Refund sut = requested();
+        sut.approve(NOW, fee);
+
+        // when & then
+        assertThat(sut.getRefundAmount()).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> 배송비_판단과_돌려줄_금액() {
+        return Stream.of(
+                Arguments.of(RefundShippingFee.none(), 20_000L),
+                Arguments.of(RefundShippingFee.refund(3_000L, 2_000L), 25_000L),
+                Arguments.of(RefundShippingFee.deduct(3_000L), 17_000L),
+                Arguments.of(RefundShippingFee.deduct(20_000L), 0L));
+    }
+
+    @Test
+    void 받을_수_없는_판단으로_승인하면_예외를_던지고_바꾸지_않는다() {
+        // given
+        Refund refund = requested();
+
+        // when & then
+        assertThatThrownBy(() -> refund.approve(NOW, RefundShippingFee.notAllowed()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("받을 수 없는 배송비 판단으로는 승인할 수 없습니다.");
+        assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    @Test
+    void 요청됨이_아니면_배송비와_함께_승인해도_막고_배송비를_저장하지_않는다() {
+        // given
+        Refund refund = requested();
+        refund.withdraw(NOW);
+
+        // when & then
+        assertThatThrownBy(() -> refund.approve(NOW, RefundShippingFee.refund(3_000L, 0)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+        assertThat(refund.getShippingFeeAmount()).isZero();
     }
 
     @Test
@@ -187,11 +267,11 @@ class RefundTest {
     static Stream<Arguments> 결정된_요청과_동작() {
         // 이름을 붙여야 실패했을 때 어느 상태에서 어느 동작이 통과했는지 보인다
         List<Named<Consumer<Refund>>> decisions = List.of(
-                Named.of("처리 중", refund -> refund.approve(NOW)),
+                Named.of("처리 중", refund -> refund.approve(NOW, RefundShippingFee.none())),
                 Named.of("거절", refund -> refund.reject("사유", NOW)),
                 Named.of("철회", refund -> refund.withdraw(NOW)));
         List<Named<Consumer<Refund>>> actions = List.of(
-                Named.of("승인", refund -> refund.approve(NOW)),
+                Named.of("승인", refund -> refund.approve(NOW, RefundShippingFee.none())),
                 Named.of("거절", refund -> refund.reject("사유", NOW)),
                 Named.of("철회", refund -> refund.withdraw(NOW)));
         List<Arguments> cases = new ArrayList<>();

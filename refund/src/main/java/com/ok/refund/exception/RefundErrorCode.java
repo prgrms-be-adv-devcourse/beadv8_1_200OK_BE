@@ -13,6 +13,9 @@ public enum RefundErrorCode implements ErrorCode {
     INVALID_REFUND_QUANTITY(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid refund quantity", "취소 개수는 1 이상이어야 합니다."),
     REFUND_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Refund quantity exceeded", "취소할 수 있는 개수를 넘었습니다."),
     REFUND_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "Refund already in progress", "이 상품에 처리 중인 환불 요청이 있습니다."),
+    // 일부 취소로 무료배송 기준이 깨져 기본 배송비를 빼야 하는데 취소 금액이 그보다 작을 때. 승인 때 자동 거절 사유로도 같은 문구를 쓴다
+    PARTIAL_CANCEL_NOT_ALLOWED(HttpStatus.CONFLICT, "Partial cancel not allowed",
+            "취소 금액이 남은 상품의 배송비보다 적어 이 상품만 취소할 수 없습니다."),
 
     // 승인·거절·철회
     REFUND_NOT_FOUND(HttpStatus.NOT_FOUND, "Refund not found", "환불 요청을 찾을 수 없습니다."),

@@ -1,6 +1,8 @@
 package com.ok.refund.client;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.refund.domain.BundleItem;
+import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.service.dto.RefundableOrderItem;
 import com.sun.net.httpserver.HttpServer;
@@ -24,6 +26,29 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 조용히 틀리므로, 요청서 모양의 JSON이 그대로 옮겨 담기는지 JDK 내장 서버로 확인한다.
 // 주문 팀 API가 아직 없어 실제 주문 모듈 대신 이 서버가 요청서대로 응답한다
 class RefundOrderApiClientTest {
+
+    private static final String ITEMS_JSON = """
+            [ { "orderItemId": 101, "unitPrice": 10000, "quantity": 3 },
+                { "orderItemId": 102, "unitPrice": 5000, "quantity": 1 } ]""";
+
+    // 요청서 ① 응답 전체 모양. 테스트마다 칸 하나만 바꿔 쓴다
+    private static final String VALID_BODY = """
+            {
+              "orderId": 10, "orderItemId": 101,
+              "buyerId": 1, "sellerId": 5,
+              "productOptionId": 55,
+              "productName": "양말", "optionName": "흰색",
+              "status": "PREPARING",
+              "unitPrice": 10000, "quantity": 3, "refundedQuantity": 1,
+              "sellerGroup": {
+                "shippingFee": 1000,
+                "remoteAreaFee": 2000,
+                "baseShippingFee": 3000,
+                "freeShippingThreshold": 50000,
+                "items": %s
+              }
+            }
+            """.formatted(ITEMS_JSON);
 
     private final AtomicInteger status = new AtomicInteger(200);
     private final AtomicReference<String> body = new AtomicReference<>("");
@@ -57,23 +82,9 @@ class RefundOrderApiClientTest {
 
     @Test
     void 요청서_모양의_주문_응답을_그대로_옮겨_담는다() {
-        // given: 요청서 전체 모양. 아직 받지 않는 칸(refundedQuantity, sellerGroup)이 와도 깨지지 않아야 한다
-        body.set("""
-                {
-                  "orderId": 10, "orderItemId": 101,
-                  "buyerId": 1, "sellerId": 5,
-                  "productOptionId": 55,
-                  "productName": "양말", "optionName": "흰색",
-                  "status": "PREPARING",
-                  "unitPrice": 10000, "quantity": 3, "refundedQuantity": 1,
-                  "sellerGroup": {
-                    "shippingFee": 3000,
-                    "baseShippingFee": 3000,
-                    "freeShippingThreshold": 50000,
-                    "items": [ { "orderItemId": 101, "unitPrice": 10000, "quantity": 3 } ]
-                  }
-                }
-                """);
+        // given: 요청서 전체 모양. 받지 않는 칸(refundedQuantity)이 와도 깨지지 않아야 한다.
+        // 묶음 금액 칸은 같은 long이라 뒤바뀌어도 컴파일이 되므로 칸마다 다른 값을 넣는다
+        body.set(VALID_BODY);
 
         // when
         RefundableOrderItem orderItem = sut.getOrderItem(10L, 101L);
@@ -93,6 +104,79 @@ class RefundOrderApiClientTest {
             softly.assertThat(orderItem.unitPrice()).isEqualTo(10_000L);
             softly.assertThat(orderItem.quantity()).isEqualTo(3);
         });
+    }
+
+    @Test
+    void 묶음_배송비_값을_모두_옮긴다() {
+        // given
+        body.set(VALID_BODY);
+
+        // when
+        BundleShipping sut = this.sut.getOrderItem(10L, 101L).bundle();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.shippingFee()).isEqualTo(1_000L);
+            softly.assertThat(sut.remoteAreaFee()).isEqualTo(2_000L);
+            softly.assertThat(sut.baseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(sut.freeShippingThreshold()).isEqualTo(50_000L);
+            softly.assertThat(sut.items()).containsExactly(
+                    new BundleItem(101L, 10_000L, 3),
+                    new BundleItem(102L, 5_000L, 1));
+        });
+    }
+
+    @Test
+    void 무료배송_기준이_없으면_null로_옮긴다() {
+        // given
+        body.set(VALID_BODY.replace("\"freeShippingThreshold\": 50000", "\"freeShippingThreshold\": null"));
+
+        // when & then
+        assertThat(sut.getOrderItem(10L, 101L).bundle().freeShippingThreshold()).isNull();
+    }
+
+    @Test
+    void 묶음이_없으면_주문_쪽_버그로_표준_예외를_던진다() {
+        // given: 0원 배송비로 채워 넘기면 돌려줄 배송비를 조용히 빠뜨린다
+        body.set(VALID_BODY.substring(0, VALID_BODY.indexOf(",\n  \"sellerGroup\"")) + "\n}");
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("주문 상품 조회 응답에 판매자 묶음이 없습니다. orderId=10, orderItemId=101");
+    }
+
+    @Test
+    void 묶음의_상품_목록이_없으면_표준_예외를_던진다() {
+        // given
+        body.set(VALID_BODY.replace(ITEMS_JSON, "null"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("주문 상품 조회 응답의 판매자 묶음에 상품 목록이 없습니다.");
+    }
+
+    @Test
+    void 묶음_금액_칸이_빠지면_0원으로_채우지_않고_예외를_던진다() {
+        // given: 기본 배송비 칸이 없는 응답
+        body.set(VALID_BODY.replace("\"baseShippingFee\": 3000,", ""));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(RestClientException.class);
+    }
+
+    @Test
+    void 묶음_금액이_음수면_표준_예외를_던진다() {
+        // given
+        body.set(VALID_BODY.replace("\"shippingFee\": 1000", "\"shippingFee\": -1"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("묶음 배송비·도서산간 운임·기본 배송비는 0 이상이어야 합니다.");
     }
 
     @Test

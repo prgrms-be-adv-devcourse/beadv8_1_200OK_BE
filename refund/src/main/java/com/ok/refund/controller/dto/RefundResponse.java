@@ -5,7 +5,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 
-// 상세 API를 두지 않으므로 목록 한 줄에 필요한 값을 모두 담는다. 배송비·완료 시각은 그 칸을 만드는 이슈(#410, #414)에서 더한다
+// 상세 API를 두지 않으므로 목록 한 줄에 필요한 값을 모두 담는다. 완료 시각은 그 칸을 만드는 이슈(#414)에서 더한다.
+// 돌려줄 금액 합계를 서버가 계산해 주는 이유: 화면마다 더하고 빼면 부호 실수로 금액이 어긋날 수 있다
+// 거절·철회도 승인 때 정한 금액 칸을 그대로 보여 준다. 끝난 요청인지는 상태로 구분한다
 @Schema(description = "환불 요청 한 건")
 public record RefundResponse(
 
@@ -33,6 +35,21 @@ public record RefundResponse(
         @Schema(description = "상품 금액 = 단가 x 개수 (원). 배송비는 판매자 승인 때 정해진다", example = "10000")
         long itemAmount,
 
+        @Schema(description = "돌려줄 배송비 (원). 판매자 묶음(한 주문 안 같은 판매자 상품)이 이 환불로 전부 취소될 때만 "
+                + "낸 배송비와 앞선 환불에서 뺀 배송비를 돌려준다. 승인 전에는 0", example = "3000")
+        long shippingFeeAmount,
+
+        @Schema(description = "돌려줄 도서산간 운임 (원). 판매자 묶음이 이 환불로 전부 취소될 때만. 승인 전에는 0", example = "0")
+        long remoteAreaFeeAmount,
+
+        @Schema(description = "환불 금액에서 뺀 배송비 (원). 일부 취소로 남은 묶음 금액이 무료배송 기준 아래로 처음 내려가면 "
+                + "판매자의 기본 배송비를 뺀다(남은 상품을 보낼 택배비). 아니면 0. 승인 전에는 0", example = "0")
+        long deductedShippingFeeAmount,
+
+        @Schema(description = "돌려줄 금액 (원) = 상품 금액 + 돌려줄 배송비 + 도서산간 운임 - 뺀 배송비. 승인 전에는 상품 금액과 같다",
+                example = "13000")
+        long refundAmount,
+
         @Schema(description = "구매자가 적은 취소 사유 (적었을 때만)", example = "옵션을 잘못 골랐습니다.")
         String cancelReason,
 
@@ -40,7 +57,8 @@ public record RefundResponse(
                 example = "REQUESTED")
         String status,
 
-        @Schema(description = "판매자가 적은 거절 사유 (거절일 때만)", example = "이미 포장을 마쳤습니다.")
+        @Schema(description = "거절 사유 (거절일 때만). 판매자가 적은 사유이거나, 승인 때 배송비가 모자라 자동 거절됐으면 그 이유",
+                example = "이미 포장을 마쳤습니다.")
         String rejectReason,
 
         @Schema(description = "요청 시각")
@@ -60,6 +78,10 @@ public record RefundResponse(
                 result.quantity(),
                 result.unitPrice(),
                 result.itemAmount(),
+                result.shippingFeeAmount(),
+                result.remoteAreaFeeAmount(),
+                result.deductedShippingFeeAmount(),
+                result.refundAmount(),
                 result.cancelReason(),
                 result.status(),
                 result.rejectReason(),

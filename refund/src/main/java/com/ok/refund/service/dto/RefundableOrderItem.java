@@ -1,12 +1,14 @@
 package com.ok.refund.service.dto;
 
+import com.ok.refund.domain.BundleShipping;
+
 /**
  * 주문 모듈이 알려 준 주문 상품 정보. 주문 모듈 타입을 가져오지 않고 값으로 옮겨 담는다.
- * 요청 단계(#408)에 쓰는 칸만 있다. 배송비 묶음은 배송비 계산(#410)에서 더한다.
  *
  * @param status    주문 상품 상태 이름 (예: {@code PREPARING}). 주문 모듈 enum을 import하지 않으려고 문자열로 받는다
  * @param unitPrice 주문 시점 단가 (원)
  * @param quantity  산 개수
+ * @param bundle    이 상품이 속한 판매자 묶음의 배송비 값. 요청·승인 때 배송비를 판단할 때 쓴다(#410)
  */
 public record RefundableOrderItem(
         Long orderId,
@@ -18,7 +20,8 @@ public record RefundableOrderItem(
         String optionName,
         String status,
         long unitPrice,
-        int quantity
+        int quantity,
+        BundleShipping bundle
 ) {
 
     /** 1단계는 출고 전 취소만 받는다. 이 값 외의 상태(결제 전, 배송 중, 전부 취소 등)는 모두 요청할 수 없다 */
