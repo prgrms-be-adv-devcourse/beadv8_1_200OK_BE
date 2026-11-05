@@ -1,4 +1,4 @@
-package com.ok.payout.application.dto;
+package com.ok.payout.application.port.in;
 
 // 정산 항목이 관리자 조정 건일 때의 조정 정보
 public record PayoutAdjustmentResult(

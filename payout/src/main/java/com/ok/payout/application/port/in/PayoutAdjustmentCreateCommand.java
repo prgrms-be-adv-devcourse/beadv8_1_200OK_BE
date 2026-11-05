@@ -1,4 +1,4 @@
-package com.ok.payout.application.dto;
+package com.ok.payout.application.port.in;
 
 // eventType은 문자열로 받음. 컨트롤러 쪽은 domain enum을 쓸 수 없어서, enum 변환은 조정 기능을 열 때 서비스에서 함
 public record PayoutAdjustmentCreateCommand(

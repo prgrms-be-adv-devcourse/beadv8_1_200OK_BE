@@ -5,7 +5,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
-import com.ok.payout.application.dto.PurchaseConfirmedCommand;
+import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

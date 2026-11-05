@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.web.dto;
 
-import com.ok.payout.application.dto.PayoutAdjustmentResult;
+import com.ok.payout.application.port.in.PayoutAdjustmentResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 // 판매자가 보는 조정 정보. 관리자용(PayoutAdjustmentResponse)에서 조정 번호·관리자 ID를 뺀 응답

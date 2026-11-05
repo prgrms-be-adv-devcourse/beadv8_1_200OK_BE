@@ -1,4 +1,4 @@
-package com.ok.payout.application.dto;
+package com.ok.payout.application.port.in;
 
 // verifyStep 결과 (#290). tasklet이 배치 실행 기록에 수를 남기는 데 씀
 // 전부 걸려 정산할 것이 0건인 경우는 verify가 결과를 돌려주지 않고 예외로 멈춤 (DRAFT_ALL_ORDERS_MISMATCHED)

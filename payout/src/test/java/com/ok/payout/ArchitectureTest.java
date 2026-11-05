@@ -42,7 +42,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
  * 정산 모듈의 헥사고날 구조(이슈 #441)를 검사한다.
  * <ul>
  *   <li>{@code domain}: 엔티티와 정책. 바깥 레이어와 저장소·메시징·배치·웹 기술을 모른다 (엔티티라 JPA·Hibernate 애노테이션은 쓴다).</li>
- *   <li>{@code application}: {@code port.in}(유스케이스), {@code port.out}(저장소·발행 포트), {@code service}(유스케이스 구현), {@code dto}.</li>
+ *   <li>{@code application}: {@code port.in}(유스케이스와 그 입출력 값 Command·Query·Result), {@code port.out}(저장소·발행 포트와 그 값 Row·발행 명령), {@code service}(유스케이스 구현).</li>
  *   <li>{@code adapter.in}: {@code web}(컨트롤러), {@code event}(Spring·Kafka 리스너), {@code batch}(잡 설정·실행기·스케줄러).</li>
  *   <li>{@code adapter.out}: {@code persistence}(JPA·QueryDSL 구현), {@code event}(Kafka 발행 구현).</li>
  * </ul>
@@ -92,7 +92,7 @@ class ArchitectureTest {
 
     // web·event를 나열하지 않고 adapter.in 전체에서 batch만 뺀다. 새 입구(예: adapter.in.grpc)가 생겨도 같은 규칙을 받게 한다
     @ArchTest
-    static final ArchRule 배치를_뺀_입구는_유스케이스_포트와_dto만_안다 = noClasses()
+    static final ArchRule 배치를_뺀_입구는_입력_포트만_안다 = noClasses()
             .that().resideInAPackage("..adapter.in..")
             .and().resideOutsideOfPackage("..adapter.in.batch..")
             .should().dependOnClassesThat().resideInAnyPackage(
@@ -134,7 +134,7 @@ class ArchitectureTest {
 
     // 포트
 
-    // 포트가 주고받는 값(조회 결과 Row, 발행 명령 등 record)은 포트 옆에 둔다. dto에 두면 dto ↔ port.out 순환이 생긴다
+    // 포트가 주고받는 값(record)은 그 포트 옆에 둔다: 입력 포트의 Command·Query·Result는 port.in, 조회 결과 Row와 발행 명령은 port.out. 한곳(dto)에 모으면 dto ↔ port.out 순환이 생긴다
     @ArchTest
     static final ArchRule 포트는_인터페이스다 = classes()
             .that().resideInAnyPackage("..application.port.in..", "..application.port.out..")

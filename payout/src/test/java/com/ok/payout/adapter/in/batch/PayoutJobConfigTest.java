@@ -1,8 +1,8 @@
 package com.ok.payout.adapter.in.batch;
 
 import com.ok.payout.domain.PayoutPolicy;
-import com.ok.payout.application.dto.PayoutDraftResult;
-import com.ok.payout.application.dto.PayoutVerifyResult;
+import com.ok.payout.application.port.in.PayoutDraftResult;
+import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

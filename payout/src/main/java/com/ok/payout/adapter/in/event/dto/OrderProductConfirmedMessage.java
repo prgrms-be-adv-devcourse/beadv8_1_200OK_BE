@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.event.dto;
 
-import com.ok.payout.application.dto.PurchaseConfirmedCommand;
+import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 
 /**
  * 주문이 Kafka로 보내는 구매확정 메시지를 정산이 읽는 모양. 필드 뜻은 주문 담당이 정했다(#339 "정산이 받는 JSON 약속").

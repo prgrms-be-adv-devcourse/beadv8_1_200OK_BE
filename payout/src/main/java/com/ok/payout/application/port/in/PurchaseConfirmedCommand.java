@@ -1,4 +1,4 @@
-package com.ok.payout.application.dto;
+package com.ok.payout.application.port.in;
 
 // 구매확정된 주문상품 정보. 정산후보 생성(PayoutCandidateService)의 입력
 // 서비스는 주문 모듈과의 계약 타입(common.event.OrderProductConfirmedEvent)을 직접 받지 않고,

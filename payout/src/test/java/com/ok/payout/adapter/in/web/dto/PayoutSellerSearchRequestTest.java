@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.web.dto;
 
-import com.ok.payout.application.dto.PayoutSellerSearchQuery;
+import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;

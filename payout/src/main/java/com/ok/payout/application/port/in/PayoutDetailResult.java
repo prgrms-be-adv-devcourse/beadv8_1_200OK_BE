@@ -1,4 +1,4 @@
-package com.ok.payout.application.dto;
+package com.ok.payout.application.port.in;
 
 import java.time.LocalDateTime;
 

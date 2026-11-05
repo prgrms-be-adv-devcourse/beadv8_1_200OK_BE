@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.web.dto;
 
-import com.ok.payout.application.dto.PayoutItemSearchQuery;
+import com.ok.payout.application.port.in.PayoutItemSearchQuery;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

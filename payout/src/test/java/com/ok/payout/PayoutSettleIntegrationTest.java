@@ -26,7 +26,7 @@ import com.ok.payout.adapter.out.persistence.PayoutSystemDraftItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.payout.application.service.PayoutService;
-import com.ok.payout.application.dto.PayoutVerifyResult;
+import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

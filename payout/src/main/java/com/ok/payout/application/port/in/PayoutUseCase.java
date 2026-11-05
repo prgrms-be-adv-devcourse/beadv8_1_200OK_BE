@@ -1,17 +1,5 @@
 package com.ok.payout.application.port.in;
 
-import com.ok.payout.application.dto.PayoutAdjustmentCreateCommand;
-import com.ok.payout.application.dto.PayoutCandidateResult;
-import com.ok.payout.application.dto.PayoutCandidateSearchQuery;
-import com.ok.payout.application.dto.PayoutDetailResult;
-import com.ok.payout.application.dto.PayoutDraftResult;
-import com.ok.payout.application.dto.PayoutItemResult;
-import com.ok.payout.application.dto.PayoutItemSearchQuery;
-import com.ok.payout.application.dto.PayoutSearchQuery;
-import com.ok.payout.application.dto.PayoutSellerCandidateSearchQuery;
-import com.ok.payout.application.dto.PayoutSellerSearchQuery;
-import com.ok.payout.application.dto.PayoutSummaryResult;
-import com.ok.payout.application.dto.PayoutVerifyResult;
 import org.springframework.data.domain.Page;
 
 import java.time.LocalDate;

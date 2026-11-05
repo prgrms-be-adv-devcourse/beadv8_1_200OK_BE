@@ -1,7 +1,5 @@
 package com.ok.payout.application.port.in;
 
-import com.ok.payout.application.dto.PurchaseConfirmedCommand;
-
 /**
  * 정산후보 생성 입력 포트. 구현은 {@code application.service}에 있다.
  */

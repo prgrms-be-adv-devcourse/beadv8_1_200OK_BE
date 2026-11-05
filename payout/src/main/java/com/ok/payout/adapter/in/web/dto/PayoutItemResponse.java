@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.web.dto;
 
-import com.ok.payout.application.dto.PayoutItemResult;
+import com.ok.payout.application.port.in.PayoutItemResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;

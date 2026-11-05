@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.web.dto;
 
-import com.ok.payout.application.dto.PayoutItemSearchQuery;
+import com.ok.payout.application.port.in.PayoutItemSearchQuery;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

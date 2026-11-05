@@ -1,6 +1,6 @@
 package com.ok.payout.adapter.in.web.dto;
 
-import com.ok.payout.application.dto.PayoutAdjustmentResult;
+import com.ok.payout.application.port.in.PayoutAdjustmentResult;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 @Schema(description = "관리자 정산 항목의 조정 정보")

@@ -2,7 +2,7 @@ package com.ok.payout.application.service;
 
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
-import com.ok.payout.application.dto.WalletPaymentCompletedCommand;
+import com.ok.payout.application.port.in.WalletPaymentCompletedCommand;
 import com.ok.payout.application.port.in.PayoutWalletDeductionUseCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

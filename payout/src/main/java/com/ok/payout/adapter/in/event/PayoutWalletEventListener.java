@@ -2,7 +2,7 @@ package com.ok.payout.adapter.in.event;
 
 import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.payout.application.port.in.PayoutWalletDeductionUseCase;
-import com.ok.payout.application.dto.WalletPaymentCompletedCommand;
+import com.ok.payout.application.port.in.WalletPaymentCompletedCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;

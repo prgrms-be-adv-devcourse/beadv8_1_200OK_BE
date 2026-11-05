@@ -3,7 +3,7 @@ package com.ok.payout.adapter.in.event.dto;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-import com.ok.payout.application.dto.WalletPaymentCompletedCommand;
+import com.ok.payout.application.port.in.WalletPaymentCompletedCommand;
 
 /**
  * 지갑이 Kafka로 보내는 결제 완료(예치금 차감) 메시지를 정산이 읽는 모양. 필드 이름은 지갑이 제안대로 동의했다(#339).

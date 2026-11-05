@@ -2,7 +2,7 @@ package com.ok.payout.adapter.in.event;
 
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.application.port.in.PayoutCandidateUseCase;
-import com.ok.payout.application.dto.PurchaseConfirmedCommand;
+import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;

@@ -6,7 +6,7 @@ import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
-import com.ok.payout.application.dto.PurchaseConfirmedCommand;
+import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import com.ok.payout.application.port.in.PayoutCandidateUseCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
