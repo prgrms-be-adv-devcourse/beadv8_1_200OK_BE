@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.Dependency;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -46,6 +48,19 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
  */
 @AnalyzeClasses(packages = {"com.ok.refund", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
+
+    // 발행 도구를 직접 쓰는 클래스 = 발행 구현체로 본다. 아래 이벤트_발행_도구는_adapter_out_event만_사용한다와 같은 두 도구 기준이다
+    private static final DescribedPredicate<JavaClass> 발행_도구에_의존하는 = DescribedPredicate.describe(
+            "use ApplicationEventPublisher or KafkaOperations",
+            javaClass -> {
+                for (Dependency dependency : javaClass.getDirectDependenciesFromSelf()) {
+                    JavaClass target = dependency.getTargetClass();
+                    if (target.isAssignableTo(ApplicationEventPublisher.class) || target.isAssignableTo(KafkaOperations.class)) {
+                        return true;
+                    }
+                }
+                return false;
+            });
 
     // 레이어
 
@@ -183,6 +198,17 @@ class ArchitectureTest {
             .should().dependOnClassesThat().areAssignableTo(ApplicationEventPublisher.class)
             .orShould().dependOnClassesThat().areAssignableTo(KafkaOperations.class)
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out.event)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (환불 헥사고날 구조, 이슈 #481)");
+
+    // 지금은 adapter.out.event가 없어 검사 대상이 비지만, archunit.properties의 failOnEmptyShould=false라 실패하지 않는다.
+    // 발행이 생기는 날(예: 지갑 Kafka) 구현체가 포트 없이 서비스에 바로 주입되는 일을 처음부터 막는다
+    @ArchTest
+    static final ArchRule 이벤트_발행_구현체는_출력_포트를_구현한다 = classes()
+            .that(발행_도구에_의존하는)
+            // adapter.out.event 밖에서 쓰는 경우는 이벤트_발행_도구는_adapter_out_event만_사용한다 규칙이 막는다
+            .and().resideInAPackage("..adapter.out.event..")
+            .should().implement(resideInAPackage("..application.port.out.."))
+            .because("서비스는 출력 포트만 알고, adapter.out.event의 구현체가 발행 방식을 맡는다. "
+                    + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (환불 헥사고날 구조, 이슈 #481)");
 
     @ArchTest
     static final ArchRule 이벤트_클래스는_이벤트_어댑터만_사용한다 = noClasses()

@@ -80,6 +80,10 @@ public class RefundPersistenceAdapter implements RefundRepository {
     // 불러왔더라도 잠금 조회(findByIdForUpdate)로 불러온 것이어야 한다(설계 Ruling 2). 같은 트랜잭션에서 잠그지 않는 findById로 읽은 행에
     // 쓰면, 다른 트랜잭션이 그 행을 잠그고 바꾸는 중에도 기다리지 않고 덮어쓸 수 있다. 잠금 모드는 JPA 표준 getLockMode로 본다
     // (Hibernate 7에서 findById로 불러오면 NONE, findByIdForUpdate면 PESSIMISTIC_WRITE임을 확인함).
+    // PESSIMISTIC_FORCE_INCREMENT도 허용하는 이유: 이 트랜잭션에서 그 행의 INSERT나 UPDATE가 flush되면(집계 조회의 자동 flush,
+    // saveNew의 saveAndFlush 등) Hibernate가 잠금 모드를 내부 WRITE로 바꾸고, getLockMode는 이를 PESSIMISTIC_FORCE_INCREMENT로 알린다.
+    // 이 행에 쓰기를 보낸 트랜잭션은 커밋까지 그 행의 쓰기 잠금을 가지므로 PESSIMISTIC_WRITE와 같은 뜻이다.
+    // 이것을 막으면 "잠금 → update → 집계 조회 → 다시 update"나 "saveNew → findByIdForUpdate → update"가 정상인데도 실패한다.
     // isLoaded 확인 뒤에 보는 이유: 초기화 안 된 프록시에 getLockMode를 부르면 프록시가 초기화되며 잠금 없는 조회가 나갈 수 있다.
     // 두 경우 모두 "이 트랜잭션에서 잠금 조회로 불러오지 않았다"는 같은 버그라 같은 메시지를 쓴다
     @Override
@@ -91,10 +95,14 @@ public class RefundPersistenceAdapter implements RefundRepository {
         if (!entityManager.getEntityManagerFactory().getPersistenceUnitUtil().isLoaded(entity)) {
             throw notLockedInThisTransaction(refund.getId());
         }
-        if (entityManager.getLockMode(entity) != LockModeType.PESSIMISTIC_WRITE) {
+        if (!holdsWriteLock(entityManager.getLockMode(entity))) {
             throw notLockedInThisTransaction(refund.getId());
         }
         RefundMapper.applyMutableState(refund, entity);
+    }
+
+    private static boolean holdsWriteLock(LockModeType lockMode) {
+        return lockMode == LockModeType.PESSIMISTIC_WRITE || lockMode == LockModeType.PESSIMISTIC_FORCE_INCREMENT;
     }
 
     private static IllegalStateException notLockedInThisTransaction(Long refundId) {

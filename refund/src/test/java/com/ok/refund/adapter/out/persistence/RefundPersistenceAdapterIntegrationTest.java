@@ -117,6 +117,34 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // 앞선 update가 집계 조회의 자동 flush로 먼저 나가면 Hibernate가 잠금 모드를 PESSIMISTIC_WRITE에서 PESSIMISTIC_FORCE_INCREMENT로 바꾼다.
+    // 쓰기 잠금은 그대로 이 트랜잭션에 있으므로 같은 트랜잭션의 다음 update도 받아야 한다
+    @Test
+    void 같은_트랜잭션에서_update가_flush된_뒤에_다시_update해도_마지막_값이_저장된다() {
+        // given
+        Long refundId = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))).getId();
+
+        // when
+        inTransaction(() -> {
+            Refund locked = refundRepository.findByIdForUpdate(refundId).orElseThrow();
+            locked.approve(NOW, RefundShippingFee.none());
+            refundRepository.update(locked);
+            refundRepository.sumCancelledByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING));
+            locked.recordFailure(RefundFailedStep.ORDER, "ORDER_API_FAILED");
+            refundRepository.update(locked);
+            return null;
+        });
+
+        // then
+        Refund sut = refundRepository.findById(refundId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+        });
+    }
+
     // 잠그지 않고(같은 트랜잭션에서 불러오지 않고) update하면 다른 트랜잭션이 잠근 행을 잠금 없이 덮어쓸 수 있어 막아야 한다
     @Test
     void 이_트랜잭션에서_불러오지_않은_환불을_update하면_예외를_던지고_바꾸지_않는다() {
