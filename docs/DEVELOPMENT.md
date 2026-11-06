@@ -411,6 +411,10 @@ com.ok.wallet
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
 - 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지를 더 검사).
 
+### payout 모듈 구조(헥사고날)
+
+`payout`도 헥사고날 구조입니다. 패키지와 의존 규칙은 정산 전용 규칙 `payout/CLAUDE.md`와 payout `ArchitectureTest`를 따릅니다.
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.

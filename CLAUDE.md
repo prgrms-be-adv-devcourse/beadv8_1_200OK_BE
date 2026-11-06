@@ -25,6 +25,7 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 
 - `delivery`: `docs/DEVELOPMENT.md`의 "delivery 모듈 구조(헥사고날)"
 - `wallet`: `docs/DEVELOPMENT.md`의 "wallet 모듈 구조(헥사고날)"
+- `payout`: `payout/CLAUDE.md`
 
 `adapter/in/web`은 경로가 `controller`가 아니라 `api.md`가 자동으로 로드되지 않으므로, 다룰 때 `.claude/rules/api.md`를 직접 읽고 따른다.
 

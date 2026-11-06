@@ -1,5 +1,6 @@
 package com.ok.payout;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static com.tngtech.archunit.base.DescribedPredicate.not;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.equivalentTo;
@@ -11,6 +12,10 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import java.net.URISyntaxException;
+import java.nio.file.Path;
+
+import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.stereotype.Controller;
@@ -19,14 +24,17 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.library.GeneralCodingRules;
 
+import com.ok.PayoutApplication;
 import com.ok.common.exception.ErrorCode;
-import com.ok.payout.PayoutSchema;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.payout.domain.PayoutPolicy;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -42,7 +50,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
  * 정산 모듈의 헥사고날 구조(이슈 #441)를 검사한다.
  * <ul>
  *   <li>{@code domain}: 엔티티와 정책. 바깥 레이어와 저장소·메시징·배치·웹 기술을 모른다 (엔티티라 JPA·Hibernate 애노테이션은 쓴다).</li>
- *   <li>{@code application}: {@code port.in}(유스케이스와 그 입출력 값 Command·Query·Result), {@code port.out}(저장소·발행 포트와 그 값 Row·발행 명령), {@code service}(유스케이스 구현).</li>
+ *   <li>{@code application}: {@code port.in}(유스케이스와 그 입출력 값 Command·Query·Result), {@code port.out}(저장소·발행 포트와 그 값 Row·발행 값), {@code service}(유스케이스 구현).</li>
  *   <li>{@code adapter.in}: {@code web}(컨트롤러), {@code event}(Spring·Kafka 리스너), {@code batch}(잡 설정·실행기·스케줄러).</li>
  *   <li>{@code adapter.out}: {@code persistence}(JPA·QueryDSL 구현), {@code event}(Kafka 발행 구현).</li>
  * </ul>
@@ -54,6 +62,7 @@ class ArchitectureTest {
 
     // 배치 어댑터(PayoutJobConfig, PayoutJobRunner)는 domain.PayoutPolicy 상수를 쓰므로 AdapterIn -> Domain을 허용한다.
     // 컨트롤러 -> PayoutJobRunner는 같은 AdapterIn 안이라 이 규칙이 보지 않는다 (승인된 설계).
+    // 배치가 아닌 입구(web·event)가 배치 중 무엇을 쓸 수 있는지는 아래 `배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다`가 좁힌다.
     // 입구가 domain을 어디까지 쓸 수 있는지는 아래 별도 규칙이 좁힌다 (web·event는 금지, batch는 PayoutPolicy만)
     @ArchTest
     static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
@@ -70,12 +79,26 @@ class ArchitectureTest {
 
     // 레이어 규칙은 레이어에 든 패키지끼리만 본다. 레이어 밖 새 패키지(예: support)를 거치면 서비스 → adapter.out 같은 의존이 검사를 피하므로
     // 정산 클래스가 놓일 수 있는 패키지를 정해 두고, 레이어 밖 패키지(루트·config·exception)는 바깥 레이어를 모르게 한다
+    // adapter..·application..처럼 넓게 열면 adapter.support 같은 새 하위 패키지가 검사를 피하므로 실제 쓰는 하위 패키지만 나열한다 (이슈 #469)
     @ArchTest
     static final ArchRule 정산_클래스는_정해진_패키지에만_있다 = classes()
             .that().resideInAPackage("com.ok.payout..")
-            .should().resideInAnyPackage("com.ok.payout", "com.ok.payout.domain..", "com.ok.payout.application..",
-                    "com.ok.payout.adapter..", "com.ok.payout.config..", "com.ok.payout.exception..")
-            .because("레이어 밖에 새 패키지를 만들면 레이어 규칙을 우회할 수 있다. 새 역할이 필요하면 이 목록과 레이어 규칙을 함께 고친다 (정산 헥사고날 구조, 이슈 #441)");
+            .should().resideInAnyPackage("com.ok.payout", "com.ok.payout.domain..",
+                    "com.ok.payout.application.port.in..", "com.ok.payout.application.port.out..",
+                    "com.ok.payout.application.service..",
+                    "com.ok.payout.adapter.in.web..", "com.ok.payout.adapter.in.event..", "com.ok.payout.adapter.in.batch..",
+                    "com.ok.payout.adapter.out.persistence..", "com.ok.payout.adapter.out.event..",
+                    "com.ok.payout.config..", "com.ok.payout.exception..")
+            .because("레이어 밖이나 정해지지 않은 하위 패키지를 만들면 레이어 규칙을 우회할 수 있다(예: web → adapter.in.shared → batch는 웹-배치 규칙이 직접 의존만 봐서 통과한다). "
+                    + "새 입구나 out 어댑터 패키지가 필요하면 이 목록과 관련 규칙을 함께 고친다 (정산 헥사고날 구조, 이슈 #469)");
+
+    // 다른 모듈의 내부 타입을 알면 모듈을 따로 떼어낼 수 없다(MSA 분리 대비). com.ok 아래에서는 자기 모듈과 common만 허용한다
+    @ArchTest
+    static final ArchRule 정산_코드는_com_ok_중_payout과_common만_안다 = noClasses()
+            .that().resideInAPackage("com.ok.payout..")
+            .should().dependOnClassesThat(resideInAPackage("com.ok..")
+                    .and(not(resideInAnyPackage("com.ok.payout..", "com.ok.common.."))))
+            .because("모듈 간 연결은 common의 계약 타입으로만 해야 다른 모듈이 바뀌어도 정산이 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #469)");
 
     @ArchTest
     static final ArchRule 레이어_밖_패키지는_application과_adapter를_모른다 = noClasses()
@@ -90,7 +113,8 @@ class ArchitectureTest {
             .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다. "
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
-    // web·event를 나열하지 않고 adapter.in 전체에서 batch만 뺀다. 새 입구(예: adapter.in.grpc)가 생겨도 같은 규칙을 받게 한다
+    // web·event를 나열하지 않고 adapter.in 전체에서 batch만 뺀다. 새 입구(예: adapter.in.grpc)는 이 규칙을 자동으로 받는다.
+    // 다만 새 하위 패키지는 `정산_클래스는_정해진_패키지에만_있다`의 허용 목록에도 함께 추가해야 한다
     @ArchTest
     static final ArchRule 배치를_뺀_입구는_입력_포트만_안다 = noClasses()
             .that().resideInAPackage("..adapter.in..")
@@ -111,6 +135,15 @@ class ArchitectureTest {
                             .or(resideInAPackage("com.ok.payout.domain..").and(not(equivalentTo(PayoutPolicy.class)))))
             .because("배치 시작기와 Tasklet도 입력 포트로만 비즈니스를 호출해야 구현이 바뀌어도 배치 코드가 바뀌지 않는다. "
                     + "배치 크기·대기 일수 같은 정책 상수만 직접 쓴다 (정산 헥사고날 구조, 이슈 #441)");
+
+    // 배치를 뺀 입구는 배치의 시작 버튼(PayoutJobRunner)만 누른다. 잡 설정·Tasklet 같은 배치 내부는 알지 못하게 한다 (ADR 441 "관리자 실행 API").
+    // 웹만 대상으로 하면 web → event → batch처럼 다른 입구가 다리가 되어 우회하므로 batch를 뺀 모든 입구를 대상으로 한다 (이슈 #469)
+    @ArchTest
+    static final ArchRule 배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다 = noClasses()
+            .that().resideInAPackage("..adapter.in..")
+            .and().resideOutsideOfPackage("..adapter.in.batch..")
+            .should().dependOnClassesThat(resideInAPackage("..adapter.in.batch..").and(not(equivalentTo(PayoutJobRunner.class))))
+            .because("배치가 아닌 입구는 배치 시작기만 알아야 배치 내부 구성이 바뀌어도 입구가 바뀌지 않고, 다른 입구가 다리가 되어 배치 내부에 닿지도 못한다 (정산 헥사고날 구조, 이슈 #469)");
 
     @ArchTest
     static final ArchRule application은_영속_메시징_배치_기술에_의존하지_않는다 = noClasses()
@@ -134,7 +167,14 @@ class ArchitectureTest {
 
     // 포트
 
-    // 포트가 주고받는 값(record)은 그 포트 옆에 둔다: 입력 포트의 Command·Query·Result는 port.in, 조회 결과 Row와 발행 명령은 port.out. 한곳(dto)에 모으면 dto ↔ port.out 순환이 생긴다
+    // 입구가 보는 port.in은 조회 Row 모양이 바뀌어도 변하지 않아야 한다. 변환은 서비스의 PayoutQueryResultMapper가 맡는다 (delivery 모듈과 같은 방식)
+    @ArchTest
+    static final ArchRule 입력_포트는_출력_포트를_모른다 = noClasses()
+            .that().resideInAPackage("..application.port.in..")
+            .should().dependOnClassesThat().resideInAPackage("..application.port.out..")
+            .because("입력 포트가 출력 포트의 값을 쓰면 저장소 조회 모양이 바뀔 때 입구까지 바뀐다. 변환은 서비스에서 한다 (정산 헥사고날 구조, 이슈 #469)");
+
+    // 포트가 주고받는 값(record)은 그 포트 옆에 둔다: 입력 포트의 Command·Query·Result는 port.in, 조회 결과 Row와 발행 값은 port.out. 한곳(dto)에 모으면 dto ↔ port.out 순환이 생긴다
     @ArchTest
     static final ArchRule 포트는_인터페이스다 = classes()
             .that().resideInAnyPackage("..application.port.in..", "..application.port.out..")
@@ -196,6 +236,29 @@ class ArchitectureTest {
                     + "발행 포트는 값을 받는다 (정산 헥사고날 구조, 이슈 #441)");
 
     // 이름과 위치
+
+    // @AnalyzeClasses(com.ok.payout, com.ok.common.event)는 정산 모듈 안이지만 다른 패키지(예: com.ok.relay)에 둔 클래스를 보지 못한다.
+    // Spring은 그 클래스도 빈으로 묶어 정산 포트를 구현하게 할 수 있으므로, 모듈 출력 전체를 따로 가져와 아래 @Test에서 검사한다.
+    // @ArchTest 필드로 두면 위의 가져오기 범위가 적용되어 의미가 없다
+    static final ArchRule 정산_모듈_클래스는_com_ok_payout에_있다 = classes()
+            .that().doNotHaveFullyQualifiedName(PayoutApplication.class.getName())
+            .should().resideInAPackage("com.ok.payout..")
+            .because("정산 모듈의 클래스가 com.ok.payout 밖에 있으면 패키지 기반 구조 규칙이 보지 못한다 (정산 헥사고날 구조, 이슈 #469)");
+
+    @Test
+    void 정산_모듈_클래스는_모두_com_ok_payout_아래에_있다() throws URISyntaxException {
+        // given
+        Path main = Path.of(PayoutApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        JavaClasses classes = new ClassFileImporter().importPath(main);
+
+        // when
+        // archunit.properties의 failOnEmptyShould=false 때문에 아무 클래스도 못 가져와도 규칙이 통과한다.
+        // 출력 위치가 바뀌어 가져오기가 비어도 조용히 통과하지 않도록, 모듈의 대표 클래스가 들어 있는지 먼저 확인한다
+        // then
+        assertThat(classes.contain(PayoutApplication.class)).isTrue();
+        assertThat(classes.contain("com.ok.payout.application.service.PayoutService")).isTrue();
+        정산_모듈_클래스는_com_ok_payout에_있다.check(classes);
+    }
 
     @ArchTest
     static final ArchRule RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = classes()

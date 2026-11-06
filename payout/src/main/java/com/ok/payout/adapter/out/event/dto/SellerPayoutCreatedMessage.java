@@ -2,7 +2,7 @@ package com.ok.payout.adapter.out.event.dto;
 
 import java.time.LocalDateTime;
 
-import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
 
 /**
  * 정산이 지갑으로 보내는 정산 확정 메시지. Kafka에 JSON으로 실려 나간다.
@@ -20,7 +20,7 @@ public record SellerPayoutCreatedMessage(
         LocalDateTime createdAt
 ) {
 
-    public static SellerPayoutCreatedMessage from(SellerPayoutCreatedCommand command) {
-        return new SellerPayoutCreatedMessage(command.payoutId(), command.payeeId(), command.amount(), command.createdAt());
+    public static SellerPayoutCreatedMessage from(SellerPayoutCreated created) {
+        return new SellerPayoutCreatedMessage(created.payoutId(), created.payeeId(), created.amount(), created.createdAt());
     }
 }
