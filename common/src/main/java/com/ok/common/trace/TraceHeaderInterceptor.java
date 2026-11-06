@@ -27,6 +27,7 @@ public class TraceHeaderInterceptor implements ClientHttpRequestInterceptor {
     private static void addIfPresent(HttpRequest request, String header, String mdcKey) {
         String value = MDC.get(mdcKey);
         if (value != null) {
+            // 호출부가 같은 이름의 헤더를 넣었어도 MDC 값이 기준이다. 한 요청 안에서 추적 키가 갈라지지 않게 덮어쓴다
             request.getHeaders().set(header, value);
         }
     }
