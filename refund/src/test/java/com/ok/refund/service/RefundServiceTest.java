@@ -286,6 +286,8 @@ class RefundServiceTest {
             softly.assertThat(refund.getRemoteAreaFeeAmount()).isZero();
             softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
         });
+        // 거절될 환불에는 배송비 판단(집계 쿼리)을 할 이유가 없고, 판단이 예외를 내면 거절 대신 오류가 남는다
+        then(refundRepository).should(never()).sumCancelledByOrderItem(any(), any(), any());
     }
 
     static Stream<String> 출고되거나_취소된_주문_상태() {
@@ -343,6 +345,27 @@ class RefundServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    // 다른 주문 상품 정보는 출고 상태여도 먼저 막아야 한다. 순서가 바뀌면 엉뚱한 상품의 출고 상태로 이 환불이 거절된다
+    @Test
+    void 다른_주문_상품_정보가_출고_상태여도_다른_상품_예외가_먼저이고_거절하지_않는다() {
+        // given
+        Refund refund = requested();
+        givenLockedBundle(refund);
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(102L, 10_000L, 2)));
+        RefundableOrderItem shippedOtherItem =
+                new RefundableOrderItem(10L, 102L, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", "SHIPPING", 10_000L, 2, bundle);
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, shippedOtherItem))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
+        assertThat(refund).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(refund.getDecidedAt()).isNull();
+        });
     }
 
     // 남의 요청은 판매자 ID로 찾는 잠글 목록에 들어오지 않는다. 잠그지도 않아야 남의 행을 건드리지 않는다
