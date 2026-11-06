@@ -21,7 +21,12 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 새 파일을 만들기 전에 위 표에서 해당하는 규칙을 먼저 읽는다. 규칙이 로드되지 않았다면 직접 읽는다.
 사람용 원문은 `docs/CONVENTION.md`이다. 규칙을 바꿀 때는 원문을 먼저 고치고 `.claude/rules/`에 반영한다. 두 곳이 어긋나면 원문이 기준이다.
 
-`delivery`, `wallet` 모듈은 헥사고날 구조(`application`, `adapter/in`, `adapter/out`)라서 `structure.md`의 레이어 패키지와 발행 인터페이스 위치 규칙 대신 `docs/DEVELOPMENT.md`의 "delivery 모듈 구조(헥사고날)", "wallet 모듈 구조(헥사고날)"와 각 모듈의 `ArchitectureTest`를 따른다. 두 모듈의 `adapter/in/web`을 다룰 때는 경로가 `controller`가 아니라 자동으로 로드되지 않으므로 `.claude/rules/api.md`를 직접 읽고 따른다. 다른 모듈은 위 규칙 그대로다.
+헥사고날 구조(`application`, `adapter/in`, `adapter/out`) 모듈은 `structure.md`의 레이어 패키지와 발행 인터페이스 위치 규칙 대신 아래 문서와 각 모듈의 `ArchitectureTest`를 따른다. 다른 모듈은 위 규칙 그대로다.
+
+- `delivery`: `docs/DEVELOPMENT.md`의 "delivery 모듈 구조(헥사고날)"
+- `wallet`: `docs/DEVELOPMENT.md`의 "wallet 모듈 구조(헥사고날)"
+
+`adapter/in/web`은 경로가 `controller`가 아니라 `api.md`가 자동으로 로드되지 않으므로, 다룰 때 `.claude/rules/api.md`를 직접 읽고 따른다.
 
 ## 작업 스킬
 
