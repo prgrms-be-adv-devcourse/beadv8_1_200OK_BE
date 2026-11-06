@@ -62,7 +62,7 @@ class ArchitectureTest {
 
     // 배치 어댑터(PayoutJobConfig, PayoutJobRunner)는 domain.PayoutPolicy 상수를 쓰므로 AdapterIn -> Domain을 허용한다.
     // 컨트롤러 -> PayoutJobRunner는 같은 AdapterIn 안이라 이 규칙이 보지 않는다 (승인된 설계).
-    // 웹이 배치 중 무엇을 쓸 수 있는지는 아래 `웹은_배치_중_PayoutJobRunner만_안다`가 좁힌다.
+    // 배치가 아닌 입구(web·event)가 배치 중 무엇을 쓸 수 있는지는 아래 `배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다`가 좁힌다.
     // 입구가 domain을 어디까지 쓸 수 있는지는 아래 별도 규칙이 좁힌다 (web·event는 금지, batch는 PayoutPolicy만)
     @ArchTest
     static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
@@ -136,12 +136,14 @@ class ArchitectureTest {
             .because("배치 시작기와 Tasklet도 입력 포트로만 비즈니스를 호출해야 구현이 바뀌어도 배치 코드가 바뀌지 않는다. "
                     + "배치 크기·대기 일수 같은 정책 상수만 직접 쓴다 (정산 헥사고날 구조, 이슈 #441)");
 
-    // 관리자 실행 API는 배치의 시작 버튼(PayoutJobRunner)만 누른다. 잡 설정·Tasklet 같은 배치 내부는 웹이 알지 못하게 한다 (ADR 441 "관리자 실행 API")
+    // 배치를 뺀 입구는 배치의 시작 버튼(PayoutJobRunner)만 누른다. 잡 설정·Tasklet 같은 배치 내부는 알지 못하게 한다 (ADR 441 "관리자 실행 API").
+    // 웹만 대상으로 하면 web → event → batch처럼 다른 입구가 다리가 되어 우회하므로 batch를 뺀 모든 입구를 대상으로 한다 (이슈 #469)
     @ArchTest
-    static final ArchRule 웹은_배치_중_PayoutJobRunner만_안다 = noClasses()
-            .that().resideInAPackage("..adapter.in.web..")
+    static final ArchRule 배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다 = noClasses()
+            .that().resideInAPackage("..adapter.in..")
+            .and().resideOutsideOfPackage("..adapter.in.batch..")
             .should().dependOnClassesThat(resideInAPackage("..adapter.in.batch..").and(not(equivalentTo(PayoutJobRunner.class))))
-            .because("컨트롤러가 배치 시작기만 알아야 배치 내부 구성이 바뀌어도 웹이 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #469)");
+            .because("배치가 아닌 입구는 배치 시작기만 알아야 배치 내부 구성이 바뀌어도 입구가 바뀌지 않고, 다른 입구가 다리가 되어 배치 내부에 닿지도 못한다 (정산 헥사고날 구조, 이슈 #469)");
 
     @ArchTest
     static final ArchRule application은_영속_메시징_배치_기술에_의존하지_않는다 = noClasses()

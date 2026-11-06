@@ -8,11 +8,14 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.EvaluationResult;
 
+import com.ok.payout.adapter.in.event.EdgeFakeEventBatchUser;
 import com.ok.payout.adapter.in.shared.EdgeFakeBridge;
 import com.ok.payout.adapter.in.web.EdgeFakeWebScheduler;
 import com.ok.payout.adapter.out.EdgeFakeRelayUser;
+import com.ok.payout.adapter.out.shared.EdgeFakeOutShared;
 import com.ok.payout.adapter.shared.EdgeFakeSharedAdapter;
 import com.ok.payout.application.port.in.EdgeFakeInPortResult;
+import com.ok.payout.application.port.shared.EdgeFakePortShared;
 import com.ok.payout.application.support.EdgeFakeSupportHelper;
 import com.ok.relay.EdgeFakeRelayPublisher;
 
@@ -50,6 +53,18 @@ class ArchitectureRuleEdgeTest {
     }
 
     @Test
+    void 포트와_out_어댑터_아래_새_하위_패키지를_만들면_허용_목록_규칙이_실패한다() {
+        // given
+        JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakePortShared.class, EdgeFakeOutShared.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.정산_클래스는_정해진_패키지에만_있다.evaluate(classes);
+
+        // then
+        assertViolationMentions(sut, EdgeFakePortShared.class, EdgeFakeOutShared.class);
+    }
+
+    @Test
     void 정산_밖_패키지를_쓰면_다른_모듈_규칙이_실패한다() {
         // given
         JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeRelayUser.class, EdgeFakeRelayPublisher.class);
@@ -79,10 +94,22 @@ class ArchitectureRuleEdgeTest {
         JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeWebScheduler.class);
 
         // when
-        EvaluationResult sut = ArchitectureTest.웹은_배치_중_PayoutJobRunner만_안다.evaluate(classes);
+        EvaluationResult sut = ArchitectureTest.배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다.evaluate(classes);
 
         // then
         assertViolationMentions(sut, EdgeFakeWebScheduler.class);
+    }
+
+    @Test
+    void 다른_입구가_배치_내부_클래스를_쓰면_실패한다() {
+        // given: web → event → batch 우회 경로의 가운데 다리
+        JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeEventBatchUser.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다.evaluate(classes);
+
+        // then
+        assertViolationMentions(sut, EdgeFakeEventBatchUser.class);
     }
 
     @Test
