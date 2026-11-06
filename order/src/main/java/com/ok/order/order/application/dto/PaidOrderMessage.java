@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-// 결제 완료 이벤트에 담을 주문 정보. Service가 엔티티에서 값만 꺼내 event 패키지로 넘길 때 쓴다
+// 결제 완료 이벤트에 담을 주문 정보. Service가 엔티티에서 값만 꺼내 발행 포트(OrderEventPublisher)로 넘길 때 쓴다
 public record PaidOrderMessage(
         Long orderId,
         Long buyerId,
