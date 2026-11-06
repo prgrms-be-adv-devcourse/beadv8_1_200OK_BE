@@ -263,19 +263,48 @@ class RefundServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
     }
 
-    // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고된 상품은 취소로 돌려줄 수 없다.
-    // "배송 중"만 막는 게 아니라 출고 전(PREPARING)이 아닌 모든 상태를 막는지 여러 상태로 확인한다
+    // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고·취소된 상품은 취소로 돌려줄 수 없어 자동 거절한다.
+    // "배송 중"만이 아니라 알려진 비-PREPARING 상태 7개 모두 거절되는지 확인한다
     @ParameterizedTest
-    @MethodSource("출고_전이_아닌_주문_상태")
-    void 승인_때_이미_출고됐으면_409이고_요청됨_그대로다(String orderItemStatus) {
+    @MethodSource("출고되거나_취소된_주문_상태")
+    void 승인_때_출고되거나_취소된_상품이면_사유와_함께_자동_거절한다(String orderItemStatus) {
+        // given
+        Refund refund = requested();
+        givenLockedBundle(refund);
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.status()).isEqualTo("REJECTED");
+            softly.assertThat(result.rejectReason()).isEqualTo(RefundService.SHIPPED_REJECT_REASON);
+            softly.assertThat(result.decidedAt()).isEqualTo(NOW);
+            softly.assertThat(refund.getActiveOrderItemId()).isNull();
+            softly.assertThat(refund.getShippingFeeAmount()).isZero();
+            softly.assertThat(refund.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+        });
+    }
+
+    static Stream<String> 출고되거나_취소된_주문_상태() {
+        return Stream.of("SHIPPING", "DELIVERED", "PURCHASE_CONFIRMED", "CANCEL_REQUESTED", "REFUNDED",
+                "PAYMENT_PENDING", "PAYMENT_FAILED");
+    }
+
+    // 주문 모듈의 버그나 새 상태일 수 있어 거절로 끝내지 않고 500으로 드러낸다. 저장한 것이 없어 요청됨 그대로 남는다
+    @ParameterizedTest
+    @MethodSource("모르는_주문_상태")
+    void 승인_때_주문_상태를_모르면_예외를_던지고_요청됨으로_남는다(String orderItemStatus) {
         // given
         Refund refund = requested();
         givenLockedBundle(refund);
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2)))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE));
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("알 수 없는 주문 상품 상태라 승인할 수 없습니다. refundId=7, status=" + orderItemStatus);
         assertThat(refund).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
@@ -283,8 +312,8 @@ class RefundServiceTest {
         });
     }
 
-    static Stream<String> 출고_전이_아닌_주문_상태() {
-        return Stream.of("SHIPPING", "DELIVERED", "REFUNDED");
+    static Stream<String> 모르는_주문_상태() {
+        return Stream.of(null, "UNKNOWN");
     }
 
     // 이미 끝난 요청은 출고 여부와 상관없이 처리할 수 없다는 것이 진짜 이유라, 판매자에게 상태 충돌을 먼저 알린다

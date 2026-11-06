@@ -41,7 +41,6 @@ public class RefundFacade {
      * @throws com.ok.common.exception.RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND},
      *                                                  요청됨이 아니면 {@code INVALID_REFUND_STATE},
      *                                                  승인 때 주문 호출이 실패하면 {@code ORDER_API_FAILED}, 주문 상품이 없으면 {@code ORDER_ITEM_NOT_FOUND},
-     *                                                  승인 때 이미 출고됐으면 {@code ORDER_ITEM_NOT_CANCELLABLE},
      *                                                  거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
      */
     public RefundResult decide(RefundDecisionCommand command) {

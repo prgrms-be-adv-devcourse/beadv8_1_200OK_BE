@@ -30,13 +30,13 @@ interface SellerRefundControllerSpec {
                     + "거절 사유에 그 이유를 넣는다. "
                     + "거절하면 REJECTED가 되고, 구매자는 같은 상품에 다시 요청할 수 있다. 거절 사유는 필수다. 거절은 주문을 조회하지 않는다.")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "처리 성공 (PROCESSING 또는 REJECTED). 승인 요청이어도 자동 거절이면 REJECTED"),
+            @ApiResponse(responseCode = "200", description = "처리 성공 (PROCESSING 또는 REJECTED). 승인 요청이어도 자동 거절이면 REJECTED. "
+                    + "승인 때 이미 출고됐거나 취소된 상품이면 \"이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.\" 사유로 자동 거절한다"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
             @ApiResponse(responseCode = "403", description = "판매자가 아님"),
             @ApiResponse(responseCode = "404", description = "없거나 남의 상품 요청 (REFUND_NOT_FOUND), "
                     + "승인 때 주문에 그 상품이 없음 (ORDER_ITEM_NOT_FOUND)"),
             @ApiResponse(responseCode = "409", description = "요청됨이 아님. 이미 승인·거절됐거나 구매자가 철회함 (INVALID_REFUND_STATE). "
-                    + "승인 때 이미 출고된 상품 (ORDER_ITEM_NOT_CANCELLABLE). 요청됨 그대로 남아 거절할 수 있다. "
                     + "요청됨이 아니면서 출고도 됐으면 INVALID_REFUND_STATE다"),
             @ApiResponse(responseCode = "422", description = "거절 사유 없음 (REJECT_REASON_REQUIRED). 사유를 상태보다 먼저 보므로 "
                     + "이미 처리된 요청이어도 사유 없이 거절하면 409가 아니라 이 응답이다. "
