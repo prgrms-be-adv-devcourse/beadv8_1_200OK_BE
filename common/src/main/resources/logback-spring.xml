@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    로그 출력 설정. 모든 모듈과 monolith가 common을 통해 이 파일을 쓴다 (#378)
+    콘솔은 사람이 읽는 Boot 기본 형식이고, 파일(app.log, app-error.log)은 고정 스키마 JSON이다
+    JSON 스키마 필드 이름은 고정이다. 이름을 바꾸면 조회와 대시보드가 깨진다 (docs/CONVENTION.md 7.4)
+    값(상한)은 common-logging.yaml이 정한다. 아래 defaultValue는 그 파일을 import하지 않는 앱을 위한 같은 값이다
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="paldo-gotgan"/>
+    <springProperty scope="context" name="LOG_DIR" source="app.logging.dir" defaultValue="logs"/>
+    <springProperty scope="context" name="LOG_QUEUE_SIZE" source="app.logging.queue-size" defaultValue="8192"/>
+    <springProperty scope="context" name="LOG_FIELD_BYTES" source="app.logging.field-bytes" defaultValue="1024"/>
+    <springProperty scope="context" name="LOG_EVENT_BYTES" source="app.logging.event-bytes" defaultValue="8192"/>
+    <springProperty scope="context" name="LOG_STACK_DEPTH" source="app.logging.stack-depth" defaultValue="30"/>
+    <springProperty scope="context" name="LOG_STACK_BYTES" source="app.logging.stack-bytes" defaultValue="6144"/>
+    <springProperty scope="context" name="LOG_MASK_KEYS" source="app.logging.mask-keys" defaultValue="name,phone,address,email,receiver"/>
+    <springProperty scope="context" name="LOG_HTTP_SUCCESS_SAMPLING_RATE" source="app.logging.http-success-sampling-rate" defaultValue="0.1"/>
+    <springProperty scope="context" name="LOG_THROTTLE_LIMIT" source="app.logging.throttle.limit" defaultValue="10"/>
+    <springProperty scope="context" name="LOG_THROTTLE_WINDOW_SECONDS" source="app.logging.throttle.window-seconds" defaultValue="60"/>
+    <springProperty scope="context" name="LOG_THROTTLE_MAX_KEYS" source="app.logging.throttle.max-keys" defaultValue="1000"/>
+    <springProperty scope="context" name="LOG_ROLLING_MAX_FILE_SIZE" source="app.logging.rolling.max-file-size" defaultValue="100MB"/>
+    <springProperty scope="context" name="LOG_ROLLING_MAX_HISTORY_DAYS" source="app.logging.rolling.max-history-days" defaultValue="7"/>
+    <springProperty scope="context" name="LOG_ROLLING_SUCCESS_TOTAL_SIZE_CAP" source="app.logging.rolling.success-total-size-cap" defaultValue="1536MB"/>
+    <springProperty scope="context" name="LOG_ROLLING_FAILURE_TOTAL_SIZE_CAP" source="app.logging.rolling.failure-total-size-cap" defaultValue="512MB"/>
+
+    <!-- 같은 에러가 폭주하면 상한을 넘은 건을 버리고 "N건 생략" 한 건으로 대신한다 -->
+    <turboFilter class="com.ok.common.logging.ErrorKeyThrottleTurboFilter">
+        <limit>${LOG_THROTTLE_LIMIT}</limit>
+        <windowSeconds>${LOG_THROTTLE_WINDOW_SECONDS}</windowSeconds>
+        <maxKeys>${LOG_THROTTLE_MAX_KEYS}</maxKeys>
+    </turboFilter>
+
+    <!-- 아래 두 appender의 <encoder>는 서로 같아야 한다. logback은 appender 안에서 include를 처리하지 않아 복사해 두었다 -->
+    <!-- 실패(WARN 이상): 큐를 거치지 않고 호출 스레드가 동기로 쓴다. 큐가 넘쳐 버려지는 일이 없다 -->
+    <appender name="JSON_FAILURE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+        <file>${LOG_DIR}/app-error.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/app-error-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>${LOG_ROLLING_MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${LOG_ROLLING_MAX_HISTORY_DAYS}</maxHistory>
+            <totalSizeCap>${LOG_ROLLING_FAILURE_TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="com.ok.common.logging.BoundedLogstashEncoder">
+            <maxEventBytes>${LOG_EVENT_BYTES}</maxEventBytes>
+            <!-- 스키마 필드 이름은 고정이다. 이름을 바꾸면 조회와 대시보드가 깨진다 -->
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+                <!-- 기본 이름(logger_name, thread_name)은 마스킹 키 단어 name에 걸려 값이 가려진다 -->
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <stackTrace>error</stackTrace>
+            </fieldNames>
+            <!-- 컨텍스트 속성(위 springProperty들)이 매 줄에 필드로 붙는 것을 막는다. 줄이 커지고 APP_NAME 같은 값이 마스킹에 걸린다 -->
+            <includeContext>false</includeContext>
+            <!-- 값은 com.ok.common.trace.TraceContext가 MDC에 넣는다. 없는 키는 필드가 생략된다 -->
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>orderId</includeMdcKeyName>
+            <includeMdcKeyName>shipmentId</includeMdcKeyName>
+            <includeMdcKeyName>eventType</includeMdcKeyName>
+            <includeMdcKeyName>step</includeMdcKeyName>
+            <includeMdcKeyName>outcome</includeMdcKeyName>
+            <customFields>{"app":"${APP_NAME}"}</customFields>
+            <!-- module은 로거 패키지(com.ok.<모듈>...)에서 뽑는다. 모듈 밖 로거(org.springframework 등)는 빈 문자열이다 -->
+            <provider class="net.logstash.logback.composite.loggingevent.LoggingEventPatternJsonProvider">
+                <pattern>{"module": "%replace(%logger){'^com\\.ok\\.([^.]+)\\..*$|^.*$', '$1'}"}</pattern>
+            </provider>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>${LOG_STACK_DEPTH}</maxDepthPerThrowable>
+                <maxLength>${LOG_STACK_BYTES}</maxLength>
+            </throwableConverter>
+            <decorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <fieldMasker class="com.ok.common.logging.PersonalInfoFieldMasker">
+                    <keys>${LOG_MASK_KEYS}</keys>
+                </fieldMasker>
+                <valueMasker class="com.ok.common.logging.SafeValueMasker">
+                    <keys>${LOG_MASK_KEYS}</keys>
+                    <maxBytes>${LOG_FIELD_BYTES}</maxBytes>
+                    <largeFieldMaxBytes>${LOG_STACK_BYTES}</largeFieldMaxBytes>
+                </valueMasker>
+            </decorator>
+        </encoder>
+    </appender>
+
+    <!-- 성공(WARN 미만): 큐에 담아 다른 스레드가 쓴다. WARN 이상은 위 실패 파일에만 간다 -->
+    <!-- 걸러내는 필터는 큐 앞(JSON_ASYNC)에 둔다. 뒤에 두면 실패 로그와 샘플링에서 빠질 로그가 큐 자리를 차지해 성공 로그를 밀어낸다 -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/app-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>${LOG_ROLLING_MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${LOG_ROLLING_MAX_HISTORY_DAYS}</maxHistory>
+            <totalSizeCap>${LOG_ROLLING_SUCCESS_TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="com.ok.common.logging.BoundedLogstashEncoder">
+            <maxEventBytes>${LOG_EVENT_BYTES}</maxEventBytes>
+            <!-- 스키마 필드 이름은 고정이다. 이름을 바꾸면 조회와 대시보드가 깨진다 -->
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+                <!-- 기본 이름(logger_name, thread_name)은 마스킹 키 단어 name에 걸려 값이 가려진다 -->
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <stackTrace>error</stackTrace>
+            </fieldNames>
+            <!-- 컨텍스트 속성(위 springProperty들)이 매 줄에 필드로 붙는 것을 막는다. 줄이 커지고 APP_NAME 같은 값이 마스킹에 걸린다 -->
+            <includeContext>false</includeContext>
+            <!-- 값은 com.ok.common.trace.TraceContext가 MDC에 넣는다. 없는 키는 필드가 생략된다 -->
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>orderId</includeMdcKeyName>
+            <includeMdcKeyName>shipmentId</includeMdcKeyName>
+            <includeMdcKeyName>eventType</includeMdcKeyName>
+            <includeMdcKeyName>step</includeMdcKeyName>
+            <includeMdcKeyName>outcome</includeMdcKeyName>
+            <customFields>{"app":"${APP_NAME}"}</customFields>
+            <!-- module은 로거 패키지(com.ok.<모듈>...)에서 뽑는다. 모듈 밖 로거(org.springframework 등)는 빈 문자열이다 -->
+            <provider class="net.logstash.logback.composite.loggingevent.LoggingEventPatternJsonProvider">
+                <pattern>{"module": "%replace(%logger){'^com\\.ok\\.([^.]+)\\..*$|^.*$', '$1'}"}</pattern>
+            </provider>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>${LOG_STACK_DEPTH}</maxDepthPerThrowable>
+                <maxLength>${LOG_STACK_BYTES}</maxLength>
+            </throwableConverter>
+            <decorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <fieldMasker class="com.ok.common.logging.PersonalInfoFieldMasker">
+                    <keys>${LOG_MASK_KEYS}</keys>
+                </fieldMasker>
+                <valueMasker class="com.ok.common.logging.SafeValueMasker">
+                    <keys>${LOG_MASK_KEYS}</keys>
+                    <maxBytes>${LOG_FIELD_BYTES}</maxBytes>
+                    <largeFieldMaxBytes>${LOG_STACK_BYTES}</largeFieldMaxBytes>
+                </valueMasker>
+            </decorator>
+        </encoder>
+    </appender>
+
+    <!-- discardingThreshold 0: 기본값은 큐가 80% 차면 INFO 이하를 조용히 버려 건수를 셀 수 없다. 가득 찰 때만 버리고 센다 -->
+    <appender name="JSON_ASYNC" class="com.ok.common.logging.CountingAsyncAppender">
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>WARN</level>
+            <onMatch>DENY</onMatch>
+        </filter>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>DENY</onMatch>
+        </filter>
+        <filter class="com.ok.common.logging.HttpSuccessSamplingFilter">
+            <rate>${LOG_HTTP_SUCCESS_SAMPLING_RATE}</rate>
+        </filter>
+        <queueSize>${LOG_QUEUE_SIZE}</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="JSON_FILE"/>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON_ASYNC"/>
+        <appender-ref ref="JSON_FAILURE_FILE"/>
+    </root>
+</configuration>

@@ -93,3 +93,5 @@ crash.log
 *.pem
 # 테스트 전용 키 쌍만 예외 (개발·운영에서 쓰지 않는다)
 !**/src/test/resources/jwt/*.pem
+# 앱이 쓰는 JSON 로그 파일 (#378)
+logs/
