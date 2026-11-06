@@ -11,6 +11,7 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.core.KafkaOperations;
+import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,6 +57,35 @@ class ArchitectureTest {
                 for (Dependency dependency : javaClass.getDirectDependenciesFromSelf()) {
                     JavaClass target = dependency.getTargetClass();
                     if (target.isAssignableTo(ApplicationEventPublisher.class) || target.isAssignableTo(KafkaOperations.class)) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+
+    private static final DescribedPredicate<JavaClass> 구현하는_UseCase가_있는 = DescribedPredicate.describe(
+            "implement a *UseCase of application.port.in",
+            javaClass -> {
+                if (javaClass.isInterface()) {
+                    return false;
+                }
+                for (JavaClass anInterface : javaClass.getAllRawInterfaces()) {
+                    if (anInterface.getPackageName().startsWith("com.ok.refund.application.port.in")
+                            && anInterface.getSimpleName().endsWith("UseCase")) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+
+    private static final DescribedPredicate<JavaClass> 출력_포트를_구현하는 = DescribedPredicate.describe(
+            "implement a *Port of application.port.out",
+            javaClass -> {
+                if (javaClass.isInterface()) {
+                    return false;
+                }
+                for (JavaClass anInterface : javaClass.getAllRawInterfaces()) {
+                    if (anInterface.getPackageName().startsWith("com.ok.refund.application.port.out")) {
                         return true;
                     }
                 }
@@ -112,6 +142,14 @@ class ArchitectureTest {
             .because("컨트롤러는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (환불 헥사고날 구조, 이슈 #481)");
 
     @ArchTest
+    static final ArchRule application은_Transactional을_쓰지_않는다 = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().dependOnClassesThat().areAssignableTo(Transactional.class)
+            .orShould().dependOnClassesThat().areAssignableTo(jakarta.transaction.Transactional.class)
+            .because("트랜잭션은 서비스 안에서 TransactionTemplate으로 DB 작업 구간만 연다. 어노테이션은 메서드 전체를 묶어 "
+                    + "다른 모듈 호출 동안에도 DB 연결과 행 잠금을 잡는다 (refund/CLAUDE.md 3절)");
+
+    @ArchTest
     static final ArchRule 출력_어댑터는_입력_포트와_서비스를_모른다 = noClasses()
             .that().resideInAPackage("..adapter.out..")
             .should().dependOnClassesThat().resideInAnyPackage(
@@ -156,6 +194,36 @@ class ArchitectureTest {
             .and().areNotEnums()
             .should().beInterfaces()
             .because("포트는 구현을 숨기는 경계라 인터페이스여야 한다. 포트가 주고받는 값(record, enum)만 함께 둔다 (환불 헥사고날 구조, 이슈 #481)");
+
+    // 입력·출력 포트의 인터페이스 이름. 값(record, enum)은 위 규칙대로 이름 제한 없이 허용한다
+    @ArchTest
+    static final ArchRule 입력_포트는_UseCase로_끝난다 = classes()
+            .that().resideInAPackage("..application.port.in..")
+            .and().areInterfaces()
+            .should().haveSimpleNameEndingWith("UseCase")
+            .because("이름만 보고 입력 포트를 찾고, 서비스가 구현하는 유스케이스를 구분하기 위해서다 (refund/CLAUDE.md 6절)");
+
+    @ArchTest
+    static final ArchRule 출력_포트는_Port로_끝난다 = classes()
+            .that().resideInAPackage("..application.port.out..")
+            .and().areInterfaces()
+            .should().haveSimpleNameEndingWith("Port")
+            .because("이름만 보고 출력 포트를 찾고, 어댑터가 구현하는 경계를 구분하기 위해서다 (refund/CLAUDE.md 6절)");
+
+    @ArchTest
+    static final ArchRule UseCase는_port_in에만_Port는_port_out에만_있다 = classes()
+            .that().haveSimpleNameEndingWith("UseCase")
+            .should().resideInAPackage("..application.port.in..")
+            .andShould().beInterfaces()
+            .because("UseCase 이름을 다른 곳에서 쓰면 입력 포트와 헷갈린다 (refund/CLAUDE.md 6절)");
+
+    // 이름이 Port로 끝나는 클래스(예: SomePort 구현체)는 출력 포트 인터페이스뿐이어야 한다
+    @ArchTest
+    static final ArchRule Port는_port_out에만_있다 = classes()
+            .that().haveSimpleNameEndingWith("Port")
+            .should().resideInAPackage("..application.port.out..")
+            .andShould().beInterfaces()
+            .because("Port 이름을 다른 곳에서 쓰면 출력 포트와 헷갈린다 (refund/CLAUDE.md 6절)");
 
     @ArchTest
     static final ArchRule 출력_포트는_Spring_Data_Repository를_상속하지_않는다 = noClasses()
@@ -224,14 +292,80 @@ class ArchitectureTest {
             .that().areAnnotatedWith(RestController.class)
             .should().haveSimpleNameEndingWith("Controller")
             .andShould().resideInAPackage("..adapter.in.web..")
-            .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2, 환불 헥사고날 구조)");
+            .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2, refund/CLAUDE.md 6절)");
 
     @ArchTest
     static final ArchRule Service는_Service로_끝나고_application_service_패키지에_있다 = classes()
             .that().areAnnotatedWith(Service.class)
             .should().haveSimpleNameEndingWith("Service")
             .andShould().resideInAPackage("..application.service..")
-            .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2, 환불 헥사고날 구조)");
+            .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2, refund/CLAUDE.md 6절)");
+
+    // 한 유스케이스의 흐름을 서비스 한 클래스에서 읽게 한다. 포트 둘을 한 서비스가 구현하면 유스케이스 경계가 흐려진다
+    @ArchTest
+    static final ArchRule Service는_입력_포트_UseCase를_정확히_하나_구현한다 = classes()
+            .that().areAnnotatedWith(Service.class)
+            .should(new ArchCondition<JavaClass>("implement exactly one *UseCase in application.port.in") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    int count = 0;
+                    for (JavaClass anInterface : javaClass.getAllRawInterfaces()) {
+                        if (anInterface.getPackageName().startsWith("com.ok.refund.application.port.in")
+                                && anInterface.getSimpleName().endsWith("UseCase")) {
+                            count++;
+                        }
+                    }
+                    events.add(new SimpleConditionEvent(javaClass, count == 1,
+                            javaClass.getName() + " implements " + count + " UseCase(s)"));
+                }
+            })
+            .because("입력 포트 하나를 서비스 하나가 구현해야 한 유스케이스의 흐름이 한 클래스에서 읽힌다 (refund/CLAUDE.md 3절)");
+
+    // 서비스 패키지에서 @Service가 아닌 빈은 RefundStepRunner(서비스들이 함께 쓰는 실패 기록 틀) 하나뿐이다.
+    // 그 밖의 보조 클래스(RefundPaging 등)는 package-private이어야 한다. @Component만 붙이면 공개해도 된다는 구멍을 막으려고 이름으로 못 박는다
+    @ArchTest
+    static final ArchRule application_service의_Service가_아닌_클래스는_RefundStepRunner이거나_공개하지_않는다 = classes()
+            .that().resideInAPackage("..application.service..")
+            .and().areTopLevelClasses()
+            .and().areNotAnnotatedWith(Service.class)
+            .and().doNotHaveSimpleName("RefundStepRunner")
+            .should().notBePublic()
+            .because("서비스 패키지의 보조 클래스가 공개되면 다른 곳이 서비스 내부 도구에 기대고, Facade 같은 조율 클래스가 몰래 생긴다. "
+                    + "공개를 허용하는 비서비스 빈은 RefundStepRunner뿐이다 (refund/CLAUDE.md 3절, 5절)");
+
+    // UseCase를 구현하는 클래스가 @Service가 아니면 위 @Service 대상 규칙을 피한다
+    @ArchTest
+    static final ArchRule UseCase_구현체는_application_service의_Service다 = classes()
+            .that(구현하는_UseCase가_있는)
+            .should().beAnnotatedWith(Service.class)
+            .andShould().resideInAPackage("..application.service..")
+            .andShould().haveSimpleNameEndingWith("Service")
+            .because("유스케이스 구현은 *Service 하나로만 둔다. 다른 이름(Facade 등)의 조율 클래스로 유스케이스를 나누지 않는다 (refund/CLAUDE.md 3절)");
+
+    @ArchTest
+    static final ArchRule Entity는_JpaEntity로_끝난다 = classes()
+            .that().areAnnotatedWith(Entity.class)
+            .should().haveSimpleNameEndingWith("JpaEntity")
+            .because("JPA 엔티티는 도메인 모델과 이름으로 구분한다 (refund/CLAUDE.md 6절). 위치는 엔티티는_adapter_out_persistence_패키지에_있다가 본다");
+
+    @ArchTest
+    static final ArchRule 출력_포트_구현체는_Adapter로_끝나고_adapter_out에_있다 = classes()
+            .that(출력_포트를_구현하는)
+            .should().haveSimpleNameEndingWith("Adapter")
+            .andShould().resideInAPackage("..adapter.out..")
+            .because("외부와 닿는 구현을 이름만 보고 찾게 한다 (refund/CLAUDE.md 6절)");
+
+    // 강제하지 않는 이름 규칙(리뷰에서 본다): *Mapper(persistence 안 변환 클래스라 이름 접미사만 관례), *Request/*Response(api.md가 DTO 위치를 정함),
+    // *Command/*Query/*Result의 위치(값이 지나가는 포트 옆, 포트마다 달라 기계 검사가 어렵다), domain은 접미사 없음(접미사 없음은 검사할 수 없다)
+
+    // 모든 모듈이 한 앱(monolith)으로 뜰 때 다른 모듈의 같은 이름 빈과 겹치면 앱이 시작되지 않는다
+    @ArchTest
+    static final ArchRule 스프링_빈_클래스는_이름에_Refund가_들어간다 = classes()
+            .that().resideInAPackage("com.ok.refund..")
+            .and().areMetaAnnotatedWith(Component.class)
+            .should().haveSimpleNameContaining("Refund")
+            .because("빈 이름이 다른 모듈과 겹치면 monolith가 시작되지 않는다. @Service, @Repository, @RestController, "
+                    + "@Configuration은 모두 @Component를 포함한다 (refund/CLAUDE.md 6절)");
 
     @ArchTest
     static final ArchRule ErrorCode_구현체는_ErrorCode로_끝나고_exception_패키지에_있다 = classes()
