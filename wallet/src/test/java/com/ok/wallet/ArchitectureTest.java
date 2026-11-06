@@ -75,6 +75,12 @@ class ArchitectureTest {
             .because("컨트롤러와 리스너는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
+    static final ArchRule 입력_포트는_도메인을_모른다 = noClasses()
+            .that().resideInAPackage("..application.port.in..")
+            .should().dependOnClassesThat().resideInAPackage("com.ok.wallet.domain..")
+            .because("입력 포트는 진입점에 공개하는 약속이다. 엔티티를 돌려주면 진입점이 도메인을 알게 되고, 트랜잭션 밖에서 바꾼 값은 오류 없이 저장되지 않는다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
     static final ArchRule application은_영속_기술에_의존하지_않는다 = noClasses()
             .that().resideInAPackage("..application..")
             .should().dependOnClassesThat(assignableTo(org.springframework.data.repository.Repository.class)

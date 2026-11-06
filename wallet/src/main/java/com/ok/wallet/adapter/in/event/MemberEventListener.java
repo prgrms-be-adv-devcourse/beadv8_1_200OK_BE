@@ -24,7 +24,7 @@ public class MemberEventListener {
      */
     @ApplicationModuleListener
     void on(MemberRegisteredEvent event) {
-        buyerWalletUseCase.getOrCreate(event.memberId());
+        buyerWalletUseCase.createIfAbsent(event.memberId());
     }
 
     /**
@@ -34,6 +34,6 @@ public class MemberEventListener {
      */
     @ApplicationModuleListener
     void on(SellerApprovedEvent event) {
-        sellerWalletUseCase.getOrCreate(event.memberId());
+        sellerWalletUseCase.createIfAbsent(event.memberId());
     }
 }
