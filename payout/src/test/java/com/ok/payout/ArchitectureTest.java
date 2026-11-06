@@ -1,5 +1,6 @@
 package com.ok.payout;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static com.tngtech.archunit.base.DescribedPredicate.not;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.equivalentTo;
@@ -85,9 +86,11 @@ class ArchitectureTest {
             .should().resideInAnyPackage("com.ok.payout", "com.ok.payout.domain..",
                     "com.ok.payout.application.port.in..", "com.ok.payout.application.port.out..",
                     "com.ok.payout.application.service..",
-                    "com.ok.payout.adapter.in..", "com.ok.payout.adapter.out..",
+                    "com.ok.payout.adapter.in.web..", "com.ok.payout.adapter.in.event..", "com.ok.payout.adapter.in.batch..",
+                    "com.ok.payout.adapter.out.persistence..", "com.ok.payout.adapter.out.event..",
                     "com.ok.payout.config..", "com.ok.payout.exception..")
-            .because("레이어 밖이나 정해지지 않은 하위 패키지를 만들면 레이어 규칙을 우회할 수 있다. 새 역할이 필요하면 이 목록과 레이어 규칙을 함께 고친다 (정산 헥사고날 구조, 이슈 #469)");
+            .because("레이어 밖이나 정해지지 않은 하위 패키지를 만들면 레이어 규칙을 우회할 수 있다(예: web → adapter.in.shared → batch는 웹-배치 규칙이 직접 의존만 봐서 통과한다). "
+                    + "새 입구나 out 어댑터 패키지가 필요하면 이 목록과 관련 규칙을 함께 고친다 (정산 헥사고날 구조, 이슈 #469)");
 
     // 다른 모듈의 내부 타입을 알면 모듈을 따로 떼어낼 수 없다(MSA 분리 대비). com.ok 아래에서는 자기 모듈과 common만 허용한다
     @ArchTest
@@ -110,7 +113,8 @@ class ArchitectureTest {
             .because("패키지가 서로 참조하면 한쪽만 따로 이해하거나 테스트하거나 분리할 수 없다. "
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
-    // web·event를 나열하지 않고 adapter.in 전체에서 batch만 뺀다. 새 입구(예: adapter.in.grpc)가 생겨도 같은 규칙을 받게 한다
+    // web·event를 나열하지 않고 adapter.in 전체에서 batch만 뺀다. 새 입구(예: adapter.in.grpc)는 이 규칙을 자동으로 받는다.
+    // 다만 새 하위 패키지는 `정산_클래스는_정해진_패키지에만_있다`의 허용 목록에도 함께 추가해야 한다
     @ArchTest
     static final ArchRule 배치를_뺀_입구는_입력_포트만_안다 = noClasses()
             .that().resideInAPackage("..adapter.in..")
@@ -245,7 +249,12 @@ class ArchitectureTest {
         Path main = Path.of(PayoutApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         JavaClasses classes = new ClassFileImporter().importPath(main);
 
-        // when & then
+        // when
+        // archunit.properties의 failOnEmptyShould=false 때문에 아무 클래스도 못 가져와도 규칙이 통과한다.
+        // 출력 위치가 바뀌어 가져오기가 비어도 조용히 통과하지 않도록, 모듈의 대표 클래스가 들어 있는지 먼저 확인한다
+        // then
+        assertThat(classes.contain(PayoutApplication.class)).isTrue();
+        assertThat(classes.contain("com.ok.payout.application.service.PayoutService")).isTrue();
         정산_모듈_클래스는_com_ok_payout에_있다.check(classes);
     }
 

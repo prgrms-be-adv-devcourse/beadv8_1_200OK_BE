@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.EvaluationResult;
 
+import com.ok.payout.adapter.in.shared.EdgeFakeBridge;
 import com.ok.payout.adapter.in.web.EdgeFakeWebScheduler;
 import com.ok.payout.adapter.out.EdgeFakeRelayUser;
 import com.ok.payout.adapter.shared.EdgeFakeSharedAdapter;
@@ -35,6 +35,18 @@ class ArchitectureRuleEdgeTest {
 
         // then
         assertViolationMentions(sut, EdgeFakeSharedAdapter.class, EdgeFakeSupportHelper.class);
+    }
+
+    @Test
+    void 입구_아래_새_하위_패키지를_만들면_허용_목록_규칙이_실패한다() {
+        // given
+        JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeBridge.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.정산_클래스는_정해진_패키지에만_있다.evaluate(classes);
+
+        // then
+        assertViolationMentions(sut, EdgeFakeBridge.class);
     }
 
     @Test
