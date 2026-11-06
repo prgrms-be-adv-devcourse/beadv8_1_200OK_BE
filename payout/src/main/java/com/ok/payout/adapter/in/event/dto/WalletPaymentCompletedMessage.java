@@ -1,7 +1,6 @@
 package com.ok.payout.adapter.in.event.dto;
 
 import java.time.LocalDateTime;
-import java.util.Objects;
 
 import com.ok.payout.application.port.in.WalletPaymentCompletedCommand;
 
@@ -20,15 +19,8 @@ public record WalletPaymentCompletedMessage(
         LocalDateTime paidAt
 ) {
 
-    // 차감 기록 저장은 값 검사를 하지 않는다. Spring 이벤트 클래스(WalletPaymentCompletedEvent) 생성자가 필수값을 검사해 왔기 때문
-    // Kafka로 받을 때도 같은 보장을 하도록 생성자에서 막는다. JSON을 읽다 실패하면 재시도 없이 오류 처리로 넘어간다
-    public WalletPaymentCompletedMessage {
-        Objects.requireNonNull(orderId, "orderId는 필수입니다.");
-        Objects.requireNonNull(buyerId, "buyerId는 필수입니다.");
-        Objects.requireNonNull(amount, "amount는 필수입니다.");
-        Objects.requireNonNull(paidAt, "paidAt은 필수입니다.");
-    }
-
+    // 값 검사는 입구(PayoutInboundEventValidator)가 한다.
+    // Kafka로 받으면 null과 음수가 모두 입구까지 오고, Spring 이벤트로 받으면 공통 이벤트 생성자가 null을 먼저 거절해 음수만 온다
     public WalletPaymentCompletedCommand toCommand() {
         return new WalletPaymentCompletedCommand(orderId, buyerId, amount, paidAt);
     }

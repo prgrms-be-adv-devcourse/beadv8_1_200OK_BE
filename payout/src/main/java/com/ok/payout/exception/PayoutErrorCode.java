@@ -9,14 +9,6 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum PayoutErrorCode implements ErrorCode {
 
-    // 구매확정 이벤트 값 검증용. 규칙(exception.md)상 이벤트로 받은 값의 오류는 표준 예외 대상이지만,
-    // 정산 이벤트·배치 경로는 #117 협의 전까지 기존처럼 PayoutErrorCode를 씀
-    // (검증 위치 정리는 원래 #90 범위였으나 10/26 범위 조정으로 구매확정 이벤트 처리와 함께 Kafka 전환 때로 미룸, #52)
-    MISSING_ORDER_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing order id", "주문 ID는 필수입니다."),
-    MISSING_ORDER_ITEM_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing order item id", "주문항목 ID는 필수입니다."),
-    MISSING_SELLER_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing seller id", "판매자 ID는 필수입니다."),
-    INVALID_TOTAL_ITEM_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid total item price", "상품 총액은 필수이며 0 이상이어야 합니다."),
-    INVALID_SHIPPING_PRICE(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid shipping price", "배송비는 필수이며 0 이상이어야 합니다."),
     INVALID_ADJUSTMENT_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid adjustment id", "수동 조정 번호는 1 이상이어야 합니다."),
     MISSING_ADMIN_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing admin id", "수동 조정에는 관리자 ID가 필수입니다."),
     MISSING_ADJUSTMENT_REASON(HttpStatus.UNPROCESSABLE_ENTITY, "Missing adjustment reason", "수동 조정에는 조정 사유가 필수입니다."),
