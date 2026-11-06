@@ -5,8 +5,8 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
-import com.ok.refund.repository.RefundRepository;
-import com.ok.refund.service.dto.RefundableOrderItem;
+import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeRefundOrderClient;
 import com.ok.testsupport.TestAccessTokens;
@@ -69,7 +69,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     TestAccessTokens tokens;
     @Autowired
-    RefundRepository refundRepository;
+    RefundJpaRepository refundRepository;
     @Autowired
     FakeRefundOrderClient orderClient;
 

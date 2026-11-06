@@ -2,8 +2,8 @@ package com.ok.testsupport;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.service.RefundOrderClient;
-import com.ok.refund.service.dto.RefundableOrderItem;
+import com.ok.refund.application.port.out.RefundOrderClient;
+import com.ok.refund.application.port.out.RefundableOrderItem;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
