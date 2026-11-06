@@ -2,7 +2,7 @@ package com.ok.testsupport;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.application.port.out.RefundOrderClient;
+import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Component
 @Primary
-public class FakeRefundOrderClient implements RefundOrderClient {
+public class FakeOrderQueryPort implements OrderQueryPort {
 
     private final Map<Long, RefundableOrderItem> items = new ConcurrentHashMap<>();
     private volatile boolean failing;

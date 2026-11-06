@@ -8,7 +8,7 @@ import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.in.SellerRefundUseCase;
-import com.ok.refund.application.port.out.RefundOrderClient;
+import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class RefundFacade implements BuyerRefundUseCase, SellerRefundUseCase {
 
-    private final RefundOrderClient orderClient;
+    private final OrderQueryPort orderQueryPort;
     private final RefundService refundService;
 
     /**
@@ -33,7 +33,7 @@ public class RefundFacade implements BuyerRefundUseCase, SellerRefundUseCase {
      */
     @Override
     public RefundResult request(RefundRequestCommand command) {
-        RefundableOrderItem orderItem = orderClient.getOrderItem(command.orderId(), command.orderItemId());
+        RefundableOrderItem orderItem = orderQueryPort.getOrderItem(command.orderId(), command.orderItemId());
         return refundService.request(command, orderItem);
     }
 
@@ -83,7 +83,7 @@ public class RefundFacade implements BuyerRefundUseCase, SellerRefundUseCase {
         if (!RefundStatus.REQUESTED.name().equals(refund.status())) {
             throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
         }
-        RefundableOrderItem orderItem = orderClient.getOrderItem(refund.orderId(), refund.orderItemId());
+        RefundableOrderItem orderItem = orderQueryPort.getOrderItem(refund.orderId(), refund.orderItemId());
         return refundService.approve(refundId, sellerId, orderItem);
     }
 }

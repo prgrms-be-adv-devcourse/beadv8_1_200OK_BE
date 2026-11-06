@@ -5,7 +5,7 @@ import com.ok.refund.adapter.out.order.dto.RefundOrderItemResponse;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.application.port.out.RefundOrderClient;
+import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -19,12 +19,12 @@ import java.util.List;
  * 이름에 Refund를 붙인 이유: 다른 모듈에도 주문 호출 클라이언트가 있어, monolith에서 빈 이름이 겹치면 앱이 뜨지 않는다.
  */
 @Component
-public class RefundOrderApiClient implements RefundOrderClient {
+public class RefundOrderHttpAdapter implements OrderQueryPort {
 
     private final RestClient restClient;
 
     // 주소 설정은 주문 모듈의 클라이언트와 같은 키·기본값을 쓴다. 한 앱(monolith)에서는 자기 자신을 부르게 된다
-    public RefundOrderApiClient(@Value("${app.internal-api.base-url:http://localhost:8080}") String baseUrl) {
+    public RefundOrderHttpAdapter(@Value("${app.internal-api.base-url:http://localhost:8080}") String baseUrl) {
         this.restClient = InternalRestClient.create(baseUrl + "/internal/v1/orders", RefundErrorCode.ORDER_API_FAILED);
     }
 

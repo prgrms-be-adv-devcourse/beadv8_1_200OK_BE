@@ -8,7 +8,7 @@ import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.application.port.out.RefundRepository;
+import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.RefundableOrderItem;
@@ -49,7 +49,7 @@ public class RefundService {
     // 승인 때 이미 출고됐거나 취소된 상품을 자동 거절할 때 구매자에게 보이는 사유
     static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
 
-    private final RefundRepository refundRepository;
+    private final RefundPersistencePort refundPersistencePort;
     private final Clock clock;
 
     /**
@@ -80,7 +80,7 @@ public class RefundService {
         Refund refund = Refund.request(orderItem.orderId(), orderItem.orderItemId(), command.quantity(), command.buyerId(),
                 orderItem.sellerId(), orderItem.productOptionId(), orderItem.productName(), orderItem.optionName(),
                 orderItem.unitPrice(), command.cancelReason());
-        Refund saved = refundRepository.saveNew(refund);
+        Refund saved = refundPersistencePort.saveNew(refund);
         // 배송비는 승인 때 정하지만, 지금 승인해도 받을 수 없는 요청은 판매자에게 보내지 않고 미리 막는다.
         // 저장 뒤에 판단하는 이유: 같은 상품에 처리 중 요청이 있으면 그 개수까지 더해져 판단이 "개수 초과"(500)로 깨지므로,
         // UNIQUE가 먼저 409로 막게 한다. 여기서 던지면 트랜잭션이 되돌려져 저장한 행도 남지 않는다
@@ -97,7 +97,7 @@ public class RefundService {
      * @param page 0부터 시작하는 페이지 번호
      */
     public Page<RefundResult> getBuyerRefunds(Long buyerId, int page) {
-        return refundRepository.findAllByBuyerId(buyerId, pageOf(page)).map(RefundResult::from);
+        return refundPersistencePort.findAllByBuyerId(buyerId, pageOf(page)).map(RefundResult::from);
     }
 
     /**
@@ -109,9 +109,9 @@ public class RefundService {
      */
     public Page<RefundResult> getSellerRefunds(Long sellerId, String status, int page) {
         if (status == null) {
-            return refundRepository.findAllBySellerId(sellerId, pageOf(page)).map(RefundResult::from);
+            return refundPersistencePort.findAllBySellerId(sellerId, pageOf(page)).map(RefundResult::from);
         }
-        return refundRepository.findAllBySellerIdAndStatus(sellerId, RefundStatus.valueOf(status), pageOf(page))
+        return refundPersistencePort.findAllBySellerIdAndStatus(sellerId, RefundStatus.valueOf(status), pageOf(page))
                 .map(RefundResult::from);
     }
 
@@ -122,7 +122,7 @@ public class RefundService {
      * @throws RestApiException 없거나 남의 요청이면 {@code REFUND_NOT_FOUND}
      */
     public RefundResult getSellerRefund(Long refundId, Long sellerId) {
-        return refundRepository.findById(refundId)
+        return refundPersistencePort.findById(refundId)
                 .filter(found -> found.isOwnedBySeller(sellerId))
                 .map(RefundResult::from)
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
@@ -170,7 +170,7 @@ public class RefundService {
             // 배송비 판단은 하지 않는다. 취소할 수 없는 상품이라 뺄 배송비도 없고, 배송비 칸은 0으로 남는다
             refund.reject(SHIPPED_REJECT_REASON, now);
             // 도메인을 바꾼 것만으로는 저장되지 않는다(#481, 명시적 저장). 상태를 바꾼 경로마다 update를 불러야 한다
-            refundRepository.update(refund);
+            refundPersistencePort.update(refund);
             return RefundResult.from(refund);
         }
         // 출고 전(PREPARING)이 아닌데 아는 상태도 아니면(null, 새 상태) 자동 거절하지 않고 서버 오류(500)로 던진다.
@@ -190,7 +190,7 @@ public class RefundService {
             // 판매자 거절과 같은 상태로 남긴다. 상태를 따로 두지 않는 이유: 구매자에게는 "거절, 사유"로 충분하고 다시 요청할 수 있다
             refund.reject(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED.getMessage(), now);
         }
-        refundRepository.update(refund);
+        refundPersistencePort.update(refund);
         return RefundResult.from(refund);
     }
 
@@ -205,7 +205,7 @@ public class RefundService {
     public RefundResult reject(Long refundId, Long sellerId, String rejectReason) {
         Refund refund = findSellerRefundForUpdate(refundId, sellerId);
         refund.reject(rejectReason, LocalDateTime.now(clock));
-        refundRepository.update(refund);
+        refundPersistencePort.update(refund);
         return RefundResult.from(refund);
     }
 
@@ -216,11 +216,11 @@ public class RefundService {
      */
     @Transactional
     public RefundResult withdraw(Long refundId, Long buyerId) {
-        Refund refund = refundRepository.findByIdForUpdate(refundId)
+        Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
                 .filter(found -> found.isOwnedByBuyer(buyerId))
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         refund.withdraw(LocalDateTime.now(clock));
-        refundRepository.update(refund);
+        refundPersistencePort.update(refund);
         return RefundResult.from(refund);
     }
 
@@ -237,10 +237,10 @@ public class RefundService {
     public void recordFailure(Long refundId, RefundFailedStep step, String failureCode) {
         // 같은 환불을 동시에 결정·기록하는 다른 트랜잭션과 섞이지 않게 다른 결정 메서드처럼 잠근 뒤 고친다.
         // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)
-        Refund refund = refundRepository.findByIdForUpdate(refundId)
+        Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
                 .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
         refund.recordFailure(step, failureCode);
-        refundRepository.update(refund);
+        refundPersistencePort.update(refund);
     }
 
     // 승인은 이 메서드가 트랜잭션을 새로 시작했을 때만 진행한다. 바깥 트랜잭션에 합류하면 두 가지가 조용히 깨진다.
@@ -262,7 +262,7 @@ public class RefundService {
     // 묶음(주문 + 판매자)의 진행 중 환불과 이번 환불을 ID 오름차순으로 한 건씩 잠그고 그중 이번 환불을 돌려준다.
     // 판매자 ID로 묶음을 찾으므로 남의 요청이나 없는 요청은 목록에 들어 있지 않아 없는 것과 같게 막는다
     private Refund lockBundleAndFind(Long refundId, Long sellerId, Long orderId) {
-        List<Long> lockTargetIds = refundRepository.findLockTargetIds(orderId, sellerId, refundId, LOCK_TARGET_STATUSES);
+        List<Long> lockTargetIds = refundPersistencePort.findLockTargetIds(orderId, sellerId, refundId, LOCK_TARGET_STATUSES);
         if (!lockTargetIds.contains(refundId)) {
             throw new RestApiException(RefundErrorCode.REFUND_NOT_FOUND);
         }
@@ -274,7 +274,7 @@ public class RefundService {
         // 환불 행은 지우지 않아 ID를 읽은 뒤 잠그는 사이에 사라질 일은 없다. 그래도 사라지면 없는 요청으로 막는다.
         Refund target = null;
         for (Long id : lockTargetIds) {
-            Refund locked = refundRepository.findByIdForUpdate(id)
+            Refund locked = refundPersistencePort.findByIdForUpdate(id)
                     .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
             if (id.equals(refundId)) {
                 target = locked;
@@ -291,7 +291,7 @@ public class RefundService {
 
     // 판매자 결정은 트랜잭션의 첫 조회로 잠근다(findByIdForUpdate 설명 참고). 남의 요청은 있는지도 알려 주지 않으려고 없는 것과 같게 막는다
     private Refund findSellerRefundForUpdate(Long refundId, Long sellerId) {
-        return refundRepository.findByIdForUpdate(refundId)
+        return refundPersistencePort.findByIdForUpdate(refundId)
                 .filter(found -> found.isOwnedBySeller(sellerId))
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
     }
@@ -299,7 +299,7 @@ public class RefundService {
     // 같은 묶음(주문 + 판매자)에서 처리 중인 요청만 센다. 요청됨은 아직 승인될지 모르고, 거절·철회는 취소되지 않는다.
     // 판단할 환불은 요청됨이라 집계에 들어가지 않는다
     private RefundShippingFee decideShippingFee(Refund refund, RefundableOrderItem orderItem) {
-        List<CancelledQuantity> cancelled = refundRepository.sumCancelledByOrderItem(
+        List<CancelledQuantity> cancelled = refundPersistencePort.sumCancelledByOrderItem(
                 refund.getOrderId(), refund.getSellerId(), CANCELLING_STATUSES);
         return RefundShippingFeePolicy.decide(refund, orderItem.bundle(), cancelled);
     }

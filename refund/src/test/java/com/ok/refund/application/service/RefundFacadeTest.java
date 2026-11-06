@@ -1,6 +1,6 @@
 package com.ok.refund.application.service;
 
-import com.ok.refund.application.port.out.RefundOrderClient;
+import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
@@ -36,7 +36,7 @@ class RefundFacadeTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 5, 10, 0);
 
     @Mock
-    RefundOrderClient orderClient;
+    OrderQueryPort orderQueryPort;
     @Mock
     RefundService refundService;
     @InjectMocks
@@ -49,7 +49,7 @@ class RefundFacadeTest {
         RefundableOrderItem orderItem = orderItem();
         RefundResult approved = RefundResult.from(approved());
         given(refundService.getSellerRefund(REFUND_ID, SELLER_ID)).willReturn(requested);
-        given(orderClient.getOrderItem(10L, 101L)).willReturn(orderItem);
+        given(orderQueryPort.getOrderItem(10L, 101L)).willReturn(orderItem);
         given(refundService.approve(REFUND_ID, SELLER_ID, orderItem)).willReturn(approved);
 
         // when
@@ -70,7 +70,7 @@ class RefundFacadeTest {
 
         // then
         assertThat(result).isSameAs(rejected);
-        then(orderClient).should(never()).getOrderItem(any(), any());
+        then(orderQueryPort).should(never()).getOrderItem(any(), any());
     }
 
     @Test
@@ -82,7 +82,7 @@ class RefundFacadeTest {
         assertThatThrownBy(() -> sut.decide(new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.APPROVE, null)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
-        then(orderClient).should(never()).getOrderItem(any(), any());
+        then(orderQueryPort).should(never()).getOrderItem(any(), any());
     }
 
     @Test
@@ -95,14 +95,14 @@ class RefundFacadeTest {
         assertThatThrownBy(() -> sut.decide(new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.APPROVE, null)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
-        then(orderClient).should(never()).getOrderItem(any(), any());
+        then(orderQueryPort).should(never()).getOrderItem(any(), any());
     }
 
     @Test
     void 승인_때_주문_호출이_실패하면_승인하지_않는다() {
         // given
         given(refundService.getSellerRefund(REFUND_ID, SELLER_ID)).willReturn(RefundResult.from(requested()));
-        given(orderClient.getOrderItem(10L, 101L)).willThrow(new RestApiException(RefundErrorCode.ORDER_API_FAILED));
+        given(orderQueryPort.getOrderItem(10L, 101L)).willThrow(new RestApiException(RefundErrorCode.ORDER_API_FAILED));
 
         // when & then
         assertThatThrownBy(() -> sut.decide(new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.APPROVE, null)))

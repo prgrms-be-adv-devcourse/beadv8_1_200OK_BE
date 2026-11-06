@@ -25,7 +25,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 주문 응답은 요청서에 적은 필드 이름으로 약속했다. 이름이 어긋나면 컴파일은 되고 값만 0이나 null로 들어와
 // 조용히 틀리므로, 요청서 모양의 JSON이 그대로 옮겨 담기는지 JDK 내장 서버로 확인한다.
 // 주문 팀 API가 아직 없어 실제 주문 모듈 대신 이 서버가 요청서대로 응답한다
-class RefundOrderApiClientTest {
+class RefundOrderHttpAdapterTest {
 
     private static final String ITEMS_JSON = """
             [ { "orderItemId": 101, "unitPrice": 10000, "quantity": 3 },
@@ -54,7 +54,7 @@ class RefundOrderApiClientTest {
     private final AtomicReference<String> body = new AtomicReference<>("");
     private final AtomicReference<String> path = new AtomicReference<>();
     private HttpServer server;
-    private RefundOrderApiClient sut;
+    private RefundOrderHttpAdapter sut;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -72,7 +72,7 @@ class RefundOrderApiClientTest {
             exchange.close();
         });
         server.start();
-        sut = new RefundOrderApiClient("http://localhost:" + server.getAddress().getPort());
+        sut = new RefundOrderHttpAdapter("http://localhost:" + server.getAddress().getPort());
     }
 
     @AfterEach

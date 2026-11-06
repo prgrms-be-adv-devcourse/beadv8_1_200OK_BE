@@ -15,7 +15,7 @@ import java.util.Optional;
  * 저장은 변경 감지에 기대지 않고 명시적으로 한다(#481). 새 행은 {@link #saveNew}, 상태 변경은 {@link #update}를 부른다.
  * 둘로 나눈 이유: 새 행은 ID 생성과 진행 중 중복(UNIQUE) 감지가 필요하고, 수정은 같은 트랜잭션에서 잠근 행에만 해야 해서 성격이 다르다.
  */
-public interface RefundRepository {
+public interface RefundPersistencePort {
 
     /**
      * 새 환불을 바로 저장하고(INSERT를 즉시 보냄) ID와 생성 시각이 채워진 새 도메인을 돌려준다. 넘긴 객체는 바뀌지 않는다.

@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * 단가·판매자·옵션·이름은 요청 때 주문에서 받아 저장해 둔다. 주문 쪽 값이 나중에 바뀌어도 환불 금액이 흔들리지 않게 하려는 것이다.
  *
  * <p>JPA를 모르는 도메인 객체다(#481). 테이블 매핑은 {@code adapter/out/persistence}의 {@code RefundJpaEntity}가 맡는다.
- * 상태를 바꾼 뒤에는 서비스가 출력 포트 {@code RefundRepository.update}를 불러야 DB에 반영된다.
+ * 상태를 바꾼 뒤에는 서비스가 출력 포트 {@code RefundPersistencePort.update}를 불러야 DB에 반영된다.
  * 변경 감지에 기대지 않는 이유: 도메인을 바꾸는 순간 엔티티가 바뀌면, 그 뒤의 조회가 자동 flush로 바뀐 값을 함께 읽는 순서 규칙을
  * 코드마다 기억해야 했다. 이제 엔티티는 {@code update}를 부를 때만 바뀐다.
  */

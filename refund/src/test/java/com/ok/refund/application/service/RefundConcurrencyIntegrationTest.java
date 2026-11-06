@@ -7,13 +7,13 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
-import com.ok.refund.application.port.out.RefundRepository;
+import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
-import com.ok.testsupport.FakeRefundOrderClient;
+import com.ok.testsupport.FakeOrderQueryPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.RepeatedTest;
@@ -62,7 +62,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     RefundService refundService;
     // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
-    RefundRepository refundRepository;
+    RefundPersistencePort refundPersistencePort;
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
@@ -70,12 +70,12 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     ApplicationContext applicationContext;
     @Autowired
-    FakeRefundOrderClient orderClient;
+    FakeOrderQueryPort orderQueryPort;
 
     @AfterEach
     void tearDown() {
         refundJpaRepository.deleteAllInBatch();
-        orderClient.clear();
+        orderQueryPort.clear();
     }
 
     @RepeatedTest(5)
@@ -83,8 +83,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // given: A 10,000 + B 10,000 = 20,000원(무료배송 기준 50,000원 미만). 배송비 3,000원과 도서산간 운임 2,000원을 냈다(총 25,000원)
         BundleShipping bundle = new BundleShipping(3_000L, 2_000L, 3_000L, 50_000L,
                 List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1)));
-        orderClient.put(orderItem(A, 10_000L, bundle));
-        orderClient.put(orderItem(B, 10_000L, bundle));
+        orderQueryPort.put(orderItem(A, 10_000L, bundle));
+        orderQueryPort.put(orderItem(B, 10_000L, bundle));
         Long refundA = request(A);
         Long refundB = request(B);
 
@@ -96,7 +96,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         List<Long> feesPerRefund = new ArrayList<>();
         long total = 0;
         for (Long refundId : List.of(refundA, refundB)) {
-            Refund refund = refundRepository.findById(refundId).orElseThrow();
+            Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
             feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
             total += refund.getRefundAmount();
         }
@@ -113,8 +113,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // B·C를 각각 요청하면 먼저 승인되는 쪽이 45,000원으로 기준을 깨 3,000원을 빼고, 나중 쪽은 이미 깨져 빼지 않는다
         BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(A, 30_000L, 1), new BundleItem(B, 15_000L, 1), new BundleItem(C, 15_000L, 1)));
-        orderClient.put(orderItem(B, 15_000L, bundle));
-        orderClient.put(orderItem(C, 15_000L, bundle));
+        orderQueryPort.put(orderItem(B, 15_000L, bundle));
+        orderQueryPort.put(orderItem(C, 15_000L, bundle));
         Long refundB = request(B);
         Long refundC = request(C);
 
@@ -125,7 +125,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThat(results).containsOnly(SUCCESS);
         List<Long> deductedPerRefund = new ArrayList<>();
         for (Long refundId : List.of(refundB, refundC)) {
-            deductedPerRefund.add(refundRepository.findById(refundId).orElseThrow().getDeductedShippingFeeAmount());
+            deductedPerRefund.add(refundPersistencePort.findById(refundId).orElseThrow().getDeductedShippingFeeAmount());
         }
         assertThat(deductedPerRefund).containsExactlyInAnyOrder(3_000L, 0L);
     }
@@ -136,9 +136,9 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // given: A·B·C 각 10,000원 = 30,000원(기준 50,000원 미만). 배송비 3,000원과 도서산간 운임 2,000원을 냈다(총 35,000원)
         BundleShipping bundle = new BundleShipping(3_000L, 2_000L, 3_000L, 50_000L,
                 List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1), new BundleItem(C, 10_000L, 1)));
-        orderClient.put(orderItem(A, 10_000L, bundle));
-        orderClient.put(orderItem(B, 10_000L, bundle));
-        orderClient.put(orderItem(C, 10_000L, bundle));
+        orderQueryPort.put(orderItem(A, 10_000L, bundle));
+        orderQueryPort.put(orderItem(B, 10_000L, bundle));
+        orderQueryPort.put(orderItem(C, 10_000L, bundle));
         Long refundA = request(A);
         Long refundB = request(B);
         Long refundC = request(C);
@@ -151,7 +151,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         List<Long> feesPerRefund = new ArrayList<>();
         long total = 0;
         for (Long refundId : List.of(refundA, refundB, refundC)) {
-            Refund refund = refundRepository.findById(refundId).orElseThrow();
+            Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
             feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
             total += refund.getRefundAmount();
         }
@@ -170,9 +170,9 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // given: A 요청됨, B 철회 뒤 다시 요청(철회 행 + 요청됨 행), C 철회
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1), new BundleItem(C, 10_000L, 1)));
-        orderClient.put(orderItem(A, 10_000L, bundle));
-        orderClient.put(orderItem(B, 10_000L, bundle));
-        orderClient.put(orderItem(C, 10_000L, bundle));
+        orderQueryPort.put(orderItem(A, 10_000L, bundle));
+        orderQueryPort.put(orderItem(B, 10_000L, bundle));
+        orderQueryPort.put(orderItem(C, 10_000L, bundle));
         Long refundA = request(A);
         Long withdrawnB = request(B);
         refundService.withdraw(withdrawnB, BUYER_ID);
@@ -182,7 +182,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         List<RefundStatus> active = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
 
         // when
-        List<Long> sut = refundRepository.findLockTargetIds(ORDER_ID, SELLER_ID, withdrawnC, active);
+        List<Long> sut = refundPersistencePort.findLockTargetIds(ORDER_ID, SELLER_ID, withdrawnC, active);
 
         // then: 철회된 B는 빠지고, 철회됐어도 이번 환불인 C는 들어간다. ID 오름차순이다
         assertThat(sut).containsExactly(refundA, refundB, withdrawnC);
@@ -196,8 +196,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // given: 배송비 3,000원과 도서산간 운임 2,000원을 낸 묶음 A 10,000 + B 10,000
         BundleShipping bundle = new BundleShipping(3_000L, 2_000L, 3_000L, 50_000L,
                 List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1)));
-        orderClient.put(orderItem(A, 10_000L, bundle));
-        orderClient.put(orderItem(B, 10_000L, bundle));
+        orderQueryPort.put(orderItem(A, 10_000L, bundle));
+        orderQueryPort.put(orderItem(B, 10_000L, bundle));
         Long refundA = request(A);
         Long refundB = request(B);
         CountDownLatch locked = new CountDownLatch(1);
@@ -206,11 +206,11 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<?> holding = executor.submit(() -> first.executeWithoutResult(status -> {
-                Refund lockedA = refundRepository.findByIdForUpdate(refundA).orElseThrow();
-                refundRepository.findByIdForUpdate(refundB).orElseThrow();
+                Refund lockedA = refundPersistencePort.findByIdForUpdate(refundA).orElseThrow();
+                refundPersistencePort.findByIdForUpdate(refundB).orElseThrow();
                 lockedA.approve(LocalDateTime.of(2026, 11, 5, 10, 0), RefundShippingFee.none());
                 // 명시적 저장(#481): update를 불러야 커밋 때 A의 "처리 중"이 저장돼 B가 최신 값으로 읽는다
-                refundRepository.update(lockedA);
+                refundPersistencePort.update(lockedA);
                 locked.countDown();
                 await(release);
             }));
@@ -225,7 +225,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
             holding.get(30, TimeUnit.SECONDS);
             assertThat(approvingB.get(30, TimeUnit.SECONDS)).isEqualTo(SUCCESS);
         }
-        Refund savedB = refundRepository.findById(refundB).orElseThrow();
+        Refund savedB = refundPersistencePort.findById(refundB).orElseThrow();
         assertThat(savedB).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(savedB.getShippingFeeAmount()).isEqualTo(3_000L);
@@ -242,7 +242,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // given
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L, List.of(new BundleItem(A, 10_000L, 1)));
         RefundableOrderItem item = orderItem(A, 10_000L, bundle);
-        orderClient.put(item);
+        orderQueryPort.put(item);
         Long refundId = request(A);
         TransactionTemplate outer = new TransactionTemplate(transactionManager);
         outer.setIsolationLevel(isolationLevel);
@@ -251,7 +251,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> outer.executeWithoutResult(status -> refundService.approve(refundId, SELLER_ID, item)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불 승인은 이미 열린 트랜잭션 안에서 부를 수 없습니다. 새 트랜잭션으로 실행해야 합니다.");
-        assertThat(refundRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
     // 승인 검사(새 트랜잭션인지)는 영속성 컨텍스트도 새것이라는 전제에 기댄다. OSIV(open-in-view)를 켜면 요청 하나 동안 영속성 컨텍스트가

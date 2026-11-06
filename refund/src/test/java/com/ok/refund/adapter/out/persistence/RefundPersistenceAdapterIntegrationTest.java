@@ -1,7 +1,7 @@
 package com.ok.refund.adapter.out.persistence;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.refund.application.port.out.RefundRepository;
+import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundFailedStep;
@@ -34,7 +34,7 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     private static final Long SELLER_ID = 7L;
 
     @Autowired
-    RefundRepository refundRepository;
+    RefundPersistencePort refundPersistencePort;
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
@@ -51,7 +51,7 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
         Refund refund = requested(ORDER_ITEM_ID);
 
         // when
-        Refund sut = inTransaction(() -> refundRepository.saveNew(refund));
+        Refund sut = inTransaction(() -> refundPersistencePort.saveNew(refund));
 
         // then
         assertThat(sut).isNotNull();
@@ -67,19 +67,19 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 잠금_조회한_환불을_update하면_바뀌는_칸이_모두_저장된다() {
         // given
-        Long refundId = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
 
         // when: 서비스처럼 한 트랜잭션에서 잠그고, 바꾸고, update한다
         inTransaction(() -> {
-            Refund locked = refundRepository.findByIdForUpdate(refundId).orElseThrow();
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
             locked.approve(NOW, new RefundShippingFee(3_000L, 2_000L, 1_000L, true));
             locked.recordFailure(RefundFailedStep.ORDER, "ORDER_API_FAILED");
-            refundRepository.update(locked);
+            refundPersistencePort.update(locked);
             return null;
         });
 
         // then
-        Refund sut = refundRepository.findById(refundId).orElseThrow();
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
@@ -97,18 +97,18 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 거절을_update하면_거절_사유가_남고_진행_중_칸이_비워진다() {
         // given
-        Long refundId = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
 
         // when
         inTransaction(() -> {
-            Refund locked = refundRepository.findByIdForUpdate(refundId).orElseThrow();
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
             locked.reject("이미 포장을 마쳤습니다.", NOW);
-            refundRepository.update(locked);
+            refundPersistencePort.update(locked);
             return null;
         });
 
         // then
-        Refund sut = refundRepository.findById(refundId).orElseThrow();
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.REJECTED);
@@ -122,21 +122,21 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 같은_트랜잭션에서_update가_flush된_뒤에_다시_update해도_마지막_값이_저장된다() {
         // given
-        Long refundId = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
 
         // when
         inTransaction(() -> {
-            Refund locked = refundRepository.findByIdForUpdate(refundId).orElseThrow();
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
             locked.approve(NOW, RefundShippingFee.none());
-            refundRepository.update(locked);
-            refundRepository.sumCancelledByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING));
+            refundPersistencePort.update(locked);
+            refundPersistencePort.sumCancelledByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING));
             locked.recordFailure(RefundFailedStep.ORDER, "ORDER_API_FAILED");
-            refundRepository.update(locked);
+            refundPersistencePort.update(locked);
             return null;
         });
 
         // then
-        Refund sut = refundRepository.findById(refundId).orElseThrow();
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
@@ -149,17 +149,17 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 이_트랜잭션에서_불러오지_않은_환불을_update하면_예외를_던지고_바꾸지_않는다() {
         // given: 앞 트랜잭션에서 읽어 둔 환불을 다음 트랜잭션에서 바꾼다
-        Refund saved = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID)));
+        Refund saved = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID)));
         saved.withdraw(NOW);
 
         // when & then
         assertThatThrownBy(() -> inTransaction(() -> {
-            refundRepository.update(saved);
+            refundPersistencePort.update(saved);
             return null;
         }))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("이 트랜잭션에서 잠금 조회로 불러온 환불만 update할 수 있습니다. refundId=" + saved.getId());
-        assertThat(refundRepository.findById(saved.getId()).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        assertThat(refundPersistencePort.findById(saved.getId()).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
     // 같은 트랜잭션에서 불러왔어도 잠그지 않은 조회(findById)라면, 다른 트랜잭션이 잠그고 바꾸는 중에도 기다리지 않고 덮어쓸 수 있다.
@@ -167,18 +167,18 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 같은_트랜잭션에서_잠그지_않고_불러온_환불을_update하면_예외를_던지고_바꾸지_않는다() {
         // given
-        Long refundId = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
 
         // when & then
         assertThatThrownBy(() -> inTransaction(() -> {
-            Refund unlocked = refundRepository.findById(refundId).orElseThrow();
+            Refund unlocked = refundPersistencePort.findById(refundId).orElseThrow();
             unlocked.withdraw(NOW);
-            refundRepository.update(unlocked);
+            refundPersistencePort.update(unlocked);
             return null;
         }))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("이 트랜잭션에서 잠금 조회로 불러온 환불만 update할 수 있습니다. refundId=" + refundId);
-        assertThat(refundRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
     // 분리 전에는 엔티티를 바꾸는 순간 그 뒤의 집계 쿼리가 자동 flush로 바뀐 값을 읽었다(승인 때 "개수 초과"의 원인).
@@ -186,13 +186,13 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 도메인을_바꿔도_update_전에는_같은_트랜잭션의_집계에_보이지_않는다() {
         // given
-        Long refundId = inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
 
         // when
         List<CancelledQuantity> sut = inTransaction(() -> {
-            Refund locked = refundRepository.findByIdForUpdate(refundId).orElseThrow();
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
             locked.approve(NOW, RefundShippingFee.none());
-            return refundRepository.sumCancelledByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING));
+            return refundPersistencePort.sumCancelledByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING));
         });
 
         // then
@@ -202,10 +202,10 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 같은_주문_상품에_진행_중인_요청이_있으면_진행_중_에러를_던진다() {
         // given
-        inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID)));
+        inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID)));
 
         // when & then
-        assertThatThrownBy(() -> inTransaction(() -> refundRepository.saveNew(requested(ORDER_ITEM_ID))))
+        assertThatThrownBy(() -> inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
         assertThat(refundJpaRepository.count()).isOne();

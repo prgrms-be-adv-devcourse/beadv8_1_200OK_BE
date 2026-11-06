@@ -8,13 +8,13 @@ import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
-import com.ok.refund.application.port.out.RefundRepository;
+import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
-import com.ok.testsupport.FakeRefundOrderClient;
+import com.ok.testsupport.FakeOrderQueryPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -47,18 +47,18 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     RefundService refundService;
     // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
-    RefundRepository refundRepository;
+    RefundPersistencePort refundPersistencePort;
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
-    FakeRefundOrderClient orderClient;
+    FakeOrderQueryPort orderQueryPort;
     @Autowired
     PlatformTransactionManager transactionManager;
 
     @AfterEach
     void tearDown() {
         refundJpaRepository.deleteAllInBatch();
-        orderClient.clear();
+        orderQueryPort.clear();
     }
 
     @Test
@@ -73,7 +73,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
                 e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
 
         // then
-        Refund sut = refundRepository.findById(refundId).orElseThrow();
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
@@ -95,7 +95,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         refundService.recordFailure(refundId, step, longestFailureCode);
 
         // then
-        Refund sut = refundRepository.findById(refundId).orElseThrow();
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getFailedStep()).isEqualTo(step);
@@ -129,7 +129,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     private Long processingRefundId() {
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(ORDER_ITEM_ID, 10_000L, 1)));
-        orderClient.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 77L, "상품", "옵션",
+        orderQueryPort.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 77L, "상품", "옵션",
                 RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 1, bundle));
         Long refundId = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null)).refundId();
         refundFacade.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));

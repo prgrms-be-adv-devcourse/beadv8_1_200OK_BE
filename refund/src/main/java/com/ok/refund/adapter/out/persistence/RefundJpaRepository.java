@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * {@link RefundJpaEntity}의 Spring Data 리포지토리. 서비스는 이 인터페이스가 아니라 출력 포트 {@code RefundRepository}를 쓰고,
+ * {@link RefundJpaEntity}의 Spring Data 리포지토리. 서비스는 이 인터페이스가 아니라 출력 포트 {@code RefundPersistencePort}를 쓰고,
  * {@link RefundPersistenceAdapter}가 이 리포지토리로 포트를 구현한다.
  * JPQL은 기본 엔티티 이름 {@code RefundJpaEntity}를 쓴다. {@code @Entity(name = "Refund")}로 옛 이름을 남기면 쿼리 문자열은
  * 덜 바뀌지만, 쿼리가 도메인 {@code Refund}를 가리키는 것처럼 읽혀 헷갈려서 쓰지 않았다.

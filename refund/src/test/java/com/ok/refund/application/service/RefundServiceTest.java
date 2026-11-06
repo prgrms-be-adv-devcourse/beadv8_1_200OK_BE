@@ -8,7 +8,7 @@ import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.application.port.out.RefundRepository;
+import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.RefundableOrderItem;
@@ -53,26 +53,26 @@ class RefundServiceTest {
     private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
 
     @Mock
-    RefundRepository refundRepository;
+    RefundPersistencePort refundPersistencePort;
 
     RefundService sut;
 
     @BeforeEach
     void setUp() {
-        sut = new RefundService(refundRepository, CLOCK);
+        sut = new RefundService(refundPersistencePort, CLOCK);
     }
 
     @Test
     void 요청하면_주문에서_받은_값으로_요청됨을_저장한다() {
         // given
-        given(refundRepository.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
         sut.request(command(2), socks("PREPARING", 3));
 
         // then
         ArgumentCaptor<Refund> captor = ArgumentCaptor.forClass(Refund.class);
-        then(refundRepository).should().saveNew(captor.capture());
+        then(refundPersistencePort).should().saveNew(captor.capture());
         Refund saved = captor.getValue();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
@@ -94,7 +94,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.request(otherBuyer, socks("PREPARING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_FOUND));
-        then(refundRepository).should(never()).saveNew(any());
+        then(refundPersistencePort).should(never()).saveNew(any());
     }
 
     @Test
@@ -103,7 +103,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.request(command(1), socks("SHIPPING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE));
-        then(refundRepository).should(never()).saveNew(any());
+        then(refundPersistencePort).should(never()).saveNew(any());
     }
 
     @Test
@@ -112,13 +112,13 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.request(command(4), socks("PREPARING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_QUANTITY_EXCEEDED));
-        then(refundRepository).should(never()).saveNew(any());
+        then(refundPersistencePort).should(never()).saveNew(any());
     }
 
     @Test
     void 산_개수만큼은_요청할_수_있다() {
         // given
-        given(refundRepository.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
         RefundResult result = sut.request(command(3), socks("PREPARING", 3));
@@ -137,7 +137,7 @@ class RefundServiceTest {
     @Test
     void 저장소가_진행_중_에러를_던지면_그대로_돌려준다() {
         // given
-        given(refundRepository.saveNew(any(Refund.class)))
+        given(refundPersistencePort.saveNew(any(Refund.class)))
                 .willThrow(new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
 
         // when & then
@@ -150,7 +150,7 @@ class RefundServiceTest {
     @Test
     void 요청_때_배송비가_모자라면_409로_막는다() {
         // given
-        given(refundRepository.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when & then
         assertThatThrownBy(() -> sut.request(new RefundRequestCommand(BUYER_ID, 10L, 101L, 1, null), cheapItemInFreeBundle()))
@@ -161,7 +161,7 @@ class RefundServiceTest {
     @Test
     void 남의_상품_요청은_조회해도_없는_요청처럼_막는다() {
         // given
-        given(refundRepository.findById(REFUND_ID)).willReturn(Optional.of(requested()));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(requested()));
 
         // when & then
         assertThatThrownBy(() -> sut.getSellerRefund(REFUND_ID, OTHER_SELLER_ID))
@@ -234,7 +234,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
-        then(refundRepository).should(never()).update(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고·취소된 상품은 취소로 돌려줄 수 없어 자동 거절한다.
@@ -267,7 +267,7 @@ class RefundServiceTest {
             softly.assertThat(updated.getDeductedShippingFeeAmount()).isZero();
         });
         // 거절될 환불에는 배송비 판단(집계 쿼리)을 할 이유가 없고, 판단이 예외를 내면 거절 대신 오류가 남는다
-        then(refundRepository).should(never()).sumCancelledByOrderItem(any(), any(), any());
+        then(refundPersistencePort).should(never()).sumCancelledByOrderItem(any(), any(), any());
     }
 
     static Stream<String> 출고되거나_취소된_주문_상태() {
@@ -291,7 +291,7 @@ class RefundServiceTest {
             softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
             softly.assertThat(refund.getDecidedAt()).isNull();
         });
-        then(refundRepository).should(never()).update(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     static Stream<String> 모르는_주문_상태() {
@@ -324,7 +324,7 @@ class RefundServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
-        then(refundRepository).should(never()).update(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     // 다른 주문 상품 정보는 출고 상태여도 먼저 막아야 한다. 순서가 바뀌면 엉뚱한 상품의 출고 상태로 이 환불이 거절된다
@@ -351,25 +351,25 @@ class RefundServiceTest {
     @Test
     void 남의_상품_요청을_승인하면_없는_요청처럼_막고_잠그지도_않는다() {
         // given
-        given(refundRepository.findLockTargetIds(10L, OTHER_SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of());
+        given(refundPersistencePort.findLockTargetIds(10L, OTHER_SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of());
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, OTHER_SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
-        then(refundRepository).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
     }
 
     @Test
     void 없는_요청을_승인하면_막는다() {
         // given
-        given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of(99L));
+        given(refundPersistencePort.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES)).willReturn(List.of(99L));
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
-        then(refundRepository).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
     }
 
     // 이번 환불 행만 잠그면 같은 묶음의 동시 승인이 서로를 못 본다(#411). 묶음의 진행 중 행을 ID 오름차순으로 한 건씩 잠그는 것이
@@ -379,26 +379,26 @@ class RefundServiceTest {
         // given
         Refund refund = withId(requested(), REFUND_ID);
         Refund other = withId(Refund.request(10L, 102L, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L, null), 3L);
-        given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
+        given(refundPersistencePort.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
                 .willReturn(List.of(3L, REFUND_ID));
-        given(refundRepository.findByIdForUpdate(3L)).willReturn(Optional.of(other));
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundPersistencePort.findByIdForUpdate(3L)).willReturn(Optional.of(other));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
 
         // then
         assertThat(result.refundId()).isEqualTo(REFUND_ID);
-        InOrder lockOrder = inOrder(refundRepository);
-        lockOrder.verify(refundRepository).findByIdForUpdate(3L);
-        lockOrder.verify(refundRepository).findByIdForUpdate(REFUND_ID);
+        InOrder lockOrder = inOrder(refundPersistencePort);
+        lockOrder.verify(refundPersistencePort).findByIdForUpdate(3L);
+        lockOrder.verify(refundPersistencePort).findByIdForUpdate(REFUND_ID);
     }
 
     @Test
     void 거절하면_사유를_도메인에_넘기고_저장한다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
         RefundResult result = sut.reject(REFUND_ID, SELLER_ID, "이미 포장을 마쳤습니다.");
@@ -424,21 +424,21 @@ class RefundServiceTest {
     void 남의_상품_요청을_거절하면_없는_요청처럼_막고_바꾸지_않는다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when & then
         assertThatThrownBy(() -> sut.reject(REFUND_ID, OTHER_SELLER_ID, "사유"))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
-        then(refundRepository).should(never()).update(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     @Test
     void 철회하면_지금_시각으로_철회가_된다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
         RefundResult result = sut.withdraw(REFUND_ID, BUYER_ID);
@@ -462,20 +462,20 @@ class RefundServiceTest {
     void 남의_요청을_철회하면_없는_요청처럼_막고_바꾸지_않는다() {
         // given
         Refund refund = requested();
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when & then
         assertThatThrownBy(() -> sut.withdraw(REFUND_ID, OTHER_BUYER_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
-        then(refundRepository).should(never()).update(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     @Test
     void 없는_요청을_철회하면_막는다() {
         // given
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> sut.withdraw(REFUND_ID, BUYER_ID))
@@ -488,7 +488,7 @@ class RefundServiceTest {
         // given
         Refund refund = requested();
         refund.approve(NOW, RefundShippingFee.none());
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
 
         // when
         sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
@@ -506,7 +506,7 @@ class RefundServiceTest {
     @Test
     void 없는_환불에_실패를_기록하면_예외를_던진다() {
         // given
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED"))
@@ -532,9 +532,9 @@ class RefundServiceTest {
     // 서비스가 바꾸는 것은 돌려준 객체라, 바뀌지 않았는지 확인하려면 돌려받은 객체를 봐야 한다
     private Refund givenLockedBundle(Refund refund) {
         Refund locked = withId(refund, REFUND_ID);
-        given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
+        given(refundPersistencePort.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
                 .willReturn(List.of(REFUND_ID));
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(locked));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(locked));
         return locked;
     }
 
@@ -551,7 +551,7 @@ class RefundServiceTest {
     // update에 넘긴 환불. 정확히 한 번 불러야 한다(두 번이면 상태 변경 경로가 꼬인 것이다)
     private Refund capturedUpdate() {
         ArgumentCaptor<Refund> captor = ArgumentCaptor.forClass(Refund.class);
-        then(refundRepository).should().update(captor.capture());
+        then(refundPersistencePort).should().update(captor.capture());
         Refund updated = captor.getValue();
         assertThat(updated).isNotNull();
         return updated;

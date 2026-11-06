@@ -1,7 +1,7 @@
 package com.ok.refund.adapter.out.persistence;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.refund.application.port.out.RefundRepository;
+import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 출력 포트 {@link RefundRepository}를 JPA로 구현한다. 도메인과 {@link RefundJpaEntity}를 {@link RefundMapper}로 바꿔 주고받는다.
+ * 출력 포트 {@link RefundPersistencePort}를 JPA로 구현한다. 도메인과 {@link RefundJpaEntity}를 {@link RefundMapper}로 바꿔 주고받는다.
  * 트랜잭션은 따로 열지 않는다. 서비스가 연 트랜잭션 안에서 불려야 잠금과 {@link #update}의 확인이 그 트랜잭션 기준으로 맞는다.
  * DB에 묶인 지식(UNIQUE 제약 이름, SQLState)은 여기서 에러 코드로 바꿔, 서비스가 Spring DAO 예외를 알지 않게 한다.
  *
@@ -31,7 +31,7 @@ import java.util.Optional;
  */
 @Component
 @RequiredArgsConstructor
-public class RefundPersistenceAdapter implements RefundRepository {
+public class RefundPersistenceAdapter implements RefundPersistencePort {
 
     // 마이그레이션의 제약 이름과 같아야 한다. 이 이름으로 "진행 중 요청 중복"과 다른 무결성 오류를 구분한다
     private static final String ACTIVE_ORDER_ITEM_UNIQUE_CONSTRAINT = "uk_refund_active_order_item_id";
