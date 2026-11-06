@@ -23,6 +23,9 @@ dependencies {
     // 모든 모듈이 같은 브로커를 쓰는 공통 인프라라 common의 api로 연다(#288). 연결은 처음 쓸 때 맺어 쓰지 않는 모듈의 비용은 거의 없다
     api("org.springframework.boot:spring-boot-starter-kafka")
 
+    // 실행마다 traceId를 두는 Job 리스너(trace 패키지)용. Batch는 payout만 쓰므로 common이 다른 모듈에 끌어오지 않는다
+    compileOnly("org.springframework.batch:spring-batch-core")
+
     runtimeOnly("com.mysql:mysql-connector-j")
 
     annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
