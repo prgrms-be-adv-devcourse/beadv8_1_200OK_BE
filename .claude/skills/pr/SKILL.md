@@ -37,7 +37,7 @@ description: 현재 브랜치의 PR 제목과 본문 초안을 이 프로젝트�
    ```bash
    git diff dev...HEAD --name-only | grep '^docs/decisions/'
    ```
-   - 이 PR에 ADR이 있으면 `💬 참고 사항`에 `- 설계 기록(ADR): <링크>` 한 줄을 넣는다. 머지 전에는 상대 경로가 열리지 않으므로 브랜치 기준 전체 주소를 쓴다: `https://github.com/<소유자>/<레포>/blob/<브랜치>/docs/decisions/<모듈>/<이슈번호>-<slug>.md` (소유자와 레포는 `git remote get-url origin`에서 얻는다).
+   - 이 PR에 ADR이 있으면 `💬 참고 사항`에 `- 설계 기록(ADR): <링크>` 한 줄을 넣는다. `<링크>`에는 저장소 경로 `docs/decisions/<모듈>/<이슈번호>-<slug>.md`를 백틱으로 감싸 쓴다. 브랜치 기준 GitHub 주소는 머지 후 브랜치를 지우면 열리지 않으므로 쓰지 않는다.
    - 링크를 넣기 전에 `bash .claude/skills/session-summary/scan-sensitive.sh <ADR 파일>`을 돌려 민감정보가 없는지 확인한다. 걸리면 PR을 올리기 전에 사용자에게 알린다.
    - ADR이 없는데 모듈 경계, 외부 연동 방식, 트랜잭션·락 정책처럼 `docs/decisions/README.md`의 "무엇을 남기나"에 해당하는 결정이 있으면, `session-summary`로 먼저 남길지 사용자에게 한 줄로 묻는다. 강제하지 않는다.
    - ADR의 결정 중 앞으로 모든 작업에 적용할 것이 있으면 규칙으로 올릴지 사용자에게 한 줄로 묻는다(`docs/decisions/README.md`의 "쌓이는 문서 관리"). 강제하지 않는다.
