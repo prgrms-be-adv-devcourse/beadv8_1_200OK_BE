@@ -149,6 +149,22 @@ class ArchitectureTest {
             .because("트랜잭션은 서비스 안에서 TransactionTemplate으로 DB 작업 구간만 연다. 어노테이션은 메서드 전체를 묶어 "
                     + "다른 모듈 호출 동안에도 DB 연결과 행 잠금을 잡는다 (refund/CLAUDE.md 3절)");
 
+    // 위 규칙은 직접 의존만 본다. @Transactional을 붙인 어노테이션을 config 등에 만들어 서비스에 달면 의존이 그 어노테이션으로만 잡혀
+    // 검사를 피하므로, 어노테이션의 어노테이션까지 보는 meta 검사로 한 번 더 막는다
+    @ArchTest
+    static final ArchRule application_클래스는_Transactional을_감싼_어노테이션도_달지_않는다 = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().beMetaAnnotatedWith(Transactional.class)
+            .orShould().beMetaAnnotatedWith(jakarta.transaction.Transactional.class)
+            .because("어노테이션으로 감싸도 메서드 전체가 트랜잭션으로 묶이는 것은 같다 (refund/CLAUDE.md 3절)");
+
+    @ArchTest
+    static final ArchRule application_메서드는_Transactional을_감싼_어노테이션도_달지_않는다 = noMethods()
+            .that().areDeclaredInClassesThat().resideInAPackage("..application..")
+            .should().beMetaAnnotatedWith(Transactional.class)
+            .orShould().beMetaAnnotatedWith(jakarta.transaction.Transactional.class)
+            .because("어노테이션으로 감싸도 메서드 전체가 트랜잭션으로 묶이는 것은 같다 (refund/CLAUDE.md 3절)");
+
     @ArchTest
     static final ArchRule 출력_어댑터는_입력_포트와_서비스를_모른다 = noClasses()
             .that().resideInAPackage("..adapter.out..")
@@ -164,7 +180,11 @@ class ArchitectureTest {
                             "com.querydsl..", "org.springframework.jdbc..", "org.springframework.orm..",
                             "org.springframework.kafka..", "org.apache.kafka..",
                             "org.springframework.web.client..", "org.springframework.web.reactive..",
-                            "org.springframework.http.client..", "java.net.http..", "org.apache.hc..", "okhttp3..", "feign..")))
+                            "org.springframework.http.client..", "java.net.http..", "org.apache.hc..", "okhttp3..", "feign..",
+                            // 직접 DB 연결(JDBC), JDK 기본 HTTP(java.net), Spring 웹(HTTP 인터페이스·웹 진입점), Redis, AWS SDK도
+                            // 출력 포트를 거치지 않고 바깥에 닿는 길이라 함께 막는다. 지금 application은 이 중 아무것도 쓰지 않는다
+                            "java.sql..", "javax.sql..", "java.net..", "org.springframework.web..",
+                            "org.springframework.data.redis..", "software.amazon.awssdk..")))
             .because("서비스는 포트에만 의존해야 영속, 메시징, 외부 호출 기술을 바꿔도 비즈니스 코드가 바뀌지 않는다. "
                     + "Page, Pageable(org.springframework.data.domain)은 조회 결과 형식이라 허용한다 (환불 헥사고날 구조, 이슈 #481)");
 
@@ -267,6 +287,14 @@ class ArchitectureTest {
             .orShould().dependOnClassesThat().areAssignableTo(KafkaOperations.class)
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out.event)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (환불 헥사고날 구조, 이슈 #481)");
 
+    // 위 규칙은 Spring의 발행 도구만 본다. Kafka 클라이언트(Producer 등)를 직접 쓰면 다른 출력 어댑터(예: order)에서도
+    // 토픽 이름을 들고 발행할 수 있어, 메시징 라이브러리 자체를 이벤트 어댑터(받기 in.event, 보내기 out.event)에만 허용한다
+    @ArchTest
+    static final ArchRule 메시징_라이브러리는_이벤트_어댑터만_사용한다 = noClasses()
+            .that().resideOutsideOfPackages("..adapter.in.event..", "..adapter.out.event..")
+            .should().dependOnClassesThat().resideInAnyPackage("org.apache.kafka..", "org.springframework.kafka..")
+            .because("토픽 이름과 메시지 클래스는 이벤트 어댑터 안에만 둔다 (refund/CLAUDE.md 5절)");
+
     // 지금은 adapter.out.event가 없어 검사 대상이 비지만, archunit.properties의 failOnEmptyShould=false라 실패하지 않는다.
     // 발행이 생기는 날(예: 지갑 Kafka) 구현체가 포트 없이 서비스에 바로 주입되는 일을 처음부터 막는다
     @ArchTest
@@ -287,9 +315,11 @@ class ArchitectureTest {
 
     // 이름과 위치
 
+    // @RestController만 보면 @Controller + @ResponseBody로 만든 웹 진입점이 다른 패키지에 숨을 수 있다.
+    // @RestController도 @Controller를 품고 있어 meta 검사 하나로 둘 다 잡는다
     @ArchTest
-    static final ArchRule RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = classes()
-            .that().areAnnotatedWith(RestController.class)
+    static final ArchRule 웹_컨트롤러는_Controller로_끝나고_adapter_in_web_패키지에_있다 = classes()
+            .that().areMetaAnnotatedWith(Controller.class)
             .should().haveSimpleNameEndingWith("Controller")
             .andShould().resideInAPackage("..adapter.in.web..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2, refund/CLAUDE.md 6절)");
@@ -321,8 +351,36 @@ class ArchitectureTest {
             })
             .because("입력 포트 하나를 서비스 하나가 구현해야 한 유스케이스의 흐름이 한 클래스에서 읽힌다 (refund/CLAUDE.md 3절)");
 
+    // 위 규칙은 서비스 쪽에서 센다. 같은 UseCase를 서비스 둘이 나눠 구현하는 경우는 UseCase 쪽에서 세야 잡힌다
+    @ArchTest
+    static final ArchRule UseCase는_구현이_하나뿐이다 = classes()
+            .that().resideInAPackage("..application.port.in..")
+            .and().areInterfaces()
+            .should(new ArchCondition<JavaClass>("be implemented by exactly one class") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    int count = 0;
+                    for (JavaClass subclass : javaClass.getAllSubclasses()) {
+                        if (!subclass.isInterface()) {
+                            count++;
+                        }
+                    }
+                    events.add(new SimpleConditionEvent(javaClass, count == 1,
+                            javaClass.getName() + " is implemented by " + count + " class(es)"));
+                }
+            })
+            .because("입력 포트 하나를 서비스 하나가 구현한다. 구현이 둘이면 어느 쪽이 주입될지 설정에 따라 갈린다 (refund/CLAUDE.md 3절)");
+
+    // 서비스가 다른 서비스를 불러 흐름을 나누면 한 유스케이스를 한 클래스에서 읽을 수 없다. 함께 쓰는 도구는 RefundStepRunner나 package-private 도우미로 둔다
+    @ArchTest
+    static final ArchRule 서비스는_다른_서비스를_쓰지_않는다 = noClasses()
+            .that().resideInAPackage("..application.service..")
+            .should().dependOnClassesThat().areAnnotatedWith(Service.class)
+            .because("한 유스케이스의 흐름은 그 서비스 한 클래스에서 읽힌다 (refund/CLAUDE.md 3절)");
+
     // 서비스 패키지에서 @Service가 아닌 빈은 RefundStepRunner(서비스들이 함께 쓰는 실패 기록 틀) 하나뿐이다.
-    // 그 밖의 보조 클래스(RefundPaging 등)는 package-private이어야 한다. @Component만 붙이면 공개해도 된다는 구멍을 막으려고 이름으로 못 박는다
+    // 그 밖의 보조 클래스(RefundPaging 등)는 package-private이어야 한다. @Component만 붙이면 공개해도 된다는 구멍을 막으려고 이름으로 못 박는다.
+    // 보조 클래스가 빈이면(package-private이어도) 포트와 TransactionTemplate을 들고 "안쪽 DB 클래스"가 될 수 있어 빈도 금지한다
     @ArchTest
     static final ArchRule application_service의_Service가_아닌_클래스는_RefundStepRunner이거나_공개하지_않는다 = classes()
             .that().resideInAPackage("..application.service..")
@@ -330,6 +388,7 @@ class ArchitectureTest {
             .and().areNotAnnotatedWith(Service.class)
             .and().doNotHaveSimpleName("RefundStepRunner")
             .should().notBePublic()
+            .andShould().notBeMetaAnnotatedWith(Component.class)
             .because("서비스 패키지의 보조 클래스가 공개되면 다른 곳이 서비스 내부 도구에 기대고, Facade 같은 조율 클래스가 몰래 생긴다. "
                     + "공개를 허용하는 비서비스 빈은 RefundStepRunner뿐이다 (refund/CLAUDE.md 3절, 5절)");
 
@@ -359,10 +418,13 @@ class ArchitectureTest {
     // *Command/*Query/*Result의 위치(값이 지나가는 포트 옆, 포트마다 달라 기계 검사가 어렵다), domain은 접미사 없음(접미사 없음은 검사할 수 없다)
 
     // 모든 모듈이 한 앱(monolith)으로 뜰 때 다른 모듈의 같은 이름 빈과 겹치면 앱이 시작되지 않는다
+    // Spring Data 저장소 인터페이스는 @Component 없이도 인터페이스 이름으로 빈이 되므로 함께 본다
     @ArchTest
     static final ArchRule 스프링_빈_클래스는_이름에_Refund가_들어간다 = classes()
             .that().resideInAPackage("com.ok.refund..")
-            .and().areMetaAnnotatedWith(Component.class)
+            .and(DescribedPredicate.describe("are Spring beans (@Component or Spring Data repository)",
+                    (JavaClass javaClass) -> javaClass.isMetaAnnotatedWith(Component.class)
+                            || javaClass.isAssignableTo(org.springframework.data.repository.Repository.class)))
             .should().haveSimpleNameContaining("Refund")
             .because("빈 이름이 다른 모듈과 겹치면 monolith가 시작되지 않는다. @Service, @Repository, @RestController, "
                     + "@Configuration은 모두 @Component를 포함한다 (refund/CLAUDE.md 6절)");
