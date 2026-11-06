@@ -3,8 +3,8 @@ issue: 387
 module: product
 summary: 구매자 리뷰 키워드는 서비스에서 자유 추출하지 않고, 자유 추출로 만든 긍정 키워드 목록을 Jev가 리뷰마다 판정해 확률 0.9 이상만 센다
 status: 확정
-date: 2026-11-05
-paths: [product/src/main/java/com/ok/product/review/domain/ReviewAnalysisType.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/controller/ProductReviewController.java, product/src/main/java/com/ok/product/review/repository/ReviewKeywordRepository.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewKeywordAnalyzer.java, product/src/main/java/com/ok/product/review/service/ReviewKeywordAnalysisScheduler.java]
+date: 2026-11-06
+paths: [product/src/main/java/com/ok/product/review/domain/ReviewAnalysisType.java, product/src/main/java/com/ok/product/review/domain/ReviewAnalysisRequest.java, product/src/main/java/com/ok/product/review/controller/ProductReviewController.java, product/src/main/java/com/ok/product/review/repository/ReviewKeywordRepository.java, product/src/main/java/com/ok/product/review/client/jev/JevReviewKeywordAnalyzer.java, product/src/main/java/com/ok/product/review/service/ReviewKeywordAnalysisScheduler.java, product/src/main/java/com/ok/product/review/service/ReviewAnalysisPreviewFacade.java]
 related: [385, 386, 422]
 ---
 
@@ -12,7 +12,7 @@ related: [385, 386, 422]
 
 ## 배경
 
-구매자가 리뷰를 다 읽지 않고 상품의 장점을 알 수 있게, 여러 구매자가 반복해 칭찬한 표현을 상품 상세에 칩으로 보여 준다. 키워드를 뽑는 방식, 키워드 목록, 판정 모델의 설정을 정하고 #385 생성 리뷰로 검증한 뒤, 서비스 구현을 티켓 세 개로 나눠 했다. #459는 분석 요청·작업자·결과 저장·집계 API, #460은 Jev 키워드 분석기, #461은 리뷰 목록의 키워드 필터다. 실험 코드는 머지하지 않고 보관 브랜치 `feature/385`의 `tools/review-analysis-bench/keyword/`에 두었고, 서비스로 옮길 목록은 그 안의 `keywords.json`이다. 판매자 센터 노출, 관리자 목록 편집, 목록 변경 시 일괄 재분석(#422)은 범위 밖이다.
+구매자가 리뷰를 다 읽지 않고 상품의 장점을 알 수 있게, 여러 구매자가 반복해 칭찬한 표현을 상품 상세에 칩으로 보여 준다. 키워드를 뽑는 방식, 키워드 목록, 판정 모델의 설정을 정하고 #385 생성 리뷰로 검증한 뒤, 서비스 구현을 티켓 네 개로 나눠 했다. #459는 분석 요청·작업자·결과 저장·집계 API, #460은 Jev 키워드 분석기, #461은 리뷰 목록의 키워드 필터, #471은 관리자 리뷰 분석 테스트 API다. 실험 코드는 머지하지 않고 보관 브랜치 `feature/385`의 `tools/review-analysis-bench/keyword/`에 두었고, 서비스로 옮길 목록은 그 안의 `keywords.json`이다. 판매자 센터 노출, 관리자 목록 편집, 목록 변경 시 일괄 재분석(#422)은 범위 밖이다.
 
 ## 결정과 이유
 
@@ -33,6 +33,10 @@ related: [385, 386, 422]
 | 키워드 분석기 | `JevReviewKeywordAnalyzer`가 리뷰 하나에 상품 분류의 키워드 질문(12~30개)을 요청 1회로 보내고, 키워드마다 `probabilities.mentioned`를 돌려준다. 답이나 확률이 없으면 최종 실패다. HTTP 호출과 오류 분류는 감성 분석기와 함께 `JevClient` 하나를 쓴다 | 정밀도 0.942를 잰 실험(`list.ts`의 `buildJevBody`)과 같은 요청을 보낸다. 지시문·질문·판정 기준 문장과 선택지 설명을 목록 파일 그대로 쓰고, 상품명과 본문만 보낸다. 확률이 없을 때 0으로 두면 응답 형식이 바뀌어도 "키워드 0개"로 조용히 완료되므로 실패로 남긴다. 오류 분류를 한 곳에 두어 두 분석기의 분류가 어긋나지 않게 한다 |
 | 키워드 작업자 켜는 설정 | `app.review-analysis.keyword-worker.enabled`를 감성의 `app.review-analysis.worker.enabled`와 따로 두고, 운영 설정에서만 켠다 (사용자 결정) | 운영자가 한쪽 작업자만 끄고 운영할 수 있게 한다. 이름은 감성 쪽 이름에 맞췄다 |
 | 리뷰 목록 키워드 필터 | `?keyword=<ID>`로 받는다. 빈 값은 필터 없음(사용자 결정)이고, 목록에 없는 ID는 400(`REVIEW_KEYWORD_NOT_FOUND`), 상품 분류에 묻지 않는 키워드는 빈 페이지다. 필터 조회는 집계 쿼리와 함께 `ReviewKeywordRepository`에 두고 분석 완료 리뷰 조건(JPQL 조각)을 상수 하나로 같이 쓴다. 칩의 노출 기준(분모 10, 리뷰 3개)은 필터에 적용하지 않는다 | 칩 수와 필터 결과 수가 같아야 구매자가 화면을 믿는다. 조건을 두 쿼리에 따로 쓰면 한쪽만 고쳐 어긋나기 쉽다. 노출 기준을 필터에도 걸면 링크로 들어온 칩 밖 키워드가 빈 목록이 된다 |
+| 관리자 리뷰 분석 테스트 API | 관리자가 상품·옵션·본문을 보내면 키워드(`/keywords`)와 감성(`/sentiment`)을 따로 분석해 돌려주고 아무것도 저장하지 않는다. 키워드마다 확률, 표현 판정, 식감 규칙으로 빠졌는지를 함께 준다 (사용자 결정) | 리뷰를 남기지 않고 본문 하나로 분석을 돌려 봐야 했고, 발표 자료를 만들고 사람이 결과를 하나씩 눈으로 보기에 이 모양이 맞았다 (사용자 설명). 판정은 `ReviewKeywordAnalysis.expressedKeywordIds()`를 그대로 써 작업자와 같은 결과를 보여 준다. 두 분석을 나눠 한쪽 분석기가 실패해도 다른 쪽 결과는 받는다 |
+| 테스트 API의 선택지 순서 시드 | 분석기 입력의 시드를 `choiceSeed`로 넓히고, 작업자는 리뷰 ID, 테스트 API는 본문의 `String.hashCode()`를 넣는다. 감성 API도 같다 | 테스트 API에는 리뷰 ID가 없다. 본문 해시는 명세로 값이 정해져 있어 같은 본문을 다시 보내면 같은 순서로 묻는다. 작업자의 요청은 바뀌지 않는다 |
+| 테스트 API의 오류 응답 | 분석기 인증 거절은 503(`REVIEW_ANALYZER_UNAVAILABLE`), 그 밖의 분석 실패는 502(`REVIEW_ANALYSIS_FAILED`), 다른 상품의 옵션은 400, 본문 검증 실패는 422. 다시 시도하지 않는다 | 인증 거절은 설정 문제라 다시 보내도 같고, 그 밖은 분석기 쪽 일시 실패다. 본문 검증은 이 프로젝트의 Bean Validation 공통 응답(422)을 따르고, FE #11의 400을 422로 고쳤다 (사용자 결정) |
+| 테스트 API의 빈 본문 | 내용 없는 본문은 분석기를 부르지 않고 `analyzed: false`를 돌려준다. 판단은 `ProductReview.isAnalyzableContent`를 리뷰 엔티티와 함께 쓴다 | 작업자가 분석하지 않는 본문을 테스트 API만 분석하면 둘의 결과가 어긋난다 |
 
 ## 버린 대안
 
@@ -46,6 +50,8 @@ related: [385, 386, 422]
 - **감성 설정 속성 이름을 `sentiment-worker`로 바꾸고 짝을 맞추기:** 이미 운영 설정이 `worker.enabled`를 쓰고 있어 두 설정을 함께 바꿔야 한다.
 - **필터 쿼리를 `ProductReviewRepository`에 두기(설계 문서 처음 안):** 분석 완료 조건이 두 파일에 따로 생겨 한쪽만 고치면 칩 수와 필터 결과 수가 어긋난다.
 - **Specification이나 Querydsl로 조건 공유:** 쿼리 세 개를 맞추려고 새 기술을 들이기에는 과하다. JPQL 상수 결합으로 충분하다.
+- **테스트 API에서 판정(0.9, 식감 규칙)을 다시 구현:** 운영 판정과 어긋날 수 있다. 식감 규칙으로 빠진 키워드만 `ReviewKeywordAnalysis.excludedByTextureRuleKeywordIds()`로 더했다.
+- **테스트 API의 본문 검증을 400으로 맞추기:** 프로젝트의 다른 검증 실패와 상태 코드가 달라진다.
 
 ## 건드릴 때 주의
 
@@ -55,7 +61,8 @@ related: [385, 386, 422]
 - 목록이 측정용 표현을 덮는 비율은 v0.2 기준 92%(297/324)다. 새 문구의 판정을 Claude가 했으므로 후할 수 있고, 판정을 모두 틀렸다고 보면 38%다. v0.3은 측정용을 보고 고쳐 97%지만 독립 측정이 아니다.
 - `keywords.json`의 `guide`나 키워드를 바꾸면 `version`을 올린다. 이미 매긴 정답과 어긋나고, 기존 리뷰는 #422 일괄 재분석 전까지 새 키워드에 잡히지 않는다.
 - v0.3에서 농산 가공품(`PROCESSED_AGRI`)은 공통 11개와 가공품 몫 19개로 정확히 30개를 묻는다(직접 셌다). 공통(`ALL`) 키워드나 가공품에 묻는 키워드를 하나만 더해도 목록 로더가 상한 초과로 기동을 막는다. 더하려면 가공품에 묻는 다른 키워드의 분류에서 가공품을 빼거나, 상한을 올리고 질문 31개 이상인 요청으로 Jev 응답과 정밀도를 다시 잰다. 다음으로 여유가 적은 분류는 과일(26개)이다.
-- Jev는 선택지 앞쪽을 고르는 경향이 있고 키워드 질문은 선택지가 둘이라 치우침이 곧 오탐이다. #386처럼 리뷰 ID를 시드로 선택지 순서를 섞는다.
+- Jev는 선택지 앞쪽을 고르는 경향이 있고 키워드 질문은 선택지가 둘이라 치우침이 곧 오탐이다. #386처럼 리뷰 ID를 시드로 선택지 순서를 섞는다. 관리자 테스트 API는 본문 해시를 시드로 쓰므로, 같은 본문이라도 작업자가 저장한 결과와 확률·판정이 다를 수 있다. 통합 테스트는 시드를 쓰지 않는 Fake 분석기라 이 차이를 잡지 못한다.
+- 테스트 API는 `RestApiException`에 원인을 담을 수 없어 Facade가 분석기 예외를 WARN으로 남긴 뒤 바꿔 던진다. 이 로그를 지우면 502·503의 원인이 어디에도 남지 않는다.
 - 키워드 분석은 감성 분석과 요청·결과를 분리한다. 꺼내기 인덱스가 `analysis_type`을 앞에 둔 것은 이 분석 종류 추가를 위해서다(#386).
 - 키워드 질문 문장(`이 리뷰는 "<문구>"라고 말하나?`, `판정 기준: `)은 `keywords.json`이 아니라 `JevReviewKeywordAnalyzer` 코드에 있고, 실험의 `list.ts`에서 그대로 옮겼다. 바꾸면 `guide`를 바꿀 때처럼 0.942가 근거가 되지 못한다.
 - 상품명이 비면 요청에서 "상품:" 줄을 뺀다(감성 분석기와 같다). 실험은 상품명이 늘 있었으므로 이때만 실험과 요청 모양이 다르다.
