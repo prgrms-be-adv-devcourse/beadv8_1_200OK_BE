@@ -39,6 +39,7 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
             @Param("productId") Long productId,
             @Param("status") OrderItemStatus status
     );
+
     @Override
     @Query("""
             select distinct i.sellerGroup.order.id
