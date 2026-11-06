@@ -5,7 +5,7 @@ import com.ok.member.seller.adapter.in.web.dto.SellerApplicationAdminPageRespons
 import com.ok.member.seller.adapter.in.web.dto.SellerApplicationAdminResponse;
 import com.ok.member.seller.adapter.in.web.dto.SellerApplicationRejectRequest;
 import com.ok.member.seller.adapter.in.web.dto.SellerApplicationSearchRequest;
-import com.ok.member.seller.application.service.SellerApplicationService;
+import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerApplicationAdminController implements SellerApplicationAdminControllerSpec {
 
-    private final SellerApplicationService sellerApplicationService;
+    private final SellerApplicationUseCase sellerApplicationUseCase;
 
     @Override
     @GetMapping
@@ -33,14 +33,14 @@ public class SellerApplicationAdminController implements SellerApplicationAdminC
             @Valid @ModelAttribute SellerApplicationSearchRequest request
     ) {
         return ResponseEntity.ok(SellerApplicationAdminPageResponse.from(
-                sellerApplicationService.getApplications(request.toQuery())));
+                sellerApplicationUseCase.getApplications(request.toQuery())));
     }
 
     @Override
     @GetMapping("/{applicationId}")
     public ResponseEntity<SellerApplicationAdminResponse> getApplication(@PathVariable Long applicationId) {
         return ResponseEntity.ok(SellerApplicationAdminResponse.from(
-                sellerApplicationService.getApplication(applicationId)));
+                sellerApplicationUseCase.getApplication(applicationId)));
     }
 
     // 처리 API는 처리 후의 상세를 돌려준다. 관리자 화면이 다시 조회하지 않고 바뀐 상태를 바로 보여 줄 수 있다
@@ -48,7 +48,7 @@ public class SellerApplicationAdminController implements SellerApplicationAdminC
     @PostMapping("/{applicationId}/review")
     public ResponseEntity<SellerApplicationAdminResponse> startReview(@PathVariable Long applicationId) {
         return ResponseEntity.ok(SellerApplicationAdminResponse.from(
-                sellerApplicationService.startReview(applicationId)));
+                sellerApplicationUseCase.startReview(applicationId)));
     }
 
     @Override
@@ -58,7 +58,7 @@ public class SellerApplicationAdminController implements SellerApplicationAdminC
             @PathVariable Long applicationId
     ) {
         return ResponseEntity.ok(SellerApplicationAdminResponse.from(
-                sellerApplicationService.approve(adminId, applicationId)));
+                sellerApplicationUseCase.approve(adminId, applicationId)));
     }
 
     @Override
@@ -69,7 +69,7 @@ public class SellerApplicationAdminController implements SellerApplicationAdminC
             @Valid @RequestBody SellerApplicationRejectRequest request
     ) {
         return ResponseEntity.ok(SellerApplicationAdminResponse.from(
-                sellerApplicationService.reject(adminId, applicationId, request.toCommand())));
+                sellerApplicationUseCase.reject(adminId, applicationId, request.toCommand())));
     }
 
 }

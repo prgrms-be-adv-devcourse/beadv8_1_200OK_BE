@@ -10,7 +10,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
-import com.ok.member.seller.application.service.SellerApplicationService;
+import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,16 +29,16 @@ public class AuthService {
     private final MemberRepository memberRepository;
     private final AccessTokenProvider accessTokenProvider;
     private final RefreshTokenService refreshTokenService;
-    private final SellerApplicationService sellerApplicationService;
+    private final SellerApprovalCheckUseCase sellerApprovalCheckUseCase;
 
     public AuthService(MemberRepository memberRepository,
                        AccessTokenProvider accessTokenProvider,
                        RefreshTokenService refreshTokenService,
-                       SellerApplicationService sellerApplicationService) {
+                       SellerApprovalCheckUseCase sellerApprovalCheckUseCase) {
         this.memberRepository = memberRepository;
         this.accessTokenProvider = accessTokenProvider;
         this.refreshTokenService = refreshTokenService;
-        this.sellerApplicationService = sellerApplicationService;
+        this.sellerApprovalCheckUseCase = sellerApprovalCheckUseCase;
     }
 
     /**
@@ -114,7 +114,7 @@ public class AuthService {
     // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.
     // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다
     private TokenResult createTokens(Member member) {
-        boolean approvedSeller = sellerApplicationService.isApprovedSeller(member.getId());
+        boolean approvedSeller = sellerApprovalCheckUseCase.isApprovedSeller(member.getId());
         List<String> roles = TokenRoleMapper.toTokenRoles(member.getType(), approvedSeller);
         AccessToken accessToken = accessTokenProvider.issue(member.getId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());

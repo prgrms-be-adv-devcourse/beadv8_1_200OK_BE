@@ -5,7 +5,7 @@ import com.ok.member.seller.adapter.in.web.dto.SellerApplicationHistoryResponse;
 import com.ok.member.seller.adapter.in.web.dto.SellerApplicationResponse;
 import com.ok.member.seller.adapter.in.web.dto.SellerApplyRequest;
 import com.ok.member.seller.adapter.in.web.dto.SellerApplyResponse;
-import com.ok.member.seller.application.service.SellerApplicationService;
+import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerApplicationController implements SellerApplicationControllerSpec {
 
-    private final SellerApplicationService sellerApplicationService;
+    private final SellerApplicationUseCase sellerApplicationUseCase;
 
     @Override
     @PostMapping
@@ -34,7 +34,7 @@ public class SellerApplicationController implements SellerApplicationControllerS
             @CurrentMemberId Long memberId,
             @Valid @RequestBody SellerApplyRequest request
     ) {
-        Long applicationId = sellerApplicationService.apply(memberId, request.toCommand());
+        Long applicationId = sellerApplicationUseCase.apply(memberId, request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED).body(new SellerApplyResponse(applicationId));
     }
 
@@ -42,7 +42,7 @@ public class SellerApplicationController implements SellerApplicationControllerS
     @GetMapping
     public ResponseEntity<SellerApplicationHistoryResponse> getMyApplications(@CurrentMemberId Long memberId) {
         return ResponseEntity.ok(
-                SellerApplicationHistoryResponse.from(sellerApplicationService.getMyApplications(memberId)));
+                SellerApplicationHistoryResponse.from(sellerApplicationUseCase.getMyApplications(memberId)));
     }
 
     @Override
@@ -52,7 +52,7 @@ public class SellerApplicationController implements SellerApplicationControllerS
             @PathVariable Long applicationId
     ) {
         return ResponseEntity.ok(
-                SellerApplicationResponse.from(sellerApplicationService.getMyApplication(memberId, applicationId)));
+                SellerApplicationResponse.from(sellerApplicationUseCase.getMyApplication(memberId, applicationId)));
     }
 
 }

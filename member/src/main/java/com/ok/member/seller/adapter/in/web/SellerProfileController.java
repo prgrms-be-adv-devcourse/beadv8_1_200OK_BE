@@ -3,7 +3,7 @@ package com.ok.member.seller.adapter.in.web;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.member.seller.adapter.in.web.dto.SellerProfileRequest;
 import com.ok.member.seller.adapter.in.web.dto.SellerProfileResponse;
-import com.ok.member.seller.application.service.SellerProfileService;
+import com.ok.member.seller.application.port.in.SellerProfileUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -23,12 +23,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerProfileController implements SellerProfileControllerSpec {
 
-    private final SellerProfileService sellerProfileService;
+    private final SellerProfileUseCase sellerProfileUseCase;
 
     @Override
     @GetMapping
     public ResponseEntity<SellerProfileResponse> getMyProfile(@CurrentMemberId Long memberId) {
-        return ResponseEntity.ok(SellerProfileResponse.from(sellerProfileService.getMyProfile(memberId)));
+        return ResponseEntity.ok(SellerProfileResponse.from(sellerProfileUseCase.getMyProfile(memberId)));
     }
 
     @Override
@@ -38,7 +38,7 @@ public class SellerProfileController implements SellerProfileControllerSpec {
             @Valid @RequestBody SellerProfileRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(SellerProfileResponse.from(sellerProfileService.register(memberId, request.toCommand())));
+                .body(SellerProfileResponse.from(sellerProfileUseCase.register(memberId, request.toCommand())));
     }
 
     @Override
@@ -47,7 +47,7 @@ public class SellerProfileController implements SellerProfileControllerSpec {
             @CurrentMemberId Long memberId,
             @Valid @RequestBody SellerProfileRequest request
     ) {
-        return ResponseEntity.ok(SellerProfileResponse.from(sellerProfileService.update(memberId, request.toCommand())));
+        return ResponseEntity.ok(SellerProfileResponse.from(sellerProfileUseCase.update(memberId, request.toCommand())));
     }
 
 }

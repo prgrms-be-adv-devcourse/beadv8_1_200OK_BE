@@ -7,6 +7,7 @@ import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.application.port.out.SellerProfileRepository;
 import com.ok.member.seller.application.dto.SellerProfileCommand;
 import com.ok.member.seller.application.dto.SellerProfileResult;
+import com.ok.member.seller.application.port.in.SellerProfileUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -19,28 +20,19 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class SellerProfileService {
+public class SellerProfileService implements SellerProfileUseCase {
 
     private final SellerProfileRepository sellerProfileRepository;
     private final SellerProfileDuplicateValidator duplicateValidator;
     private final SellerProfileImageUrlValidator imageUrlValidator;
     private final MediaUrlResolver mediaUrlResolver;
 
-    /**
-     * 판매자 본인의 프로필을 반환한다.
-     *
-     * @throws RestApiException 프로필을 등록하지 않았으면 {@code SELLER_PROFILE_NOT_FOUND}
-     */
+    @Override
     public SellerProfileResult getMyProfile(Long memberId) {
         return toResult(findProfile(memberId));
     }
 
-    /**
-     * 판매자 프로필을 등록한다. 한 회원은 프로필(상점)을 하나만 가진다.
-     *
-     * @throws RestApiException 이미 등록했으면 {@code SELLER_PROFILE_ALREADY_EXISTS},
-     *                          사진 주소가 판매자 프로필용이 아니면 {@code INVALID_PROFILE_IMAGE_URL}
-     */
+    @Override
     @Transactional
     public SellerProfileResult register(Long memberId, SellerProfileCommand command) {
         duplicateValidator.validate(memberId);
@@ -56,12 +48,7 @@ public class SellerProfileService {
         return toResult(save(profile));
     }
 
-    /**
-     * 판매자 프로필 전체를 새 값으로 바꾼다. 사진 URL이 없으면 사진을 지운다.
-     *
-     * @throws RestApiException 프로필을 등록하지 않았으면 {@code SELLER_PROFILE_NOT_FOUND},
-     *                          사진 주소가 판매자 프로필용이 아니면 {@code INVALID_PROFILE_IMAGE_URL}
-     */
+    @Override
     @Transactional
     public SellerProfileResult update(Long memberId, SellerProfileCommand command) {
         SellerProfile profile = findProfile(memberId);

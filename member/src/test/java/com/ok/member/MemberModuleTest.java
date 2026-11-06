@@ -12,7 +12,7 @@ import com.ok.member.member.service.MemberSignupService;
 import com.ok.member.member.service.dto.SignupCommand;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
-import com.ok.member.seller.application.service.SellerApplicationService;
+import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
@@ -45,7 +45,7 @@ public class MemberModuleTest {
     MemberRepository memberRepository;
 
     @Autowired
-    SellerApplicationService sellerApplicationService;
+    SellerApplicationUseCase sellerApplicationUseCase;
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;
@@ -99,7 +99,7 @@ public class MemberModuleTest {
         Long applicationId = sellerApplicationRepository.saveAndFlush(application).getId();
 
         // when & then: wallet 모듈이 이 이벤트로 판매자 지갑을 만든다 (WalletModuleTest가 수신 쪽을 확인)
-        scenario.stimulate(() -> sellerApplicationService.approve(adminId, applicationId))
+        scenario.stimulate(() -> sellerApplicationUseCase.approve(adminId, applicationId))
                 .andWaitForEventOfType(SellerApprovedEvent.class)
                 .toArriveAndVerify(event -> assertSoftly(softly -> {
                     softly.assertThat(event.memberId()).isEqualTo(applicantId);
