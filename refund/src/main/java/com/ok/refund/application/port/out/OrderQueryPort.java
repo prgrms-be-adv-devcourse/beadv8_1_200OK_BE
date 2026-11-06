@@ -1,9 +1,7 @@
 package com.ok.refund.application.port.out;
 
-import com.ok.refund.application.port.out.RefundableOrderItem;
-
 /**
- * 주문 모듈을 부른다. 서비스는 이 인터페이스만 알고, HTTP로 부르는 방법은 구현체({@code client} 패키지)가 맡는다.
+ * 주문 모듈을 부른다. 서비스는 이 인터페이스만 알고, HTTP로 부르는 방법은 구현체({@code adapter.out.order} 패키지)가 맡는다.
  * 주문 팀 API가 아직 없어 경로와 응답 모양은 요청서 기준 가정이다.
  */
 public interface OrderQueryPort {

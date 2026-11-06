@@ -77,7 +77,7 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     // find를 쓰지 않는 이유: 컨텍스트에 없으면 잠금 없이 새로 조회해 버려, 잠그지 않은 행을 덮어쓰는 것을 막지 못한다.
     // 없을 때 남는 빈 프록시는 이어서 던지는 예외로 트랜잭션이 되돌려지므로 따로 치우지 않는다.
     //
-    // 불러왔더라도 잠금 조회(findByIdForUpdate)로 불러온 것이어야 한다(설계 Ruling 2). 같은 트랜잭션에서 잠그지 않는 findById로 읽은 행에
+    // 불러왔더라도 잠금 조회(findByIdForUpdate)로 불러온 것이어야 한다. 같은 트랜잭션에서 잠그지 않는 findById로 읽은 행에
     // 쓰면, 다른 트랜잭션이 그 행을 잠그고 바꾸는 중에도 기다리지 않고 덮어쓸 수 있다. 잠금 모드는 JPA 표준 getLockMode로 본다
     // (Hibernate 7에서 findById로 불러오면 NONE, findByIdForUpdate면 PESSIMISTIC_WRITE임을 확인함).
     // PESSIMISTIC_FORCE_INCREMENT도 허용하는 이유: 이 트랜잭션에서 그 행의 INSERT나 UPDATE가 flush되면(집계 조회의 자동 flush,

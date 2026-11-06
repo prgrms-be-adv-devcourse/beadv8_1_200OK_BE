@@ -163,7 +163,7 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 같은 트랜잭션에서 불러왔어도 잠그지 않은 조회(findById)라면, 다른 트랜잭션이 잠그고 바꾸는 중에도 기다리지 않고 덮어쓸 수 있다.
-    // 그래서 "불러왔는가"만이 아니라 "잠금 조회로 불러왔는가"까지 막는지 본다(설계 Ruling 2)
+    // 그래서 "불러왔는가"만이 아니라 "잠금 조회로 불러왔는가"까지 막는지 본다
     @Test
     void 같은_트랜잭션에서_잠그지_않고_불러온_환불을_update하면_예외를_던지고_바꾸지_않는다() {
         // given
