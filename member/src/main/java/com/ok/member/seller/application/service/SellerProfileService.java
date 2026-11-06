@@ -4,7 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.member.seller.domain.SellerProfile;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerProfileRepository;
+import com.ok.member.seller.application.port.out.SellerProfileRepository;
 import com.ok.member.seller.application.dto.SellerProfileCommand;
 import com.ok.member.seller.application.dto.SellerProfileResult;
 import lombok.RequiredArgsConstructor;

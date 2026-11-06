@@ -4,7 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationRepository;
+import com.ok.member.seller.application.port.out.SellerApplicationRepository;
 import com.ok.member.seller.application.dto.SellerApplicationAdminResult;
 import com.ok.member.seller.application.dto.SellerApplicationRejectCommand;
 import com.ok.member.seller.application.dto.SellerApplicationSearchQuery;

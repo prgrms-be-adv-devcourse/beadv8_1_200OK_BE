@@ -2,7 +2,7 @@ package com.ok.member.seller.application.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerProfileRepository;
+import com.ok.member.seller.application.port.out.SellerProfileRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;

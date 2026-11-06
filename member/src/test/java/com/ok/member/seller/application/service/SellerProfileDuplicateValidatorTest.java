@@ -2,7 +2,7 @@ package com.ok.member.seller.application.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerProfileRepository;
+import com.ok.member.seller.application.port.out.SellerProfileRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;

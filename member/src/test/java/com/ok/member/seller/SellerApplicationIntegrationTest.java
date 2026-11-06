@@ -6,7 +6,7 @@ import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.application.service.SellerApplicationDuplicateValidator;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
@@ -70,7 +70,7 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
     MemberRepository memberRepository;
 
     @Autowired
-    SellerApplicationRepository sellerApplicationRepository;
+    SellerApplicationJpaRepository sellerApplicationRepository;
 
     private MockMvc mockMvc;
 
