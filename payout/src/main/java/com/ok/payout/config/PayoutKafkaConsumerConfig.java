@@ -49,8 +49,11 @@ public class PayoutKafkaConsumerConfig {
 
     // 테스트에서 규칙(다시 시도하지 않는 예외, 다시 시도 간격)을 확인할 수 있게 빈 메서드와 나눠 둔다
     static DefaultErrorHandler payoutErrorHandler() {
+        // TODO(#388): 지금은 넘긴 메시지가 ERROR 로그에만 남는다. 팀 DLT가 생기면 넘길 때 DLT로 보내도록 바꾼다
         DefaultErrorHandler errorHandler = new DefaultErrorHandler(payoutBackOff());
         // 입구 검사가 값이 틀렸다고 판단하면 던지는 예외. 다시 받아도 같은 값이라 다시 시도하지 않는다
+        // 서비스·도메인·라이브러리에서 난 IllegalArgumentException도 일부러 포함한다. "인자가 틀림"은 같은 메시지로 다시 해도 결과가 같다
+        // 입구 전용 예외를 따로 만들지 않는 이유: 다른 모듈이 보낸 값의 오류는 표준 예외를 던진다(exception.md 15줄)
         errorHandler.addNotRetryableExceptions(IllegalArgumentException.class);
         return errorHandler;
     }
