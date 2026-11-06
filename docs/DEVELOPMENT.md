@@ -21,7 +21,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 |---|---|
 | 언어 / 빌드 | Java 25, Gradle (Kotlin DSL) |
 | 프레임워크 | Spring Boot 4.1.1 (Web MVC, Security, Validation) |
-| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 (Spring Data Redis, Lettuce) |
+| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 클러스터 (마스터 3 + 복제본 3, Spring Data Redis, Lettuce) |
 | 메시지 브로커 | Apache Kafka 4.2 (KRaft combined, 브로커 3대), Spring for Apache Kafka |
 | 구조 | Gradle 멀티 모듈 + Spring Modulith (도메인 모듈 분리) |
 | 배치 / 문서 / 외부 | Spring Batch, springdoc-openapi (Swagger), AWS SDK v2 (S3) |
@@ -48,7 +48,7 @@ cp .env.example .env
 ## 3. 로컬 실행
 
 ```bash
-# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka는 도커 볼륨에 데이터 저장, Redis는 볼륨 없이 재시작하면 비워짐)
+# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka와 Redis 노드는 도커 볼륨에 데이터 저장)
 docker compose up -d
 
 # 2) 앱 실행 (기본 프로파일 dev)
@@ -101,6 +101,28 @@ docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^
 - 그룹 오프셋은 조회만 하고 컨슈머 그룹에 가입하지 않으므로 앱 컨슈머에 영향을 주지 않습니다.
 - Prometheus·Grafana 대시보드 연결은 #374 이후에 추가합니다.
 
+### 로컬 Redis 클러스터 (#366)
+
+`docker compose up -d`가 Redis 노드 6대(`redis-1`~`redis-6`)를 띄우고, `redis-cluster-init`이 마스터 3 + 복제본 3으로 묶은 뒤 끝납니다. 노드가 모두 `cluster_state:ok`(healthy)가 되면 앱이 시작합니다. Docker 메모리는 Redis에 약 1GB를 더 잡아 둡니다(노드당 `mem_limit` 160m).
+
+```bash
+docker compose exec redis-1 redis-cli -p 7001 cluster info | grep cluster_state   # cluster_state:ok
+docker compose exec redis-1 redis-cli -p 7001 cluster nodes                       # 노드 6대와 마스터·복제본 역할
+redis-cli -c -h redis-1.localhost -p 7001 set k v                                 # 내 PC에서 접속 (-c는 슬롯 이동을 따라감)
+```
+
+- **접속 주소:** 노드가 클라이언트에게 알려 주는 주소로 앱이 다시 접속합니다. 그래서 노드 이름은 `redis-N.localhost`, 포트는 `7001`~`7006`으로 고정입니다(바꿀 수 없음). 내 PC에서는 `*.localhost`가 `127.0.0.1`로 풀리고, 컨테이너 안에서는 compose 네트워크 별칭으로 풀려 두 곳 모두 같은 값(`REDIS_CLUSTER_NODES`)으로 접속하도록 만들었습니다(컨테이너 안에서 `redis-cli`로 접속되는 것은 확인했습니다. 앱 컨테이너를 `--profile app`으로 처음 띄울 때 `/actuator/health`가 `UP`인지 확인합니다). `*.localhost`가 풀리지 않는 환경(일부 Linux·Windows)은 hosts 파일에 `127.0.0.1 redis-1.localhost` ~ `redis-6.localhost`를 추가합니다.
+- **장애 조치 해 보기:** `cluster nodes`에서 마스터 하나를 찾아 `docker compose stop redis-N` 하면 몇 초 안에 그 복제본이 마스터가 됩니다(`cluster_state:ok` 유지). 다시 `docker compose start redis-N` 하면 복제본으로 합류하고, 노드 ID는 그대로입니다(`nodes.conf`가 볼륨에 있음). 단, **마스터 2대를 동시에 죽이면** 마스터 과반이 없어 자동 승격이 안 되고 클러스터 전체가 `CLUSTERDOWN`이 됩니다. 복구 방법은 `docs/DEPLOY.md`의 Redis 절을 봅니다.
+- **처음부터 다시:** 노드 볼륨에는 노드 ID와 데이터가 들어 있습니다. 노드 일부의 볼륨만 지우면 `redis-cluster-init`이 클러스터를 만들지 않고 실패합니다(기존 데이터 보호). 6대를 모두 지우려면 `docker compose down -v`를 합니다(Kafka 볼륨도 함께 지워짐).
+- 로컬 Redis는 비밀번호가 없고, 호스트 포트는 `127.0.0.1`에만 엽니다.
+
+**클러스터에서 코드를 쓸 때의 규칙** (캐시·락 같은 사용처를 만드는 이슈에서 지킵니다)
+
+- 여러 키를 한 번에 다루는 명령(`MGET`, `MSET`, 트랜잭션)과 Lua 스크립트는 키가 같은 슬롯에 있어야 합니다. 키에 해시 태그를 씁니다. 예: `order:{123}:lock`, `order:{123}:cache`는 `{123}`만 해시되어 같은 슬롯에 갑니다. 다른 슬롯의 키를 한 명령에 섞으면 `CROSSSLOT` 오류입니다.
+- 읽기는 복제본을 우선합니다(`read-from: replicaPreferred`). 복제는 비동기라 **복제본은 마지막 쓰기보다 오래된 값을 줄 수 있습니다.** 그래서 락과 중복 방지는 "읽고 판단"하지 말고 `SET key value NX PX <ms>`나 Lua 스크립트 같은 원자적 명령으로 합니다(쓰기와 원자적 명령은 항상 마스터로 갑니다).
+- **Redis는 락과 중복 방지의 정합성을 보장하지 않습니다.** 장애 조치 순간에는 마스터가 가진 최신 키가 새 마스터에 없을 수 있습니다. 락은 짧은 TTL로 쓰고, 정합성이 필요하면 DB 유니크 제약 같은 최종 방어선을 둡니다.
+- 메모리 정책은 `noeviction`입니다(#319 그대로, 정책 재검토는 #324). 노드당 `maxmemory`가 96mb라 데이터가 차면 쓰기가 실패합니다.
+
 ### 앱까지 컨테이너(docker compose)로 실행
 
 `docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
@@ -113,7 +135,7 @@ docker compose --profile app logs -f app     # 앱 로그
 docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ```
 
-- DB, Redis, Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).
+- DB, Redis, Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다. Redis는 6대 모두 healthy이고 `redis-cluster-init`이 끝나야 합니다. 앱 컨테이너는 `REDIS_CLUSTER_NODES`를 compose가 정한 노드 목록(`redis-N.localhost:700N`)으로 고정해 접속합니다.
 - 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름(`kafka-1:9092,...`)으로 덮어씁니다. `.env`의 `localhost:...`는 컨테이너 안에서 앱 자신을 가리키기 때문입니다.
 - Kafka 3대는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
@@ -146,8 +168,8 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `MYSQL_VERSION` | MySQL 이미지 버전 (docker compose, 통합 테스트 공통) | `9.4` |
 | `MYSQL_PORT` | 호스트에 열 DB 포트 | `3306` |
 | `REDIS_VERSION` | Redis 이미지 버전 (docker compose, 통합 테스트 공통) | `8.10` |
-| `REDIS_PORT` | 호스트의 loopback(127.0.0.1)에만 여는 Redis 포트(비밀번호가 없어 외부 비공개). 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
-| `REDIS_HOST` / `REDIS_PASSWORD` | 앱의 Redis 접속 정보. 비밀번호가 비어 있으면 없이 접속(로컬). 운영은 `REDIS_PASSWORD` 필수 | `localhost` / 빈 값 |
+| `REDIS_CLUSTER_NODES` | 앱이 접속할 Redis 클러스터 노드 목록(쉼표 구분). 접속 후 나머지 노드와 역할은 앱이 스스로 읽는다. 노드 포트(7001~7006)는 노드가 알리는 주소와 같아야 해서 바꿀 수 없음(로컬 Redis 클러스터 절) | `redis-1.localhost:7001,...,redis-6.localhost:7006` |
+| `REDIS_PASSWORD` | 앱의 Redis 비밀번호. 비어 있으면 없이 접속(로컬). 운영은 필수 | 빈 값 |
 | `APP_PORT` | docker compose로 실행하는 앱 컨테이너의 호스트 포트 | `8080` |
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | docker compose의 MySQL 계정 | `.env.example` 참고 |
 | `DOCKER_COMPOSE_ENABLED` | 앱 실행 시 compose 자동 기동 (dev) | `false` |
@@ -206,7 +228,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `spring.flyway.out-of-order` | `${FLYWAY_OUT_OF_ORDER:false}` | 순서가 뒤바뀐 마이그레이션 허용 여부. 기본은 운영과 같게 막고, 개발 중 필요할 때만 `FLYWAY_OUT_OF_ORDER=true`로 엽니다 |
 | `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
-| `spring.data.redis.*` | `${REDIS_HOST:localhost}`, `${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
+| `spring.data.redis.*` | `cluster.nodes`=`${REDIS_CLUSTER_NODES:...}`, 리다이렉트 3회, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s, 복제본 우선 읽기, 토폴로지 30초 주기 갱신(리다이렉트·재연결 때는 즉시 갱신) | Redis 클러스터 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
 | `app.async.*` | `default-executor`, `executors.<이름>.*` | 비동기 실행기(가상 스레드)의 설정. `event` 실행기의 값은 `common`의 `common-async.yaml` 한 곳에 있고, 모듈이 쓰는 실행기는 이름을 붙여 추가합니다. 자세한 내용은 [11. 비동기 처리](#11-비동기-처리-이벤트-리스너와-async) |
 | `jwt.verification-keys` | `file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem` | 검증용 공개키. 저장소 루트의 `keys/`에서 읽습니다. member는 서명용 개인키 `jwt.signing`(`keys/rs256-v1-private.pem`)도 둡니다. 파일이 없으면 기동이 실패합니다(테스트는 `application-test.yml`의 테스트 키를 씁니다). 자세한 내용은 [키 관리와 교체](#키-관리와-교체) |
 | `jwt.issuer`, `audience`, `*-expiration` | 고정값 | 토큰 발급·검증 기준. 모듈마다 같은 값이어야 서로의 토큰을 검증할 수 있습니다 |
@@ -734,7 +756,7 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
 - MySQL 컨테이너는 서브프로젝트의 테스트 실행(JVM) 한 번에 하나만 뜨고 그 안의 모든 테스트 컨텍스트가 같은 DB를 씁니다. 컨테이너가 모듈 스키마를 모두 만들며, 모듈 테스트는 자기 모듈 스키마를, `monolith` 테스트는 기본 스키마를 접속 DB로 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
-- Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
+- Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 기동 시간 때문에 **단일 노드**로 띄우며(접속 정보 빈이 `cluster.nodes` 속성보다 우선), 클러스터 모드 접속은 `common`의 `RedisClusterConnectionTest`(클러스터 모드 컨테이너 1개)가 따로 검증합니다. 장애 조치는 자동 테스트가 없고 위 로컬 Redis 클러스터 절의 절차로 확인합니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
 - Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:8080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
 - 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`TestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
 - 토픽의 메시지는 테스트마다 지워지지 않습니다. 메시지를 확인하는 테스트는 자기가 만든 키(예: `payoutId`)로 걸러서 셉니다.
