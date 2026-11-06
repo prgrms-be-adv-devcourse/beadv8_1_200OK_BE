@@ -840,7 +840,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 - **같은 클래스 안에서 `@Async` 메서드를 부르면 비동기가 되지 않습니다.** 프록시를 거치지 않아 오류 없이 동기로 실행됩니다. 다른 빈에서 호출합니다.
 - **리스너는 처리 순서가 보장되지 않고, 같은 이벤트를 두 번 받을 수 있습니다.** 재시작 때 미완료 이벤트가 재발행되기 때문에 같은 이벤트를 여러 번 처리해도 결과가 같아야 합니다.
 - **비동기 작업의 예외는 호출한 쪽으로 전달되지 않습니다.** `[ASYNC_LISTENER_FAILED]` 로그로 남고, 이벤트는 미완료로 남습니다.
-- **MDC는 있는 값을 그대로 복사합니다**(`MdcTaskDecorator`). traceId는 [12. 추적](#12-추적-traceid)의 필터·스케줄러·배치가 MDC에 넣지만 로그 패턴에는 아직 찍히지 않고, 재발행이나 Kafka 경계에서는 전달되지 않습니다. `SecurityContext`는 전달하지 않습니다.
+- **MDC는 있는 값을 그대로 복사합니다**(`MdcTaskDecorator`). traceId는 [12. 추적](#12-추적-traceid)의 필터·스케줄러·배치가 MDC에 넣고, orderId 같은 다른 추적 키도 함께 복사됩니다. 로그 패턴에는 아직 찍히지 않고, 재발행이나 Kafka 경계에서는 전달되지 않습니다. `SecurityContext`는 전달하지 않습니다.
 
 ## 12. 추적 (traceId)
 
@@ -854,7 +854,15 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 | `@Scheduled` | 실행할 때마다 새로 발급합니다. 끝나면 실행한 스레드의 MDC를 이전 값으로 되돌립니다 |
 | Spring Batch | Job 실행마다 새로 발급합니다. Job은 호출한 스레드에서 동기로 실행되므로, 끝나면 호출한 쪽의 MDC(예: HTTP 요청의 traceId)로 되돌립니다. Batch가 없는 모듈에서는 등록되지 않습니다 |
 
-비동기 리스너, 내부 HTTP, Kafka로 traceId를 넘기는 것은 후속 이슈입니다(#377 등).
+### 경계 넘어 전파
+
+| 경계 | 방식 |
+|---|---|
+| 비동기 리스너(`@ApplicationModuleListener`) | `MdcTaskDecorator`가 MDC 전체를 복사합니다 |
+| 내부 HTTP | 내부 API 클라이언트(`InternalRestClient`, 상품의 `OrderApiClient`)가 `TraceHeaderInterceptor`로 MDC에 있는 `X-Trace-Id`, `X-Order-Id`, `X-Shipment-Id`만 보냅니다 |
+| `/internal/` 수신 | `TraceFilter`가 헤더로 복원합니다. `X-Order-Id`·`X-Shipment-Id`는 `/internal/` 경로에서, loopback 주소에서 온 요청이고 숫자 1~18자리일 때만 받습니다 |
+
+새 내부 HTTP 클라이언트를 만들면 `RestClient`에 `TraceHeaderInterceptor`를 붙입니다. Kafka로 넘기는 것은 후속 이슈입니다(#382).
 
 ### traceId 해석
 
@@ -882,5 +890,5 @@ SELECT FROM_UNIXTIME(((111634463317819397 >> 22) + 1767225600000) / 1000) AS iss
 
 ### 코드에서 쓰기
 
-- 추적 키(`traceId`, `orderId`, `shipmentId`, `module`, `step`, `eventType`)의 MDC 이름은 [`TraceContext`](../common/src/main/java/com/ok/common/trace/TraceContext.java)의 상수입니다. 현재 값이 채워지는 것은 `traceId`뿐이고, 나머지는 `bindOrderId`, `bindShipmentId`로 범위 안에서 붙일 수 있습니다.
+- 추적 키(`traceId`, `orderId`, `shipmentId`, `module`, `step`, `eventType`)의 MDC 이름은 [`TraceContext`](../common/src/main/java/com/ok/common/trace/TraceContext.java)의 상수입니다. 현재 진입점이 채우는 것은 `traceId`뿐이고(`/internal/` 요청은 헤더가 있으면 `orderId`, `shipmentId`도), 나머지는 `bindOrderId`, `bindShipmentId`로 범위 안에서 붙일 수 있습니다.
 - 새 진입점이 직접 범위를 열어야 하면 `try (TraceContext.Scope scope = TraceContext.open(traceId)) { ... }`로 씁니다. 닫으면 진입 전 MDC 전체로 되돌립니다.
