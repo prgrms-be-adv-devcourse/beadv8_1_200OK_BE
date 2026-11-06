@@ -14,11 +14,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
+import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.review.client.ReviewKeywordList;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ProductReviewMedia;
 import com.ok.product.review.domain.ProductReviewMediaSpec;
@@ -27,10 +29,12 @@ import com.ok.product.review.domain.ReviewAnalysisType;
 import com.ok.product.review.exception.ProductReviewErrorCode;
 import com.ok.product.review.repository.ProductReviewRepository;
 import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
+import com.ok.product.review.repository.ReviewKeywordRepository;
 import com.ok.product.review.service.dto.ProductReviewCreateCommand;
 import com.ok.product.review.service.dto.ProductReviewMediaResult;
 import com.ok.product.review.service.dto.ProductReviewResult;
 import com.ok.product.review.service.dto.ProductReviewUpdateCommand;
+import com.ok.product.review.service.dto.ReviewAnalysisSubjectResult;
 import com.ok.product.review.service.dto.ReviewablePurchase;
 import lombok.RequiredArgsConstructor;
 
@@ -43,12 +47,14 @@ public class ProductReviewService {
 	private final ProductRepository productRepository;
 	private final ProductOptionRepository productOptionRepository;
 	private final ReviewAnalysisRequestRepository analysisRequestRepository;
+	private final ReviewKeywordRepository reviewKeywordRepository;
+	private final ReviewKeywordList keywordList;
 	private final ProductReviewMediaValidator mediaValidator;
 	private final MediaUrlResolver mediaUrlResolver;
 	private final Clock clock;
 
 	/**
-	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다. 감성 분석 요청을 대기로 남긴다.
+	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다. 분석 종류(감성, 키워드)마다 분석 요청을 대기로 남긴다.
 	 * 작성 자격 확인은 {@link ProductReviewFacade}가 하므로 여기서는 구매 건을 믿고 저장만 한다.
 	 */
 	@Transactional
@@ -70,12 +76,14 @@ public class ProductReviewService {
 		productRepository.addReviewStats(productId, 1, command.rating());
 		Long reviewId = saveReview(review);
 		// 리뷰와 같은 트랜잭션에 남겨, 저장된 리뷰는 모두 분석되고 롤백된 리뷰의 요청은 남지 않게 한다
-		analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, ReviewAnalysisType.SENTIMENT, now()));
+		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
+			analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, analysisType, now()));
+		}
 		return reviewId;
 	}
 
 	/**
-	 * 내 리뷰를 수정한다. 별점이나 본문이 바뀌면 같은 트랜잭션에서 감성 분석 요청을 처음 대기로 되돌린다.
+	 * 내 리뷰를 수정한다. 별점이나 본문이 바뀌면 같은 트랜잭션에서 모든 분석 종류의 요청을 처음 대기로 되돌린다.
 	 * 첨부만 바꾸면 리뷰 행이 바뀌지 않아 수정 시각이 그대로이고 기존 분석 결과도 유효하므로 다시 분석하지 않는다.
 	 */
 	@Transactional
@@ -102,10 +110,26 @@ public class ProductReviewService {
 
 	// 구매자에게 보이는 상품의 리뷰를 최신순으로 조회한다
 	public Page<ProductReviewResult> getProductReviews(Long productId, Pageable pageable) {
-		// 숨긴 상품의 리뷰가 상품 상세보다 먼저 새어 나가지 않게 상세와 같은 조건으로 막는다
-		productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
-			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		findVisibleProduct(productId);
 		return toResults(productReviewRepository.findByProductIdAndDeletedAtIsNullOrderByIdDesc(productId, pageable));
+	}
+
+	/**
+	 * 구매자에게 보이는 상품의 리뷰 중 키워드를 표현한 분석 완료 리뷰를 최신순으로 조회한다.
+	 * 키워드 집계와 같은 조건으로 걸러 칩의 리뷰 수와 결과 수가 같다. 리뷰 수가 적어 칩에 뜨지 않는 키워드도 거른다.
+	 * 상품의 현재 분류에 묻지 않는 키워드는 집계에서 세지 않으므로 빈 페이지를 돌려준다.
+	 *
+	 * @throws RestApiException 상품이 없거나 숨겨졌거나 삭제됐으면 {@code PRODUCT_NOT_FOUND},
+	 *                          키워드가 현재 목록에 없으면 {@code REVIEW_KEYWORD_NOT_FOUND}
+	 */
+	public Page<ProductReviewResult> getProductReviewsByKeyword(Long productId, String keywordId, Pageable pageable) {
+		Product product = findVisibleProduct(productId);
+		ReviewKeywordList.Keyword keyword = keywordList.find(keywordId)
+			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.REVIEW_KEYWORD_NOT_FOUND));
+		if (!keyword.appliesTo(product.getCategory())) {
+			return Page.empty(pageable);
+		}
+		return toResults(reviewKeywordRepository.findAnalyzedByProductIdAndKeywordId(productId, keywordId, pageable));
 	}
 
 	// 내가 쓴 리뷰를 최신순으로 조회한다. 상품이 숨겨지거나 지워져도 내 리뷰는 보여 준다
@@ -121,6 +145,27 @@ public class ProductReviewService {
 		return reviews.stream()
 			.map(review -> toResult(review, optionNames))
 			.toList();
+	}
+
+	/**
+	 * 관리자 분석 테스트에 쓸 상품명·옵션명·분류를 읽는다. 숨긴 상품과 삭제된 옵션도 받는다.
+	 * 운영 작업자도 숨긴 상품과 삭제된 옵션의 리뷰를 분석하므로, 같은 상품을 테스트할 수 있게 한다.
+	 *
+	 * @throws RestApiException 상품이 없거나 삭제됐으면 {@code PRODUCT_NOT_FOUND}, 옵션이 그 상품의 것이 아니면 {@code INVALID_REVIEW_OPTION}
+	 */
+	public ReviewAnalysisSubjectResult getAnalysisSubject(Long productId, Long optionId) {
+		Product product = productRepository.findByIdAndDeletedAtIsNull(productId)
+			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		ProductOption option = productOptionRepository.findById(optionId)
+			.filter(found -> found.getProduct().getId().equals(productId))
+			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.INVALID_REVIEW_OPTION));
+		return new ReviewAnalysisSubjectResult(product.getName(), option.getName(), product.getCategory());
+	}
+
+	// 숨긴 상품의 리뷰가 상품 상세보다 먼저 새어 나가지 않게 상세와 같은 조건으로 막는다
+	private Product findVisibleProduct(Long productId) {
+		return productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
+			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
 	}
 
 	// 삭제한 리뷰도 포함해서 본다. 지우고 다시 써서 같은 주문으로 리뷰를 여러 번 남기지 못하게 한다
@@ -141,10 +186,12 @@ public class ProductReviewService {
 
 	// 요청이 없는 리뷰도 수정하면 분석되도록 새로 만든다. 요청은 (리뷰, 분석 종류)마다 하나라 연달아 수정해도 같은 행을 되돌린다
 	private void requestReanalysis(Long reviewId) {
-		analysisRequestRepository.findByReviewIdAndAnalysisType(reviewId, ReviewAnalysisType.SENTIMENT)
-			.ifPresentOrElse(
-				request -> request.reset(now()),
-				() -> analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, ReviewAnalysisType.SENTIMENT, now())));
+		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
+			analysisRequestRepository.findByReviewIdAndAnalysisType(reviewId, analysisType)
+				.ifPresentOrElse(
+					request -> request.reset(now()),
+					() -> analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, analysisType, now())));
+		}
 	}
 
 	// 개수는 그대로 두고 별점 차이만 합계에 반영한다

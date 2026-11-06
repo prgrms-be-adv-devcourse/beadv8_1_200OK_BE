@@ -59,7 +59,8 @@ public class SecurityConfig {
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/categories", TokenUse.IGNORED),
-            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews", TokenUse.IGNORED)
+            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews", TokenUse.IGNORED),
+            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/review-keywords", TokenUse.IGNORED)
     );
 
     /**
