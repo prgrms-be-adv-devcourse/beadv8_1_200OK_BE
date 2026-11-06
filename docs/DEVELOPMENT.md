@@ -382,6 +382,10 @@ com.ok.delivery
 - 모듈 간 연동은 지금처럼 Spring 이벤트와 `/internal` 호출입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
 
+### refund 모듈 구조(헥사고날)
+
+`refund`도 헥사고날 구조입니다. 패키지와 의존 규칙은 환불 전용 규칙 `refund/CLAUDE.md`와 refund `ArchitectureTest`를 따릅니다.
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.
