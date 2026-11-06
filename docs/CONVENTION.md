@@ -775,6 +775,8 @@ LocalDateTime agreedAt = LocalDateTime.now();
 - 레벨은 아래 기준으로 고른다.
 - 비밀번호, 토큰, 개인정보는 로그에 남기지 않는다.
 - 예외를 던질 때 로그를 따로 남기지 않는다. 처리되지 않은 예외는 `ApiControllerAdvice`가 한 번만 남긴다.
+- 로그 파일은 고정 스키마 JSON이다. 필드 이름을 바꾸거나 지우지 않는다(추가는 괜찮다).
+- 로그를 남기는 코드는 출력 장치(큐, 억제, 샘플링)를 신경 쓰지 않는다. 성공 로그는 큐가 넘치면 버려질 수 있다. WARN 이상은 큐 때문에 버려지지 않고, 같은 에러가 폭주할 때만 요약으로 대체된다.
 
 | 레벨 | 쓰는 경우 | 예 |
 |---|---|---|
@@ -799,6 +801,43 @@ catch (RuntimeException e) {
     throw e;
 }
 ```
+
+**출력 형식 (#378)**
+
+모든 모듈과 monolith가 `common`의 `logback-spring.xml`을 쓴다. 콘솔은 사람이 읽는 Boot 기본 형식이고, 파일은 JSON 한 줄씩이다. 실패(WARN 이상)는 `app-error.log`, 그 밖은 `app.log`다.
+
+| 필드 | 값 |
+|---|---|
+| `timestamp` | 발생 시각(ISO-8601, 오프셋 포함) |
+| `level` | `INFO`, `WARN` 등 |
+| `app` | `spring.application.name` |
+| `module` | 로거 패키지(`com.ok.<모듈>...`)에서 뽑은 모듈 이름. 모듈 밖 로거는 빈 문자열 |
+| `eventType` | 사건 종류(`HTTP_IN`, `BUSINESS_FAILURE` 등). MDC `eventType` |
+| `step` | 흐름 안의 단계. MDC `step` |
+| `traceId` | 흐름 번호. MDC `traceId`(`com.ok.common.trace.TraceContext`) |
+| `orderId`, `shipmentId` | 주문·배송 번호. MDC 값이라 JSON에서는 문자열이다 |
+| `outcome` | 처리 결과(`SUCCESS`, `FAILURE` 등). MDC `outcome` |
+| `message` | 로그 메시지 |
+| `error` | 예외가 있을 때 스택 트레이스 문자열 |
+| `logger`, `thread` | 로거 이름, 스레드 이름 |
+
+- MDC 값이 없는 필드는 생략한다(`null`로 쓰지 않는다).
+- 기본 이름 `logger_name`, `thread_name`은 마스킹 키 단어 `name`에 걸려 값이 가려지므로 `logger`, `thread`로 바꿨다.
+
+폭증과 유출을 막는 장치는 모두 `common-logging.yaml`의 `app.logging.*`로 바꿀 수 있다(기본값은 괄호).
+
+| 장치 | 동작 |
+|---|---|
+| 성공 appender | `AsyncAppender`, 큐 8192(`queue-size`). 가득 차면 요청 스레드를 막지 않고 버린다 |
+| 실패 appender | WARN 이상은 큐를 거치지 않고 호출 스레드가 파일에 동기로 쓴다 |
+| 크기 상한 | 필드 1KB(`field-bytes`), 이벤트 8KB(`event-bytes`), 스택 깊이 30(`stack-depth`), 스택 총 6KB(`stack-bytes`). 크기 단위는 UTF-8 바이트다. 이벤트가 상한을 넘으면 본문을 생략한 짧은 이벤트로 대신한다 |
+| 에러 억제 | 같은 에러 키(로거 + 예외 클래스)가 60초 안에 10회를 넘으면(`throttle.*`) 넘은 건을 버리고 창이 끝날 때 "N건 생략" 한 건을 남긴다 |
+| 샘플링 | `eventType=HTTP_IN` 성공 로그를 10%만 남긴다(`http-success-sampling-rate`). 실패는 줄이지 않는다 |
+| 마스킹 | 이름에 `name`, `phone`, `address`, `email`, `receiver`가 들어간 필드와 메시지 안의 `키=값`의 값을 `****`로 가린다(`mask-keys`) |
+| 롤링 | 파일 100MB, 7일, 두 파일 합쳐 2GB(`rolling.*`) |
+| 관측 | 버린 건수를 Micrometer 지표 `app.log.dropped`로 노출한다. `reason` 태그는 `queue_full`, `throttled`, `sampled` |
+
+**이유**: 주문 하나로 묶어 검색하려면 필드 이름이 고정된 구조화 로그가 필요하다. 로그가 몰려 메모리나 디스크가 차면 비즈니스가 멈추므로 상한을 두고, 버려도 되는 성공 로그와 잃으면 안 되는 실패 로그의 경로를 나눴다. 마스킹은 개발자가 실수로 개인정보를 남겨도 인코더에서 한 번 더 막기 위한 것이고, 로그에 남기지 않는 것이 원칙이다.
 
 ### 7.5 서비스를 나누는 기준
 
