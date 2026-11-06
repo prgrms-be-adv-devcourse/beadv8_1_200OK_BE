@@ -81,7 +81,6 @@
                     <keys>${LOG_MASK_KEYS}</keys>
                 </fieldMasker>
                 <valueMasker class="com.ok.common.logging.SafeValueMasker">
-                    <keys>${LOG_MASK_KEYS}</keys>
                     <maxBytes>${LOG_FIELD_BYTES}</maxBytes>
                     <largeFieldMaxBytes>${LOG_STACK_BYTES}</largeFieldMaxBytes>
                 </valueMasker>
@@ -134,7 +133,6 @@
                     <keys>${LOG_MASK_KEYS}</keys>
                 </fieldMasker>
                 <valueMasker class="com.ok.common.logging.SafeValueMasker">
-                    <keys>${LOG_MASK_KEYS}</keys>
                     <maxBytes>${LOG_FIELD_BYTES}</maxBytes>
                     <largeFieldMaxBytes>${LOG_STACK_BYTES}</largeFieldMaxBytes>
                 </valueMasker>

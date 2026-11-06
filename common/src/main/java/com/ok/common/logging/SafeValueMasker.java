@@ -1,20 +1,16 @@
 package com.ok.common.logging;
 
 import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.regex.Pattern;
 
-import net.logstash.logback.mask.MaskingJsonGenerator;
 import net.logstash.logback.mask.ValueMasker;
 import tools.jackson.core.TokenStreamContext;
 
 /**
- * 문자열 값에서 개인정보를 가리고, 필드 하나가 상한(기본 1KB)을 넘으면 자른다.
+ * 문자열 값 하나가 상한(기본 1KB)을 넘으면 자른다.
  *
- * <p>개인정보는 필드 이름({@link PersonalInfoFieldMasker})뿐 아니라 메시지 문장 안의 {@code receiverName=홍길동} 같은
- * {@code 키=값}, {@code 키: 값}, JSON {@code "키":"값"} 모양으로도 남으므로 같은 키 단어로 문장 안의 값도 가린다.
- * 값은 쉼표, 닫는 괄호, 따옴표, 줄 끝까지 가린다. 주소처럼 공백이 든 값이 일부만 남는 것보다 더 가리는 편이 낫다. 가리는 일을 먼저 하고 자른다.
- * 자르고 나면 가릴 값의 앞부분만 남아 패턴에 걸리지 않을 수 있기 때문이다.
+ * <p>개인정보는 필드 이름으로만 가린다({@link PersonalInfoFieldMasker}). 메시지 문장 속의 {@code 키=값}은 정규식으로 찾아 가리지 않는다.
+ * 긴 문자열에서 정규식이 길이의 제곱에 비례해 느려지고, {@code NameNotFoundException: 원인}처럼 장애 원인까지 가렸기 때문이다.
+ * 개인정보는 로그 문장에 섞어 쓰지 않는 것이 원칙이다.
  *
  * <p>상한은 UTF-8 바이트 기준이다. 한글은 글자당 3바이트라 글자 수로 세면 실제 크기가 3배가 된다.
  * 스택 트레이스 필드는 깊이 상한이 따로 있고 한 줄이 길어 더 큰 상한을 쓴다. 인코더의 글자 수 기준 상한만으로는 한글 예외 메시지가
@@ -24,7 +20,6 @@ public class SafeValueMasker implements ValueMasker {
 
     private static final String TRUNCATED = "…[잘림]";
 
-    private Pattern keyValuePattern = Pattern.compile("(?!)");
     private int maxBytes = 1024;
     private String largeFieldName = "error";
     private int largeFieldMaxBytes = 6144;
@@ -34,9 +29,8 @@ public class SafeValueMasker implements ValueMasker {
         if (!(value instanceof String text)) {
             return null;
         }
-        String result = keyValuePattern.matcher(text).replaceAll("$1" + MaskingJsonGenerator.MASK);
         boolean largeField = context.hasCurrentName() && largeFieldName.equals(context.currentName());
-        result = truncate(result, largeField ? largeFieldMaxBytes : maxBytes);
+        String result = truncate(text, largeField ? largeFieldMaxBytes : maxBytes);
         return result.equals(text) ? null : result;
     }
 
@@ -61,17 +55,6 @@ public class SafeValueMasker implements ValueMasker {
             return text;
         }
         return text.substring(0, end) + TRUNCATED;
-    }
-
-    /** 쉼표로 구분한 키 단어. 문장 안의 {@code 키=값}에서 키에 이 단어가 들어 있으면 값을 가린다. */
-    public void setKeys(String keys) {
-        List<String> words = MaskKeys.parse(keys);
-        if (words.isEmpty()) {
-            return;
-        }
-        String alternation = String.join("|", words.stream().map(Pattern::quote).toList());
-        keyValuePattern = Pattern.compile(
-                "([\\w.\\-]*(?:" + alternation + ")[\\w.\\-]*\"?\\s*[=:]\\s*\"?)[^,;\\]})\"\\r\\n]+", Pattern.CASE_INSENSITIVE);
     }
 
     /** 필드 하나의 최대 크기(UTF-8 바이트). */

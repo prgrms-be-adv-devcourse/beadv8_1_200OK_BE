@@ -9,10 +9,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,7 +120,7 @@ class LogbackSpringConfigTest {
     }
 
     @Test
-    void 개인정보_키의_값은_필드와_메시지_안의_키_값_모두_가려지고_스키마_필드는_가려지지_않는다() throws IOException {
+    void 개인정보_키의_필드_값은_가려지고_스키마_필드는_가려지지_않는다() throws IOException {
         // given
         Logger log = LoggerFactory.getLogger("com.ok.delivery.DeliveryService");
         MDC.put("traceId", "222");
@@ -128,19 +130,46 @@ class LogbackSpringConfigTest {
                 .addKeyValue("receiverName", "홍길동")
                 .addKeyValue("buyerPhone", "010-1234-5678")
                 .addKeyValue("orderId", "1")
-                .log("배송 요청 receiverAddress=서울시강남구 email=a@b.com 완료");
+                .log("배송 요청 완료");
         log.info("구조화 인자", StructuredArguments.kv("phone", "010-9999-0000"));
-        log.warn("실패", new IllegalStateException("email=leak@b.com 으로 발송 실패"));
-        log.info("주소 address=서울시 강남구 테헤란로 123 receiverName: 김철수 {\"email\":\"json@b.com\"}");
         flush();
 
         // then
-        String all = String.join("\n", readLines("app.log")) + "\n" + String.join("\n", readLines("app-error.log"));
+        String all = String.join("\n", readLines("app.log"));
         assertSoftly(softly -> {
-            softly.assertThat(all).doesNotContain("홍길동", "010-1234-5678", "서울시강남구", "a@b.com", "010-9999-0000", "leak@b.com", "강남구", "테헤란로", "김철수", "json@b.com");
-            softly.assertThat(all).contains("\"receiverName\":\"****\"", "\"buyerPhone\":\"****\"", "receiverAddress=****");
+            softly.assertThat(all).doesNotContain("홍길동", "010-1234-5678", "010-9999-0000");
+            softly.assertThat(all).contains("\"receiverName\":\"****\"", "\"buyerPhone\":\"****\"");
             softly.assertThat(all).contains("\"traceId\":\"222\"", "\"logger\":\"com.ok.delivery.DeliveryService\"");
         });
+    }
+
+    @Test
+    void 메시지와_예외_메시지_안의_문장은_가리지_않아_장애_원인이_남는다() throws IOException {
+        // given
+        Logger log = LoggerFactory.getLogger("com.ok.common.CauseTest");
+
+        // when
+        log.warn("서버 hostname=web-1 연결 실패", new IllegalStateException("javax.naming.NameNotFoundException: 원인 메시지"));
+        flush();
+
+        // then
+        String all = String.join("\n", readLines("app-error.log"));
+        assertThat(all).contains("hostname=web-1", "NameNotFoundException: 원인 메시지");
+    }
+
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    void 공백_없는_긴_문자열_한_줄도_바로_기록되고_1KB로_잘린다() throws IOException {
+        // given
+        Logger log = LoggerFactory.getLogger("com.ok.common.LongInputTest");
+
+        // when
+        log.warn("a".repeat(80_000));
+        flush();
+
+        // then
+        JsonNode warn = MAPPER.readTree(readLines("app-error.log").get(0));
+        assertThat(warn.get("message").asString().getBytes(StandardCharsets.UTF_8)).hasSizeLessThanOrEqualTo(1024);
     }
 
     @Test

@@ -14,7 +14,7 @@ app:
     # 스택 트레이스는 깊이와 총 크기를 모두 제한한다. 총 크기는 이벤트 상한(event-bytes) 안에 들어가야 한다
     stack-depth: ${LOG_STACK_DEPTH:30}
     stack-bytes: ${LOG_STACK_BYTES:6144}
-    # 이름에 이 단어가 들어간 필드와 메시지 안의 키=값의 값을 가린다(대소문자 무시, 쉼표로 구분)
+    # 이름에 이 단어가 들어간 필드의 값을 가린다(대소문자 무시, 쉼표로 구분). 메시지 문장 속의 값은 가리지 않으므로 로그 문장에 섞어 쓰지 않는다
     mask-keys: ${LOG_MASK_KEYS:name,phone,address,email,receiver}
     # HTTP 성공 로그(eventType=HTTP_IN)를 남길 비율(0~1). 실패 로그는 줄이지 않는다
     http-success-sampling-rate: ${LOG_HTTP_SUCCESS_SAMPLING_RATE:0.1}
