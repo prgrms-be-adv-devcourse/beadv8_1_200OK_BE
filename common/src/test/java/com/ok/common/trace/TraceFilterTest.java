@@ -63,7 +63,7 @@ class TraceFilterTest {
                     .csrf(AbstractHttpConfigurer::disable)
                     .httpBasic(Customizer.withDefaults())
                     .authorizeHttpRequests(auth -> auth
-                            .requestMatchers("/open").permitAll()
+                            .requestMatchers("/open", "/internal/open").permitAll()
                             .requestMatchers("/admin").hasRole("ADMIN")
                             .anyRequest().authenticated())
                     .build();
@@ -73,6 +73,10 @@ class TraceFilterTest {
         RouterFunction<ServerResponse> testRoutes() {
             return RouterFunctions.route()
                     .GET("/open", request -> {
+                        LOG.info("요청 처리");
+                        return ServerResponse.ok().body("ok");
+                    })
+                    .GET("/internal/open", request -> {
                         LOG.info("요청 처리");
                         return ServerResponse.ok().body("ok");
                     })
@@ -189,6 +193,89 @@ class TraceFilterTest {
 
         // when
         mockMvc.perform(get("/open"));
+
+        // then
+        assertThat(MDC.getCopyOfContextMap()).containsExactly(java.util.Map.entry("before", "value"));
+    }
+
+    @Test
+    void 내부_요청은_X_Order_Id와_X_Shipment_Id_헤더로_컨텍스트를_복원한다() throws Exception {
+        // when
+        mockMvc.perform(get("/internal/open")
+                .header("X-Trace-Id", "111111111111111").header("X-Order-Id", "222").header("X-Shipment-Id", "333"));
+
+        // then
+        assertThat(appender.list).hasSize(1);
+        assertSoftly(softly -> {
+            softly.assertThat(appender.list.get(0).getMDCPropertyMap()).containsEntry("traceId", "111111111111111");
+            softly.assertThat(appender.list.get(0).getMDCPropertyMap()).containsEntry("orderId", "222");
+            softly.assertThat(appender.list.get(0).getMDCPropertyMap()).containsEntry("shipmentId", "333");
+        });
+    }
+
+    @Test
+    void 내부_요청에_주문_헤더가_없으면_orderId는_비어_있다() throws Exception {
+        // when
+        mockMvc.perform(get("/internal/open").header("X-Trace-Id", "111111111111111"));
+
+        // then
+        assertThat(appender.list.get(0).getMDCPropertyMap())
+                .containsEntry("traceId", "111111111111111")
+                .doesNotContainKeys("orderId", "shipmentId");
+    }
+
+    @ParameterizedTest
+    @MethodSource("유효하지_않은_헤더_값")
+    void 내부_요청의_유효하지_않은_주문_헤더는_무시한다(String incoming) throws Exception {
+        // when
+        mockMvc.perform(get("/internal/open").header("X-Order-Id", incoming).header("X-Shipment-Id", incoming));
+
+        // then
+        assertThat(appender.list.get(0).getMDCPropertyMap()).doesNotContainKeys("orderId", "shipmentId");
+    }
+
+    @Test
+    void loopback이_아닌_주소에서_온_내부_요청은_주문_헤더를_무시한다() throws Exception {
+        // when
+        mockMvc.perform(get("/internal/open").header("X-Order-Id", "222").header("X-Shipment-Id", "333")
+                .with(request -> {
+                    request.setRemoteAddr("10.0.0.5");
+                    return request;
+                }));
+
+        // then
+        assertThat(appender.list.get(0).getMDCPropertyMap()).doesNotContainKeys("orderId", "shipmentId");
+    }
+
+    @Test
+    void IP가_아닌_원격_주소의_내부_요청도_실패하지_않고_주문_헤더를_무시한다() throws Exception {
+        // when
+        mockMvc.perform(get("/internal/open").header("X-Order-Id", "222")
+                .with(request -> {
+                    request.setRemoteAddr("localhost");
+                    return request;
+                }));
+
+        // then
+        assertThat(appender.list.get(0).getMDCPropertyMap()).doesNotContainKeys("orderId", "shipmentId");
+    }
+
+    @Test
+    void 내부_경로가_아닌_요청은_주문_헤더를_무시한다() throws Exception {
+        // when
+        mockMvc.perform(get("/open").header("X-Order-Id", "222").header("X-Shipment-Id", "333"));
+
+        // then
+        assertThat(appender.list.get(0).getMDCPropertyMap()).doesNotContainKeys("orderId", "shipmentId");
+    }
+
+    @Test
+    void 내부_요청이_끝나면_MDC를_진입_전으로_되돌린다() throws Exception {
+        // given
+        MDC.put("before", "value");
+
+        // when
+        mockMvc.perform(get("/internal/open").header("X-Order-Id", "222"));
 
         // then
         assertThat(MDC.getCopyOfContextMap()).containsExactly(java.util.Map.entry("before", "value"));
