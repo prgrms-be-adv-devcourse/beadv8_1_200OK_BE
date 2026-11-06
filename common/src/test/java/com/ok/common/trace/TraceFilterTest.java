@@ -275,7 +275,7 @@ class TraceFilterTest {
         MDC.put("before", "value");
 
         // when
-        mockMvc.perform(get("/internal/open").header("X-Order-Id", "222"));
+        mockMvc.perform(get("/internal/open").header("X-Order-Id", "222").header("X-Shipment-Id", "333"));
 
         // then
         assertThat(MDC.getCopyOfContextMap()).containsExactly(java.util.Map.entry("before", "value"));
