@@ -31,6 +31,7 @@ related: [441, 447]
 | 다른 모듈 의존 | `com.ok` 중 payout과 common만 안다 | MSA 분리 때 다른 모듈 내부 타입에 묶이지 않게 한다 |
 | 입구 → 배치 | 배치를 뺀 모든 입구(web·event)는 배치 중 `PayoutJobRunner`만 안다 | web만 대상으로 하면 web → event → `PayoutJobConfig` 경로가 실제로 통과했다. 기존 "배치를 뺀 입구는 입력 포트만 안다"와 범위를 맞춘다 (사용자 확인) |
 | 정산 밖 패키지 | 정산 모듈 빌드 결과 폴더 전체를 `ClassFileImporter`로 읽어 `com.ok.payout` 밖 클래스를 막는 `@Test` (`PayoutApplication`만 예외) | `@AnalyzeClasses`는 패키지 기준이라 모듈 안 다른 패키지를 못 본다. `@ArchTest` 필드로 두면 같은 가져오기 범위가 적용되어 의미가 없다 |
+| 정산 구조 규칙 문서 | `payout/CLAUDE.md`에 두고, 레포 `CLAUDE.md`·`DEVELOPMENT.md`는 가리키기만 함 | ADR 441이 남긴 "`structure.md`의 레이어 규칙은 정산과 맞지 않는다(문서 반영은 팀 확인 후)"를 정리한다. 공통 문서는 팀 전체가 보므로 정산 내용은 정산 폴더 한 곳에 둔다. 레이어 규칙을 근거로 적은 정산 주석도 이 문서로 바꿨고, 레이어 규칙("발행 인터페이스는 `*Command`를 받는다")을 따라 붙인 발행 값 이름 `SellerPayoutCreatedCommand`는 `SellerPayoutCreated`로 바꿨다. `*Command`는 port.in의 입력 값에만 쓴다 (사용자 결정) |
 | 규칙 자체의 검증 | `ArchitectureRuleEdgeTest`: 규칙마다 일부러 어긴 가짜 클래스를 넣고 위반이 잡히는지 확인 | 규칙을 느슨하게 고쳐도 다른 테스트는 통과하므로, 규칙이 실제로 잡는지를 계속 확인한다 |
 
 ## 버린 대안

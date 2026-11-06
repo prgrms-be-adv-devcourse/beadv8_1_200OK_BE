@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage;
-import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import com.ok.payout.config.PayoutTopics;
 
@@ -32,22 +32,22 @@ class KafkaPayoutEventPublisher implements PayoutEventPublisher {
     private final ApplicationEventPublisher applicationEventPublisher;
 
     @Override
-    public void publishSellerPayoutCreated(SellerPayoutCreatedCommand command) {
+    public void publishSellerPayoutCreated(SellerPayoutCreated created) {
         // 키를 payoutId로 두면 같은 정산의 메시지는 같은 파티션으로 가서 순서가 지켜지고, 지갑은 이 값으로 중복을 막는다
-        String key = String.valueOf(command.payoutId());
+        String key = String.valueOf(created.payoutId());
         try {
             // 저장 확인을 기다린다. 기다리지 않으면 브로커가 거절해도 publishStep이 성공으로 끝나 실패를 놓친다
             // 최대 대기 시간은 Kafka 기본 delivery.timeout.ms(120초)
-            kafkaTemplate.send(PayoutTopics.SELLER_PAYOUT_CREATED, key, SellerPayoutCreatedMessage.from(command)).get();
+            kafkaTemplate.send(PayoutTopics.SELLER_PAYOUT_CREATED, key, SellerPayoutCreatedMessage.from(created)).get();
         } catch (InterruptedException e) {
             // 기다리는 중 스레드가 중단되면 중단 표시를 되살린 뒤 실패로 올린다
             Thread.currentThread().interrupt();
-            throw publishFailed(command, e);
+            throw publishFailed(created, e);
         } catch (ExecutionException e) {
-            throw publishFailed(command, e.getCause());
+            throw publishFailed(created, e.getCause());
         } catch (RuntimeException e) {
             // send()를 부르는 순간 바로 나는 오류(직렬화 실패, 보낼 자리를 기다리다 시간 초과 등)도 어느 정산인지 남긴다
-            throw publishFailed(command, e);
+            throw publishFailed(created, e);
         }
 
         // Kafka 저장 확인 뒤에 보낸다. 이 정산이 Kafka에서 실패하면 Spring 이벤트도 보내지 않는다
@@ -56,12 +56,12 @@ class KafkaPayoutEventPublisher implements PayoutEventPublisher {
         //       Spring 이벤트는 지갑 리스너가 커밋 후에 받으므로(@ApplicationModuleListener) publish 롤백과 함께 1~36 모두 전달되지 않음
         //   어느 쪽이든 확정된 정산이 지갑에 안 가는 발행 누락이며, outbox(#309)에서 함께 해결한다
         applicationEventPublisher.publishEvent(new SellerPayoutCreatedEvent(
-                command.payoutId(), command.payeeId(), command.amount(), command.createdAt()));
+                created.payoutId(), created.payeeId(), created.amount(), created.createdAt()));
     }
 
     // 배치 내부 실패라 표준 예외를 쓴다 (exception.md: 값의 출처 기준). 로그는 따로 남기지 않는다(service.md)
     // 메시지는 Step 실행 기록(EXIT_MESSAGE)에 남아 어느 정산에서 멈췄는지 찾을 수 있다
-    private static IllegalStateException publishFailed(SellerPayoutCreatedCommand command, Throwable cause) {
-        return new IllegalStateException("정산 지갑 이벤트 발행에 실패했습니다. payoutId=" + command.payoutId(), cause);
+    private static IllegalStateException publishFailed(SellerPayoutCreated created, Throwable cause) {
+        return new IllegalStateException("정산 지갑 이벤트 발행에 실패했습니다. payoutId=" + created.payoutId(), cause);
     }
 }

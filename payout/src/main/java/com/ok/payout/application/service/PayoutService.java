@@ -36,7 +36,7 @@ import com.ok.payout.application.port.in.PayoutSellerCandidateSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import com.ok.payout.application.port.in.PayoutSummaryResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
-import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import lombok.RequiredArgsConstructor;
@@ -355,7 +355,7 @@ public class PayoutService implements PayoutUseCase {
             if (payout.getAmount() <= 0) {
                 continue;
             }
-            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreatedCommand(
+            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
                     payout.getId(),
                     payout.getPayeeId(),
                     payout.getAmount(),
