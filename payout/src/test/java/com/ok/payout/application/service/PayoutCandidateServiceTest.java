@@ -1,9 +1,7 @@
 package com.ok.payout.application.service;
 
-import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,7 +20,6 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -133,89 +130,10 @@ class PayoutCandidateServiceTest {
         verify(repository, never()).saveAll(any());
     }
 
-    // ---------- 이벤트 값 검증 ----------
-
-    @Test
-    void 주문_ID가_없으면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(null, ORDER_ITEM_ID, SELLER_ID, 10_000L, 3_000L);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.MISSING_ORDER_ID);
-        verify(repository, never()).saveAll(any());
-    }
-
-    @Test
-    void 주문항목_ID가_없으면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, null, SELLER_ID, 10_000L, 3_000L);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.MISSING_ORDER_ITEM_ID);
-        verify(repository, never()).saveAll(any());
-    }
-
-    @Test
-    void 판매자_ID가_없으면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, null, 10_000L, 3_000L);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.MISSING_SELLER_ID);
-        verify(repository, never()).saveAll(any());
-    }
-
-    @Test
-    void 상품총액이_없으면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, null, 3_000L);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
-        verify(repository, never()).saveAll(any());
-    }
-
-    @Test
-    void 상품총액이_음수면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, -1L, 3_000L);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.INVALID_TOTAL_ITEM_PRICE);
-        verify(repository, never()).saveAll(any());
-    }
-
-    @Test
-    void 배송비가_없으면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, null);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.INVALID_SHIPPING_PRICE);
-        verify(repository, never()).saveAll(any());
-    }
-
-    @Test
-    void 배송비가_음수면_예외가_난다() {
-        // given
-        PurchaseConfirmedCommand command = new PurchaseConfirmedCommand(ORDER_ID, ORDER_ITEM_ID, SELLER_ID, 10_000L, -1L);
-
-        // when & then
-        assertErrorCode(command, PayoutErrorCode.INVALID_SHIPPING_PRICE);
-        verify(repository, never()).saveAll(any());
-    }
-
     // 가짜 리포지토리가 "아직 처리 안 된 주문항목"이라고 대답하게 함
     private void givenNotProcessedYet() {
         given(repository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
                 ORDER_ITEM_ID, PayoutEventType.PURCHASE_CONFIRMED_TYPES, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .willReturn(false);
-    }
-
-    // RestApiException이 나고, 그 안의 에러 코드가 기대값인지 확인
-    private void assertErrorCode(PurchaseConfirmedCommand command, PayoutErrorCode expected) {
-        assertThatThrownBy(() -> sut.createFromPurchaseConfirmed(command))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(expected));
     }
 }

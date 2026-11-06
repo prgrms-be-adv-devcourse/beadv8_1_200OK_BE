@@ -101,6 +101,24 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 금액이_음수인_지갑_차감_이벤트는_기록하지_않고_실패로_남지_않는다() {
+        // given: 값이 틀린 이벤트 (공용 이벤트 생성자는 음수를 막지 않으므로 입구가 걸러야 한다)
+        Long orderId = nextOrderId();
+        WalletPaymentCompletedEvent event = new WalletPaymentCompletedEvent(orderId, BUYER_ID, -1L, PAID_AT);
+
+        // when
+        publishInTransaction(event);
+
+        // then
+        // 1) 리스너가 정상 종료(COMPLETED)할 때까지 기다림 → 처리를 끝냈다는 증거. 이 뒤에야 "기록 없음"이 의미가 있다
+        await().atMost(TIMEOUT).until(() -> countPublications(orderId, "COMPLETED") == 1);
+        // 2) 차감 기록은 남기지 않음
+        assertThat(repository.existsByOrderId(orderId)).isFalse();
+        // 3) 실패(FAILED)로 남지 않아 재처리 대상이 아님
+        assertThat(countPublications(orderId, "FAILED")).isZero();
+    }
+
+    @Test
     void 같은_주문의_차감_기록은_DB에서도_두_번_저장할_수_없다() {
         // given: 리스너를 거치지 않고 저장 (동시에 두 번 처리되어 중복 확인을 둘 다 통과한 상황)
         Long orderId = nextOrderId();

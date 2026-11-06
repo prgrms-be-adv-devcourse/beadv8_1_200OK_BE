@@ -1,11 +1,15 @@
 package com.ok.payout.adapter.in.event;
 
 import com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage;
+import com.ok.payout.config.PayoutKafkaConsumerConfig;
 import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.application.port.in.PayoutCandidateUseCase;
+import com.ok.payout.application.port.in.PurchaseConfirmedCommand;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+
+import java.util.Optional;
 
 /**
  * 주문 구매확정을 Kafka로 받는 입구다.
@@ -23,8 +27,21 @@ public class PayoutCandidateKafkaListener {
     @KafkaListener(
             topics = PayoutTopics.ORDER_PRODUCT_CONFIRMED,
             groupId = PayoutTopics.CONSUMER_GROUP,
+            containerFactory = PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage")
     void onKafka(OrderProductConfirmedMessage message) {
-        payoutCandidateUseCase.createFromPurchaseConfirmed(message.toCommand());
+        PurchaseConfirmedCommand command = message.toCommand();
+        // 값이 잘못된 메시지는 규칙(exception.md "다른 모듈이 보낸 값의 오류는 표준 예외")대로 IllegalArgumentException을 던진다.
+        // Kafka는 예외가 나도 실패 기록이 쌓이는 곳이 없다. 정산 오류 처리기(PayoutKafkaConsumerConfig)는 이 예외를 다시 시도하지 않고 ERROR 로그를 남긴 뒤 다음 메시지로 넘어간다.
+        // 그래서 멘토 지적(재처리해도 안 되는 이벤트로 실패가 쌓이지 않게)과 규칙을 함께 지킨다. 팀 DLT가 들어오면 이 예외로 원본이 DLT에 보관된다.
+        // 확인은 서비스를 부르기 전에 입구에서 끝낸다. Spring 입구와 같은 검사 기준(PayoutInboundEventValidator)을 쓰기 위해서다.
+        Optional<String> invalidReason = PayoutInboundEventValidator.findInvalidReason(command);
+        if (invalidReason.isPresent()) {
+            // 태그는 Spring 입구의 건너뛰기 로그와 같게 둬 한 번에 검색되게 한다. 로그는 오류 처리기가 남기므로 여기서 또 남기지 않는다
+            throw new IllegalArgumentException("[PAYOUT_CANDIDATE_SKIPPED] 처리할 수 없는 구매확정 메시지입니다. reason="
+                    + invalidReason.get() + ", command=" + command);
+        }
+        // DB 오류 같은 일시적 실패는 예외를 그대로 전파한다. 정산 오류 처리기가 간격을 늘려 가며(약 31초) 다시 시도한다.
+        payoutCandidateUseCase.createFromPurchaseConfirmed(command);
     }
 }
