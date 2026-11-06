@@ -5,8 +5,7 @@ import com.ok.refund.adapter.in.web.dto.RefundCreateRequest;
 import com.ok.refund.adapter.in.web.dto.RefundPageRequest;
 import com.ok.refund.adapter.in.web.dto.RefundPageResponse;
 import com.ok.refund.adapter.in.web.dto.RefundResponse;
-import com.ok.refund.application.service.RefundFacade;
-import com.ok.refund.application.service.RefundService;
+import com.ok.refund.application.port.in.BuyerRefundUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -28,8 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class RefundController implements RefundControllerSpec {
 
-    private final RefundFacade refundFacade;
-    private final RefundService refundService;
+    private final BuyerRefundUseCase buyerRefundUseCase;
 
     @Override
     @PostMapping
@@ -38,7 +36,7 @@ public class RefundController implements RefundControllerSpec {
             @Valid @RequestBody RefundCreateRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(RefundResponse.from(refundFacade.request(request.toCommand(buyerId))));
+                .body(RefundResponse.from(buyerRefundUseCase.request(request.toCommand(buyerId))));
     }
 
     @Override
@@ -47,7 +45,7 @@ public class RefundController implements RefundControllerSpec {
             @CurrentMemberId Long buyerId,
             @Valid @ModelAttribute RefundPageRequest request
     ) {
-        return ResponseEntity.ok(RefundPageResponse.from(refundService.getBuyerRefunds(buyerId, request.page())));
+        return ResponseEntity.ok(RefundPageResponse.from(buyerRefundUseCase.getBuyerRefunds(buyerId, request.page())));
     }
 
     // 새로 만드는 게 아니라 있는 요청의 상태를 바꾸므로 201이 아니라 200이다
@@ -57,6 +55,6 @@ public class RefundController implements RefundControllerSpec {
             @CurrentMemberId Long buyerId,
             @PathVariable Long refundId
     ) {
-        return ResponseEntity.ok(RefundResponse.from(refundService.withdraw(refundId, buyerId)));
+        return ResponseEntity.ok(RefundResponse.from(buyerRefundUseCase.withdraw(refundId, buyerId)));
     }
 }

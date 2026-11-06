@@ -3,12 +3,15 @@ package com.ok.refund.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
+import com.ok.refund.application.port.in.BuyerRefundUseCase;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RefundResult;
+import com.ok.refund.application.port.in.SellerRefundUseCase;
 import com.ok.refund.application.port.out.RefundOrderClient;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,7 +20,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @RequiredArgsConstructor
-public class RefundFacade {
+public class RefundFacade implements BuyerRefundUseCase, SellerRefundUseCase {
 
     private final RefundOrderClient orderClient;
     private final RefundService refundService;
@@ -28,6 +31,7 @@ public class RefundFacade {
      * @throws com.ok.common.exception.RestApiException 주문 상품이 없으면 {@code ORDER_ITEM_NOT_FOUND},
      *                                                  주문 호출이 실패하면 {@code ORDER_API_FAILED}, 그 밖은 {@link RefundService#request}를 따른다
      */
+    @Override
     public RefundResult request(RefundRequestCommand command) {
         RefundableOrderItem orderItem = orderClient.getOrderItem(command.orderId(), command.orderItemId());
         return refundService.request(command, orderItem);
@@ -44,6 +48,7 @@ public class RefundFacade {
      *                                                  승인 때 주문 호출이 실패하면 {@code ORDER_API_FAILED}, 주문 상품이 없으면 {@code ORDER_ITEM_NOT_FOUND},
      *                                                  거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
      */
+    @Override
     public RefundResult decide(RefundDecisionCommand command) {
         // 예전 방식 enum switch는 컴파일러가 모든 값을 다뤘는지 보지 않아, 결정이 늘었는데 여기를 빠뜨리면 아무것도 바꾸지 않고
         // 성공으로 응답한다. case null을 두면 새 방식 switch가 되어 모든 값을 다루지 않으면 컴파일 오류가 난다(default를 두지 않는 이유).
@@ -53,6 +58,22 @@ public class RefundFacade {
             case REJECT -> refundService.reject(command.refundId(), command.sellerId(), command.rejectReason());
             case null -> throw new IllegalArgumentException("환불 결정은 필수입니다.");
         };
+    }
+
+    // 컨트롤러는 입력 포트만 알도록 목록·철회도 파사드를 거친다. 주문 호출이 없어 서비스에 그대로 맡긴다
+    @Override
+    public Page<RefundResult> getBuyerRefunds(Long buyerId, int page) {
+        return refundService.getBuyerRefunds(buyerId, page);
+    }
+
+    @Override
+    public Page<RefundResult> getSellerRefunds(Long sellerId, String status, int page) {
+        return refundService.getSellerRefunds(sellerId, status, page);
+    }
+
+    @Override
+    public RefundResult withdraw(Long refundId, Long buyerId) {
+        return refundService.withdraw(refundId, buyerId);
     }
 
     private RefundResult approve(Long refundId, Long sellerId) {
