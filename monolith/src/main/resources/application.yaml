@@ -5,7 +5,7 @@ spring:
     name: paldo-gotgan
   config:
     # Redis 설정은 common의 common-redis.yaml 한 곳에서 관리한다 (#319)
-    import: optional:file:.env[.properties],classpath:common-redis.yaml,classpath:common-async.yaml
+    import: optional:file:.env[.properties],classpath:common-redis.yaml,classpath:common-async.yaml,classpath:common-logging.yaml
   # Kafka 접속 설정. 운영(monolith)이 쓰는 기준 설정이다
   # 모듈 yaml에는 두지 않는다. 모듈을 단독 실행하며 Kafka를 쓰게 되면 이 블록을 그대로 복사해 직렬화 방식을 맞춘다
   kafka:

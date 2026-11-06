@@ -1,0 +1,32 @@
+# 로그 출력(JSON 구조화 로그)과 폭증 방지 장치의 상한값. 앱이 spring.config.import로 가져다 쓴다 (#378)
+# logback은 Spring 빈보다 먼저 만들어지므로 이 값은 properties 클래스가 아니라 logback-spring.xml이 <springProperty>로 직접 읽는다.
+# 그래서 이 파일을 import하지 않는 앱도 뜨도록 logback-spring.xml에 같은 기본값이 있다. 값을 바꿀 때는 두 곳을 함께 고친다
+# 운영에서는 재빌드 없이 환경 변수(.env)로 바꾼다. 값은 기동할 때 한 번 읽으므로 바꾸면 재시작해야 한다
+app:
+  logging:
+    # 로그 파일 위치. 실패 로그는 app-error.log, 그 밖의 로그는 app.log에 JSON 한 줄씩 쓴다
+    dir: ${LOG_DIR:logs}
+    # 성공 로그 비동기 큐 크기. 가득 차면 요청 스레드를 막지 않고 버린다(app.log.dropped 지표의 queue_full)
+    queue-size: ${LOG_QUEUE_SIZE:8192}
+    # 로그 때문에 메모리가 가득 차지 않도록 한 줄의 크기를 제한한다. 단위는 UTF-8 바이트이고 한글은 글자당 3바이트다
+    field-bytes: ${LOG_FIELD_BYTES:1024}
+    event-bytes: ${LOG_EVENT_BYTES:8192}
+    # 스택 트레이스는 깊이와 총 크기를 모두 제한한다. 총 크기는 이벤트 상한(event-bytes) 안에 들어가야 한다
+    stack-depth: ${LOG_STACK_DEPTH:30}
+    stack-bytes: ${LOG_STACK_BYTES:6144}
+    # 이름에 이 단어가 들어간 필드의 값을 가린다(대소문자 무시, 쉼표로 구분). 메시지 문장 속의 값은 가리지 않으므로 로그 문장에 섞어 쓰지 않는다
+    mask-keys: ${LOG_MASK_KEYS:name,phone,address,email,receiver}
+    # HTTP 성공 로그(eventType=HTTP_IN)를 남길 비율(0~1). 실패 로그는 줄이지 않는다
+    http-success-sampling-rate: ${LOG_HTTP_SUCCESS_SAMPLING_RATE:0.1}
+    throttle:
+      # 같은 에러 키(로거 + 예외 클래스)를 창 안에 통과시킬 최대 횟수. 넘으면 버리고 창이 끝날 때 "N건 생략" 한 건을 남긴다
+      limit: ${LOG_THROTTLE_LIMIT:10}
+      window-seconds: ${LOG_THROTTLE_WINDOW_SECONDS:60}
+      # 동시에 추적하는 에러 키 수. 가득 차면 새 키는 추적하지 않고 통과시킨다
+      max-keys: ${LOG_THROTTLE_MAX_KEYS:1000}
+    rolling:
+      max-file-size: ${LOG_ROLLING_MAX_FILE_SIZE:100MB}
+      max-history-days: ${LOG_ROLLING_MAX_HISTORY_DAYS:7}
+      # 두 파일의 합이 전체 상한(2GB)이 되도록 나눴다. 실패 로그는 양이 적어 작게 잡았다
+      success-total-size-cap: ${LOG_ROLLING_SUCCESS_TOTAL_SIZE_CAP:1536MB}
+      failure-total-size-cap: ${LOG_ROLLING_FAILURE_TOTAL_SIZE_CAP:512MB}
