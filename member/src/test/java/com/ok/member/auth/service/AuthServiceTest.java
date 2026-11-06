@@ -11,7 +11,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
-import com.ok.member.seller.service.SellerApplicationService;
+import com.ok.member.seller.application.service.SellerApplicationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

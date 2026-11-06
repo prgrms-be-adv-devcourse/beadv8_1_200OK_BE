@@ -5,7 +5,7 @@ import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
-import com.ok.member.seller.repository.SellerApplicationRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;

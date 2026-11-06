@@ -10,7 +10,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
-import com.ok.member.seller.service.SellerApplicationService;
+import com.ok.member.seller.application.service.SellerApplicationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
