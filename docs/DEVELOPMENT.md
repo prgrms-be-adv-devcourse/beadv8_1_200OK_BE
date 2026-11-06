@@ -351,7 +351,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 
 ### delivery 모듈 구조(헥사고날)
 
-`delivery`는 모듈별 서버 배포와 브로커 연동 전환에 대비해 진입점과 외부 연결을 패키지로 나눈 헥사고날 구조입니다. `order`도 같은 구조입니다(아래 "order 모듈 구조(헥사고날)"). 다른 모듈은 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 구조 그대로입니다.
+`delivery`는 모듈별 서버 배포와 브로커 연동 전환에 대비해 진입점과 외부 연결을 패키지로 나눈 헥사고날 구조입니다. 다른 모듈은 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 구조 그대로입니다.
 
 ```
 com.ok.delivery
