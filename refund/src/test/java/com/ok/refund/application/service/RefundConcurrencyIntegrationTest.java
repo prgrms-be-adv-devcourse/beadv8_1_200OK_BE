@@ -11,6 +11,8 @@ import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
+import com.ok.refund.application.port.in.RequestRefundUseCase;
+import com.ok.refund.application.port.in.WithdrawRefundUseCase;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
@@ -57,9 +59,12 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     private static final Long C = 503L;
 
     @Autowired
-    RefundFacade refundFacade;
+    RequestRefundUseCase requestRefundUseCase;
     @Autowired
-    RefundService refundService;
+    WithdrawRefundUseCase withdrawRefundUseCase;
+    // 바깥 트랜잭션 검사는 주문 정보를 받은 뒤의 승인 구간(패키지 안 approve)을 직접 불러 보므로 구현 클래스로 받는다
+    @Autowired
+    DecideRefundService decideRefundService;
     // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
     RefundPersistencePort refundPersistencePort;
@@ -175,10 +180,10 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         orderQueryPort.put(orderItem(C, 10_000L, bundle));
         Long refundA = request(A);
         Long withdrawnB = request(B);
-        refundService.withdraw(withdrawnB, BUYER_ID);
+        withdrawRefundUseCase.withdraw(withdrawnB, BUYER_ID);
         Long refundB = request(B);
         Long withdrawnC = request(C);
-        refundService.withdraw(withdrawnC, BUYER_ID);
+        withdrawRefundUseCase.withdraw(withdrawnC, BUYER_ID);
         List<RefundStatus> active = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
 
         // when
@@ -248,14 +253,14 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         outer.setIsolationLevel(isolationLevel);
 
         // when & then
-        assertThatThrownBy(() -> outer.executeWithoutResult(status -> refundService.approve(refundId, SELLER_ID, item)))
+        assertThatThrownBy(() -> outer.executeWithoutResult(status -> decideRefundService.approve(refundId, SELLER_ID, item)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불 승인은 이미 열린 트랜잭션 안에서 부를 수 없습니다. 새 트랜잭션으로 실행해야 합니다.");
         assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
     // 승인 검사(새 트랜잭션인지)는 영속성 컨텍스트도 새것이라는 전제에 기댄다. OSIV(open-in-view)를 켜면 요청 하나 동안 영속성 컨텍스트가
-    // 이어져 Facade가 앞서 읽은 환불이 승인까지 남고, 잠금 조회가 그 옛 객체를 돌려줘도 검사로 막지 못한다. 설정이 바뀌면 여기서 드러나게 한다
+    // 이어져 승인 전 확인 조회가 앞서 읽은 환불이 승인까지 남고, 잠금 조회가 그 옛 객체를 돌려줘도 검사로 막지 못한다. 설정이 바뀌면 여기서 드러나게 한다
     @Test
     void OSIV가_꺼져_있어_승인이_새_영속성_컨텍스트로_시작한다() {
         // when
@@ -272,11 +277,11 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Long request(Long orderItemId) {
-        return refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, orderItemId, 1, null)).refundId();
+        return requestRefundUseCase.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, orderItemId, 1, null)).refundId();
     }
 
     private void approve(Long refundId) {
-        refundFacade.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
+        decideRefundService.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
     }
 
     private static RefundableOrderItem orderItem(Long orderItemId, long unitPrice, BundleShipping bundle) {

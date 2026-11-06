@@ -5,7 +5,8 @@ import com.ok.refund.adapter.in.web.dto.RefundDecisionRequest;
 import com.ok.refund.adapter.in.web.dto.RefundPageResponse;
 import com.ok.refund.adapter.in.web.dto.RefundResponse;
 import com.ok.refund.adapter.in.web.dto.SellerRefundPageRequest;
-import com.ok.refund.application.port.in.SellerRefundUseCase;
+import com.ok.refund.application.port.in.DecideRefundUseCase;
+import com.ok.refund.application.port.in.GetSellerRefundsUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerRefundController implements SellerRefundControllerSpec {
 
-    private final SellerRefundUseCase sellerRefundUseCase;
+    private final GetSellerRefundsUseCase getSellerRefundsUseCase;
+    private final DecideRefundUseCase decideRefundUseCase;
 
     @Override
     @GetMapping
@@ -34,7 +36,7 @@ public class SellerRefundController implements SellerRefundControllerSpec {
             @Valid @ModelAttribute SellerRefundPageRequest request
     ) {
         return ResponseEntity.ok(RefundPageResponse.from(
-                sellerRefundUseCase.getSellerRefunds(sellerId, request.status(), request.page())));
+                getSellerRefundsUseCase.getSellerRefunds(sellerId, request.status(), request.page())));
     }
 
     // 승인과 거절은 둘 다 "판매자가 요청 상태를 정한다"는 같은 동작이라 한 API로 받는다
@@ -45,6 +47,6 @@ public class SellerRefundController implements SellerRefundControllerSpec {
             @PathVariable Long refundId,
             @Valid @RequestBody RefundDecisionRequest request
     ) {
-        return ResponseEntity.ok(RefundResponse.from(sellerRefundUseCase.decide(request.toCommand(refundId, sellerId))));
+        return ResponseEntity.ok(RefundResponse.from(decideRefundUseCase.decide(request.toCommand(refundId, sellerId))));
     }
 }

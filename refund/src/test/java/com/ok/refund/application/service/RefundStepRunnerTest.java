@@ -5,42 +5,55 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
+import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundShippingFee;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.CannotAcquireLockException;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
-// 기록 여부와 기록한 값이 이 클래스의 요구사항이라 서비스 호출을 검증한다
+// 기록 여부와 기록한 값이 이 클래스의 요구사항이라 영속 포트에 넘긴 값을 검증한다
 @ExtendWith(MockitoExtension.class)
 class RefundStepRunnerTest {
 
     private static final Long REFUND_ID = 7L;
+    private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 4, 10, 0);
 
     @Mock
-    RefundService refundService;
-    @InjectMocks
+    RefundPersistencePort refundPersistencePort;
+
     RefundStepRunner sut;
 
     // 출력 문자열 검색은 스택에 찍힌 테스트 메서드 이름에도 "ERROR"가 있어 수준을 못 가린다. 로그 이벤트의 수준을 직접 받는다
     private final Logger runnerLogger = (Logger) LoggerFactory.getLogger(RefundStepRunner.class);
     private ListAppender<ILoggingEvent> logAppender;
+
+    @BeforeEach
+    void setUp() {
+        sut = new RefundStepRunner(refundPersistencePort, new NoOpTransactionManager());
+    }
 
     @BeforeEach
     void attachLogAppender() {
@@ -61,19 +74,20 @@ class RefundStepRunnerTest {
 
         // then
         assertThat(result).isEqualTo("OK");
-        then(refundService).should(never()).recordFailure(any(), any(), any());
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
     }
 
     @Test
     void 실패하면_단계와_에러_코드를_기록하고_원래_예외를_던진다() {
         // given
         RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        givenProcessingRefund();
 
         // when & then
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
-        then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+        assertRecorded(RefundFailedStep.ORDER, "ORDER_API_FAILED");
     }
 
     // 예외 메시지에는 다른 모듈의 응답 내용이 들어갈 수 있어 메시지가 아니라 클래스 이름만 남는지 본다
@@ -81,12 +95,13 @@ class RefundStepRunnerTest {
     void 에러_코드가_없는_예외면_클래스_이름을_기록한다() {
         // given
         IllegalStateException failure = new IllegalStateException("상대 서버 응답 본문");
+        givenProcessingRefund();
 
         // when & then
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.PRODUCT, () -> {
             throw failure;
         })).isSameAs(failure);
-        then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.PRODUCT, "IllegalStateException");
+        assertRecorded(RefundFailedStep.PRODUCT, "IllegalStateException");
     }
 
     // 만일을 대비한 경우: 그 자리에서 만든 이름 없는 예외는 짧은 이름이 빈 값이라, 그대로 넘기면 기록이 거부돼 실패가 남지 않는다
@@ -95,12 +110,13 @@ class RefundStepRunnerTest {
         // given
         RuntimeException failure = new RuntimeException("상대 서버 응답 본문") {
         };
+        givenProcessingRefund();
 
         // when & then
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
-        then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.ORDER, failure.getClass().getName());
+        assertRecorded(RefundFailedStep.ORDER, failure.getClass().getName());
     }
 
     // 칸(failure_code)이 100자라 넘는 이름을 그대로 넘기면 저장이 실패해 기록이 사라진다. 앞 100자만 남는지 본다
@@ -109,14 +125,14 @@ class RefundStepRunnerTest {
         // given
         RuntimeException failure = new 이름이_아주_긴_예외_클래스는_실패_이유_칸의_길이를_넘을_수_있어서_앞부분만_남기는지_확인하려고_일부러_길게_지은_테스트_전용_예외_클래스_이름입니다_조금_더_길게_백자를_넘기도록();
         String name = failure.getClass().getSimpleName();
+        givenProcessingRefund();
 
         // when & then
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.PRODUCT, () -> {
             throw failure;
         })).isSameAs(failure);
         assertThat(name.length()).isGreaterThan(RefundStepRunner.MAX_FAILURE_CODE_LENGTH);
-        then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.PRODUCT,
-                name.substring(0, RefundStepRunner.MAX_FAILURE_CODE_LENGTH));
+        assertRecorded(RefundFailedStep.PRODUCT, name.substring(0, RefundStepRunner.MAX_FAILURE_CODE_LENGTH));
     }
 
     private static class 이름이_아주_긴_예외_클래스는_실패_이유_칸의_길이를_넘을_수_있어서_앞부분만_남기는지_확인하려고_일부러_길게_지은_테스트_전용_예외_클래스_이름입니다_조금_더_길게_백자를_넘기도록
@@ -129,7 +145,7 @@ class RefundStepRunnerTest {
         // given
         RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         CannotAcquireLockException recordError = new CannotAcquireLockException("잠금 대기 시간 초과");
-        willThrow(recordError).given(refundService).recordFailure(REFUND_ID, RefundFailedStep.WALLET, "ORDER_API_FAILED");
+        willThrow(recordError).given(refundPersistencePort).findByIdForUpdate(REFUND_ID);
 
         // when & then
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.WALLET, () -> {
@@ -145,7 +161,7 @@ class RefundStepRunnerTest {
         // given
         RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         willThrow(new CannotAcquireLockException("잠금 대기 시간 초과"))
-                .given(refundService).recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+                .given(refundPersistencePort).findByIdForUpdate(REFUND_ID);
 
         // when
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
@@ -162,5 +178,60 @@ class RefundStepRunnerTest {
             softly.assertThat(event.getFormattedMessage()).isEqualTo(
                     "환불 실패 단계 기록 실패. 멈춘 단계가 환불에 남지 않음. refundId=7, step=ORDER, failureCode=ORDER_API_FAILED");
         });
+    }
+
+    // 아래 두 테스트는 예전 환불 서비스의 실패 기록 테스트에서 옮겼다. 기록을 이 클래스가 직접 하게 되어서다
+    @Test
+    void 실패를_기록하면_처리_중_그대로_단계와_이유가_남는다() {
+        // given
+        givenProcessingRefund();
+
+        // when
+        sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+
+        // then: 명시적 저장(#481). update에 넘긴 값이 저장될 값이라 그 값을 본다
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(updated.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(updated.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+        });
+    }
+
+    // refundId는 승인을 마친 시스템이 넘기는 값이라 없으면 사용자 잘못이 아닌 버그다. 404가 아니라 표준 예외(500)로 드러나야 한다
+    @Test
+    void 없는_환불에_실패를_기록하면_예외를_던진다() {
+        // given
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("실패를 기록할 환불이 없습니다. refundId=7");
+    }
+
+    // 실패 기록은 처리 중인 환불에만 남길 수 있다. 승인까지 마친 환불을 잠금 조회 결과로 준다
+    private void givenProcessingRefund() {
+        Refund refund = Refund.request(10L, 101L, 2, 1L, 5L, 55L, "양말", "흰색", 10_000L, null);
+        refund.approve(NOW, RefundShippingFee.none());
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+    }
+
+    // 기록한 단계와 이유는 update에 넘긴 환불에 담긴다
+    private void assertRecorded(RefundFailedStep step, String failureCode) {
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getFailedStep()).isEqualTo(step);
+            softly.assertThat(updated.getFailureCode()).isEqualTo(failureCode);
+        });
+    }
+
+    // update에 넘긴 환불. 정확히 한 번 불러야 한다
+    private Refund capturedUpdate() {
+        ArgumentCaptor<Refund> captor = ArgumentCaptor.forClass(Refund.class);
+        then(refundPersistencePort).should().update(captor.capture());
+        Refund updated = captor.getValue();
+        assertThat(updated).isNotNull();
+        return updated;
     }
 }

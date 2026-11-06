@@ -9,9 +9,11 @@ import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.in.DecideRefundUseCase;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
+import com.ok.refund.application.port.in.RequestRefundUseCase;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
@@ -31,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-// 기록이 Facade처럼 트랜잭션 밖에서 불려도 따로 커밋되어 DB에 남는지, 새 칸이 엔티티와 맞게 저장되는지 실제 DB로 확인한다
+// 기록이 서비스의 트랜잭션 구간 밖에서 불려도 따로 커밋되어 DB에 남는지, 새 칸이 엔티티와 맞게 저장되는지 실제 DB로 확인한다
 class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
 
     private static final Long BUYER_ID = 1L;
@@ -42,9 +44,9 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     RefundStepRunner refundStepRunner;
     @Autowired
-    RefundFacade refundFacade;
+    RequestRefundUseCase requestRefundUseCase;
     @Autowired
-    RefundService refundService;
+    DecideRefundUseCase decideRefundUseCase;
     // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
     RefundPersistencePort refundPersistencePort;
@@ -92,7 +94,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         String longestFailureCode = "E".repeat(100);
 
         // when
-        refundService.recordFailure(refundId, step, longestFailureCode);
+        refundStepRunner.recordFailure(refundId, step, longestFailureCode);
 
         // then
         Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
@@ -131,8 +133,8 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
                 List.of(new BundleItem(ORDER_ITEM_ID, 10_000L, 1)));
         orderQueryPort.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 77L, "상품", "옵션",
                 RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 1, bundle));
-        Long refundId = refundFacade.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null)).refundId();
-        refundFacade.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
+        Long refundId = requestRefundUseCase.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null)).refundId();
+        decideRefundUseCase.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
         return refundId;
     }
 }

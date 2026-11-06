@@ -5,7 +5,9 @@ import com.ok.refund.adapter.in.web.dto.RefundCreateRequest;
 import com.ok.refund.adapter.in.web.dto.RefundPageRequest;
 import com.ok.refund.adapter.in.web.dto.RefundPageResponse;
 import com.ok.refund.adapter.in.web.dto.RefundResponse;
-import com.ok.refund.application.port.in.BuyerRefundUseCase;
+import com.ok.refund.application.port.in.GetBuyerRefundsUseCase;
+import com.ok.refund.application.port.in.RequestRefundUseCase;
+import com.ok.refund.application.port.in.WithdrawRefundUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,7 +29,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class RefundController implements RefundControllerSpec {
 
-    private final BuyerRefundUseCase buyerRefundUseCase;
+    private final RequestRefundUseCase requestRefundUseCase;
+    private final GetBuyerRefundsUseCase getBuyerRefundsUseCase;
+    private final WithdrawRefundUseCase withdrawRefundUseCase;
 
     @Override
     @PostMapping
@@ -36,7 +40,7 @@ public class RefundController implements RefundControllerSpec {
             @Valid @RequestBody RefundCreateRequest request
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(RefundResponse.from(buyerRefundUseCase.request(request.toCommand(buyerId))));
+                .body(RefundResponse.from(requestRefundUseCase.request(request.toCommand(buyerId))));
     }
 
     @Override
@@ -45,7 +49,7 @@ public class RefundController implements RefundControllerSpec {
             @CurrentMemberId Long buyerId,
             @Valid @ModelAttribute RefundPageRequest request
     ) {
-        return ResponseEntity.ok(RefundPageResponse.from(buyerRefundUseCase.getBuyerRefunds(buyerId, request.page())));
+        return ResponseEntity.ok(RefundPageResponse.from(getBuyerRefundsUseCase.getBuyerRefunds(buyerId, request.page())));
     }
 
     // 새로 만드는 게 아니라 있는 요청의 상태를 바꾸므로 201이 아니라 200이다
@@ -55,6 +59,6 @@ public class RefundController implements RefundControllerSpec {
             @CurrentMemberId Long buyerId,
             @PathVariable Long refundId
     ) {
-        return ResponseEntity.ok(RefundResponse.from(buyerRefundUseCase.withdraw(refundId, buyerId)));
+        return ResponseEntity.ok(RefundResponse.from(withdrawRefundUseCase.withdraw(refundId, buyerId)));
     }
 }
