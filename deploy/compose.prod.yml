@@ -1,5 +1,6 @@
 # 운영 EC2(/opt/paldo-gotgan)에서 deploy.sh로 실행한다. 절차는 docs/DEPLOY.md
 # app·mysql·redis·kafka는 호스트 포트를 열지 않는다. 외부에서는 nginx(80)만 닿는다
+# 예외로 grafana·prometheus는 서버의 127.0.0.1에만 연다. 외부에서는 SSH 터널로만 본다 (docs/DEPLOY.md 모니터링)
 name: paldo-gotgan
 
 # ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
@@ -70,6 +71,16 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 필요하다}
       # NOW(), CURRENT_TIMESTAMP 기본값이 앱(JVM)과 같은 시간대를 따르게 한다 (#93)
       TZ: ${APP_TIME_ZONE:-Asia/Seoul}
+    # 슬로우 쿼리 로그 (#374). 1초 이상 걸린 쿼리만 남긴다. 부하테스트에서 병목 쿼리를 찾는 용도라 0.x초까지 남기면 로그가 쌓이는 속도만 빨라진다
+    # 파일 이름을 고정하지 않으면 컨테이너 ID가 이름에 들어가 재생성할 때마다 바뀌어 찾기 어렵다. 로그는 /data/mysql에 쌓인다
+    # 주의: command가 새로 생겨서 이 변경을 처음 배포할 때 mysql 컨테이너가 한 번 다시 만들어져 DB가 잠깐 끊긴다 (docs/DEPLOY.md 모니터링)
+    command:
+      - --slow_query_log=ON
+      - --long_query_time=1
+      - --log_slow_extra=ON
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+    # mem_limit을 걸지 않는다. 기본 버퍼 풀이 128MB라 사용량이 제한적이고, 한도에 걸려 OOM kill로 DB가 죽는 쪽이 더 위험하다
+    # 부하테스트 때 docker stats로 실제 사용량을 본 뒤 정한다 (docs/DEPLOY.md 메모리 예산)
     volumes:
       # EBS 데이터 볼륨(/data). 인스턴스를 교체해도 데이터가 남는다
       - /data/mysql:/var/lib/mysql
@@ -179,8 +190,8 @@ services:
       # 남겨 두는 이유: APP_IMAGE_TAG만 바꾸는 표준 롤백(docs/DEPLOY.md 4절)으로 이전 이미지가 뜨게 하기 위해서다
       # TODO(#313): RS256 버전이 운영에서 안정된 뒤 서버 .env의 JWT_SECRET과 함께 이 줄을 지운다
       JWT_SECRET: ${JWT_SECRET:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(384m)·Kafka(3대 약 2GB)를 함께 올리면
-      # 남는 메모리(약 1.5~2GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(384m)·Kafka(3대 약 2GB)·모니터링(832m)을 함께 올리면
+      # 남는 메모리(약 0.7~1.2GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     volumes:
       # 서버의 /opt/paldo-gotgan/keys. JWT 키 PEM과 그 설정(jwt.yaml)을 둔다. 앱은 application-prod.yml에서 jwt.yaml을 읽는다
@@ -189,11 +200,90 @@ services:
     mem_limit: 2560m
     healthcheck:
       # 런타임 이미지가 alpine이라 curl 대신 busybox wget을 쓴다
-      test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/actuator/health | grep -q UP']
+      # 관리 포트(18080)에서만 응답한다. 이 포트는 호스트에 열지 않고 nginx도 프록시하지 않는다
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:18080/actuator/health | grep -q UP']
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 60s
+
+  # ---------- 모니터링 (#374). 설정 파일은 로컬 compose와 같은 deploy/monitoring을 쓴다 ----------
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v3.15.1}
+    restart: unless-stopped
+    # default: app(관리 포트 18080)·mysqld-exporter에 닿는다 / monitoring-net: grafana가 닿는다
+    networks: [default, monitoring-net]
+    # 보존 7일·2GB 중 먼저 닿는 쪽에서 오래된 것부터 지운다. 디스크는 MySQL과 같은 EBS(/data)라 상한을 둬서 DB 디스크를 채우지 않게 한다
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=2GB
+    mem_limit: 512m
+    ports:
+      # 서버의 loopback에만 연다. 보안 그룹과 무관하게 외부에서 닿지 않고, 접속은 SSH 터널로 한다
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 수집 대상. 모듈별 서버로 나뉘면 이 폴더의 파일에 항목만 추가한다
+      - ./monitoring/prometheus/targets/prod:/etc/prometheus/targets:ro
+      # 컨테이너 사용자(nobody, uid 65534)가 쓸 수 있어야 한다. 최초 1회 chown은 docs/DEPLOY.md 2절
+      - /data/prometheus:/prometheus
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:9090/-/healthy > /dev/null']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  grafana:
+    image: grafana/grafana-oss:${GRAFANA_VERSION:-13.0.2}
+    restart: unless-stopped
+    # prometheus만 닿으면 되므로 mysql·app이 있는 기본 네트워크에 붙이지 않는다
+    networks: [monitoring-net]
+    environment:
+      # 이 비밀번호는 Grafana DB가 처음 만들어질 때만 쓰인다. 나중에 바꾸려면 docs/DEPLOY.md의 초기화 절차를 따른다
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD가 필요하다}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    mem_limit: 256m
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # 컨테이너 사용자(uid 472)가 쓸 수 있어야 한다. 최초 1회 chown은 docs/DEPLOY.md 2절
+      - /data/grafana:/var/lib/grafana
+      # 데이터소스·대시보드는 파일로만 등록한다. Grafana에는 MySQL 데이터소스를 만들지 않으므로 DB 계정이 필요 없다
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/api/health | grep -q ok']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:${MYSQLD_EXPORTER_VERSION:-v0.21.0}
+    restart: unless-stopped
+    # mysql에만 닿으면 되고 prometheus가 같은 기본 네트워크에서 가져간다. 9104는 호스트에 열지 않는다
+    networks: [default]
+    # 계정 exporter는 create-exporter-user.sh로 만든다(docs/DEPLOY.md 모니터링). 계정이 없어도 이 컨테이너는 뜨고 mysql_up만 0이다
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD가 필요하다}
+    # 비밀번호를 --config.my-cnf 파일에 담아 넘긴다. DATA_SOURCE_NAME 같은 환경변수나 명령행 인자로 넘기면 ps·inspect에 드러난다
+    # 파일은 컨테이너 안에서 만들고(redis와 같은 방식) 본인만 읽게 한다. 비밀번호는 create-exporter-user.sh가 허용하는 문자만 쓴다
+    entrypoint: [sh, -c]
+    command:
+      - |
+        umask 077
+        printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
+        exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
+    mem_limit: 64m
 
   nginx:
     image: nginx:1.29-alpine
@@ -211,6 +301,9 @@ services:
 
 networks:
   kafka-net:
+  # grafana는 prometheus만 닿으면 되므로 mysql·app이 있는 기본 네트워크와 나눈다 (#374)
+  # 기본 네트워크는 바꾸지 않는다. 바꾸면 mysql 컨테이너가 다시 만들어진다
+  monitoring-net:
   # 프론트 레포의 BFF compose(/opt/paldo-gotgan-bff)가 external로 붙는 네트워크다.
   # 이름은 두 레포의 계약이라 프로젝트 이름이 붙지 않게 고정한다. 바꾸면 프론트 deploy/compose.prod.yml도 같이 바꾼다
   edge:
