@@ -8,13 +8,11 @@ import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.application.port.out.RefundRepository;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -25,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -38,10 +35,6 @@ import java.util.List;
 @Transactional(readOnly = true)
 public class RefundService {
 
-    // 마이그레이션의 제약 이름과 같아야 한다. 이 이름으로 "진행 중 요청 중복"과 다른 무결성 오류를 구분한다
-    private static final String ACTIVE_ORDER_ITEM_UNIQUE_CONSTRAINT = "uk_refund_active_order_item_id";
-    // 표준 SQLState의 "직렬화 실패". MySQL은 교착 상태(1213)를 이 값으로 알린다
-    private static final String DEADLOCK_SQL_STATE = "40001";
     // 배송 목록과 같은 페이지 크기. 클라이언트가 바꿀 수 없다
     private static final int PAGE_SIZE = 25;
     // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
@@ -56,7 +49,7 @@ public class RefundService {
     // 승인 때 이미 출고됐거나 취소된 상품을 자동 거절할 때 구매자에게 보이는 사유
     static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
 
-    private final RefundJpaRepository refundRepository;
+    private final RefundRepository refundRepository;
     private final Clock clock;
 
     /**
@@ -87,7 +80,7 @@ public class RefundService {
         Refund refund = Refund.request(orderItem.orderId(), orderItem.orderItemId(), command.quantity(), command.buyerId(),
                 orderItem.sellerId(), orderItem.productOptionId(), orderItem.productName(), orderItem.optionName(),
                 orderItem.unitPrice(), command.cancelReason());
-        Refund saved = saveDetectingActiveRequest(refund);
+        Refund saved = refundRepository.saveNew(refund);
         // 배송비는 승인 때 정하지만, 지금 승인해도 받을 수 없는 요청은 판매자에게 보내지 않고 미리 막는다.
         // 저장 뒤에 판단하는 이유: 같은 상품에 처리 중 요청이 있으면 그 개수까지 더해져 판단이 "개수 초과"(500)로 깨지므로,
         // UNIQUE가 먼저 409로 막게 한다. 여기서 던지면 트랜잭션이 되돌려져 저장한 행도 남지 않는다
@@ -161,7 +154,7 @@ public class RefundService {
     public RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
         requireNewTransaction();
         Refund refund = lockBundleAndFind(refundId, sellerId, orderItem.orderId());
-        // 엔티티의 approve도 상태를 보지만, 배송비 판단보다 먼저 막아야 한다. 이미 처리 중인 요청은 자기 개수가 집계에 들어가
+        // 도메인의 approve도 상태를 보지만, 배송비 판단보다 먼저 막아야 한다. 이미 처리 중인 요청은 자기 개수가 집계에 들어가
         // 판단이 "개수 초과"(500)로 깨지므로 그 전에 409로 돌려준다
         if (refund.getStatus() != RefundStatus.REQUESTED) {
             throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
@@ -176,6 +169,8 @@ public class RefundService {
         if (orderItem.isNoLongerCancellable()) {
             // 배송비 판단은 하지 않는다. 취소할 수 없는 상품이라 뺄 배송비도 없고, 배송비 칸은 0으로 남는다
             refund.reject(SHIPPED_REJECT_REASON, now);
+            // 도메인을 바꾼 것만으로는 저장되지 않는다(#481, 명시적 저장). 상태를 바꾼 경로마다 update를 불러야 한다
+            refundRepository.update(refund);
             return RefundResult.from(refund);
         }
         // 출고 전(PREPARING)이 아닌데 아는 상태도 아니면(null, 새 상태) 자동 거절하지 않고 서버 오류(500)로 던진다.
@@ -185,8 +180,9 @@ public class RefundService {
             throw new IllegalStateException("알 수 없는 주문 상품 상태라 승인할 수 없습니다. refundId=" + refundId
                     + ", status=" + orderItem.status());
         }
-        // 집계는 이 환불을 처리 중으로 바꾸기 전에 해야 한다. 바꾼 뒤에 조회하면 자동 flush로 이번 환불이 집계에 들어가고,
-        // 정책이 이번 개수를 또 더해 "개수 초과"(500)가 난다
+        // 집계는 이 환불을 처리 중으로 바꾸고 저장하기 전에 한다. 예전에는 엔티티를 바꾸는 순간 자동 flush로 이번 환불이 집계에
+        // 들어가 정책이 이번 개수를 또 더하는("개수 초과" 500) 위험이 있었다. 이제는 update를 불러야 엔티티가 바뀌어 구조적으로 안전하지만,
+        // "판단한 뒤 바꾸고 저장한다"는 순서가 읽기에도 자연스러워 그대로 둔다
         RefundShippingFee fee = decideShippingFee(refund, orderItem);
         if (fee.allowed()) {
             refund.approve(now, fee);
@@ -194,6 +190,7 @@ public class RefundService {
             // 판매자 거절과 같은 상태로 남긴다. 상태를 따로 두지 않는 이유: 구매자에게는 "거절, 사유"로 충분하고 다시 요청할 수 있다
             refund.reject(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED.getMessage(), now);
         }
+        refundRepository.update(refund);
         return RefundResult.from(refund);
     }
 
@@ -208,6 +205,7 @@ public class RefundService {
     public RefundResult reject(Long refundId, Long sellerId, String rejectReason) {
         Refund refund = findSellerRefundForUpdate(refundId, sellerId);
         refund.reject(rejectReason, LocalDateTime.now(clock));
+        refundRepository.update(refund);
         return RefundResult.from(refund);
     }
 
@@ -222,6 +220,7 @@ public class RefundService {
                 .filter(found -> found.isOwnedByBuyer(buyerId))
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         refund.withdraw(LocalDateTime.now(clock));
+        refundRepository.update(refund);
         return RefundResult.from(refund);
     }
 
@@ -241,6 +240,7 @@ public class RefundService {
         Refund refund = refundRepository.findByIdForUpdate(refundId)
                 .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
         refund.recordFailure(step, failureCode);
+        refundRepository.update(refund);
     }
 
     // 승인은 이 메서드가 트랜잭션을 새로 시작했을 때만 진행한다. 바깥 트랜잭션에 합류하면 두 가지가 조용히 깨진다.
@@ -306,38 +306,5 @@ public class RefundService {
 
     private static Pageable pageOf(int page) {
         return PageRequest.of(page, PAGE_SIZE, LATEST_FIRST);
-    }
-
-    // saveAndFlush로 INSERT를 바로 보내야 UNIQUE 위반이 이 메서드 안에서 나서 에러 코드로 바꿀 수 있다.
-    // save만 쓰면 커밋 때 터져 500이 된다
-    private Refund saveDetectingActiveRequest(Refund refund) {
-        try {
-            return refundRepository.saveAndFlush(refund);
-        } catch (DataIntegrityViolationException e) {
-            if (String.valueOf(e.getMostSpecificCause().getMessage()).contains(ACTIVE_ORDER_ITEM_UNIQUE_CONSTRAINT)) {
-                throw new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS);
-            }
-            throw e;
-        } catch (PessimisticLockingFailureException e) {
-            // 철회·거절이 진행 중 칸을 비우고 커밋하는 순간 같은 상품의 새 요청이 둘 이상 오면, 두 INSERT가 비워지는 UNIQUE 항목의
-            // 잠금을 함께 얻은 뒤 서로를 기다려 MySQL이 한쪽을 교착 상태로 되돌린다(직접 재현함). 되돌려진 쪽은 다른 요청이
-            // 먼저 들어간 경우라 중복과 같게 409로 돌려준다.
-            // 같은 예외에 잠금 대기 시간 초과도 들어오는데, 그건 DB가 느린 것이지 중복이 아니라 그대로 던져 500으로 드러낸다
-            if (isDeadlock(e)) {
-                throw new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS);
-            }
-            throw e;
-        }
-    }
-
-    // 교착 상태는 SQLState 40001(MySQL 1213), 잠금 대기 시간 초과는 HY000(MySQL 1205)이라 SQLState로 가른다.
-    // 스프링은 둘 다 CannotAcquireLockException으로 바꾸므로 예외 종류로는 가를 수 없다(재현에서 확인)
-    private static boolean isDeadlock(PessimisticLockingFailureException e) {
-        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
-            if (cause instanceof SQLException sqlException && DEADLOCK_SQL_STATE.equals(sqlException.getSQLState())) {
-                return true;
-            }
-        }
-        return false;
     }
 }

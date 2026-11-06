@@ -1,7 +1,6 @@
 package com.ok.refund.adapter.out.persistence;
 
 import com.ok.refund.domain.CancelledQuantity;
-import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
@@ -15,15 +14,21 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-public interface RefundJpaRepository extends JpaRepository<Refund, Long> {
+/**
+ * {@link RefundJpaEntity}의 Spring Data 리포지토리. 서비스는 이 인터페이스가 아니라 출력 포트 {@code RefundRepository}를 쓰고,
+ * {@link RefundPersistenceAdapter}가 이 리포지토리로 포트를 구현한다.
+ * JPQL은 기본 엔티티 이름 {@code RefundJpaEntity}를 쓴다. {@code @Entity(name = "Refund")}로 옛 이름을 남기면 쿼리 문자열은
+ * 덜 바뀌지만, 쿼리가 도메인 {@code Refund}를 가리키는 것처럼 읽혀 헷갈려서 쓰지 않았다.
+ */
+public interface RefundJpaRepository extends JpaRepository<RefundJpaEntity, Long> {
 
     /**
      * 환불 행을 쓰기 잠금({@code SELECT ... FOR UPDATE})으로 조회한다. 승인·거절·철회처럼 상태를 바꿀 때 쓴다.
      * 트랜잭션의 첫 조회로 불러야 한다. 같은 행을 잠그기 전에 읽어 두면 영속성 컨텍스트에 남은 잠금 전 상태가 그대로 쓰인다.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select r from Refund r where r.id = :id")
-    Optional<Refund> findByIdForUpdate(@Param("id") Long id);
+    @Query("select r from RefundJpaEntity r where r.id = :id")
+    Optional<RefundJpaEntity> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * 같은 판매자 묶음(주문 ID + 판매자 ID)에서 승인 때 잠글 환불 ID를 오름차순으로 조회한다.
@@ -37,7 +42,7 @@ public interface RefundJpaRepository extends JpaRepository<Refund, Long> {
      */
     @Query("""
             select r.id
-            from Refund r
+            from RefundJpaEntity r
             where r.orderId = :orderId and r.sellerId = :sellerId and (r.status in :statuses or r.id = :refundId)
             order by r.id
             """)
@@ -47,11 +52,11 @@ public interface RefundJpaRepository extends JpaRepository<Refund, Long> {
             @Param("refundId") Long refundId,
             @Param("statuses") Collection<RefundStatus> statuses);
 
-    Page<Refund> findAllByBuyerId(Long buyerId, Pageable pageable);
+    Page<RefundJpaEntity> findAllByBuyerId(Long buyerId, Pageable pageable);
 
-    Page<Refund> findAllBySellerId(Long sellerId, Pageable pageable);
+    Page<RefundJpaEntity> findAllBySellerId(Long sellerId, Pageable pageable);
 
-    Page<Refund> findAllBySellerIdAndStatus(Long sellerId, RefundStatus status, Pageable pageable);
+    Page<RefundJpaEntity> findAllBySellerIdAndStatus(Long sellerId, RefundStatus status, Pageable pageable);
 
     /**
      * 같은 판매자 묶음(주문 ID + 판매자 ID)에서 주어진 상태인 요청의 취소 개수와 뺀 배송비를 주문 상품별로 더한다.
@@ -60,7 +65,7 @@ public interface RefundJpaRepository extends JpaRepository<Refund, Long> {
     // 승인할 때는 묶음 잠금(findLockTargetIds의 행들을 findByIdForUpdate로)을 얻은 뒤 READ COMMITTED로 불러야, 먼저 끝난 다른 승인의 커밋까지 보인다
     @Query("""
             select new com.ok.refund.domain.CancelledQuantity(r.orderItemId, sum(r.quantity), sum(r.deductedShippingFeeAmount))
-            from Refund r
+            from RefundJpaEntity r
             where r.orderId = :orderId and r.sellerId = :sellerId and r.status in :statuses
             group by r.orderItemId
             """)

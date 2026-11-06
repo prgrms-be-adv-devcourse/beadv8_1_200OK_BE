@@ -54,7 +54,8 @@ class ArchitectureTest {
             .layer("Repository").definedBy("..adapter.out.persistence..")
             .layer("Domain").definedBy("..domain..")
             .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
-            .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
+            // 영속 어댑터는 출력 포트(application.port.out)를 구현하므로 Service 레이어에 의존한다(#481, 헥사고날). 4단계에서 규칙을 다시 쓴다
+            .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller", "Repository")
             .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
             .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)"));
@@ -130,10 +131,10 @@ class ArchitectureTest {
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 
     @ArchTest
-    static final ArchRule 엔티티는_domain_패키지에_있다 = classes()
+    static final ArchRule 엔티티는_영속_어댑터_패키지에_있다 = classes()
             .that().areAnnotatedWith(Entity.class)
-            .should().resideInAPackage("..domain..")
-            .because("엔티티가 domain 패키지에 있어야 레이어 규칙이 엔티티 의존을 검사할 수 있다 (컨벤션 2.1)");
+            .should().resideInAPackage("..adapter.out.persistence..")
+            .because("도메인을 JPA에서 분리해(#481) JPA 엔티티는 영속 어댑터에만 둔다. 도메인 패키지에 엔티티가 다시 생기지 않게 한다");
 
     // freeze
     @ArchTest

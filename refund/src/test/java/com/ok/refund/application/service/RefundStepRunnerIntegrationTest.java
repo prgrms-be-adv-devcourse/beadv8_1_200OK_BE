@@ -8,6 +8,7 @@ import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.application.port.out.RefundRepository;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
@@ -44,8 +45,11 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     RefundFacade refundFacade;
     @Autowired
     RefundService refundService;
+    // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
-    RefundJpaRepository refundRepository;
+    RefundRepository refundRepository;
+    @Autowired
+    RefundJpaRepository refundJpaRepository;
     @Autowired
     FakeRefundOrderClient orderClient;
     @Autowired
@@ -53,7 +57,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        refundRepository.deleteAllInBatch();
+        refundJpaRepository.deleteAllInBatch();
         orderClient.clear();
     }
 

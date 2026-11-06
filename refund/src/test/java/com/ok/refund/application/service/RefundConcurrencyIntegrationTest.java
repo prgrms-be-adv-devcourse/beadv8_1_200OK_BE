@@ -7,6 +7,7 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.application.port.out.RefundRepository;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
@@ -59,8 +60,11 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     RefundFacade refundFacade;
     @Autowired
     RefundService refundService;
+    // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
-    RefundJpaRepository refundRepository;
+    RefundRepository refundRepository;
+    @Autowired
+    RefundJpaRepository refundJpaRepository;
     @Autowired
     PlatformTransactionManager transactionManager;
     @Autowired
@@ -70,7 +74,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        refundRepository.deleteAllInBatch();
+        refundJpaRepository.deleteAllInBatch();
         orderClient.clear();
     }
 
@@ -91,7 +95,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThat(results).containsOnly(SUCCESS);
         List<Long> feesPerRefund = new ArrayList<>();
         long total = 0;
-        for (Refund refund : refundRepository.findAll()) {
+        for (Long refundId : List.of(refundA, refundB)) {
+            Refund refund = refundRepository.findById(refundId).orElseThrow();
             feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
             total += refund.getRefundAmount();
         }
@@ -119,8 +124,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // then: 둘 다 "처음 깨짐"으로 보면 3,000원을 두 번 뺀다
         assertThat(results).containsOnly(SUCCESS);
         List<Long> deductedPerRefund = new ArrayList<>();
-        for (Refund refund : refundRepository.findAll()) {
-            deductedPerRefund.add(refund.getDeductedShippingFeeAmount());
+        for (Long refundId : List.of(refundB, refundC)) {
+            deductedPerRefund.add(refundRepository.findById(refundId).orElseThrow().getDeductedShippingFeeAmount());
         }
         assertThat(deductedPerRefund).containsExactlyInAnyOrder(3_000L, 0L);
     }
@@ -145,7 +150,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         assertThat(results).containsOnly(SUCCESS);
         List<Long> feesPerRefund = new ArrayList<>();
         long total = 0;
-        for (Refund refund : refundRepository.findAll()) {
+        for (Long refundId : List.of(refundA, refundB, refundC)) {
+            Refund refund = refundRepository.findById(refundId).orElseThrow();
             feesPerRefund.add(refund.getShippingFeeAmount() + refund.getRemoteAreaFeeAmount());
             total += refund.getRefundAmount();
         }
@@ -203,6 +209,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
                 Refund lockedA = refundRepository.findByIdForUpdate(refundA).orElseThrow();
                 refundRepository.findByIdForUpdate(refundB).orElseThrow();
                 lockedA.approve(LocalDateTime.of(2026, 11, 5, 10, 0), RefundShippingFee.none());
+                // 명시적 저장(#481): update를 불러야 커밋 때 A의 "처리 중"이 저장돼 B가 최신 값으로 읽는다
+                refundRepository.update(lockedA);
                 locked.countDown();
                 await(release);
             }));

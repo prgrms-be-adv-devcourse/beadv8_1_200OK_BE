@@ -5,7 +5,9 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.adapter.out.persistence.RefundJpaEntity;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.application.port.out.RefundRepository;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeRefundOrderClient;
@@ -68,8 +70,11 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
     @Autowired
     TestAccessTokens tokens;
+    // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기·행 개수는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
-    RefundJpaRepository refundRepository;
+    RefundRepository refundRepository;
+    @Autowired
+    RefundJpaRepository refundJpaRepository;
     @Autowired
     FakeRefundOrderClient orderClient;
 
@@ -85,7 +90,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        refundRepository.deleteAllInBatch();
+        refundJpaRepository.deleteAllInBatch();
         // 통합 테스트는 컨텍스트(Fake 빈)를 함께 쓰므로 비우지 않으면 다른 테스트로 값이 넘어간다
         orderClient.clear();
     }
@@ -178,7 +183,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         requestWithReason("\"" + "가".repeat(256) + "\"")
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -187,7 +192,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(SOCKS_ORDER_ITEM_ID, 0)
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -196,7 +201,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(SOCKS_ORDER_ITEM_ID, 4)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/refund-quantity-exceeded")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -208,7 +213,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(SOCKS_ORDER_ITEM_ID, 1)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/refund-already-in-progress")));
-        assertThat(refundRepository.count()).isOne();
+        assertThat(refundJpaRepository.count()).isOne();
     }
 
     @Test
@@ -220,7 +225,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                         .content(body(SOCKS_ORDER_ITEM_ID, 1)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.type", endsWith("/refund/order-item-not-found")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -232,7 +237,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(SOCKS_ORDER_ITEM_ID, 1)
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.type", endsWith("/refund/order-item-not-found")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -244,7 +249,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(SOCKS_ORDER_ITEM_ID, 1)
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.type", endsWith("/refund/order-api-failed")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -256,7 +261,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(SOCKS_ORDER_ITEM_ID, 1)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/order-item-not-cancellable")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -433,7 +438,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(saved.getActiveOrderItemId()).isNull();
         });
         request(SOCKS_ORDER_ITEM_ID, 1).andExpect(status().isCreated());
-        assertThat(refundRepository.count()).isEqualTo(2);
+        assertThat(refundJpaRepository.count()).isEqualTo(2);
     }
 
     @Test
@@ -615,7 +620,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         request(30L, 301L, 1)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/partial-cancel-not-allowed")));
-        assertThat(refundRepository.count()).isZero();
+        assertThat(refundJpaRepository.count()).isZero();
     }
 
     @Test
@@ -769,7 +774,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(saved.getActiveOrderItemId()).isNull();
         });
         request(SOCKS_ORDER_ITEM_ID, 1).andExpect(status().isCreated());
-        assertThat(refundRepository.count()).isEqualTo(2);
+        assertThat(refundJpaRepository.count()).isEqualTo(2);
     }
 
     @Test
@@ -921,10 +926,11 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 """.formatted(ORDER_ID, orderItemId, quantity);
     }
 
+    // 테이블에 한 건만 있는지는 JPA 리포지토리로 세고, 값은 출력 포트로 다시 읽어 도메인으로 확인한다
     private Refund onlyRefund() {
-        List<Refund> refunds = refundRepository.findAll();
-        assertThat(refunds).hasSize(1);
-        return refunds.getFirst();
+        List<RefundJpaEntity> rows = refundJpaRepository.findAll();
+        assertThat(rows).hasSize(1);
+        return refundRepository.findById(rows.getFirst().getId()).orElseThrow();
     }
 
     // 판매자가 달라 양말과 모자는 각자 한 상품짜리 묶음이다. 둘 다 무료배송 기준(50,000원) 아래라 배송비 3,000원을 냈다

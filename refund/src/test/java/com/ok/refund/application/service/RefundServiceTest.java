@@ -8,7 +8,7 @@ import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
-import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.application.port.out.RefundRepository;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.RefundableOrderItem;
@@ -21,11 +21,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.CannotAcquireLockException;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -57,7 +53,7 @@ class RefundServiceTest {
     private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
 
     @Mock
-    RefundJpaRepository refundRepository;
+    RefundRepository refundRepository;
 
     RefundService sut;
 
@@ -69,14 +65,14 @@ class RefundServiceTest {
     @Test
     void 요청하면_주문에서_받은_값으로_요청됨을_저장한다() {
         // given
-        given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundRepository.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
         sut.request(command(2), socks("PREPARING", 3));
 
         // then
         ArgumentCaptor<Refund> captor = ArgumentCaptor.forClass(Refund.class);
-        then(refundRepository).should().saveAndFlush(captor.capture());
+        then(refundRepository).should().saveNew(captor.capture());
         Refund saved = captor.getValue();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
@@ -98,7 +94,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.request(otherBuyer, socks("PREPARING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_FOUND));
-        then(refundRepository).should(never()).saveAndFlush(any());
+        then(refundRepository).should(never()).saveNew(any());
     }
 
     @Test
@@ -107,7 +103,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.request(command(1), socks("SHIPPING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE));
-        then(refundRepository).should(never()).saveAndFlush(any());
+        then(refundRepository).should(never()).saveNew(any());
     }
 
     @Test
@@ -116,13 +112,13 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.request(command(4), socks("PREPARING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_QUANTITY_EXCEEDED));
-        then(refundRepository).should(never()).saveAndFlush(any());
+        then(refundRepository).should(never()).saveNew(any());
     }
 
     @Test
     void 산_개수만큼은_요청할_수_있다() {
         // given
-        given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundRepository.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
         RefundResult result = sut.request(command(3), socks("PREPARING", 3));
@@ -136,61 +132,25 @@ class RefundServiceTest {
         });
     }
 
+    // 진행 중 중복(UNIQUE)·교착 상태를 에러 코드로 바꾸는 일은 영속 어댑터로 옮겼다(RefundPersistenceAdapterTest).
+    // 서비스는 포트가 던진 에러를 그대로 돌려줘야 한다
     @Test
-    void 진행_중_UNIQUE에_걸리면_진행_중_에러로_바꾼다() {
+    void 저장소가_진행_중_에러를_던지면_그대로_돌려준다() {
         // given
-        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(new DataIntegrityViolationException("중복",
-                new SQLException("Duplicate entry '101' for key 'refund.uk_refund_active_order_item_id'")));
+        given(refundRepository.saveNew(any(Refund.class)))
+                .willThrow(new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
 
         // when & then
         assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
-    }
-
-    @Test
-    void 다른_무결성_오류는_그대로_던진다() {
-        // given
-        DataIntegrityViolationException other = new DataIntegrityViolationException("다른 제약",
-                new SQLException("Check constraint 'ck_refund_quantity' is violated."));
-        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(other);
-
-        // when & then
-        assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
-                .isSameAs(other);
-    }
-
-    // 철회 커밋 순간 같은 상품 새 요청 둘이 겹치면 MySQL이 한쪽을 교착 상태로 되돌린다. 그 쪽도 진행 중 중복으로 본다.
-    // 원인 예외 모양은 재현 때 실제로 받은 값(CannotAcquireLockException, SQLState 40001, 1213)과 같게 만든다
-    @Test
-    void 저장이_교착_상태로_되돌려지면_진행_중_에러로_바꾼다() {
-        // given
-        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(new CannotAcquireLockException("교착",
-                new SQLException("Deadlock found when trying to get lock; try restarting transaction", "40001", 1213)));
-
-        // when & then
-        assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
-    }
-
-    @Test
-    void 잠금_대기_시간_초과는_중복이_아니라_그대로_던진다() {
-        // given
-        CannotAcquireLockException timeout = new CannotAcquireLockException("대기 시간 초과",
-                new SQLException("Lock wait timeout exceeded; try restarting transaction", "HY000", 1205));
-        given(refundRepository.saveAndFlush(any(Refund.class))).willThrow(timeout);
-
-        // when & then
-        assertThatThrownBy(() -> sut.request(command(1), socks("PREPARING", 3)))
-                .isSameAs(timeout);
     }
 
     // 무료배송(50,000원 이상) 묶음에서 1,000원짜리만 취소하면 49,500원이 남아 기준이 깨지고, 뺄 배송비 3,000원이 취소 금액보다 크다
     @Test
     void 요청_때_배송비가_모자라면_409로_막는다() {
         // given
-        given(refundRepository.saveAndFlush(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundRepository.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when & then
         assertThatThrownBy(() -> sut.request(new RefundRequestCommand(BUYER_ID, 10L, 101L, 1, null), cheapItemInFreeBundle()))
@@ -212,8 +172,7 @@ class RefundServiceTest {
     @Test
     void 승인하면_지금_시각으로_처리_중이_되고_배송비_판단을_저장한다() {
         // given: 산 2개를 모두 취소해 묶음 전부 취소다. 낸 배송비 3,000원을 돌려준다
-        Refund refund = requested();
-        givenLockedBundle(refund);
+        givenLockedBundle(requested());
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
@@ -223,17 +182,24 @@ class RefundServiceTest {
         assertSoftly(softly -> {
             softly.assertThat(result.status()).isEqualTo("PROCESSING");
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
-            softly.assertThat(refund.getShippingFeeAmount()).isEqualTo(3_000L);
-            softly.assertThat(refund.getRemoteAreaFeeAmount()).isZero();
-            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+        });
+        // 명시적 저장(#481): update를 부르지 않으면 바꾼 상태가 DB에 남지 않으므로, 호출과 넘긴 값 자체가 요구사항이다
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getId()).isEqualTo(REFUND_ID);
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(updated.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(updated.getShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(updated.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(updated.getDeductedShippingFeeAmount()).isZero();
+            softly.assertThat(updated.getActiveOrderItemId()).isEqualTo(101L);
         });
     }
 
     @Test
     void 승인_때_배송비가_모자라면_사유와_함께_자동_거절한다() {
         // given
-        Refund refund = Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 1_000L, null);
-        givenLockedBundle(refund);
+        givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 1_000L, null));
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, cheapItemInFreeBundle());
@@ -244,8 +210,15 @@ class RefundServiceTest {
             softly.assertThat(result.status()).isEqualTo("REJECTED");
             softly.assertThat(result.rejectReason()).isEqualTo(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED.getMessage());
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
-            softly.assertThat(refund.getActiveOrderItemId()).isNull();
-            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+        });
+        // 자동 거절도 상태를 바꾸므로 update로 저장해야 한다. 진행 중 칸을 비워 저장해야 같은 상품을 다시 요청할 수 있다
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(updated.getRejectReason()).isEqualTo(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED.getMessage());
+            softly.assertThat(updated.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(updated.getActiveOrderItemId()).isNull();
+            softly.assertThat(updated.getDeductedShippingFeeAmount()).isZero();
         });
     }
 
@@ -261,6 +234,7 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+        then(refundRepository).should(never()).update(any());
     }
 
     // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고·취소된 상품은 취소로 돌려줄 수 없어 자동 거절한다.
@@ -269,8 +243,7 @@ class RefundServiceTest {
     @MethodSource("출고되거나_취소된_주문_상태")
     void 승인_때_출고되거나_취소된_상품이면_사유와_함께_자동_거절한다(String orderItemStatus) {
         // given
-        Refund refund = requested();
-        givenLockedBundle(refund);
+        givenLockedBundle(requested());
 
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2));
@@ -281,10 +254,17 @@ class RefundServiceTest {
             softly.assertThat(result.status()).isEqualTo("REJECTED");
             softly.assertThat(result.rejectReason()).isEqualTo(RefundService.SHIPPED_REJECT_REASON);
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
-            softly.assertThat(refund.getActiveOrderItemId()).isNull();
-            softly.assertThat(refund.getShippingFeeAmount()).isZero();
-            softly.assertThat(refund.getRemoteAreaFeeAmount()).isZero();
-            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+        });
+        // 출고 자동 거절은 배송비 판단보다 먼저 끝나는 별도 경로라, 이 경로에서도 update로 저장하는지 따로 확인한다
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(updated.getRejectReason()).isEqualTo(RefundService.SHIPPED_REJECT_REASON);
+            softly.assertThat(updated.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(updated.getActiveOrderItemId()).isNull();
+            softly.assertThat(updated.getShippingFeeAmount()).isZero();
+            softly.assertThat(updated.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(updated.getDeductedShippingFeeAmount()).isZero();
         });
         // 거절될 환불에는 배송비 판단(집계 쿼리)을 할 이유가 없고, 판단이 예외를 내면 거절 대신 오류가 남는다
         then(refundRepository).should(never()).sumCancelledByOrderItem(any(), any(), any());
@@ -300,8 +280,7 @@ class RefundServiceTest {
     @MethodSource("모르는_주문_상태")
     void 승인_때_주문_상태를_모르면_예외를_던지고_요청됨으로_남는다(String orderItemStatus) {
         // given
-        Refund refund = requested();
-        givenLockedBundle(refund);
+        Refund refund = givenLockedBundle(requested());
 
         // when & then
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2)))
@@ -312,6 +291,7 @@ class RefundServiceTest {
             softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
             softly.assertThat(refund.getDecidedAt()).isNull();
         });
+        then(refundRepository).should(never()).update(any());
     }
 
     static Stream<String> 모르는_주문_상태() {
@@ -335,8 +315,7 @@ class RefundServiceTest {
     @Test
     void 환불과_다른_주문_상품_정보로_승인하면_예외를_던지고_바꾸지_않는다() {
         // given
-        Refund refund = requested();
-        givenLockedBundle(refund);
+        Refund refund = givenLockedBundle(requested());
         RefundableOrderItem otherItem = orderItem(102L, 10_000L, 2,
                 new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(102L, 10_000L, 2))));
 
@@ -345,14 +324,14 @@ class RefundServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        then(refundRepository).should(never()).update(any());
     }
 
     // 다른 주문 상품 정보는 출고 상태여도 먼저 막아야 한다. 순서가 바뀌면 엉뚱한 상품의 출고 상태로 이 환불이 거절된다
     @Test
     void 다른_주문_상품_정보가_출고_상태여도_다른_상품_예외가_먼저이고_거절하지_않는다() {
         // given
-        Refund refund = requested();
-        givenLockedBundle(refund);
+        Refund refund = givenLockedBundle(requested());
         BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(102L, 10_000L, 2)));
         RefundableOrderItem shippedOtherItem =
                 new RefundableOrderItem(10L, 102L, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", "SHIPPING", 10_000L, 2, bundle);
@@ -398,10 +377,8 @@ class RefundServiceTest {
     @Test
     void 승인하면_같은_묶음의_진행_중_환불을_ID_순서로_한_건씩_잠근다() {
         // given
-        Refund refund = requested();
-        ReflectionTestUtils.setField(refund, "id", REFUND_ID);
-        Refund other = Refund.request(10L, 102L, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L, null);
-        ReflectionTestUtils.setField(other, "id", 3L);
+        Refund refund = withId(requested(), REFUND_ID);
+        Refund other = withId(Refund.request(10L, 102L, 1, BUYER_ID, SELLER_ID, 56L, "모자", "검정", 5_000L, null), 3L);
         given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
                 .willReturn(List.of(3L, REFUND_ID));
         given(refundRepository.findByIdForUpdate(3L)).willReturn(Optional.of(other));
@@ -418,7 +395,7 @@ class RefundServiceTest {
     }
 
     @Test
-    void 거절하면_사유를_엔티티에_넘긴다() {
+    void 거절하면_사유를_도메인에_넘기고_저장한다() {
         // given
         Refund refund = requested();
         given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
@@ -433,6 +410,14 @@ class RefundServiceTest {
             softly.assertThat(result.rejectReason()).isEqualTo("이미 포장을 마쳤습니다.");
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
         });
+        // 명시적 저장(#481): update 호출과 넘긴 값 자체가 요구사항이다
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(updated.getRejectReason()).isEqualTo("이미 포장을 마쳤습니다.");
+            softly.assertThat(updated.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(updated.getActiveOrderItemId()).isNull();
+        });
     }
 
     @Test
@@ -446,6 +431,7 @@ class RefundServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        then(refundRepository).should(never()).update(any());
     }
 
     @Test
@@ -463,6 +449,13 @@ class RefundServiceTest {
             softly.assertThat(result.status()).isEqualTo("WITHDRAWN");
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
         });
+        // 명시적 저장(#481): update 호출과 넘긴 값 자체가 요구사항이다. 진행 중 칸을 비워 저장해야 같은 상품을 다시 요청할 수 있다
+        Refund updated = capturedUpdate();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.WITHDRAWN);
+            softly.assertThat(updated.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(updated.getActiveOrderItemId()).isNull();
+        });
     }
 
     @Test
@@ -476,6 +469,7 @@ class RefundServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+        then(refundRepository).should(never()).update(any());
     }
 
     @Test
@@ -499,12 +493,12 @@ class RefundServiceTest {
         // when
         sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
 
-        // then
-        assertThat(refund).isNotNull();
+        // then: 명시적 저장(#481). update에 넘긴 값이 저장될 값이라 그 값을 본다
+        Refund updated = capturedUpdate();
         assertSoftly(softly -> {
-            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(refund.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
-            softly.assertThat(refund.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(updated.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(updated.getFailureCode()).isEqualTo("ORDER_API_FAILED");
         });
     }
 
@@ -534,12 +528,33 @@ class RefundServiceTest {
         return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "양말", "흰색", status, 10_000L, boughtQuantity, bundle);
     }
 
-    // 승인은 잠글 ID를 읽고 한 건씩 잠가 이번 환불을 ID로 찾는다. 저장 전 엔티티라 ID를 직접 넣는다
-    private void givenLockedBundle(Refund refund) {
-        ReflectionTestUtils.setField(refund, "id", REFUND_ID);
+    // 승인은 잠글 ID를 읽고 한 건씩 잠가 이번 환불을 ID로 찾는다. 저장 전 도메인이라 같은 값에 ID를 붙여 잠금 조회 결과로 준다.
+    // 서비스가 바꾸는 것은 돌려준 객체라, 바뀌지 않았는지 확인하려면 돌려받은 객체를 봐야 한다
+    private Refund givenLockedBundle(Refund refund) {
+        Refund locked = withId(refund, REFUND_ID);
         given(refundRepository.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
                 .willReturn(List.of(REFUND_ID));
-        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(locked));
+        return locked;
+    }
+
+    // 저장소가 돌려주는 환불처럼 ID가 붙은 같은 값을 만든다. 도메인에 setter가 없어(#481) 복원 메서드를 쓴다
+    private static Refund withId(Refund refund, Long id) {
+        return Refund.restore(id, refund.getOrderId(), refund.getOrderItemId(), refund.getQuantity(), refund.getBuyerId(),
+                refund.getSellerId(), refund.getProductOptionId(), refund.getProductName(), refund.getOptionName(),
+                refund.getUnitPrice(), refund.getItemAmount(), refund.getShippingFeeAmount(), refund.getRemoteAreaFeeAmount(),
+                refund.getDeductedShippingFeeAmount(), refund.getCancelReason(), refund.getStatus(), refund.getRejectReason(),
+                refund.getDecidedAt(), refund.getFailedStep(), refund.getFailureCode(), refund.getActiveOrderItemId(),
+                refund.getCreatedAt());
+    }
+
+    // update에 넘긴 환불. 정확히 한 번 불러야 한다(두 번이면 상태 변경 경로가 꼬인 것이다)
+    private Refund capturedUpdate() {
+        ArgumentCaptor<Refund> captor = ArgumentCaptor.forClass(Refund.class);
+        then(refundRepository).should().update(captor.capture());
+        Refund updated = captor.getValue();
+        assertThat(updated).isNotNull();
+        return updated;
     }
 
     private static RefundableOrderItem cheapItemInFreeBundle() {
