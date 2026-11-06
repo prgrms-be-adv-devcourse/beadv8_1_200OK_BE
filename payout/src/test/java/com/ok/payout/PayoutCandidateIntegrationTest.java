@@ -3,7 +3,7 @@ package com.ok.payout;
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -49,7 +49,7 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private PayoutCandidateItemRepository repository;
+    private PayoutCandidateItemJpaRepository repository;
 
     // 이 테스트에서 사용한 주문 ID (정리할 때 이 주문의 행만 지움)
     private final List<Long> usedOrderIds = new ArrayList<>();

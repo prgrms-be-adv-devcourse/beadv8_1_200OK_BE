@@ -1,7 +1,7 @@
 package com.ok.payout;
 
-import com.ok.payout.repository.PayoutCandidateItemRepository;
-import com.ok.payout.repository.PayoutRepository;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,10 +79,10 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
     private TestAccessTokens tokens;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
-    private PayoutCandidateItemRepository candidateRepository;
+    private PayoutCandidateItemJpaRepository candidateRepository;
 
     // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
     @BeforeEach

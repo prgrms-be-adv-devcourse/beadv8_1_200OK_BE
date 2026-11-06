@@ -15,9 +15,9 @@ import org.springframework.kafka.core.KafkaTemplate;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.event.PayoutTopics;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
+import com.ok.payout.config.PayoutTopics;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,10 +39,10 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
     private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Autowired
-    private PayoutCandidateItemRepository candidateRepository;
+    private PayoutCandidateItemJpaRepository candidateRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository deductionRepository;
+    private PayoutWalletDeductionJpaRepository deductionRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;

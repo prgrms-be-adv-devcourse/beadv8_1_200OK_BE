@@ -15,18 +15,18 @@ import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.exception.PayoutErrorCode;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
-import com.ok.payout.repository.PayoutFailureRepository;
-import com.ok.payout.repository.PayoutQueryRepository;
-import com.ok.payout.repository.PayoutRepository;
-import com.ok.payout.repository.PayoutSellerDraftRepository;
-import com.ok.payout.repository.PayoutSnapshotItemRepository;
-import com.ok.payout.repository.PayoutSnapshotRepository;
-import com.ok.payout.repository.PayoutSystemDraftItemRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
-import com.ok.payout.service.PayoutJobRunner;
-import com.ok.payout.service.PayoutService;
-import com.ok.payout.service.dto.PayoutVerifyResult;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutFailureJpaRepository;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSellerDraftJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSystemDraftItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -88,28 +88,28 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private Job payoutJob;
 
     @Autowired
-    private PayoutCandidateItemRepository candidateRepository;
+    private PayoutCandidateItemJpaRepository candidateRepository;
 
     @Autowired
-    private PayoutSnapshotRepository snapshotRepository;
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     @Autowired
-    private PayoutSnapshotItemRepository snapshotItemRepository;
+    private PayoutSnapshotItemJpaRepository snapshotItemRepository;
 
     @Autowired
-    private PayoutSellerDraftRepository sellerDraftRepository;
+    private PayoutSellerDraftJpaRepository sellerDraftRepository;
 
     @Autowired
-    private PayoutSystemDraftItemRepository systemDraftItemRepository;
+    private PayoutSystemDraftItemJpaRepository systemDraftItemRepository;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
+    private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
 
     @Autowired
-    private PayoutFailureRepository failureRepository;
+    private PayoutFailureJpaRepository failureRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
