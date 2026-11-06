@@ -10,7 +10,10 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 
-// 장바구니 상품 저장소 출력 포트의 JPA 구현. 쿼리 설정은 포트에 둘 수 없어(application은 영속 기술을 모른다) 여기서 다시 선언한다
+/**
+ * 장바구니 상품 저장소 출력 포트의 JPA 구현이다.
+ * 쿼리 설정은 포트에 둘 수 없어(application은 영속 기술을 모른다) 여기서 다시 선언한다.
+ */
 public interface CartItemJpaRepository extends JpaRepository<CartItem, Long>, CartItemRepository {
 
     // 확인 → 저장으로 나누면 같은 옵션을 동시에 담을 때 둘 다 "없음"으로 보고 늦은 쪽이 유니크 제약(uk_cart_item_cart_option)에 걸리고,

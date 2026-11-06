@@ -13,7 +13,10 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
-// 장바구니 저장소 출력 포트의 JPA 구현. 쿼리·잠금 설정은 포트에 둘 수 없어(application은 영속 기술을 모른다) 여기서 다시 선언한다
+/**
+ * 장바구니 저장소 출력 포트의 JPA 구현이다.
+ * 쿼리·잠금 설정은 포트에 둘 수 없어(application은 영속 기술을 모른다) 여기서 다시 선언한다.
+ */
 public interface CartJpaRepository extends JpaRepository<Cart, Long>, CartRepository {
 
     // 중복일 때만 넘어가고 다른 오류(null 등)는 그대로 실패한다. INSERT IGNORE는 다른 오류도 경고로 바꿔 삼켜서 쓰지 않는다.

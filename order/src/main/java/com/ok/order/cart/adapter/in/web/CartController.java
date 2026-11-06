@@ -30,7 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 // 장바구니는 구매를 위한 것이라 주문과 같이 구매 권한(BUYER)이 있는 회원만 쓴다
 @PreAuthorize("hasRole('BUYER')")
 @RequiredArgsConstructor
-public class ApiV1CartController implements CartControllerSpec {
+public class CartController implements CartControllerSpec {
 
     private final AddCartItemUseCase addCartItem;
     private final GetCartUseCase getCart;
