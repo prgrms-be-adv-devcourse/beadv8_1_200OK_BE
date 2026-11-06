@@ -34,6 +34,7 @@ import com.ok.product.review.service.dto.ProductReviewCreateCommand;
 import com.ok.product.review.service.dto.ProductReviewMediaResult;
 import com.ok.product.review.service.dto.ProductReviewResult;
 import com.ok.product.review.service.dto.ProductReviewUpdateCommand;
+import com.ok.product.review.service.dto.ReviewAnalysisSubjectResult;
 import com.ok.product.review.service.dto.ReviewablePurchase;
 import lombok.RequiredArgsConstructor;
 
@@ -144,6 +145,21 @@ public class ProductReviewService {
 		return reviews.stream()
 			.map(review -> toResult(review, optionNames))
 			.toList();
+	}
+
+	/**
+	 * 관리자 분석 테스트에 쓸 상품명·옵션명·분류를 읽는다. 숨긴 상품과 삭제된 옵션도 받는다.
+	 * 운영 작업자도 숨긴 상품과 삭제된 옵션의 리뷰를 분석하므로, 같은 상품을 테스트할 수 있게 한다.
+	 *
+	 * @throws RestApiException 상품이 없거나 삭제됐으면 {@code PRODUCT_NOT_FOUND}, 옵션이 그 상품의 것이 아니면 {@code INVALID_REVIEW_OPTION}
+	 */
+	public ReviewAnalysisSubjectResult getAnalysisSubject(Long productId, Long optionId) {
+		Product product = productRepository.findByIdAndDeletedAtIsNull(productId)
+			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		ProductOption option = productOptionRepository.findById(optionId)
+			.filter(found -> found.getProduct().getId().equals(productId))
+			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.INVALID_REVIEW_OPTION));
+		return new ReviewAnalysisSubjectResult(product.getName(), option.getName(), product.getCategory());
 	}
 
 	// 숨긴 상품의 리뷰가 상품 상세보다 먼저 새어 나가지 않게 상세와 같은 조건으로 막는다

@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
  */
 public record ReviewKeywordTarget(
 	Long requestId,
+	Long reviewId,
 	LocalDateTime reviewUpdatedAt,
 	ReviewKeywordInput input
 ) {

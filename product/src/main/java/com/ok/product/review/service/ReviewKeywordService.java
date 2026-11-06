@@ -98,7 +98,7 @@ public class ReviewKeywordService {
 				// 상품의 현재 분류로 묻는다. 분류가 바뀌어도 이미 분석한 리뷰는 다시 묻지 않는다(#422)
 				ReviewKeywordInput input = new ReviewKeywordInput(
 					review.getId(), product.getName(), review.getContent(), product.getCategory());
-				targets.add(new ReviewKeywordTarget(request.getId(), review.getUpdatedAt(), input));
+				targets.add(new ReviewKeywordTarget(request.getId(), review.getId(), review.getUpdatedAt(), input));
 			}
 		}
 		return targets;
@@ -189,7 +189,7 @@ public class ReviewKeywordService {
 	// 잠그지 않으면 수정이 요청을 대기로 되돌린 뒤 이 트랜잭션이 요청을 완료로 덮어써, 새 내용이 분석되지 않는다.
 	// 요청은 잠금을 잡은 뒤에 읽어야 수정이 되돌린 상태를 본다
 	private boolean confirmReviewUnchanged(ReviewKeywordTarget target) {
-		Long reviewId = target.input().reviewId();
+		Long reviewId = target.reviewId();
 		Optional<ProductReview> review = productReviewRepository.findForUpdateByIdAndDeletedAtIsNull(reviewId);
 		if (review.isEmpty()) {
 			// soft delete라 행은 남아 있다. 조회되지 않으면 분석하는 동안 삭제된 리뷰다

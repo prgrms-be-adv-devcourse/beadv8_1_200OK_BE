@@ -17,7 +17,10 @@ public enum ProductReviewErrorCode implements ErrorCode {
 	INVALID_REVIEW_MEDIA_URL(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid review media url", "업로드한 리뷰 첨부 주소가 아닙니다."),
 	REVIEW_MEDIA_LIMIT_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY, "Review media limit exceeded", "리뷰 영상은 1개까지 첨부할 수 있습니다."),
 	REVIEW_KEYWORD_NOT_FOUND(HttpStatus.BAD_REQUEST, "Review keyword not found", "리뷰 키워드 목록에 없는 키워드입니다."),
-	ANALYSIS_REQUEST_NOT_PENDING(HttpStatus.CONFLICT, "Analysis request not pending", "대기 중인 리뷰 분석 요청이 아닙니다.");
+	ANALYSIS_REQUEST_NOT_PENDING(HttpStatus.CONFLICT, "Analysis request not pending", "대기 중인 리뷰 분석 요청이 아닙니다."),
+	INVALID_REVIEW_OPTION(HttpStatus.BAD_REQUEST, "Invalid review option", "상품의 옵션이 아닙니다."),
+	REVIEW_ANALYZER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Review analyzer unavailable", "리뷰 분석기를 쓸 수 없습니다. 분석기 설정을 확인해 주세요."),
+	REVIEW_ANALYSIS_FAILED(HttpStatus.BAD_GATEWAY, "Review analysis failed", "리뷰 분석기가 결과를 돌려주지 않았습니다. 잠시 후 다시 시도해 주세요.");
 
 	private final HttpStatus httpStatus;
 	private final String title;

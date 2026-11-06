@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
  */
 public record ReviewSentimentTarget(
 	Long requestId,
+	Long reviewId,
 	LocalDateTime reviewUpdatedAt,
 	ReviewSentimentInput input
 ) {

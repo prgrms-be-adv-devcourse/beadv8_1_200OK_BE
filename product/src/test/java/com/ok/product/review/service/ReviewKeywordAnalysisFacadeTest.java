@@ -113,7 +113,7 @@ class ReviewKeywordAnalysisFacadeTest {
 	}
 
 	private static ReviewKeywordTarget target(Long requestId) {
-		return new ReviewKeywordTarget(requestId, LocalDateTime.of(2026, 11, 1, 0, 0),
+		return new ReviewKeywordTarget(requestId, requestId * 10, LocalDateTime.of(2026, 11, 1, 0, 0),
 			new ReviewKeywordInput(requestId * 10, "청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
 	}
 

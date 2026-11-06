@@ -52,8 +52,8 @@ public class JevReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 	}
 
 	private JevRequest toRequest(ReviewSentimentInput input) {
-		// Jev는 앞쪽 선택지를 더 고르는 경향이 있어 순서를 섞는다. 리뷰 ID를 시드로 써서 같은 리뷰는 늘 같은 순서를 받는다
-		Random random = new Random(input.reviewId());
+		// Jev는 앞쪽 선택지를 더 고르는 경향이 있어 순서를 섞는다. 시드가 같으면 늘 같은 순서를 받는다
+		Random random = new Random(input.choiceSeed());
 		Map<String, JevRequest.Question> questions = new LinkedHashMap<>();
 		for (Question question : criteria.questions()) {
 			List<Choice> shuffled = new ArrayList<>(question.choices());

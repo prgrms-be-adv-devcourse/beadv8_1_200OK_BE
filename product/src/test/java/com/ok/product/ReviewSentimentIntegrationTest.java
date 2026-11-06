@@ -551,8 +551,8 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 			release.countDown();
 			List<ReviewSentimentTarget> firstTargets = first.get(5, TimeUnit.SECONDS);
 			assertSoftly(softly -> {
-				softly.assertThat(sut).extracting(target -> target.input().reviewId()).containsExactly(secondReviewId);
-				softly.assertThat(firstTargets).extracting(target -> target.input().reviewId())
+				softly.assertThat(sut).extracting(ReviewSentimentTarget::reviewId).containsExactly(secondReviewId);
+				softly.assertThat(firstTargets).extracting(ReviewSentimentTarget::reviewId)
 					.containsExactly(firstReviewId);
 			});
 		} finally {

@@ -42,8 +42,8 @@ public class JevReviewKeywordAnalyzer implements ReviewKeywordAnalyzer {
 	}
 
 	private JevRequest toRequest(ReviewKeywordInput input, List<Keyword> keywords) {
-		// 선택지가 둘이라 Jev의 앞쪽 선택지 치우침이 곧 오탐이 되어 순서를 섞는다. 리뷰 ID를 시드로 써서 같은 리뷰는 늘 같은 순서를 받는다
-		Random random = new Random(input.reviewId());
+		// 선택지가 둘이라 Jev의 앞쪽 선택지 치우침이 곧 오탐이 되어 순서를 섞는다. 시드가 같으면 늘 같은 순서를 받는다
+		Random random = new Random(input.choiceSeed());
 		Map<String, JevRequest.Question> questions = new LinkedHashMap<>();
 		for (Keyword keyword : keywords) {
 			List<Choice> shuffled = new ArrayList<>(keywordList.choices());

@@ -49,4 +49,15 @@ public record ReviewKeywordAnalysis(
 		}
 		return Set.copyOf(expressed);
 	}
+
+	/**
+	 * 확률은 기준을 넘었지만 식감 규칙으로 표현하지 않은 것으로 본 키워드 ID다. 관리자 분석 테스트가 판정 이유를 보여 주려고 쓴다.
+	 */
+	public Set<String> excludedByTextureRuleKeywordIds() {
+		Set<String> expressed = expressedKeywordIds();
+		return probabilities.entrySet().stream()
+			.filter(entry -> entry.getValue() >= EXPRESSED_THRESHOLD && !expressed.contains(entry.getKey()))
+			.map(Map.Entry::getKey)
+			.collect(Collectors.toUnmodifiableSet());
+	}
 }

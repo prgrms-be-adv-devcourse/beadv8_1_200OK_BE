@@ -205,6 +205,34 @@ class JevReviewKeywordAnalyzerTest {
 		});
 	}
 
+	@Test
+	void 본문_해시를_시드로_쓰면_같은_본문은_늘_같은_선택지_순서를_받는다() {
+		// given
+		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategory.FRUIT);
+
+		// when
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
+
+		// then
+		assertThat(choiceOrders(sentBodies.get(1))).isEqualTo(choiceOrders(sentBodies.get(0)));
+	}
+
+	@Test
+	void 본문_해시를_시드로_쓰면_다른_본문은_선택지를_다른_순서로_섞어_받는다() {
+		// given
+		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategory.FRUIT);
+
+		// when
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "달고 향긋해요", ProductCategory.FRUIT));
+
+		// then
+		assertThat(choiceOrders(sentBodies.get(1))).isNotEqualTo(choiceOrders(sentBodies.get(0)));
+	}
+
 	// 응답 해석
 
 	@Test
