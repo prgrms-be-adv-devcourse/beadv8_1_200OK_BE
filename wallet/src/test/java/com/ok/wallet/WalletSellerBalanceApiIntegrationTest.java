@@ -2,7 +2,7 @@ package com.ok.wallet;
 
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
-import com.ok.wallet.service.SellerWalletService;
+import com.ok.wallet.application.service.SellerWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

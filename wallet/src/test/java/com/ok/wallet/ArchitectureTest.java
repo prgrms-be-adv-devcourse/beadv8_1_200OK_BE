@@ -1,13 +1,14 @@
 package com.ok.wallet;
 
 import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
-import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Controller;
@@ -45,19 +46,18 @@ class ArchitectureTest {
 
     // 레이어
 
-    // freeze: 기존 위반은 archunit_store에 기준선으로 두고, 새 위반만 실패시킨다.
     @ArchTest
-    static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = freeze(layeredArchitecture()
+    static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
-            .layer("Controller").definedBy("..controller..")
-            .layer("Service").definedBy("..service..")
-            .layer("Repository").definedBy("..repository..")
-            .layer("Domain").definedBy("..domain..")
-            .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
-            .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
-            .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
-            .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
-            .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)"));
+            .layer("Domain").definedBy("com.ok.wallet.domain..")
+            .layer("Application").definedBy("com.ok.wallet.application..")
+            .layer("AdapterIn").definedBy("com.ok.wallet.adapter.in..")
+            .layer("AdapterOut").definedBy("com.ok.wallet.adapter.out..")
+            .whereLayer("AdapterIn").mayNotBeAccessedByAnyLayer()
+            .whereLayer("AdapterOut").mayNotBeAccessedByAnyLayer()
+            .whereLayer("Application").mayOnlyBeAccessedByLayers("AdapterIn", "AdapterOut")
+            .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "AdapterOut")
+            .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule 패키지_간_순환_의존이_없다 = slices()
@@ -67,91 +67,125 @@ class ArchitectureTest {
                     + "모듈 간 순환 금지(컨벤션 2.2)를 모듈 안 패키지까지 넓혀 적용한다");
 
     @ArchTest
-    static final ArchRule 이벤트_리스너는_controller_repository_domain을_쓰지_않는다 = noClasses()
-            .that().resideInAPackage("..event..")
-            // common.event는 모듈 간 이벤트 DTO라 리스너가 아니다
-            .and().resideOutsideOfPackage("com.ok.common.event..")
-            .should().dependOnClassesThat().resideInAnyPackage("..controller..", "..repository..", "..domain..")
-            .because("리스너는 컨트롤러처럼 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 서비스에 맡긴다 (컨벤션 2.1)");
+    static final ArchRule 입력_어댑터는_유스케이스_포트와_dto만_안다 = noClasses()
+            .that().resideInAPackage("..adapter.in..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "com.ok.wallet.application.service..", "com.ok.wallet.application.port.out..",
+                    "com.ok.wallet.adapter.out..", "com.ok.wallet.domain..")
+            .because("컨트롤러와 리스너는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
-    // freeze
     @ArchTest
-    static final ArchRule ApplicationEventPublisher는_event_패키지만_사용한다 = freeze(noClasses()
-            .that().resideOutsideOfPackage("..event..")
+    static final ArchRule 입력_포트는_도메인을_모른다 = noClasses()
+            .that().resideInAPackage("..application.port.in..")
+            .should().dependOnClassesThat().resideInAPackage("com.ok.wallet.domain..")
+            .because("입력 포트는 진입점에 공개하는 약속이다. 엔티티를 돌려주면 진입점이 도메인을 알게 되고, 트랜잭션 밖에서 바꾼 값은 오류 없이 저장되지 않는다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule application은_영속_기술에_의존하지_않는다 = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().dependOnClassesThat(assignableTo(org.springframework.data.repository.Repository.class)
+                    .or(resideInAnyPackage("org.springframework.data.jpa..", "jakarta.persistence..", "com.querydsl..")))
+            .because("서비스는 저장소 포트에만 의존해야 영속 기술을 바꿔도 비즈니스 코드가 바뀌지 않는다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule application은_HTTP_클라이언트에_의존하지_않는다 = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().dependOnClassesThat().resideInAnyPackage("org.springframework.web.client..", "org.springframework.http..")
+            .because("토스 호출은 출력 포트 뒤에 두어, 서비스가 HTTP 요청·응답 모양을 모르고 승인 결과만 보게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule 포트는_인터페이스다 = classes()
+            .that().resideInAnyPackage("..application.port.in..", "..application.port.out..")
+            .should().beInterfaces()
+            .because("포트는 구현을 숨기는 경계라 인터페이스여야 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule 출력_포트는_Spring_Data_Repository를_상속하지_않는다 = noClasses()
+            .that().resideInAPackage("..application.port.out..")
+            .should().beAssignableTo(org.springframework.data.repository.Repository.class)
+            .because("포트가 Repository를 상속하면 Spring Data가 포트 자체로 저장소를 하나 더 만들어 빈이 둘이 된다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule 출력_포트의_구현은_adapter_out에_있다 = classes()
+            .that().areAssignableTo(resideInAPackage("..application.port.out.."))
+            .and().resideOutsideOfPackage("..application.port.out..")
+            .should().resideInAPackage("..adapter.out..")
+            .because("외부 시스템과 닿는 구현은 adapter.out에 모아 바뀌는 범위가 경로로 드러나게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule ApplicationEventPublisher는_adapter_out만_사용한다 = noClasses()
+            .that().resideOutsideOfPackage("..adapter.out..")
             .should().dependOnClassesThat().areAssignableTo(ApplicationEventPublisher.class)
-            .because("서비스는 service/publisher 인터페이스로만 발행하고 구현체(event)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (컨벤션 2.1)"));
+            .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
-    // freeze
     @ArchTest
-    static final ArchRule 이벤트_클래스는_event_패키지만_사용한다 = freeze(classes()
+    static final ArchRule 이벤트_클래스는_adapter만_사용한다 = classes()
             .that().resideInAPackage("com.ok.common.event..")
-            .should().onlyBeAccessed().byAnyPackage("..event..")
-            .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 서비스를 호출하고, "
-                    + "발행 인터페이스는 값을 받는다 (컨벤션 2.1)"));
+            // common.event 안에서 서로 참조하는 것(DomainEvent, payload)은 모듈 간 계약 타입 내부의 일이다
+            .should().onlyBeAccessed().byAnyPackage("com.ok.wallet.adapter..", "com.ok.common.event..")
+            .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 유스케이스를 호출하고, "
+                    + "발행 포트는 값을 받는다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
-    static final ArchRule 서비스는_event_패키지에_의존하지_않는다 = noClasses()
-            .that().resideInAPackage("..service..")
-            // common.event(이벤트 record)는 이벤트_클래스는_event_패키지만_사용한다 규칙이 검사한다
-            .should().dependOnClassesThat(resideInAPackage("..event..")
-                    .and(not(resideInAPackage("com.ok.common.event.."))))
-            .because("서비스는 service의 발행 인터페이스에만 의존하고, 구현체(event)를 바꿔도 서비스가 바뀌지 않게 한다 (컨벤션 2.1)");
-
-    @ArchTest
-    static final ArchRule 이벤트_발행_구현체는_service의_발행_인터페이스를_구현한다 = classes()
+    static final ArchRule 이벤트_발행_구현체는_출력_포트를_구현한다 = classes()
             .that(ApplicationEventPublisher에_의존하는)
-            // event 밖에서 쓰는 경우는 ApplicationEventPublisher는_event_패키지만_사용한다 규칙이 막는다
-            .and().resideInAPackage("..event..")
-            .should().implement(resideInAPackage("..service.."))
-            .because("서비스는 service의 발행 인터페이스만 알고, event의 구현체가 발행 방식을 맡는다. "
-                    + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (컨벤션 2.1)");
+            // adapter.out 밖에서 쓰는 경우는 ApplicationEventPublisher는_adapter_out만_사용한다 규칙이 막는다
+            .and().resideInAPackage("..adapter.out..")
+            .should().implement(resideInAPackage("..application.port.out.."))
+            .because("서비스는 출력 포트만 알고, adapter.out의 구현체가 발행 방식을 맡는다. "
+                    + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
+    static final ArchRule wallet은_common_외_다른_모듈에_의존하지_않는다 = noClasses()
+            .that().resideInAPackage("com.ok.wallet..")
+            .should().dependOnClassesThat(resideInAPackage("com.ok..")
+                    .and(not(resideInAnyPackage("com.ok.wallet..", "com.ok.common.."))))
+            .because("모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있고, 모듈별 서버로 나눌 수 있다. 연동은 이벤트로 한다 (컨벤션 2.2)");
 
     // 이름과 위치
 
     @ArchTest
-    static final ArchRule RestController는_Controller로_끝나고_controller_패키지에_있다 = classes()
+    static final ArchRule RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = classes()
             .that().areAnnotatedWith(RestController.class)
             .should().haveSimpleNameEndingWith("Controller")
-            .andShould().resideInAPackage("..controller..")
-            .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
+            .andShould().resideInAPackage("..adapter.in.web..")
+            .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2, 헥사고날 구조)");
 
     @ArchTest
-    static final ArchRule Service는_Service로_끝나고_service_패키지에_있다 = classes()
+    static final ArchRule Service는_Service로_끝나고_application_service_패키지에_있다 = classes()
             .that().areAnnotatedWith(Service.class)
             .should().haveSimpleNameEndingWith("Service")
-            .andShould().resideInAPackage("..service..")
-            .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2)");
+            .andShould().resideInAPackage("..application.service..")
+            .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2, 헥사고날 구조)");
 
     @ArchTest
-    static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
+    static final ArchRule 리포지토리는_adapter_out_persistence_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .should().resideInAPackage("..repository..")
-            .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
+            .should().resideInAPackage("..adapter.out.persistence..")
+            .because("영속성 구현은 adapter.out.persistence에 모아 역할별로 찾기 쉽게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule 엔티티는_domain_패키지에_있다 = classes()
             .that().areAnnotatedWith(Entity.class)
-            .should().resideInAPackage("..domain..")
-            .because("엔티티가 domain 패키지에 있어야 레이어 규칙이 엔티티 의존을 검사할 수 있다 (컨벤션 2.1)");
+            .should().resideInAPackage("com.ok.wallet.domain..")
+            .because("엔티티가 domain 패키지에 있어야 레이어 규칙이 엔티티 의존을 검사할 수 있다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
-    // freeze
     @ArchTest
-    static final ArchRule ErrorCode_구현체는_ErrorCode로_끝나고_exception_패키지에_있다 = freeze(classes()
+    static final ArchRule ErrorCode_구현체는_ErrorCode로_끝나고_exception_패키지에_있다 = classes()
             .that().implement(ErrorCode.class)
             .should().haveSimpleNameEndingWith("ErrorCode")
             .andShould().resideInAPackage("..exception..")
-            .because("모듈의 에러 코드를 exception 패키지 한곳에서 찾을 수 있어야 한다 (컨벤션 2.1, 3.2)"));
+            .because("모듈의 에러 코드를 exception 패키지 한곳에서 찾을 수 있어야 한다 (컨벤션 2.1, 3.2)");
 
-    // freeze
     @ArchTest
-    static final ArchRule Swagger_인터페이스는_Spec으로_끝나고_컨트롤러와_같은_패키지에_있다 = freeze(classes()
+    static final ArchRule Swagger_인터페이스는_Spec으로_끝나고_컨트롤러와_같은_패키지에_있다 = classes()
             .that().areInterfaces()
             .and().areAnnotatedWith(Tag.class)
             .should().haveSimpleNameEndingWith("Spec")
             .andShould().notBePublic()
             .andShould().resideOutsideOfPackage("..spec..")
-            .because("문서 어노테이션은 컨트롤러 옆에 두고, 다른 곳에서 쓰지 않으므로 공개하지 않는다 (컨벤션 3.3)"));
+            .because("문서 어노테이션은 컨트롤러 옆에 두고, 다른 곳에서 쓰지 않으므로 공개하지 않는다 (컨벤션 3.3)");
 
     // 기타
 

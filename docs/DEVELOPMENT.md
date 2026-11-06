@@ -382,6 +382,35 @@ com.ok.delivery
 - 모듈 간 연동은 지금처럼 Spring 이벤트와 `/internal` 호출입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
 
+### wallet 모듈 구조(헥사고날)
+
+`wallet`은 연동이 Kafka로 바뀌고 토스 결제 조회·취소가 늘어날 것에 대비해, 진입점과 외부 연결을 delivery와 같은 헥사고날 구조로 나눴습니다.
+
+```
+com.ok.wallet
+├── domain/               엔티티 (JPA 엔티티를 도메인 모델로 그대로 쓴다)
+├── exception/            WalletErrorCode
+├── config/               모듈 전용 설정
+├── application/
+│   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행, 토스 결제 승인 인터페이스
+│   ├── service/          유스케이스 구현 (*Service)
+│   └── dto/              *Command, *Query, *Result, 토스 승인 결과(TossConfirmResult)
+└── adapter/
+    ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
+    ├── in/event/         이벤트 리스너
+    ├── out/persistence/  Spring Data JPA 저장소, Querydsl 조회
+    ├── out/event/        스프링 이벤트 발행 구현체
+    └── out/toss/         토스 결제 승인 HTTP 구현, 토스 요청·응답 DTO, 설정
+```
+
+- 의존 방향, 저장소 포트와 `*JpaRepository`의 관계, 이벤트 수신·발행 위치는 delivery와 같습니다.
+- 토스 승인은 출력 포트(`TossPaymentsClient`)로 부릅니다. 서비스는 승인 결과(`TossConfirmResult`)만 알고, HTTP 요청·응답 모양은 `adapter/out/toss` 안에 둡니다.
+- 충전 승인은 토스를 부르는 `ChargeConfirmService`(트랜잭션 없음)만 `ChargeConfirmUseCase`를 구현합니다. DB 반영은 `ChargeTransactionService`가 포트 없이 다른 빈으로 맡습니다. 같은 빈 안에서 부르면 `@Transactional`이 걸리지 않으므로 두 서비스를 합치지 않습니다.
+- 엔티티를 도메인 모델과 나누지 않습니다. 잔액 변경과 충전 완료는 엔티티 값만 바꾸고 저장은 변경 감지에 맡기므로, 나누면 저장이 빠졌을 때 오류 없이 잔액이 반영되지 않습니다.
+- 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
+- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지를 더 검사).
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.

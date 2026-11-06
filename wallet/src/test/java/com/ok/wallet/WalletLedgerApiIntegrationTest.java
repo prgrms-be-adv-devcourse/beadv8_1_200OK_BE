@@ -2,8 +2,8 @@ package com.ok.wallet;
 
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
+import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
 import com.ok.wallet.domain.BuyerWallet;
-import com.ok.wallet.repository.BuyerWalletRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +37,7 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
     TestAccessTokens tokens;
 
     @Autowired
-    BuyerWalletRepository buyerWalletRepository;
+    BuyerWalletJpaRepository buyerWalletRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

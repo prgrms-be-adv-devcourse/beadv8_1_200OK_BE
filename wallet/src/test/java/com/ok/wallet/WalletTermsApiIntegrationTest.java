@@ -2,9 +2,9 @@ package com.ok.wallet;
 
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
+import com.ok.wallet.application.dto.TermsAgreeCommand;
+import com.ok.wallet.application.service.TermsService;
 import com.ok.wallet.domain.TermsType;
-import com.ok.wallet.service.TermsService;
-import com.ok.wallet.service.dto.TermsAgreeCommand;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
