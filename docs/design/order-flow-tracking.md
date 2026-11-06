@@ -112,6 +112,13 @@ flowchart LR
 
 Snowflake 노드 ID는 `trace.node-id` 설정으로 정한다. 지금은 인스턴스가 하나라고 가정한다.
 
+구현(#376, `com.ok.common.trace`)은 다음과 같다.
+- **traceId**: 41비트 시각(기준 2026-01-01T00:00:00Z) + 10비트 노드 ID + 12비트 시퀀스. 시각은 공용 `Clock` 빈에서 읽는다. 값에서 발급 시각을 역산할 수 있다 (`docs/DEVELOPMENT.md` 12절).
+- **HTTP**: `TraceFilter`가 Spring Security 필터보다 앞(order -200)에 있어 401·403 응답에도 `X-Trace-Id` 헤더가 실린다. 요청 헤더는 숫자 1~18자리일 때만 이어받고, 아니면 무시하고 새로 발급한다.
+- **`@Scheduled`**: Boot가 만드는 `ObservationRegistry`에 `ObservationHandler`를 등록해, 작업을 실행하는 스레드에서 범위가 열릴 때 새 traceId를 넣고 닫힐 때 이전 MDC로 되돌린다.
+- **Spring Batch**: `BeanPostProcessor`가 모든 `AbstractJob`에 `JobExecutionListener`를 붙인다. Batch가 클래스패스에 없는 앱(order 등)에서는 등록되지 않는다.
+- 이 이슈에서 만든 것은 발급과 MDC 설정까지다. `module` 값 채우기, `HTTP_IN` 로그는 만들지 않았다.
+
 ### 5.3 전파
 
 | 경계 | 방식 | 이슈 |
@@ -128,7 +135,7 @@ Snowflake 노드 ID는 `trace.node-id` 설정으로 정한다. 지금은 인스�
 
 | 수집 지점 | 기록 대상 | eventType | 이슈 |
 |---|---|---|---|
-| HTTP 필터 | 요청과 응답 요약 (성공은 10%만 샘플링) | `HTTP_IN` | #376, #378 |
+| HTTP 필터 | 요청과 응답 요약 (성공은 10%만 샘플링) | `HTTP_IN` | #378 (#376의 `TraceFilter`는 traceId만 다룬다) |
 | `RestApiException` 처리 | 잔액 부족, 재고 부족 같은 비즈니스 실패와 에러 코드 | `BUSINESS_FAILURE` | #379 |
 | `ApiControllerAdvice` | 처리되지 않은 예외 (1회만) | `SYSTEM_FAILURE` | #379 |
 | 비동기 리스너 | 리스너 처리 실패 | `SYSTEM_FAILURE` | #379 |
@@ -156,7 +163,7 @@ Hibernate 리스너를 거치지 않는 bulk·native 쿼리(Aspect로 보완해�
   "module": "wallet",
   "eventType": "BUSINESS_FAILURE",
   "step": "WALLET_PAYMENT",
-  "traceId": "7389201745123328",
+  "traceId": "111634463317819397",
   "orderId": 1024,
   "shipmentId": null,
   "outcome": "FAILURE",
