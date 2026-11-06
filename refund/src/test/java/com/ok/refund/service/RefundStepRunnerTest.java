@@ -89,6 +89,40 @@ class RefundStepRunnerTest {
         then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.PRODUCT, "IllegalStateException");
     }
 
+    // 만일을 대비한 경우: 그 자리에서 만든 이름 없는 예외는 짧은 이름이 빈 값이라, 그대로 넘기면 기록이 거부돼 실패가 남지 않는다
+    @Test
+    void 이름_없는_예외면_패키지까지_붙은_이름을_기록한다() {
+        // given
+        RuntimeException failure = new RuntimeException("상대 서버 응답 본문") {
+        };
+
+        // when & then
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
+            throw failure;
+        })).isSameAs(failure);
+        then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.ORDER, failure.getClass().getName());
+    }
+
+    // 칸(failure_code)이 100자라 넘는 이름을 그대로 넘기면 저장이 실패해 기록이 사라진다. 앞 100자만 남는지 본다
+    @Test
+    void 이유가_100자를_넘으면_앞_100자만_기록한다() {
+        // given
+        RuntimeException failure = new 이름이_아주_긴_예외_클래스는_실패_이유_칸의_길이를_넘을_수_있어서_앞부분만_남기는지_확인하려고_일부러_길게_지은_테스트_전용_예외_클래스_이름입니다_조금_더_길게_백자를_넘기도록();
+        String name = failure.getClass().getSimpleName();
+
+        // when & then
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.PRODUCT, () -> {
+            throw failure;
+        })).isSameAs(failure);
+        assertThat(name.length()).isGreaterThan(RefundStepRunner.MAX_FAILURE_CODE_LENGTH);
+        then(refundService).should().recordFailure(REFUND_ID, RefundFailedStep.PRODUCT,
+                name.substring(0, RefundStepRunner.MAX_FAILURE_CODE_LENGTH));
+    }
+
+    private static class 이름이_아주_긴_예외_클래스는_실패_이유_칸의_길이를_넘을_수_있어서_앞부분만_남기는지_확인하려고_일부러_길게_지은_테스트_전용_예외_클래스_이름입니다_조금_더_길게_백자를_넘기도록
+            extends RuntimeException {
+    }
+
     // 기록 실패로 응답을 바꾸면 진짜 원인(다른 모듈 실패)이 가려진다. 원래 예외를 던지고 기록 실패는 거기에 붙어 있어야 한다
     @Test
     void 기록마저_실패하면_원래_예외에_붙여_던진다() {

@@ -19,11 +19,16 @@ import java.util.function.Supplier;
 @RequiredArgsConstructor
 public class RefundStepRunner {
 
+    // refund.failure_code 칸 길이와 같아야 한다(마이그레이션 V202611051722)
+    static final int MAX_FAILURE_CODE_LENGTH = 100;
+
     private final RefundService refundService;
 
     /**
      * 한 단계를 실행해 결과를 돌려준다. 실패하면 단계와 이유를 기록한 뒤 원래 예외를 그대로 던진다.
      * 기록마저 실패하면 기록 실패를 원래 예외에 붙여(suppressed) 원래 예외를 던진다.
+     * {@link Error}(메모리 부족, 무한 호출 등)는 일부러 잡지 않아 기록하지 않는다. JVM이 망가진 상태라 DB 기록도 믿을 수 없고
+     * 기록하려다 상황을 더 나쁘게 만들 수 있어, 그대로 올려 서버 오류로 드러내는 편이 낫다(만일을 대비해 밝혀 둔다).
      *
      * @param call 다른 모듈 호출. 돌려줄 값이 없으면 {@code null}을 돌려준다
      * @throws IllegalStateException 이미 열린 트랜잭션 안에서 부르면 (부르는 쪽 버그). 호출 전에 막는다
@@ -68,6 +73,18 @@ public class RefundStepRunner {
         if (e instanceof RestApiException restApiException) {
             return restApiException.getErrorCode().name();
         }
-        return e.getClass().getSimpleName();
+        String name = e.getClass().getSimpleName();
+        // 만일을 대비한 처리: 그 자리에서 만든 이름 없는 예외(new RuntimeException() { })는 짧은 이름이 빈 값이라,
+        // 그대로 넘기면 Refund.recordFailure가 "이유가 비었다"며 거부해 진짜 실패가 기록되지 않는다. 지금 환불 코드에는 없지만
+        // #413·#414에서 이 틀로 부르는 호출이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
+        if (name.isEmpty()) {
+            name = e.getClass().getName();
+        }
+        // 패키지까지 붙은 이름은 길 수 있다. 칸(failure_code VARCHAR(100))을 넘으면 저장이 실패해 역시 기록이 사라지므로,
+        // 어느 클래스인지 알아볼 수 있는 앞부분만 남긴다
+        if (name.length() > MAX_FAILURE_CODE_LENGTH) {
+            name = name.substring(0, MAX_FAILURE_CODE_LENGTH);
+        }
+        return name;
     }
 }
