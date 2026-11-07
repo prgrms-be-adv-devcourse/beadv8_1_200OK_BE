@@ -3,6 +3,7 @@ package com.ok.refund;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.type;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
@@ -10,6 +11,7 @@ import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
 import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
@@ -186,7 +188,16 @@ class ArchitectureTest {
                             "java.sql..", "javax.sql..", "java.net..", "org.springframework.web..",
                             "org.springframework.data.redis..", "software.amazon.awssdk..")))
             .because("서비스는 포트에만 의존해야 영속, 메시징, 외부 호출 기술을 바꿔도 비즈니스 코드가 바뀌지 않는다. "
-                    + "Page, Pageable(org.springframework.data.domain)은 조회 결과 형식이라 허용한다 (환불 헥사고날 구조, 이슈 #481)");
+                    + "페이징 묶음(org.springframework.data.domain)은 아래 규칙대로 결과 그릇 Page만 허용한다 (환불 헥사고날 구조, 이슈 #481)");
+
+    // 쪽 크기·정렬(PageRequest, Sort)과 요청 그릇(Pageable)은 DB에서 꺼내는 방법이라 영속 어댑터가 정한다(refund/CLAUDE.md 3절).
+    // 서비스·포트는 결과 그릇 Page만 쓴다
+    @ArchTest
+    static final ArchRule application은_페이징_묶음에서_Page만_쓴다 = noClasses()
+            .that().resideInAPackage("..application..")
+            .should().dependOnClassesThat(resideInAPackage("org.springframework.data.domain..")
+                    .and(DescribedPredicate.not(type(Page.class))))
+            .because("쪽 크기와 정렬이 서비스로 새어 들어오지 않게 한다. 결과 그릇 Page만 조회 결과 형식이라 허용한다 (refund/CLAUDE.md 3절)");
 
     @ArchTest
     static final ArchRule domain은_application_adapter와_프레임워크_기술에_의존하지_않는다 = noClasses()
