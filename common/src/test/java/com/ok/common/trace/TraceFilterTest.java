@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import java.time.Clock;
 import java.util.stream.Stream;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -158,6 +159,46 @@ class TraceFilterTest {
     }
 
     @Test
+    void 내부_요청의_형식이_틀린_X_Trace_Id_헤더는_값을_찍지_않고_경고를_남긴다() throws Exception {
+        // given
+        ListAppender<ILoggingEvent> warnings = new ListAppender<>();
+        warnings.start();
+        Logger filterLogger = (Logger) LoggerFactory.getLogger(TraceFilter.class);
+        filterLogger.addAppender(warnings);
+        try {
+            // when
+            mockMvc.perform(get("/internal/open").header("X-Trace-Id", "forged\nabc"));
+
+            // then
+            assertSoftly(softly -> {
+                softly.assertThat(warnings.list).hasSize(1);
+                softly.assertThat(warnings.list.get(0).getLevel()).isEqualTo(Level.WARN);
+                softly.assertThat(warnings.list.get(0).getFormattedMessage()).doesNotContain("forged");
+            });
+        } finally {
+            filterLogger.detachAppender(warnings);
+        }
+    }
+
+    @Test
+    void 내부_요청에_X_Trace_Id_헤더가_없으면_경고를_남기지_않는다() throws Exception {
+        // given
+        ListAppender<ILoggingEvent> warnings = new ListAppender<>();
+        warnings.start();
+        Logger filterLogger = (Logger) LoggerFactory.getLogger(TraceFilter.class);
+        filterLogger.addAppender(warnings);
+        try {
+            // when
+            mockMvc.perform(get("/internal/open"));
+
+            // then
+            assertThat(warnings.list).isEmpty();
+        } finally {
+            filterLogger.detachAppender(warnings);
+        }
+    }
+
+    @Test
     void loopback이_아닌_주소의_내부_요청은_X_Trace_Id_헤더를_무시한다() throws Exception {
         // when
         MvcResult sut = mockMvc.perform(get("/internal/open").header("X-Trace-Id", "123456789012345678")
@@ -183,12 +224,12 @@ class TraceFilterTest {
     }
 
     static Stream<String> 유효하지_않은_헤더_값() {
-        return Stream.of("abc", "12ab", "1234567890123456789", "-1", "1 2", "12\n34", "<script>", "0x10");
+        return Stream.of("abc", "12ab", "1234567890123456789", "-1", "1 2", "12\n34", "<script>", "0x10", "0", "01");
     }
 
     // 발급기가 만들 수 없는 짧은 값과 0으로 시작하는 값도 추적 번호로는 이어받지 않는다. 주문 번호로는 유효하므로 위 목록과 나눈다
     static Stream<String> 유효하지_않은_추적_번호_값() {
-        return Stream.concat(유효하지_않은_헤더_값(), Stream.of("0", "1", "12345678901234", "0123456789012345"));
+        return Stream.concat(유효하지_않은_헤더_값(), Stream.of("1", "12345678901234", "0123456789012345"));
     }
 
     @Test

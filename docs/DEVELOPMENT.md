@@ -879,7 +879,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 | 진입점 | traceId |
 |---|---|
-| HTTP | 서버끼리 부르는 `/internal/` 요청(loopback에서 온 것)에서만 요청 헤더 `X-Trace-Id`가 **0으로 시작하지 않는 숫자 15~18자리**면 이어받고, 아니면(문자, 14자리 이하, 19자리 이상, 빈 값) 무시하고 새로 발급합니다. 공개 API는 헤더를 보내도 항상 새로 발급합니다(외부 호출자가 기존 traceId로 이력을 겹치게 하지 못하도록). 발급한 값이든 이어받은 값이든 응답 헤더 `X-Trace-Id`로 돌려줍니다. 401·403 응답에도 실립니다 |
+| HTTP | 서버끼리 부르는 `/internal/` 요청(loopback에서 온 것)에서만 요청 헤더 `X-Trace-Id`가 **0으로 시작하지 않는 숫자 15~18자리**면 이어받고, 아니면(문자, 14자리 이하, 19자리 이상, 빈 값) 무시하고 새로 발급합니다. 공개 API는 헤더를 보내도 항상 새로 발급합니다(외부 호출자가 기존 traceId로 이력을 겹치게 하지 못하도록). `/internal/` 호출이 보낸 값의 형식이 틀리면 WARN 로그가 남고 새로 발급합니다(값은 찍지 않고 길이만 남깁니다). 발급한 값이든 이어받은 값이든 응답 헤더 `X-Trace-Id`로 돌려줍니다. 401·403 응답에도 실립니다 |
 | `@Scheduled` | 실행할 때마다 새로 발급합니다. 끝나면 실행한 스레드의 MDC를 이전 값으로 되돌립니다 |
 | Spring Batch | Job 실행마다 새로 발급합니다. Job은 호출한 스레드에서 동기로 실행되므로, 끝나면 호출한 쪽의 MDC(예: HTTP 요청의 traceId)로 되돌립니다. Batch가 없는 모듈에서는 등록되지 않습니다 |
 
@@ -889,7 +889,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 |---|---|
 | 비동기 리스너(`@ApplicationModuleListener`) | `MdcTaskDecorator`가 MDC 전체를 복사합니다 |
 | 내부 HTTP | 내부 API 클라이언트(`InternalRestClient`, 상품의 `OrderApiClient`)가 `TraceHeaderInterceptor`로 MDC에 있는 `X-Trace-Id`, `X-Order-Id`, `X-Shipment-Id`만 보냅니다 |
-| `/internal/` 수신 | `TraceFilter`가 헤더로 복원합니다. `X-Order-Id`·`X-Shipment-Id`는 `/internal/` 경로에서, loopback 주소에서 온 요청이고 숫자 1~18자리일 때만 받습니다 |
+| `/internal/` 수신 | `TraceFilter`가 헤더로 복원합니다. `X-Order-Id`·`X-Shipment-Id`는 `/internal/` 경로에서, loopback 주소에서 온 요청이고 0으로 시작하지 않는 숫자 1~18자리일 때만 받습니다 |
 
 새 내부 HTTP 클라이언트를 만들면 `RestClient`에 `TraceHeaderInterceptor`를 붙입니다. Kafka로 넘기는 것은 후속 이슈입니다(#382).
 
