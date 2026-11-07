@@ -169,10 +169,13 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     // 끝난 행(거절·철회)은 다시 처리 중이 될 수 없어 잠그지 않는다. 다만 이번 환불은 끝났어도 넣어야 잠근 뒤 409로 막힌다.
     // 저장소를 따로 테스트하지 않는 규칙(testing-strategy.md)의 예외다. 어떤 행을 잠갔는지는 승인 결과에 드러나지 않아
-    // 서비스 경로로는 끝난 행이 빠졌는지 확인할 수 없고, 잠금 범위가 #411의 핵심 동작이라 쿼리 결과를 직접 본다
+    // 서비스 경로로는 끝난 행이 빠졌는지 확인할 수 없고, 잠금 범위가 #411의 핵심 동작이라 쿼리 결과를 직접 본다.
+    // 잠금 순서(ID 오름차순)도 여기서 본다. 행을 ID 순서대로 넣고 상태까지 같으면 DB가 정렬하지 않아도 우연히 ID 순서로 나와,
+    // order by가 빠져도 이 테스트가 통과한다(#486에서 확인). 그래서 B를 승인해 상태 글자 순서(PROCESSING < REQUESTED)가
+    // ID 순서와 반대가 되게 한다. 판매자 인덱스(seller_id, status, created_at)로 읽으면 정렬 없이는 B가 A보다 먼저 나온다
     @Test
-    void 승인_때_잠글_행은_진행_중_행과_이번_환불뿐이다() {
-        // given: A 요청됨, B 철회 뒤 다시 요청(철회 행 + 요청됨 행), C 철회
+    void 승인_때_잠글_행은_진행_중_행과_이번_환불뿐이고_ID_오름차순이다() {
+        // given: A 요청됨, B 철회 뒤 다시 요청하고 승인(철회 행 + 처리 중 행), C 철회
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 10_000L, 1), new BundleItem(C, 10_000L, 1)));
         orderQueryPort.put(orderItem(A, 10_000L, bundle));
@@ -182,6 +185,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         Long withdrawnB = request(B);
         withdrawRefundUseCase.withdraw(withdrawnB, BUYER_ID);
         Long refundB = request(B);
+        approve(refundB);
         Long withdrawnC = request(C);
         withdrawRefundUseCase.withdraw(withdrawnC, BUYER_ID);
         List<RefundStatus> active = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
@@ -189,7 +193,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         // when
         List<Long> sut = refundPersistencePort.findLockTargetIds(ORDER_ID, SELLER_ID, withdrawnC, active);
 
-        // then: 철회된 B는 빠지고, 철회됐어도 이번 환불인 C는 들어간다. ID 오름차순이다
+        // then: 철회된 B는 빠지고, 철회됐어도 이번 환불인 C는 들어간다. 상태와 상관없이 ID 오름차순이다
         assertThat(sut).containsExactly(refundA, refundB, withdrawnC);
     }
 
