@@ -411,6 +411,35 @@ com.ok.wallet
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
 - 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지를 더 검사).
 
+### member 모듈 구조(헥사고날)
+
+`member`는 연동이 Kafka로 바뀌는 것에 대비해 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮기고 있습니다. 하위 도메인마다 그 아래에 같은 패키지를 둡니다.
+
+> 전환 상태: `seller` 완료(#476). `member`(#477), `auth`(#478)는 아직 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 레이어 구조입니다.
+
+```
+com.ok.member.seller
+├── domain/               엔티티 (SellerApplication, SellerProfile)
+├── exception/            SellerErrorCode
+├── application/
+│   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행
+│   ├── service/          유스케이스 구현 (*Service), 검증기 (*Validator)
+│   └── dto/              *Command, *Query, *Result
+└── adapter/
+    ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
+    ├── out/persistence/  Spring Data JPA 저장소 (*JpaRepository)
+    └── out/event/        스프링 이벤트 발행 구현체
+```
+
+- 의존 방향은 `adapter.in` → `application`(`port.in`, `dto`) → `domain`, `adapter.out` → `application.port.out`, `domain`입니다. 컨트롤러는 `port.in`의 유스케이스 인터페이스만 알고, 서비스는 JPA 저장소를 모르고 `port.out` 인터페이스에만 의존합니다.
+- 저장소 포트(`*Repository`)는 Spring Data `Repository`를 상속하지 않습니다. `adapter/out/persistence`의 Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로입니다.
+- 이벤트 발행은 `port.out`의 발행 인터페이스로 하고, `ApplicationEventPublisher`와 `common.event`의 이벤트 클래스는 `adapter/out/event`의 구현체에서만 씁니다.
+- 다른 하위 도메인은 옮긴 하위 도메인의 `port.in`과 `dto`만 씁니다. 예를 들어 `auth`는 토큰 권한을 정할 때 `SellerApprovalCheckUseCase`로 승인 여부만 확인합니다. 하위 도메인을 다른 서버로 나눌 때 유스케이스 호출만 원격 호출로 바꾸면 됩니다.
+- 포트와 `JpaRepository`가 같은 메서드(`findById`, `saveAndFlush`)를 서로 다른 제네릭 형태로 물려주어, `*JpaRepository` 타입으로 부르면 모호한 호출 오류가 납니다. 이런 메서드는 `*JpaRepository`에서 다시 선언해 하나로 합칩니다.
+- 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다.
+- 이 구조는 `member`의 `ArchitectureTest`에서 `seller_`로 시작하는 규칙이 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, seller 밖에서 `port.in`과 `dto` 외 접근 금지). 아직 옮기지 않은 하위 도메인은 기존 레이어 구조 규칙으로 검사합니다.
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.
