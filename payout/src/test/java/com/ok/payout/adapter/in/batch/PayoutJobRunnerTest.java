@@ -1,15 +1,16 @@
 package com.ok.payout.adapter.in.batch;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.exception.PayoutErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParameters;
-import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
 
 import java.time.Clock;
@@ -19,6 +20,7 @@ import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -63,11 +65,7 @@ class PayoutJobRunnerTest {
 
         // then
         assertThat(actual).isSameAs(expected);
-        JobParameters expectedParams = new JobParametersBuilder()
-                .addLocalDateTime("requestedAt", LocalDateTime.now(CLOCK).plusDays(17))
-                .addString("runType", "SKIP_WAIT", false)
-                .toJobParameters();
-        verify(jobOperator).start(payoutJob, expectedParams);
+        assertStartedWith(LocalDateTime.now(CLOCK).plusDays(PayoutPolicy.SETTLEMENT_WAITING_DAYS + 2), "SKIP_WAIT");
     }
 
     @Test
@@ -80,7 +78,7 @@ class PayoutJobRunnerTest {
         sut.runScheduled();
 
         // then
-        verify(jobOperator).start(payoutJob, paramsOf("SCHEDULED"));
+        assertStartedWith(LocalDateTime.now(CLOCK), "SCHEDULED");
     }
 
     @Test
@@ -93,14 +91,22 @@ class PayoutJobRunnerTest {
         sut.runManual();
 
         // then
-        verify(jobOperator).start(payoutJob, paramsOf("MANUAL"));
+        assertStartedWith(LocalDateTime.now(CLOCK), "MANUAL");
     }
 
-    // 실행 유형은 JobInstance를 가르지 않는 기록용(identifying = false) 파라미터
-    private JobParameters paramsOf(String runType) {
-        return new JobParametersBuilder()
-                .addLocalDateTime("requestedAt", LocalDateTime.now(CLOCK))
-                .addString("runType", runType, false)
-                .toJobParameters();
+    // Spring Batch 6.0.5의 JobParameter.equals는 이름만 비교하므로 verify(start(job, 기대 파라미터))로는 값을 확인할 수 없다.
+    // 그래서 실제로 넘어간 JobParameters를 잡아 값과 identifying 여부를 직접 단언한다.
+    // 실행 유형은 JobInstance를 가르지 않는 기록용(identifying = false), requestedAt은 가르는 키(identifying = true)
+    private void assertStartedWith(LocalDateTime requestedAt, String runType) throws Exception {
+        ArgumentCaptor<JobParameters> captor = ArgumentCaptor.forClass(JobParameters.class);
+        verify(jobOperator).start(eq(payoutJob), captor.capture());
+        JobParameters actual = captor.getValue();
+
+        assertSoftly(softly -> {
+            softly.assertThat(actual.getLocalDateTime("requestedAt")).isEqualTo(requestedAt);
+            softly.assertThat(actual.getString("runType")).isEqualTo(runType);
+            softly.assertThat(actual.getParameter("requestedAt").identifying()).isTrue();
+            softly.assertThat(actual.getParameter("runType").identifying()).isFalse();
+        });
     }
 }

@@ -51,7 +51,11 @@ class PayoutJobParametersValidatorTest {
                 Arguments.of(new JobParametersBuilder().addLocalDateTime("requestedAt", REQUESTED_AT).toJobParameters()),
                 Arguments.of(withRunType("")),
                 Arguments.of(withRunType(" ")),
-                Arguments.of(withRunType("SKIPWAIT"))
+                Arguments.of(withRunType("SKIPWAIT")),
+                // 소문자·앞뒤 공백은 모르는 값이다 (봐주면 PayoutRunType.valueOf에서 터짐)
+                Arguments.of(withRunType("manual")),
+                Arguments.of(withRunType(" MANUAL")),
+                Arguments.of(withRunType("MANUAL "))
         );
     }
 
