@@ -32,7 +32,8 @@ public class PayoutJobRunner {
     private final Clock clock;
 
     // 대기 건너뛰기 실행 허용 여부 (payout.skip-wait-run.enabled, 기본 꺼짐, #485)
-    // monolith는 정산 설정 파일을 읽지 않아 이 값이 없으므로 기본값 false가 적용되어 항상 꺼짐
+    // monolith는 정산 설정 파일을 읽지 않아 이 값이 없으므로 기본값 false가 적용되어 기본은 꺼짐
+    // (단, 같은 이름의 환경 변수 PAYOUT_SKIP_WAIT_RUN_ENABLED가 넘어오면 monolith에서도 켜짐 — 로컬 compose는 .env를 통째로 넘김)
     private final boolean skipWaitRunEnabled;
 
     // @RequiredArgsConstructor 대신 직접 만든 이유: 생성자 파라미터에 @Value를 붙여야 하고,
