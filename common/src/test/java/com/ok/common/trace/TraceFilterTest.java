@@ -137,20 +137,44 @@ class TraceFilterTest {
     }
 
     @Test
-    void 유효한_X_Trace_Id_헤더는_이어받는다() throws Exception {
+    void 공개_경로는_유효한_X_Trace_Id_헤더도_무시하고_새로_발급한다() throws Exception {
         // when
         MvcResult sut = mockMvc.perform(get("/open").header("X-Trace-Id", "123456789012345678")).andReturn();
+
+        // then
+        String header = sut.getResponse().getHeader("X-Trace-Id");
+        assertThat(header).isNotEqualTo("123456789012345678");
+        assertThat(appender.list.get(0).getMDCPropertyMap()).containsEntry("traceId", header);
+    }
+
+    @Test
+    void 내부_경로의_loopback_요청은_유효한_X_Trace_Id_헤더를_이어받는다() throws Exception {
+        // when
+        MvcResult sut = mockMvc.perform(get("/internal/open").header("X-Trace-Id", "123456789012345678")).andReturn();
 
         // then
         assertThat(sut.getResponse().getHeader("X-Trace-Id")).isEqualTo("123456789012345678");
         assertThat(appender.list.get(0).getMDCPropertyMap()).containsEntry("traceId", "123456789012345678");
     }
 
+    @Test
+    void loopback이_아닌_주소의_내부_요청은_X_Trace_Id_헤더를_무시한다() throws Exception {
+        // when
+        MvcResult sut = mockMvc.perform(get("/internal/open").header("X-Trace-Id", "123456789012345678")
+                .with(request -> {
+                    request.setRemoteAddr("10.0.0.5");
+                    return request;
+                })).andReturn();
+
+        // then
+        assertThat(sut.getResponse().getHeader("X-Trace-Id")).isNotEqualTo("123456789012345678");
+    }
+
     @ParameterizedTest
-    @MethodSource("유효하지_않은_헤더_값")
+    @MethodSource("유효하지_않은_추적_번호_값")
     void 유효하지_않은_X_Trace_Id_헤더는_무시하고_새로_발급한다(String incoming) throws Exception {
         // when
-        MvcResult sut = mockMvc.perform(get("/open").header("X-Trace-Id", incoming)).andReturn();
+        MvcResult sut = mockMvc.perform(get("/internal/open").header("X-Trace-Id", incoming)).andReturn();
 
         // then
         String header = sut.getResponse().getHeader("X-Trace-Id");
@@ -159,7 +183,12 @@ class TraceFilterTest {
     }
 
     static Stream<String> 유효하지_않은_헤더_값() {
-        return Stream.of("abc", "12ab", "1234567890123456789", "-1", "1 2", "12\n34", "<script>", "0x10", "0", "1", "12345678901234", "0123456789012345");
+        return Stream.of("abc", "12ab", "1234567890123456789", "-1", "1 2", "12\n34", "<script>", "0x10");
+    }
+
+    // 발급기가 만들 수 없는 짧은 값과 0으로 시작하는 값도 추적 번호로는 이어받지 않는다. 주문 번호로는 유효하므로 위 목록과 나눈다
+    static Stream<String> 유효하지_않은_추적_번호_값() {
+        return Stream.concat(유효하지_않은_헤더_값(), Stream.of("0", "1", "12345678901234", "0123456789012345"));
     }
 
     @Test

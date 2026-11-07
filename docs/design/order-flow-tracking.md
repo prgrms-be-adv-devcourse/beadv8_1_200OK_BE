@@ -104,7 +104,7 @@ flowchart LR
 
 | 진입점 | 동작 |
 |---|---|
-| HTTP | `TraceFilter`: `X-Trace-Id`가 있으면 이어받고 없으면 새로 만든다. 응답 헤더로 돌려준다 |
+| HTTP | `TraceFilter`: 서버끼리 부르는 `/internal/` 요청(loopback에서 온 것)은 `X-Trace-Id`를 이어받고, 그 밖의 요청은 항상 새로 만든다. 응답 헤더로 돌려준다 |
 | `@Scheduled` | 실행할 때마다 새 traceId를 발급한다 |
 | Spring Batch | `JobExecutionListener`로 실행 단위마다 새 traceId를 발급한다 |
 | Kafka 소비 | 메시지 헤더에서 복원한다 (#382) |
@@ -114,7 +114,7 @@ Snowflake 노드 ID는 `trace.node-id` 설정으로 정한다. 지금은 인스�
 
 구현(#376, `com.ok.common.trace`)은 다음과 같다.
 - **traceId**: 41비트 시각(기준 2026-01-01T00:00:00Z) + 10비트 노드 ID + 12비트 시퀀스. 시각은 공용 `Clock` 빈에서 읽는다. 값에서 발급 시각을 역산할 수 있다 (`docs/DEVELOPMENT.md` 12절).
-- **HTTP**: `TraceFilter`가 Spring Security 필터보다 앞(order -200)에 있어 401·403 응답에도 `X-Trace-Id` 헤더가 실린다. 요청 헤더는 0으로 시작하지 않는 숫자 15~18자리일 때만 이어받고, 아니면 무시하고 새로 발급한다.
+- **HTTP**: `TraceFilter`가 Spring Security 필터보다 앞(order -200)에 있어 401·403 응답에도 `X-Trace-Id` 헤더가 실린다. 요청 헤더는 `/internal/`이면서 loopback에서 온 요청에서만, 그중에서도 0으로 시작하지 않는 숫자 15~18자리일 때만 이어받고, 아니면 무시하고 새로 발급한다. 외부 호출자가 이전 요청의 traceId를 보내 `eventKey`(traceId가 구분자)와 겹치게 만드는 것을 막기 위해서다.
 - **`@Scheduled`**: Boot가 만드는 `ObservationRegistry`에 `ObservationHandler`를 등록해, 작업을 실행하는 스레드에서 범위가 열릴 때 새 traceId를 넣고 닫힐 때 이전 MDC로 되돌린다.
 - **Spring Batch**: `BeanPostProcessor`가 모든 `AbstractJob`에 `JobExecutionListener`를 붙인다. Batch가 클래스패스에 없는 앱(order 등)에서는 등록되지 않는다.
 - 이 이슈에서 만든 것은 발급과 MDC 설정까지다. `module` 값 채우기, `HTTP_IN` 로그는 만들지 않았다.
@@ -132,7 +132,7 @@ Snowflake 노드 ID는 `trace.node-id` 설정으로 정한다. 지금은 인스�
 구현(#377)은 다음과 같다.
 - **비동기 리스너**: `AsyncConfig`가 모든 실행기에 `MdcTaskDecorator`를 적용한다. 리스너를 띄우는 스레드의 MDC 전체(traceId, orderId 등)를 그대로 복사하고, 끝나면 실행 스레드의 MDC로 되돌린다.
 - **보내는 쪽**: `TraceHeaderInterceptor`를 주문·환불의 `InternalRestClient`와 상품의 주문 조회 클라이언트(`OrderApiClient`)에 한 줄씩 붙였다. 모듈의 호출 코드는 바꾸지 않는다.
-- **받는 쪽**: 별도 필터를 두지 않고 `TraceFilter`가 복원한다. `X-Trace-Id`는 모든 요청에서 이어받고, `X-Order-Id`·`X-Shipment-Id`는 `/internal/` 경로이면서 loopback 주소에서 온 요청에서만 이어받는다(Security의 `/internal/**` 조건과 같다. 필터가 Security보다 앞이라 막힐 요청의 헤더도 먼저 읽기 때문이다). 공개 API에서 받으면 호출자가 임의의 주문 번호로 로그를 오염시킬 수 있기 때문이다. 형식(숫자 1~18자리)이 틀리면 무시하고, 요청이 끝나면 진입 전 MDC로 되돌린다.
+- **받는 쪽**: 별도 필터를 두지 않고 `TraceFilter`가 복원한다. `X-Trace-Id`, `X-Order-Id`, `X-Shipment-Id`는 모두 `/internal/` 경로이면서 loopback 주소에서 온 요청에서만 이어받는다(Security의 `/internal/**` 조건과 같다. 필터가 Security보다 앞이라 막힐 요청의 헤더도 먼저 읽기 때문이다). 공개 API에서 받으면 호출자가 임의의 주문 번호로 로그를 오염시킬 수 있기 때문이다. 형식(숫자 1~18자리)이 틀리면 무시하고, 요청이 끝나면 진입 전 MDC로 되돌린다.
 - 이어지지 않는 곳: 미완료 이벤트 재발행(호출 스레드가 없다)과 Kafka(#382)는 전파되지 않는다.
 
 ## 6. 수집

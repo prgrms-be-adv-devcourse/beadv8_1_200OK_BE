@@ -14,13 +14,16 @@ import java.util.regex.Pattern;
 /**
  * 요청마다 traceId를 정해 MDC에 넣고 응답 헤더로 돌려준다.
  *
- * <p>요청 헤더 {@code X-Trace-Id}가 0으로 시작하지 않는 숫자 15~18자리면 이어받는다. 발급기가 만드는 값은 기준 시각 6시간 뒤부터 항상 15자리 이상이라, 그보다 짧은 값은 발급기가 만든 값이 아니고 발급 시각 역산도 틀리게 만든다. 18자리 수는 모두 long 안에 들어가므로, 헤더로 임의의 문자나 긴 값을
- * 넣어 로그를 오염시키는 것을 막으면서 long 범위 검사를 따로 하지 않아도 된다. 그 밖의 값(문자, 너무 긴 값)은 무시하고 새로 발급한다.
- * 발급기가 만드는 값은 2033년 중반부터 19자리가 되어, 그 이후 값은 이어받지 못하고 새로 발급된다.
+ * <p>요청 헤더 {@code X-Trace-Id}는 서버끼리 부르는 {@code /internal/} 요청에서만, 그중에서도 Spring Security의 {@code /internal/**}
+ * 접근 조건과 같게 loopback 주소에서 온 요청에서만 이어받는다. 공개 API는 헤더를 보내도 항상 새로 발급한다.
+ * traceId는 flowwatch 이력의 {@code eventKey} 구분자로 쓰이므로, 외부 호출자가 이전 요청의 traceId를 보내 새 사건이 중복으로 버려지게 하는 것을 막기 위해서다.
  *
- * <p>{@code /internal/} 요청은 {@code X-Order-Id}, {@code X-Shipment-Id}도 같은 규칙(숫자 1~18자리)으로 이어받는다.
- * 이 헤더는 서버끼리 부르는 호출에만 믿을 수 있다. 공개 API에서 받으면 호출자가 임의의 주문 번호로 로그를 오염시킬 수 있어,
- * 서버끼리 부르는 {@code /internal/} 경로에서, 그중에서도 Spring Security의 {@code /internal/**} 접근 조건과 같게 loopback 주소에서 온 요청에서만 받는다.
+ * <p>이어받는 값은 0으로 시작하지 않는 숫자 15~18자리여야 한다. 발급기가 만드는 값은 기준 시각 6시간 뒤부터 항상 15자리 이상이라,
+ * 그보다 짧은 값은 발급기가 만든 값이 아니고 발급 시각 역산도 틀리게 만든다. 18자리 수는 모두 long 안에 들어가므로 long 범위 검사를 따로 하지 않아도 된다.
+ * 그 밖의 값은 무시하고 새로 발급한다. 발급기가 만드는 값은 2033년 중반부터 19자리가 되어, 그 이후 값은 이어받지 못하고 새로 발급된다.
+ *
+ * <p>같은 조건({@code /internal/}, loopback)에서 {@code X-Order-Id}, {@code X-Shipment-Id}도 숫자 1~18자리면 이어받는다.
+ * 이 헤더는 서버끼리 부르는 호출에만 믿을 수 있다. 공개 API에서 받으면 호출자가 임의의 주문 번호로 로그를 오염시킬 수 있다.
  */
 public class TraceFilter extends OncePerRequestFilter {
 
@@ -40,13 +43,14 @@ public class TraceFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+        boolean internal = request.getRequestURI().startsWith(INTERNAL_PATH_PREFIX) && isLoopback(request);
         String incoming = request.getHeader(HEADER);
-        String traceId = incoming != null && VALID_TRACE_ID.matcher(incoming).matches() ? incoming : generator.next();
+        String traceId = internal && incoming != null && VALID_TRACE_ID.matcher(incoming).matches() ? incoming : generator.next();
 
         // 본문을 쓰기 시작하면 응답이 커밋되어 헤더를 못 넣으므로 체인을 타기 전에 넣는다
         response.setHeader(HEADER, traceId);
         try (TraceContext.Scope ignored = TraceContext.open(traceId)) {
-            if (request.getRequestURI().startsWith(INTERNAL_PATH_PREFIX) && isLoopback(request)) {
+            if (internal) {
                 restoreKey(request, ORDER_HEADER, TraceContext.ORDER_ID);
                 restoreKey(request, SHIPMENT_HEADER, TraceContext.SHIPMENT_ID);
             }

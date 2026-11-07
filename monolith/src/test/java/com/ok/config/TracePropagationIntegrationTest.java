@@ -98,13 +98,13 @@ class TracePropagationIntegrationTest extends AbstractIntegrationTest {
 
         // when
         client.get().uri("/internal/v1/trace-probe/start")
-                .header("X-Trace-Id", "123456789")
+                .header("X-Trace-Id", "123456789012345")
                 .header("X-Order-Id", "987654321")
                 .retrieve().toBodilessEntity();
 
         // then
         await().atMost(Duration.ofSeconds(10)).until(() -> LISTENER_MDC.get() != null);
-        assertThat(LISTENER_MDC.get()).containsEntry("traceId", "123456789").containsEntry("orderId", "987654321");
-        assertThat(INTERNAL_MDC.get()).containsEntry("traceId", "123456789").containsEntry("orderId", "987654321");
+        assertThat(LISTENER_MDC.get()).containsEntry("traceId", "123456789012345").containsEntry("orderId", "987654321");
+        assertThat(INTERNAL_MDC.get()).containsEntry("traceId", "123456789012345").containsEntry("orderId", "987654321");
     }
 }
