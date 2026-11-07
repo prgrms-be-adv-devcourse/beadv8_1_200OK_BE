@@ -16,7 +16,7 @@ related: [389, 245, 441, 469, 390]
 
 헥사고날 구조에서는 배치 입구가 `domain` 중 `PayoutPolicy`만 쓸 수 있어서, 입구가 정하는 실행 유형 enum을 어디 둘지가 새 문제였다. 같은 문제는 `PayoutPolicy` 예외, `PayoutEventType` 문자열 우회에 이어 세 번째다. 엔티티가 JPA 엔티티 그대로라(#441) 엔티티와 값이 `domain` 한 칸에 있기 때문이다.
 
-범위 밖: monolith에서 스위치 켜기, `PayoutEventType`을 `domain/type`으로 옮기기(관리자 조정 API 검증이 함께 바뀜), 엔티티·도메인 분리(#441 결정).
+범위 밖: monolith에서 스위치 켜기, 엔티티·도메인 분리(#441 결정). `PayoutEventType`은 `domain`에 그대로 둔다. 이 enum이 필요한 입구는 웹(관리자 조정 API)이라 `domain/type`으로 옮겨도 웹은 여전히 문자열로 받아야 해서 달라지는 것이 없다.
 
 ## 결정과 이유
 
