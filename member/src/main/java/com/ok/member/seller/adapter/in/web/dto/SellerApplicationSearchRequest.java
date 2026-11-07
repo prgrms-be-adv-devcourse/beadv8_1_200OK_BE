@@ -10,7 +10,7 @@ import jakarta.validation.constraints.PositiveOrZero;
 @Schema(description = "관리자 판매자 신청 목록 조회 조건")
 public record SellerApplicationSearchRequest(
 
-        // 컨트롤러 계층은 도메인 enum(SellerApplicationStatus)을 쓸 수 없어 허용 값을 문자열로 검사한다.
+        // 입력 어댑터는 도메인 enum(SellerApplicationStatus)을 쓸 수 없어 허용 값을 문자열로 검사한다.
         // 상태를 추가하면 여기도 함께 바꾼다
         @Schema(description = "신청 상태 (PENDING, IN_REVIEW, APPROVED, REJECTED). 생략하면 모든 상태",
                 example = "PENDING", nullable = true)

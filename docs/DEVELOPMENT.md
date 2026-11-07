@@ -434,6 +434,7 @@ com.ok.member.seller
 
 - 의존 방향은 `adapter.in` → `application`(`port.in`, `dto`) → `domain`, `adapter.out` → `application.port.out`, `domain`입니다. 컨트롤러는 `port.in`의 유스케이스 인터페이스만 알고, 서비스는 JPA 저장소를 모르고 `port.out` 인터페이스에만 의존합니다.
 - 저장소 포트(`*Repository`)는 Spring Data `Repository`를 상속하지 않습니다. `adapter/out/persistence`의 Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로입니다.
+- `application`은 JPA와 Spring Data 저장소에 의존하지 않지만, Spring의 `Page`, `Pageable`, `Sort`와 DAO 예외(`DataIntegrityViolationException`, `OptimisticLockingFailureException`)는 씁니다. 영속 기술이 아닌 Spring 추상화라 허용하고, `ArchitectureTest`도 막지 않습니다.
 - 이벤트 발행은 `port.out`의 발행 인터페이스로 하고, `ApplicationEventPublisher`와 `common.event`의 이벤트 클래스는 `adapter/out/event`의 구현체에서만 씁니다.
 - 다른 하위 도메인은 옮긴 하위 도메인의 `port.in`과 `dto`만 씁니다. 예를 들어 `auth`는 토큰 권한을 정할 때 `SellerApprovalCheckUseCase`로 승인 여부만 확인합니다. 하위 도메인을 다른 서버로 나눌 때 유스케이스 호출만 원격 호출로 바꾸면 됩니다.
 - 포트와 `JpaRepository`가 같은 메서드(`findById`, `saveAndFlush`)를 서로 다른 제네릭 형태로 물려주어, `*JpaRepository` 타입으로 부르면 모호한 호출 오류가 납니다. 이런 메서드는 `*JpaRepository`에서 다시 선언해 하나로 합칩니다.

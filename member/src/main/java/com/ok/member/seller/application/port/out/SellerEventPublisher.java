@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
  *
  * <p>회원(member.member)과 판매자는 같은 모듈이지만 역할과 성격이 달라, 판매자 기능이 늘어날 때
  * 회원의 발행 인터페이스가 함께 커지지 않도록 하위 도메인마다 인터페이스를 둔다.
- * 발행 방식(스프링 이벤트, 메시지 브로커 등)은 구현체({@code event} 패키지)가 맡고, 이벤트 클래스는 구현체 안에서만 만들도록 값을 받는다.
+ * 발행 방식(스프링 이벤트, 메시지 브로커 등)은 구현체({@code adapter.out.event} 패키지)가 맡고, 이벤트 클래스는 구현체 안에서만 만들도록 값을 받는다.
  */
 public interface SellerEventPublisher {
 
