@@ -385,6 +385,69 @@ class RefundTest {
         });
     }
 
+    // ID와 생성 시각은 저장해야 생긴다. 저장소가 저장 뒤 채운 새 객체를 돌려주므로(#481) 요청 때는 비어 있어야 한다
+    @Test
+    void 요청은_저장_전이라_ID와_생성_시각이_비어_있다() {
+        // when
+        Refund sut = requested();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getId()).isNull();
+            softly.assertThat(sut.getCreatedAt()).isNull();
+        });
+    }
+
+    // 저장된 값은 요청 때 검사를 거친 값이라 그대로 되살린다. 칸 순서가 뒤바뀌지 않았는지 칸마다 다른 값을 넣어 본다
+    @Test
+    void 복원하면_저장된_칸을_모두_그대로_가진다() {
+        // given
+        LocalDateTime createdAt = LocalDateTime.of(2026, 11, 3, 9, 0);
+
+        // when
+        Refund sut = Refund.restore(7L, 10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, 20_000L, 3_000L, 2_000L, 1_000L,
+                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, RefundFailedStep.ORDER, "ORDER_API_FAILED", 101L,
+                createdAt);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getId()).isEqualTo(7L);
+            softly.assertThat(sut.getOrderId()).isEqualTo(10L);
+            softly.assertThat(sut.getOrderItemId()).isEqualTo(101L);
+            softly.assertThat(sut.getQuantity()).isEqualTo(2);
+            softly.assertThat(sut.getBuyerId()).isEqualTo(1L);
+            softly.assertThat(sut.getSellerId()).isEqualTo(2L);
+            softly.assertThat(sut.getProductOptionId()).isEqualTo(55L);
+            softly.assertThat(sut.getProductName()).isEqualTo("양말");
+            softly.assertThat(sut.getOptionName()).isEqualTo("흰색");
+            softly.assertThat(sut.getUnitPrice()).isEqualTo(10_000L);
+            softly.assertThat(sut.getItemAmount()).isEqualTo(20_000L);
+            softly.assertThat(sut.getShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(sut.getRemoteAreaFeeAmount()).isEqualTo(2_000L);
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isEqualTo(1_000L);
+            softly.assertThat(sut.getCancelReason()).isEqualTo("옵션을 잘못 골랐습니다.");
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(sut.getRejectReason()).isNull();
+            softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
+            softly.assertThat(sut.getCreatedAt()).isEqualTo(createdAt);
+        });
+    }
+
+    // ID와 상태는 DB에서 NOT NULL이라 비었으면 저장된 행이 아니다. 부르는 쪽 버그라 표준 예외로 막는다
+    @Test
+    void ID_없이_복원하면_예외를_던진다() {
+        // when & then
+        assertThatThrownBy(() -> Refund.restore(null, 10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, 20_000L, 0L, 0L, 0L,
+                null, RefundStatus.REQUESTED, null, null, null, null, 101L, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("저장된 환불을 되살리려면 ID와 상태가 필요합니다.");
+    }
+
     private static Refund requested() {
         return Refund.request(10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, null);
     }
