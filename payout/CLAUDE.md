@@ -1,13 +1,14 @@
 # 정산 패키지 구조 (헥사고날)
 
 정산(`payout`) 모듈의 클래스를 만들거나 옮길 때 따르는 규칙이다. `structure.md`의 레이어 패키지(`controller`, `service`, `repository`, `event`)와 발행 인터페이스 위치 규칙 대신 이 파일을 따른다. 역할별 접미사와 모듈 간 규칙은 `structure.md` 그대로다.
-결정과 이유: `docs/decisions/payout/441-payout-hexagonal.md`, `469-payout-arch-test-gaps.md`.
+결정과 이유: `docs/decisions/payout/441-payout-hexagonal.md`, `469-payout-arch-test-gaps.md`, `485-payout-skip-wait-run-type.md`.
 
 ## 패키지
 
 | 패키지 | 두는 것 |
 |---|---|
 | `domain` | 엔티티(JPA 어노테이션 그대로), 정책(`PayoutPolicy`) |
+| `domain/type` | 배치 입구와 엔티티가 같이 쓰는 enum(`PayoutRunType`). enum만 둔다 |
 | `application/port/in` | 입력 포트(`*UseCase`)와 그 값(`*Command`, `*Query`, `*Result`) |
 | `application/port/out` | 출력 포트(`*Repository`, `*QueryRepository`, 발행 인터페이스)와 그 값(`*Row`, 발행 값 `SellerPayoutCreated`) |
 | `application/service` | 유스케이스 구현(`*Service`), 검증기, 조회 결과 변환(`PayoutQueryResultMapper`) |
@@ -29,7 +30,8 @@
 - `adapter.in` → `application.port.in` → `application.service` → `application.port.out` ← `adapter.out`. 서비스는 JPA 저장소, JDBC, Kafka, Spring Batch를 모른다.
 - `port.in`은 `port.out`을 모른다. 조회 Row → Result 변환은 서비스(`PayoutQueryResultMapper`)가 한다.
 - 컨트롤러와 리스너는 `port.in`만 안다. 서비스 구현체, `port.out`, `domain`을 직접 쓰지 않는다.
-- 배치를 뺀 입구(web, event)는 배치 중 `PayoutJobRunner`만 쓴다. 배치는 `domain` 중 `PayoutPolicy`만 쓴다.
+- 배치를 뺀 입구(web, event)는 배치 중 `PayoutJobRunner`만 쓴다. 배치는 `domain` 중 `PayoutPolicy`와 `domain/type`만 쓴다.
+- `domain/type`에는 enum만 두고, 정산의 다른 패키지와 JPA·Spring을 모른다. 웹·이벤트 입구는 `domain/type`도 쓰지 않는다(`api.md`: 컨트롤러는 domain 타입을 쓰지 않음).
 - `com.ok` 중 `payout`과 `common`만 안다.
 - `common.event`의 이벤트 클래스는 `adapter/in/event`, `adapter/out/event`에서만 쓴다.
 - 발행 도구(`ApplicationEventPublisher`, `KafkaOperations`)는 `adapter/out/event`에서만 쓴다.

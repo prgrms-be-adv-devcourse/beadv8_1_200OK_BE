@@ -49,7 +49,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 /**
  * 정산 모듈의 헥사고날 구조(이슈 #441)를 검사한다.
  * <ul>
- *   <li>{@code domain}: 엔티티와 정책. 바깥 레이어와 저장소·메시징·배치·웹 기술을 모른다 (엔티티라 JPA·Hibernate 애노테이션은 쓴다).</li>
+ *   <li>{@code domain}: 엔티티와 정책, {@code domain.type}(배치 입구와 엔티티가 같이 쓰는 enum). 바깥 레이어와 저장소·메시징·배치·웹 기술을 모른다 (엔티티라 JPA·Hibernate 애노테이션은 쓴다).</li>
  *   <li>{@code application}: {@code port.in}(유스케이스와 그 입출력 값 Command·Query·Result), {@code port.out}(저장소·발행 포트와 그 값 Row·발행 값), {@code service}(유스케이스 구현).</li>
  *   <li>{@code adapter.in}: {@code web}(컨트롤러), {@code event}(Spring·Kafka 리스너), {@code batch}(잡 설정·실행기·스케줄러).</li>
  *   <li>{@code adapter.out}: {@code persistence}(JPA·QueryDSL 구현), {@code event}(Kafka 발행 구현).</li>
@@ -60,10 +60,10 @@ class ArchitectureTest {
 
     // 레이어
 
-    // 배치 어댑터(PayoutJobConfig, PayoutJobRunner)는 domain.PayoutPolicy 상수를 쓰므로 AdapterIn -> Domain을 허용한다.
+    // 배치 어댑터(PayoutJobConfig, PayoutJobRunner)는 domain.PayoutPolicy 상수와 domain.type enum을 쓰므로 AdapterIn -> Domain을 허용한다.
     // 컨트롤러 -> PayoutJobRunner는 같은 AdapterIn 안이라 이 규칙이 보지 않는다 (승인된 설계).
     // 배치가 아닌 입구(web·event)가 배치 중 무엇을 쓸 수 있는지는 아래 `배치를_뺀_입구는_배치_중_PayoutJobRunner만_안다`가 좁힌다.
-    // 입구가 domain을 어디까지 쓸 수 있는지는 아래 별도 규칙이 좁힌다 (web·event는 금지, batch는 PayoutPolicy만)
+    // 입구가 domain을 어디까지 쓸 수 있는지는 아래 별도 규칙이 좁힌다 (web·event는 금지, batch는 PayoutPolicy와 domain.type만)
     @ArchTest
     static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
@@ -124,17 +124,31 @@ class ArchitectureTest {
                     "com.ok.payout.adapter.out..", "com.ok.payout.domain..")
             .because("컨트롤러와 리스너는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (정산 헥사고날 구조, 이슈 #441)");
 
-    // 배치는 domain 중 정산 정책 상수(PayoutPolicy)만 쓸 수 있다: 한 번에 처리할 판매자 수(PayoutJobConfig), 대기 일수(PayoutJobRunner)
-    // 엔티티 등 나머지 domain 타입은 웹·이벤트 입구처럼 입력 포트를 거쳐야 한다
+    // 배치는 domain 중 정산 정책 상수(PayoutPolicy)와 domain.type의 enum(PayoutRunType)만 쓸 수 있다: 한 번에 처리할 판매자 수(PayoutJobConfig), 대기 일수(PayoutJobRunner), 실행 유형(#485)
+    // 엔티티 등 나머지 domain 타입은 웹·이벤트 입구처럼 입력 포트를 거쳐야 한다. 웹·이벤트 입구는 domain.type도 쓰지 못한다(위 규칙, api.md)
     @ArchTest
-    static final ArchRule 배치_어댑터는_정책_상수_외_domain과_서비스_출력_포트를_모른다 = noClasses()
+    static final ArchRule 배치_어댑터는_정책_상수와_domain_type_외_domain과_서비스_출력_포트를_모른다 = noClasses()
             .that().resideInAPackage("..adapter.in.batch..")
             .should().dependOnClassesThat(
                     resideInAnyPackage("com.ok.payout.application.service..", "com.ok.payout.application.port.out..",
                             "com.ok.payout.adapter.out..")
-                            .or(resideInAPackage("com.ok.payout.domain..").and(not(equivalentTo(PayoutPolicy.class)))))
+                            .or(resideInAPackage("com.ok.payout.domain..")
+                                    .and(not(equivalentTo(PayoutPolicy.class)))
+                                    .and(not(resideInAPackage("com.ok.payout.domain.type..")))))
             .because("배치 시작기와 Tasklet도 입력 포트로만 비즈니스를 호출해야 구현이 바뀌어도 배치 코드가 바뀌지 않는다. "
-                    + "배치 크기·대기 일수 같은 정책 상수만 직접 쓴다 (정산 헥사고날 구조, 이슈 #441)");
+                    + "배치 크기·대기 일수 같은 정책 상수와, 실행 유형 같은 enum(domain.type)만 직접 쓴다 (정산 헥사고날 구조, 이슈 #441, #485)");
+
+    // domain.type은 배치 입구가 domain 중 유일하게 쓸 수 있는 칸이다. 여기에 일반 클래스나 다른 패키지에 기대는 코드가 들어오면
+    // 배치가 엔티티·서비스에 닿는 통로가 되므로, enum만 두고 정산의 다른 패키지·JPA·Spring을 모르게 한다 (#469의 "목록 밖 패키지로 우회" 교훈)
+    @ArchTest
+    static final ArchRule domain_type에는_enum만_있고_정산의_다른_패키지를_모른다 = classes()
+            .that().resideInAPackage("com.ok.payout.domain.type..")
+            .should().beEnums()
+            .andShould().onlyDependOnClassesThat(not(
+                    resideInAPackage("com.ok.payout..").and(not(resideInAPackage("com.ok.payout.domain.type..")))
+                            .or(resideInAnyPackage("jakarta.persistence..", "org.hibernate..", "org.springframework.."))))
+            .because("domain.type은 배치 입구가 쓸 수 있는 유일한 domain 하위 칸이다. enum 외 클래스나 다른 패키지·JPA·Spring 의존이 들어오면 "
+                    + "입구 규칙을 우회하는 통로가 된다 (정산 헥사고날 구조, 이슈 #469, #485)");
 
     // 배치를 뺀 입구는 배치의 시작 버튼(PayoutJobRunner)만 누른다. 잡 설정·Tasklet 같은 배치 내부는 알지 못하게 한다 (ADR 441 "관리자 실행 API").
     // 웹만 대상으로 하면 web → event → batch처럼 다른 입구가 다리가 되어 우회하므로 batch를 뺀 모든 입구를 대상으로 한다 (이슈 #469)

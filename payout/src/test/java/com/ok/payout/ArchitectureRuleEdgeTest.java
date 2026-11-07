@@ -8,8 +8,10 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.EvaluationResult;
 
+import com.ok.payout.adapter.in.batch.EdgeFakeBatchRunType;
 import com.ok.payout.adapter.in.event.EdgeFakeEventBatchUser;
 import com.ok.payout.adapter.in.shared.EdgeFakeBridge;
+import com.ok.payout.adapter.in.web.EdgeFakeWebRunType;
 import com.ok.payout.adapter.in.web.EdgeFakeWebScheduler;
 import com.ok.payout.adapter.out.EdgeFakeRelayUser;
 import com.ok.payout.adapter.out.shared.EdgeFakeOutShared;
@@ -17,6 +19,9 @@ import com.ok.payout.adapter.shared.EdgeFakeSharedAdapter;
 import com.ok.payout.application.port.in.EdgeFakeInPortResult;
 import com.ok.payout.application.port.shared.EdgeFakePortShared;
 import com.ok.payout.application.support.EdgeFakeSupportHelper;
+import com.ok.payout.domain.type.EdgeFakeTypeClass;
+import com.ok.payout.domain.type.EdgeFakeTypeEnumUser;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.relay.EdgeFakeRelayPublisher;
 
 /**
@@ -122,6 +127,56 @@ class ArchitectureRuleEdgeTest {
 
         // then
         assertViolationMentions(sut, EdgeFakeInPortResult.class);
+    }
+
+    @Test
+    void domain_type에_enum이_아닌_클래스나_다른_패키지를_쓰는_enum을_두면_실패한다() {
+        // given: 규칙이 빈 입력으로 조용히 통과하지 않도록 정상 enum(PayoutRunType)도 함께 넣는다
+        JavaClasses classes = new ClassFileImporter().importClasses(
+                PayoutRunType.class, EdgeFakeTypeClass.class, EdgeFakeTypeEnumUser.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.domain_type에는_enum만_있고_정산의_다른_패키지를_모른다.evaluate(classes);
+
+        // then
+        assertViolationMentions(sut, EdgeFakeTypeClass.class, EdgeFakeTypeEnumUser.class);
+        assertThat(String.join("\n", sut.getFailureReport().getDetails())).doesNotContain(PayoutRunType.class.getName());
+    }
+
+    @Test
+    void 정상_enum만_있으면_domain_type_규칙은_통과한다() {
+        // given
+        JavaClasses classes = new ClassFileImporter().importClasses(PayoutRunType.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.domain_type에는_enum만_있고_정산의_다른_패키지를_모른다.evaluate(classes);
+
+        // then
+        assertThat(sut.hasViolation()).isFalse();
+    }
+
+    @Test
+    void 웹이_domain_type을_쓰면_입구_규칙이_실패한다() {
+        // given
+        JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeWebRunType.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.배치를_뺀_입구는_입력_포트만_안다.evaluate(classes);
+
+        // then
+        assertViolationMentions(sut, EdgeFakeWebRunType.class);
+    }
+
+    @Test
+    void 배치가_domain_type을_쓰는_것은_배치_규칙이_허용한다() {
+        // given
+        JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeBatchRunType.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.배치_어댑터는_정책_상수와_domain_type_외_domain과_서비스_출력_포트를_모른다.evaluate(classes);
+
+        // then
+        assertThat(sut.hasViolation()).isFalse();
     }
 
     // 위반이 있고, 그 보고서에 가짜 클래스 이름이 있어야 한다 (다른 이유로 실패한 것과 구분)
