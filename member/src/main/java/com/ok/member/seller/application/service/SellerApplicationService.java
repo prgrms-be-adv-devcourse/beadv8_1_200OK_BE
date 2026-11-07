@@ -1,11 +1,6 @@
 package com.ok.member.seller.application.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.member.seller.domain.SellerApplication;
-import com.ok.member.seller.domain.SellerApplicationStatus;
-import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.application.port.out.SellerApplicationRepository;
-import com.ok.member.seller.application.port.out.SellerEventPublisher;
 import com.ok.member.seller.application.dto.SellerApplicationAdminResult;
 import com.ok.member.seller.application.dto.SellerApplicationRejectCommand;
 import com.ok.member.seller.application.dto.SellerApplicationResult;
@@ -13,6 +8,11 @@ import com.ok.member.seller.application.dto.SellerApplicationSearchQuery;
 import com.ok.member.seller.application.dto.SellerApplyCommand;
 import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
+import com.ok.member.seller.application.port.out.SellerApplicationRepository;
+import com.ok.member.seller.application.port.out.SellerEventPublisher;
+import com.ok.member.seller.domain.SellerApplication;
+import com.ok.member.seller.domain.SellerApplicationStatus;
+import com.ok.member.seller.exception.SellerErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
