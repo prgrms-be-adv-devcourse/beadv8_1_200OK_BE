@@ -93,3 +93,9 @@ management:
 logging:
   level:
     com.ok: ${LOG_LEVEL_OK:INFO}
+payout:
+  skip-wait-run:
+    # 대기 건너뛰기 실행(POST /api/v1/admin/payouts/run/skip-wait) 스위치. 기본 꺼짐이고, 꺼져 있으면 409로 거절한다
+    # 발표·연동 테스트 때만 정산을 단독으로 띄우고 환경 변수 PAYOUT_SKIP_WAIT_RUN_ENABLED=true로 켠다.
+    # monolith는 이 파일을 읽지 않아 항상 꺼져 있다 (#485)
+    enabled: ${PAYOUT_SKIP_WAIT_RUN_ENABLED:false}
