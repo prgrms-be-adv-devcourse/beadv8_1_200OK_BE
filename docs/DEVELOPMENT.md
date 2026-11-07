@@ -207,6 +207,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
 | `spring.data.redis.*` | `${REDIS_HOST:localhost}`, `${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
+| `trace.node-id` | `0` | traceId(Snowflake)에 들어가는 노드 번호(0~1023). 설정이 없으면 0이고, 범위를 벗어나면 기동이 실패합니다. 서버(인스턴스)를 둘 이상 띄울 때 서버마다 다르게 지정합니다. 자세한 내용은 [12. 추적](#12-추적-traceid) |
 | `app.async.*` | `default-executor`, `executors.<이름>.*` | 비동기 실행기(가상 스레드)의 설정. `event` 실행기의 값은 `common`의 `common-async.yaml` 한 곳에 있고, 모듈이 쓰는 실행기는 이름을 붙여 추가합니다. 자세한 내용은 [11. 비동기 처리](#11-비동기-처리-이벤트-리스너와-async) |
 | `jwt.verification-keys` | `file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem` | 검증용 공개키. 저장소 루트의 `keys/`에서 읽습니다. member는 서명용 개인키 `jwt.signing`(`keys/rs256-v1-private.pem`)도 둡니다. 파일이 없으면 기동이 실패합니다(테스트는 `application-test.yml`의 테스트 키를 씁니다). 자세한 내용은 [키 관리와 교체](#키-관리와-교체) |
 | `jwt.issuer`, `audience`, `*-expiration` | 고정값 | 토큰 발급·검증 기준. 모듈마다 같은 값이어야 서로의 토큰을 검증할 수 있습니다 |
@@ -868,4 +869,48 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 - **같은 클래스 안에서 `@Async` 메서드를 부르면 비동기가 되지 않습니다.** 프록시를 거치지 않아 오류 없이 동기로 실행됩니다. 다른 빈에서 호출합니다.
 - **리스너는 처리 순서가 보장되지 않고, 같은 이벤트를 두 번 받을 수 있습니다.** 재시작 때 미완료 이벤트가 재발행되기 때문에 같은 이벤트를 여러 번 처리해도 결과가 같아야 합니다.
 - **비동기 작업의 예외는 호출한 쪽으로 전달되지 않습니다.** `[ASYNC_LISTENER_FAILED]` 로그로 남고, 이벤트는 미완료로 남습니다.
-- **MDC는 있는 값을 그대로 복사합니다**(`MdcTaskDecorator`). MDC에 값을 넣는 TraceID 필터와 로그 패턴은 아직 없어서 지금은 복사할 값이 없고, 재발행이나 Kafka 경계에서는 전달되지 않습니다. `SecurityContext`는 전달하지 않습니다.
+- **MDC는 있는 값을 그대로 복사합니다**(`MdcTaskDecorator`). traceId는 [12. 추적](#12-추적-traceid)의 필터·스케줄러·배치가 MDC에 넣지만 로그 패턴에는 아직 찍히지 않고, 재발행이나 Kafka 경계에서는 전달되지 않습니다. `SecurityContext`는 전달하지 않습니다.
+
+## 12. 추적 (traceId)
+
+로그 한 줄이 어느 요청이나 실행에서 나왔는지 잇기 위해, 진입점마다 traceId를 정해 로그의 MDC(`traceId` 키)에 넣습니다. 구현은 `common`의 [`com.ok.common.trace`](../common/src/main/java/com/ok/common/trace) 패키지이고, 전체 설계는 [`design/order-flow-tracking.md`](design/order-flow-tracking.md)에 있습니다. 이 단계는 traceId를 발급해 MDC에 넣는 데까지이고, 로그 패턴과 JSON 출력은 포함하지 않습니다.
+
+### 진입점별 동작
+
+| 진입점 | traceId |
+|---|---|
+| HTTP | 요청 헤더 `X-Trace-Id`가 **0으로 시작하지 않는 숫자 15~18자리**면 이어받고, 아니면(문자, 14자리 이하, 19자리 이상, 빈 값) 무시하고 새로 발급합니다. 발급한 값이든 이어받은 값이든 응답 헤더 `X-Trace-Id`로 돌려줍니다. 401·403 응답에도 실립니다 |
+| `@Scheduled` | 실행할 때마다 새로 발급합니다. 끝나면 실행한 스레드의 MDC를 이전 값으로 되돌립니다 |
+| Spring Batch | Job 실행마다 새로 발급합니다. Job은 호출한 스레드에서 동기로 실행되므로, 끝나면 호출한 쪽의 MDC(예: HTTP 요청의 traceId)로 되돌립니다. Batch가 없는 모듈에서는 등록되지 않습니다 |
+
+비동기 리스너, 내부 HTTP, Kafka로 traceId를 넘기는 것은 후속 이슈입니다(#377 등).
+
+### traceId 해석
+
+traceId는 10진수 long이고, 비트 구성은 다음과 같습니다.
+
+| 비트 | 내용 |
+|---|---|
+| 상위 41 | 발급 시각. 2026-01-01T00:00:00Z(`1767225600000`)부터 지난 ms |
+| 다음 10 | 노드 번호(`trace.node-id`) |
+| 하위 12 | 같은 ms 안의 순번(0~4095). 다 쓰면 다음 ms까지 기다립니다 |
+
+값이 클수록 나중에 발급된 것입니다. 발급 시각은 값에서 역산합니다.
+
+```sql
+-- 예: traceId 111634463317819397 -> 2026-11-05 10:15:30.123 (KST), 노드 0, 순번 5
+SELECT FROM_UNIXTIME(((111634463317819397 >> 22) + 1767225600000) / 1000) AS issued_at,
+       (111634463317819397 >> 12) & 1023 AS node_id,
+       111634463317819397 & 4095 AS sequence;
+```
+
+- 역산한 시각은 절대 시각이고, `FROM_UNIXTIME`은 DB 세션 시간대로 보여 줍니다. 위 예의 KST는 세션이 `Asia/Seoul`일 때입니다.
+- 서버 시계가 뒤로 가면(NTP 보정 등) 예외 없이 마지막 발급 시각을 유지하며 계속 발급합니다. 이때 값의 시각이 실제와 조금 다를 수 있습니다.
+- 값이 2033년 중반부터 19자리가 됩니다. 요청 헤더로 이어받는 규칙은 18자리까지라서, 그 이후 발급된 값은 `X-Trace-Id`로 보내도 새로 발급됩니다.
+- 서버를 둘 이상 띄우면 `trace.node-id`를 서버마다 다르게 정합니다(예: 환경변수 `TRACE_NODE_ID=1`). 같은 값이면 서로 다른 서버가 같은 ms에 만든 traceId가 겹칠 수 있습니다. 지금은 인스턴스가 하나라 기본값 0을 씁니다. 설정하지 않으면 기동할 때 경고 로그가 남습니다.
+- `@Scheduled` 추적은 `ObservationRegistry`로 동작합니다. `management.observations`로 관찰을 끄면 스케줄러 로그에 traceId가 없을 수 있습니다.
+
+### 코드에서 쓰기
+
+- 추적 키(`traceId`, `orderId`, `shipmentId`, `module`, `step`, `eventType`)의 MDC 이름은 [`TraceContext`](../common/src/main/java/com/ok/common/trace/TraceContext.java)의 상수입니다. 현재 값이 채워지는 것은 `traceId`뿐이고, 나머지는 `bindOrderId`, `bindShipmentId`로 범위 안에서 붙일 수 있습니다.
+- 새 진입점이 직접 범위를 열어야 하면 `try (TraceContext.Scope scope = TraceContext.open(traceId)) { ... }`로 씁니다. 닫으면 진입 전 MDC 전체로 되돌립니다.
