@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 정산 조회 전용 저장소 출력 포트. 구현은 {@code adapter.out.persistence}에 있다.
@@ -104,4 +105,8 @@ public interface PayoutQueryRepository {
     // 수수료는 판매자 정산이 아니라 같은 스냅샷의 시스템 몫 정산에 모든 판매자 것이 섞여 들어가므로 sellerId로 골라냄
     //   예) 시스템 몫 정산 14의 수수료 300(판매자 7) + 600(판매자 9) → 판매자 7이면 (1건, 300원)
     CountAndAmount summarizeSellerFeeItems(Long systemPayoutId, Long sellerId);
+
+    // 마지막 "정기(SCHEDULED) 실행이 COMPLETED이고 정산을 1건 이상 만든" 배치 실행의 requestedAt (#390)
+    // 정산 조회 하한을 정할 때 쓴다. 조건에 맞는 실행이 없으면 빈 값
+    Optional<LocalDateTime> findLastCompletedScheduledRequestedAt();
 }

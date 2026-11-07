@@ -85,17 +85,28 @@ public class PayoutService implements PayoutUseCase {
         return runDate.minusDays(PayoutPolicy.SETTLEMENT_WAITING_DAYS).atStartOfDay();
     }
 
-    // 조회 하한: 마지막 정산일 − (대기 일수 + 여유 일수) 00:00, 정산이 없으면 null(하한 없음)
-    // 마지막 정산일 기준이라 배치가 밀리면 하한도 그만큼 과거로 내려가 밀린 후보까지 조회됨
+    // 조회 하한: 기준일 − (대기 일수 + 여유 일수) 00:00, 기준일이 없으면 null(하한 없음)
+    // 기준일 = 정산을 1건 이상 만든 마지막 정기(SCHEDULED) 완료 실행의 요청일
+    //  - 수동(MANUAL) 실행은 제외: 임의로 돌린 실행이 하한을 움직이지 않게 함
+    //  - 대기 건너뛰기(SKIP_WAIT)는 제외: 요청일이 +17일 미래라 하한이 앞으로 튐
+    //  - 정산 0건 실행은 제외: 정산이 만들어졌을 때만 하한이 움직이게 함
+    //  - 요청일은 settlementTo가 상한을 계산하는 기준과 같아서, 하한 = 지난 상한 − 여유 일수가 됨
+    // 정기 실행 기록이 없으면(배치 기록 삭제 등) 마지막 정산 생성일로 대체함. 없애 버리면 하한이 통째로 사라지기 때문
+    // 기준이 마지막 실행이라 배치가 밀리면 하한도 그만큼 과거로 내려가 밀린 후보까지 조회됨
     @Override
     public LocalDateTime settlementFrom() {
-        LocalDateTime last = payoutRepository.findFirstByOrderByIdDesc()
-                .map(Payout::getCreatedAt)
-                .orElse(null);
-        if (last == null) {
-            return null;
+        LocalDate baseDate;
+        Optional<LocalDateTime> lastScheduledRequestedAt = payoutQueryRepository.findLastCompletedScheduledRequestedAt();
+        if (lastScheduledRequestedAt.isPresent()) {
+            baseDate = lastScheduledRequestedAt.get().toLocalDate();
+        } else {
+            Optional<Payout> lastPayout = payoutRepository.findFirstByOrderByIdDesc();
+            if (lastPayout.isEmpty()) {
+                return null;
+            }
+            baseDate = lastPayout.get().getCreatedAt().toLocalDate();
         }
-        return last.toLocalDate()
+        return baseDate
                 .minusDays(PayoutPolicy.SETTLEMENT_WAITING_DAYS + PayoutPolicy.SETTLEMENT_LOOKBACK_MARGIN_DAYS)
                 .atStartOfDay();
     }

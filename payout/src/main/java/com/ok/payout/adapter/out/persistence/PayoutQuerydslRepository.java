@@ -1,5 +1,6 @@
 package com.ok.payout.adapter.out.persistence;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
@@ -21,6 +22,7 @@ import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.JPQLSubQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -33,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
@@ -52,6 +55,35 @@ import static com.ok.payout.domain.QPayoutWalletDeduction.payoutWalletDeduction;
 public class PayoutQuerydslRepository implements PayoutQueryRepository {
 
     private final JPAQueryFactory queryFactory;
+    private final EntityManager entityManager;
+
+    // 마지막 "정기 실행이 COMPLETED이고 정산을 만든" 배치 실행의 requestedAt (#390)
+    // 네이티브 SQL인 이유: Spring Batch 메타 테이블(BATCH_JOB_EXECUTION 등)은 JPA 엔티티가 아니라 Querydsl로 볼 수 없음
+    //   BATCH 테이블도 정산 스키마에 있어 이름을 붙임: monolith는 spring.batch.jdbc.table-prefix가 paldogotgan_payout.BATCH_라 기본 DB와 다르고, 단독 실행 기본 DB에서도 같은 위치임
+    // run_type = SCHEDULED만 보는 이유: 대기 건너뛰기(SKIP_WAIT)의 requestedAt은 +17일 미래 값이라 하한이 되면 안 되고,
+    //   관리자 실행(MANUAL)은 임시 실행이 하한을 옮기지 않게 하려는 결정으로 뺌
+    // EXISTS payout인 이유: 정산을 하나도 못 만든 실행은 하한을 옮기지 않는다는 기존 규칙("정산이 만들어졌을 때만 하한 이동")을 지키려는 것
+    // 최신 판단은 requestedAt 값이 아니라 실행 ID(큰 쪽)로 함. 실행 ID는 항상 증가해 정렬이 안정적임
+    // PARAMETER_VALUE는 Spring Batch가 LocalDateTime을 ISO_LOCAL_DATE_TIME 글자(예: 2026-11-10T02:00:00)로 저장한 것
+    @Override
+    public Optional<LocalDateTime> findLastCompletedScheduledRequestedAt() {
+        List<?> rows = entityManager.createNativeQuery(
+                        "SELECT p.PARAMETER_VALUE "
+                                + "FROM " + PayoutSchema.NAME + ".payout_snapshot s "
+                                + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
+                                + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION_PARAMS p ON p.JOB_EXECUTION_ID = e.JOB_EXECUTION_ID "
+                                + "WHERE p.PARAMETER_NAME = 'requestedAt' "
+                                + "AND e.STATUS = 'COMPLETED' "
+                                + "AND s.run_type = 'SCHEDULED' "
+                                + "AND EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout po WHERE po.snapshot_id = s.id) "
+                                + "ORDER BY e.JOB_EXECUTION_ID DESC "
+                                + "LIMIT 1")
+                .getResultList();
+        if (rows.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(LocalDateTime.parse((String) rows.get(0)));
+    }
 
     // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
     @Override
