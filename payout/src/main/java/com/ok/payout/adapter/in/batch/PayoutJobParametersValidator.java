@@ -9,8 +9,12 @@ import org.springframework.batch.core.job.parameters.JobParametersValidator;
 import java.time.LocalDateTime;
 
 // 정산 Job을 시작하기 전에 필수 파라미터(requestedAt, runType)를 확인함 (#485)
-// Job에 붙인 검사기는 JobExecution을 만들기 전에 돌아서, 잘못된 실행이 FAILED 정산 기록(스냅샷, 실행 기록)으로 남지 않음
-// 예) 앱 시작 시 자동 실행처럼 파라미터 없이 시작된 경우 → 실행 기록 없이 바로 예외
+// Job에 붙인 검사기는 JobExecution을 만들기 전에 돌아서, 잘못된 실행이 JobExecution·스냅샷·FAILED 정산 기록으로 남지 않음
+// 다만 Spring Batch 6.0.5는 검사기보다 JobInstance를 먼저 만들어서, 빈 JobInstance(실행 기록 없음)는 남을 수 있음
+//   → 같은 식별 파라미터로 restart하면 "Cannot find any job execution"(IllegalStateException)으로 더 일찍 실패함
+// 정상 경로는 영향이 없음: PayoutJobRunner가 항상 새 requestedAt을 넣어 매번 새 JobInstance로 시작함
+// 예) 앱 시작 시 자동 실행처럼 파라미터 없이 시작된 경우 → 예외로 실패함. 운영은 spring.batch.job.enabled=false(#245)라
+//     자동 실행이 꺼져 있어 앱 시작이 이 예외로 실패하지 않음 (켜져 있다면 앱 시작이 실패함)
 // 던지는 예외는 표준 예외가 아닌 RestApiException(PayoutErrorCode): 정산 배치 경로의 예외는 정산 에러 코드를 씀 (exception.md)
 // 검사기가 던지는 예외는 Spring Batch가 감싸지 않고 그대로 호출자(JobOperator.start)에게 전달됨 (통합 테스트로 확인)
 public class PayoutJobParametersValidator implements JobParametersValidator {

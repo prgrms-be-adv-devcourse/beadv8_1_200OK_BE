@@ -25,6 +25,7 @@ import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSystemDraftItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.in.batch.PayoutJobScheduler;
 import com.ok.payout.application.service.PayoutService;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -88,6 +89,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutJobRunner payoutJobRunner;
+
+    @Autowired
+    private PayoutJobScheduler payoutJobScheduler;
 
     @Autowired
     private JobOperator jobOperator;
@@ -892,6 +896,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_PAYOUT_RUN_TYPE));
 
+        // then: 실행 기록·스냅샷·정산이 하나도 늘지 않음
         assertSoftly(softly -> {
             softly.assertThat(payoutJobExecutionCount()).isEqualTo(executionsBefore);
             softly.assertThat(snapshotRepository.findAll()).isEmpty();
@@ -1380,6 +1385,20 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(10L, 1_000L));
     }
 
+    // 새벽 정기 스케줄러 입구(PayoutJobScheduler.runDaily)가 SCHEDULED로 시작하는지 본다 (러너가 아니라 스케줄러 빈을 직접 호출)
+    @Test
+    void 스케줄러가_실행하면_실행_유형이_SCHEDULED인_스냅샷이_남는다() throws Exception {
+        // given: 후보 없이도 스냅샷은 만들어짐 (테스트마다 DB를 비우므로 스냅샷은 이 실행의 1건뿐)
+
+        // when
+        payoutJobScheduler.runDaily();
+
+        // then
+        List<PayoutSnapshot> sut = snapshotRepository.findAll();
+        assertThat(sut).hasSize(1);
+        assertThat(sut.get(0).getRunType()).isEqualTo(PayoutRunType.SCHEDULED);
+    }
+
     // 실행 경로마다 Job 시작 메서드가 정한 실행 유형이 스냅샷에 남는지 본다 (스위치는 module-test.yml로 켜져 있음)
     @ParameterizedTest
     @MethodSource("실행_경로들")
@@ -1395,16 +1414,16 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(sut.getRunType()).isEqualTo(expected);
     }
 
-    @FunctionalInterface
-    private interface JobStarter {
-        JobExecution start(PayoutJobRunner runner) throws Exception;
-    }
-
     private static Stream<Arguments> 실행_경로들() {
         return Stream.of(
                 Arguments.of((JobStarter) PayoutJobRunner::runScheduled, PayoutRunType.SCHEDULED),
                 Arguments.of((JobStarter) PayoutJobRunner::runManual, PayoutRunType.MANUAL),
                 Arguments.of((JobStarter) PayoutJobRunner::runSkippingWait, PayoutRunType.SKIP_WAIT));
+    }
+
+    @FunctionalInterface
+    private interface JobStarter {
+        JobExecution start(PayoutJobRunner runner) throws Exception;
     }
 
     @Test
