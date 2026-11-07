@@ -1,7 +1,7 @@
 # 정산 패키지 구조 (헥사고날)
 
 정산(`payout`) 모듈의 클래스를 만들거나 옮길 때 따르는 규칙이다. `structure.md`의 레이어 패키지(`controller`, `service`, `repository`, `event`)와 발행 인터페이스 위치 규칙 대신 이 파일을 따른다. 역할별 접미사와 모듈 간 규칙은 `structure.md` 그대로다.
-결정과 이유: `docs/decisions/payout/441-payout-hexagonal.md`, `469-payout-arch-test-gaps.md`, `485-payout-skip-wait-run-type.md`.
+결정과 이유: `docs/decisions/payout/441-payout-hexagonal.md`, `469-payout-arch-test-gaps.md`, `485-payout-skip-wait-run-type.md`, `390-payout-lower-bound-scheduled-run.md`.
 
 ## 패키지
 
@@ -15,7 +15,7 @@
 | `adapter/in/web` | 컨트롤러, `*Spec`, 요청·응답 DTO(`dto/`) |
 | `adapter/in/event` | Spring·Kafka 리스너, Kafka 메시지 DTO(`dto/`) |
 | `adapter/in/batch` | 정산 Job 설정, 시작기(`PayoutJobRunner`), 스케줄러 |
-| `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회 |
+| `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회, JPA 엔티티가 아닌 표(Spring Batch 실행 기록)를 읽는 네이티브 SQL(`EntityManager`, 표 이름에 `PayoutSchema.NAME`) |
 | `adapter/out/event` | 이벤트 발행 구현체 |
 | `config`, `exception` | 모듈 전용 설정, `PayoutErrorCode` |
 
