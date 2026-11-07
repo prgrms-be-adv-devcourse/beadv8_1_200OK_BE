@@ -28,10 +28,10 @@ public class GetSellerRefundsService implements GetSellerRefundsUseCase {
     public Page<RefundResult> getSellerRefunds(Long sellerId, String status, int page) {
         return readOnlyTransaction.execute(transactionStatus -> {
             if (status == null) {
-                return refundPersistencePort.findAllBySellerId(sellerId, RefundPaging.latestFirst(page)).map(RefundResult::from);
+                return refundPersistencePort.findAllBySellerId(sellerId, page).map(RefundResult::from);
             }
-            return refundPersistencePort.findAllBySellerIdAndStatus(sellerId, RefundStatus.valueOf(status),
-                    RefundPaging.latestFirst(page)).map(RefundResult::from);
+            return refundPersistencePort.findAllBySellerIdAndStatus(sellerId, RefundStatus.valueOf(status), page)
+                    .map(RefundResult::from);
         });
     }
 }

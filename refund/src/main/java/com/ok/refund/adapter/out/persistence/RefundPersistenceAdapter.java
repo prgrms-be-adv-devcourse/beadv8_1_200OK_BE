@@ -12,7 +12,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
 import java.sql.SQLException;
@@ -37,6 +39,10 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     private static final String ACTIVE_ORDER_ITEM_UNIQUE_CONSTRAINT = "uk_refund_active_order_item_id";
     // 표준 SQLState의 "직렬화 실패". MySQL은 교착 상태(1213)를 이 값으로 알린다
     private static final String DEADLOCK_SQL_STATE = "40001";
+    // 목록 한 쪽의 크기. 클라이언트가 바꿀 수 없는 고정 크기다
+    private static final int PAGE_SIZE = 25;
+    // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
+    private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
     private final RefundJpaRepository refundJpaRepository;
     private final EntityManager entityManager;
@@ -126,18 +132,23 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     }
 
     @Override
-    public Page<Refund> findAllByBuyerId(Long buyerId, Pageable pageable) {
-        return refundJpaRepository.findAllByBuyerId(buyerId, pageable).map(RefundMapper::toDomain);
+    public Page<Refund> findAllByBuyerId(Long buyerId, int page) {
+        return refundJpaRepository.findAllByBuyerId(buyerId, latestFirst(page)).map(RefundMapper::toDomain);
     }
 
     @Override
-    public Page<Refund> findAllBySellerId(Long sellerId, Pageable pageable) {
-        return refundJpaRepository.findAllBySellerId(sellerId, pageable).map(RefundMapper::toDomain);
+    public Page<Refund> findAllBySellerId(Long sellerId, int page) {
+        return refundJpaRepository.findAllBySellerId(sellerId, latestFirst(page)).map(RefundMapper::toDomain);
     }
 
     @Override
-    public Page<Refund> findAllBySellerIdAndStatus(Long sellerId, RefundStatus status, Pageable pageable) {
-        return refundJpaRepository.findAllBySellerIdAndStatus(sellerId, status, pageable).map(RefundMapper::toDomain);
+    public Page<Refund> findAllBySellerIdAndStatus(Long sellerId, RefundStatus status, int page) {
+        return refundJpaRepository.findAllBySellerIdAndStatus(sellerId, status, latestFirst(page)).map(RefundMapper::toDomain);
+    }
+
+    // 구매자·판매자 목록이 같은 크기와 순서를 쓰도록 한곳에서 만든다
+    private static Pageable latestFirst(int page) {
+        return PageRequest.of(page, PAGE_SIZE, LATEST_FIRST);
     }
 
     @Override

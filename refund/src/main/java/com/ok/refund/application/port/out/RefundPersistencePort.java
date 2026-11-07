@@ -4,7 +4,6 @@ import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 
 import java.util.Collection;
 import java.util.List;
@@ -48,11 +47,12 @@ public interface RefundPersistencePort {
      */
     List<Long> findLockTargetIds(Long orderId, Long sellerId, Long refundId, Collection<RefundStatus> statuses);
 
-    Page<Refund> findAllByBuyerId(Long buyerId, Pageable pageable);
+    // 목록 조회는 몇 번째 쪽인지만 받는다(0부터). 한 쪽 크기와 정렬은 DB에서 꺼내는 방법이라 구현(어댑터)이 정한다
+    Page<Refund> findAllByBuyerId(Long buyerId, int page);
 
-    Page<Refund> findAllBySellerId(Long sellerId, Pageable pageable);
+    Page<Refund> findAllBySellerId(Long sellerId, int page);
 
-    Page<Refund> findAllBySellerIdAndStatus(Long sellerId, RefundStatus status, Pageable pageable);
+    Page<Refund> findAllBySellerIdAndStatus(Long sellerId, RefundStatus status, int page);
 
     /**
      * 같은 판매자 묶음에서 주어진 상태인 요청의 취소 개수와 뺀 배송비를 주문 상품별로 더한다.

@@ -7,8 +7,10 @@ import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
+import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundShippingFee;
+import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import org.springframework.stereotype.Service;
@@ -151,7 +153,10 @@ public class DecideRefundService implements DecideRefundUseCase {
         // 집계는 이 환불을 처리 중으로 바꾸고 저장하기 전에 한다. 예전에는 엔티티를 바꾸는 순간 자동 flush로 이번 환불이 집계에
         // 들어가 정책이 이번 개수를 또 더하는("개수 초과" 500) 위험이 있었다. 이제는 update를 불러야 엔티티가 바뀌어 구조적으로 안전하지만,
         // "판단한 뒤 바꾸고 저장한다"는 순서가 읽기에도 자연스러워 그대로 둔다
-        RefundShippingFee fee = RefundShippingFees.decide(refundPersistencePort, refund, orderItem);
+        // 같은 묶음에서 처리 중인 요청만 센다. 판단할 환불은 아직 요청됨이라 집계에 들어가지 않는다
+        List<CancelledQuantity> cancelled = refundPersistencePort.sumCancelledByOrderItem(
+                refund.getOrderId(), refund.getSellerId(), RefundShippingFeePolicy.CANCELLING_STATUSES);
+        RefundShippingFee fee = RefundShippingFeePolicy.decide(refund, orderItem.bundle(), cancelled);
         if (fee.allowed()) {
             refund.approve(now, fee);
         } else {

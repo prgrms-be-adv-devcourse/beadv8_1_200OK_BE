@@ -378,19 +378,16 @@ class ArchitectureTest {
             .should().dependOnClassesThat().areAnnotatedWith(Service.class)
             .because("한 유스케이스의 흐름은 그 서비스 한 클래스에서 읽힌다 (refund/CLAUDE.md 3절)");
 
-    // 서비스 패키지에서 @Service가 아닌 빈은 RefundStepRunner(서비스들이 함께 쓰는 실패 기록 틀) 하나뿐이다.
-    // 그 밖의 보조 클래스(RefundPaging 등)는 package-private이어야 한다. @Component만 붙이면 공개해도 된다는 구멍을 막으려고 이름으로 못 박는다.
-    // 보조 클래스가 빈이면(package-private이어도) 포트와 TransactionTemplate을 들고 "안쪽 DB 클래스"가 될 수 있어 빈도 금지한다
+    // 서비스 패키지에는 유스케이스 구현(@Service)과 실패 기록 틀(RefundStepRunner)만 둔다.
+    // 서비스들이 함께 쓰는 코드는 규칙이면 domain(정책), DB에서 꺼내는 방법이면 영속 어댑터로 보낸다.
+    // 서비스 패키지에 보조 클래스가 생기면 규칙·흐름·기술이 섞인 "안쪽 클래스"가 되기 쉬워 이름으로 못 박는다
     @ArchTest
-    static final ArchRule application_service의_Service가_아닌_클래스는_RefundStepRunner이거나_공개하지_않는다 = classes()
+    static final ArchRule application_service에는_Service와_RefundStepRunner만_있다 = classes()
             .that().resideInAPackage("..application.service..")
             .and().areTopLevelClasses()
             .and().areNotAnnotatedWith(Service.class)
-            .and().doNotHaveSimpleName("RefundStepRunner")
-            .should().notBePublic()
-            .andShould().notBeMetaAnnotatedWith(Component.class)
-            .because("서비스 패키지의 보조 클래스가 공개되면 다른 곳이 서비스 내부 도구에 기대고, Facade 같은 조율 클래스가 몰래 생긴다. "
-                    + "공개를 허용하는 비서비스 빈은 RefundStepRunner뿐이다 (refund/CLAUDE.md 3절, 5절)");
+            .should().haveSimpleName("RefundStepRunner")
+            .because("서비스 패키지는 유스케이스 흐름만 둔다. 함께 쓰는 규칙은 domain, DB 조회 방법은 영속 어댑터가 맡는다 (refund/CLAUDE.md 3절, 5절)");
 
     // UseCase를 구현하는 클래스가 @Service가 아니면 위 @Service 대상 규칙을 피한다
     @ArchTest

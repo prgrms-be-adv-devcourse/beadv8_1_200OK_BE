@@ -26,6 +26,6 @@ public class GetBuyerRefundsService implements GetBuyerRefundsUseCase {
     @Override
     public Page<RefundResult> getBuyerRefunds(Long buyerId, int page) {
         return readOnlyTransaction.execute(status ->
-                refundPersistencePort.findAllByBuyerId(buyerId, RefundPaging.latestFirst(page)).map(RefundResult::from));
+                refundPersistencePort.findAllByBuyerId(buyerId, page).map(RefundResult::from));
     }
 }

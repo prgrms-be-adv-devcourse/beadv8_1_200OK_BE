@@ -7,12 +7,16 @@ import com.ok.refund.application.port.in.RequestRefundUseCase;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
+import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundShippingFee;
+import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.exception.RefundErrorCode;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.List;
 
 /**
  * 구매자의 취소 요청을 "요청됨"으로 저장한다. 요청만으로는 주문·배송·지갑·상품이 바뀌지 않는다.
@@ -71,7 +75,10 @@ public class RequestRefundService implements RequestRefundUseCase {
         // 배송비는 승인 때 정하지만, 지금 승인해도 받을 수 없는 요청은 판매자에게 보내지 않고 미리 막는다.
         // 저장 뒤에 판단하는 이유: 같은 상품에 처리 중 요청이 있으면 그 개수까지 더해져 판단이 "개수 초과"(500)로 깨지므로,
         // UNIQUE가 먼저 409로 막게 한다. 여기서 던지면 트랜잭션이 되돌려져 저장한 행도 남지 않는다
-        RefundShippingFee fee = RefundShippingFees.decide(refundPersistencePort, saved, orderItem);
+        // 같은 묶음(주문 + 판매자)에서 이미 취소가 진행 중인 개수를 가져와 도메인 정책이 판단한다. 방금 저장한 요청은 요청됨이라 집계에 들어가지 않는다
+        List<CancelledQuantity> cancelled = refundPersistencePort.sumCancelledByOrderItem(
+                saved.getOrderId(), saved.getSellerId(), RefundShippingFeePolicy.CANCELLING_STATUSES);
+        RefundShippingFee fee = RefundShippingFeePolicy.decide(saved, orderItem.bundle(), cancelled);
         if (!fee.allowed()) {
             throw new RestApiException(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED);
         }
