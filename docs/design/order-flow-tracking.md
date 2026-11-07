@@ -166,7 +166,7 @@ Hibernate 리스너를 거치지 않는 bulk·native 쿼리(Aspect로 보완해�
   "eventType": "BUSINESS_FAILURE",
   "step": "WALLET_PAYMENT",
   "traceId": "7389201745123328",
-  "eventKey": "(사건 종류별로 구성, §11)",
+  "eventKey": "1024:-:WALLET_PAYMENT:FAILURE:INSUFFICIENT_BALANCE:7389201745123328",
   "orderId": 1024,
   "shipmentId": null,
   "outcome": "FAILURE",
@@ -179,7 +179,10 @@ Hibernate 리스너를 거치지 않는 bulk·native 쿼리(Aspect로 보완해�
 
 - `STATE_CHANGED`일 때는 `entity`(이름과 ID)와 `changes`(`{필드: [이전, 이후]}`)를 채운다.
 - `stack`은 깊이 30까지만 남긴다.
-- `eventKey`는 같은 사건이 두 번 와도 flowwatch가 한 번만 저장하게 하는 멱등 키다. 사건 종류마다 구성이 다를 수 있어 아직 정하지 않았다(§11).
+- `eventKey`는 같은 사건이 두 번 와도 flowwatch가 한 번만 저장하게 하는 멱등 키다. 구성은 `{orderId[:shipmentId]}:{step}:{outcome[:errorCode]}:{구분자}`다.
+  - 시스템 안의 사건: 구분자는 `traceId`다. 재전송은 같은 traceId라 같은 키이고, 다시 시도한 요청은 새 traceId라 다른 키다. Kafka 구간은 헤더로 복원한 traceId를 쓰므로 두 경로가 같은 키를 만든다.
+  - 택배사 이벤트: 구분자는 `status.code:time`이다. 택배사 응답의 이벤트에는 ID가 없고 상태 코드가 9개로 거칠어서 시각이 필요하다. 시각이 비면 상태 코드, 설명, 장소의 해시를 쓴다. 송장번호는 사건 구분이 아니라 Shipment를 찾아 연결하는 데만 쓴다.
+  - 같은 키가 또 오면 새로 저장하지 않고 무시한다. 같은 요청 안에서 같은 단계가 반복돼도 한 건으로 본다.
 
 ### 6.3 추적 대상 표시 (어노테이션)
 
@@ -379,7 +382,7 @@ flowchart LR
 | CDC (Debezium) | 앱 밖에서 일어나는 쓰기까지 잡는다. 모듈 경계, binlog 설정, Kafka Connect의 운영·메모리 부담 때문에 보류했다 | 수동 SQL이나 다른 언어 서비스처럼 앱 밖 쓰기가 생길 때 |
 | 로그 Kafka 토픽 | 로그를 토픽으로 보내 상태 프로젝션이나 모듈 간 조인 분석을 한다. JSON 스키마를 메시지처럼 설계해 둔 이유다 | Loki 쿼리로 분석하기 어려워질 때 |
 | S3 + Athena | 원본을 아카이브하고 장기 조회한다 | 보존 기간보다 오래된 데이터를 분석해야 할 때 |
-| 배송사 연동 | Delivery Tracker 계약(GraphQL `track`, `registerTrackWebhook`, 48시간 만료를 24시간마다 갱신) 기준 어댑터와 시뮬레이터. 콜백에는 carrierId와 trackingNumber만 오므로 `track`을 다시 조회하고, 중복과 순서 역전을 판정하고, 1초 안에 202로 응답한다. (미확인) 플랜별 웹훅 제공 여부 | 배송사 연동 이슈를 만들 때 |
+| 배송사 연동 | Delivery Tracker 계약(GraphQL `track`, `registerTrackWebhook`, 48시간 만료를 24시간마다 갱신) 기준 어댑터와 시뮬레이터. 콜백에는 carrierId와 trackingNumber만 오므로 `track`을 다시 조회하고, 중복과 순서 역전을 판정하고, 1초 안에 202로 응답한다. 이벤트에는 ID가 없어 `status.code`와 `time`으로 구분한다(공식 문서 확인). (미확인) 플랜별 웹훅 제공 여부, 요금과 호출 제한, 인증 방식 | Mock 택배사를 교체할 때 |
 | 사가 확인 이벤트 | 받는 쪽 확인을 영수증 대신 도메인 이벤트로 한다 | 사가를 설계할 때 |
 | 다중 인스턴스 | Snowflake 노드 ID 할당, StuckDetector 중복 실행 방지 (ShedLock 등) | 서버가 둘 이상이 되기 전(배포 구조 전환 중) |
 | Kafka로 입력 통일 | Kafka를 쓰지 않는 구간도 Kafka로 옮기면 flowwatch의 Loki 조회 입력이 필요 없어지고 offset으로 이어 읽을 수 있다 | Loki 조회의 지연과 중복 처리가 부담이 될 때 |
@@ -395,7 +398,7 @@ flowchart LR
 | 같은 에러 억제 횟수 N, 샘플링 비율 | 부하 테스트(#378)로 정한다 |
 | 로깅 규칙의 `CONVENTION.md` §7.4 반영 | #378에서 한다 (라벨 정책, 인코더 마스킹, eventType) |
 | 이력 테이블과 상태 테이블 분리 | 제안(§8.2). 확정 전 |
-| `eventKey` 구성 | 미정(검토 중). `STATE_CHANGED`에는 엔티티 버전이 있지만 실패·HTTP·Kafka 사건에는 없어 종류마다 구성이 다를 수 있다. 같은 주문의 재시도 실패가 중복으로 걸러지지 않아야 하고, 두 경로가 같은 단계를 기록해도 한 번만 저장되어야 한다 |
+| `eventKey` 확인 사항 | 구성은 정했다(§6.2). `step` 이름을 DB 변경과 Kafka 메시지가 같게 번역하는 표(흐름 정의 yaml)가 필요하고, 택배사 이벤트 시각이 비는 경우의 해시 구성과 "같은 요청 안의 반복을 한 건으로 본다"는 가정을 확인해야 한다 |
 | flowwatch 배포 방식 | 별도 서버. 현재 운영은 monolith이고 모듈별 서버로 전환 중이다. 다른 서비스와 함께 배포하는지 단독인지는 정하지 않았다 |
 | 조회 겹침 구간, 성공 사건의 Loki 보존 기간 | 최악의 전달 지연과 flowwatch 최대 중단 시간을 정한 뒤 정한다 |
 | `HTTP_IN` | 흐름 사건으로 볼지, 샘플링해도 되는 일반 로그로 볼지 정하지 않았다 |
