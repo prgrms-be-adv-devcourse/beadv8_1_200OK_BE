@@ -11,17 +11,17 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
-import org.springframework.batch.core.job.AbstractJob;
 import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.job.AbstractJob;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.JobExecutionException;
 import org.springframework.batch.core.job.JobInstance;
 import org.springframework.batch.core.job.parameters.JobParameters;
 import org.springframework.batch.core.repository.support.ResourcelessJobRepository;
 import org.springframework.batch.core.step.Step;
+import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.beans.factory.config.BeanPostProcessor;
 
 /**
  * 실제 {@code AbstractJob.execute} 경로로 검증한다. Job은 최소 구현(작업 중 MDC를 기록만 하는 Job)이다.

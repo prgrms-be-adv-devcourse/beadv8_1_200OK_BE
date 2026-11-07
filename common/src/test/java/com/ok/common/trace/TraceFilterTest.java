@@ -155,7 +155,7 @@ class TraceFilterTest {
     }
 
     static Stream<String> 유효하지_않은_헤더_값() {
-        return Stream.of("abc", "12ab", "1234567890123456789", "-1", "1 2", "12\n34", "<script>", "0x10");
+        return Stream.of("abc", "12ab", "1234567890123456789", "-1", "1 2", "12\n34", "<script>", "0x10", "0", "1", "12345678901234", "0123456789012345");
     }
 
     @Test
