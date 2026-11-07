@@ -492,7 +492,8 @@ class ArchitectureTest {
     // 위 규칙은 클래스 이름만 본다. @Service("orderService")처럼 이름을 직접 적으면 클래스 이름과 상관없이 그 이름이 빈 이름이 된다.
     // 빈 이름은 소문자로 시작해(refundOrderHttpAdapter) 대소문자를 가리지 않고 본다.
     // value가 문자열일 때만 빈 이름으로 본다. @RestControllerAdvice·@ControllerAdvice의 value는 basePackages(String[])의 별칭이라,
-    // 그대로 읽으면 이름을 적지 않아도 배열 문자열이 빈 이름처럼 보여 정상 코드를 막는다(#486 리뷰에서 실행으로 확인)
+    // 그대로 읽으면 이름을 적지 않아도 배열 문자열이 빈 이름처럼 보여 정상 코드를 막는다(#486 리뷰에서 실행으로 확인).
+    // 대신 이 둘은 name 속성으로 빈 이름을 정하므로(common의 ApiControllerAdvice와 겹칠 수 있음) 문자열인 name도 함께 본다
     @ArchTest
     static final ArchRule 직접_적은_빈_이름에도_refund가_들어간다 = classes()
             .that().resideInAPackage("com.ok.refund..")
@@ -504,12 +505,14 @@ class ArchitectureTest {
                         if (!annotationType.isEquivalentTo(Component.class) && !annotationType.isMetaAnnotatedWith(Component.class)) {
                             continue;
                         }
-                        if (!(annotation.get("value").orElse(null) instanceof String beanName)) {
-                            continue;
+                        for (String attribute : List.of("value", "name")) {
+                            if (!(annotation.get(attribute).orElse(null) instanceof String beanName)) {
+                                continue;
+                            }
+                            boolean ok = beanName.isEmpty() || containsRefund(beanName);
+                            events.add(new SimpleConditionEvent(javaClass, ok, javaClass.getName() + " declares bean name '"
+                                    + beanName + "' in @" + annotationType.getSimpleName() + "." + attribute));
                         }
-                        boolean ok = beanName.isEmpty() || containsRefund(beanName);
-                        events.add(new SimpleConditionEvent(javaClass, ok,
-                                javaClass.getName() + " declares bean name '" + beanName + "' on @" + annotationType.getSimpleName()));
                     }
                 }
             })

@@ -25,6 +25,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.orm.jpa.support.OpenEntityManagerInViewInterceptor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -32,7 +33,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -170,9 +173,10 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     // 끝난 행(거절·철회)은 다시 처리 중이 될 수 없어 잠그지 않는다. 다만 이번 환불은 끝났어도 넣어야 잠근 뒤 409로 막힌다.
     // 저장소를 따로 테스트하지 않는 규칙(testing-strategy.md)의 예외다. 어떤 행을 잠갔는지는 승인 결과에 드러나지 않아
     // 서비스 경로로는 끝난 행이 빠졌는지 확인할 수 없고, 잠금 범위가 #411의 핵심 동작이라 쿼리 결과를 직접 본다.
-    // 잠금 순서(ID 오름차순)도 여기서 본다. 행을 ID 순서대로 넣고 상태까지 같으면 DB가 정렬하지 않아도 우연히 ID 순서로 나와,
-    // order by가 빠져도 이 테스트가 통과한다(#486에서 확인). 그래서 B를 승인해 상태 글자 순서(PROCESSING < REQUESTED)가
-    // ID 순서와 반대가 되게 한다. 판매자 인덱스(seller_id, status, created_at)로 읽으면 정렬 없이는 B가 A보다 먼저 나온다
+    // 결과가 ID 오름차순인지도 본다. B를 승인해 상태 글자 순서(PROCESSING < REQUESTED)를 ID 순서와 반대로 만들어 두면,
+    // DB가 판매자 인덱스(seller_id, status, created_at)로 읽을 때는 정렬이 빠지면 B가 A보다 먼저 나와 실패한다.
+    // 다만 어느 인덱스를 탈지는 옵티마이저가 실행마다 정해서, (order_id, seller_id) 인덱스를 타면 정렬 없이도 ID 순서로 나와 통과한다
+    // (#486에서 order by를 지우고 반복 실행해 보니 일부만 실패). 정렬이 빠지는 것을 늘 잡는 검사는 아래 쿼리 글자 테스트가 맡는다
     @Test
     void 승인_때_잠글_행은_진행_중_행과_이번_환불뿐이고_ID_오름차순이다() {
         // given: A 요청됨, B 철회 뒤 다시 요청하고 승인(철회 행 + 처리 중 행), C 철회
@@ -195,6 +199,24 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
         // then: 철회된 B는 빠지고, 철회됐어도 이번 환불인 C는 들어간다. 상태와 상관없이 ID 오름차순이다
         assertThat(sut).containsExactly(refundA, refundB, withdrawnC);
+    }
+
+    // 잠금 대상은 ID 오름차순으로 돌려줘야 동시 승인들이 같은 순서로 잠가 교착 상태가 생기지 않는다(#411).
+    // 실제 조회로는 옵티마이저가 고르는 인덱스에 따라 정렬이 빠져도 우연히 ID 순서가 나올 수 있어(위 테스트 주석),
+    // 정렬 조건이 쿼리에서 빠지거나 다른 칸으로 바뀌는 것은 쿼리 글자로 막는다(#486).
+    // 정렬 칸이 늘어 r.id가 마지막이 아니게 되면(예: order by r.status, r.id) 잠금 순서가 상태에 따라 달라지므로 끝이 r.id인지 본다
+    @Test
+    void 잠금_대상_조회는_ID_오름차순으로만_정렬한다() throws NoSuchMethodException {
+        // given
+        Query query = RefundJpaRepository.class
+                .getMethod("findLockTargetIds", Long.class, Long.class, Long.class, Collection.class)
+                .getAnnotation(Query.class);
+
+        // when
+        String sut = query.value().replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+
+        // then
+        assertThat(sut).endsWith("order by r.id");
     }
 
     // 위의 동시 승인 테스트들은 동시에 출발시킬 뿐이라 어느 쪽이 먼저 잠글지 정할 수 없다. 여기서는 순서를 고정한다:
