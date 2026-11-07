@@ -14,6 +14,7 @@ public enum PayoutErrorCode implements ErrorCode {
     MISSING_ADJUSTMENT_REASON(HttpStatus.UNPROCESSABLE_ENTITY, "Missing adjustment reason", "수동 조정에는 조정 사유가 필수입니다."),
     ADJUSTMENT_REASON_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Adjustment reason too long", "조정 사유는 255자 이하여야 합니다."),
     MISSING_PAYOUT_REQUESTED_AT(HttpStatus.INTERNAL_SERVER_ERROR, "Missing payout requested at", "정산 Job 실행에는 requestedAt 파라미터가 필요합니다."),
+    INVALID_PAYOUT_RUN_TYPE(HttpStatus.INTERNAL_SERVER_ERROR, "Invalid payout run type", "정산 Job 실행에는 올바른 runType 파라미터가 필요합니다."),
     MISSING_CANDIDATE_ID(HttpStatus.INTERNAL_SERVER_ERROR, "Missing candidate id", "정산 항목은 저장된 정산후보로만 만들 수 있습니다."),
     UNSETTLED_CANDIDATES_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "Unsettled candidates not found", "정산 대상 판매자의 미정산 후보가 없습니다. 조회 조건 불일치를 확인하세요."),
     // 판매자 draft 합계(헤더)가 항목 합계와 다름 (#290). 같은 코드가 같은 순간에 만드는 값이라, 다르면 draft를 만드는 코드 자체가 망가진 상태

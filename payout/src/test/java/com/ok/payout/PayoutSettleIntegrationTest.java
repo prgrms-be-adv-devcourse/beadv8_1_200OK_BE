@@ -34,8 +34,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
 import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.repository.JobRepository;
+import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -83,6 +87,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JobOperator jobOperator;
+
+    @Autowired
+    private JobRepository jobRepository;
 
     @Autowired
     private Job payoutJob;
@@ -728,7 +735,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         }
 
         // when: 스케줄러/API와 같은 경로로 실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -752,7 +759,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 정산_대상이_없어도_Job은_COMPLETED로_끝나고_빈_스냅샷이_남는다() throws Exception {
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 대상이 없던 날도 "배치는 돌았다"는 기록이 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -772,7 +779,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_FEE, orderB, 20L, 600L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공하고(실패가 있어도 verify 통과), 주문 B의 후보 2건만 실패로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -801,7 +808,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertShippingFeeWithoutDeduction(orderB, 20L, 3_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 주문 단위 검사라 배송비도 같은 주문으로 걸리고, 실패 기록의 주문상품 ID는 비어 있음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -839,9 +846,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
 
         // when: 1차 배치 → 빠짐, 그 뒤 지갑 차감 기록이 늦게 들어옴 → 2차 배치
-        JobExecution first = payoutJobRunner.run();
+        JobExecution first = payoutJobRunner.runScheduled();
         givenDeduction(orderB);
-        JobExecution second = payoutJobRunner.run();
+        JobExecution second = payoutJobRunner.runScheduled();
 
         // then: 1차는 실패 기록만 있고 정산 없음 (잠그지 않아 미정산 후보로 남음)
         Long firstSnapshotId = snapshotIdOf(first);
@@ -857,24 +864,50 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(20L, 19_400L));
     }
 
+    // 필수 파라미터 검사는 Job 시작 전(PayoutJobParametersValidator)에 하므로, 잘못된 실행이 FAILED 기록으로 남지 않아야 함
+    // 검사기의 RestApiException이 감싸지지 않고 그대로 나오는지도 여기서 실제 JobOperator로 확인함
+    // JobInstance는 검사 전에 만들어질 수 있어 개수는 확인하지 않고, 실행 기록(JobExecution)과 스냅샷만 확인함
     @Test
-    void requestedAt_없이_실행하면_Job이_FAILED로_끝나고_스냅샷도_만들지_않는다() throws Exception {
+    void 필수_파라미터가_잘못되면_Job을_시작하지_않아_실행_기록도_스냅샷도_남지_않는다() throws Exception {
         // given: 정산 대상이 있어도 (앱 시작 시 자동 실행 등 의도치 않은 실행 방지)
         insertSaleAmount(10L, 1_000L, LocalDateTime.now().minusDays(20));
+        int executionsBefore = payoutJobExecutionCount();
+        JobParameters withoutRequestedAt = new JobParametersBuilder()
+                .addString("runType", PayoutRunType.MANUAL.name(), false)
+                .toJobParameters();
+        JobParameters withoutRunType = new JobParametersBuilder()
+                .addLocalDateTime("requestedAt", LocalDateTime.now())
+                .toJobParameters();
 
-        // when: 파라미터 없이 직접 실행
-        JobExecution execution = jobOperator.start(payoutJob, new JobParameters());
+        // when & then: requestedAt이 없으면 MISSING_PAYOUT_REQUESTED_AT
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, withoutRequestedAt))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.MISSING_PAYOUT_REQUESTED_AT));
+        // runType이 없으면 INVALID_PAYOUT_RUN_TYPE
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, withoutRunType))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_PAYOUT_RUN_TYPE));
 
-        // then
-        assertThat(execution.getStatus()).isEqualTo(BatchStatus.FAILED);
-        assertThat(snapshotRepository.findAll()).isEmpty();
-        assertThat(payoutRepository.count()).isZero();
+        assertSoftly(softly -> {
+            softly.assertThat(payoutJobExecutionCount()).isEqualTo(executionsBefore);
+            softly.assertThat(snapshotRepository.findAll()).isEmpty();
+            softly.assertThat(payoutRepository.count()).isZero();
+        });
+    }
+
+    // 정산 Job의 모든 실행 기록 수 (JobInstance를 거쳐 JobExecution을 셈)
+    private int payoutJobExecutionCount() {
+        int count = 0;
+        for (JobInstance instance : jobRepository.findJobInstances("payoutJob")) {
+            count += jobRepository.getJobExecutions(instance).size();
+        }
+        return count;
     }
 
     @Test
     void Job_실행_기록이_DB에_저장된다() throws Exception {
         // when: 정산 대상 없이 실행 (대상 유무와 상관없이 실행 기록은 남아야 함)
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 반환된 실행 ID로 메타 테이블을 직접 조회 → 메모리 저장이면 행이 없어 실패
         // (Spring Batch 메타 테이블은 엔티티가 없어 JDBC로 확인)
@@ -897,7 +930,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 재실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 새 스냅샷으로 판매자 10, 20 모두 정산되고, 실패한 스냅샷의 draft는 기록으로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1072,7 +1105,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(PayoutEventType.SALE_FEE, orderY, 30L, 300L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공, 주문 X의 후보 5건은 1건씩 실패로 기록
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1106,7 +1139,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 1_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 실패 기록 UK에 걸려 롤백되지 않고 4건이 1건씩 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1349,7 +1382,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertSaleAmount(10L, 1_000L, LocalDateTime.now());
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);

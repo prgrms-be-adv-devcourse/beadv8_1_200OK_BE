@@ -1,9 +1,7 @@
 package com.ok.payout.adapter.in.batch;
 
-import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.application.port.in.PayoutUseCase;
-import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.in.PayoutDraftResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +49,7 @@ public class PayoutJobConfig {
                          Step payoutSnapshotStep, Step payoutValidateStep, Step payoutDraftStep,
                          Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep) {
         return new JobBuilder("payoutJob", jobRepository)
+                .validator(new PayoutJobParametersValidator())
                 .start(payoutSnapshotStep)
                 .next(payoutValidateStep)
                 .next(payoutDraftStep)
@@ -71,10 +70,8 @@ public class PayoutJobConfig {
     @Bean
     @StepScope
     public Tasklet payoutSnapshotTasklet(@Value("#{jobParameters['requestedAt']}") LocalDateTime requestedAt) {
-        // requestedAt 없이 실행됨 = 스케줄러/API가 아닌 경로(앱 시작 시 자동 실행 등) → 의도치 않은 실행이므로 실패시킴
-        if (requestedAt == null) {
-            throw new RestApiException(PayoutErrorCode.MISSING_PAYOUT_REQUESTED_AT);
-        }
+        // requestedAt 누락(앱 시작 시 자동 실행 등 의도치 않은 실행)은 Job 시작 전에 PayoutJobParametersValidator가 막으므로,
+        // 여기서는 값이 있다고 믿고 씀 (실패한 실행 기록·스냅샷이 남지 않게 하려고 Step 안이 아닌 시작 전에 검사함)
         return (contribution, chunkContext) -> {
             JobExecution jobExecution = contribution.getStepExecution().getJobExecution();
             LocalDateTime from = payoutUseCase.settlementFrom();

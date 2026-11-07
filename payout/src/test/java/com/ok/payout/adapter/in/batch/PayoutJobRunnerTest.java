@@ -65,7 +65,42 @@ class PayoutJobRunnerTest {
         assertThat(actual).isSameAs(expected);
         JobParameters expectedParams = new JobParametersBuilder()
                 .addLocalDateTime("requestedAt", LocalDateTime.now(CLOCK).plusDays(17))
+                .addString("runType", "SKIP_WAIT", false)
                 .toJobParameters();
         verify(jobOperator).start(payoutJob, expectedParams);
+    }
+
+    @Test
+    void 정기_실행은_현재_시각과_실행_유형_SCHEDULED로_Job을_시작한다() throws Exception {
+        // given
+        PayoutJobRunner sut = new PayoutJobRunner(jobOperator, payoutJob, CLOCK, false);
+        given(jobOperator.start(eq(payoutJob), any(JobParameters.class))).willReturn(new JobExecution(1L, null, new JobParameters()));
+
+        // when
+        sut.runScheduled();
+
+        // then
+        verify(jobOperator).start(payoutJob, paramsOf("SCHEDULED"));
+    }
+
+    @Test
+    void 관리자_실행은_현재_시각과_실행_유형_MANUAL로_Job을_시작한다() throws Exception {
+        // given
+        PayoutJobRunner sut = new PayoutJobRunner(jobOperator, payoutJob, CLOCK, false);
+        given(jobOperator.start(eq(payoutJob), any(JobParameters.class))).willReturn(new JobExecution(1L, null, new JobParameters()));
+
+        // when
+        sut.runManual();
+
+        // then
+        verify(jobOperator).start(payoutJob, paramsOf("MANUAL"));
+    }
+
+    // 실행 유형은 JobInstance를 가르지 않는 기록용(identifying = false) 파라미터
+    private JobParameters paramsOf(String runType) {
+        return new JobParametersBuilder()
+                .addLocalDateTime("requestedAt", LocalDateTime.now(CLOCK))
+                .addString("runType", runType, false)
+                .toJobParameters();
     }
 }
