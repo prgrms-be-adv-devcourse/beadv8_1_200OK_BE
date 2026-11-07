@@ -1,5 +1,6 @@
 package com.ok.payout.adapter.out.persistence;
 
+import com.ok.payout.PayoutSchema;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
@@ -108,14 +109,15 @@ class PayoutLastScheduledRunPersistenceIntegrationTest extends AbstractIntegrati
     // 배치 실행 1건(인스턴스·실행·requestedAt 파라미터)과 그 스냅샷, 필요하면 정산 1건을 넣는다
     // requestedAt은 Spring Batch가 LocalDateTime을 저장하는 ISO_LOCAL_DATE_TIME 글자 그대로 넣음
     private void insertRun(long executionId, String status, String runType, String requestedAt, boolean withPayout) {
-        jdbcTemplate.update("INSERT INTO paldogotgan_payout.BATCH_JOB_INSTANCE (JOB_INSTANCE_ID, VERSION, JOB_NAME, JOB_KEY) "
+        jdbcTemplate.update("INSERT INTO " + PayoutSchema.NAME + ".BATCH_JOB_INSTANCE (JOB_INSTANCE_ID, VERSION, JOB_NAME, JOB_KEY) "
                 + "VALUES (?, 0, 'payoutJobTest390', ?)", executionId, "key-" + executionId);
-        jdbcTemplate.update("INSERT INTO paldogotgan_payout.BATCH_JOB_EXECUTION "
+        jdbcTemplate.update("INSERT INTO " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION "
                 + "(JOB_EXECUTION_ID, VERSION, JOB_INSTANCE_ID, CREATE_TIME, STATUS) "
                 + "VALUES (?, 0, ?, NOW(6), ?)", executionId, executionId, status);
-        jdbcTemplate.update("INSERT INTO paldogotgan_payout.BATCH_JOB_EXECUTION_PARAMS "
+        jdbcTemplate.update("INSERT INTO " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION_PARAMS "
                 + "(JOB_EXECUTION_ID, PARAMETER_NAME, PARAMETER_TYPE, PARAMETER_VALUE, IDENTIFYING) "
                 + "VALUES (?, 'requestedAt', 'java.time.LocalDateTime', ?, 'Y')", executionId, requestedAt);
+        // 스냅샷·정산은 SQL로 직접 넣음: job_execution_id를 위에서 넣은 배치 실행 ID(이 클래스 번호대)와 맞춰야 쿼리가 둘을 이어 주기 때문
         jdbcTemplate.update("INSERT INTO payout_snapshot "
                 + "(job_execution_id, period_to, created_at, updated_at, run_type) "
                 + "VALUES (?, NOW(6), NOW(6), NOW(6), ?)", executionId, runType);
@@ -137,11 +139,11 @@ class PayoutLastScheduledRunPersistenceIntegrationTest extends AbstractIntegrati
         jdbcTemplate.update("DELETE FROM payout_failure");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
-        jdbcTemplate.update("DELETE FROM paldogotgan_payout.BATCH_JOB_EXECUTION_PARAMS WHERE JOB_EXECUTION_ID BETWEEN ? AND ?",
+        jdbcTemplate.update("DELETE FROM " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION_PARAMS WHERE JOB_EXECUTION_ID BETWEEN ? AND ?",
                 ID_START, ID_END);
-        jdbcTemplate.update("DELETE FROM paldogotgan_payout.BATCH_JOB_EXECUTION WHERE JOB_EXECUTION_ID BETWEEN ? AND ?",
+        jdbcTemplate.update("DELETE FROM " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION WHERE JOB_EXECUTION_ID BETWEEN ? AND ?",
                 ID_START, ID_END);
-        jdbcTemplate.update("DELETE FROM paldogotgan_payout.BATCH_JOB_INSTANCE WHERE JOB_INSTANCE_ID BETWEEN ? AND ?",
+        jdbcTemplate.update("DELETE FROM " + PayoutSchema.NAME + ".BATCH_JOB_INSTANCE WHERE JOB_INSTANCE_ID BETWEEN ? AND ?",
                 ID_START, ID_END);
     }
 }

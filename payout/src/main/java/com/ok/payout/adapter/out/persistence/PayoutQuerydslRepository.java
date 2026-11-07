@@ -49,6 +49,7 @@ import static com.ok.payout.domain.QPayoutWalletDeduction.payoutWalletDeduction;
 
 /**
  * 정산 조회 전용 저장소 출력 포트({@link PayoutQueryRepository})의 QueryDSL 구현.
+ * 마지막 정기 실행 요청일(#390)만은 Spring Batch 메타 테이블을 함께 읽어야 해서 EntityManager로 네이티브 SQL 1개를 직접 실행한다.
  */
 @Repository
 @RequiredArgsConstructor

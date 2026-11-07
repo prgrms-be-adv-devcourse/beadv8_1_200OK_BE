@@ -17,7 +17,8 @@ public interface PayoutUseCase {
     LocalDateTime settlementTo(LocalDate runDate);
 
     /**
-     * 정산 대상 조회 하한을 구한다. 마지막 정산일 기준으로 대기·여유 일수를 뺀 날 00:00이며, 정산이 없으면 {@code null}(하한 없음)이다.
+     * 정산 대상 조회 하한을 구한다. 정산을 1건 이상 만든 마지막 정기(SCHEDULED) 완료 실행의 요청일에서 대기·여유 일수를 뺀 날 00:00이다.
+     * 그런 실행이 없으면(배치 기록 삭제, 정기 실행이 정산을 만든 적 없음 등) 마지막 정산 생성일로 대체하고, 정산도 없으면 {@code null}(하한 없음)이다.
      */
     LocalDateTime settlementFrom();
 

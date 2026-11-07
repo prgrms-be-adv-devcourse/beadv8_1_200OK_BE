@@ -40,7 +40,7 @@ import static org.awaitility.Awaitility.await;
 //   (차감액 = 주문 결제 금액 = 상품 금액 합 + 판매자 묶음 배송비 합, 후보 합계 = 상품 금액 합 + 배송비 후보)
 // - 리스너(@ApplicationModuleListener)는 커밋 후 비동기로 실행되므로 트랜잭션 안에서 발행하고 결과를 await()로 기다린다
 // - 정산은 생성 15일 뒤가 대상이라 후보가 만들어진 뒤 created_at을 과거로 옮긴다 (PayoutDepositIntegrationTest와 같은 방식)
-// - 정산·스냅샷·실패 기록은 "마지막 정산일"이 조회 범위 계산에 쓰이므로 테스트 전후로 전부 비운다
+// - 정산·스냅샷·실패 기록은 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다
 class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
@@ -182,7 +182,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 정산은 생성 15일 뒤가 대상이라 이 클래스 후보의 생성 시각을 16일 전으로 옮김
-    // 16일인 이유: 2차 배치의 조회 하한은 "마지막 정산일(오늘) − 18일"이라, 더 과거(예: 20일 전)로 옮기면
+    // 16일인 이유: 2차 배치의 조회 하한은 "1차(정산을 만든 정기 실행, 오늘) 요청일 − 18일"이라, 더 과거(예: 20일 전)로 옮기면
     //   잠금과 상관없이 기간 밖이라 빠져서 "잠금 때문에 빠졌다"를 확인할 수 없음
     // (JPA 저장은 Auditing이 현재 시각으로 채우므로 SQL로 직접 바꿈, 시간대는 Asia/Seoul로 고정되어 그대로 비교됨)
     private void backdateCandidates() {
