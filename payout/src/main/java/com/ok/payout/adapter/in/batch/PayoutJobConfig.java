@@ -1,6 +1,7 @@
 package com.ok.payout.adapter.in.batch;
 
 import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.in.PayoutDraftResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
@@ -69,7 +70,8 @@ public class PayoutJobConfig {
 
     @Bean
     @StepScope
-    public Tasklet payoutSnapshotTasklet(@Value("#{jobParameters['requestedAt']}") LocalDateTime requestedAt) {
+    public Tasklet payoutSnapshotTasklet(@Value("#{jobParameters['requestedAt']}") LocalDateTime requestedAt,
+                                  @Value("#{jobParameters['runType']}") String runType) {
         // requestedAt 누락(앱 시작 시 자동 실행 등 의도치 않은 실행)은 Job 시작 전에 PayoutJobParametersValidator가 막으므로,
         // 여기서는 값이 있다고 믿고 씀 (실패한 실행 기록·스냅샷이 남지 않게 하려고 Step 안이 아닌 시작 전에 검사함)
         return (contribution, chunkContext) -> {
@@ -77,7 +79,8 @@ public class PayoutJobConfig {
             LocalDateTime from = payoutUseCase.settlementFrom();
             LocalDateTime to = payoutUseCase.settlementTo(requestedAt.toLocalDate());
 
-            Long snapshotId = payoutUseCase.createSnapshot(jobExecution.getId(), from, to);
+            // runType이 PayoutRunType 이름인지는 Job 시작 전에 PayoutJobParametersValidator가 보장하므로 valueOf는 실패하지 않음
+            Long snapshotId = payoutUseCase.createSnapshot(jobExecution.getId(), from, to, PayoutRunType.valueOf(runType));
             // Step 사이에 값을 넘기는 통로: 다음 Step은 #{jobExecutionContext['snapshotId']}로 꺼냄
             jobExecution.getExecutionContext().put(SNAPSHOT_ID_KEY, snapshotId);
             return RepeatStatus.FINISHED;

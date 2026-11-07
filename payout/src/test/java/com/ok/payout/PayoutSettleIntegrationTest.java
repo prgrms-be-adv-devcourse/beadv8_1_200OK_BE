@@ -31,6 +31,9 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
@@ -48,6 +51,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -184,10 +188,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // given: Job 실행 1회 = 스냅샷 1건 (UK job_execution_id)
         insertSaleAmount(10L, 1_000L, TO.minusDays(1));
         long jobExecutionId = JOB_EXECUTION_ID_SEQ.incrementAndGet();
-        payoutService.createSnapshot(jobExecutionId, FROM, TO);
+        payoutService.createSnapshot(jobExecutionId, FROM, TO, PayoutRunType.SCHEDULED);
 
         // when & then
-        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO))
+        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO, PayoutRunType.SCHEDULED))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(snapshotRepository.findAll())
                 .filteredOn(snapshot -> snapshot.getJobExecutionId().equals(jobExecutionId))
@@ -1376,6 +1380,33 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(10L, 1_000L));
     }
 
+    // 실행 경로마다 Job 시작 메서드가 정한 실행 유형이 스냅샷에 남는지 본다 (스위치는 module-test.yml로 켜져 있음)
+    @ParameterizedTest
+    @MethodSource("실행_경로들")
+    void 실행_경로마다_스냅샷에_맞는_실행_유형이_남는다(JobStarter starter, PayoutRunType expected) throws Exception {
+        // given: 후보 없이도 스냅샷은 만들어짐
+
+        // when
+        JobExecution execution = starter.start(payoutJobRunner);
+
+        // then
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(execution)).orElseThrow();
+        assertThat(sut.getRunType()).isEqualTo(expected);
+    }
+
+    @FunctionalInterface
+    private interface JobStarter {
+        JobExecution start(PayoutJobRunner runner) throws Exception;
+    }
+
+    private static Stream<Arguments> 실행_경로들() {
+        return Stream.of(
+                Arguments.of((JobStarter) PayoutJobRunner::runScheduled, PayoutRunType.SCHEDULED),
+                Arguments.of((JobStarter) PayoutJobRunner::runManual, PayoutRunType.MANUAL),
+                Arguments.of((JobStarter) PayoutJobRunner::runSkippingWait, PayoutRunType.SKIP_WAIT));
+    }
+
     @Test
     void 평소_실행은_15일이_안_지난_후보를_정산하지_않는다() throws Exception {
         // given: 위 테스트와 같은 후보. 건너뛰기 실행만 차이를 만든다는 것을 보이기 위한 짝
@@ -1415,7 +1446,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 서비스 직접 호출용 스냅샷 생성 (Job 실행 ID는 테스트마다 새로 발급)
     private Long createSnapshot(LocalDateTime from, LocalDateTime to) {
-        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to);
+        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to, PayoutRunType.SCHEDULED);
     }
 
     // draftStep처럼 0이 나올 때까지 회차 반복

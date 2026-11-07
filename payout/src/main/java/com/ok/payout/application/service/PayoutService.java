@@ -10,6 +10,7 @@ import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
@@ -109,8 +110,8 @@ public class PayoutService implements PayoutUseCase {
     // → 하루 정산후보가 수만 건을 넘어 메모리·시간이 부담되면 HQL INSERT ... SELECT(DB 안에서 1문장 복사)로 바꾸는 것을 고려
     @Override
     @Transactional
-    public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to) {
-        PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to));
+    public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to, PayoutRunType runType) {
+        PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to, runType));
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to);
         List<PayoutSnapshotItem> items = new ArrayList<>();
