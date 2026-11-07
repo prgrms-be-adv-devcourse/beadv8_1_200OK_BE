@@ -235,9 +235,11 @@ class ArchitectureTest {
     static final ArchRule domain은_application_adapter와_프레임워크_기술에_의존하지_않는다 = noClasses()
             .that().resideInAPackage("..domain..")
             .should().dependOnClassesThat(resideInAnyPackage("..application..", "..adapter..", "jakarta.persistence..",
-                    "org.hibernate..", "org.springframework..", "org.apache.kafka..", "jakarta.servlet..", "java.sql.."))
+                    "org.hibernate..", "org.springframework..", "org.apache.kafka..", "jakarta.servlet..",
+                    "java.sql..", "java.net..", "java.nio.file.."))
             .because("도메인은 바깥 레이어와 저장소, 메시징, 웹 기술을 몰라야 단독으로 이해하고 테스트할 수 있다. "
-                    + "java.sql(JDBC)은 아래 허용 목록의 java..에 들어가 따로 막는다(#486). "
+                    + "JDK 안의 바깥 기술(java.sql JDBC, java.net HTTP·네트워크, java.nio.file 파일)은 "
+                    + "규칙 domain은_허용된_패키지에만_의존한다가 java..를 통째로 허용해 통과하므로 여기서 따로 막는다(#486). "
                     + "common 예외와 환불 예외, lombok은 허용한다 (환불 헥사고날 구조, 이슈 #481)");
 
     // 위 금지 목록에 없는 새 기술이나 다른 모듈 타입이 도메인에 들어와도 잡도록 허용 목록으로 한 번 더 건다.
@@ -453,7 +455,9 @@ class ArchitectureTest {
             .andShould().haveSimpleNameEndingWith("Service")
             .because("유스케이스 구현은 *Service 하나로만 둔다. 다른 이름(Facade 등)의 조율 클래스로 유스케이스를 나누지 않는다 (refund/CLAUDE.md 3절)");
 
-    // 위 규칙은 클래스만 본다. 설정 클래스의 @Bean 메서드가 람다로 UseCase를 만들어 돌려주면 구현 클래스가 없어 모든 Service 규칙을 피한다
+    // 위 규칙은 클래스만 본다. 설정 클래스의 @Bean 메서드가 람다로 UseCase를 만들어 돌려주면 구현 클래스가 없어 모든 Service 규칙을 피한다.
+    // 막지 않는 길(#486): 선언된 반환 타입만 보므로 Object나 FactoryBean<...UseCase>로 선언하고 UseCase를 돌려주면 통과한다.
+    // 규칙을 피하려고 타입을 일부러 숨겨야만 생기고, 막으려면 정상 설정의 반환 타입까지 제한해야 해서 리뷰에서 본다
     @ArchTest
     static final ArchRule Bean_메서드는_UseCase를_만들지_않는다 = noMethods()
             .that().areAnnotatedWith(Bean.class)
