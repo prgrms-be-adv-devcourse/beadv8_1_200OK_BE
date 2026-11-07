@@ -382,7 +382,8 @@ class ArchitectureTest {
             })
             .because("입력 포트 하나를 서비스 하나가 구현한다. 구현이 둘이면 어느 쪽이 주입될지 설정에 따라 갈린다 (refund/CLAUDE.md 3절)");
 
-    // 서비스가 다른 서비스를 불러 흐름을 나누면 한 유스케이스를 한 클래스에서 읽을 수 없다. 함께 쓰는 도구는 RefundStepRunner나 package-private 도우미로 둔다
+    // 서비스가 다른 서비스를 불러 흐름을 나누면 한 유스케이스를 한 클래스에서 읽을 수 없다.
+    // 함께 쓰는 규칙은 domain(정책), DB에서 꺼내는 방법은 영속 어댑터에 두고, 승인 뒤 단계 호출은 RefundStepRunner로 부른다
     @ArchTest
     static final ArchRule 서비스는_다른_서비스를_쓰지_않는다 = noClasses()
             .that().resideInAPackage("..application.service..")
