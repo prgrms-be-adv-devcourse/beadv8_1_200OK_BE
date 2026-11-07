@@ -63,6 +63,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     //   BATCH 테이블도 정산 스키마에 있어 이름을 붙임: monolith는 spring.batch.jdbc.table-prefix가 paldogotgan_payout.BATCH_라 기본 DB와 다르고, 단독 실행 기본 DB에서도 같은 위치임
     // run_type = SCHEDULED만 보는 이유: 대기 건너뛰기(SKIP_WAIT)의 requestedAt은 +17일 미래 값이라 하한이 되면 안 되고,
     //   관리자 실행(MANUAL)은 임시 실행이 하한을 옮기지 않게 하려는 결정으로 뺌
+    // 실행 자신의 runType 잡 파라미터도 SCHEDULED여야 하는 이유: #485 이전 실행은 runType 파라미터가 없고,
+    //   마이그레이션이 그 스냅샷의 run_type을 전부 SCHEDULED로 채워 놓아 이전의 대기 건너뛰기(+17일 미래) 실행이 섞여 있을 수 있음
+    //   파라미터가 없는 옛 실행은 후보에서 빠져 결과가 없으면 기존 동작(폴백)으로 돌아감
     // EXISTS payout인 이유: 정산을 하나도 못 만든 실행은 하한을 옮기지 않는다는 기존 규칙("정산이 만들어졌을 때만 하한 이동")을 지키려는 것
     // 최신 판단은 requestedAt 값이 아니라 실행 ID(큰 쪽)로 함. 실행 ID는 항상 증가해 정렬이 안정적임
     // PARAMETER_VALUE는 Spring Batch가 LocalDateTime을 ISO_LOCAL_DATE_TIME 글자(예: 2026-11-10T02:00:00)로 저장한 것
@@ -76,6 +79,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                                 + "WHERE p.PARAMETER_NAME = 'requestedAt' "
                                 + "AND e.STATUS = 'COMPLETED' "
                                 + "AND s.run_type = 'SCHEDULED' "
+                                + "AND EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION_PARAMS rt "
+                                + "WHERE rt.JOB_EXECUTION_ID = e.JOB_EXECUTION_ID "
+                                + "AND rt.PARAMETER_NAME = 'runType' AND rt.PARAMETER_VALUE = 'SCHEDULED') "
                                 + "AND EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout po WHERE po.snapshot_id = s.id) "
                                 + "ORDER BY e.JOB_EXECUTION_ID DESC "
                                 + "LIMIT 1")
