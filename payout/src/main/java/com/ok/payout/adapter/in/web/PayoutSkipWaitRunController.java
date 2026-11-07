@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 // 정산 대기(15일) 건너뛰기 실행 API (#224, 발표·연동 테스트용 임시 기능)
 // 관리자 정산 API(PayoutAdminController)와 같은 경로(/admin/payouts) 아래에 둠
 // 발표 때 배포 서버에서 정산 흐름을 보여 줘야 해서 prod에도 등록함 (#269). 발표가 끝나면 삭제 여부를 다시 정함
+// 설정(payout.skip-wait-run.enabled)이 꺼져 있으면 PayoutJobRunner가 409(SKIP_WAIT_RUN_DISABLED)로 거절함. API는 항상 등록하고 막는 곳은 한 군데로 둠 (#485)
 // 임시 기능이라 지울 때 이 파일과 Spec만 지우면 되도록 PayoutAdminController와 분리함
 @RestController
 @RequestMapping("/api/v1/admin/payouts")

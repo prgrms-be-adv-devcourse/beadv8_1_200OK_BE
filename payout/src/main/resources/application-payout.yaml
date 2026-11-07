@@ -36,7 +36,8 @@ spring:
       republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
   batch:
     job:
-      # 앱 시작 시 Job 자동 실행 여부 (monolith의 dev 프로파일과 같게 기본은 끈다)
+      # 앱 시작 시 Job 자동 실행 여부. 기본은 false로 자동 실행하지 않는다(운영도 false 고정, #245)
+      # true로 켜면 파라미터 없이 실행되어 Job 시작 전 검사(#485)에 걸려 앱이 시작되지 않는다. 정산은 스케줄러와 관리자 API로 실행한다
       enabled: ${BATCH_JOB_ENABLED:false}
     jdbc:
       # 배치 메타데이터 테이블은 Flyway 마이그레이션으로 관리하므로 자동 생성 안 함
@@ -93,3 +94,9 @@ management:
 logging:
   level:
     com.ok: ${LOG_LEVEL_OK:INFO}
+payout:
+  skip-wait-run:
+    # 대기 건너뛰기 실행(POST /api/v1/admin/payouts/run/skip-wait) 스위치. 기본 꺼짐이고, 꺼져 있으면 409로 거절한다
+    # 발표·연동 테스트 때만 정산을 단독으로 띄우고 환경 변수 PAYOUT_SKIP_WAIT_RUN_ENABLED=true로 켠다.
+    # monolith는 이 파일을 읽지 않아 기본은 꺼져 있다. 단, 로컬 docker-compose처럼 .env를 통째로 넘기면 같은 환경 변수로 monolith도 켜진다 (#485)
+    enabled: ${PAYOUT_SKIP_WAIT_RUN_ENABLED:false}

@@ -1,9 +1,12 @@
 package com.ok.payout.domain;
 
 import com.ok.payout.PayoutSchema;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.common.jpa.entity.BaseTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -40,11 +43,22 @@ public class PayoutSnapshot extends BaseTime {
     @Column(nullable = false)
     private LocalDateTime periodTo;
 
-    public static PayoutSnapshot create(Long jobExecutionId, LocalDateTime periodFrom, LocalDateTime periodTo) {
+    // 이 정산이 어느 경로로 시작됐는지 (정기 스케줄러 / 관리자 실행 / 대기 건너뛰기). 나중에 실행 경로별로 구분해 보려고 남김
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private PayoutRunType runType;
+
+    public static PayoutSnapshot create(Long jobExecutionId, LocalDateTime periodFrom, LocalDateTime periodTo,
+                                        PayoutRunType runType) {
+        // 실행 유형은 배치가 Job 파라미터에서 꺼내 넘기는 시스템 값이라 null이면 코드 버그 → 표준 예외로 막음
+        if (runType == null) {
+            throw new IllegalArgumentException("정산 실행 유형은 필수입니다. jobExecutionId=" + jobExecutionId);
+        }
         PayoutSnapshot snapshot = new PayoutSnapshot();
         snapshot.jobExecutionId = jobExecutionId;
         snapshot.periodFrom = periodFrom;
         snapshot.periodTo = periodTo;
+        snapshot.runType = runType;
         return snapshot;
     }
 }
