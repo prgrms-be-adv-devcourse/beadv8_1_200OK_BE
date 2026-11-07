@@ -7,7 +7,7 @@ import com.ok.common.event.WalletPaymentFailedEvent;
 import com.ok.common.event.payload.PaidOrderItem;
 import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
-import com.ok.order.cart.service.CartService;
+import com.ok.order.cart.application.service.CartService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.SellerShippingFee;

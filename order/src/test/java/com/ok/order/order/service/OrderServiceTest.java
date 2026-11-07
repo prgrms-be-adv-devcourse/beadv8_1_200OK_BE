@@ -1,7 +1,7 @@
 package com.ok.order.order.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.order.cart.service.CartService;
+import com.ok.order.cart.application.port.in.RemoveOrderedCartItemsUseCase;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
@@ -48,7 +48,7 @@ class OrderServiceTest {
 
     @Mock OrderRepository orderRepository;
     @Mock OrderEventPublisher orderEventPublisher;
-    @Mock CartService cartService;
+    @Mock RemoveOrderedCartItemsUseCase removeOrderedCartItems;
 
     // 한국 시간 2026-10-25 09:00으로 고정
     Clock clock = Clock.fixed(Instant.parse("2026-10-25T00:00:00Z"), ZoneId.of("Asia/Seoul"));
@@ -58,7 +58,7 @@ class OrderServiceTest {
 
     @BeforeEach
     void setUp() {
-        sut = new OrderService(orderRepository, orderEventPublisher, cartService, clock);
+        sut = new OrderService(orderRepository, orderEventPublisher, removeOrderedCartItems, clock);
     }
 
     // 저장된 것처럼 ID가 있는 주문 (구매자 1, 판매자 100, 사과 1kg 10,000원 × 2개)
@@ -176,7 +176,7 @@ class OrderServiceTest {
             softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
             softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
         });
-        then(cartService).should().removeOrderItems(1L, List.of(11L));
+        then(removeOrderedCartItems).should().removeOrderItems(1L, List.of(11L));
     }
 
     @Test
@@ -190,7 +190,7 @@ class OrderServiceTest {
         sut.completePayment(10L);
 
         // then
-        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+        then(removeOrderedCartItems).should(never()).removeOrderItems(anyLong(), anyList());
     }
 
     @Test
@@ -205,7 +205,7 @@ class OrderServiceTest {
 
         // then
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
-        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+        then(removeOrderedCartItems).should(never()).removeOrderItems(anyLong(), anyList());
     }
 
     @Test
@@ -223,7 +223,7 @@ class OrderServiceTest {
             softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
             softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PAYMENT_FAILED);
         });
-        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+        then(removeOrderedCartItems).should(never()).removeOrderItems(anyLong(), anyList());
     }
 
     @Test
@@ -266,7 +266,7 @@ class OrderServiceTest {
         // when & then (예외를 던지면 이벤트가 계속 재처리됨)
         assertThatCode(() -> sut.completePayment(10L)).doesNotThrowAnyException();
         assertThat(sut.failPayment(10L)).isFalse();
-        then(cartService).should(never()).removeOrderItems(anyLong(), anyList());
+        then(removeOrderedCartItems).should(never()).removeOrderItems(anyLong(), anyList());
     }
 
     // ---------- 배송 상태 반영 ----------
