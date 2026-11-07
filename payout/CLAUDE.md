@@ -8,7 +8,7 @@
 | 패키지 | 두는 것 |
 |---|---|
 | `domain` | 엔티티(JPA 어노테이션 그대로), 정책(`PayoutPolicy`) |
-| `domain/type` | 배치 입구와 엔티티가 같이 쓰는 enum(`PayoutRunType`). enum만 둔다 |
+| `domain/type` | 입구 중 배치와 application·엔티티가 같이 쓰는 enum(`PayoutRunType`). enum만 둔다. 웹·이벤트 입구는 쓰지 않는다 |
 | `application/port/in` | 입력 포트(`*UseCase`)와 그 값(`*Command`, `*Query`, `*Result`) |
 | `application/port/out` | 출력 포트(`*Repository`, `*QueryRepository`, 발행 인터페이스)와 그 값(`*Row`, 발행 값 `SellerPayoutCreated`) |
 | `application/service` | 유스케이스 구현(`*Service`), 검증기, 조회 결과 변환(`PayoutQueryResultMapper`) |

@@ -22,7 +22,7 @@ related: [389, 245, 441, 469, 390]
 
 | 결정 | 선택 | 이유 |
 |---|---|---|
-| 실행 유형 enum 위치 | `domain/type/PayoutRunType` 하나. 배치 입구만 `domain.type`을 쓸 수 있고, `domain.type`에는 enum만 둔다 | enum을 port.in과 domain에 두 벌 두지 않고 입구·엔티티 모두 타입으로 막는다. 웹·이벤트 입구는 `api.md`(컨트롤러는 domain 타입 금지)대로 계속 막는다 (사용자 결정) |
+| 실행 유형 enum 위치 | `domain/type/PayoutRunType` 하나. 입구 중에는 배치만 `domain.type`을 쓸 수 있고(application·엔티티는 원래 domain을 씀), `domain.type`에는 enum만 둔다 | enum을 port.in과 domain에 두 벌 두지 않고 입구·엔티티 모두 타입으로 막는다. 웹·이벤트 입구는 `api.md`(컨트롤러는 domain 타입 금지)대로 계속 막는다 (사용자 결정) |
 | 실행 유형을 정하는 곳 | `PayoutJobRunner.runScheduled()` / `runManual()` / `runSkippingWait()` 메서드 | 컨트롤러가 enum을 몰라도 되고, SKIP_WAIT를 스위치 확인 없이 넘기는 길이 없다 |
 | 스위치 위치 | `payout.skip-wait-run.enabled`(기본 false)를 정산 설정에만 둠 | monolith는 사라지고 모듈별 독립 서버로 간다 (사용자 결정) |
 | 꺼졌을 때 응답 | 409 `SKIP_WAIT_RUN_DISABLED`, `PayoutJobRunner`에서 확인 | 404는 "없는 주소"와 구분되지 않고, 501은 "아직 안 만든 기능"이라 뜻이 다르다 |
