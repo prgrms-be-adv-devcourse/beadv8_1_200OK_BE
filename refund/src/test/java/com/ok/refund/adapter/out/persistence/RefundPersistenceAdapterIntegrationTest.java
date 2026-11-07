@@ -164,6 +164,8 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
 
     // 같은 트랜잭션에서 불러왔어도 잠그지 않은 조회(findById)라면, 다른 트랜잭션이 잠그고 바꾸는 중에도 기다리지 않고 덮어쓸 수 있다.
     // 그래서 "불러왔는가"만이 아니라 "잠금 조회로 불러왔는가"까지 막는지 본다
+    // 잠금 여부는 Hibernate가 알려 주는 잠금 모드(getLockMode)로 판단한다. Hibernate를 올린 뒤 잠그지 않은 조회도 잠금으로 보고하게 바뀌면
+    // 이 테스트만 깨진다. 그때는 테스트를 고치지 말고 어댑터의 잠금 확인 방식을 다시 정한다
     @Test
     void 같은_트랜잭션에서_잠그지_않고_불러온_환불을_update하면_예외를_던지고_바꾸지_않는다() {
         // given
