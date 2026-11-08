@@ -9,7 +9,7 @@ public record SellerShippingFeeResponse(
         @Schema(description = "판매자 회원 ID", example = "10")
         Long sellerId,
 
-        @Schema(description = "판매자 설정의 기본 배송비 (원). 무료배송이어도 설정 값이다", example = "3000")
+        @Schema(description = "판매자 설정의 기본 배송비 (원). 무료배송이어도 설정 값이다. 배송비 견적 응답의 baseShippingFee(무료배송 적용 후 값)와 뜻이 다르다", example = "3000")
         long baseShippingFee,
 
         @Schema(description = "판매자 설정의 무료배송 기준 금액 (원). null이면 무료배송이 없다", example = "50000", nullable = true)

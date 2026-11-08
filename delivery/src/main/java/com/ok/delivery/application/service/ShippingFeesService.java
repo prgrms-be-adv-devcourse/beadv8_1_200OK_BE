@@ -33,6 +33,7 @@ public class ShippingFeesService implements ShippingFeesUseCase {
         RegionResult region = deliveryRegionService.resolve(query.postalCode());
         Map<Long, SellerShippingSetting> settings = sellerShippingSettingService.getSettings(query.sellerIds());
 
+        // getSettings는 요청한 모든 판매자 ID를 채워(저장값이 없으면 기본값) 돌려주므로 settings.get은 null이 아니다
         List<SellerShippingFeeResult> sellers = query.sellers().stream()
                 .map(seller -> toResult(seller, settings.get(seller.sellerId()), region.surcharge()))
                 .toList();
