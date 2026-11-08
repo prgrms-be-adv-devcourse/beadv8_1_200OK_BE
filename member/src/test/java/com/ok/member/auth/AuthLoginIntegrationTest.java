@@ -4,7 +4,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.ok.common.security.TokenClaims;
 import com.ok.member.auth.repository.RefreshTokenRepository;
 import com.ok.member.auth.service.TokenHasher;
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -48,7 +48,7 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     RefreshTokenRepository refreshTokenRepository;

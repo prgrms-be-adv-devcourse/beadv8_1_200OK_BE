@@ -1,7 +1,7 @@
 package com.ok.member.auth;
 
 import com.ok.member.auth.repository.RefreshTokenRepository;
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.zaxxer.hikari.HikariDataSource;
@@ -53,7 +53,7 @@ class AuthLoginConcurrencyIntegrationTest extends AbstractIntegrationTest {
     DataSource dataSource;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     RefreshTokenRepository refreshTokenRepository;

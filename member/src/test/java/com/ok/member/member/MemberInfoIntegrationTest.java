@@ -1,6 +1,6 @@
 package com.ok.member.member;
 
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -50,7 +50,7 @@ class MemberInfoIntegrationTest extends AbstractIntegrationTest {
     JsonMapper jsonMapper;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     private MockMvc mockMvc;
 

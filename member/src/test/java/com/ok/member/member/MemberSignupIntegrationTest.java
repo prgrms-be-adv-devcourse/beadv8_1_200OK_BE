@@ -1,6 +1,6 @@
 package com.ok.member.member;
 
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberType;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -38,7 +38,7 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;

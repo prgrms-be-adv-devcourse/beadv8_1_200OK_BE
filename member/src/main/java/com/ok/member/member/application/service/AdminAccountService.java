@@ -1,8 +1,8 @@
 package com.ok.member.member.application.service;
 
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
 import com.ok.member.member.application.dto.AdminAccountCommand;
 import com.ok.member.member.application.dto.AdminAccountCreation;
+import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberType;
 import lombok.RequiredArgsConstructor;

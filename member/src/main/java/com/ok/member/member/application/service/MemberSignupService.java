@@ -1,8 +1,8 @@
 package com.ok.member.member.application.service;
 
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
 import com.ok.member.member.application.dto.SignupCommand;
 import com.ok.member.member.application.port.out.MemberEventPublisher;
+import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;

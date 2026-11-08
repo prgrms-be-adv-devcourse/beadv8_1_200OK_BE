@@ -1,7 +1,7 @@
 package com.ok.member.seller;
 
 import com.jayway.jsonpath.JsonPath;
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.domain.SellerApplication;
@@ -56,7 +56,7 @@ class SellerApplicationAdminIntegrationTest extends AbstractIntegrationTest {
     JsonMapper jsonMapper;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;

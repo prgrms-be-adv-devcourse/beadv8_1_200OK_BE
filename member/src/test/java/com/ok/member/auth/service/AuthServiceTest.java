@@ -8,7 +8,7 @@ import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.service.dto.LoginCredential;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
 import com.ok.member.auth.service.dto.TokenResult;
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;

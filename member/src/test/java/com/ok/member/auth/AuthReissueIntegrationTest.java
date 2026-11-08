@@ -10,7 +10,7 @@ import com.ok.member.auth.service.AuthService;
 import com.ok.member.auth.service.RefreshTokenService;
 import com.ok.member.auth.service.TokenHasher;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
-import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -62,7 +62,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     RefreshTokenRepository refreshTokenRepository;
