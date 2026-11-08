@@ -112,9 +112,15 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
         if (response.hasErrorCode(UNAUTHENTICATED)) {
             invalidateToken();
             response = track(carrierId, trackingNumber);
+            if (response.hasErrorCode(UNAUTHENTICATED)) {
+                // 새 토큰으로도 인증이 안 되면 만료가 아니라 client secret 오류다. 반복 장애라 경고에 묻히지 않게 error로 남긴다
+                log.error("Delivery Tracker 인증 실패. 새 토큰으로도 거부됐습니다. client-id와 client-secret을 확인하세요.");
+                return false;
+            }
         }
         if (response.hasErrors()) {
-            log.warn("Delivery Tracker 조회 오류 응답. carrierId={}, errors={}", carrierId, response.errorMessages());
+            // NOT_FOUND 같은 오류는 message가 비어 올 수 있어 코드도 함께 남긴다
+            log.warn("Delivery Tracker 조회 오류 응답. carrierId={}, errors={}", carrierId, response.errorSummaries());
             return false;
         }
         return DELIVERED.equals(response.lastStatusCode());
@@ -177,8 +183,8 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
             return hasErrors() && errors.stream().anyMatch(error -> code.equals(error.code()));
         }
 
-        List<String> errorMessages() {
-            return errors.stream().map(GraphQlError::message).toList();
+        List<String> errorSummaries() {
+            return errors.stream().map(error -> error.code() + ": " + error.message()).toList();
         }
 
         String lastStatusCode() {
@@ -210,7 +216,8 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
     record GraphQlError(String message, Map<String, Object> extensions) {
 
         String code() {
-            return extensions == null ? null : String.valueOf(extensions.get("code"));
+            Object code = extensions == null ? null : extensions.get("code");
+            return code == null ? null : code.toString();
         }
     }
 }
