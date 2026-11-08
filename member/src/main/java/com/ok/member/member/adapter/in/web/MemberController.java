@@ -5,8 +5,8 @@ import com.ok.member.member.adapter.in.web.dto.MemberInfoResponse;
 import com.ok.member.member.adapter.in.web.dto.MemberInfoUpdateRequest;
 import com.ok.member.member.adapter.in.web.dto.SignupRequest;
 import com.ok.member.member.adapter.in.web.dto.SignupResponse;
-import com.ok.member.member.application.service.MemberService;
-import com.ok.member.member.application.service.MemberSignupService;
+import com.ok.member.member.application.port.in.MemberInfoUseCase;
+import com.ok.member.member.application.port.in.MemberSignupUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -23,22 +23,22 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class MemberController implements MemberControllerSpec {
 
-    private final MemberSignupService memberSignupService;
-    private final MemberService memberService;
+    private final MemberSignupUseCase memberSignupUseCase;
+    private final MemberInfoUseCase memberInfoUseCase;
 
     @Override
     @PostMapping("/signup")
     public ResponseEntity<SignupResponse> signup(
             @Valid @RequestBody SignupRequest request
     ) {
-        Long memberId = memberSignupService.signup(request.toCommand());
+        Long memberId = memberSignupUseCase.signup(request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED).body(new SignupResponse(memberId));
     }
 
     @Override
     @GetMapping("/me")
     public ResponseEntity<MemberInfoResponse> getMyInfo(@CurrentMemberId Long memberId) {
-        return ResponseEntity.ok(MemberInfoResponse.from(memberService.getMyInfo(memberId)));
+        return ResponseEntity.ok(MemberInfoResponse.from(memberInfoUseCase.getMyInfo(memberId)));
     }
 
     @Override
@@ -47,7 +47,7 @@ public class MemberController implements MemberControllerSpec {
             @CurrentMemberId Long memberId,
             @Valid @RequestBody MemberInfoUpdateRequest request
     ) {
-        return ResponseEntity.ok(MemberInfoResponse.from(memberService.updateMyInfo(memberId, request.toCommand())));
+        return ResponseEntity.ok(MemberInfoResponse.from(memberInfoUseCase.updateMyInfo(memberId, request.toCommand())));
     }
 
 }

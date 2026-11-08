@@ -1,6 +1,7 @@
 package com.ok.member.member.application.service;
 
 import com.ok.member.member.application.dto.SignupCommand;
+import com.ok.member.member.application.port.in.MemberSignupUseCase;
 import com.ok.member.member.application.port.out.MemberEventPublisher;
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
@@ -15,7 +16,7 @@ import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
-public class MemberSignupService {
+public class MemberSignupService implements MemberSignupUseCase {
 
     private final MemberRepository memberRepository;
     private final MemberDuplicateValidator memberDuplicateValidator;
@@ -25,6 +26,7 @@ public class MemberSignupService {
     // 약관 동의 일시를 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
     private final Clock clock;
 
+    @Override
     @Transactional
     public Long signup(SignupCommand command) {
         // 중복 확인

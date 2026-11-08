@@ -8,7 +8,7 @@ import com.ok.common.media.MediaUrlResolver;
 import com.ok.member.auth.controller.JwksController;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.application.dto.SignupCommand;
-import com.ok.member.member.application.service.MemberSignupService;
+import com.ok.member.member.application.port.in.MemberSignupUseCase;
 import com.ok.member.member.domain.Member;
 import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
@@ -39,7 +39,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 public class MemberModuleTest {
 
     @Autowired
-    MemberSignupService memberSignupService;
+    MemberSignupUseCase memberSignupUseCase;
 
     @Autowired
     MemberJpaRepository memberRepository;
@@ -83,7 +83,7 @@ public class MemberModuleTest {
         );
 
         // when & then
-        scenario.stimulate(() -> memberSignupService.signup(command))
+        scenario.stimulate(() -> memberSignupUseCase.signup(command))
                 .andWaitForEventOfType(MemberRegisteredEvent.class)
                 .toArriveAndVerify(event -> assertThat(event.memberId()).isNotNull());
     }

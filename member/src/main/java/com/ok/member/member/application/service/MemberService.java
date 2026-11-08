@@ -3,6 +3,7 @@ package com.ok.member.member.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.member.member.application.dto.MemberInfoResult;
 import com.ok.member.member.application.dto.MemberInfoUpdateCommand;
+import com.ok.member.member.application.port.in.MemberInfoUseCase;
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.exception.MemberErrorCode;
@@ -16,24 +17,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class MemberService {
+public class MemberService implements MemberInfoUseCase {
 
     private final MemberRepository memberRepository;
 
-    /**
-     * 회원 본인의 정보를 반환한다.
-     *
-     * @throws RestApiException 회원이 없거나 탈퇴했으면 {@code MEMBER_NOT_FOUND}
-     */
+    @Override
     public MemberInfoResult getMyInfo(Long memberId) {
         return toResult(findMember(memberId));
     }
 
-    /**
-     * 회원 본인의 이름과 닉네임을 수정한다. 닉네임 중복은 허용한다.
-     *
-     * @throws RestApiException 회원이 없거나 탈퇴했으면 {@code MEMBER_NOT_FOUND}
-     */
+    @Override
     @Transactional
     public MemberInfoResult updateMyInfo(Long memberId, MemberInfoUpdateCommand command) {
         Member member = findMember(memberId);

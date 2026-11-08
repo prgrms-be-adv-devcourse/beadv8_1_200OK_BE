@@ -2,7 +2,7 @@ package com.ok.member.member.adapter.in.bootstrap;
 
 import com.ok.member.member.application.dto.AdminAccountCommand;
 import com.ok.member.member.application.dto.AdminAccountCreation;
-import com.ok.member.member.application.service.AdminAccountService;
+import com.ok.member.member.application.port.in.AdminAccountUseCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -15,11 +15,11 @@ import static org.mockito.Mockito.mock;
 // 전체 앱을 띄우지 않고 이 설정만 올려, 설정값에 따라 빈이 등록되는지와 앱 시작이 막히는지 확인한다
 class AdminBootstrapConfigTest {
 
-    private final AdminAccountService adminAccountService = mock(AdminAccountService.class);
+    private final AdminAccountUseCase adminAccountUseCase = mock(AdminAccountUseCase.class);
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(AdminBootstrapConfig.class)
-            .withBean(AdminAccountService.class, () -> adminAccountService);
+            .withBean(AdminAccountUseCase.class, () -> adminAccountUseCase);
 
     @Test
     void 관리자_아이디가_없으면_최초_관리자_생성을_등록하지_않는다() {
@@ -62,7 +62,7 @@ class AdminBootstrapConfigTest {
     @Test
     void 앱이_시작되면_정규화한_설정값으로_관리자_생성을_요청한다() {
         // given
-        given(adminAccountService.createAdminIfAbsent(
+        given(adminAccountUseCase.createAdminIfAbsent(
                 new AdminAccountCommand("admin01", "Admin123!", "admin@example.com")))
                 .willReturn(AdminAccountCreation.CREATED);
 
@@ -75,7 +75,7 @@ class AdminBootstrapConfigTest {
                     context.getBean(AdminBootstrapRunner.class).run(new DefaultApplicationArguments());
 
                     // then
-                    then(adminAccountService).should().createAdminIfAbsent(
+                    then(adminAccountUseCase).should().createAdminIfAbsent(
                             new AdminAccountCommand("admin01", "Admin123!", "admin@example.com"));
                 });
     }

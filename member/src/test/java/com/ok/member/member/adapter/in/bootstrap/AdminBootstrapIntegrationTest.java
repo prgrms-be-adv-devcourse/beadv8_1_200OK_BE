@@ -6,7 +6,7 @@ import com.ok.member.auth.repository.RefreshTokenRepository;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.application.dto.AdminAccountCommand;
 import com.ok.member.member.application.dto.AdminAccountCreation;
-import com.ok.member.member.application.service.AdminAccountService;
+import com.ok.member.member.application.port.in.AdminAccountUseCase;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberType;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -48,7 +48,7 @@ class AdminBootstrapIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext webApplicationContext;
 
     @Autowired
-    AdminAccountService adminAccountService;
+    AdminAccountUseCase adminAccountUseCase;
 
     @Autowired
     MemberJpaRepository memberRepository;
@@ -88,7 +88,7 @@ class AdminBootstrapIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 만든_관리자로_로그인하면_ADMIN_권한_토큰을_받고_비밀번호는_인코딩되어_저장된다() throws Exception {
         // given
-        AdminAccountCreation result = adminAccountService.createAdminIfAbsent(command(PASSWORD));
+        AdminAccountCreation result = adminAccountUseCase.createAdminIfAbsent(command(PASSWORD));
 
         // when
         String body = performLogin(PASSWORD)
@@ -110,10 +110,10 @@ class AdminBootstrapIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 다시_실행해도_이미_있는_관리자의_비밀번호를_바꾸지_않는다() throws Exception {
         // given: 처음 시작할 때 만든 관리자
-        adminAccountService.createAdminIfAbsent(command(PASSWORD));
+        adminAccountUseCase.createAdminIfAbsent(command(PASSWORD));
 
         // when: 설정값의 비밀번호를 바꾸고 다시 시작했다
-        AdminAccountCreation result = adminAccountService.createAdminIfAbsent(command("Changed123!"));
+        AdminAccountCreation result = adminAccountUseCase.createAdminIfAbsent(command("Changed123!"));
 
         // then: 처음 비밀번호로만 로그인된다
         assertThat(result).isEqualTo(AdminAccountCreation.ALREADY_EXISTS);
@@ -128,7 +128,7 @@ class AdminBootstrapIntegrationTest extends AbstractIntegrationTest {
                 "user@example.com", "김영수", "admin01", LocalDateTime.of(2026, 10, 1, 0, 0)));
 
         // when
-        AdminAccountCreation result = adminAccountService.createAdminIfAbsent(command(PASSWORD));
+        AdminAccountCreation result = adminAccountUseCase.createAdminIfAbsent(command(PASSWORD));
 
         // then
         assertSoftly(softly -> {

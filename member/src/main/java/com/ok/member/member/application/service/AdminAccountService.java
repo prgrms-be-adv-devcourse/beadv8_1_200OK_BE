@@ -2,6 +2,7 @@ package com.ok.member.member.application.service;
 
 import com.ok.member.member.application.dto.AdminAccountCommand;
 import com.ok.member.member.application.dto.AdminAccountCreation;
+import com.ok.member.member.application.port.in.AdminAccountUseCase;
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberType;
@@ -22,7 +23,7 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class AdminAccountService {
+public class AdminAccountService implements AdminAccountUseCase {
 
     // 최초 관리자는 사람이 아니라 운영 계정이라 이름과 닉네임을 정해 둔다. 사람별 관리자는 관리자 생성 API에서 받는다
     static final String ADMIN_NAME = "관리자";
@@ -32,13 +33,7 @@ public class AdminAccountService {
     private final PasswordEncoder passwordEncoder;
     private final Clock clock;
 
-    /**
-     * 같은 아이디의 회원이 없을 때만 관리자 계정을 만든다.
-     * 이미 있으면 만들지 않고 비밀번호도 바꾸지 않는다. 재시작할 때마다 덮어쓰면, 바꾼 비밀번호가 설정값으로 조용히 되돌아간다.
-     *
-     * @return 만들었는지, 이미 관리자가 있는지, 일반 회원이 아이디를 쓰고 있는지
-     * @throws IllegalStateException 아이디는 비어 있지만 이메일을 다른 회원이 쓰고 있으면. 설정값을 고쳐야 하므로 앱 시작을 막는다
-     */
+    @Override
     @Transactional
     public AdminAccountCreation createAdminIfAbsent(AdminAccountCommand command) {
         Optional<Member> existing = memberRepository.findByLoginId(command.loginId());

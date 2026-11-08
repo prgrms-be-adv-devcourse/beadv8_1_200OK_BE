@@ -1,7 +1,7 @@
 package com.ok.member.member.adapter.in.bootstrap;
 
 import com.ok.member.member.application.dto.AdminAccountCreation;
-import com.ok.member.member.application.service.AdminAccountService;
+import com.ok.member.member.application.port.in.AdminAccountUseCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -17,12 +17,12 @@ import org.springframework.boot.ApplicationRunner;
 @RequiredArgsConstructor
 class AdminBootstrapRunner implements ApplicationRunner {
 
-    private final AdminAccountService adminAccountService;
+    private final AdminAccountUseCase adminAccountUseCase;
     private final AdminBootstrapProperties properties;
 
     @Override
     public void run(ApplicationArguments args) {
-        AdminAccountCreation result = adminAccountService.createAdminIfAbsent(properties.toCommand());
+        AdminAccountCreation result = adminAccountUseCase.createAdminIfAbsent(properties.toCommand());
         String loginId = properties.loginId();
         switch (result) {
             case CREATED -> log.info("최초 관리자 계정을 만들었습니다. loginId={}", loginId);

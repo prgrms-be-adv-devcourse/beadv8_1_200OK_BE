@@ -1,6 +1,6 @@
 package com.ok.member.member.adapter.in.bootstrap;
 
-import com.ok.member.member.application.service.AdminAccountService;
+import com.ok.member.member.application.port.in.AdminAccountUseCase;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Condition;
@@ -23,9 +23,9 @@ import org.springframework.util.StringUtils;
 public class AdminBootstrapConfig {
 
     @Bean
-    AdminBootstrapRunner adminBootstrapRunner(AdminAccountService adminAccountService,
+    AdminBootstrapRunner adminBootstrapRunner(AdminAccountUseCase adminAccountUseCase,
                                               AdminBootstrapProperties properties) {
-        return new AdminBootstrapRunner(adminAccountService, properties);
+        return new AdminBootstrapRunner(adminAccountUseCase, properties);
     }
 
     /**
