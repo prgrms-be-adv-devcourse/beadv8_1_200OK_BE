@@ -1,7 +1,7 @@
 package com.ok.member.member.domain;
 
-import com.ok.member.MemberSchema;
 import com.ok.common.jpa.entity.BaseTime;
+import com.ok.member.MemberSchema;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -95,6 +95,21 @@ public class Member extends BaseTime {
      */
     public boolean isWithdrawn() {
         return status == MemberStatus.WITHDRAWN;
+    }
+
+    /**
+     * 이용이 정지된 회원인지 확인한다.
+     * 다른 하위 도메인(인증)이 회원 상태 enum을 직접 비교하지 않도록 판단을 이곳에 둔다.
+     */
+    public boolean isSuspended() {
+        return status == MemberStatus.SUSPENDED;
+    }
+
+    /**
+     * 관리자 계정인지 확인한다. 토큰 권한과 최초 관리자 계정 생성이 같은 기준을 쓰도록 한곳에 둔다.
+     */
+    public boolean isAdmin() {
+        return type == MemberType.ADMIN;
     }
 
     /**

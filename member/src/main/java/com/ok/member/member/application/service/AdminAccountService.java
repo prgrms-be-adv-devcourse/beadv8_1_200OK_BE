@@ -5,7 +5,6 @@ import com.ok.member.member.application.dto.AdminAccountCreation;
 import com.ok.member.member.application.port.in.AdminAccountUseCase;
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.domain.MemberType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -38,7 +37,7 @@ public class AdminAccountService implements AdminAccountUseCase {
     public AdminAccountCreation createAdminIfAbsent(AdminAccountCommand command) {
         Optional<Member> existing = memberRepository.findByLoginId(command.loginId());
         if (existing.isPresent()) {
-            return existing.get().getType() == MemberType.ADMIN
+            return existing.get().isAdmin()
                     ? AdminAccountCreation.ALREADY_EXISTS
                     : AdminAccountCreation.LOGIN_ID_TAKEN;
         }

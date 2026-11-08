@@ -1,8 +1,11 @@
 package com.ok.member.member.application.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.member.member.application.dto.MemberAuthAccount;
 import com.ok.member.member.application.dto.MemberInfoResult;
 import com.ok.member.member.application.dto.MemberInfoUpdateCommand;
+import com.ok.member.member.application.dto.MemberLoginCredential;
+import com.ok.member.member.application.port.in.MemberAuthAccountUseCase;
 import com.ok.member.member.application.port.in.MemberInfoUseCase;
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
@@ -11,13 +14,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
+
 /**
- * 로그인한 회원 본인의 정보 조회·수정을 처리한다.
+ * 로그인한 회원 본인의 정보 조회·수정과, 인증이 토큰 발급에 쓰는 계정 조회를 처리한다.
+ * 인증용 조회도 클래스의 읽기 전용 트랜잭션이라, 인증의 발급 트랜잭션 안에서 불리면 그 트랜잭션에 참여한다.
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class MemberService implements MemberInfoUseCase {
+public class MemberService implements MemberInfoUseCase, MemberAuthAccountUseCase {
 
     private final MemberRepository memberRepository;
 
@@ -32,6 +38,19 @@ public class MemberService implements MemberInfoUseCase {
         Member member = findMember(memberId);
         member.updateInfo(command.name(), command.nickname());
         return toResult(member);
+    }
+
+    @Override
+    public Optional<MemberLoginCredential> findLoginCredential(String loginId) {
+        return memberRepository.findByLoginId(loginId)
+                .map(member -> new MemberLoginCredential(member.getId(), member.getPassword()));
+    }
+
+    @Override
+    public Optional<MemberAuthAccount> findAuthAccount(Long memberId) {
+        return memberRepository.findById(memberId)
+                .map(member -> new MemberAuthAccount(member.getId(), member.isAdmin(), member.isWithdrawn(),
+                        member.isSuspended(), member.getPassword()));
     }
 
     private Member findMember(Long memberId) {

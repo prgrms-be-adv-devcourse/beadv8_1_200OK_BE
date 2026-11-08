@@ -8,9 +8,8 @@ import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.service.dto.LoginCredential;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
 import com.ok.member.auth.service.dto.TokenResult;
-import com.ok.member.member.application.port.out.MemberRepository;
-import com.ok.member.member.domain.Member;
-import com.ok.member.member.domain.MemberStatus;
+import com.ok.member.member.application.dto.MemberAuthAccount;
+import com.ok.member.member.application.port.in.MemberAuthAccountUseCase;
 import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,11 +19,9 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -45,9 +42,13 @@ class AuthServiceTest {
     private static final Long MEMBER_ID = 1L;
     // Facade가 비밀번호 확인에 쓴 값. 저장된 회원 해시(ENCODED_PASSWORD)와 같다
     private static final LoginCredential CREDENTIAL = new LoginCredential(MEMBER_ID, ENCODED_PASSWORD);
+    // 회원 도메인이 판단해 넘겨주는 계정 상태. 일반 회원(관리자 아님)이다
+    private static final MemberAuthAccount ACTIVE = new MemberAuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD);
+    private static final MemberAuthAccount WITHDRAWN = new MemberAuthAccount(MEMBER_ID, false, true, false, ENCODED_PASSWORD);
+    private static final MemberAuthAccount SUSPENDED = new MemberAuthAccount(MEMBER_ID, false, false, true, ENCODED_PASSWORD);
 
     @Mock
-    MemberRepository memberRepository;
+    MemberAuthAccountUseCase memberAuthAccountUseCase;
 
     @Mock
     AccessTokenProvider accessTokenProvider;
@@ -63,14 +64,14 @@ class AuthServiceTest {
 
     @BeforeEach
     void setUp() {
-        authService = new AuthService(memberRepository, accessTokenProvider, refreshTokenService,
+        authService = new AuthService(memberAuthAccountUseCase, accessTokenProvider, refreshTokenService,
                 sellerApprovalCheckUseCase);
     }
 
     @Test
     void 로그인_토큰을_발급하면_Access_Token과_Refresh_Token을_함께_반환한다() {
         // given
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
@@ -94,7 +95,7 @@ class AuthServiceTest {
     @Test
     void 승인된_판매자가_로그인하면_구매자와_판매자_권한으로_Access_Token을_발급한다() {
         // given
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalCheckUseCase.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
@@ -111,7 +112,7 @@ class AuthServiceTest {
     @Test
     void 로그인_토큰을_발급할_때_회원이_없으면_INVALID_CREDENTIALS가_발생하고_토큰을_발급하지_않는다() {
         // given
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.empty());
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> authService.issueLoginTokens(CREDENTIAL))
@@ -123,7 +124,7 @@ class AuthServiceTest {
     @Test
     void 비밀번호를_확인한_뒤_비밀번호가_바뀌었으면_INVALID_CREDENTIALS가_발생하고_토큰을_발급하지_않는다() {
         // given: Facade는 옛 해시로 비밀번호를 확인했는데, 발급 직전에 읽은 회원의 해시는 바뀌어 있다
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         LoginCredential staleCredential = new LoginCredential(MEMBER_ID, "{bcrypt}old-encoded");
 
         // when & then
@@ -136,9 +137,9 @@ class AuthServiceTest {
     @ParameterizedTest
     @MethodSource("로그인할_수_없는_회원_상태")
     void 로그인_토큰을_발급할_때_회원_상태를_다시_읽어_로그인할_수_없으면_예외가_발생하고_토큰을_발급하지_않는다(
-            MemberStatus status, AuthErrorCode expected) {
+            MemberAuthAccount account, AuthErrorCode expected) {
         // given: 비밀번호를 확인한 뒤 발급 직전에 탈퇴·정지된 경우도 이 상태로 판단한다
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(status)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(account));
 
         // when & then
         assertThatThrownBy(() -> authService.issueLoginTokens(CREDENTIAL))
@@ -150,8 +151,8 @@ class AuthServiceTest {
     static Stream<Arguments> 로그인할_수_없는_회원_상태() {
         return Stream.of(
                 // 탈퇴 회원은 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다
-                Arguments.of(MemberStatus.WITHDRAWN, AuthErrorCode.INVALID_CREDENTIALS),
-                Arguments.of(MemberStatus.SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
+                Arguments.of(WITHDRAWN, AuthErrorCode.INVALID_CREDENTIALS),
+                Arguments.of(SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
         );
     }
 
@@ -159,7 +160,7 @@ class AuthServiceTest {
     void 재발급하면_토큰을_사용_처리하고_회원의_현재_권한으로_새_토큰을_발급한다() {
         // given
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
 
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
@@ -185,7 +186,7 @@ class AuthServiceTest {
     void 재발급할_때_판매자_승인_여부를_다시_조회해_승인됐으면_판매자_권한을_함께_준다() {
         // given: 승인 전에 로그인해 BUYER 토큰만 가진 회원이 승인 뒤 재발급한다
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalCheckUseCase.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
@@ -203,7 +204,7 @@ class AuthServiceTest {
     void 재발급할_때_회원이_없으면_INVALID_REFRESH_TOKEN이_발생하고_새_토큰을_발급하지_않는다() {
         // given
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.empty());
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
@@ -215,10 +216,10 @@ class AuthServiceTest {
     @ParameterizedTest
     @MethodSource("재발급할_수_없는_회원_상태")
     void 재발급할_수_없는_상태의_회원은_예외가_발생하고_새_토큰을_발급하지_않는다(
-            MemberStatus status, AuthErrorCode expected) {
+            MemberAuthAccount account, AuthErrorCode expected) {
         // given
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
-        given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(status)));
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(account));
 
         // when & then
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
@@ -230,18 +231,9 @@ class AuthServiceTest {
     static Stream<Arguments> 재발급할_수_없는_회원_상태() {
         return Stream.of(
                 // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급한다
-                Arguments.of(MemberStatus.WITHDRAWN, AuthErrorCode.INVALID_REFRESH_TOKEN),
-                Arguments.of(MemberStatus.SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
+                Arguments.of(WITHDRAWN, AuthErrorCode.INVALID_REFRESH_TOKEN),
+                Arguments.of(SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
         );
-    }
-
-    private Member member(MemberStatus status) {
-        Member member = Member.createUser("tester01", ENCODED_PASSWORD, "tester@example.com",
-                "홍길동", "길동이", LocalDateTime.of(2026, 10, 1, 12, 0));
-        ReflectionTestUtils.setField(member, "id", MEMBER_ID);
-        // 정지·탈퇴로 바꾸는 도메인 메서드가 아직 없어 상태를 직접 설정한다
-        ReflectionTestUtils.setField(member, "status", status);
-        return member;
     }
 
 }
