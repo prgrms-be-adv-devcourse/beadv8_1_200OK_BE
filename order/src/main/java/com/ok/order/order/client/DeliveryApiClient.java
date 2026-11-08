@@ -25,7 +25,7 @@ public class DeliveryApiClient {
 
     // 판매자별 배송비와 도서산간 운임을 한 번에 조회 (판매자 ID -> 그 판매자 상품 금액 합계)
     // 따로 부르면 주문 한 건에 HTTP가 두 번이라, 부하가 몰릴 때 스레드·DB 커넥션을 그만큼 더 쓴다
-    // TODO(#342): 배송 모듈에 이 내부 API가 아직 없음. 요청·응답 형식(ShippingFeesRequest/Response)으로 배송 담당과 협의 후 함께 머지
+    // TODO(#492): 배송의 실제 shipping-fees와 연결하는 테스트가 아직 없음. 주문 테스트는 Fake 클라이언트를 써서 요청·응답 형식이 어긋나도 잡히지 않는다
     public List<SellerShippingFeeResponse> getShippingFees(String postalCode, Map<Long, Long> itemAmountBySeller) {
         List<SellerItemAmountRequest> sellers = new ArrayList<>();
         for (Map.Entry<Long, Long> entry : itemAmountBySeller.entrySet()) {
