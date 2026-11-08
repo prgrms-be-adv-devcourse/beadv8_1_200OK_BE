@@ -1,18 +1,18 @@
 package com.ok.member;
 
+import com.ok.common.config.JpaConfig;
+import com.ok.common.config.JwtProperties;
 import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.media.MediaUrlResolver;
-import com.ok.common.config.JpaConfig;
-import com.ok.common.config.JwtProperties;
 import com.ok.member.auth.controller.JwksController;
+import com.ok.member.member.adapter.out.persistence.MemberRepository;
+import com.ok.member.member.application.dto.SignupCommand;
+import com.ok.member.member.application.service.MemberSignupService;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
-import com.ok.member.member.service.MemberSignupService;
-import com.ok.member.member.service.dto.SignupCommand;
-import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
+import com.ok.member.seller.domain.SellerApplication;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;

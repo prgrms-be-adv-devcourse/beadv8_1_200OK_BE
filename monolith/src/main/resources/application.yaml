@@ -80,7 +80,7 @@ app:
       connect-timeout: 3s
       read-timeout: 10s
 
-# 앱 시작 시 만들 최초 관리자 계정 (member.member.config.AdminBootstrapConfig)
+# 앱 시작 시 만들 최초 관리자 계정 (member.member.adapter.in.bootstrap.AdminBootstrapConfig)
 # - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)
 # - 같은 아이디의 회원이 이미 있으면 만들지 않고 비밀번호도 바꾸지 않는다
 admin-bootstrap:

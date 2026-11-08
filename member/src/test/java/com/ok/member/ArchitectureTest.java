@@ -46,8 +46,9 @@ class ArchitectureTest {
                     .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
 
     // 헥사고날 구조로 옮긴 하위 도메인. 레이어 구조의 위치 규칙에서 빼고 헥사고날 규칙으로 검사한다.
-    // member·auth도 옮기면(#477, #478) 레이어 구조 규칙과 함께 지운다(#479)
+    // auth도 옮기면(#478) 레이어 구조 규칙과 함께 지운다(#479)
     private static final String SELLER = "com.ok.member.seller..";
+    private static final String MEMBER = "com.ok.member.member..";
     private static final String SELLER_PORT_IN = "com.ok.member.seller.application.port.in..";
     private static final String SELLER_PORT_OUT = "com.ok.member.seller.application.port.out..";
     private static final String SELLER_DTO = "com.ok.member.seller.application.dto..";
@@ -206,7 +207,7 @@ class ArchitectureTest {
             .that(ApplicationEventPublisher에_의존하는)
             // event 밖에서 쓰는 경우는 ApplicationEventPublisher는_event_패키지만_사용한다 규칙이 막는다
             .and().resideInAPackage("..event..")
-            .and().resideOutsideOfPackage(SELLER)
+            .and().resideOutsideOfPackages(SELLER, MEMBER)
             .should().implement(resideInAPackage("..service.."))
             .because("서비스는 service의 발행 인터페이스만 알고, event의 구현체가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (컨벤션 2.1)");
@@ -216,7 +217,7 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule RestController는_Controller로_끝나고_controller_패키지에_있다 = classes()
             .that().areAnnotatedWith(RestController.class)
-            .and().resideOutsideOfPackage(SELLER)
+            .and().resideOutsideOfPackages(SELLER, MEMBER)
             .should().haveSimpleNameEndingWith("Controller")
             .andShould().resideInAPackage("..controller..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
@@ -232,7 +233,7 @@ class ArchitectureTest {
     static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .and().resideOutsideOfPackage(SELLER)
+            .and().resideOutsideOfPackages(SELLER, MEMBER)
             .should().resideInAPackage("..repository..")
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 

@@ -1,8 +1,8 @@
 package com.ok.member.auth;
 
 import com.ok.member.auth.repository.RefreshTokenRepository;
+import com.ok.member.member.adapter.out.persistence.MemberRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterEach;

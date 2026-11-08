@@ -1,8 +1,8 @@
 package com.ok.member.member;
 
+import com.ok.member.member.adapter.out.persistence.MemberRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
-import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;

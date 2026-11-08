@@ -1,11 +1,11 @@
 package com.ok.member.seller;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.member.member.adapter.out.persistence.MemberRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
