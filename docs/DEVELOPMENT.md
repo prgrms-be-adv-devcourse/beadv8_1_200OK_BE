@@ -439,7 +439,7 @@ com.ok.member.seller
 - 다른 하위 도메인은 옮긴 하위 도메인의 `port.in`과 `dto`만 씁니다. 예를 들어 `auth`는 토큰 권한을 정할 때 `SellerApprovalCheckUseCase`로 승인 여부만 확인합니다. 하위 도메인을 다른 서버로 나눌 때 유스케이스 호출만 원격 호출로 바꾸면 됩니다.
 - 포트와 `JpaRepository`가 같은 메서드(`findById`, `saveAndFlush`)를 서로 다른 제네릭 형태로 물려주어, `*JpaRepository` 타입으로 부르면 모호한 호출 오류가 납니다. 이런 메서드는 `*JpaRepository`에서 다시 선언해 하나로 합칩니다.
 - 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다.
-- 이 구조는 `member`의 `ArchitectureTest`에서 `seller_`로 시작하는 규칙이 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, seller 밖에서 `port.in`과 `dto` 외 접근 금지). 아직 옮기지 않은 하위 도메인은 기존 레이어 구조 규칙으로 검사합니다.
+- 이 구조는 `member`의 `ArchitectureTest`에서 `seller_`로 시작하는 규칙이 검사합니다(레이어 방향, 입력 어댑터 제한, 입력 포트의 도메인 의존 금지, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, seller 밖에서 `port.in`과 `dto` 외 접근 금지). 아직 옮기지 않은 하위 도메인은 기존 레이어 구조 규칙으로 검사합니다.
 
 ## 7. 예외 처리 (ProblemDetail)
 

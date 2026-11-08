@@ -97,6 +97,12 @@ class ArchitectureTest {
             .because("포트는 구현을 숨기는 경계라 인터페이스여야 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
+    static final ArchRule seller_입력_포트는_도메인을_모른다 = noClasses()
+            .that().resideInAPackage(SELLER_PORT_IN)
+            .should().dependOnClassesThat().resideInAPackage("com.ok.member.seller.domain..")
+            .because("입력 포트는 진입점에 공개하는 약속이다. 엔티티를 돌려주면 진입점이 도메인을 알게 되고, 트랜잭션 밖에서 바꾼 값은 오류 없이 저장되지 않는다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
     static final ArchRule seller_출력_포트는_Spring_Data_Repository를_상속하지_않는다 = noClasses()
             .that().resideInAPackage(SELLER_PORT_OUT)
             .should().beAssignableTo(org.springframework.data.repository.Repository.class)
