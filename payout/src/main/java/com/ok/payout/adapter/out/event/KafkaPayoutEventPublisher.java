@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 /**
  * {@link PayoutEventPublisher}의 Kafka 구현체. 정산 확정을 {@link PayoutTopics#SELLER_PAYOUT_CREATED}로 보낸다.
  * 한 건마다 브로커의 저장 확인(acks=all)을 기다리고, 실패하면 정산 ID를 담은 예외를 던진다 (#339).
- * outbox 발송(#309)이 부른다. 지갑 입금용 Spring 이벤트는 {@link SpringPayoutEventPublisher}가 확정 때 따로 보낸다.
+ * 지갑 입금용 Spring 이벤트는 {@link SpringPayoutEventPublisher}가 확정 때 따로 보낸다.
  */
 @Component
 @RequiredArgsConstructor
@@ -44,8 +44,7 @@ class KafkaPayoutEventPublisher implements PayoutEventPublisher {
     }
 
     // 배치 내부 실패라 표준 예외를 쓴다 (exception.md: 값의 출처 기준). 로그는 따로 남기지 않는다(service.md)
-    // 발송하는 쪽(PayoutService.publishPending)이 받아 outbox 줄의 실패로 기록한다
     private static IllegalStateException publishFailed(SellerPayoutCreated created, Throwable cause) {
-        return new IllegalStateException("정산 지갑 이벤트 발행에 실패했습니다. payoutId=" + created.payoutId(), cause);
+        return new IllegalStateException("정산 Kafka 발행에 실패했습니다. payoutId=" + created.payoutId(), cause);
     }
 }

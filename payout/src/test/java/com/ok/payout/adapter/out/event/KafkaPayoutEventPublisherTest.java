@@ -63,7 +63,7 @@ class KafkaPayoutEventPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 지갑 이벤트 발행에 실패했습니다. payoutId=12");
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
     }
 
     @Test
@@ -77,6 +77,6 @@ class KafkaPayoutEventPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 지갑 이벤트 발행에 실패했습니다. payoutId=12");
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
     }
 }

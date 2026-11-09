@@ -27,19 +27,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.ConsumerFactory;
 
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutOutboxJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutOutbox;
 import com.ok.payout.domain.PayoutOutboxStatus;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.config.PayoutTopics;
-import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
-import com.ok.payout.adapter.out.persistence.PayoutOutboxJpaRepository;
-import com.ok.payout.application.port.out.PayoutOutboxRepository;
-import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
-import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
-import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 import tools.jackson.databind.JsonNode;
@@ -73,9 +72,6 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutJpaRepository payoutRepository;
-
-    @Autowired
-    private PayoutOutboxRepository outboxRepository;
 
     @Autowired
     private PayoutOutboxJpaRepository outboxJpaRepository;
@@ -162,7 +158,7 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
         Long oldPayoutId = payoutIdOf(payoutRepository.findBySnapshotId(snapshotIdOf(first)), 10L);
         // 리포지토리에 삭제·되돌리기가 없어, 줄을 지우고 PENDING으로 다시 저장함
         jdbcTemplate.update("DELETE FROM payout_outbox WHERE payout_id = ?", oldPayoutId);
-        outboxRepository.save(PayoutOutbox.pending(oldPayoutId));
+        outboxJpaRepository.save(PayoutOutbox.pending(oldPayoutId));
 
         // when: 새 후보로 다시 실행 (조회 하한이 첫 실행 기준 오늘-18일로 올라가, 하한 안쪽인 16일 전으로 만듦)
         long orderB = nextOrderId();

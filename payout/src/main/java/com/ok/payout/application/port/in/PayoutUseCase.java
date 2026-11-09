@@ -43,8 +43,7 @@ public interface PayoutUseCase {
     void commit(Long snapshotId);
 
     /**
-     * outbox에 남은(PENDING) 판매자 몫 정산을 한 줄씩 Kafka로 보내고 보낸 수·실패 수·남은 수를 반환한다.
-     * 실패한 줄은 PENDING으로 남겨 다음 실행이 다시 보내고, 연속 3번 실패하면 이번 발송을 멈춘다.
+     * outbox에 남은(PENDING) 정산을 Kafka로 보내고 보낸 수·실패 수·남은 수를 반환한다. 실패·중단 규칙은 구현체 참고.
      */
     PayoutPublishResult publishPending();
 

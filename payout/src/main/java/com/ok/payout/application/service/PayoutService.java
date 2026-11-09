@@ -82,9 +82,7 @@ public class PayoutService implements PayoutUseCase {
     private final PayoutFailureRepository payoutFailureRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
-    // 정산 확정을 Kafka로 보내는 발행 인터페이스
     private final PayoutEventPublisher payoutEventPublisher;
-    // 정산 확정을 같은 애플리케이션의 지갑에 Spring 이벤트로 알리는 발행 인터페이스
     private final PayoutModuleEventPublisher payoutModuleEventPublisher;
     private final PayoutOutboxRepository payoutOutboxRepository;
     private final PayoutOutboxService payoutOutboxService;
@@ -227,7 +225,7 @@ public class PayoutService implements PayoutUseCase {
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환
     // 판매자 수가 0이면 더 없음 → tasklet 종료
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
-    // payout 생성(commitStep)과 이벤트 발행(publishStep)은 검증 이후 단계에서 함
+    // payout 생성·지갑 이벤트(commitStep)와 Kafka 발송(publishStep)은 검증 이후 단계에서 함
     //
     // 판매자 단위 격리(#90): 판매자마다 저장 트랜잭션을 따로 둠 (PayoutSellerDraftService, REQUIRES_NEW)
     //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 후보 전체를 UNEXPECTED_ERROR로 기록한 뒤 다음 판매자로 넘어감
@@ -345,7 +343,7 @@ public class PayoutService implements PayoutUseCase {
 
         payoutRepository.saveAll(payouts);
 
-        // 지갑 Spring 이벤트와 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함 (#309 E1)
+        // 지갑 Spring 이벤트와 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함
         List<PayoutOutbox> outboxes = new ArrayList<>();
         for (Payout payout : payouts) {
             // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
@@ -373,7 +371,8 @@ public class PayoutService implements PayoutUseCase {
     }
 
     // outbox의 PENDING 줄을 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
-    // 트랜잭션을 열지 않고 줄마다 결과만 PayoutOutboxService가 짧은 트랜잭션으로 저장 (Kafka 대기 중 DB를 잡지 않게)
+    // 이 메서드는 트랜잭션을 더 만들지 않고, 보냄·실패 기록만 줄마다 짧은 별도 트랜잭션(PayoutOutboxService)에 남김
+    // 그래서 한 줄의 실패가 앞 줄의 보냄 기록을 되돌리지 않음
     // 실패해도 멈추지 않음: 정산·지갑 입금은 이미 끝났고 남은 줄은 다음 실행이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음
     // 단 연속으로 실패하면 브로커 장애로 보고 이번 발송을 멈춤 (줄마다 최대 120초씩 기다리지 않게)
     @Override
@@ -391,6 +390,10 @@ public class PayoutService implements PayoutUseCase {
                 log.warn("정산 Kafka 발송 실패, 다음 실행에서 다시 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
                 payoutOutboxService.recordFailure(row.outboxId(), failureMessage(e));
                 failed++;
+                // 기다리다 스레드가 중단됐으면 다음 줄을 헛되이 실패로 기록하지 않고 멈춤 (남은 줄은 PENDING)
+                if (Thread.currentThread().isInterrupted()) {
+                    break;
+                }
                 consecutiveFailures++;
                 if (consecutiveFailures >= MAX_CONSECUTIVE_PUBLISH_FAILURES) {
                     break;

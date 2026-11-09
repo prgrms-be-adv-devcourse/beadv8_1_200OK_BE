@@ -1,4 +1,4 @@
--- 정산 outbox (#309): 지갑·Kafka로 보낼 정산 1건당 1줄
+-- 정산 outbox (#309): Kafka로 보낼 정산 1건당 1줄
 -- 정산 확정과 같은 트랜잭션에서 PENDING으로 저장하고, 발송 단계가 Kafka로 보낸 뒤 SENT로 바꿈
 -- 메시지 본문은 저장하지 않음 (payout은 바뀌지 않으므로 보낼 때 payout에서 읽음)
 CREATE TABLE payout_outbox (

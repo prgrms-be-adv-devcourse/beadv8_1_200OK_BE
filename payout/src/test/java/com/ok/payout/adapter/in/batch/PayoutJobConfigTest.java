@@ -148,6 +148,7 @@ class PayoutJobConfigTest {
 
         // then: 정산·지갑 입금은 이미 끝났으니 Step은 정상 종료, 실패한 줄은 다음 실행이 보냄
         assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertThat(contribution).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(contribution.getWriteCount()).isEqualTo(2L);
             softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(1L);

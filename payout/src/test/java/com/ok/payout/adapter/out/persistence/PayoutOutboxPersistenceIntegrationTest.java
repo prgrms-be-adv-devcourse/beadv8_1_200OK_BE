@@ -68,6 +68,7 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
 
         // then
         PayoutOutbox sut = outboxRepository.findById(id).orElseThrow();
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getPayoutId()).isEqualTo(payout.getId());
             softly.assertThat(sut.getStatus()).isEqualTo(PayoutOutboxStatus.PENDING);
@@ -94,6 +95,8 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
         // then
         PayoutOutbox savedFailed = outboxRepository.findById(failed.getId()).orElseThrow();
         PayoutOutbox savedSent = outboxRepository.findById(sent.getId()).orElseThrow();
+        assertThat(savedFailed).isNotNull();
+        assertThat(savedSent).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(savedFailed.getStatus()).isEqualTo(PayoutOutboxStatus.PENDING);
             softly.assertThat(savedFailed.getAttemptCount()).isEqualTo(1);
@@ -146,6 +149,7 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
         assertThat(ids).containsSubsequence(firstOutbox.getId(), secondOutbox.getId())
                 .doesNotContain(sentOutbox.getId());
         PayoutOutboxRow firstRow = sut.get(ids.indexOf(firstOutbox.getId()));
+        assertThat(firstRow).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(firstRow.payoutId()).isEqualTo(first.getId());
             softly.assertThat(firstRow.payeeId()).isEqualTo(1L);

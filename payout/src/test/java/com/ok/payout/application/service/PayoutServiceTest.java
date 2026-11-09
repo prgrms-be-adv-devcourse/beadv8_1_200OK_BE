@@ -451,6 +451,29 @@ class PayoutServiceTest {
     }
 
     @Test
+    void 발송_중_스레드가_중단되면_그_줄만_실패로_기록하고_나머지_줄은_시도하지_않는다() {
+        // given: 첫 줄에서 발행기가 중단 표시를 되살리고 예외를 던짐
+        given(payoutOutboxRepository.findPendingRows()).willReturn(List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L)));
+        willAnswer(invocation -> {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("정산 Kafka 발행에 실패했습니다. payoutId=1");
+        }).given(payoutEventPublisher).publishSellerPayoutCreated(any());
+
+        try {
+            // when
+            PayoutPublishResult result = sut.publishPending();
+
+            // then
+            assertThat(result).isEqualTo(new PayoutPublishResult(0, 1, 2));
+            then(payoutEventPublisher).should(times(1)).publishSellerPayoutCreated(any());
+            then(payoutOutboxService).should().recordFailure(any(), any());
+        } finally {
+            // 다른 테스트로 중단 표시가 새지 않게 지움
+            Thread.interrupted();
+        }
+    }
+
+    @Test
     void 중간에_성공하면_연속_실패_수가_초기화돼_끝까지_시도한다() {
         // given: 실패 → 성공 → 실패 → 실패 (연속 실패는 최대 2번)
         given(payoutOutboxRepository.findPendingRows()).willReturn(
@@ -489,7 +512,7 @@ class PayoutServiceTest {
         willAnswer(invocation -> {
             SellerPayoutCreated created = invocation.getArgument(0);
             if (failingPayoutIds.contains(created.payoutId())) {
-                throw new IllegalStateException("정산 지갑 이벤트 발행에 실패했습니다. payoutId=" + created.payoutId(),
+                throw new IllegalStateException("정산 Kafka 발행에 실패했습니다. payoutId=" + created.payoutId(),
                         new RuntimeException("브로커 응답 없음"));
             }
             return null;

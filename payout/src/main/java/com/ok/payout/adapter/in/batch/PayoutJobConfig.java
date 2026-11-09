@@ -202,8 +202,7 @@ public class PayoutJobConfig {
         };
     }
 
-    // Kafka 발송 실패로 이 Step을 실패시키지 않음: 정산·지갑 입금은 이미 끝났고, 못 보낸 줄은 다음 실행이 보냄 (#309)
-    //   WRITE_COUNT = 보낸 수, WRITE_SKIP_COUNT = 실패 수
+    // 발송 실패로 Step을 실패시키지 않음 (WRITE_COUNT = 보낸 수, WRITE_SKIP_COUNT = 실패 수)
     @Bean
     public Step payoutPublishStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                   Tasklet payoutPublishTasklet) {
