@@ -28,6 +28,11 @@ dependencies {
 
     runtimeOnly("com.mysql:mysql-connector-j")
 
+    // AWS 에뮬레이터(floci)를 Testcontainers로 띄워 S3·IAM·EC2 연동을 확인하는 테스트용 (#500). 운영 코드에는 들어가지 않는다
+    testImplementation(libs.floci.testcontainers)
+    testImplementation("software.amazon.awssdk:ec2")
+    testImplementation("software.amazon.awssdk:iam")
+
     annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")
