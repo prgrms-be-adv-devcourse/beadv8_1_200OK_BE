@@ -26,7 +26,7 @@ related: [334, 360, 372, 135, 438, 441]
 | 충전 승인 | `ChargeConfirmService`만 `ChargeConfirmUseCase`를 구현하고, `ChargeTransactionService`는 포트 없이 다른 빈으로 둠 | 토스 호출(트랜잭션 없음)과 DB 반영(트랜잭션)을 같은 빈으로 합치면 자기 호출이라 `@Transactional`이 걸리지 않는다. "서비스마다 유스케이스 하나"보다 이 전제를 우선한다 |
 | 입력 포트 | 서비스마다 유스케이스 하나. 메서드 계약 Javadoc은 유스케이스로, 구현 설명은 서비스에 남김. 엔티티는 돌려주지 않음: 잠긴 엔티티를 돌려주는 `getOrCreate`는 서비스에만 두고, 입력 포트에는 반환값 없는 `createIfAbsent`를 둠 (리뷰 반영) | 진입점이 Kafka로 바뀌어도 서비스가 바뀌지 않게 한다. 서비스끼리 부르는 곳은 `application` 안이라 포트를 거치지 않는다. 엔티티를 돌려주면 진입점이 도메인을 알게 되고, 트랜잭션 밖에서 바꾼 값은 오류 없이 저장되지 않는다 |
 | 저장소 포트 | 이름은 그대로(`*Repository`), 구현은 `*JpaRepository`가 포트를 상속. 포트에는 서비스가 쓰는 메서드만 둠 | 배송과 같은 방식이라 실행 객체가 Spring Data 프록시 그대로여서 잠금·쿼리 동작이 같다. 호출하는 쪽이 지킬 약속은 포트 주석에, 쿼리를 그렇게 쓴 이유는 JPA 저장소 주석에 둔다 |
-| `ArchitectureTest` | 배송 규칙에 "application은 HTTP 클라이언트(`org.springframework.web.client`, `org.springframework.http`)를 모른다", "입력 포트는 도메인을 모른다"를 더함. freeze 기준선 삭제 | 지갑을 헥사고날로 바꾸는 이유인 토스 경계를 테스트로 지킨다. 기존 기준선이 모두 0건이라 freeze로 둘 이유가 없다 |
+| `ArchitectureTest` | 배송 규칙을 그대로 가져오고, 지갑에만 "application은 HTTP 클라이언트(`org.springframework.web.client`, `org.springframework.http`)를 모른다", "입력 포트는 도메인을 모른다", "잠금 조회는 `*JpaRepository`에 `@Lock`과 함께 다시 선언한다"(#502)를 더함. freeze 기준선 삭제 | 지갑을 헥사고날로 바꾸는 이유인 토스 경계를 테스트로 지킨다. 기존 기준선이 모두 0건이라 freeze로 둘 이유가 없다 |
 | 문서 | `CLAUDE.md`, `docs/DEVELOPMENT.md`에 배송 절과 같은 모양으로 wallet 절 추가 (사용자 결정) | 모듈마다 안내 모양이 같아야 찾기 쉽다 |
 
 ## 버린 대안
@@ -38,5 +38,5 @@ related: [334, 360, 372, 135, 438, 441]
 ## 건드릴 때 주의
 
 - 리스너 패키지를 옮기면 `event_publication.listener_id`(`패키지.클래스.메서드(이벤트 타입)`)가 바뀌어 옛 이름의 미완료 이벤트가 재시작 후에도 오류 없이 남는다(로컬에서 확인). 배포 전에 지갑 리스너 앞 미완료 이벤트가 0건인지 본다.
-- 서비스에서 저장소 메서드를 새로 쓰면 포트에도 선언한다. 잠금·네이티브 쿼리처럼 어노테이션이 필요한 메서드는 `*JpaRepository`에서 `@Override`로 다시 선언해야 설정이 적용된다.
+- 서비스에서 저장소 메서드를 새로 쓰면 포트에도 선언한다. 잠금·네이티브 쿼리처럼 어노테이션이 필요한 메서드는 `*JpaRepository`에서 `@Override`로 다시 선언해야 설정이 적용된다. 잠금 조회는 이름에 `ForUpdate`/`ForShare`를 넣어야 `ArchitectureTest`가 재선언 누락을 잡는다.
 - `adapter/in/web`은 경로가 `controller`가 아니라 `.claude/rules/api.md`가 자동으로 로드되지 않는다. 직접 읽고 따른다.
