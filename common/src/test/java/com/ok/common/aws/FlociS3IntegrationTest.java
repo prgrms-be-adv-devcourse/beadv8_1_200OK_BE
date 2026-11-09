@@ -12,11 +12,9 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
-// 운영 코드(S3Config)가 만든 클라이언트가 floci의 S3에 실제로 붙는지 확인한다 (#500)
 @Testcontainers
 class FlociS3IntegrationTest {
 
-	// 운영과 같은 리전으로 띄운다
 	@Container
 	static FlociContainer floci = new FlociContainer().withRegion("ap-northeast-2");
 
