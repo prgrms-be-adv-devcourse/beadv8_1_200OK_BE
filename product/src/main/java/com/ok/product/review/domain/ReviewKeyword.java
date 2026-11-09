@@ -47,7 +47,7 @@ public class ReviewKeyword extends BaseTime {
 	@Column(name = "keyword_version", nullable = false, length = 20)
 	private String keywordVersion;
 
-	// 모델명은 50자까지만 저장된다. 더 긴 모델로 바꾸면 결과를 저장하지 못해 요청이 대기로 남고 5초마다 다시 분석된다
+	// 모델명은 50자까지만 저장된다. 더 긴 모델로 바꾸면 결과를 저장하지 못해 요청이 대기로 남고, 꺼낼 때 건 임대(10분)가 끝날 때마다 다시 분석된다
 	@Column(nullable = false, length = 50)
 	private String model;
 
