@@ -25,7 +25,7 @@ Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modu
 
 - `delivery`: `docs/DEVELOPMENT.md`의 "delivery 모듈 구조(헥사고날)"
 - `wallet`: `docs/DEVELOPMENT.md`의 "wallet 모듈 구조(헥사고날)"
-- `member`(옮긴 하위 도메인만, 현재 `seller`): `docs/DEVELOPMENT.md`의 "member 모듈 구조(헥사고날)", member `ArchitectureTest`의 `seller_` 규칙
+- `member`(옮긴 하위 도메인만, 현재 `seller`, `member`): `docs/DEVELOPMENT.md`의 "member 모듈 구조(헥사고날)", member `ArchitectureTest`의 헥사고날 규칙(`HEXAGONAL_SUBDOMAINS` 목록)
 - `order`(하위 도메인 `cart`, `order`): `docs/DEVELOPMENT.md`의 "order 모듈 구조(헥사고날)", order `ArchitectureTest`
 
 `adapter/in/web`은 경로가 `controller`가 아니라 `api.md`가 자동으로 로드되지 않으므로, 다룰 때 `.claude/rules/api.md`를 직접 읽고 따른다.
