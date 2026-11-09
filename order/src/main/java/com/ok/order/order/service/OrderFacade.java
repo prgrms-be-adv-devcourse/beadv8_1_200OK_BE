@@ -1,8 +1,8 @@
 package com.ok.order.order.service;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.order.cart.service.CartService;
-import com.ok.order.cart.service.dto.SelectedCartItem;
+import com.ok.order.cart.application.dto.SelectedCartItem;
+import com.ok.order.cart.application.port.in.GetSelectedCartItemsUseCase;
 import com.ok.order.order.client.DeliveryApiClient;
 import com.ok.order.order.client.ProductApiClient;
 import com.ok.order.order.client.WalletApiClient;
@@ -32,7 +32,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class OrderFacade {
 
-    private final CartService cartService;
+    private final GetSelectedCartItemsUseCase getSelectedCartItems;
     private final OrderService orderService;
     private final ProductApiClient productApiClient;
     private final DeliveryApiClient deliveryApiClient;
@@ -122,7 +122,7 @@ public class OrderFacade {
 
     // 장바구니 선택 상품 + 상품 모듈의 최신 정보로 주문 객체 만들기 (저장 X, 배송비 미반영)
     private Order buildOrder(Long memberId) {
-        List<SelectedCartItem> cartItems = cartService.getSelectedCartItems(memberId);
+        List<SelectedCartItem> cartItems = getSelectedCartItems.getSelectedCartItems(memberId);
         if (cartItems.isEmpty()) {
             throw new RestApiException(OrderErrorCode.EMPTY_ORDER_ITEMS);
         }
