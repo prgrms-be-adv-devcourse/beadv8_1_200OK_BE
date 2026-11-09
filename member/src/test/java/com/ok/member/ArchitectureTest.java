@@ -151,9 +151,14 @@ class ArchitectureTest {
             .should().resideInAPackage(subdomain.pkg("adapter.out.persistence"))
             .because("영속성 구현은 adapter.out.persistence에 모아 역할별로 찾기 쉽게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
-    // 같은 규칙을 옮긴 하위 도메인마다 만들어 하나로 묶는다. 실패하면 메시지에 어느 하위 도메인 패키지인지 나온다
+    // 같은 규칙을 옮긴 하위 도메인마다 만들어 하나로 묶는다. 실패하면 메시지에 어느 하위 도메인 패키지인지 나온다.
+    // 모듈 설정(archRule.failOnEmptyShould=false)은 대상이 없는 규칙을 통과시키므로, 여기서는 대상이 없으면 실패하게 한다.
+    // 패키지 이름을 잘못 적었거나 옮긴 하위 도메인에 해당 클래스가 없으면 규칙이 아무것도 검사하지 않은 채 통과하기 때문이다
     private static ArchRule eachSubdomain(Function<Subdomain, ArchRule> rule) {
-        return CompositeArchRule.of(HEXAGONAL_SUBDOMAINS.stream().map(rule).toList());
+        return CompositeArchRule.of(HEXAGONAL_SUBDOMAINS.stream()
+                .map(rule)
+                .map(subdomainRule -> subdomainRule.allowEmptyShould(false))
+                .toList());
     }
 
     private record Subdomain(String name) {

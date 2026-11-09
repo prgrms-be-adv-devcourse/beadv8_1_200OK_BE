@@ -46,6 +46,7 @@ class AuthServiceTest {
     private static final MemberAuthAccount ACTIVE = new MemberAuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD);
     private static final MemberAuthAccount WITHDRAWN = new MemberAuthAccount(MEMBER_ID, false, true, false, ENCODED_PASSWORD);
     private static final MemberAuthAccount SUSPENDED = new MemberAuthAccount(MEMBER_ID, false, false, true, ENCODED_PASSWORD);
+    private static final MemberAuthAccount ADMIN = new MemberAuthAccount(MEMBER_ID, true, false, false, ENCODED_PASSWORD);
 
     @Mock
     MemberAuthAccountUseCase memberAuthAccountUseCase;
@@ -107,6 +108,22 @@ class AuthServiceTest {
 
         // then
         assertThat(sut.accessToken()).isEqualTo("seller-access-token");
+    }
+
+    @Test
+    void 관리자가_로그인하면_관리자_권한으로만_Access_Token을_발급한다() {
+        // given: TokenRoleMapper는 boolean 두 개를 받아 순서가 바뀌어도 컴파일되므로, 관리자 여부를 제자리에 넘기는지 확인한다
+        given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ADMIN));
+        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.ADMIN)))
+                .willReturn(new AccessToken("admin-access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID))
+                .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
+
+        // when
+        TokenResult sut = authService.issueLoginTokens(CREDENTIAL);
+
+        // then
+        assertThat(sut.accessToken()).isEqualTo("admin-access-token");
     }
 
     @Test

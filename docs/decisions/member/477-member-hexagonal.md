@@ -43,5 +43,5 @@ member 모듈을 하위 도메인별로 헥사고날 구조로 옮기는 두 번
 - `MemberAuthAccountUseCase.findLoginCredential`은 탈퇴 회원도 돌려준다. 틀린 비밀번호에 회원 상태와 관계없이 같은 응답을 주려면 상태를 비밀번호 확인 뒤에 판단해야 한다.
 - 회원 유형이 늘면 `MemberAuthAccount`에 그 판단을 더하고 `TokenRoleMapper`를 함께 고친다. 컴파일러가 알려 주지 않는다.
 - `MemberAuthAccount`, `MemberLoginCredential`은 `toString`에서 비밀번호 해시를 가린다. 필드를 더할 때 `toString`도 함께 고친다.
-- 하위 도메인을 옮기면(#478) `ArchitectureTest`의 `HEXAGONAL_SUBDOMAINS`에 더한다. `archRule.failOnEmptyShould=false`라 대상 클래스가 없는 규칙도 통과하므로, 규칙이 실제로 그 하위 도메인을 검사하는지는 위반을 넣어 확인한다.
+- 하위 도메인을 옮기면(#478) `ArchitectureTest`의 `HEXAGONAL_SUBDOMAINS`에 더한다. 모듈 설정(`archRule.failOnEmptyShould=false`)과 달리 헥사고날 규칙은 대상 클래스가 없으면 실패하게 했다. 옮긴 하위 도메인에 해당 클래스가 없는 규칙(예: 이벤트 발행이 없는 하위 도메인의 발행 규칙)이 실패하면, 규칙을 빼지 말고 그 규칙만 대상에서 제외하는 이유를 남긴다.
 - `MemberJpaRepository`에서 다시 선언한 `findById`, `save`, `saveAndFlush`를 지우면 테스트가 이 타입으로 부를 때 모호한 호출 컴파일 오류가 난다.
