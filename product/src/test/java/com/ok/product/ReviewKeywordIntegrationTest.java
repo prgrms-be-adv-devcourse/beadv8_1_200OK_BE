@@ -470,6 +470,36 @@ class ReviewKeywordIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 다른_상품의_분석_완료_리뷰는_칩과_키워드_필터에_섞이지_않는다() throws Exception {
+		// given: 이 상품은 10개 리뷰가 C01, 다른 상품은 3개 리뷰가 C01·C02를 표현한다
+		for (int i = 0; i < 10; i++) {
+			writeAnalyzableReview(100L + i, Map.of("C01", EXPRESSED));
+		}
+		Long otherProductId = productRepository.save(product()).getId();
+		Long otherOptionId = transactionTemplate.execute(
+			status -> productRepository.findById(otherProductId).orElseThrow().getOptions().getFirst().getId());
+		for (int i = 0; i < 3; i++) {
+			writeAnalyzableReview(otherProductId, otherOptionId, 200L + i, Map.of("C01", EXPRESSED, "C02", EXPRESSED));
+		}
+		reviewKeywordAnalysisFacade.analyzePending();
+
+		// when
+		ResultActions sut = getKeywords(productId);
+
+		// then
+		sut.andExpect(status().isOk())
+			.andExpect(jsonPath("$.analyzedReviewCount").value(10))
+			.andExpect(jsonPath("$.keywords[*].keywordId").value(contains("C01")))
+			.andExpect(jsonPath("$.keywords[*].reviewCount").value(contains(10)));
+		mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "C01"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalElements").value(10));
+		mockMvc.perform(get(REVIEWS_URL, productId).param("keyword", "C02"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.totalElements").value(0));
+	}
+
+	@Test
 	void 칩에_뜨지_않는_키워드로도_리뷰를_거른다() throws Exception {
 		// given: 분석 완료 리뷰가 10개 미만이고 C03을 표현한 리뷰는 하나뿐이라 칩이 없다
 		long expressedId = writeAnalyzableReview(100L, Map.of("C01", EXPRESSED, "C03", EXPRESSED));
@@ -563,15 +593,24 @@ class ReviewKeywordIntegrationTest extends AbstractIntegrationTest {
 		return mockMvc.perform(get(KEYWORDS_URL, productId));
 	}
 
-	// 본문을 주문 ID로 구분해 리뷰마다 다른 결과를 넣는다
 	private long writeAnalyzableReview(long orderId, Map<String, Double> probabilities) throws Exception {
+		return writeAnalyzableReview(productId, optionId, orderId, probabilities);
+	}
+
+	// 본문을 주문 ID로 구분해 리뷰마다 다른 결과를 넣는다
+	private long writeAnalyzableReview(Long productId, Long optionId, long orderId, Map<String, Double> probabilities)
+		throws Exception {
 		String content = "리뷰 " + orderId + " 맛있어요";
 		analyzer.respond(content, probabilities);
-		return writeReview(orderId, content);
+		return writeReview(productId, optionId, orderId, content);
 	}
 
 	private long writeReview(long orderId, String content) throws Exception {
-		orderApiClient.add(BUYER_ID, productId, purchase(orderId));
+		return writeReview(productId, optionId, orderId, content);
+	}
+
+	private long writeReview(Long productId, Long optionId, long orderId, String content) throws Exception {
+		orderApiClient.add(BUYER_ID, productId, new ReviewablePurchase(orderId, orderItemId(orderId), optionId));
 		String body = mockMvc.perform(post("/api/v1/products/{productId}/reviews", productId)
 				.header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
 				.contentType(MediaType.APPLICATION_JSON)
@@ -615,10 +654,6 @@ class ReviewKeywordIntegrationTest extends AbstractIntegrationTest {
 			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 10)), List.of("product/a.jpg"));
 		product.changeVisibility(ProductVisibility.VISIBLE);
 		return product;
-	}
-
-	private ReviewablePurchase purchase(long orderId) {
-		return new ReviewablePurchase(orderId, orderItemId(orderId), optionId);
 	}
 
 	// 테스트에서는 주문마다 주문상품이 하나라 주문 ID로 주문상품 ID를 정한다
