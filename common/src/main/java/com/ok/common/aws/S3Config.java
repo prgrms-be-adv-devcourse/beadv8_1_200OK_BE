@@ -10,6 +10,9 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
+
+import java.net.URI;
 
 @Configuration
 public class S3Config {
@@ -17,12 +20,16 @@ public class S3Config {
 	S3Client s3Client(
 			@Value("${app.s3.region}") String region,
 			@Value("${app.s3.access-key:}") String accessKey,
-			@Value("${app.s3.secret-key:}") String secretKey
+			@Value("${app.s3.secret-key:}") String secretKey,
+			@Value("${app.s3.endpoint:}") String endpoint
 	) {
-		return S3Client.builder()
+		S3ClientBuilder builder = S3Client.builder()
 				.region(Region.of(region))
-				.credentialsProvider(credentialsProvider(accessKey, secretKey))
-				.build();
+				.credentialsProvider(credentialsProvider(accessKey, secretKey));
+		if (StringUtils.hasText(endpoint)) {
+			builder.endpointOverride(URI.create(endpoint)).forcePathStyle(true);
+		}
+		return builder.build();
 	}
 
 	private AwsCredentialsProvider credentialsProvider(String accessKey, String secretKey) {
