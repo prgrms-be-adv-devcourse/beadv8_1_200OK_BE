@@ -29,10 +29,14 @@ import org.springframework.kafka.core.ConsumerFactory;
 
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutOutboxStatus;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutOutboxJpaRepository;
+import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
@@ -69,6 +73,12 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutJpaRepository payoutRepository;
+
+    @Autowired
+    private PayoutOutboxRepository outboxRepository;
+
+    @Autowired
+    private PayoutOutboxJpaRepository outboxJpaRepository;
 
     @Autowired
     private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
@@ -132,6 +142,67 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(message.get("createdAt").isString()).isTrue();
             softly.assertThat(LocalDateTime.parse(message.get("createdAt").asString())).isEqualTo(seller10.getCreatedAt());
         });
+
+        // then: 0원 초과 판매자 정산(10번)만 outbox 줄이 1건이고 SENT, 발송 시각이 기록됨
+        PayoutOutbox outbox = singleOutboxOf(seller10PayoutId);
+        assertThat(outbox.getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+        assertThat(outbox.getSentAt()).isNotNull();
+        assertThat(countOutboxes(payouts)).isEqualTo(1);
+    }
+
+    @Test
+    void 이전_정산의_미발송_줄도_다음_실행에서_함께_보낸다() throws Exception {
+        // given: 첫 실행으로 정산 1건을 만들고, 그 outbox 줄을 "아직 못 보낸" PENDING 상태로 되돌림
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderA = nextOrderId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderA, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderA, 10L, 300L, createdAt);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long oldPayoutId = payoutIdOf(payoutRepository.findBySnapshotId(snapshotIdOf(first)), 10L);
+        // 리포지토리에 삭제·되돌리기가 없어, 줄을 지우고 PENDING으로 다시 저장함
+        jdbcTemplate.update("DELETE FROM payout_outbox WHERE payout_id = ?", oldPayoutId);
+        outboxRepository.save(PayoutOutbox.pending(oldPayoutId));
+
+        // when: 새 후보로 다시 실행 (조회 하한이 첫 실행 기준 오늘-18일로 올라가, 하한 안쪽인 16일 전으로 만듦)
+        long orderB = nextOrderId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderB, 20L, 5_000L, LocalDateTime.now().minusDays(16));
+        JobExecution second = payoutJobRunner.runScheduled();
+
+        // then: 새 정산과 함께 이전 정산도 토픽에 나가고 두 줄 모두 SENT
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long newPayoutId = payoutIdOf(payoutRepository.findBySnapshotId(snapshotIdOf(second)), 20L);
+        Set<String> keys = Set.of(String.valueOf(oldPayoutId), String.valueOf(newPayoutId));
+        assertThat(readMessages(keys)).containsOnlyKeys(keys);
+        assertThat(singleOutboxOf(oldPayoutId).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+        assertThat(singleOutboxOf(newPayoutId).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+    }
+
+    // ---------- 도우미: outbox 확인 ----------
+
+    private PayoutOutbox singleOutboxOf(Long payoutId) {
+        List<PayoutOutbox> found = new ArrayList<>();
+        for (PayoutOutbox outbox : outboxJpaRepository.findAll()) {
+            if (payoutId.equals(outbox.getPayoutId())) {
+                found.add(outbox);
+            }
+        }
+        assertThat(found).hasSize(1);
+        return found.get(0);
+    }
+
+    private long countOutboxes(List<Payout> payouts) {
+        Set<Long> ids = new HashSet<>();
+        for (Payout payout : payouts) {
+            ids.add(payout.getId());
+        }
+        long count = 0;
+        for (PayoutOutbox outbox : outboxJpaRepository.findAll()) {
+            if (ids.contains(outbox.getPayoutId())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // ---------- 도우미: 토픽 읽기 ----------

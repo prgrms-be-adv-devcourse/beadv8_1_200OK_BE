@@ -32,11 +32,13 @@ import com.ok.payout.application.port.in.PayoutItemSearchQuery;
 import com.ok.payout.application.port.in.PayoutSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import com.ok.payout.application.port.in.PayoutSummaryResult;
+import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import com.ok.payout.application.port.out.PayoutModuleEventPublisher;
 import com.ok.payout.application.port.out.PayoutOutboxRepository;
+import com.ok.payout.application.port.out.PayoutOutboxRow;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -62,6 +64,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -76,6 +79,9 @@ class PayoutServiceTest {
     // 상세 조회 테스트의 스냅샷 대상 기간
     private static final LocalDateTime PERIOD_FROM = LocalDateTime.of(2026, 9, 27, 0, 0);
     private static final LocalDateTime PERIOD_TO = LocalDateTime.of(2026, 9, 30, 0, 0);
+    // publishPending 테스트의 outbox 줄 값
+    private static final long OUTBOX_ID_OFFSET = 100L;
+    private static final LocalDateTime PAYOUT_CREATED_AT = LocalDateTime.of(2026, 10, 10, 10, 0);
 
     // verify 테스트용 draft 항목 (후보 1·2는 주문 1, 3·4는 주문 2)
     private static final DraftItemRow SELLER_DRAFT_1 =
@@ -122,6 +128,9 @@ class PayoutServiceTest {
 
     @Mock
     private PayoutOutboxRepository payoutOutboxRepository;
+
+    @Mock
+    private PayoutOutboxService payoutOutboxService;
 
     @InjectMocks
     private PayoutService sut;
@@ -406,49 +415,85 @@ class PayoutServiceTest {
         then(payoutOutboxRepository).shouldHaveNoInteractions();
     }
 
-    // ---------- publish ----------
+    // ---------- publishPending ----------
 
     @Test
-    void 조회한_판매자_몫_정산마다_지갑_이벤트를_1건씩_발행한다() {
-        // given: 이번 스냅샷의 판매자 몫 정산 2건 (시스템 몫 제외는 조회 쿼리가 맡음 → 통합 테스트에서 확인)
-        Payout seller10 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))));
-        Payout seller20 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 4L))));
-        given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID)).willReturn(List.of(seller10, seller20));
+    void 가운데_줄만_발송에_실패하면_나머지는_보냄으로_표시하고_실패한_줄은_실패로_기록한다() {
+        // given
+        given(payoutOutboxRepository.findPendingRows()).willReturn(List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L)));
+        failPublishFor(2L);
 
         // when
-        int published = sut.publish(SNAPSHOT_ID);
+        PayoutPublishResult result = sut.publishPending();
 
-        // then: payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 확인하지 않음
-        assertThat(published).isEqualTo(2);
-        then(payoutEventPublisher).should(times(2)).publishSellerPayoutCreated(createdCaptor.capture());
-        assertThat(createdCaptor.getAllValues())
-                .extracting(SellerPayoutCreated::payeeId, SellerPayoutCreated::amount)
-                .containsExactlyInAnyOrder(
-                        tuple(10L, 9_700L),
-                        tuple(20L, 19_400L));
+        // then
+        assertThat(result).isEqualTo(new PayoutPublishResult(2, 1, 0));
+        then(payoutOutboxService).should().markSent(OUTBOX_ID_OFFSET + 1L);
+        then(payoutOutboxService).should().markSent(OUTBOX_ID_OFFSET + 3L);
+        then(payoutOutboxService).should().recordFailure(OUTBOX_ID_OFFSET + 2L, "java.lang.RuntimeException: 브로커 응답 없음");
     }
 
     @Test
-    void 금액이_0원_이하인_판매자_정산은_지갑_이벤트를_발행하지_않는다() {
-        // given: 판매자 10은 9,700원, 판매자 20은 0원(0원 상품만 판매), 판매자 30은 -2,000원(차감 조정만 남음)
-        Payout seller10 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))));
-        Payout zeroSeller20 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 0L), 4L))));
-        Payout negativeSeller30 = forSeller(PayoutSellerDraft.create(SNAPSHOT_ID, 30L,
-                List.of(withId(PayoutCandidateItem.ofSaleAmount(3L, 3001L, 30L, -2_000L), 7L))));
-        given(payoutRepository.findBySnapshotIdAndSystemFalse(SNAPSHOT_ID))
-                .willReturn(List.of(seller10, zeroSeller20, negativeSeller30));
+    void 연속_3번_실패하면_나머지_줄은_시도하지_않고_멈춘다() {
+        // given
+        given(payoutOutboxRepository.findPendingRows()).willReturn(
+                List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L), outboxRow(4L), outboxRow(5L)));
+        failPublishFor(1L, 2L, 3L);
 
         // when
-        int published = sut.publish(SNAPSHOT_ID);
+        PayoutPublishResult result = sut.publishPending();
+
+        // then: 4·5는 보내지도, 기록하지도 않아 PENDING 그대로
+        assertThat(result).isEqualTo(new PayoutPublishResult(0, 3, 2));
+        then(payoutEventPublisher).should(times(3)).publishSellerPayoutCreated(any());
+        then(payoutOutboxService).should(never()).markSent(any());
+        then(payoutOutboxService).should(times(3)).recordFailure(any(), any());
+    }
+
+    @Test
+    void 중간에_성공하면_연속_실패_수가_초기화돼_끝까지_시도한다() {
+        // given: 실패 → 성공 → 실패 → 실패 (연속 실패는 최대 2번)
+        given(payoutOutboxRepository.findPendingRows()).willReturn(
+                List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L), outboxRow(4L)));
+        failPublishFor(1L, 3L, 4L);
+
+        // when
+        PayoutPublishResult result = sut.publishPending();
 
         // then
-        assertThat(published).isEqualTo(1);
+        assertThat(result).isEqualTo(new PayoutPublishResult(1, 3, 0));
+        then(payoutOutboxService).should().markSent(OUTBOX_ID_OFFSET + 2L);
+    }
+
+    @Test
+    void 보내는_메시지는_outbox_줄의_정산_값으로_만든다() {
+        // given
+        given(payoutOutboxRepository.findPendingRows()).willReturn(List.of(outboxRow(1L)));
+
+        // when
+        sut.publishPending();
+
+        // then
         then(payoutEventPublisher).should().publishSellerPayoutCreated(createdCaptor.capture());
-        assertThat(createdCaptor.getValue().payeeId()).isEqualTo(10L);
+        assertThat(createdCaptor.getValue()).isEqualTo(new SellerPayoutCreated(1L, 101L, 1_000L, PAYOUT_CREATED_AT));
+    }
+
+    // payoutId=n인 줄: outboxId = n + 100, 판매자 = n + 100, 금액 = n × 1,000원
+    private static PayoutOutboxRow outboxRow(Long payoutId) {
+        return new PayoutOutboxRow(OUTBOX_ID_OFFSET + payoutId, payoutId, 100L + payoutId, payoutId * 1_000L, PAYOUT_CREATED_AT);
+    }
+
+    // 주어진 정산만 Kafka 발행기가 예외를 던짐 (실제 발행기처럼 원인을 cause에 담음)
+    private void failPublishFor(Long... payoutIds) {
+        List<Long> failingPayoutIds = List.of(payoutIds);
+        willAnswer(invocation -> {
+            SellerPayoutCreated created = invocation.getArgument(0);
+            if (failingPayoutIds.contains(created.payoutId())) {
+                throw new IllegalStateException("정산 지갑 이벤트 발행에 실패했습니다. payoutId=" + created.payoutId(),
+                        new RuntimeException("브로커 응답 없음"));
+            }
+            return null;
+        }).given(payoutEventPublisher).publishSellerPayoutCreated(any());
     }
 
     // ---------- settlementTo / settlementFrom ----------
