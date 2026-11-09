@@ -33,6 +33,7 @@ import com.ok.wallet.WalletSchema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.Table;
 
 import com.tngtech.archunit.lang.ArchCondition;
@@ -116,22 +117,30 @@ class ArchitectureTest {
             .because("외부 시스템과 닿는 구현은 adapter.out에 모아 바뀌는 범위가 경로로 드러나게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     // 포트는 JPA를 몰라 @Lock을 붙일 수 없다. *JpaRepository에서 다시 선언하지 않으면 Spring Data가 이름만 보고
-    // 잠금 없는 조회를 만들어 오류 없이 돈다. 잠금 조회는 이름(ForUpdate, ForShare)으로 찾는다
+    // 잠금 없는 조회를 만들어 오류 없이 돈다. 잠금 조회는 이름(ForUpdate, ForShare)으로 찾고, 이름과 잠금 종류가 맞는지도 본다.
+    // ForUpdate에 읽기 잠금이 붙으면 두 트랜잭션이 함께 읽고 함께 바꾸려다 교착이 나므로 잠금이 없는 것과 같은 실수다
     @ArchTest
     static final ArchRule 잠금_조회는_JPA_저장소에_Lock과_함께_다시_선언한다 = methods()
             .that().areDeclaredInClassesThat().resideInAPackage("..application.port.out..")
             .and().haveNameMatching(".*For(Update|Share).*")
-            .should(new ArchCondition<JavaMethod>("be redeclared with @Lock in a *JpaRepository") {
+            .should(new ArchCondition<JavaMethod>("be redeclared in a *JpaRepository with a @Lock mode matching its name") {
                 @Override
                 public void check(JavaMethod portMethod, ConditionEvents events) {
+                    LockModeType expected = portMethod.getName().contains("ForUpdate")
+                            ? LockModeType.PESSIMISTIC_WRITE
+                            : LockModeType.PESSIMISTIC_READ;
                     boolean ok = portMethod.getOwner().getAllSubclasses().stream()
-                            .filter(sub -> sub.getPackageName().contains(".adapter.out.persistence"))
+                            .filter(sub -> resideInAPackage("..adapter.out.persistence..").test(sub)
+                                    && sub.getSimpleName().endsWith("JpaRepository"))
                             .flatMap(sub -> sub.getMethods().stream())
                             .anyMatch(method -> method.getName().equals(portMethod.getName())
                                     && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
-                                    && method.isAnnotatedWith(Lock.class));
+                                    && method.tryGetAnnotationOfType(Lock.class)
+                                            .map(lock -> lock.value() == expected)
+                                            .orElse(false));
                     events.add(new SimpleConditionEvent(portMethod, ok,
-                            portMethod.getFullName() + (ok ? " is" : " is not") + " redeclared with @Lock in a *JpaRepository"));
+                            portMethod.getFullName() + (ok ? " is" : " is not")
+                                    + " redeclared in a *JpaRepository with @Lock(" + expected + ")"));
                 }
             })
             .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 이중 차감 같은 문제로 드러난다. 빌드에서 바로 실패하게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
