@@ -17,7 +17,7 @@ output "ssh_command" {
   value       = "ssh ubuntu@${aws_eip.app.public_ip}"
 }
 
-output "medium_public_ip" {
-  description = "medium(infra) 인스턴스에 연결한 고정 퍼블릭 IP"
-  value       = aws_eip.medium.public_ip
+output "infra_public_ip" {
+  description = "infra 인스턴스에 연결한 고정 퍼블릭 IP"
+  value       = aws_eip.infra.public_ip
 }

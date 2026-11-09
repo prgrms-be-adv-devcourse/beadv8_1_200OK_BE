@@ -1,4 +1,4 @@
-resource "aws_instance" "medium" {
+resource "aws_instance" "infra" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t3.medium"
   subnet_id              = aws_subnet.public.id
@@ -35,20 +35,20 @@ resource "aws_instance" "medium" {
 }
 
 # 자동 생성된 ENI에는 default_tags가 붙지 않아 태그를 따로 단다.
-resource "aws_ec2_tag" "medium_eni_team" {
-  resource_id = aws_instance.medium.primary_network_interface_id
+resource "aws_ec2_tag" "infra_eni_team" {
+  resource_id = aws_instance.infra.primary_network_interface_id
   key         = "Team"
   value       = var.team_tag
 }
 
-resource "aws_ec2_tag" "medium_eni_name" {
-  resource_id = aws_instance.medium.primary_network_interface_id
+resource "aws_ec2_tag" "infra_eni_name" {
+  resource_id = aws_instance.infra.primary_network_interface_id
   key         = "Name"
   value       = "${local.name_prefix}-infra-eni"
 }
 
 # 서브넷이 퍼블릭 IP를 자동 할당하지 않아 EIP를 붙인다.
-resource "aws_eip" "medium" {
+resource "aws_eip" "infra" {
   domain = "vpc"
 
   tags = {
@@ -56,9 +56,35 @@ resource "aws_eip" "medium" {
   }
 }
 
-resource "aws_eip_association" "medium" {
-  instance_id   = aws_instance.medium.id
-  allocation_id = aws_eip.medium.id
+resource "aws_eip_association" "infra" {
+  instance_id   = aws_instance.infra.id
+  allocation_id = aws_eip.infra.id
 
   depends_on = [aws_internet_gateway.main]
+}
+
+# 처음 medium이라는 이름으로 apply했다. state의 주소만 옮기고 인스턴스는 그대로 둔다.
+moved {
+  from = aws_instance.medium
+  to   = aws_instance.infra
+}
+
+moved {
+  from = aws_ec2_tag.medium_eni_team
+  to   = aws_ec2_tag.infra_eni_team
+}
+
+moved {
+  from = aws_ec2_tag.medium_eni_name
+  to   = aws_ec2_tag.infra_eni_name
+}
+
+moved {
+  from = aws_eip.medium
+  to   = aws_eip.infra
+}
+
+moved {
+  from = aws_eip_association.medium
+  to   = aws_eip_association.infra
 }
