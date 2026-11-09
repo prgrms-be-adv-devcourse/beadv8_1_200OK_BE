@@ -5,7 +5,8 @@ plugins {
 
 dependencies {
     api("org.springframework.boot:spring-boot-starter-webmvc")
-    api("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)
+    api("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)와 지표 노출
+    api("io.micrometer:micrometer-registry-prometheus") // 지표를 Prometheus 형식으로 노출(/actuator/prometheus) (#374)
     api("org.springframework.boot:spring-boot-starter-validation")
     api("org.springframework.boot:spring-boot-starter-security")
     api("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
