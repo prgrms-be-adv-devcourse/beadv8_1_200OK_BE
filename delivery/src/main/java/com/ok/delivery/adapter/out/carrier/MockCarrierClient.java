@@ -9,6 +9,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -37,7 +38,7 @@ public class MockCarrierClient implements CarrierClient {
     private final ApplicationEventPublisher applicationEventPublisher;
 
     @Override
-    public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
+    public void requestTracking(Long shipmentId, String carrier, String trackingNumber, LocalDateTime shippedAt) {
         CompletableFuture.runAsync(() -> notifyDelivered(shipmentId), delayedExecutor);
     }
 

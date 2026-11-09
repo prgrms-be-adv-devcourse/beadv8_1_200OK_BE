@@ -74,6 +74,9 @@ delivery:
       client-secret: ${DELIVERY_TRACKER_CLIENT_SECRET:}
       # 무료 플랜은 웹훅이 없어 조회로 확인한다. 호출 제한이 확인되기 전까지 넉넉하게 둔다
       poll-interval: ${DELIVERY_TRACKER_POLL_INTERVAL:5m}
+      # 출고 후 이 기간이 지나면 조회를 멈추고 알린다. 미발급 송장이 항상 NOT_FOUND로 오지 않아(진행 중이나 DELIVERED가 오기도 한다)
+      # 오류 종류로는 멈출 때를 알 수 없어서 기간으로 정한다
+      max-tracking-period: ${DELIVERY_TRACKER_MAX_TRACKING_PERIOD:7d}
       connect-timeout: 3s
       read-timeout: 15s
   # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다

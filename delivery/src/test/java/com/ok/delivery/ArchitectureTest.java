@@ -28,6 +28,8 @@ import com.tngtech.archunit.library.GeneralCodingRules;
 import com.ok.common.exception.ErrorCode;
 import com.ok.delivery.DeliverySchema;
 import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
+import com.ok.delivery.adapter.in.event.CarrierStatusReportedEvent;
+import com.ok.delivery.adapter.in.event.CarrierTrackingGaveUpEvent;
 import com.ok.delivery.adapter.out.carrier.MockCarrierClient;
 import com.ok.delivery.adapter.out.carrier.TrackerCarrierClient;
 
@@ -51,6 +53,7 @@ class ArchitectureTest {
     // 레이어
 
     // 가짜 택배사는 택배사가 우리 쪽 입력으로 보내는 알림을 흉내 내므로 알림 형식(CarrierDeliveredEvent)을 받는 쪽(in)이 소유한다.
+    // Tracker 연동이 발행하는 상태 보고·조회 포기 이벤트도 같은 이유로 받는 쪽(in)이 소유한다.
     // 실제 택배사 연동이 생기면 가짜와 함께 사라지는 예외다
     @ArchTest
     static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = layeredArchitecture()
@@ -65,6 +68,8 @@ class ArchitectureTest {
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "AdapterOut")
             .ignoreDependency(MockCarrierClient.class, CarrierDeliveredEvent.class)
             .ignoreDependency(TrackerCarrierClient.class, CarrierDeliveredEvent.class)
+            .ignoreDependency(TrackerCarrierClient.class, CarrierStatusReportedEvent.class)
+            .ignoreDependency(TrackerCarrierClient.class, CarrierTrackingGaveUpEvent.class)
             .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (delivery 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest

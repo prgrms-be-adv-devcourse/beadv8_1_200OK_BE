@@ -13,6 +13,7 @@ import java.time.Duration;
  * @param clientId       콘솔에서 발급한 Client ID
  * @param clientSecret   Client Secret. 환경 변수로만 주입하고 저장소에 두지 않는다.
  * @param pollInterval   배송 상태 조회 간격. 무료 플랜은 웹훅이 없어 조회로 배송 완료를 확인한다.
+ * @param maxTrackingPeriod 출고 후 이 기간이 지나면 조회를 멈춘다. 오류 종류가 아니라 기간으로 정한다.
  * @param connectTimeout 연결 타임아웃
  * @param readTimeout    응답 대기 타임아웃. 무료 플랜의 일반 추적 큐는 응답이 느릴 수 있어 문서 권장값(15초)을 기본으로 쓴다.
  */
@@ -23,6 +24,7 @@ record TrackerProperties(
         String clientId,
         String clientSecret,
         Duration pollInterval,
+        Duration maxTrackingPeriod,
         Duration connectTimeout,
         Duration readTimeout
 ) {
@@ -33,6 +35,9 @@ record TrackerProperties(
         if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank()) {
             throw new IllegalArgumentException(
                     "delivery.carrier.tracker의 client-id, client-secret(DELIVERY_TRACKER_CLIENT_ID, DELIVERY_TRACKER_CLIENT_SECRET)이 설정되지 않았습니다.");
+        }
+        if (maxTrackingPeriod == null || maxTrackingPeriod.isZero() || maxTrackingPeriod.isNegative()) {
+            throw new IllegalArgumentException("delivery.carrier.tracker의 max-tracking-period가 올바르지 않습니다.");
         }
         if (pollInterval == null || pollInterval.isZero() || pollInterval.isNegative()
                 || connectTimeout == null || readTimeout == null) {
@@ -48,6 +53,7 @@ record TrackerProperties(
                 + ", clientId=" + clientId
                 + ", clientSecret=****"
                 + ", pollInterval=" + pollInterval
+                + ", maxTrackingPeriod=" + maxTrackingPeriod
                 + ", connectTimeout=" + connectTimeout
                 + ", readTimeout=" + readTimeout + "]";
     }

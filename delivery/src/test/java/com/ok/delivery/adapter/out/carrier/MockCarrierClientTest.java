@@ -8,6 +8,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.time.LocalDateTime;
+
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.timeout;
 
@@ -23,7 +25,7 @@ class MockCarrierClientTest {
     @Test
     void 추적을_요청받으면_바로_알리지_않고_5초_뒤_배송_완료를_알린다() {
         // when
-        sut.requestTracking(1L, "CJ_LOGISTICS", "1234567890");
+        sut.requestTracking(1L, "CJ_LOGISTICS", "1234567890", LocalDateTime.of(2026, 10, 21, 10, 0));
 
         // then
         then(applicationEventPublisher).shouldHaveNoInteractions();
