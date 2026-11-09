@@ -6,6 +6,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOutbox;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSystemDraftItem;
@@ -34,6 +35,8 @@ import com.ok.payout.application.port.in.PayoutSummaryResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutModuleEventPublisher;
+import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -114,6 +117,12 @@ class PayoutServiceTest {
     @Mock
     private PayoutEventPublisher payoutEventPublisher;
 
+    @Mock
+    private PayoutModuleEventPublisher payoutModuleEventPublisher;
+
+    @Mock
+    private PayoutOutboxRepository payoutOutboxRepository;
+
     @InjectMocks
     private PayoutService sut;
 
@@ -122,6 +131,9 @@ class PayoutServiceTest {
 
     @Captor
     private ArgumentCaptor<List<PayoutFailure>> failuresCaptor;
+
+    @Captor
+    private ArgumentCaptor<List<PayoutOutbox>> outboxesCaptor;
 
     // ---------- draft ----------
 
@@ -330,6 +342,68 @@ class PayoutServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE));
         then(payoutFailureRepository).should(never()).saveAll(any());
+    }
+
+    // ---------- commit ----------
+
+    @Test
+    void 금액이_0원보다_큰_판매자_몫_정산만_지갑_이벤트를_발행하고_outbox_줄을_남긴다() {
+        // given: 판매자 10은 9,700원, 20은 19,400원, 30은 0원, 40은 -2,000원, 그리고 수수료 300원의 시스템 몫
+        given(payoutQueryRepository.findFailureRows(SNAPSHOT_ID)).willReturn(List.of());
+        given(payoutSellerDraftRepository.findBySnapshotId(SNAPSHOT_ID)).willReturn(List.of(
+                PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
+                        List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L))),
+                PayoutSellerDraft.create(SNAPSHOT_ID, 20L,
+                        List.of(withId(PayoutCandidateItem.ofSaleAmount(2L, 2001L, 20L, 19_400L), 2L))),
+                PayoutSellerDraft.create(SNAPSHOT_ID, 30L,
+                        List.of(withId(PayoutCandidateItem.ofSaleAmount(3L, 3001L, 30L, 0L), 3L))),
+                PayoutSellerDraft.create(SNAPSHOT_ID, 40L,
+                        List.of(withId(PayoutCandidateItem.ofSaleAmount(4L, 4001L, 40L, -2_000L), 4L)))));
+        given(payoutSystemDraftItemRepository.findBySnapshotId(SNAPSHOT_ID)).willReturn(List.of(
+                PayoutSystemDraftItem.create(SNAPSHOT_ID, withId(PayoutCandidateItem.ofSaleFee(1L, 1001L, 10L, 300L), 5L))));
+        // DB가 저장할 때 채우는 ID를 저장 순서대로 101부터 넣음 (판매자 10 → 101, 20 → 102, 30 → 103, 40 → 104, 시스템 몫 → 105)
+        given(payoutRepository.<Payout>saveAll(any())).willAnswer(invocation -> {
+            List<Payout> payouts = invocation.getArgument(0);
+            long id = 101L;
+            for (Payout payout : payouts) {
+                ReflectionTestUtils.setField(payout, "id", id++);
+            }
+            return payouts;
+        });
+
+        // when
+        sut.commit(SNAPSHOT_ID);
+
+        // then
+        then(payoutModuleEventPublisher).should(times(2)).publishSellerPayoutCreated(createdCaptor.capture());
+        assertThat(createdCaptor.getAllValues())
+                .extracting(SellerPayoutCreated::payoutId, SellerPayoutCreated::payeeId, SellerPayoutCreated::amount)
+                .containsExactly(
+                        tuple(101L, 10L, 9_700L),
+                        tuple(102L, 20L, 19_400L));
+        then(payoutOutboxRepository).should().saveAll(outboxesCaptor.capture());
+        assertThat(outboxesCaptor.getValue())
+                .extracting(PayoutOutbox::getPayoutId)
+                .containsExactly(101L, 102L);
+    }
+
+    @Test
+    void 정산_저장이_실패하면_지갑_이벤트도_outbox_줄도_남기지_않는다() {
+        // given
+        given(payoutQueryRepository.findFailureRows(SNAPSHOT_ID)).willReturn(List.of());
+        given(payoutSellerDraftRepository.findBySnapshotId(SNAPSHOT_ID)).willReturn(List.of(
+                PayoutSellerDraft.create(SNAPSHOT_ID, 10L,
+                        List.of(withId(PayoutCandidateItem.ofSaleAmount(1L, 1001L, 10L, 9_700L), 1L)))));
+        given(payoutSystemDraftItemRepository.findBySnapshotId(SNAPSHOT_ID)).willReturn(List.of());
+        // 예) 같은 후보가 이미 다른 정산에 들어 있어 payout_item UK 위반
+        given(payoutRepository.<Payout>saveAll(any())).willThrow(new IllegalStateException("정산 저장 실패"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.commit(SNAPSHOT_ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("정산 저장 실패");
+        then(payoutModuleEventPublisher).shouldHaveNoInteractions();
+        then(payoutOutboxRepository).shouldHaveNoInteractions();
     }
 
     // ---------- publish ----------

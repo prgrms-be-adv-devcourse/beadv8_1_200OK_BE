@@ -5,6 +5,7 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOutbox;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
@@ -40,6 +41,8 @@ import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutModuleEventPublisher;
+import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -76,8 +79,11 @@ public class PayoutService implements PayoutUseCase {
     private final PayoutFailureRepository payoutFailureRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
-    // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(adapter/out/event)가 맡는다
+    // 정산 확정을 Kafka로 보내는 발행 인터페이스
     private final PayoutEventPublisher payoutEventPublisher;
+    // 정산 확정을 같은 애플리케이션의 지갑에 Spring 이벤트로 알리는 발행 인터페이스
+    private final PayoutModuleEventPublisher payoutModuleEventPublisher;
+    private final PayoutOutboxRepository payoutOutboxRepository;
 
     // 조회 상한: 실행일 − 대기 일수 00:00 (생성 후 대기 일수가 지난 후보만 정산)
     @Override
@@ -335,6 +341,27 @@ public class PayoutService implements PayoutUseCase {
 
         payoutRepository.saveAll(payouts);
 
+        // 지갑 Spring 이벤트와 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함 (#309 E1)
+        List<PayoutOutbox> outboxes = new ArrayList<>();
+        for (Payout payout : payouts) {
+            // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
+            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
+            //   0원: 지갑에 반영할 금액이 없음
+            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
+            // 정산(payout) 자체는 장부 기록으로 그대로 남김
+            if (payout.isSystem() || payout.getAmount() <= 0) {
+                continue;
+            }
+            payoutModuleEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
+                    payout.getId(),
+                    payout.getPayeeId(),
+                    payout.getAmount(),
+                    payout.getCreatedAt()
+            ));
+            outboxes.add(PayoutOutbox.pending(payout.getId()));
+        }
+        payoutOutboxRepository.saveAll(outboxes);
+
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 정산 확정은 돈이 장부에 기록되는 시점이라 INFO로 남김
         log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건), 결과 검증 실패로 뺀 draft 항목 수={}",
@@ -362,10 +389,7 @@ public class PayoutService implements PayoutUseCase {
         List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
         int published = 0;
         for (Payout payout : payouts) {
-            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
-            //   0원: 지갑에 반영할 금액이 없음
-            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
-            // 정산(payout) 자체는 장부 기록으로 그대로 남김
+            // 0원 이하 제외 이유는 commit 참고
             if (payout.getAmount() <= 0) {
                 continue;
             }
