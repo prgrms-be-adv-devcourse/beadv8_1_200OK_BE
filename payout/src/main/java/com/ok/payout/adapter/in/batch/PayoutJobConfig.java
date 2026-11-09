@@ -43,7 +43,7 @@ public class PayoutJobConfig {
     //   verify   : 스냅샷과 임시 정산을 후보 단위로 비교, 어긋난 후보의 주문만 실패로 기록하고 잠금 (#290)
     //              단 코드 자체가 망가진 경우(판매자 합계 불일치 등)와 정산할 것이 0건 남은 경우는 여기서 멈춤
     //   commit   : 임시 정산을 payout·payout_item으로 확정 (단일 트랜잭션, 분리 금지). 결과 검증에 걸린 주문의 항목은 뺌
-    //   publish  : outbox에 남은 판매자 몫 정산을 Kafka로 발송 (지갑 Spring 이벤트는 commit에서 발행). 발송 실패가 있어도 COMPLETED
+    //   publish  : outbox에 남은 판매자 몫 정산을 Kafka로 발송 (지갑 Spring 이벤트는 commit에서 발행). Kafka 발송 실패로는 Step을 실패시키지 않음
     // 앞 Step이 실패하면 Job이 FAILED로 멈추고 뒤 Step은 실행되지 않음
     // 실패한 Job은 재시작하지 않고 새 스냅샷으로 처음부터 재실행 (PayoutJobRunner 주석 참고)
     @Bean

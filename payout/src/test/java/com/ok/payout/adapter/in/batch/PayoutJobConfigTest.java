@@ -139,8 +139,8 @@ class PayoutJobConfigTest {
 
     @Test
     void 발송_실패가_있어도_publish_Step을_끝내고_보낸_수는_write_count_실패_수는_write_skip_count로_남긴다() throws Exception {
-        // given: outbox 3줄 중 1줄 Kafka 발송 실패
-        given(payoutUseCase.publishPending()).willReturn(new PayoutPublishResult(2, 1, 0));
+        // given: 2줄 보냄, 1줄 실패, 멈춰서 시도 못 한 4줄 남음 (남은 줄은 실패가 아니라 skip에 넣지 않음)
+        given(payoutUseCase.publishPending()).willReturn(new PayoutPublishResult(2, 1, 4));
         StepContribution contribution = contribution();
 
         // when

@@ -1,6 +1,7 @@
 package com.ok.payout.adapter.out.persistence;
 
 import com.ok.payout.application.port.out.PayoutOutboxRow;
+import com.ok.payout.application.service.PayoutOutboxService;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutOutbox;
 import com.ok.payout.domain.PayoutOutboxStatus;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -39,6 +41,12 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutSnapshotJpaRepository snapshotRepository;
+
+    @Autowired
+    private PayoutOutboxService payoutOutboxService;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -127,7 +135,7 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 대기_줄만_id_순서로_정산_값과_함께_조회한다() {
+    void 시도_수가_같으면_대기_줄만_id_순서로_정산_값과_함께_조회한다() {
         // given
         Payout first = savePayout(1L, 9_000L);
         Payout second = savePayout(2L, 5_000L);
@@ -157,6 +165,61 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(firstRow.payoutCreatedAt()).isEqualTo(
                     payoutRepository.findById(first.getId()).orElseThrow().getCreatedAt());
         });
+    }
+
+    @Test
+    void 실패한_줄도_다시_조회하고_덜_시도한_줄부터_시도_수가_같으면_id_순서로_준다() {
+        // given: id 순서와 반대로 시도 수를 둬, id 순(인덱스 순)으로 읽으면 통과하지 못하게 함
+        PayoutOutbox failedTwice = saveOutboxWithFailures(1L, 2);
+        PayoutOutbox failedOnce = saveOutboxWithFailures(2L, 1);
+        PayoutOutbox neverTried = saveOutboxWithFailures(3L, 0);
+        PayoutOutbox neverTriedLater = saveOutboxWithFailures(4L, 0);
+        List<Long> savedIds = List.of(failedTwice.getId(), failedOnce.getId(), neverTried.getId(), neverTriedLater.getId());
+
+        // when
+        List<PayoutOutboxRow> sut = outboxRepository.findPendingRows();
+
+        // then: 다른 테스트 클래스가 남긴 줄은 빼고 이 테스트의 줄만 순서를 봄
+        List<Long> ids = new ArrayList<>();
+        for (PayoutOutboxRow row : sut) {
+            if (savedIds.contains(row.outboxId())) {
+                ids.add(row.outboxId());
+            }
+        }
+        assertThat(ids).containsExactly(
+                neverTried.getId(), neverTriedLater.getId(), failedOnce.getId(), failedTwice.getId());
+    }
+
+    @Test
+    void 보냄_표시와_실패_기록은_부른_쪽_트랜잭션이_롤백돼도_남는다() {
+        // given
+        PayoutOutbox toSend = saveOutboxWithFailures(1L, 0);
+        PayoutOutbox toFail = saveOutboxWithFailures(2L, 0);
+
+        // when: 발행 Step 트랜잭션처럼 바깥 트랜잭션 안에서 부른 뒤 롤백
+        transactionTemplate.executeWithoutResult(status -> {
+            payoutOutboxService.markSent(toSend.getId());
+            payoutOutboxService.recordFailure(toFail.getId(), "브로커 응답 없음");
+            status.setRollbackOnly();
+        });
+
+        // then
+        PayoutOutbox savedSent = outboxRepository.findById(toSend.getId()).orElseThrow();
+        PayoutOutbox savedFailed = outboxRepository.findById(toFail.getId()).orElseThrow();
+        assertThat(savedSent).isNotNull();
+        assertThat(savedFailed).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(savedSent.getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+            softly.assertThat(savedFailed.getAttemptCount()).isEqualTo(1);
+        });
+    }
+
+    private PayoutOutbox saveOutboxWithFailures(Long sellerId, int failures) {
+        PayoutOutbox outbox = PayoutOutbox.pending(savePayout(sellerId, 1_000L).getId());
+        for (int i = 0; i < failures; i++) {
+            outbox.recordFailure("브로커 응답 없음");
+        }
+        return outboxRepository.save(outbox);
     }
 
     // 항목 없는 판매자 정산을 만들고 금액만 지정해 저장 (outbox 저장에는 항목이 필요 없음)

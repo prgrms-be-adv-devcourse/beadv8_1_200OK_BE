@@ -370,7 +370,7 @@ public class PayoutService implements PayoutUseCase {
                 snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1, excludedItemCount);
     }
 
-    // outbox의 PENDING 줄을 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
+    // outbox의 PENDING 줄을 덜 시도한 줄부터 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
     // 이 메서드는 트랜잭션을 더 만들지 않고, 보냄·실패 기록만 줄마다 짧은 별도 트랜잭션(PayoutOutboxService)에 남김
     // 그래서 한 줄의 실패가 앞 줄의 보냄 기록을 되돌리지 않음
     // 실패해도 멈추지 않음: 정산·지갑 입금은 이미 끝났고 남은 줄은 다음 실행이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음

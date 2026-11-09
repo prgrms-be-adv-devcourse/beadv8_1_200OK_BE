@@ -475,17 +475,31 @@ class PayoutServiceTest {
 
     @Test
     void 중간에_성공하면_연속_실패_수가_초기화돼_끝까지_시도한다() {
-        // given: 실패 → 성공 → 실패 → 실패 (연속 실패는 최대 2번)
+        // given: 실패 → 성공 → 실패 → 실패 → 실패 (초기화가 없으면 4번째 줄에서 연속 3번이 돼 멈춤)
         given(payoutOutboxRepository.findPendingRows()).willReturn(
-                List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L), outboxRow(4L)));
-        failPublishFor(1L, 3L, 4L);
+                List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L), outboxRow(4L), outboxRow(5L)));
+        failPublishFor(1L, 3L, 4L, 5L);
 
         // when
         PayoutPublishResult result = sut.publishPending();
 
         // then
-        assertThat(result).isEqualTo(new PayoutPublishResult(1, 3, 0));
+        assertThat(result).isEqualTo(new PayoutPublishResult(1, 4, 0));
+        then(payoutEventPublisher).should(times(5)).publishSellerPayoutCreated(any());
         then(payoutOutboxService).should().markSent(OUTBOX_ID_OFFSET + 2L);
+    }
+
+    @Test
+    void 보냄_표시_저장이_실패하면_Kafka_실패로_기록하지_않고_그_예외로_끝난다() {
+        // given: Kafka 발송은 성공, 보냄 표시의 DB 저장이 실패
+        given(payoutOutboxRepository.findPendingRows()).willReturn(List.of(outboxRow(1L), outboxRow(2L)));
+        willThrow(new IllegalStateException("DB 저장 실패")).given(payoutOutboxService).markSent(OUTBOX_ID_OFFSET + 1L);
+
+        // when & then: Step을 FAILED로 드러내야 해서 삼키지 않음
+        assertThatThrownBy(() -> sut.publishPending())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("DB 저장 실패");
+        then(payoutOutboxService).should(never()).recordFailure(any(), any());
     }
 
     @Test

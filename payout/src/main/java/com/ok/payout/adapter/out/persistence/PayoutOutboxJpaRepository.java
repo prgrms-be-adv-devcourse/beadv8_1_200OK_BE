@@ -24,12 +24,13 @@ public interface PayoutOutboxJpaRepository extends JpaRepository<PayoutOutbox, L
     @Override
     Optional<PayoutOutbox> findById(Long id);
 
+    // 덜 시도한 줄부터: 매번 실패하는 줄이 앞에 몰려 연속 실패로 멈춰도 뒤 줄이 막히지 않게
     @Override
     @Query("""
             select new com.ok.payout.application.port.out.PayoutOutboxRow(o.id, p.id, p.payeeId, p.amount, p.createdAt)
             from PayoutOutbox o join Payout p on p.id = o.payoutId
             where o.status = com.ok.payout.domain.PayoutOutboxStatus.PENDING
-            order by o.id
+            order by o.attemptCount, o.id
             """)
     List<PayoutOutboxRow> findPendingRows();
 }
