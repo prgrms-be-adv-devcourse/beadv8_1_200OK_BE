@@ -168,7 +168,12 @@ services:
       # UI 사이드카는 기본으로 us-east-1만 조회해서, 운영과 같은 리전(ap-northeast-2)에 만든 리소스가 목록에 안 나온다
       # 사이드카 환경변수를 덮어써 리전을 맞춘다 (FLOCI_SERVICES_UI_EXTRA_ENV는 마지막에 적용된다)
       FLOCI_SERVICES_UI_EXTRA_ENV: AWS_REGION=${AWS_REGION:-ap-northeast-2}
+      # 이미지 기본값은 memory라 재시작하면 만든 리소스가 모두 사라진다. 디스크에 남기려고 persistent로 둔다
+      FLOCI_STORAGE_MODE: ${FLOCI_STORAGE_MODE:-persistent}
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
     volumes:
+      # floci 상태를 익명 Docker 볼륨 대신 프로젝트 루트의 data/에 둔다. mysql(data/mysql)처럼 한곳에서 보고 지울 수 있고, .gitignore의 /data/에 걸린다
+      - ./data/floci:/app/data
       # 웹 콘솔 사이드카 컨테이너를 floci가 직접 띄우려면 Docker 소켓이 필요하다(첫 접속 때 floci/floci-ui 이미지를 받는다)
       # 소켓은 호스트 Docker 전체를 제어하는 권한이라 개발 PC의 floci 프로파일에서만 쓴다. 운영 compose에는 없다
       - /var/run/docker.sock:/var/run/docker.sock

@@ -67,4 +67,5 @@ terraform apply
   - 인스턴스 타입이 `t3.medium`이다. floci가 `t3.large`를 모르는 타입으로 취급해 생성이 실패한다.
 - floci는 EC2를 실제 컨테이너(`public.ecr.aws/docker/library/ubuntu:24.04`)로 띄운다. 이미지를 받다가 요청 제한(429)이 나면 인스턴스가 바로 `terminated`가 되므로, 실패하면 `docker pull public.ecr.aws/docker/library/ubuntu:24.04`로 미리 받고 `terraform apply`를 다시 한다. EC2를 만들려면 floci에 Docker 소켓이 마운트돼 있어야 한다.
 - 반환 URL은 `MediaUrlResolver`가 `amazonaws.com` 주소로 만들어서 floci 주소와 다르다. 업로드·조회 호출만 확인한다.
+- floci 상태는 프로젝트 루트의 `data/floci/`에 저장된다(`FLOCI_STORAGE_MODE`, 기본 `persistent`). 컨테이너를 다시 만들어도 리소스가 남으므로 `infra/terraform/dev/`의 state와 어긋나지 않게 함께 관리한다. 처음부터 다시 하려면 `docker compose --profile floci down` 뒤 `data/floci/`와 `infra/terraform/dev/terraform.tfstate*`를 같이 지운다.
 - 정리: `terraform destroy` 뒤 `docker compose --profile floci down`.
