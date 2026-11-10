@@ -49,3 +49,16 @@ related: [323, 409, 410, 411, 413, 414]
 - `RefundStepRunner`는 #411의 승인 트랜잭션 같은 트랜잭션 안에서 부르지 않는다. Facade에서만 부른다.
 - 1단계에는 멈춘 환불을 다시 진행하는 기능이 없다. 기록이 남아도 그 환불은 처리 중에 머물고, 구매자는 철회도 다시 요청도 못 한다. 기록마저 실패하면 ERROR 로그만 남는다. 재처리는 #413 설계 때 정한다.
 - 이름 없는 예외 클래스는 클래스 이름이 빈 값이라 이유 기록이 실패한다(ERROR 로그로만 남음). 다른 모듈 클라이언트는 이름 있는 예외를 던지게 한다.
+
+## 후속 (2026-11-07)
+
+#481에서 환불 모듈을 헥사고날 구조로 바꾸면서 이 문서가 가리키는 코드 위치와 이름이 바뀌었다. 출고 판정, 실패 기록 틀의 동작(언제 기록하고 무엇으로 응답하는지)은 그대로다. 구조 결정은 `docs/decisions/refund/481-refund-hexagonal.md`에 있다.
+
+| 이 문서에 적힌 것 | 지금 |
+|---|---|
+| `service/RefundService.java` | 승인은 `application/service/DecideRefundService.java` (유스케이스마다 서비스 하나) |
+| `service/RefundStepRunner.java` | `application/service/RefundStepRunner.java`. 서비스 패키지에서 `@Service`가 아닌 클래스는 이것 하나만 둔다(`ArchitectureTest`가 검사) |
+| `service/dto/RefundableOrderItem.java` | 출력 포트 옆 `application/port/out/RefundableOrderItem.java` |
+| 틀 위치 "Facade 안에 두면 테스트할 수 없다" | Facade가 없어졌다. 틀은 여전히 별도 클래스이고, #413·#414의 서비스가 주입받아 쓴다 |
+| "Facade에서만 부른다" | 서비스의 `TransactionTemplate` 구간 밖에서만 부른다. 틀은 바깥 트랜잭션이 있으면 지금도 예외를 던진다 |
+| 기록 저장 "별도 짧은 트랜잭션에서 그 행을 잠그고" | 틀 안의 `TransactionTemplate` 구간에서 잠금 조회 → 도메인 상태 변경 → 영속 포트 `update`로 저장한다(#481의 명시적 저장) |
