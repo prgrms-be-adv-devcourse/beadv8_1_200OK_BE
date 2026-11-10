@@ -37,7 +37,7 @@ import java.util.concurrent.Executor;
 public class AsyncConfig {
 
     // 호출한 스레드의 MDC를 비동기 작업의 스레드로 복사하도록 모든 실행기에 적용한다.
-    // MDC에 값을 넣는 쪽(TraceID 필터 등)은 아직 없어서, 지금은 복사할 값이 없다
+    // 추적 키(traceId, orderId 등)가 비동기 리스너로 이어지는 통로가 이것이다(#377)
     @Bean
     public MdcTaskDecorator mdcTaskDecorator() {
         return new MdcTaskDecorator();

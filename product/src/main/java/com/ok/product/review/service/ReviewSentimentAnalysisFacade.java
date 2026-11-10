@@ -57,7 +57,7 @@ public class ReviewSentimentAnalysisFacade {
 				log.error("리뷰 감성 분석기를 쓸 수 없어 작업을 멈춤 requestId={}, pausedUntil={}", target.requestId(), pausedUntil, e);
 				return;
 			} catch (RuntimeException e) {
-				// 한 건이 실패해도 나머지는 계속. 저장하지 못한 요청은 대기로 남아 다음 실행에서 다시 꺼낸다
+				// 한 건이 실패해도 나머지는 계속. 저장하지 못한 요청은 대기로 남아, 꺼낼 때 건 임대(10분)가 끝나면 다시 꺼낸다
 				log.error("리뷰 감성 분석 결과 저장 실패 requestId={}", target.requestId(), e);
 			}
 		}

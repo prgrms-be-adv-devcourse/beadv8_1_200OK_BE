@@ -100,6 +100,14 @@ public class ProductReview extends BaseTime {
 	 * 음절을 자모로 풀어 보내는 입력기(NFD)도 있어, 자모를 음절로 합친 뒤 본다.
 	 */
 	public boolean hasAnalyzableContent() {
+		return isAnalyzableContent(content);
+	}
+
+	/**
+	 * 리뷰가 아닌 본문(관리자 분석 테스트)에도 {@link #hasAnalyzableContent()}와 같은 규칙을 적용한다.
+	 * 두 경로의 규칙이 어긋나면 테스트에서 분석한 본문을 운영 작업자는 내용 없는 리뷰로 건너뛴다.
+	 */
+	public static boolean isAnalyzableContent(String content) {
 		return Normalizer.normalize(content, Normalizer.Form.NFC).codePoints()
 			.anyMatch(codePoint -> Character.isLetter(codePoint) && !isHangulJamo(codePoint));
 	}

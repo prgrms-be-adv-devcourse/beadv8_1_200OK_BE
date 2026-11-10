@@ -5,8 +5,8 @@ import com.ok.member.member.domain.Member;
 import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.seller.domain.SellerProfile;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.repository.SellerProfileRepository;
-import com.ok.member.seller.service.SellerProfileDuplicateValidator;
+import com.ok.member.seller.adapter.out.persistence.SellerProfileJpaRepository;
+import com.ok.member.seller.application.service.SellerProfileDuplicateValidator;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -60,7 +60,7 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     MemberRepository memberRepository;
 
     @Autowired
-    SellerProfileRepository sellerProfileRepository;
+    SellerProfileJpaRepository sellerProfileRepository;
 
     @Autowired
     SellerProfileDuplicateValidator duplicateValidator;

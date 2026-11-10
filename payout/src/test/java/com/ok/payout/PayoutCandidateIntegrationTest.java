@@ -3,7 +3,7 @@ package com.ok.payout;
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -49,7 +49,7 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private PayoutCandidateItemRepository repository;
+    private PayoutCandidateItemJpaRepository repository;
 
     // 이 테스트에서 사용한 주문 ID (정리할 때 이 주문의 행만 지움)
     private final List<Long> usedOrderIds = new ArrayList<>();
@@ -137,7 +137,7 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 잘못된_값의_이벤트는_정산후보를_만들지_않고_실패로_기록된다() {
+    void 잘못된_값의_이벤트는_정산후보를_만들지_않고_실패로_남지_않는다() {
         // given
         Long orderId = nextOrderId();
         Long orderItemId = nextOrderItemId();
@@ -147,10 +147,13 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
         publishInTransaction(event);
 
         // then
-        // 1) 리스너가 실제로 실행되어 실패했는지: event_publication에 FAILED로 남을 때까지 기다림
-        await().atMost(TIMEOUT).until(() -> countPublications(orderItemId, "FAILED") == 1);
+        // 1) 리스너가 실제로 실행되어 정상 종료했는지: event_publication이 COMPLETED로 바뀔 때까지 기다림
+        //    (입구가 값을 확인해 로그만 남기고 돌아오므로 예외 없이 끝남)
+        await().atMost(TIMEOUT).until(() -> countPublications(orderItemId, "COMPLETED") == 1);
         // 2) 이 주문의 정산 후보는 저장되지 않음
         assertThat(repository.findAllByOrderId(orderId)).isEmpty();
+        // 3) 값이 틀린 이벤트는 다시 처리해도 결과가 같으므로 FAILED로 남지 않아 재처리 대상이 아님
+        assertThat(countPublications(orderItemId, "FAILED")).isZero();
     }
 
     @Test

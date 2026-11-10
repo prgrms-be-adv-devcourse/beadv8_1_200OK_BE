@@ -4,6 +4,7 @@ import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.application.port.out.CarrierClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -20,6 +21,8 @@ import java.util.concurrent.TimeUnit;
 // 테스트 프로필에서는 등록하지 않는다. 통합 테스트가 출고한 shipment를 시간이 지나 바꾸면 결과가 흔들리기 때문이다.
 // 켤 프로필을 나열하지 않고 test만 빼서, 새 프로필이 생겨도 CarrierClient 빈이 없어 앱이 뜨지 않는 일이 없게 한다
 @Profile("!test")
+// delivery.carrier.type으로 실제 택배사(tracker)를 고르면 빠진다. 설정이 없으면 기존처럼 mock이다
+@ConditionalOnProperty(name = "delivery.carrier.type", havingValue = "mock", matchIfMissing = true)
 @Slf4j
 @Component
 @RequiredArgsConstructor
