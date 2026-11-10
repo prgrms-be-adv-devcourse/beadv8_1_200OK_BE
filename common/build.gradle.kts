@@ -29,6 +29,10 @@ dependencies {
 
     runtimeOnly("com.mysql:mysql-connector-j")
 
+    testImplementation(libs.floci.testcontainers)
+    testImplementation("software.amazon.awssdk:ec2")
+    testImplementation("software.amazon.awssdk:iam")
+
     annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")

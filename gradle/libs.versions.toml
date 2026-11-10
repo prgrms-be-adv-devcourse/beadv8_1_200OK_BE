@@ -3,6 +3,7 @@ spring-boot = "4.1.1"
 dependency-management = "1.1.7"
 spring-modulith = "2.1.1"
 aws-sdk = "2.55.12"
+floci-testcontainers = "2.17.0"
 querydsl = "7.7"
 springdoc = "3.1.1"
 archunit = "1.5.1"
@@ -14,6 +15,7 @@ spring-boot-gradle-plugin = { module = "org.springframework.boot:spring-boot-gra
 dependency-management-plugin = { module = "io.spring.gradle:dependency-management-plugin", version.ref = "dependency-management" }
 spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "spring-modulith" }
 aws-sdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
+floci-testcontainers = { module = "io.floci:testcontainers-floci-aws", version.ref = "floci-testcontainers" }
 querydsl-jpa = { module = "io.github.openfeign.querydsl:querydsl-jpa", version.ref = "querydsl" }
 querydsl-apt = { module = "io.github.openfeign.querydsl:querydsl-apt", version.ref = "querydsl" }
 springdoc-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }

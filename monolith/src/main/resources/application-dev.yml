@@ -34,3 +34,5 @@ app:
   s3:
     access-key: ${AWS_ACCESS_KEY_ID:}
     secret-key: ${AWS_SECRET_ACCESS_KEY:}
+    # floci 같은 로컬 에뮬레이터 주소. 비워 두면 실제 AWS를 쓴다(운영 프로필에는 이 값이 없어 항상 실제 AWS)
+    endpoint: ${S3_ENDPOINT:}
