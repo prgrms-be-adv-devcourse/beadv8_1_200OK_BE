@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
@@ -14,6 +15,8 @@ import com.ok.refund.service.dto.RefundableOrderItem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -29,6 +32,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -259,6 +263,75 @@ class RefundServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
     }
 
+    // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고·취소된 상품은 취소로 돌려줄 수 없어 자동 거절한다.
+    // "배송 중"만이 아니라 알려진 비-PREPARING 상태 7개 모두 거절되는지 확인한다
+    @ParameterizedTest
+    @MethodSource("출고되거나_취소된_주문_상태")
+    void 승인_때_출고되거나_취소된_상품이면_사유와_함께_자동_거절한다(String orderItemStatus) {
+        // given
+        Refund refund = requested();
+        givenLockedBundle(refund);
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.status()).isEqualTo("REJECTED");
+            softly.assertThat(result.rejectReason()).isEqualTo(RefundService.SHIPPED_REJECT_REASON);
+            softly.assertThat(result.decidedAt()).isEqualTo(NOW);
+            softly.assertThat(refund.getActiveOrderItemId()).isNull();
+            softly.assertThat(refund.getShippingFeeAmount()).isZero();
+            softly.assertThat(refund.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+        });
+        // 거절될 환불에는 배송비 판단(집계 쿼리)을 할 이유가 없고, 판단이 예외를 내면 거절 대신 오류가 남는다
+        then(refundRepository).should(never()).sumCancelledByOrderItem(any(), any(), any());
+    }
+
+    static Stream<String> 출고되거나_취소된_주문_상태() {
+        return Stream.of("SHIPPING", "DELIVERED", "PURCHASE_CONFIRMED", "CANCEL_REQUESTED", "REFUNDED",
+                "PAYMENT_PENDING", "PAYMENT_FAILED");
+    }
+
+    // 주문 모듈의 버그나 새 상태일 수 있어 거절로 끝내지 않고 500으로 드러낸다. 저장한 것이 없어 요청됨 그대로 남는다
+    @ParameterizedTest
+    @MethodSource("모르는_주문_상태")
+    void 승인_때_주문_상태를_모르면_예외를_던지고_요청됨으로_남는다(String orderItemStatus) {
+        // given
+        Refund refund = requested();
+        givenLockedBundle(refund);
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks(orderItemStatus, 2)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("알 수 없는 주문 상품 상태라 승인할 수 없습니다. refundId=7, status=" + orderItemStatus);
+        assertThat(refund).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(refund.getDecidedAt()).isNull();
+        });
+    }
+
+    static Stream<String> 모르는_주문_상태() {
+        return Stream.of(null, "UNKNOWN");
+    }
+
+    // 이미 끝난 요청은 출고 여부와 상관없이 처리할 수 없다는 것이 진짜 이유라, 판매자에게 상태 충돌을 먼저 알린다
+    @Test
+    void 철회됐고_출고도_됐으면_상태_충돌이_먼저다() {
+        // given
+        Refund refund = requested();
+        refund.withdraw(NOW);
+        givenLockedBundle(refund);
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("SHIPPING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
     @Test
     void 환불과_다른_주문_상품_정보로_승인하면_예외를_던지고_바꾸지_않는다() {
         // given
@@ -272,6 +345,27 @@ class RefundServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+    }
+
+    // 다른 주문 상품 정보는 출고 상태여도 먼저 막아야 한다. 순서가 바뀌면 엉뚱한 상품의 출고 상태로 이 환불이 거절된다
+    @Test
+    void 다른_주문_상품_정보가_출고_상태여도_다른_상품_예외가_먼저이고_거절하지_않는다() {
+        // given
+        Refund refund = requested();
+        givenLockedBundle(refund);
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(102L, 10_000L, 2)));
+        RefundableOrderItem shippedOtherItem =
+                new RefundableOrderItem(10L, 102L, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", "SHIPPING", 10_000L, 2, bundle);
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, shippedOtherItem))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=7");
+        assertThat(refund).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(refund.getDecidedAt()).isNull();
+        });
     }
 
     // 남의 요청은 판매자 ID로 찾는 잠글 목록에 들어오지 않는다. 잠그지도 않아야 남의 행을 건드리지 않는다
@@ -393,6 +487,37 @@ class RefundServiceTest {
         assertThatThrownBy(() -> sut.withdraw(REFUND_ID, BUYER_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
+    }
+
+    @Test
+    void 실패를_기록하면_처리_중_그대로_단계와_이유가_남는다() {
+        // given
+        Refund refund = requested();
+        refund.approve(NOW, RefundShippingFee.none());
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
+
+        // when
+        sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+
+        // then
+        assertThat(refund).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(refund.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(refund.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+        });
+    }
+
+    // refundId는 승인을 마친 시스템이 넘기는 값이라 없으면 사용자 잘못이 아닌 버그다. 404가 아니라 표준 예외(500)로 드러나야 한다
+    @Test
+    void 없는_환불에_실패를_기록하면_예외를_던진다() {
+        // given
+        given(refundRepository.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("실패를 기록할 환불이 없습니다. refundId=7");
     }
 
     private static Refund requested() {
