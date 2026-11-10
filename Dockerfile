@@ -18,6 +18,8 @@ USER appuser
 
 # 프로파일은 실행할 때 SPRING_PROFILES_ACTIVE=prod 로 지정 (미지정 시 dev)
 EXPOSE 8080
+# 관리 포트(health, prometheus). 호스트에 publish하지 않고 compose 네트워크 안에서만 쓴다
+EXPOSE 18080
 # JVM 시간대를 팀 기준(Asia/Seoul)으로 고정 (#93)
 # - eclipse-temurin 이미지는 기본 시간대가 UTC라서, 그대로 두면 LocalDateTime.now()와 createdAt이 UTC로 계산된다
 #   예) 정산 스케줄러는 02:00 KST에 실행되는데 실행일은 UTC 기준 전날로 잡혀 하루 앞당겨짐

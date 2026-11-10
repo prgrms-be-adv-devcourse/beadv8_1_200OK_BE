@@ -10,6 +10,7 @@ import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.domain.ShippingFeePolicy;
 import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.application.port.out.ShipmentQueryRepository;
@@ -193,20 +194,38 @@ public class ShipmentService implements ShipmentUseCase {
                                 SellerShipmentCommand seller, LocalTime cutoffTime) {
         LocalDate shipDate = deliveryDatePolicy.shipDate(command.paidAt(), cutoffTime);
         DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());
+        int baseShippingFee = Math.toIntExact(seller.baseShippingFee());
+        int regionSurcharge = Math.toIntExact(seller.regionSurcharge());
+        // 무료배송 기준 없음(null)은 그대로 저장한다. 값이 있으면 int 범위를 넘을 때 예외로 드러낸다
+        Integer freeShippingThreshold = seller.freeShippingThreshold() == null
+                ? null
+                : Math.toIntExact(seller.freeShippingThreshold());
         return Shipment.builder()
                 .orderId(command.orderId())
                 .buyerId(command.buyerId())
                 .sellerId(seller.sellerId())
                 .address(address)
                 .regionGroup(region.regionGroup())
-                .baseShippingFee(Math.toIntExact(seller.baseShippingFee()))
-                .regionSurcharge(Math.toIntExact(seller.regionSurcharge()))
-                .freeShippingThreshold(Math.toIntExact(seller.freeShippingThreshold()))
+                .baseShippingFee(baseShippingFee)
+                .chargedShippingFee(chargedShippingFee(seller, baseShippingFee, freeShippingThreshold, regionSurcharge, cutoffTime))
+                .regionSurcharge(regionSurcharge)
+                .freeShippingThreshold(freeShippingThreshold)
                 .estimatedShipDate(shipDate)
                 .estimatedDeliveryStart(arrival.start())
                 .estimatedDeliveryEnd(arrival.end())
                 .items(seller.items().stream().map(ShipmentService::toItem).toList())
                 .build();
+    }
+
+    // 판매자 설정을 다시 조회하면 결제 뒤 설정이 바뀐 경우 결제 금액과 어긋나므로, 결제 시점 값으로 견적·주문과 같은 정책을 적용한다.
+    // 마감 시간은 배송비 계산에 쓰이지 않지만 설정 값 객체를 만드는 데 필요해 넘긴다
+    private static int chargedShippingFee(SellerShipmentCommand seller, int baseShippingFee, Integer freeShippingThreshold,
+                                          int regionSurcharge, LocalTime cutoffTime) {
+        long itemAmount = seller.items().stream()
+                .mapToLong(item -> Math.multiplyExact(item.unitPrice(), (long) item.quantity()))
+                .reduce(0L, Math::addExact);
+        SellerShippingSetting paidSetting = new SellerShippingSetting(baseShippingFee, freeShippingThreshold, cutoffTime);
+        return ShippingFeePolicy.calculate(seller.sellerId(), itemAmount, paidSetting, regionSurcharge).totalFee();
     }
 
     // 추가 운임은 결제 금액과 맞추려고 이벤트 값을 저장한다. 판정 값과 다르면 주문 생성 뒤 우편번호 데이터가 바뀐 것이라 확인할 수 있게 남긴다.

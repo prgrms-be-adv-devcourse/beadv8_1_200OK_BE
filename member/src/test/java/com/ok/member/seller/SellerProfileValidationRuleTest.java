@@ -1,6 +1,6 @@
 package com.ok.member.seller;
 
-import com.ok.member.seller.controller.dto.SellerProfileRequest;
+import com.ok.member.seller.adapter.in.web.dto.SellerProfileRequest;
 import com.ok.member.seller.domain.SellerProfile;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;

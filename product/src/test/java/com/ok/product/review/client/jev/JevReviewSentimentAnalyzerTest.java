@@ -70,7 +70,7 @@ class JevReviewSentimentAnalyzerTest {
 		RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL);
 		server = MockRestServiceServer.bindTo(builder).build();
 		JevProperties properties = new JevProperties(BASE_URL, API_KEY, MODEL, Duration.ofSeconds(3), Duration.ofSeconds(10));
-		analyzer = new JevReviewSentimentAnalyzer(builder.build(), new ReviewSentimentCriteria(), properties);
+		analyzer = new JevReviewSentimentAnalyzer(new JevClient(builder.build(), properties), new ReviewSentimentCriteria(), properties);
 	}
 
 	// 요청

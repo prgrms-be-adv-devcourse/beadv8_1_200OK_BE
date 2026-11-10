@@ -127,6 +127,53 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 부과_배송비는_무료배송_적용_후_기본_배송비와_추가_운임의_합으로_저장한다() {
+        // given: 일반 지역은 상품 1만원이라 기본 배송비만, 제주는 무료배송 기준(1만원)을 채워 추가 운임만 붙는다
+        ShipmentCreateCommand generalCommand = command(11L, PAID_AT, GENERAL_POSTAL_CODE, seller(10L, 0L, 1_101L));
+        ShipmentCreateCommand jejuCommand = command(12L, PAID_AT, JEJU_MAIN_POSTAL_CODE, seller(10L, 3_000L, 1_201L));
+        ShipmentCreateCommand jejuFreeCommand = command(13L, PAID_AT, JEJU_MAIN_POSTAL_CODE,
+                new SellerShipmentCommand(10L, 3_000L, 10_000L, 3_000L,
+                        List.of(new ShipmentItemCommand(1_301L, "상품", null, 1, 10_000L))));
+
+        // when
+        shipmentService.create(generalCommand);
+        shipmentService.create(jejuCommand);
+        shipmentService.create(jejuFreeCommand);
+
+        // then
+        List<Shipment> general = shipmentsOf(11L);
+        List<Shipment> jeju = shipmentsOf(12L);
+        List<Shipment> jejuFree = shipmentsOf(13L);
+        assertThat(general).hasSize(1);
+        assertThat(jeju).hasSize(1);
+        assertThat(jejuFree).hasSize(1);
+        assertSoftly(softly -> {
+            softly.assertThat(general.get(0).getChargedShippingFee()).isEqualTo(3_000);
+            softly.assertThat(jeju.get(0).getChargedShippingFee()).isEqualTo(6_000);
+            softly.assertThat(jejuFree.get(0).getBaseShippingFee()).isEqualTo(3_000);
+            softly.assertThat(jejuFree.get(0).getChargedShippingFee()).isEqualTo(3_000);
+        });
+    }
+
+    @Test
+    void 무료배송_기준이_없는_판매자는_기준을_null로_저장하고_기본_배송비를_부과한다() {
+        // given
+        SellerShipmentCommand noFreeShipping = new SellerShipmentCommand(10L, 3_000L, null, 0L,
+                List.of(new ShipmentItemCommand(1_401L, "상품", null, 1, 10_000_000L)));
+
+        // when
+        shipmentService.create(command(14L, PAID_AT, GENERAL_POSTAL_CODE, noFreeShipping));
+
+        // then
+        Shipment sut = shipmentsOf(14L).get(0);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getFreeShippingThreshold()).isNull();
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(3_000);
+        });
+    }
+
+    @Test
     void 우편번호_데이터가_바뀌어도_이미_만든_shipment_값은_그대로다() {
         // given: 울릉 그룹(5,000원, 2일)으로 등록한 번호로 shipment를 만든 뒤 번호를 삭제한다
         postalCodeRepository.saveAndFlush(RemoteAreaPostalCode.of(TEST_POSTAL_CODE, "ULLEUNG", 2));

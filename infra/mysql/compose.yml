@@ -9,6 +9,14 @@ services:
       # MySQL 서버 시간대를 팀 기준으로 고정 (#93). 설정이 없으면 컨테이너 기본값 UTC
       # NOW(), CURRENT_TIMESTAMP 기본값(예: media 테이블)이 이 시간대를 따르므로 앱(JVM)과 같은 시간대로 맞춘다
       - 'TZ=${APP_TIME_ZONE:-Asia/Seoul}'
+    # 슬로우 쿼리 로그 (#374). 1초 이상 걸린 쿼리만 남긴다. 부하테스트에서 병목 쿼리를 찾는 용도라 0.x초까지 남기면 로그가 쌓이는 속도만 빨라진다
+    # 파일 이름을 고정하지 않으면 컨테이너 ID가 이름에 들어가 재생성할 때마다 바뀌어 찾기 어렵다
+    # 로그는 데이터 디렉터리에 쌓이고, 개수는 mysqld-exporter의 mysql_global_status_slow_queries로 본다
+    command:
+      - --slow_query_log=ON
+      - --long_query_time=1
+      - --log_slow_extra=ON
+      - --slow_query_log_file=/var/lib/mysql/slow.log
     volumes:
       - '../../data/mysql:/var/lib/mysql'
       # 새 데이터 디렉터리로 처음 뜰 때만 모듈별 스키마를 만든다

@@ -2,9 +2,11 @@ package com.ok.product.review.controller;
 
 import java.util.List;
 
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,6 +25,7 @@ import com.ok.product.review.controller.dto.ProductReviewResponse;
 import com.ok.product.review.controller.dto.ProductReviewUpdateRequest;
 import com.ok.product.review.service.ProductReviewFacade;
 import com.ok.product.review.service.ProductReviewService;
+import com.ok.product.review.service.dto.ProductReviewResult;
 
 import lombok.RequiredArgsConstructor;
 
@@ -71,10 +74,15 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 	public ResponseEntity<ProductPageResponse<ProductReviewResponse>> getProductReviews(
 		@PathVariable Long productId,
 		@RequestParam(defaultValue = "0") int page,
-		@RequestParam(defaultValue = "20") int size
+		@RequestParam(defaultValue = "20") int size,
+		@RequestParam(required = false) String keyword
 	) {
-		return ResponseEntity.ok(ProductPageResponse.from(
-			productReviewService.getProductReviews(productId, PageRequest.of(page, size)).map(ProductReviewResponse::from)));
+		PageRequest pageable = PageRequest.of(page, size);
+		// 칩 선택을 해제한 화면이 빈 keyword를 보내도 전체 목록이 나오게 빈 값은 필터 없음으로 본다
+		Page<ProductReviewResult> reviews = StringUtils.hasText(keyword)
+			? productReviewService.getProductReviewsByKeyword(productId, keyword.strip(), pageable)
+			: productReviewService.getProductReviews(productId, pageable);
+		return ResponseEntity.ok(ProductPageResponse.from(reviews.map(ProductReviewResponse::from)));
 	}
 
 	@Override

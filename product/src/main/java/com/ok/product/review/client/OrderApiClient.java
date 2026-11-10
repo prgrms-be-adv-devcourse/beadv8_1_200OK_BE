@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.common.trace.TraceHeaderInterceptor;
 import com.ok.product.review.client.dto.OrderReviewCandidateResponse;
 import com.ok.product.review.exception.ProductReviewErrorCode;
 import com.ok.product.review.service.dto.ReviewablePurchase;
@@ -37,6 +38,8 @@ public class OrderApiClient {
 		this.restClient = RestClient.builder()
 			.baseUrl(baseUrl + "/internal/v1/orders")
 			.requestFactory(factory)
+			// 주문 모듈이 어느 요청의 호출인지 알 수 있도록 MDC의 추적 키를 헤더로 보낸다
+			.requestInterceptor(new TraceHeaderInterceptor())
 			// 서버가 꺼졌거나 타임아웃이면 IOException이 나고, 그대로 두면 500이 된다
 			.requestInterceptor((request, body, execution) -> {
 				try {
