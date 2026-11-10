@@ -3,10 +3,10 @@ package com.ok.payout;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.repository.PayoutRepository;
-import com.ok.payout.repository.PayoutSnapshotRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
-import com.ok.payout.service.PayoutJobRunner;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -76,13 +76,13 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     private PayoutJobRunner payoutJobRunner;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
-    private PayoutSnapshotRepository snapshotRepository;
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
+    private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -116,7 +116,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
         insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemA, SELLER_7, -2_000L, 4L, ADMIN_ID, "금액 오입력 정정", oldCreatedAt);
         insertCandidate(PayoutEventType.SALE_AMOUNT, nextOrderItemId(), SELLER_9, 19_400L, oldCreatedAt);
 
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
         // 준비 단계 확인: 배치가 실패하면 아래 테스트가 모두 엉뚱한 이유로 실패하므로 여기서 바로 알림
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         rememberPayoutIds();
@@ -455,7 +455,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
     }
 
-    // 정산 결과는 정산 테스트들만 만들고 "마지막 정산일"이 배치 기간 계산에 쓰이므로 전부 비움
+    // 정산 결과는 정산 테스트들만 만들고 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해져, 정산·스냅샷을 비우지 않으면 배치 기간 계산이 남은 기준을 따르므로 전부 비움
     // 정산후보는 이 클래스 번호대만 지움 (다른 테스트의 후보를 건드리지 않도록)
     private void cleanUp() {
         jdbcTemplate.update("DELETE FROM payout_item");

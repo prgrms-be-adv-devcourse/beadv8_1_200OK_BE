@@ -15,27 +15,35 @@ import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.exception.PayoutErrorCode;
-import com.ok.payout.repository.PayoutCandidateItemRepository;
-import com.ok.payout.repository.PayoutFailureRepository;
-import com.ok.payout.repository.PayoutQueryRepository;
-import com.ok.payout.repository.PayoutRepository;
-import com.ok.payout.repository.PayoutSellerDraftRepository;
-import com.ok.payout.repository.PayoutSnapshotItemRepository;
-import com.ok.payout.repository.PayoutSnapshotRepository;
-import com.ok.payout.repository.PayoutSystemDraftItemRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
-import com.ok.payout.service.PayoutJobRunner;
-import com.ok.payout.service.PayoutService;
-import com.ok.payout.service.dto.PayoutVerifyResult;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutFailureJpaRepository;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSellerDraftJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSystemDraftItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.in.batch.PayoutJobScheduler;
+import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
 import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.repository.JobRepository;
+import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -44,6 +52,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -55,7 +64,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build-logic의 ok.java-conventions)과 Hibernate 시간대(application-test.yml)가
 //   모두 Asia/Seoul로 고정되어(#93), JPA가 저장·조회하는 시각과 기준이 같기 때문이다
 // - 결과 확인은 JPA 리포지토리로 한다 (팀 규칙). JDBC는 데이터 준비·정리에만 쓴다
-// - 정산·스냅샷·draft는 이 클래스만 만들고 "마지막 정산일"이 범위 계산에 쓰이므로, 테스트 전후로 전부 비운다
+// - 정산·스냅샷·draft는 이 클래스만 만들고 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다
 class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 이 클래스 전용 주문항목 ID 번호대 (PayoutCandidateIntegrationTest는 주문항목 9_000_000, 주문 9_500_000부터 사용)
@@ -82,34 +91,40 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private PayoutJobRunner payoutJobRunner;
 
     @Autowired
+    private PayoutJobScheduler payoutJobScheduler;
+
+    @Autowired
     private JobOperator jobOperator;
+
+    @Autowired
+    private JobRepository jobRepository;
 
     @Autowired
     private Job payoutJob;
 
     @Autowired
-    private PayoutCandidateItemRepository candidateRepository;
+    private PayoutCandidateItemJpaRepository candidateRepository;
 
     @Autowired
-    private PayoutSnapshotRepository snapshotRepository;
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     @Autowired
-    private PayoutSnapshotItemRepository snapshotItemRepository;
+    private PayoutSnapshotItemJpaRepository snapshotItemRepository;
 
     @Autowired
-    private PayoutSellerDraftRepository sellerDraftRepository;
+    private PayoutSellerDraftJpaRepository sellerDraftRepository;
 
     @Autowired
-    private PayoutSystemDraftItemRepository systemDraftItemRepository;
+    private PayoutSystemDraftItemJpaRepository systemDraftItemRepository;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
+    private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
 
     @Autowired
-    private PayoutFailureRepository failureRepository;
+    private PayoutFailureJpaRepository failureRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -177,10 +192,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // given: Job 실행 1회 = 스냅샷 1건 (UK job_execution_id)
         insertSaleAmount(10L, 1_000L, TO.minusDays(1));
         long jobExecutionId = JOB_EXECUTION_ID_SEQ.incrementAndGet();
-        payoutService.createSnapshot(jobExecutionId, FROM, TO);
+        payoutService.createSnapshot(jobExecutionId, FROM, TO, PayoutRunType.SCHEDULED);
 
         // when & then
-        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO))
+        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO, PayoutRunType.SCHEDULED))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(snapshotRepository.findAll())
                 .filteredOn(snapshot -> snapshot.getJobExecutionId().equals(jobExecutionId))
@@ -728,7 +743,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         }
 
         // when: 스케줄러/API와 같은 경로로 실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -752,7 +767,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 정산_대상이_없어도_Job은_COMPLETED로_끝나고_빈_스냅샷이_남는다() throws Exception {
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 대상이 없던 날도 "배치는 돌았다"는 기록이 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -772,7 +787,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_FEE, orderB, 20L, 600L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공하고(실패가 있어도 verify 통과), 주문 B의 후보 2건만 실패로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -801,7 +816,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertShippingFeeWithoutDeduction(orderB, 20L, 3_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 주문 단위 검사라 배송비도 같은 주문으로 걸리고, 실패 기록의 주문상품 ID는 비어 있음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -839,9 +854,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
 
         // when: 1차 배치 → 빠짐, 그 뒤 지갑 차감 기록이 늦게 들어옴 → 2차 배치
-        JobExecution first = payoutJobRunner.run();
+        JobExecution first = payoutJobRunner.runScheduled();
         givenDeduction(orderB);
-        JobExecution second = payoutJobRunner.run();
+        JobExecution second = payoutJobRunner.runScheduled();
 
         // then: 1차는 실패 기록만 있고 정산 없음 (잠그지 않아 미정산 후보로 남음)
         Long firstSnapshotId = snapshotIdOf(first);
@@ -857,24 +872,156 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(20L, 19_400L));
     }
 
+    // #390: 정기 실행이 BATCH_JOB_EXECUTION_PARAMS에 실제로 저장한 requestedAt을 쿼리가 읽고 파싱해 하한을 구하는지 확인함
+    // 기대값은 첫 실행의 requestedAt 파라미터에서 계산하고, 저장된 글자를 읽어 파싱하는 일은 조회 쿼리가 함
+    // 대체 경로(마지막 정산 생성일)로도 같은 값이 나오면 쿼리를 안 써도 통과하므로, 정산 생성일을 requestedAt과 다른 날로 옮겨 둠
     @Test
-    void requestedAt_없이_실행하면_Job이_FAILED로_끝나고_스냅샷도_만들지_않는다() throws Exception {
+    void 두_번째_정기_실행의_조회_하한은_첫_정기_실행_요청일에서_18일을_뺀_날이다() throws Exception {
+        // given: 첫 정기 실행이 정산을 실제로 만듦 (정산이 없으면 하한 기준이 되지 않아 검증이 의미 없음)
+        givenSettleableOrder(10L);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
+        LocalDateTime firstRequestedAt = (LocalDateTime) first.getJobParameters().getParameter("requestedAt").value();
+
+        // 정산 엔티티는 생성일을 바꿀 수 없어(불변) SQL로 옮김: 정산 생성일 날짜가 요청일 날짜와 같으면 대체 경로와 구분이 안 됨
+        LocalDateTime backdatedCreatedAt = firstRequestedAt.minusDays(10);
+        backdatePayoutCreatedAt(firstSnapshotId, backdatedCreatedAt);
+
+        // when
+        JobExecution second = payoutJobRunner.runScheduled();
+
+        // then: 요청일 기준 값이어야 하고, 대체 경로(정산 생성일 기준) 값이면 안 됨
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(second)).orElseThrow();
+        LocalDateTime fromRequestedAt = firstRequestedAt.toLocalDate().minusDays(18).atStartOfDay();
+        LocalDateTime fromFallback = backdatedCreatedAt.toLocalDate().minusDays(18).atStartOfDay();
+        assertThat(fromRequestedAt).isNotEqualTo(fromFallback);
+        assertThat(sut.getPeriodFrom()).isEqualTo(fromRequestedAt).isNotEqualTo(fromFallback);
+    }
+
+    // #390 D5: 정산·스냅샷은 지워지고 BATCH 실행 기록만 남은 실행이 하한 기준이 되면 안 됨
+    // 고아 실행 기록이 하한을 정하면 "요청일 − 18일"이고, 맞는 답은 대체 경로의 "남은 정산 생성일 − 18일"이라 둘이 다르게 만들어 둠
+    // 함께 확인: 하한이 과거로 내려가 조회 기간이 넓어져도 이미 정산된 후보는 다시 정산되지 않음 (지금 동작 유지)
+    @Test
+    void 정산이_지워진_실행_기록만_남으면_하한은_남은_정산_생성일_기준이다() throws Exception {
+        // given: 1회차는 정산을 만들되 MANUAL로 바꿔 하한 기준에서 빼고, 정산은 대체 경로(남은 정산 생성일)용으로 남기며 생성일을 옮김
+        long firstOrderId = givenSettleableOrder(10L);
+        List<Long> firstCandidateIds = candidateIdsOf(firstOrderId);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
+        LocalDateTime firstRequestedAt = (LocalDateTime) first.getJobParameters().getParameter("requestedAt").value();
+        LocalDateTime backdatedCreatedAt = firstRequestedAt.minusDays(10);
+        backdatePayoutCreatedAt(firstSnapshotId, backdatedCreatedAt);
+        jdbcTemplate.update("UPDATE payout_snapshot SET run_type = 'MANUAL' WHERE id = ?", firstSnapshotId);
+
+        // given: 2회차가 정산을 만든 뒤 그 정산·스냅샷만 지움 (BATCH_* 기록은 고아로 남음: 정기·COMPLETED·1회차보다 최신)
+        givenSettleableOrder(20L);
+        JobExecution second = payoutJobRunner.runScheduled();
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long secondSnapshotId = snapshotIdOf(second);
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isNotEmpty();
+        deleteSnapshotRows(secondSnapshotId);
+        assertThat(snapshotRepository.findById(secondSnapshotId)).isEmpty();
+        LocalDateTime secondRequestedAt = (LocalDateTime) second.getJobParameters().getParameter("requestedAt").value();
+
+        // when
+        JobExecution third = payoutJobRunner.runScheduled();
+
+        // then: 고아 기록(2회차 요청일 기준)이 아니라 남은 정산(1회차 정산 생성일) 기준이어야 함
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(third)).orElseThrow();
+        LocalDateTime expected = backdatedCreatedAt.toLocalDate().minusDays(18).atStartOfDay();
+        LocalDateTime orphanAnswer = secondRequestedAt.toLocalDate().minusDays(18).atStartOfDay();
+        assertThat(expected).isNotEqualTo(orphanAnswer);
+        assertThat(sut.getPeriodFrom()).isEqualTo(expected).isNotEqualTo(orphanAnswer);
+
+        // then: 3회차 조회 기간이 1회차 후보(20일 전 생성)를 포함하도록 넓어졌는데도, 이미 정산된 1회차 후보는 다시 정산되지 않음
+        // 먼저 후보가 3회차 기간 안에 있음을 확인해야 아래 검증이 의미 있음 (기간 밖이라 빠진 것이면 통과해도 증명이 안 됨)
+        for (Long candidateId : firstCandidateIds) {
+            LocalDateTime candidateCreatedAt = candidateRepository.findById(candidateId).orElseThrow().getCreatedAt();
+            assertThat(candidateCreatedAt).isBetween(sut.getPeriodFrom(), sut.getPeriodTo());
+        }
+        List<Long> thirdSnapshotCandidateIds = new ArrayList<>();
+        for (PayoutSnapshotItem item : snapshotItemRepository.findBySnapshotId(snapshotIdOf(third))) {
+            thirdSnapshotCandidateIds.add(item.getCandidateId());
+        }
+        assertThat(thirdSnapshotCandidateIds).doesNotContainAnyElementsOf(firstCandidateIds);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(third)))
+                .extracting(Payout::getPayeeId).doesNotContain(10L);   // 1회차 판매자의 정산은 3회차에 다시 생기지 않음
+    }
+
+    private void backdatePayoutCreatedAt(Long snapshotId, LocalDateTime createdAt) {
+        jdbcTemplate.update("UPDATE payout SET created_at = ? WHERE snapshot_id = ?", createdAt, snapshotId);
+    }
+
+    // 한 스냅샷의 정산·draft·실패·스냅샷 행만 지움 (FK 때문에 자식 테이블 먼저, 다른 실행의 행은 그대로)
+    private void deleteSnapshotRows(Long snapshotId) {
+        jdbcTemplate.update("DELETE FROM payout_item WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_seller_draft_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_seller_draft WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_system_draft_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_failure WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_snapshot_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_snapshot WHERE id = ?", snapshotId);
+    }
+
+    // 생성 20일 전(15일 지남) 판매 대금·수수료 후보를 넣어 정기 실행이 정산을 만들게 함
+    private long givenSettleableOrder(long sellerId) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderItemId = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderItemId, sellerId, 300L, createdAt);
+        return orderItemId;   // candidateIdsOf(주문 ID)에 그대로 넘길 수 있음 (이 테스트는 주문 ID = 주문항목 ID)
+    }
+
+    // 필수 파라미터 검사는 Job 시작 전(PayoutJobParametersValidator)에 하므로, 잘못된 실행이 FAILED 기록으로 남지 않아야 함
+    // 검사기의 RestApiException이 감싸지지 않고 그대로 나오는지도 여기서 실제 JobOperator로 확인함
+    // JobInstance는 검사 전에 만들어질 수 있어 개수는 확인하지 않고, 실행 기록(JobExecution)과 스냅샷만 확인함
+    @Test
+    void 필수_파라미터가_잘못되면_Job을_시작하지_않아_실행_기록도_스냅샷도_남지_않는다() throws Exception {
         // given: 정산 대상이 있어도 (앱 시작 시 자동 실행 등 의도치 않은 실행 방지)
         insertSaleAmount(10L, 1_000L, LocalDateTime.now().minusDays(20));
+        int executionsBefore = payoutJobExecutionCount();
+        JobParameters withoutRequestedAt = new JobParametersBuilder()
+                .addString("runType", PayoutRunType.MANUAL.name(), false)
+                .toJobParameters();
+        JobParameters withoutRunType = new JobParametersBuilder()
+                .addLocalDateTime("requestedAt", LocalDateTime.now())
+                .toJobParameters();
 
-        // when: 파라미터 없이 직접 실행
-        JobExecution execution = jobOperator.start(payoutJob, new JobParameters());
+        // when & then: requestedAt이 없으면 MISSING_PAYOUT_REQUESTED_AT
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, withoutRequestedAt))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.MISSING_PAYOUT_REQUESTED_AT));
+        // runType이 없으면 INVALID_PAYOUT_RUN_TYPE
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, withoutRunType))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_PAYOUT_RUN_TYPE));
 
-        // then
-        assertThat(execution.getStatus()).isEqualTo(BatchStatus.FAILED);
-        assertThat(snapshotRepository.findAll()).isEmpty();
-        assertThat(payoutRepository.count()).isZero();
+        // then: 실행 기록·스냅샷·정산이 하나도 늘지 않음
+        assertSoftly(softly -> {
+            softly.assertThat(payoutJobExecutionCount()).isEqualTo(executionsBefore);
+            softly.assertThat(snapshotRepository.findAll()).isEmpty();
+            softly.assertThat(payoutRepository.count()).isZero();
+        });
+    }
+
+    // 정산 Job의 모든 실행 기록 수 (JobInstance를 거쳐 JobExecution을 셈)
+    private int payoutJobExecutionCount() {
+        int count = 0;
+        for (JobInstance instance : jobRepository.findJobInstances("payoutJob")) {
+            count += jobRepository.getJobExecutions(instance).size();
+        }
+        return count;
     }
 
     @Test
     void Job_실행_기록이_DB에_저장된다() throws Exception {
         // when: 정산 대상 없이 실행 (대상 유무와 상관없이 실행 기록은 남아야 함)
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 반환된 실행 ID로 메타 테이블을 직접 조회 → 메모리 저장이면 행이 없어 실패
         // (Spring Batch 메타 테이블은 엔티티가 없어 JDBC로 확인)
@@ -897,7 +1044,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 재실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 새 스냅샷으로 판매자 10, 20 모두 정산되고, 실패한 스냅샷의 draft는 기록으로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1072,7 +1219,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(PayoutEventType.SALE_FEE, orderY, 30L, 300L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공, 주문 X의 후보 5건은 1건씩 실패로 기록
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1106,7 +1253,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 1_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 실패 기록 UK에 걸려 롤백되지 않고 4건이 1건씩 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1343,13 +1490,54 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(10L, 1_000L));
     }
 
+    // 새벽 정기 스케줄러 입구(PayoutJobScheduler.runDaily)가 SCHEDULED로 시작하는지 본다 (러너가 아니라 스케줄러 빈을 직접 호출)
+    @Test
+    void 스케줄러가_실행하면_실행_유형이_SCHEDULED인_스냅샷이_남는다() throws Exception {
+        // given: 후보 없이도 스냅샷은 만들어짐 (테스트마다 DB를 비우므로 스냅샷은 이 실행의 1건뿐)
+
+        // when
+        payoutJobScheduler.runDaily();
+
+        // then
+        List<PayoutSnapshot> sut = snapshotRepository.findAll();
+        assertThat(sut).hasSize(1);
+        assertThat(sut.get(0).getRunType()).isEqualTo(PayoutRunType.SCHEDULED);
+    }
+
+    // 실행 경로마다 Job 시작 메서드가 정한 실행 유형이 스냅샷에 남는지 본다 (스위치는 module-test.yml로 켜져 있음)
+    @ParameterizedTest
+    @MethodSource("실행_경로들")
+    void 실행_경로마다_스냅샷에_맞는_실행_유형이_남는다(JobStarter starter, PayoutRunType expected) throws Exception {
+        // given: 후보 없이도 스냅샷은 만들어짐
+
+        // when
+        JobExecution execution = starter.start(payoutJobRunner);
+
+        // then
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(execution)).orElseThrow();
+        assertThat(sut.getRunType()).isEqualTo(expected);
+    }
+
+    private static Stream<Arguments> 실행_경로들() {
+        return Stream.of(
+                Arguments.of((JobStarter) PayoutJobRunner::runScheduled, PayoutRunType.SCHEDULED),
+                Arguments.of((JobStarter) PayoutJobRunner::runManual, PayoutRunType.MANUAL),
+                Arguments.of((JobStarter) PayoutJobRunner::runSkippingWait, PayoutRunType.SKIP_WAIT));
+    }
+
+    @FunctionalInterface
+    private interface JobStarter {
+        JobExecution start(PayoutJobRunner runner) throws Exception;
+    }
+
     @Test
     void 평소_실행은_15일이_안_지난_후보를_정산하지_않는다() throws Exception {
         // given: 위 테스트와 같은 후보. 건너뛰기 실행만 차이를 만든다는 것을 보이기 위한 짝
         insertSaleAmount(10L, 1_000L, LocalDateTime.now());
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1382,7 +1570,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 서비스 직접 호출용 스냅샷 생성 (Job 실행 ID는 테스트마다 새로 발급)
     private Long createSnapshot(LocalDateTime from, LocalDateTime to) {
-        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to);
+        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to, PayoutRunType.SCHEDULED);
     }
 
     // draftStep처럼 0이 나올 때까지 회차 반복

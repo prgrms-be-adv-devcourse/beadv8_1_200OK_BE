@@ -5,7 +5,7 @@ import com.ok.payout.PayoutSchema;
 import com.ok.wallet.WalletSchema;
 import org.springframework.boot.test.context.SpringBootTest;
 import com.ok.common.event.OrderProductConfirmedEvent;
-import com.ok.payout.service.PayoutJobRunner;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -71,7 +71,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         backdateCandidates(LocalDateTime.now().minusDays(20));
 
         // When: 스케줄러와 같은 경로로 정산 배치 실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // Then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);

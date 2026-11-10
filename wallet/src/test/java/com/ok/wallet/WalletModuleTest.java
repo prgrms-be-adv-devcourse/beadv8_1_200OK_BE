@@ -9,10 +9,10 @@ import com.ok.common.event.WalletPaymentFailedEvent;
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
-import com.ok.wallet.repository.BuyerWalletLedgerQueryRepository;
-import com.ok.wallet.repository.BuyerWalletRepository;
-import com.ok.wallet.repository.SellerWalletRepository;
-import com.ok.wallet.service.BuyerWalletService;
+import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
+import com.ok.wallet.adapter.out.persistence.SellerWalletJpaRepository;
+import com.ok.wallet.application.port.out.BuyerWalletLedgerQueryRepository;
+import com.ok.wallet.application.service.BuyerWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,10 +38,10 @@ class WalletModuleTest {
     private static final long PAYOUT_ID = 9_200_001L;
 
     @Autowired
-    BuyerWalletRepository buyerWalletRepository;
+    BuyerWalletJpaRepository buyerWalletRepository;
 
     @Autowired
-    SellerWalletRepository sellerWalletRepository;
+    SellerWalletJpaRepository sellerWalletRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

@@ -17,6 +17,14 @@ import java.util.Map;
  */
 public final class RefundShippingFeePolicy {
 
+    // 배송비 판단에서 "이미 취소된 것"으로 보는 상태. 승인된 요청은 되돌리지 않으므로 취소된 것으로 센다.
+    // 요청(미리 막기)과 승인(배송비 결정)이 같은 기준을 써야 해서 이 정책에 둔다. 두 서비스에 따로 두면 한쪽만 바뀌어
+    // 요청 때 통과한 요청이 승인 때 다른 기준으로 판단될 수 있다
+    // TODO(#414): 완료 상태가 생기면 함께 센다. 처리 중을 완료로 바꾸는 처리도 승인처럼 묶음 잠금(lockBundleAndFind)을 거쳐야 한다
+    // 묶음 잠금은 잠글 ID를 읽은 뒤 새로 들어온 요청을 잠그지 않는다. 그래도 되는 건 새 요청이 요청됨이고 요청됨은 여기서 세지 않기 때문이다.
+    // 이 목록에 요청됨을 넣으면 그 전제가 깨져, 잠그지 않은 행이 집계를 바꿀 수 있다
+    public static final List<RefundStatus> CANCELLING_STATUSES = List.of(RefundStatus.PROCESSING);
+
     private RefundShippingFeePolicy() {
     }
 

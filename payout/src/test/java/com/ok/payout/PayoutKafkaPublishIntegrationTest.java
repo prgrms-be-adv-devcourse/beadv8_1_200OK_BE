@@ -31,11 +31,11 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.event.PayoutTopics;
-import com.ok.payout.repository.PayoutRepository;
-import com.ok.payout.repository.PayoutSnapshotRepository;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
-import com.ok.payout.service.PayoutJobRunner;
+import com.ok.payout.config.PayoutTopics;
+import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 import tools.jackson.databind.JsonNode;
@@ -48,7 +48,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 통합 테스트: 정산 배치가 확정한 정산을 실제 Kafka(테스트 컨테이너)의 payout.seller-payout-created 토픽으로 보내는지 확인 (#339)
 // - 토픽 메시지는 테스트마다 지워지지 않으므로(다른 정산 통합 테스트도 같은 토픽에 보냄) 이번 정산의 payoutId(키)로 걸러서 본다
 // - 값은 문자열로 읽어 JSON 그대로 확인한다. 지갑은 정산 클래스가 아니라 이 JSON 모양으로 읽기 때문이다
-// - 정산·스냅샷·draft는 "마지막 정산일"이 범위 계산에 쓰이므로 테스트 전후로 전부 비운다 (PayoutSettleIntegrationTest와 같은 방식)
+// - 정산·스냅샷·draft는 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다 (PayoutSettleIntegrationTest와 같은 방식)
 // - 정산후보는 created_at을 과거로 넣어야 하므로 SQL로 직접 넣는다 (저장 시 Auditing이 현재 시각으로 덮어쓰기 때문). 결과 확인은 JPA로 한다
 class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
 
@@ -65,13 +65,13 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
     private PayoutJobRunner payoutJobRunner;
 
     @Autowired
-    private PayoutSnapshotRepository snapshotRepository;
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     @Autowired
-    private PayoutRepository payoutRepository;
+    private PayoutJpaRepository payoutRepository;
 
     @Autowired
-    private PayoutWalletDeductionRepository payoutWalletDeductionRepository;
+    private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
 
     // yaml(spring.kafka)과 테스트 컨테이너 주소(KafkaConnectionDetails)로 자동 설정된 컨슈머 팩토리
     @Autowired
@@ -106,7 +106,7 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
         insertAdjustment(orderB, 20L, -5_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 정산은 판매자 10, 판매자 20(0원), 시스템 몫 3건이 확정됨
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);

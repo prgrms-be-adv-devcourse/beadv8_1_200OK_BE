@@ -11,8 +11,8 @@ import com.ok.member.member.repository.MemberRepository;
 import com.ok.member.member.service.MemberSignupService;
 import com.ok.member.member.service.dto.SignupCommand;
 import com.ok.member.seller.domain.SellerApplication;
-import com.ok.member.seller.repository.SellerApplicationRepository;
-import com.ok.member.seller.service.SellerApplicationService;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
+import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
@@ -45,10 +45,10 @@ public class MemberModuleTest {
     MemberRepository memberRepository;
 
     @Autowired
-    SellerApplicationService sellerApplicationService;
+    SellerApplicationUseCase sellerApplicationUseCase;
 
     @Autowired
-    SellerApplicationRepository sellerApplicationRepository;
+    SellerApplicationJpaRepository sellerApplicationRepository;
 
     // 모듈 테스트는 member 밖(common 모듈)의 MediaUrlResolver를 걸러 내, 판매자 프로필 서비스를 만들 수 없다.
     // 이 테스트는 이벤트 발행만 확인하고 프로필 사진 URL 변환은 쓰지 않으므로 가짜로 둔다
@@ -99,7 +99,7 @@ public class MemberModuleTest {
         Long applicationId = sellerApplicationRepository.saveAndFlush(application).getId();
 
         // when & then: wallet 모듈이 이 이벤트로 판매자 지갑을 만든다 (WalletModuleTest가 수신 쪽을 확인)
-        scenario.stimulate(() -> sellerApplicationService.approve(adminId, applicationId))
+        scenario.stimulate(() -> sellerApplicationUseCase.approve(adminId, applicationId))
                 .andWaitForEventOfType(SellerApprovedEvent.class)
                 .toArriveAndVerify(event -> assertSoftly(softly -> {
                     softly.assertThat(event.memberId()).isEqualTo(applicantId);

@@ -16,3 +16,8 @@ output "ssh_command" {
   description = "EC2 접속 명령"
   value       = "ssh ubuntu@${aws_eip.app.public_ip}"
 }
+
+output "infra_public_ip" {
+  description = "infra 인스턴스에 연결한 고정 퍼블릭 IP"
+  value       = aws_eip.infra.public_ip
+}

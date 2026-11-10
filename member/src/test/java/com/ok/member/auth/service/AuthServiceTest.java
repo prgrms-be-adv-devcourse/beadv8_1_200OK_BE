@@ -11,7 +11,7 @@ import com.ok.member.auth.service.dto.TokenResult;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
 import com.ok.member.member.repository.MemberRepository;
-import com.ok.member.seller.service.SellerApplicationService;
+import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -57,14 +57,14 @@ class AuthServiceTest {
 
     // 기본값 false라 별도 stub이 없는 테스트는 판매자가 아닌 회원(BUYER)으로 다룬다
     @Mock
-    SellerApplicationService sellerApplicationService;
+    SellerApprovalCheckUseCase sellerApprovalCheckUseCase;
 
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         authService = new AuthService(memberRepository, accessTokenProvider, refreshTokenService,
-                sellerApplicationService);
+                sellerApprovalCheckUseCase);
     }
 
     @Test
@@ -95,7 +95,7 @@ class AuthServiceTest {
     void 승인된_판매자가_로그인하면_구매자와_판매자_권한으로_Access_Token을_발급한다() {
         // given
         given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
-        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(sellerApprovalCheckUseCase.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID))
@@ -186,7 +186,7 @@ class AuthServiceTest {
         // given: 승인 전에 로그인해 BUYER 토큰만 가진 회원이 승인 뒤 재발급한다
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
         given(memberRepository.findById(MEMBER_ID)).willReturn(Optional.of(member(MemberStatus.ACTIVE)));
-        given(sellerApplicationService.isApprovedSeller(MEMBER_ID)).willReturn(true);
+        given(sellerApprovalCheckUseCase.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID))

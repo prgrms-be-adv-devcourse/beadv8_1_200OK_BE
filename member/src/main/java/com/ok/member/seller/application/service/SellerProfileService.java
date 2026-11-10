@@ -1,0 +1,93 @@
+package com.ok.member.seller.application.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.common.media.MediaUrlResolver;
+import com.ok.member.seller.application.dto.SellerProfileCommand;
+import com.ok.member.seller.application.dto.SellerProfileResult;
+import com.ok.member.seller.application.port.in.SellerProfileUseCase;
+import com.ok.member.seller.application.port.out.SellerProfileRepository;
+import com.ok.member.seller.domain.SellerProfile;
+import com.ok.member.seller.exception.SellerErrorCode;
+import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * 판매자의 상점 프로필 조회·등록·수정을 처리한다.
+ * 판매자 여부는 컨트롤러가 토큰의 SELLER 권한으로 확인한다.
+ */
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class SellerProfileService implements SellerProfileUseCase {
+
+    private final SellerProfileRepository sellerProfileRepository;
+    private final SellerProfileDuplicateValidator duplicateValidator;
+    private final SellerProfileImageUrlValidator imageUrlValidator;
+    private final MediaUrlResolver mediaUrlResolver;
+
+    @Override
+    public SellerProfileResult getMyProfile(Long memberId) {
+        return toResult(findProfile(memberId));
+    }
+
+    @Override
+    @Transactional
+    public SellerProfileResult register(Long memberId, SellerProfileCommand command) {
+        duplicateValidator.validate(memberId);
+
+        SellerProfile profile = SellerProfile.register(
+                memberId,
+                command.storeName(),
+                command.representativeName(),
+                command.customerServicePhone(),
+                command.introduction(),
+                imageUrlValidator.toObjectKey(command.profileImageUrl())
+        );
+        return toResult(save(profile));
+    }
+
+    @Override
+    @Transactional
+    public SellerProfileResult update(Long memberId, SellerProfileCommand command) {
+        SellerProfile profile = findProfile(memberId);
+
+        profile.update(
+                command.storeName(),
+                command.representativeName(),
+                command.customerServicePhone(),
+                command.introduction(),
+                imageUrlValidator.toObjectKey(command.profileImageUrl())
+        );
+        return toResult(profile);
+    }
+
+    private SellerProfile findProfile(Long memberId) {
+        return sellerProfileRepository.findByMemberId(memberId)
+                .orElseThrow(() -> new RestApiException(SellerErrorCode.SELLER_PROFILE_NOT_FOUND));
+    }
+
+    /**
+     * 등록 버튼 중복 클릭처럼 사전 확인을 함께 통과한 요청은 유니크 제약이 막는다. 그 위반을 중복 등록 오류로 바꾼다.
+     */
+    private SellerProfile save(SellerProfile profile) {
+        try {
+            return sellerProfileRepository.saveAndFlush(profile);
+        } catch (DataIntegrityViolationException e) {
+            throw duplicateValidator.toDuplicateException(e);
+        }
+    }
+
+    private SellerProfileResult toResult(SellerProfile profile) {
+        String imageKey = profile.getProfileImageKey();
+        return new SellerProfileResult(
+                profile.getStoreName(),
+                profile.getRepresentativeName(),
+                profile.getCustomerServicePhone(),
+                profile.getIntroduction(),
+                imageKey == null ? null : mediaUrlResolver.toUrl(imageKey)
+        );
+    }
+
+}
