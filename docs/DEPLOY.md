@@ -21,7 +21,7 @@ EC2 한 대에 nginx·앱·MySQL·Redis(클러스터 6노드)·Kafka를 Docker �
   - Redis 6대는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다. 6대가 같은 비밀번호를 씁니다(복제본이 마스터에 붙으려면 필요).
   - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
   - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
-- Redis는 노드당 `maxmemory 96mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음)입니다. 영속성은 [Redis (#366)](#redis-366) 절을 봅니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
+- Redis는 노드당 `maxmemory 64mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음)입니다. 영속성은 [Redis (#366)](#redis-366) 절을 봅니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
 - 앱의 `/actuator/health`에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
@@ -39,7 +39,7 @@ EC2 한 대에 nginx·앱·MySQL·Redis(클러스터 6노드)·Kafka를 Docker �
   - 로컬 시험(마스터 2대 `SIGKILL`): 40초 뒤에도 승격 없이 `cluster_state:fail`이었고, 복제본 1대에 `takeover`를 하자 약 6초 뒤 `cluster_state:ok`가 되었습니다.
 - app은 노드 6대가 모두 healthy(`cluster_state:ok`)이고 `redis-cluster-init`이 끝난 뒤 시작합니다. 클러스터 구성에 실패하면 app이 뜨지 않고 배포가 실패합니다.
 - **영속성:** 노드마다 도커 볼륨(`redis-N-data`)에 노드 ID(`nodes.conf`)와 가벼운 RDB 스냅샷(`save 900 1`, `save 300 100`)을 둡니다. AOF는 켜지 않습니다(디스크 쓰기·메모리·CPU 크레딧 부담). 그래서 **노드가 비정상 종료하면 마지막 스냅샷 뒤의 쓰기(몇 분치)를 잃을 수 있고**, 복제본이 있는 노드는 복제본에서 다시 동기화합니다. EC2 재부팅처럼 6대가 함께 내려갔다 올라오면 스냅샷으로 복구합니다. **노드끼리는 이름이 아니라 `nodes.conf`에 적힌 IP로 서로를 찾습니다**(`cluster-announce-hostname`은 앱에게 알려 주는 접속 주소일 뿐입니다). 그래서 6대가 모두 새 IP로 올라오면 그대로는 서로를 못 찾아 `CLUSTERDOWN`이 풀리지 않습니다. 이를 막으려고 각 노드 컨테이너가 `redis-cluster-rejoin.sh`를 함께 실행합니다. 이 스크립트는 5초마다 피어 이름(`REDIS_PEERS`)을 DNS로 풀어 현재 IP를 얻고, 그 주소로 아직 모르는 피어가 있으면 `CLUSTER MEET`을 보냅니다. IP를 고정하지 않으므로 노드를 늘릴 때는 `REDIS_PEERS`에 추가하면 됩니다. 로컬과 운영 compose에서 6대를 역순으로 다시 띄우거나 옛 IP를 다른 컨테이너가 차지한 상태로 올려도 3초 안에 6대 모두 `cluster_state:ok`가 되었고 스냅샷 데이터가 복구되었습니다. 처음 클러스터를 만들기 전(`cluster_known_nodes=1`)에는 MEET을 보내지 않습니다. 보내면 `redis-cli --cluster create`가 "빈 노드가 아니다"라며 거부합니다.
-  - 복제본이 처음부터 다시 동기화(full sync)할 때 마스터 메모리는 데이터가 가득 찬 상태(93.9/96MB)에서 최대 약 113MiB였습니다(`mem_limit` 160m). 마스터가 쌓는 복제 버퍼에는 상한(`client-output-buffer-limit replica 32mb 16mb 60`)을 둡니다.
+  - 복제본이 처음부터 다시 동기화(full sync)할 때 마스터 메모리는 데이터가 거의 찬 상태(58.3/64MB, 49,344키)에서 컨테이너 기준 최대 약 76MiB였습니다(`mem_limit` 128m, `OOMKilled` 없음). 복제본을 멈춘 채 쓰기를 더해 복제 백로그(4mb)를 넘긴 뒤 다시 띄워 풀 싱크를 일으켰고, `docker stats`를 1초 간격으로 쟀습니다. 마스터가 쌓는 복제 버퍼에는 상한(`client-output-buffer-limit replica 32mb 16mb 60`)을 둡니다.
   - AOF가 필요해지면 `compose.prod.yml`의 `--appendonly no`를 `yes --appendfsync everysec`로 바꿉니다. 켜기 전에 아래 메모리·CPU 크레딧 실측으로 여유를 확인합니다.
   - 락·중복 방지 키는 장애 조치 순간에도 사라질 수 있습니다. Redis는 이들의 정합성을 보장하지 않으므로 DB 유니크 제약 같은 최종 방어선을 둡니다([DEVELOPMENT.md](DEVELOPMENT.md)의 로컬 Redis 클러스터 절).
 - **배포:** `./deploy.sh`가 app보다 먼저 `redis-rollout.sh`를 실행합니다. 노드를 1대씩 다시 띄우고, 마스터는 복제본에 역할을 넘긴(`CLUSTER FAILOVER`) 뒤 다시 띄웁니다. 설정이 바뀌지 않은 노드는 건드리지 않습니다. 쓰기 부하 중에 노드 6대를 다시 띄운 로컬 시험에서 앱 요청 약 1,100개 중 7개가 타임아웃(약 8초 구간)이었고 이후에는 오류가 없었습니다. 전환 순간에 일시 오류가 날 수 있습니다. `docker compose up -d`를 직접 실행하면 6대가 동시에 다시 만들어져 Redis가 멈추니 쓰지 않습니다.
@@ -75,12 +75,12 @@ EC2 한 대에 nginx·앱·MySQL·Redis(클러스터 6노드)·Kafka를 Docker �
 | 구성 | 예산 |
 |---|---|
 | app | 2560m (`mem_limit`) |
-| redis 6대 | 대당 160m (`mem_limit`, 데이터 상한 96m), 합계 960m |
+| redis 6대 | 대당 128m (`mem_limit`, 데이터 상한 64m), 합계 768m |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
 | mysql | 제한 없음, 약 0.5~1GiB |
 | bff (프론트 레포 compose) | 256m (`mem_limit`, 힙 192m) |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 6.9~7.4GiB (여유 약 0.6~1.1GiB, mysql 사용량에 따라 달라짐) |
+| 합계 | 약 6.7~7.2GiB (여유 약 0.8~1.3GiB, mysql 사용량에 따라 달라짐) |
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -211,7 +211,7 @@ docker compose -f compose.prod.yml restart nginx
 
 - **Redis가 단일 노드에서 클러스터(6노드)로 바뀐 버전을 처음 배포하는 기존 서버**(#366)는 아래를 확인합니다.
   - 새 `compose.prod.yml`과 함께 `redis-rollout.sh`, `redis-cluster-init.sh`, `redis-cluster-rejoin.sh`를 복사하고 `chmod +x` 합니다(위 명령). `.env`의 `REDIS_PASSWORD`, `REDIS_VERSION`은 그대로 씁니다. `REDIS_HOST`·`REDIS_PORT`는 더 이상 읽지 않습니다.
-  - 메모리 여유부터 봅니다. 노드 6대(합계 `mem_limit` 960m)가 옛 단일 Redis(384m)를 대신하므로 합계가 약 0.56GiB 늘어납니다. `free -m`으로 여유가 1GiB 안팎인지 확인합니다(예산 표).
+  - 메모리 여유부터 봅니다. 노드 6대(합계 `mem_limit` 768m)가 옛 단일 Redis(384m)를 대신하므로 합계가 약 0.38GiB 늘어납니다. `free -m`으로 여유가 1GiB 안팎인지 확인합니다(예산 표).
   - `./deploy.sh`가 옛 단일 `redis` 컨테이너를 먼저 지우고(데이터는 옮기지 않습니다) 6대를 띄워 클러스터로 묶습니다. 옛 컨테이너와 새 노드가 동시에 메모리를 쓰지 않게 하려는 순서입니다. 이 순간 앱의 Redis 헬스가 잠깐 `DOWN`일 수 있습니다.
   - **새로 비밀번호를 정하는 경우**는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). 형식이 틀려 노드가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 

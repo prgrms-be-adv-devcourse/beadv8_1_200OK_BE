@@ -65,8 +65,8 @@ x-redis-environment: &redis-environment
 x-redis-service: &redis-service
   image: redis:${REDIS_VERSION:-8.10}-alpine
   networks: [db-net]
-  # maxmemory 96mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 약 1GiB이므로 운영 EC2 실측 후 조정한다 (운영과 동일)
-  mem_limit: 160m
+  # maxmemory 64mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 768m이므로 운영 EC2 실측 후 조정한다 (운영과 동일)
+  mem_limit: 128m
   # 설정 값의 이유
   # - cluster-config-file: 노드 ID가 담겨, 볼륨에 두어야 재시작해도 같은 노드로 돌아온다 (docs/DEPLOY.md)
   # - cluster-node-timeout 5000: 기본 15초는 장애 감지가 느리다
@@ -76,7 +76,7 @@ x-redis-service: &redis-service
   #   이름은 redis-N.localhost다. 내 PC에서는 *.localhost가 127.0.0.1로 풀리고, 컨테이너 안에서는 네트워크 별칭으로 풀려 양쪽에서 접속된다
   # - noeviction은 #319 그대로(정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
   # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
-  #   기본값(replica 256mb)이 mem_limit(160m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다
+  #   기본값(replica 256mb)이 mem_limit(128m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다
   #   상한을 넘으면 느린 복제본의 연결이 끊기고 다시 동기화하지만 마스터는 살아남는다
   command:
     - sh
@@ -85,7 +85,7 @@ x-redis-service: &redis-service
       sh /redis-cluster-rejoin.sh & exec redis-server --port "$$NODE_PORT" --cluster-enabled yes --cluster-config-file /data/nodes.conf
       --cluster-node-timeout 5000 --cluster-require-full-coverage no
       --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname
-      --maxmemory 96mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no
+      --maxmemory 64mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no
       --repl-backlog-size 4mb --client-output-buffer-limit "replica 32mb 16mb 60"
   healthcheck:
     # 클러스터가 아직 만들어지지 않았거나 슬롯이 비면 fail이라 unhealthy다. 앱은 6대 모두 healthy여야 시작한다

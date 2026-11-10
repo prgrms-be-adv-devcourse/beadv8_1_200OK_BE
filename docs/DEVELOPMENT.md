@@ -103,7 +103,7 @@ docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^
 
 ### 로컬 Redis 클러스터 (#366)
 
-`docker compose up -d`가 Redis 노드 6대(`redis-1`~`redis-6`)를 띄우고, `redis-cluster-init`이 마스터 3 + 복제본 3으로 묶은 뒤 끝납니다. 노드가 모두 `cluster_state:ok`(healthy)가 되면 앱이 시작합니다. Docker 메모리는 Redis에 약 1GB를 더 잡아 둡니다(노드당 `mem_limit` 160m).
+`docker compose up -d`가 Redis 노드 6대(`redis-1`~`redis-6`)를 띄우고, `redis-cluster-init`이 마스터 3 + 복제본 3으로 묶은 뒤 끝납니다. 노드가 모두 `cluster_state:ok`(healthy)가 되면 앱이 시작합니다. Docker 메모리는 Redis에 약 0.75GB를 더 잡아 둡니다(노드당 `mem_limit` 128m).
 
 ```bash
 docker compose exec redis-1 redis-cli -p 7001 cluster info | grep cluster_state   # cluster_state:ok
@@ -121,7 +121,7 @@ redis-cli -c -h redis-1.localhost -p 7001 set k v                               
 - 여러 키를 한 번에 다루는 명령(`MGET`, `MSET`, 트랜잭션)과 Lua 스크립트는 키가 같은 슬롯에 있어야 합니다. 키에 해시 태그를 씁니다. 예: `order:{123}:lock`, `order:{123}:cache`는 `{123}`만 해시되어 같은 슬롯에 갑니다. 다른 슬롯의 키를 한 명령에 섞으면 `CROSSSLOT` 오류입니다.
 - 읽기는 복제본을 우선합니다(`read-from: replicaPreferred`). 복제는 비동기라 **복제본은 마지막 쓰기보다 오래된 값을 줄 수 있습니다.** 그래서 락과 중복 방지는 "읽고 판단"하지 말고 `SET key value NX PX <ms>`나 Lua 스크립트 같은 원자적 명령으로 합니다(쓰기와 원자적 명령은 항상 마스터로 갑니다).
 - **Redis는 락과 중복 방지의 정합성을 보장하지 않습니다.** 장애 조치 순간에는 마스터가 가진 최신 키가 새 마스터에 없을 수 있습니다. 락은 짧은 TTL로 쓰고, 정합성이 필요하면 DB 유니크 제약 같은 최종 방어선을 둡니다.
-- 메모리 정책은 `noeviction`입니다(#319 그대로, 정책 재검토는 #324). 노드당 `maxmemory`가 96mb라 데이터가 차면 쓰기가 실패합니다.
+- 메모리 정책은 `noeviction`입니다(#319 그대로, 정책 재검토는 #324). 노드당 `maxmemory`가 64mb라 데이터가 차면 쓰기가 실패합니다.
 
 ### 앱까지 컨테이너(docker compose)로 실행
 

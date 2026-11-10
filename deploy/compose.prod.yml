@@ -82,7 +82,7 @@ x-redis-service: &redis-service
   #   노드끼리는 이름이 아니라 nodes.conf의 IP로 찾으므로, IP가 바뀐 노드는 redis-cluster-rejoin.sh가 CLUSTER MEET으로 다시 붙인다(EC2 재부팅, down/up)
   # - noeviction은 #319 그대로(사용처가 정해지지 않아 키를 몰래 지우지 않는다, 정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
   # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
-  #   기본값(replica 256mb)이 mem_limit(160m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다(배포 때 복제본을 다시 띄울 때마다 지나는 경로)
+  #   기본값(replica 256mb)이 mem_limit(128m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다(배포 때 복제본을 다시 띄울 때마다 지나는 경로)
   #   상한을 넘으면 느린 복제본의 연결이 끊기고 다시 동기화하지만 마스터는 살아남는다
   command:
     - sh
@@ -94,10 +94,10 @@ x-redis-service: &redis-service
       exec redis-server /tmp/redis.conf --cluster-enabled yes --cluster-config-file /data/nodes.conf \
         --cluster-node-timeout 5000 --cluster-require-full-coverage no \
         --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname \
-        --maxmemory 96mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no \
+        --maxmemory 64mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no \
         --repl-backlog-size 4mb --client-output-buffer-limit "replica 32mb 16mb 60"
-  # maxmemory 96mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 약 1GiB이므로 EC2 실측 후 조정한다 (docs/DEPLOY.md)
-  mem_limit: 160m
+  # maxmemory 64mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 768m이므로 EC2 실측 후 조정한다 (docs/DEPLOY.md)
+  mem_limit: 128m
   healthcheck:
     # 클러스터가 아직 만들어지지 않았거나 슬롯이 비면 fail이라 unhealthy다. app은 6대 모두 healthy여야 시작한다
     test: ['CMD-SHELL', 'redis-cli cluster info | grep -q cluster_state:ok']
@@ -292,8 +292,8 @@ services:
       # 남겨 두는 이유: APP_IMAGE_TAG만 바꾸는 표준 롤백(docs/DEPLOY.md 4절)으로 이전 이미지가 뜨게 하기 위해서다
       # TODO(#313): RS256 버전이 운영에서 안정된 뒤 서버 .env의 JWT_SECRET과 함께 이 줄을 지운다
       JWT_SECRET: ${JWT_SECRET:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(6대 합계 960m)·Kafka(3대 약 2GB)를 함께 올리면
-      # 남는 메모리(약 0.6~1.1GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(6대 합계 768m)·Kafka(3대 약 2GB)를 함께 올리면
+      # 남는 메모리(약 0.8~1.3GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     volumes:
       # 서버의 /opt/paldo-gotgan/keys. JWT 키 PEM과 그 설정(jwt.yaml)을 둔다. 앱은 application-prod.yml에서 jwt.yaml을 읽는다
