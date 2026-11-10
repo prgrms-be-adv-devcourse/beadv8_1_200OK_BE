@@ -36,7 +36,7 @@ import com.ok.payout.application.port.in.PayoutSellerCandidateSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import com.ok.payout.application.port.in.PayoutSummaryResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
-import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import lombok.RequiredArgsConstructor;
@@ -355,7 +355,7 @@ public class PayoutService implements PayoutUseCase {
             if (payout.getAmount() <= 0) {
                 continue;
             }
-            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreatedCommand(
+            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
                     payout.getId(),
                     payout.getPayeeId(),
                     payout.getAmount(),
@@ -711,7 +711,7 @@ public class PayoutService implements PayoutUseCase {
     // 관리자·판매자 항목 조회의 공통 부분
     private Page<PayoutItemResult> loadItems(Long payoutId, PayoutItemSearchQuery query) {
         return payoutQueryRepository.findItemsWithCandidate(payoutId, PageRequest.of(query.page(), query.size()))
-                .map(PayoutItemResult::from);
+                .map(PayoutQueryResultMapper::toItemResult);
     }
 
     /**
@@ -744,7 +744,7 @@ public class PayoutService implements PayoutUseCase {
     private Page<PayoutCandidateResult> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
                                                          boolean unsettledOnly, boolean sellerShareOnly, int page, int size) {
         return payoutQueryRepository.searchCandidates(sellerId, from, to, unsettledOnly, sellerShareOnly, PageRequest.of(page, size))
-                .map(PayoutCandidateResult::from);
+                .map(PayoutQueryResultMapper::toCandidateResult);
     }
 
     private Payout findPayout(Long payoutId) {

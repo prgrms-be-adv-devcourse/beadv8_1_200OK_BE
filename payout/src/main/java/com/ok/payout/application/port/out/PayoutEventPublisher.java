@@ -13,5 +13,5 @@ public interface PayoutEventPublisher {
      * 판매자 몫 정산이 확정되었음을 지갑에 알린다.
      * 지갑은 정산 ID(payoutId)로 같은 정산이 두 번 와도 한 번만 반영한다.
      */
-    void publishSellerPayoutCreated(SellerPayoutCreatedCommand command);
+    void publishSellerPayoutCreated(SellerPayoutCreated created);
 }

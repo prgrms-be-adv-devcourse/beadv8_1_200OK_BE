@@ -27,7 +27,7 @@ public class PayoutSkipWaitRunController implements PayoutSkipWaitRunControllerS
     @PostMapping("/run/skip-wait")
     public ResponseEntity<PayoutRunResponse> runSkippingWait() throws Exception {
         JobExecution execution = payoutJobRunner.runSkippingWait();
-        // 실패 처리는 /run과 같음 (PayoutController.run 주석 참고)
+        // 실패 처리는 /run과 같음 (PayoutAdminController.run 주석 참고)
         if (execution.getStatus() != BatchStatus.COMPLETED) {
             throw new IllegalStateException(
                     "정산 대기 건너뛰기 실행에 실패했습니다. executionId=" + execution.getId() + ", status=" + execution.getStatus());
