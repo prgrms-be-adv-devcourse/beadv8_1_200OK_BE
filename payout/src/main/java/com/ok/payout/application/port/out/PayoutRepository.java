@@ -21,6 +21,6 @@ public interface PayoutRepository {
     // 정산 상세: 판매자 정산과 같은 스냅샷의 시스템 몫 정산(수수료 묶음). commitStep이 스냅샷당 최대 1건만 만듦
     Optional<Payout> findBySnapshotIdAndSystemTrue(Long snapshotId);
 
-    // publishStep: 이번 스냅샷에서 확정된 판매자 몫 정산만 (시스템 몫은 지갑으로 보내지 않음)
+    // 이번 스냅샷에서 확정된 판매자 몫 정산만 (지금은 통합 테스트 검증에서만 씀)
     List<Payout> findBySnapshotIdAndSystemFalse(Long snapshotId);
 }

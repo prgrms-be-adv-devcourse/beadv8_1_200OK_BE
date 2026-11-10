@@ -205,6 +205,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
     // 정산·draft·스냅샷·실패 기록은 전부, 후보·차감 기록은 이 클래스 번호대만 지움 (FK 때문에 자식 테이블 먼저)
     // (리포지토리에는 삭제 기능이 없으므로 테스트 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");

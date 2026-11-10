@@ -27,15 +27,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.ConsumerFactory;
 
-import com.ok.payout.domain.Payout;
-import com.ok.payout.domain.PayoutEventType;
-import com.ok.payout.domain.PayoutSnapshot;
-import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.config.PayoutTopics;
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutOutboxJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
-import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.config.PayoutTopics;
+import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutOutboxStatus;
+import com.ok.payout.domain.PayoutSnapshot;
+import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 import tools.jackson.databind.JsonNode;
@@ -69,6 +72,9 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutJpaRepository payoutRepository;
+
+    @Autowired
+    private PayoutOutboxJpaRepository outboxJpaRepository;
 
     @Autowired
     private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
@@ -132,6 +138,70 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(message.get("createdAt").isString()).isTrue();
             softly.assertThat(LocalDateTime.parse(message.get("createdAt").asString())).isEqualTo(seller10.getCreatedAt());
         });
+
+        // then: 0원 초과 판매자 정산(10번)만 outbox 줄이 1건이고 SENT, 발송 시각이 기록됨
+        PayoutOutbox outbox = singleOutboxOf(seller10PayoutId);
+        assertThat(outbox.getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+        assertThat(outbox.getSentAt()).isNotNull();
+        assertThat(countOutboxes(payouts)).isEqualTo(1);
+    }
+
+    @Test
+    void 이전_정산의_미발송_줄도_다음_실행에서_함께_보낸다() throws Exception {
+        // given: 첫 실행으로 정산 1건을 만들고, 그 outbox 줄을 "아직 못 보낸" PENDING 상태로 되돌림
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderA = nextOrderId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderA, 10L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderA, 10L, 300L, createdAt);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long oldPayoutId = payoutIdOf(payoutRepository.findBySnapshotId(snapshotIdOf(first)), 10L);
+        // 리포지토리에 삭제·되돌리기가 없어, 줄을 지우고 PENDING으로 다시 저장함
+        jdbcTemplate.update("DELETE FROM payout_outbox WHERE payout_id = ?", oldPayoutId);
+        outboxJpaRepository.save(PayoutOutbox.pending(oldPayoutId));
+
+        // 첫 실행이 이전 정산을 이미 보냈으므로, 두 번째 실행이 새로 쓴 메시지만 보려고 지금 끝 위치를 기억함
+        Map<TopicPartition, Long> beforeSecond = endOffsets();
+
+        // when: 새 후보로 다시 실행 (조회 하한이 첫 실행 기준 오늘-18일로 올라가, 하한 안쪽인 16일 전으로 만듦)
+        long orderB = nextOrderId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderB, 20L, 5_000L, LocalDateTime.now().minusDays(16));
+        JobExecution second = payoutJobRunner.runScheduled();
+
+        // then: 새 정산과 함께 이전 정산도 토픽에 다시 나가고 두 줄 모두 SENT
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long newPayoutId = payoutIdOf(payoutRepository.findBySnapshotId(snapshotIdOf(second)), 20L);
+        Set<String> keys = Set.of(String.valueOf(oldPayoutId), String.valueOf(newPayoutId));
+        assertThat(readMessages(keys, beforeSecond)).containsOnlyKeys(keys);
+        assertThat(singleOutboxOf(oldPayoutId).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+        assertThat(singleOutboxOf(newPayoutId).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+    }
+
+    // ---------- 도우미: outbox 확인 ----------
+
+    private PayoutOutbox singleOutboxOf(Long payoutId) {
+        List<PayoutOutbox> found = new ArrayList<>();
+        for (PayoutOutbox outbox : outboxJpaRepository.findAll()) {
+            if (payoutId.equals(outbox.getPayoutId())) {
+                found.add(outbox);
+            }
+        }
+        assertThat(found).hasSize(1);
+        return found.get(0);
+    }
+
+    private long countOutboxes(List<Payout> payouts) {
+        Set<Long> ids = new HashSet<>();
+        for (Payout payout : payouts) {
+            ids.add(payout.getId());
+        }
+        long count = 0;
+        for (PayoutOutbox outbox : outboxJpaRepository.findAll()) {
+            if (ids.contains(outbox.getPayoutId())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // ---------- 도우미: 토픽 읽기 ----------
@@ -139,18 +209,17 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
     // 토픽의 처음부터 지금 끝 위치까지 읽어, 이번 정산의 키(payoutId)를 가진 메시지만 키 → JSON 문자열로 모은다
     // 발행은 브로커 저장 확인을 받은 뒤 끝나므로, Job이 끝난 뒤의 끝 위치까지 읽으면 이번 메시지는 모두 들어 있다
     private Map<String, String> readMessages(Set<String> keys) {
-        Properties overrides = new Properties();
-        // JSON을 정산 클래스로 바꾸지 않고 글자 그대로 읽는다
-        overrides.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        // 다른 컨슈머 그룹의 읽은 위치와 섞이지 않게 매번 새 그룹으로 읽는다
-        String groupId = "payout-kafka-publish-test-" + UUID.randomUUID();
-        try (Consumer<?, ?> consumer = consumerFactory.createConsumer(groupId, null, null, overrides)) {
-            List<TopicPartition> partitions = new ArrayList<>();
-            for (PartitionInfo info : consumer.partitionsFor(PayoutTopics.SELLER_PAYOUT_CREATED)) {
-                partitions.add(new TopicPartition(info.topic(), info.partition()));
-            }
-            consumer.assign(partitions);
+        return readMessages(keys, Map.of());
+    }
+
+    // from에 있는 파티션은 그 위치부터 읽는다 (없는 파티션은 처음부터)
+    private Map<String, String> readMessages(Set<String> keys, Map<TopicPartition, Long> from) {
+        try (Consumer<?, ?> consumer = createConsumer()) {
+            List<TopicPartition> partitions = assignTopic(consumer);
             consumer.seekToBeginning(partitions);
+            for (Map.Entry<TopicPartition, Long> entry : from.entrySet()) {
+                consumer.seek(entry.getKey(), entry.getValue());
+            }
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
 
             Map<String, String> found = new HashMap<>();
@@ -165,6 +234,30 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
             }
             return found;
         }
+    }
+
+    private Map<TopicPartition, Long> endOffsets() {
+        try (Consumer<?, ?> consumer = createConsumer()) {
+            return consumer.endOffsets(assignTopic(consumer));
+        }
+    }
+
+    private Consumer<?, ?> createConsumer() {
+        Properties overrides = new Properties();
+        // JSON을 정산 클래스로 바꾸지 않고 글자 그대로 읽는다
+        overrides.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        // 다른 컨슈머 그룹의 읽은 위치와 섞이지 않게 매번 새 그룹으로 읽는다
+        String groupId = "payout-kafka-publish-test-" + UUID.randomUUID();
+        return consumerFactory.createConsumer(groupId, null, null, overrides);
+    }
+
+    private List<TopicPartition> assignTopic(Consumer<?, ?> consumer) {
+        List<TopicPartition> partitions = new ArrayList<>();
+        for (PartitionInfo info : consumer.partitionsFor(PayoutTopics.SELLER_PAYOUT_CREATED)) {
+            partitions.add(new TopicPartition(info.topic(), info.partition()));
+        }
+        consumer.assign(partitions);
+        return partitions;
     }
 
     private boolean reachedEnd(Consumer<?, ?> consumer, Map<TopicPartition, Long> endOffsets) {
@@ -244,6 +337,7 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
     // 정산·draft·스냅샷은 전부, 정산 후보·차감 기록은 이 클래스 번호대만 지움 (FK 때문에 자식 테이블 먼저)
     // (리포지토리에는 삭제 기능이 없으므로 테스트 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");

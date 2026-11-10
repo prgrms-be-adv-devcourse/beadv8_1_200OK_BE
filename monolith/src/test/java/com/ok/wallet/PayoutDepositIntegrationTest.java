@@ -142,6 +142,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
                 WHERE w.member_id = ?
                 """), SELLER_ID);
         jdbcTemplate.update(q("DELETE FROM seller_wallet WHERE member_id = ?"), SELLER_ID);
+        jdbcTemplate.update(q("DELETE FROM payout_outbox"));
         jdbcTemplate.update(q("DELETE FROM payout_item"));
         jdbcTemplate.update(q("DELETE FROM payout"));
         jdbcTemplate.update(q("DELETE FROM payout_seller_draft_item"));

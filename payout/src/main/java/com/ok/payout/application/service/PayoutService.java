@@ -5,6 +5,7 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOutbox;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
@@ -36,10 +37,14 @@ import com.ok.payout.application.port.in.PayoutSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerCandidateSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import com.ok.payout.application.port.in.PayoutSummaryResult;
+import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutModuleEventPublisher;
+import com.ok.payout.application.port.out.PayoutOutboxRepository;
+import com.ok.payout.application.port.out.PayoutOutboxRow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -65,6 +70,7 @@ public class PayoutService implements PayoutUseCase {
 
     // 코드 고장으로 전체를 멈출 때 예외 메시지에 담는 항목(판매자 합계 불일치 내용, 후보 ID) 최대 개수 (메시지가 너무 길어지지 않게, 나머지는 건수로만 남김)
     private static final int MESSAGE_ITEM_LIMIT = 20;
+    private static final int MAX_CONSECUTIVE_PUBLISH_FAILURES = 3;
 
     private final PayoutQueryRepository payoutQueryRepository;
     private final PayoutCandidateItemRepository payoutCandidateItemRepository;
@@ -76,8 +82,10 @@ public class PayoutService implements PayoutUseCase {
     private final PayoutFailureRepository payoutFailureRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
-    // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(adapter/out/event)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
+    private final PayoutModuleEventPublisher payoutModuleEventPublisher;
+    private final PayoutOutboxRepository payoutOutboxRepository;
+    private final PayoutOutboxService payoutOutboxService;
 
     // 조회 상한: 실행일 − 대기 일수 00:00 (생성 후 대기 일수가 지난 후보만 정산)
     @Override
@@ -217,7 +225,7 @@ public class PayoutService implements PayoutUseCase {
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환
     // 판매자 수가 0이면 더 없음 → tasklet 종료
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
-    // payout 생성(commitStep)과 이벤트 발행(publishStep)은 검증 이후 단계에서 함
+    // payout 생성·지갑 이벤트(commitStep)와 Kafka 발송(publishStep)은 검증 이후 단계에서 함
     //
     // 판매자 단위 격리(#90): 판매자마다 저장 트랜잭션을 따로 둠 (PayoutSellerDraftService, REQUIRES_NEW)
     //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 후보 전체를 UNEXPECTED_ERROR로 기록한 뒤 다음 판매자로 넘어감
@@ -335,54 +343,100 @@ public class PayoutService implements PayoutUseCase {
 
         payoutRepository.saveAll(payouts);
 
+        // 지갑 Spring 이벤트와 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함
+        List<PayoutOutbox> outboxes = new ArrayList<>();
+        for (Payout payout : payouts) {
+            // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
+            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
+            //   0원: 지갑에 반영할 금액이 없음
+            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
+            // 정산(payout) 자체는 장부 기록으로 그대로 남김
+            if (payout.isSystem() || payout.getAmount() <= 0) {
+                continue;
+            }
+            payoutModuleEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
+                    payout.getId(),
+                    payout.getPayeeId(),
+                    payout.getAmount(),
+                    payout.getCreatedAt()
+            ));
+            outboxes.add(PayoutOutbox.pending(payout.getId()));
+        }
+        payoutOutboxRepository.saveAll(outboxes);
+
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 정산 확정은 돈이 장부에 기록되는 시점이라 INFO로 남김
         log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건), 결과 검증 실패로 뺀 draft 항목 수={}",
                 snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1, excludedItemCount);
     }
 
-    // 이번 스냅샷에서 확정된 판매자 몫 정산만 지갑 이벤트로 발행하고(0원 이하 제외), 발행 건수를 반환
-    // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
-    // 발행은 Kafka(payout.seller-payout-created)로 한 건씩 저장 확인을 기다림. 한 건이라도 실패하면 예외로 이 Step이 멈춤
-    // 같은 정산이 두 번 전달돼도 지갑은 payoutId로 중복 반영을 막음
-    //
-    // TODO(#309): 발행 누락 위험. commitStep은 성공했는데 publishStep이 실패하면 확정된 정산의 이벤트가 영원히 발행되지 않음
-    //   예) 판매자 100명 중 37번째에서 브로커 오류 → Job FAILED, 37~100은 정산은 확정됐지만 메시지가 안 감
-    //       1~36은 Kafka 토픽에는 남지만, 지갑이 아직 받는 Spring 이벤트는 이 트랜잭션 롤백으로 전달되지 않아 입금되지 않음 (지갑 전환 전까지)
-    //       → 다음 배치의 스냅샷은 "payout_item에 없는 후보"만 대상이라 이미 확정된 이 정산은 다시 다뤄지지 않음
-    //       → 판매자는 정산이 확정됐는데 지갑에 돈이 들어오지 않음
-    //   지금 구조는 실패한 Job을 재시작(restart)하지 않고 새로 재실행하므로 이 publishStep만 다시 돌릴 경로가 없음
-    //   누락 찾는 방법: payout_snapshot.job_execution_id로 BATCH_STEP_EXECUTION에서 payoutPublishStep이 COMPLETED가 아닌 실행을 찾고,
-    //   EXIT_MESSAGE의 payoutId(멈춘 정산)부터 그 스냅샷의 판매자 몫 payout을 다시 발행 (지갑은 payoutId로 중복 반영을 막음)
-    //   해결 방향: outbox. 보낼 메시지를 commitStep 트랜잭션에서 payout과 함께 DB에 저장하고, 별도 발행기가 보내고 실패하면 다시 보냄
-    //   현재는 이슈 #69 설계(확정과 발행을 Step으로 분리)를 따름
+    // outbox의 PENDING 줄을 덜 시도한 줄부터 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
+    // 이 메서드는 트랜잭션을 더 만들지 않고, 보냄·실패 기록만 줄마다 짧은 별도 트랜잭션(PayoutOutboxService)에 남김
+    // 그래서 한 줄의 실패가 앞 줄의 보냄 기록을 되돌리지 않음
+    // 실패해도 멈추지 않음: 정산·지갑 입금은 이미 끝났고 남은 줄은 다음 실행이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음
+    // Kafka 발송이든 보냄·실패 기록(DB)이든 예외를 밖으로 내지 않음: 정산이 끝났는데 발송 단계 문제로 Job이 FAILED가 되지 않게
+    // 단 연속으로 실패하면 브로커·DB 장애로 보고 이번 발송을 멈춤 (줄마다 최대 120초씩 기다리지 않게)
     @Override
-    @Transactional
-    public int publish(Long snapshotId) {
-        List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
-        int published = 0;
-        for (Payout payout : payouts) {
-            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
-            //   0원: 지갑에 반영할 금액이 없음
-            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
-            // 정산(payout) 자체는 장부 기록으로 그대로 남김
-            if (payout.getAmount() <= 0) {
+    public PayoutPublishResult publishPending() {
+        List<PayoutOutboxRow> rows = payoutOutboxRepository.findPendingRows();
+        int sent = 0;
+        int failed = 0;
+        int consecutiveFailures = 0;
+        for (PayoutOutboxRow row : rows) {
+            if (sendAndMarkSent(row)) {
+                sent++;
+                consecutiveFailures = 0;
                 continue;
             }
-            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
-                    payout.getId(),
-                    payout.getPayeeId(),
-                    payout.getAmount(),
-                    payout.getCreatedAt()
-            ));
-            published++;
+            failed++;
+            // 기다리다 스레드가 중단됐으면 다음 줄을 헛되이 실패로 기록하지 않고 멈춤 (남은 줄은 PENDING)
+            if (Thread.currentThread().isInterrupted()) {
+                break;
+            }
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_PUBLISH_FAILURES) {
+                break;
+            }
         }
 
-        // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
-        // 지갑으로 돈이 넘어가기 시작하는 시점이라 INFO로 남김. 발행 누락을 추적할 때 이 로그가 없는 snapshotId를 찾으면 됨
-        log.info("정산 지갑 이벤트 발행. snapshotId={}, 발행 건수={}, 0원 이하라 제외한 건수={}",
-                snapshotId, published, payouts.size() - published);
-        return published;
+        int remaining = rows.size() - sent - failed;
+        log.info("정산 Kafka 발송. 보낸 수={}, 실패 수={}, 멈춰서 남은 수={}", sent, failed, remaining);
+        return new PayoutPublishResult(sent, failed, remaining);
+    }
+
+    // 한 줄을 Kafka로 보내고 보냄으로 기록. 어디서 실패하든 줄은 PENDING으로 남아 다음 실행이 다시 보냄
+    private boolean sendAndMarkSent(PayoutOutboxRow row) {
+        try {
+            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
+                    row.payoutId(), row.payeeId(), row.amount(), row.payoutCreatedAt()));
+        } catch (RuntimeException e) {
+            log.warn("정산 Kafka 발송 실패, 다음 실행에서 다시 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+            recordFailure(row, e);
+            return false;
+        }
+        try {
+            payoutOutboxService.markSent(row.outboxId());
+            return true;
+        } catch (RuntimeException e) {
+            // Kafka는 이미 받았는데 DB에 못 적음. Kafka 실패가 아니라서 실패 기록은 남기지 않고, 다음 실행에서 한 번 더 감
+            log.warn("정산 outbox 보냄 기록 실패, 다음 실행에서 Kafka로 한 번 더 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+            return false;
+        }
+    }
+
+    // 실패 기록마저 저장하지 못해도 줄은 PENDING이라 다음 실행이 다시 보냄. 시도 수·오류만 빠짐
+    private void recordFailure(PayoutOutboxRow row, RuntimeException cause) {
+        try {
+            payoutOutboxService.recordFailure(row.outboxId(), failureMessage(cause));
+        } catch (RuntimeException e) {
+            log.warn("정산 outbox 실패 기록 저장 실패. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+        }
+    }
+
+    // 발행기 예외에는 어느 정산인지만 있고 실제 원인은 cause에 있어, 원인 쪽을 남김
+    private static String failureMessage(RuntimeException e) {
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        return cause.toString();
     }
 
     // 결과 검증(verifyStep): 스냅샷과 draft를 후보 단위로 비교해, 어긋난 후보의 주문을 이번 정산에서 빼고 잠금 (#290)

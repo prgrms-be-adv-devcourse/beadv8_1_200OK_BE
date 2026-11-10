@@ -10,11 +10,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.kafka.KafkaException;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 
-import com.ok.common.event.SellerPayoutCreatedEvent;
 import com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.config.PayoutTopics;
@@ -26,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaPayoutEventPublisherTest {
@@ -34,9 +34,6 @@ class KafkaPayoutEventPublisherTest {
 
     @Mock
     KafkaTemplate<String, Object> kafkaTemplate;
-
-    @Mock
-    ApplicationEventPublisher applicationEventPublisher;
 
     @InjectMocks
     KafkaPayoutEventPublisher sut;
@@ -58,19 +55,6 @@ class KafkaPayoutEventPublisherTest {
     }
 
     @Test
-    void 지갑이_Kafka로_받기_전까지_같은_정산을_Spring_이벤트로도_발행한다() {
-        // given
-        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
-        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
-
-        // when
-        sut.publishSellerPayoutCreated(created);
-
-        // then
-        then(applicationEventPublisher).should().publishEvent(new SellerPayoutCreatedEvent(12L, 5L, 9_700L, CREATED_AT));
-    }
-
-    @Test
     void 브로커_저장에_실패하면_payoutId를_담은_예외를_던진다() {
         // given
         SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
@@ -81,9 +65,7 @@ class KafkaPayoutEventPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 지갑 이벤트 발행에 실패했습니다. payoutId=12");
-        // Kafka에서 실패한 정산은 Spring 이벤트로도 보내지 않는다
-        then(applicationEventPublisher).shouldHaveNoInteractions();
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
     }
 
     @Test
@@ -97,6 +79,26 @@ class KafkaPayoutEventPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 지갑 이벤트 발행에 실패했습니다. payoutId=12");
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
+    }
+
+    @Test
+    void 저장_확인을_기다리다_중단되면_중단_표시를_되살리고_예외를_던진다() throws Exception {
+        // given: 중단 표시는 건드리지 않고 InterruptedException만 던지는 결과 (실제 get()은 던지면서 표시를 지움)
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        CompletableFuture<SendResult<String, Object>> future = mock();
+        given(future.get()).willThrow(new InterruptedException());
+        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(future);
+
+        try {
+            // when & then: PayoutService가 이 표시를 보고 남은 줄을 시도하지 않고 멈춤
+            assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            // 다른 테스트로 중단 표시가 새지 않게 지움
+            Thread.interrupted();
+        }
     }
 }

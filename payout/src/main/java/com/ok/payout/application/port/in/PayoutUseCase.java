@@ -43,9 +43,9 @@ public interface PayoutUseCase {
     void commit(Long snapshotId);
 
     /**
-     * 확정된 판매자 몫 정산을 지갑 이벤트로 발행하고(0원 이하 제외) 발행 건수를 반환한다.
+     * outbox에 남은(PENDING) 정산을 Kafka로 보내고 보낸 수·실패 수·남은 수를 반환한다. 실패·중단 규칙은 구현체 참고.
      */
-    int publish(Long snapshotId);
+    PayoutPublishResult publishPending();
 
     /**
      * 스냅샷과 draft를 후보 단위로 비교해 어긋난 주문을 이번 정산에서 빼고 잠근다. 코드 고장이 의심되면 기록 없이 예외로 중단한다.

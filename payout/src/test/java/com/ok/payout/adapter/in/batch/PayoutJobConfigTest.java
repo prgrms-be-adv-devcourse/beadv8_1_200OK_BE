@@ -2,6 +2,7 @@ package com.ok.payout.adapter.in.batch;
 
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.application.port.in.PayoutDraftResult;
+import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
 
-// 단위 테스트: draftStep·verifyStep tasklet이 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지와 전원 실패 판정만 확인 (#90, #290)
+// 단위 테스트: draftStep·verifyStep·publishStep tasklet이 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지와 전원 실패 판정만 확인 (#90, #290, #309)
 // 판매자 실패를 실제 Job 실행 중에 만들 방법이 없어(스냅샷 ID를 미리 알 수 없고, 테스트 DB 계정은 트리거를 만들 수 없음) 이 연결부를 따로 확인함
 // 판매자 단위 격리 자체(트랜잭션 분리, 실패 기록)는 PayoutSettleIntegrationTest에서 실제 DB로 확인
 @ExtendWith(MockitoExtension.class)
@@ -132,6 +133,26 @@ class PayoutJobConfigTest {
 
         // then
         assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+    }
+
+    // ---------- publishStep (#309) ----------
+
+    @Test
+    void 발송_실패가_있어도_publish_Step을_끝내고_보낸_수는_write_count_실패_수는_write_skip_count로_남긴다() throws Exception {
+        // given: 2줄 보냄, 1줄 실패, 멈춰서 시도 못 한 4줄 남음 (남은 줄은 실패가 아니라 skip에 넣지 않음)
+        given(payoutUseCase.publishPending()).willReturn(new PayoutPublishResult(2, 1, 4));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase).payoutPublishTasklet().execute(contribution, null);
+
+        // then: 정산·지갑 입금은 이미 끝났으니 Step은 정상 종료, 실패한 줄은 다음 실행이 보냄
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertThat(contribution).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(contribution.getWriteCount()).isEqualTo(2L);
+            softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(1L);
+        });
     }
 
     // 실제 Step처럼 tasklet을 회차마다 새 contribution으로 부르고, 끝난 회차의 수를 Step 실행 기록에 합산(apply)함
