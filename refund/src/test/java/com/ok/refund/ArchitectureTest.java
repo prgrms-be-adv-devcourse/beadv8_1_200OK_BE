@@ -5,12 +5,14 @@ import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPac
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.type;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Bean;
 import org.springframework.data.domain.Page;
 import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.stereotype.Component;
@@ -21,7 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.Dependency;
+import com.tngtech.archunit.core.domain.JavaAnnotation;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -39,6 +43,10 @@ import jakarta.persistence.Table;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 /**
  * 환불 모듈의 헥사고날 구조(이슈 #481)를 검사한다.
@@ -80,6 +88,27 @@ class ArchitectureTest {
                 return false;
             });
 
+    // 구현하는_UseCase가_있는과 달리 UseCase 인터페이스 자신도 포함한다. @Bean 메서드의 반환 타입은 보통 인터페이스라서
+    private static final DescribedPredicate<JavaClass> UseCase_타입인 = DescribedPredicate.describe(
+            "a *UseCase of application.port.in or its implementation",
+            javaClass -> {
+                if (isUseCaseInterface(javaClass)) {
+                    return true;
+                }
+                for (JavaClass anInterface : javaClass.getAllRawInterfaces()) {
+                    if (isUseCaseInterface(anInterface)) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+
+    private static boolean isUseCaseInterface(JavaClass javaClass) {
+        return javaClass.isInterface()
+                && javaClass.getPackageName().startsWith("com.ok.refund.application.port.in")
+                && javaClass.getSimpleName().endsWith("UseCase");
+    }
+
     private static final DescribedPredicate<JavaClass> 출력_포트를_구현하는 = DescribedPredicate.describe(
             "implement a *Port of application.port.out",
             javaClass -> {
@@ -111,7 +140,10 @@ class ArchitectureTest {
             .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (환불 헥사고날 구조, 이슈 #481)");
 
     // 레이어 규칙은 레이어에 든 패키지끼리만 본다. 레이어 밖 새 패키지(예: support)를 거치면 서비스 -> adapter.out 같은 의존이 검사를 피하므로
-    // 환불 클래스가 놓일 수 있는 패키지를 정해 두고, 레이어 밖 패키지(루트·config·exception)는 바깥 레이어를 모르게 한다
+    // 환불 클래스가 놓일 수 있는 패키지를 정해 두고, 레이어 밖 패키지(루트·config·exception)는 바깥 레이어를 모르게 한다.
+    // 막지 않는 길(#486): com.ok.refund 밖 패키지(예: com.ok.refundx)에 둔 클래스는 @AnalyzeClasses가 읽지 않아 모든 규칙을 피한다.
+    // 막으려면 검사 범위를 패키지가 아니라 refund 모듈의 클래스 파일 전체로 바꿔야 하는데, 일부러 패키지 이름을 바꿔야만 생기고
+    // 새 패키지 폴더는 PR diff에 바로 보여 리뷰에서 잡는다
     @ArchTest
     static final ArchRule 환불_클래스는_정해진_패키지에만_있다 = classes()
             .that().resideInAPackage("com.ok.refund..")
@@ -203,11 +235,16 @@ class ArchitectureTest {
     static final ArchRule domain은_application_adapter와_프레임워크_기술에_의존하지_않는다 = noClasses()
             .that().resideInAPackage("..domain..")
             .should().dependOnClassesThat(resideInAnyPackage("..application..", "..adapter..", "jakarta.persistence..",
-                    "org.hibernate..", "org.springframework..", "org.apache.kafka..", "jakarta.servlet.."))
+                    "org.hibernate..", "org.springframework..", "org.apache.kafka..", "jakarta.servlet..",
+                    "java.sql..", "java.net..", "java.nio.file.."))
             .because("도메인은 바깥 레이어와 저장소, 메시징, 웹 기술을 몰라야 단독으로 이해하고 테스트할 수 있다. "
+                    + "JDK 안의 바깥 기술(java.sql JDBC, java.net HTTP·네트워크, java.nio.file 파일)은 "
+                    + "규칙 domain은_허용된_패키지에만_의존한다가 java..를 통째로 허용해 통과하므로 여기서 따로 막는다(#486). "
                     + "common 예외와 환불 예외, lombok은 허용한다 (환불 헥사고날 구조, 이슈 #481)");
 
-    // 위 금지 목록에 없는 새 기술이나 다른 모듈 타입이 도메인에 들어와도 잡도록 허용 목록으로 한 번 더 건다
+    // 위 금지 목록에 없는 새 기술이나 다른 모듈 타입이 도메인에 들어와도 잡도록 허용 목록으로 한 번 더 건다.
+    // 막지 않는 길(#486): 배열 생성(new Foo[0])만 하는 의존은 ArchUnit이 의존으로 보지 않는다.
+    // 배열을 만들기만 하고 그 타입을 쓰지 않는 도메인 코드는 실제로 생기기 어려워 규칙 대신 이 주석으로 남긴다
     @ArchTest
     static final ArchRule domain은_허용된_패키지에만_의존한다 = classes()
             .that().resideInAPackage("..domain..")
@@ -401,6 +438,14 @@ class ArchitectureTest {
             .should().haveSimpleName("RefundStepRunner")
             .because("서비스 패키지는 유스케이스 흐름만 둔다. 함께 쓰는 규칙은 domain, DB 조회 방법은 영속 어댑터가 맡는다 (refund/CLAUDE.md 3절, 5절)");
 
+    // 위 규칙은 이름만 본다. 하위 패키지(application.service.support 등)에 RefundStepRunner라는 이름의 다른 클래스를 두면 통과하므로
+    // 서비스 패키지는 한 층으로만 둔다
+    @ArchTest
+    static final ArchRule application_service에는_하위_패키지를_두지_않는다 = classes()
+            .that().resideInAPackage("..application.service..")
+            .should().resideInAPackage("com.ok.refund.application.service")
+            .because("하위 패키지에 이름만 같은 보조 클래스를 두어 서비스 패키지 규칙을 피하지 못하게 한다 (refund/CLAUDE.md 1절, 이슈 #486)");
+
     // UseCase를 구현하는 클래스가 @Service가 아니면 위 @Service 대상 규칙을 피한다
     @ArchTest
     static final ArchRule UseCase_구현체는_application_service의_Service다 = classes()
@@ -409,6 +454,16 @@ class ArchitectureTest {
             .andShould().resideInAPackage("..application.service..")
             .andShould().haveSimpleNameEndingWith("Service")
             .because("유스케이스 구현은 *Service 하나로만 둔다. 다른 이름(Facade 등)의 조율 클래스로 유스케이스를 나누지 않는다 (refund/CLAUDE.md 3절)");
+
+    // 위 규칙은 클래스만 본다. 설정 클래스의 @Bean 메서드가 람다로 UseCase를 만들어 돌려주면 구현 클래스가 없어 모든 Service 규칙을 피한다.
+    // 막지 않는 길(#486): 선언된 반환 타입만 보므로 Object나 FactoryBean<...UseCase>로 선언하고 UseCase를 돌려주면 통과한다.
+    // 규칙을 피하려고 타입을 일부러 숨겨야만 생기고, 막으려면 정상 설정의 반환 타입까지 제한해야 해서 리뷰에서 본다
+    @ArchTest
+    static final ArchRule Bean_메서드는_UseCase를_만들지_않는다 = noMethods()
+            .that().areAnnotatedWith(Bean.class)
+            .and().areDeclaredInClassesThat().resideInAPackage("com.ok.refund..")
+            .should().haveRawReturnType(UseCase_타입인)
+            .because("유스케이스 구현은 application.service의 *Service 클래스로만 둔다 (refund/CLAUDE.md 3절, 이슈 #486)");
 
     @ArchTest
     static final ArchRule Entity는_JpaEntity로_끝난다 = classes()
@@ -437,6 +492,63 @@ class ArchitectureTest {
             .should().haveSimpleNameContaining("Refund")
             .because("빈 이름이 다른 모듈과 겹치면 monolith가 시작되지 않는다. @Service, @Repository, @RestController, "
                     + "@Configuration은 모두 @Component를 포함한다 (refund/CLAUDE.md 6절)");
+
+    // 위 규칙은 클래스 이름만 본다. @Service("orderService")처럼 이름을 직접 적으면 클래스 이름과 상관없이 그 이름이 빈 이름이 된다.
+    // 빈 이름은 소문자로 시작해(refundOrderHttpAdapter) 대소문자를 가리지 않고 본다.
+    // value가 문자열일 때만 빈 이름으로 본다. @RestControllerAdvice·@ControllerAdvice의 value는 basePackages(String[])의 별칭이라,
+    // 그대로 읽으면 이름을 적지 않아도 배열 문자열이 빈 이름처럼 보여 정상 코드를 막는다(#486 리뷰에서 실행으로 확인).
+    // 대신 이 둘은 name 속성으로 빈 이름을 정하므로(common의 ApiControllerAdvice와 겹칠 수 있음) 문자열인 name도 함께 본다
+    @ArchTest
+    static final ArchRule 직접_적은_빈_이름에도_refund가_들어간다 = classes()
+            .that().resideInAPackage("com.ok.refund..")
+            .should(new ArchCondition<JavaClass>("have no explicit bean name, or one containing refund") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    for (JavaAnnotation<JavaClass> annotation : javaClass.getAnnotations()) {
+                        JavaClass annotationType = annotation.getRawType();
+                        if (!annotationType.isEquivalentTo(Component.class) && !annotationType.isMetaAnnotatedWith(Component.class)) {
+                            continue;
+                        }
+                        for (String attribute : List.of("value", "name")) {
+                            if (!(annotation.get(attribute).orElse(null) instanceof String beanName)) {
+                                continue;
+                            }
+                            boolean ok = beanName.isEmpty() || containsRefund(beanName);
+                            events.add(new SimpleConditionEvent(javaClass, ok, javaClass.getName() + " declares bean name '"
+                                    + beanName + "' in @" + annotationType.getSimpleName() + "." + attribute));
+                        }
+                    }
+                }
+            })
+            .because("빈 이름이 다른 모듈과 겹치면 monolith가 시작되지 않는다 (refund/CLAUDE.md 6절, 이슈 #486)");
+
+    // @Bean 메서드로 만든 빈은 이름을 적지 않으면 메서드 이름이 빈 이름이다(refundFlyway). 위 클래스 규칙이 보지 못한다
+    @ArchTest
+    static final ArchRule Bean_메서드의_빈_이름에도_refund가_들어간다 = methods()
+            .that().areAnnotatedWith(Bean.class)
+            .and().areDeclaredInClassesThat().resideInAPackage("com.ok.refund..")
+            .should(new ArchCondition<JavaMethod>("have a bean name containing refund") {
+                @Override
+                public void check(JavaMethod method, ConditionEvents events) {
+                    Bean bean = method.getAnnotationOfType(Bean.class);
+                    List<String> beanNames = new ArrayList<>();
+                    beanNames.addAll(List.of(bean.name()));
+                    beanNames.addAll(List.of(bean.value()));
+                    if (beanNames.isEmpty()) {
+                        beanNames.add(method.getName());
+                    }
+                    for (String beanName : beanNames) {
+                        boolean ok = containsRefund(beanName);
+                        events.add(new SimpleConditionEvent(method, ok,
+                                method.getFullName() + " creates bean '" + beanName + "'"));
+                    }
+                }
+            })
+            .because("빈 이름이 다른 모듈과 겹치면 monolith가 시작되지 않는다 (refund/CLAUDE.md 6절, 이슈 #486)");
+
+    private static boolean containsRefund(String beanName) {
+        return beanName.toLowerCase(Locale.ROOT).contains("refund");
+    }
 
     @ArchTest
     static final ArchRule ErrorCode_구현체는_ErrorCode로_끝나고_exception_패키지에_있다 = classes()
