@@ -116,7 +116,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
         insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemA, SELLER_7, -2_000L, 4L, ADMIN_ID, "금액 오입력 정정", oldCreatedAt);
         insertCandidate(PayoutEventType.SALE_AMOUNT, nextOrderItemId(), SELLER_9, 19_400L, oldCreatedAt);
 
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
         // 준비 단계 확인: 배치가 실패하면 아래 테스트가 모두 엉뚱한 이유로 실패하므로 여기서 바로 알림
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         rememberPayoutIds();

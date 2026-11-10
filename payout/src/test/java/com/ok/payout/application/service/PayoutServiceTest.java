@@ -9,6 +9,7 @@ import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSystemDraftItem;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.port.out.PayoutFailureRepository;
@@ -679,7 +680,7 @@ class PayoutServiceTest {
     private void givenDetail(Payout payout, long itemCount) {
         given(payoutRepository.findById(payout.getId())).willReturn(Optional.of(payout));
         given(payoutSnapshotRepository.findById(SNAPSHOT_ID))
-                .willReturn(Optional.of(PayoutSnapshot.create(1L, PERIOD_FROM, PERIOD_TO)));
+                .willReturn(Optional.of(PayoutSnapshot.create(1L, PERIOD_FROM, PERIOD_TO, PayoutRunType.SCHEDULED)));
         given(payoutQueryRepository.countItemsByPayoutId(payout.getId())).willReturn(itemCount);
     }
 

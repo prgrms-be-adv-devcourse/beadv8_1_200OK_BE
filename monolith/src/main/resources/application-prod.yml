@@ -9,7 +9,9 @@ spring:
       enabled: true
   batch:
     job:
-      enabled: true
+      # 앱이 켜질 때 정산 Job을 자동 실행하지 않는다. 운영 정산은 스케줄러(02:00)와 관리자 API로만 실행한다 (#245)
+      # 켜 두면 파라미터 없이 실행되어, Job 시작 전 검사(#485)에 걸려 앱 시작이 실패한다
+      enabled: false
     jdbc:
       initialize-schema: never
   jpa:

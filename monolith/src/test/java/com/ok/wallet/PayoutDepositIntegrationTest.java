@@ -71,7 +71,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         backdateCandidates(LocalDateTime.now().minusDays(20));
 
         // When: 스케줄러와 같은 경로로 정산 배치 실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // Then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);

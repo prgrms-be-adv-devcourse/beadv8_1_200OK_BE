@@ -157,7 +157,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemB, SELLER_9, 19_400L);
         insertCandidate(PayoutEventType.SALE_FEE, orderItemB, SELLER_9, 600L);
 
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
         // 준비 단계 확인: 배치가 실패하면 아래 테스트가 모두 엉뚱한 이유로 실패하므로 여기서 바로 알림
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
 

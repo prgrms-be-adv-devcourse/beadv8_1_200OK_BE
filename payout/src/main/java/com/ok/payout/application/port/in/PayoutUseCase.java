@@ -1,5 +1,6 @@
 package com.ok.payout.application.port.in;
 
+import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.data.domain.Page;
 
 import java.time.LocalDate;
@@ -21,9 +22,9 @@ public interface PayoutUseCase {
     LocalDateTime settlementFrom();
 
     /**
-     * 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환한다.
+     * 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환한다. 실행 유형(정기·관리자·대기 건너뛰기)도 함께 남긴다.
      */
-    Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to);
+    Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to, PayoutRunType runType);
 
     /**
      * 스냅샷 후보 중 입력이 틀린 후보를 실패로 기록하고 기록한 건수를 반환한다. 예외 없이 기록만 하므로 나머지 후보는 계속 정산된다.
