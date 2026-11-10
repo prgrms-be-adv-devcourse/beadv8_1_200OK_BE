@@ -39,6 +39,7 @@ import jakarta.persistence.Table;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import java.util.List;
 
 @AnalyzeClasses(packages = {"com.ok.wallet", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
@@ -129,15 +130,19 @@ class ArchitectureTest {
                     LockModeType expected = portMethod.getName().contains("ForUpdate")
                             ? LockModeType.PESSIMISTIC_WRITE
                             : LockModeType.PESSIMISTIC_READ;
-                    boolean ok = portMethod.getOwner().getAllSubclasses().stream()
+                    List<JavaClass> jpaRepositories = portMethod.getOwner().getAllSubclasses().stream()
                             .filter(sub -> resideInAPackage("..adapter.out.persistence..").test(sub)
                                     && sub.getSimpleName().endsWith("JpaRepository"))
-                            .flatMap(sub -> sub.getMethods().stream())
-                            .anyMatch(method -> method.getName().equals(portMethod.getName())
-                                    && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
-                                    && method.tryGetAnnotationOfType(Lock.class)
-                                            .map(lock -> lock.value() == expected)
-                                            .orElse(false));
+                            .toList();
+                    // 구현체마다 따로 확인해, 여럿 중 하나만 잠금을 가져도 통과하는 일을 막는다.
+                    // 구현체가 없으면 allMatch가 참이 되므로 따로 실패시킨다
+                    boolean ok = !jpaRepositories.isEmpty() && jpaRepositories.stream()
+                            .allMatch(repository -> repository.getMethods().stream()
+                                    .anyMatch(method -> method.getName().equals(portMethod.getName())
+                                            && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
+                                            && method.tryGetAnnotationOfType(Lock.class)
+                                                    .map(lock -> lock.value() == expected)
+                                                    .orElse(false)));
                     events.add(new SimpleConditionEvent(portMethod, ok,
                             portMethod.getFullName() + (ok ? " is" : " is not")
                                     + " redeclared in a *JpaRepository with @Lock(" + expected + ")"));
