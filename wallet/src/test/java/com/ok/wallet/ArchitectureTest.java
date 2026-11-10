@@ -5,12 +5,14 @@ import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -30,11 +33,13 @@ import com.ok.wallet.WalletSchema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.Table;
 
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import java.util.List;
 
 @AnalyzeClasses(packages = {"com.ok.wallet", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
@@ -111,6 +116,39 @@ class ArchitectureTest {
             .and().resideOutsideOfPackage("..application.port.out..")
             .should().resideInAPackage("..adapter.out..")
             .because("외부 시스템과 닿는 구현은 adapter.out에 모아 바뀌는 범위가 경로로 드러나게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    // 포트는 JPA를 몰라 @Lock을 붙일 수 없다. *JpaRepository에서 다시 선언하지 않으면 Spring Data가 이름만 보고
+    // 잠금 없는 조회를 만들어 오류 없이 돈다. 잠금 조회는 이름(ForUpdate, ForShare)으로 찾고, 이름과 잠금 종류가 맞는지도 본다.
+    // ForUpdate에 읽기 잠금이 붙으면 두 트랜잭션이 함께 읽고 함께 바꾸려다 교착이 나므로 잠금이 없는 것과 같은 실수다
+    @ArchTest
+    static final ArchRule 잠금_조회는_JPA_저장소에_Lock과_함께_다시_선언한다 = methods()
+            .that().areDeclaredInClassesThat().resideInAPackage("..application.port.out..")
+            .and().haveNameMatching(".*For(Update|Share).*")
+            .should(new ArchCondition<JavaMethod>("be redeclared in a *JpaRepository with a @Lock mode matching its name") {
+                @Override
+                public void check(JavaMethod portMethod, ConditionEvents events) {
+                    LockModeType expected = portMethod.getName().contains("ForUpdate")
+                            ? LockModeType.PESSIMISTIC_WRITE
+                            : LockModeType.PESSIMISTIC_READ;
+                    List<JavaClass> jpaRepositories = portMethod.getOwner().getAllSubclasses().stream()
+                            .filter(sub -> resideInAPackage("..adapter.out.persistence..").test(sub)
+                                    && sub.getSimpleName().endsWith("JpaRepository"))
+                            .toList();
+                    // 구현체마다 따로 확인해, 여럿 중 하나만 잠금을 가져도 통과하는 일을 막는다.
+                    // 구현체가 없으면 allMatch가 참이 되므로 따로 실패시킨다
+                    boolean ok = !jpaRepositories.isEmpty() && jpaRepositories.stream()
+                            .allMatch(repository -> repository.getMethods().stream()
+                                    .anyMatch(method -> method.getName().equals(portMethod.getName())
+                                            && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
+                                            && method.tryGetAnnotationOfType(Lock.class)
+                                                    .map(lock -> lock.value() == expected)
+                                                    .orElse(false)));
+                    events.add(new SimpleConditionEvent(portMethod, ok,
+                            portMethod.getFullName() + (ok ? " is" : " is not")
+                                    + " redeclared in a *JpaRepository with @Lock(" + expected + ")"));
+                }
+            })
+            .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 이중 차감 같은 문제로 드러난다. 빌드에서 바로 실패하게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule ApplicationEventPublisher는_adapter_out만_사용한다 = noClasses()
