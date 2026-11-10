@@ -62,6 +62,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willAnswer;
@@ -490,16 +491,48 @@ class PayoutServiceTest {
     }
 
     @Test
-    void 보냄_표시_저장이_실패하면_Kafka_실패로_기록하지_않고_그_예외로_끝난다() {
-        // given: Kafka 발송은 성공, 보냄 표시의 DB 저장이 실패
+    void 보냄_표시_저장이_실패하면_예외를_내지_않고_실패로_세고_Kafka_실패로_기록하지_않는다() {
+        // given: 1번은 Kafka 발송은 성공했지만 보냄 표시의 DB 저장이 실패
         given(payoutOutboxRepository.findPendingRows()).willReturn(List.of(outboxRow(1L), outboxRow(2L)));
         willThrow(new IllegalStateException("DB 저장 실패")).given(payoutOutboxService).markSent(OUTBOX_ID_OFFSET + 1L);
 
-        // when & then: Step을 FAILED로 드러내야 해서 삼키지 않음
-        assertThatThrownBy(() -> sut.publishPending())
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("DB 저장 실패");
+        // when
+        PayoutPublishResult result = sut.publishPending();
+
+        // then: 1번은 PENDING으로 남아 다음 실행에서 다시 감, 2번은 계속 보냄
+        assertThat(result).isEqualTo(new PayoutPublishResult(1, 1, 0));
+        then(payoutOutboxService).should().markSent(OUTBOX_ID_OFFSET + 2L);
         then(payoutOutboxService).should(never()).recordFailure(any(), any());
+    }
+
+    @Test
+    void 보냄_표시_저장이_연속_3번_실패하면_나머지_줄은_시도하지_않고_멈춘다() {
+        // given: Kafka는 받지만 DB가 계속 실패
+        given(payoutOutboxRepository.findPendingRows()).willReturn(
+                List.of(outboxRow(1L), outboxRow(2L), outboxRow(3L), outboxRow(4L), outboxRow(5L)));
+        willThrow(new IllegalStateException("DB 저장 실패")).given(payoutOutboxService).markSent(any());
+
+        // when
+        PayoutPublishResult result = sut.publishPending();
+
+        // then
+        assertThat(result).isEqualTo(new PayoutPublishResult(0, 3, 2));
+        then(payoutEventPublisher).should(times(3)).publishSellerPayoutCreated(any());
+    }
+
+    @Test
+    void 실패_기록_저장마저_실패해도_예외를_내지_않고_다음_줄을_보낸다() {
+        // given: 1번은 Kafka 발송 실패, 그 실패 기록의 DB 저장도 실패
+        given(payoutOutboxRepository.findPendingRows()).willReturn(List.of(outboxRow(1L), outboxRow(2L)));
+        failPublishFor(1L);
+        willThrow(new IllegalStateException("DB 저장 실패")).given(payoutOutboxService).recordFailure(eq(OUTBOX_ID_OFFSET + 1L), any());
+
+        // when
+        PayoutPublishResult result = sut.publishPending();
+
+        // then
+        assertThat(result).isEqualTo(new PayoutPublishResult(1, 1, 0));
+        then(payoutOutboxService).should().markSent(OUTBOX_ID_OFFSET + 2L);
     }
 
     @Test

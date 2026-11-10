@@ -16,6 +16,6 @@ public interface PayoutOutboxRepository {
 
     Optional<PayoutOutbox> findById(Long id);
 
-    // 아직 보내지 않은(PENDING) 줄을 id 오름차순으로, 보낼 메시지에 필요한 정산 값과 함께
+    // 아직 보내지 않은(PENDING) 줄을 덜 시도한 줄부터(같으면 id 순), 보낼 메시지에 필요한 정산 값과 함께
     List<PayoutOutboxRow> findPendingRows();
 }

@@ -16,5 +16,5 @@ CREATE TABLE payout_outbox (
     CONSTRAINT fk_payout_outbox_payout_id FOREIGN KEY (payout_id) REFERENCES payout (id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
--- 아직 보내지 않은 줄을 id 순서로 읽는 조회용
-CREATE INDEX idx_payout_outbox_status_id ON payout_outbox (status, id);
+-- 아직 보내지 않은 줄을 덜 시도한 줄부터(같으면 id 순) 읽는 조회용
+CREATE INDEX idx_payout_outbox_status_attempt_count_id ON payout_outbox (status, attempt_count, id);

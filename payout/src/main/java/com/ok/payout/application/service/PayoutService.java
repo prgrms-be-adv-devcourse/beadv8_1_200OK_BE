@@ -374,7 +374,8 @@ public class PayoutService implements PayoutUseCase {
     // 이 메서드는 트랜잭션을 더 만들지 않고, 보냄·실패 기록만 줄마다 짧은 별도 트랜잭션(PayoutOutboxService)에 남김
     // 그래서 한 줄의 실패가 앞 줄의 보냄 기록을 되돌리지 않음
     // 실패해도 멈추지 않음: 정산·지갑 입금은 이미 끝났고 남은 줄은 다음 실행이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음
-    // 단 연속으로 실패하면 브로커 장애로 보고 이번 발송을 멈춤 (줄마다 최대 120초씩 기다리지 않게)
+    // Kafka 발송이든 보냄·실패 기록(DB)이든 예외를 밖으로 내지 않음: 정산이 끝났는데 발송 단계 문제로 Job이 FAILED가 되지 않게
+    // 단 연속으로 실패하면 브로커·DB 장애로 보고 이번 발송을 멈춤 (줄마다 최대 120초씩 기다리지 않게)
     @Override
     public PayoutPublishResult publishPending() {
         List<PayoutOutboxRow> rows = payoutOutboxRepository.findPendingRows();
@@ -382,32 +383,54 @@ public class PayoutService implements PayoutUseCase {
         int failed = 0;
         int consecutiveFailures = 0;
         for (PayoutOutboxRow row : rows) {
-            try {
-                payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
-                        row.payoutId(), row.payeeId(), row.amount(), row.payoutCreatedAt()));
-            } catch (RuntimeException e) {
-                // 다시 던지지 않고 기록으로 남기므로 원인을 WARN으로 남김
-                log.warn("정산 Kafka 발송 실패, 다음 실행에서 다시 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
-                payoutOutboxService.recordFailure(row.outboxId(), failureMessage(e));
-                failed++;
-                // 기다리다 스레드가 중단됐으면 다음 줄을 헛되이 실패로 기록하지 않고 멈춤 (남은 줄은 PENDING)
-                if (Thread.currentThread().isInterrupted()) {
-                    break;
-                }
-                consecutiveFailures++;
-                if (consecutiveFailures >= MAX_CONSECUTIVE_PUBLISH_FAILURES) {
-                    break;
-                }
+            if (sendAndMarkSent(row)) {
+                sent++;
+                consecutiveFailures = 0;
                 continue;
             }
-            payoutOutboxService.markSent(row.outboxId());
-            sent++;
-            consecutiveFailures = 0;
+            failed++;
+            // 기다리다 스레드가 중단됐으면 다음 줄을 헛되이 실패로 기록하지 않고 멈춤 (남은 줄은 PENDING)
+            if (Thread.currentThread().isInterrupted()) {
+                break;
+            }
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_PUBLISH_FAILURES) {
+                break;
+            }
         }
 
         int remaining = rows.size() - sent - failed;
-        log.info("정산 Kafka 발송. 보낸 수={}, 실패 수={}, 연속 실패로 멈춰 남은 수={}", sent, failed, remaining);
+        log.info("정산 Kafka 발송. 보낸 수={}, 실패 수={}, 멈춰서 남은 수={}", sent, failed, remaining);
         return new PayoutPublishResult(sent, failed, remaining);
+    }
+
+    // 한 줄을 Kafka로 보내고 보냄으로 기록. 어디서 실패하든 줄은 PENDING으로 남아 다음 실행이 다시 보냄
+    private boolean sendAndMarkSent(PayoutOutboxRow row) {
+        try {
+            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
+                    row.payoutId(), row.payeeId(), row.amount(), row.payoutCreatedAt()));
+        } catch (RuntimeException e) {
+            log.warn("정산 Kafka 발송 실패, 다음 실행에서 다시 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+            recordFailure(row, e);
+            return false;
+        }
+        try {
+            payoutOutboxService.markSent(row.outboxId());
+            return true;
+        } catch (RuntimeException e) {
+            // Kafka는 이미 받았는데 DB에 못 적음. Kafka 실패가 아니라서 실패 기록은 남기지 않고, 다음 실행에서 한 번 더 감
+            log.warn("정산 outbox 보냄 기록 실패, 다음 실행에서 Kafka로 한 번 더 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+            return false;
+        }
+    }
+
+    // 실패 기록마저 저장하지 못해도 줄은 PENDING이라 다음 실행이 다시 보냄. 시도 수·오류만 빠짐
+    private void recordFailure(PayoutOutboxRow row, RuntimeException cause) {
+        try {
+            payoutOutboxService.recordFailure(row.outboxId(), failureMessage(cause));
+        } catch (RuntimeException e) {
+            log.warn("정산 outbox 실패 기록 저장 실패. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+        }
     }
 
     // 발행기 예외에는 어느 정산인지만 있고 실제 원인은 cause에 있어, 원인 쪽을 남김
