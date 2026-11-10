@@ -29,7 +29,10 @@ import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
 import com.tngtech.archunit.library.GeneralCodingRules;
 
 import com.ok.PayoutApplication;
@@ -41,10 +44,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
-
-import com.tngtech.archunit.lang.ArchCondition;
-import com.tngtech.archunit.lang.ConditionEvents;
-import com.tngtech.archunit.lang.SimpleConditionEvent;
 
 /**
  * 정산 모듈의 헥사고날 구조(이슈 #441)를 검사한다.
@@ -264,13 +263,12 @@ class ArchitectureTest {
         // given
         Path main = Path.of(PayoutApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         JavaClasses classes = new ClassFileImporter().importPath(main);
-
-        // when
         // archunit.properties의 failOnEmptyShould=false 때문에 아무 클래스도 못 가져와도 규칙이 통과한다.
         // 출력 위치가 바뀌어 가져오기가 비어도 조용히 통과하지 않도록, 모듈의 대표 클래스가 들어 있는지 먼저 확인한다
-        // then
         assertThat(classes.contain(PayoutApplication.class)).isTrue();
         assertThat(classes.contain("com.ok.payout.application.service.PayoutService")).isTrue();
+
+        // when & then
         정산_모듈_클래스는_com_ok_payout에_있다.check(classes);
     }
 

@@ -20,6 +20,9 @@ import com.ok.delivery.exception.DeliveryErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -34,6 +37,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static com.ok.delivery.fixture.ShipmentFixture.item;
 import static com.ok.delivery.fixture.ShipmentFixture.shipment;
@@ -123,6 +127,87 @@ class ShipmentServiceTest {
     }
 
     @Test
+    void 무료배송_기준이_없는_판매자도_shipment를_만든다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, null, LocalTime.of(13, 0))));
+        ShipmentCreateCommand command = command(seller(10L, 3_000L, null, 0L, 1_000_000L));
+
+        // when
+        shipmentService.create(command);
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        Shipment sut = shipmentsCaptor.getValue().get(0);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getFreeShippingThreshold()).isNull();
+            softly.assertThat(sut.getBaseShippingFee()).isEqualTo(3_000);
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(3_000);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("부과_배송비_사례")
+    void 결제_시점_값으로_부과_배송비를_계산해_저장한다(Long baseShippingFee, Long freeShippingThreshold, Long regionSurcharge,
+                                  long unitPrice, int expectedCharged) {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        // 판매자 설정이 결제 뒤에 바뀌었어도 부과 금액은 이벤트 값으로 계산해야 한다
+        given(sellerShippingSettingService.getSettings(List.of(10L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(9_000, 1, LocalTime.of(13, 0))));
+        ShipmentCreateCommand command = command(seller(10L, baseShippingFee, freeShippingThreshold, regionSurcharge, unitPrice));
+
+        // when
+        shipmentService.create(command);
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        Shipment sut = shipmentsCaptor.getValue().get(0);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(expectedCharged);
+            softly.assertThat(sut.getBaseShippingFee()).isEqualTo(baseShippingFee.intValue());
+            softly.assertThat(sut.getRegionSurcharge()).isEqualTo(regionSurcharge.intValue());
+        });
+    }
+
+    static Stream<Arguments> 부과_배송비_사례() {
+        return Stream.of(
+                // 기준 미달이면 기본 배송비
+                Arguments.of(3_000L, 50_000L, 0L, 49_999L, 3_000),
+                // 기준 이상이면 기본 배송비는 0원
+                Arguments.of(3_000L, 50_000L, 0L, 50_000L, 0),
+                // 무료배송이어도 추가 운임은 붙는다
+                Arguments.of(3_000L, 50_000L, 3_000L, 50_000L, 3_000),
+                Arguments.of(3_000L, 50_000L, 3_000L, 10_000L, 6_000),
+                // 기준이 0이면 항상 무료, 없으면 항상 기본 배송비
+                Arguments.of(3_000L, 0L, 0L, 1L, 0),
+                Arguments.of(3_000L, null, 3_000L, 10_000_000L, 6_000)
+        );
+    }
+
+    @Test
+    void 판매자_묶음의_상품_금액_합계로_무료배송을_판정한다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0))));
+        // 20,000원 x 2개 + 10,000원 x 1개 = 50,000원
+        SellerShipmentCommand seller = new SellerShipmentCommand(10L, 3_000L, 50_000L, 0L, List.of(
+                new ShipmentItemCommand(101L, "상품", null, 2, 20_000L),
+                new ShipmentItemCommand(102L, "상품", null, 1, 10_000L)));
+
+        // when
+        shipmentService.create(command(seller));
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        assertThat(shipmentsCaptor.getValue().get(0).getChargedShippingFee()).isZero();
+    }
+
+    @Test
     void 출고하면_송장_정보와_출고_시각으로_배송_시작_이벤트를_발행한다() {
         // given
         given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipment(2L, 10L, item(1L)), 1L)));
@@ -207,6 +292,17 @@ class ShipmentServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
         then(deliveryEventPublisher).shouldHaveNoInteractions();
+    }
+
+    private static ShipmentCreateCommand command(SellerShipmentCommand seller) {
+        return new ShipmentCreateCommand(1L, 100L, FRIDAY_NOON,
+                new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null), List.of(seller));
+    }
+
+    private static SellerShipmentCommand seller(Long sellerId, Long baseShippingFee, Long freeShippingThreshold,
+                                                Long regionSurcharge, long unitPrice) {
+        return new SellerShipmentCommand(sellerId, baseShippingFee, freeShippingThreshold, regionSurcharge,
+                List.of(new ShipmentItemCommand(101L, "상품", null, 1, unitPrice)));
     }
 
     private static SellerShipmentCommand seller(Long sellerId, Long orderItemId) {

@@ -49,7 +49,7 @@ docker compose up -d     # data/mysql 에 데이터 저장, 호스트 포트는 
 ./gradlew :monolith:bootRun
 ```
 
-- 포트 8080, 기본 프로파일 `dev`. 헬스 체크 `http://localhost:8080/actuator/health`, Swagger UI `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
+- 포트 8080, 기본 프로파일 `dev`. 헬스 체크 `http://localhost:18080/actuator/health`(관리 포트 18080, `MANAGEMENT_SERVER_PORT`로 변경), Swagger UI `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
 - `MYSQL_PORT`를 바꿨다면 `DB_URL`도 같이 지정합니다(`docs/DEVELOPMENT.md` 참고).
 
 ### 3. 모듈 하나만 단독 실행
