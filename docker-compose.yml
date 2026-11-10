@@ -58,6 +58,10 @@ x-kafka-service: &kafka-service
 # ---------- Redis 노드 6대가 같이 쓰는 설정 (#366) ----------
 # 마스터 3 + 복제본 3의 클러스터다. 마스터가 죽으면 복제본이 마스터가 되고(장애 조치), 앱은 새 마스터를 스스로 찾아간다
 # 운영(deploy/compose.prod.yml)과 같은 값이고, 다른 점은 비밀번호가 없다는 것과 호스트 포트를 연다는 것이다
+# 노드가 재시작으로 IP가 바뀌어도 서로 다시 찾도록 피어 목록을 준다 (deploy/redis-cluster-rejoin.sh)
+x-redis-environment: &redis-environment
+  REDIS_PEERS: "redis-1.localhost:7001 redis-2.localhost:7002 redis-3.localhost:7003 redis-4.localhost:7004 redis-5.localhost:7005 redis-6.localhost:7006"
+
 x-redis-service: &redis-service
   image: redis:${REDIS_VERSION:-8.10}-alpine
   networks: [db-net]
@@ -67,7 +71,8 @@ x-redis-service: &redis-service
   # - cluster-config-file: 노드 ID가 담겨, 볼륨에 두어야 재시작해도 같은 노드로 돌아온다 (docs/DEPLOY.md)
   # - cluster-node-timeout 5000: 기본 15초는 장애 감지가 느리다
   # - cluster-require-full-coverage no: 마스터 1대가 죽어도 나머지 슬롯은 계속 서비스한다
-  # - cluster-announce-hostname + preferred-endpoint-type hostname: 컨테이너를 다시 띄워 IP가 바뀌어도 이름으로 찾는다
+  # - cluster-announce-hostname + preferred-endpoint-type hostname: 앱(클라이언트)이 노드 IP가 아니라 이름으로 접속한다
+  #   노드끼리는 이름이 아니라 nodes.conf의 IP로 찾으므로, IP가 바뀐 노드는 redis-cluster-rejoin.sh가 CLUSTER MEET으로 다시 붙인다
   #   이름은 redis-N.localhost다. 내 PC에서는 *.localhost가 127.0.0.1로 풀리고, 컨테이너 안에서는 네트워크 별칭으로 풀려 양쪽에서 접속된다
   # - noeviction은 #319 그대로(정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
   # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
@@ -77,7 +82,7 @@ x-redis-service: &redis-service
     - sh
     - -c
     - >-
-      exec redis-server --port "$$NODE_PORT" --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      sh /redis-cluster-rejoin.sh & exec redis-server --port "$$NODE_PORT" --cluster-enabled yes --cluster-config-file /data/nodes.conf
       --cluster-node-timeout 5000 --cluster-require-full-coverage no
       --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname
       --maxmemory 96mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no
@@ -102,7 +107,7 @@ services:
   # 호스트 포트를 7001~7006으로 고정하는 이유: 클라이언트는 노드가 알려 주는 주소로 다시 접속하므로, 알리는 포트가 호스트에서 닿는 포트와 같아야 한다
   redis-1:
     <<: *redis-service
-    environment: {NODE_PORT: 7001, NODE_HOSTNAME: "redis-1.localhost"}
+    environment: {<<: *redis-environment, NODE_PORT: 7001, NODE_HOSTNAME: "redis-1.localhost"}
     networks:
       db-net:
         aliases: [redis-1.localhost]
@@ -110,10 +115,11 @@ services:
       - "127.0.0.1:7001:7001"
     volumes:
       - redis-1-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-2:
     <<: *redis-service
-    environment: {NODE_PORT: 7002, NODE_HOSTNAME: "redis-2.localhost"}
+    environment: {<<: *redis-environment, NODE_PORT: 7002, NODE_HOSTNAME: "redis-2.localhost"}
     networks:
       db-net:
         aliases: [redis-2.localhost]
@@ -121,10 +127,11 @@ services:
       - "127.0.0.1:7002:7002"
     volumes:
       - redis-2-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-3:
     <<: *redis-service
-    environment: {NODE_PORT: 7003, NODE_HOSTNAME: "redis-3.localhost"}
+    environment: {<<: *redis-environment, NODE_PORT: 7003, NODE_HOSTNAME: "redis-3.localhost"}
     networks:
       db-net:
         aliases: [redis-3.localhost]
@@ -132,10 +139,11 @@ services:
       - "127.0.0.1:7003:7003"
     volumes:
       - redis-3-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-4:
     <<: *redis-service
-    environment: {NODE_PORT: 7004, NODE_HOSTNAME: "redis-4.localhost"}
+    environment: {<<: *redis-environment, NODE_PORT: 7004, NODE_HOSTNAME: "redis-4.localhost"}
     networks:
       db-net:
         aliases: [redis-4.localhost]
@@ -143,10 +151,11 @@ services:
       - "127.0.0.1:7004:7004"
     volumes:
       - redis-4-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-5:
     <<: *redis-service
-    environment: {NODE_PORT: 7005, NODE_HOSTNAME: "redis-5.localhost"}
+    environment: {<<: *redis-environment, NODE_PORT: 7005, NODE_HOSTNAME: "redis-5.localhost"}
     networks:
       db-net:
         aliases: [redis-5.localhost]
@@ -154,10 +163,11 @@ services:
       - "127.0.0.1:7005:7005"
     volumes:
       - redis-5-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-6:
     <<: *redis-service
-    environment: {NODE_PORT: 7006, NODE_HOSTNAME: "redis-6.localhost"}
+    environment: {<<: *redis-environment, NODE_PORT: 7006, NODE_HOSTNAME: "redis-6.localhost"}
     networks:
       db-net:
         aliases: [redis-6.localhost]
@@ -165,6 +175,7 @@ services:
       - "127.0.0.1:7006:7006"
     volumes:
       - redis-6-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   # 노드 6대를 클러스터로 묶고 끝나는 1회성 서비스. 이미 묶여 있으면 아무것도 하지 않는다 (deploy/redis-cluster-init.sh)
   # 노드의 healthcheck가 cluster_state:ok라 클러스터를 만들기 전에는 healthy가 될 수 없으므로, 노드가 healthy가 아니라 started이면 시작한다

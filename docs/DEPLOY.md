@@ -38,7 +38,7 @@ EC2 한 대에 nginx·앱·MySQL·Redis(클러스터 6노드)·Kafka를 Docker �
   2. 바로 띄울 수 없으면 죽은 마스터의 복제본에서 강제 승격합니다: `docker compose -f compose.prod.yml exec redis-N redis-cli cluster failover takeover`. 마스터 과반의 합의 없이 승격하므로 복제가 따라잡지 못한 최신 쓰기를 잃을 수 있습니다. 한 대를 승격하면 과반이 복구되어 나머지 복제본은 자동으로 승격됩니다.
   - 로컬 시험(마스터 2대 `SIGKILL`): 40초 뒤에도 승격 없이 `cluster_state:fail`이었고, 복제본 1대에 `takeover`를 하자 약 6초 뒤 `cluster_state:ok`가 되었습니다.
 - app은 노드 6대가 모두 healthy(`cluster_state:ok`)이고 `redis-cluster-init`이 끝난 뒤 시작합니다. 클러스터 구성에 실패하면 app이 뜨지 않고 배포가 실패합니다.
-- **영속성:** 노드마다 도커 볼륨(`redis-N-data`)에 노드 ID(`nodes.conf`)와 가벼운 RDB 스냅샷(`save 900 1`, `save 300 100`)을 둡니다. AOF는 켜지 않습니다(디스크 쓰기·메모리·CPU 크레딧 부담). 그래서 **노드가 비정상 종료하면 마지막 스냅샷 뒤의 쓰기(몇 분치)를 잃을 수 있고**, 복제본이 있는 노드는 복제본에서 다시 동기화합니다. EC2 재부팅처럼 6대가 함께 내려갔다 올라오면 스냅샷으로 복구합니다. 로컬 시험에서 6대를 모두 내렸다가 컨테이너 IP가 모두 바뀐 채 올려도 약 5초 안에 6대 모두 `cluster_state:ok`가 되었고 스냅샷 데이터가 복구되었습니다(노드가 IP가 아니라 이름 `redis-N`으로 서로를 찾기 때문).
+- **영속성:** 노드마다 도커 볼륨(`redis-N-data`)에 노드 ID(`nodes.conf`)와 가벼운 RDB 스냅샷(`save 900 1`, `save 300 100`)을 둡니다. AOF는 켜지 않습니다(디스크 쓰기·메모리·CPU 크레딧 부담). 그래서 **노드가 비정상 종료하면 마지막 스냅샷 뒤의 쓰기(몇 분치)를 잃을 수 있고**, 복제본이 있는 노드는 복제본에서 다시 동기화합니다. EC2 재부팅처럼 6대가 함께 내려갔다 올라오면 스냅샷으로 복구합니다. **노드끼리는 이름이 아니라 `nodes.conf`에 적힌 IP로 서로를 찾습니다**(`cluster-announce-hostname`은 앱에게 알려 주는 접속 주소일 뿐입니다). 그래서 6대가 모두 새 IP로 올라오면 그대로는 서로를 못 찾아 `CLUSTERDOWN`이 풀리지 않습니다. 이를 막으려고 각 노드 컨테이너가 `redis-cluster-rejoin.sh`를 함께 실행합니다. 이 스크립트는 5초마다 피어 이름(`REDIS_PEERS`)을 DNS로 풀어 현재 IP를 얻고, 그 주소로 아직 모르는 피어가 있으면 `CLUSTER MEET`을 보냅니다. IP를 고정하지 않으므로 노드를 늘릴 때는 `REDIS_PEERS`에 추가하면 됩니다. 로컬과 운영 compose에서 6대를 역순으로 다시 띄우거나 옛 IP를 다른 컨테이너가 차지한 상태로 올려도 3초 안에 6대 모두 `cluster_state:ok`가 되었고 스냅샷 데이터가 복구되었습니다. 처음 클러스터를 만들기 전(`cluster_known_nodes=1`)에는 MEET을 보내지 않습니다. 보내면 `redis-cli --cluster create`가 "빈 노드가 아니다"라며 거부합니다.
   - 복제본이 처음부터 다시 동기화(full sync)할 때 마스터 메모리는 데이터가 가득 찬 상태(93.9/96MB)에서 최대 약 113MiB였습니다(`mem_limit` 160m). 마스터가 쌓는 복제 버퍼에는 상한(`client-output-buffer-limit replica 32mb 16mb 60`)을 둡니다.
   - AOF가 필요해지면 `compose.prod.yml`의 `--appendonly no`를 `yes --appendfsync everysec`로 바꿉니다. 켜기 전에 아래 메모리·CPU 크레딧 실측으로 여유를 확인합니다.
   - 락·중복 방지 키는 장애 조치 순간에도 사라질 수 있습니다. Redis는 이들의 정합성을 보장하지 않으므로 DB 유니크 제약 같은 최종 방어선을 둡니다([DEVELOPMENT.md](DEVELOPMENT.md)의 로컬 Redis 클러스터 절).
@@ -98,14 +98,14 @@ EC2 한 대에 nginx·앱·MySQL·Redis(클러스터 6노드)·Kafka를 Docker �
 
 ```bash
 # 로컬: 배포 파일 복사
-scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/nginx deploy/initdb deploy/.env.prod.example ubuntu@<EIP>:/tmp/
+scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/redis-cluster-rejoin.sh deploy/nginx deploy/initdb deploy/.env.prod.example ubuntu@<EIP>:/tmp/
 
 # 서버
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
-mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/redis-rollout.sh /tmp/redis-cluster-init.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
+mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/redis-rollout.sh /tmp/redis-cluster-init.sh /tmp/redis-cluster-rejoin.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
 chmod +x deploy.sh kafka-rollout.sh redis-rollout.sh redis-cluster-init.sh
 cp .env.prod.example .env && chmod 600 .env
@@ -155,7 +155,7 @@ cd /opt/paldo-gotgan && ./deploy.sh
 
 ```bash
 # 로컬: 새 배포 파일 복사
-scp -i <키 파일> deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh ubuntu@<EIP>:/opt/paldo-gotgan/
+scp -i <키 파일> deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/redis-cluster-rejoin.sh ubuntu@<EIP>:/opt/paldo-gotgan/
 
 # 서버
 cd /opt/paldo-gotgan
@@ -195,12 +195,12 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options 
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka·Redis 이미지는 버전이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, `redis-rollout.sh`, `redis-cluster-init.sh`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다. `deploy.sh`가 `redis-rollout.sh`를 부르므로 이 파일들은 함께 복사합니다.
+`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka·Redis 이미지는 버전이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, `redis-rollout.sh`, `redis-cluster-init.sh`, `redis-cluster-rejoin.sh`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다. `deploy.sh`가 `redis-rollout.sh`를 부르므로 이 파일들은 함께 복사합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
-scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh ubuntu@<EIP>:/opt/paldo-gotgan/
+scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/redis-cluster-rejoin.sh ubuntu@<EIP>:/opt/paldo-gotgan/
 scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
 
 # 서버
@@ -210,7 +210,7 @@ docker compose -f compose.prod.yml restart nginx
 ```
 
 - **Redis가 단일 노드에서 클러스터(6노드)로 바뀐 버전을 처음 배포하는 기존 서버**(#366)는 아래를 확인합니다.
-  - 새 `compose.prod.yml`과 함께 `redis-rollout.sh`, `redis-cluster-init.sh`를 복사하고 `chmod +x` 합니다(위 명령). `.env`의 `REDIS_PASSWORD`, `REDIS_VERSION`은 그대로 씁니다. `REDIS_HOST`·`REDIS_PORT`는 더 이상 읽지 않습니다.
+  - 새 `compose.prod.yml`과 함께 `redis-rollout.sh`, `redis-cluster-init.sh`, `redis-cluster-rejoin.sh`를 복사하고 `chmod +x` 합니다(위 명령). `.env`의 `REDIS_PASSWORD`, `REDIS_VERSION`은 그대로 씁니다. `REDIS_HOST`·`REDIS_PORT`는 더 이상 읽지 않습니다.
   - 메모리 여유부터 봅니다. 노드 6대(합계 `mem_limit` 960m)가 옛 단일 Redis(384m)를 대신하므로 합계가 약 0.56GiB 늘어납니다. `free -m`으로 여유가 1GiB 안팎인지 확인합니다(예산 표).
   - `./deploy.sh`가 옛 단일 `redis` 컨테이너를 먼저 지우고(데이터는 옮기지 않습니다) 6대를 띄워 클러스터로 묶습니다. 옛 컨테이너와 새 노드가 동시에 메모리를 쓰지 않게 하려는 순서입니다. 이 순간 앱의 Redis 헬스가 잠깐 `DOWN`일 수 있습니다.
   - **새로 비밀번호를 정하는 경우**는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). 형식이 틀려 노드가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.

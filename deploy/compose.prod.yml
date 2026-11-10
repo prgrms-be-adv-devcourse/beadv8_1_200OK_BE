@@ -67,6 +67,8 @@ x-redis-environment: &redis-environment
   REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD가 필요하다}
   # healthcheck와 초기화의 redis-cli가 비밀번호를 인자 없이 쓰게 한다
   REDISCLI_AUTH: ${REDIS_PASSWORD}
+  # 노드가 재시작으로 IP가 바뀌어도 서로 다시 찾도록 피어 목록을 준다 (redis-cluster-rejoin.sh)
+  REDIS_PEERS: "redis-1:6379 redis-2:6379 redis-3:6379 redis-4:6379 redis-5:6379 redis-6:6379"
 
 x-redis-service: &redis-service
   image: redis:${REDIS_VERSION:-8.10}-alpine
@@ -76,7 +78,8 @@ x-redis-service: &redis-service
   # - cluster-config-file: 노드 ID가 담겨, 볼륨에 두어야 재시작해도 같은 노드로 돌아온다
   # - cluster-node-timeout 5000: 기본 15초는 장애 감지가 느리다
   # - cluster-require-full-coverage no: 마스터 1대가 죽어도 나머지 슬롯은 계속 서비스한다
-  # - cluster-announce-hostname: 컨테이너를 다시 띄워 IP가 바뀌어도 이름(redis-N)으로 찾는다
+  # - cluster-announce-hostname: 앱(클라이언트)이 노드 IP가 아니라 이름(redis-N)으로 접속한다
+  #   노드끼리는 이름이 아니라 nodes.conf의 IP로 찾으므로, IP가 바뀐 노드는 redis-cluster-rejoin.sh가 CLUSTER MEET으로 다시 붙인다(EC2 재부팅, down/up)
   # - noeviction은 #319 그대로(사용처가 정해지지 않아 키를 몰래 지우지 않는다, 정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
   # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
   #   기본값(replica 256mb)이 mem_limit(160m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다(배포 때 복제본을 다시 띄울 때마다 지나는 경로)
@@ -87,6 +90,7 @@ x-redis-service: &redis-service
     - |
       umask 077
       printf 'requirepass "%s"\nmasterauth "%s"\n' "$$REDIS_PASSWORD" "$$REDIS_PASSWORD" > /tmp/redis.conf
+      sh /redis-cluster-rejoin.sh &
       exec redis-server /tmp/redis.conf --cluster-enabled yes --cluster-config-file /data/nodes.conf \
         --cluster-node-timeout 5000 --cluster-require-full-coverage no \
         --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname \
@@ -131,6 +135,7 @@ services:
       NODE_HOSTNAME: redis-1
     volumes:
       - redis-1-data:/data
+      - ./redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-2:
     <<: *redis-service
@@ -139,6 +144,7 @@ services:
       NODE_HOSTNAME: redis-2
     volumes:
       - redis-2-data:/data
+      - ./redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-3:
     <<: *redis-service
@@ -147,6 +153,7 @@ services:
       NODE_HOSTNAME: redis-3
     volumes:
       - redis-3-data:/data
+      - ./redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-4:
     <<: *redis-service
@@ -155,6 +162,7 @@ services:
       NODE_HOSTNAME: redis-4
     volumes:
       - redis-4-data:/data
+      - ./redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-5:
     <<: *redis-service
@@ -163,6 +171,7 @@ services:
       NODE_HOSTNAME: redis-5
     volumes:
       - redis-5-data:/data
+      - ./redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   redis-6:
     <<: *redis-service
@@ -171,6 +180,7 @@ services:
       NODE_HOSTNAME: redis-6
     volumes:
       - redis-6-data:/data
+      - ./redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
 
   # 노드 6대를 클러스터로 묶고 끝나는 1회성 서비스. 이미 묶여 있으면 아무것도 하지 않는다 (redis-cluster-init.sh)
   # 노드의 healthcheck가 cluster_state:ok라 클러스터를 만들기 전에는 healthy가 될 수 없으므로, 노드가 healthy가 아니라 started이면 시작한다
