@@ -58,3 +58,17 @@ related: [323, 408, 409, 411, 412, 413, 414]
 - 배송비는 승인 때 한 번 정하고 다시 계산하지 않는다. 주문 조회와 잠금 사이의 변화는 반영하지 않는다(쓰는 값은 결제 뒤 바뀌지 않는 값).
 - 무료배송 기준은 배송 모듈 `ShippingFeePolicy`와 같게 "남은 단가 합 >= 기준이면 무료"다. 배송 모듈 기준이 바뀌면 같이 바꾼다.
 - 주문 팀의 환불용 조회 API는 아직 없다. `sellerGroup` 모양은 주문 요청서(PR #327)를 가정했다. (미확인) 실제 API 모양
+
+## 후속 (2026-11-07)
+
+#481에서 환불 모듈을 헥사고날 구조로 바꾸면서 이 문서가 가리키는 코드 위치와 이름이 바뀌었다. 배송비 결정 규칙(무엇을 언제 어떻게 정하는지)은 그대로다. 구조 결정은 `docs/decisions/refund/481-refund-hexagonal.md`에 있다.
+
+| 이 문서에 적힌 것 | 지금 |
+|---|---|
+| `service/RefundFacade.java`, `service/RefundService.java` | 유스케이스마다 서비스 하나. 승인은 `application/service/DecideRefundService.java`, 요청은 `application/service/RequestRefundService.java` |
+| `repository/RefundRepository.java` | 출력 포트 `application/port/out/RefundPersistencePort.java`, 구현 `adapter/out/persistence/RefundPersistenceAdapter.java` (집계 쿼리 포함) |
+| 승인 트랜잭션 "Facade: 읽기 → 주문 조회 → 서비스 한 트랜잭션" | `DecideRefundService` 한 클래스 안에서 읽기 전용 구간 → 주문 조회(구간 밖) → 승인 구간(행 잠금 → 상태 확인 → 집계 → 판단 → 저장). 구간은 `TransactionTemplate`으로 연다 |
+| `RefundService.CANCELLING_STATUSES` | `domain/RefundShippingFeePolicy.CANCELLING_STATUSES` (요청과 승인이 같은 기준을 쓰게 도메인 정책에 둠) |
+| 엔티티 `Refund.approve` | 도메인 `Refund.approve`. `Refund`는 JPA 엔티티가 아니고, 테이블 매핑은 `RefundJpaEntity`가 맡는다 |
+
+"건드릴 때 주의"의 순서 규칙(상태 확인을 배송비 판단보다 먼저)은 지금도 `DecideRefundService`의 승인 구간에 그대로 있다.
