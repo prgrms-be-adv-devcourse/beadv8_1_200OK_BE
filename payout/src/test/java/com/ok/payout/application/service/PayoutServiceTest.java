@@ -31,7 +31,7 @@ import com.ok.payout.application.port.in.PayoutSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import com.ok.payout.application.port.in.PayoutSummaryResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
-import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -117,7 +117,7 @@ class PayoutServiceTest {
     private PayoutService sut;
 
     @Captor
-    private ArgumentCaptor<SellerPayoutCreatedCommand> commandCaptor;
+    private ArgumentCaptor<SellerPayoutCreated> createdCaptor;
 
     @Captor
     private ArgumentCaptor<List<PayoutFailure>> failuresCaptor;
@@ -347,9 +347,9 @@ class PayoutServiceTest {
 
         // then: payoutId·createdAt은 저장 후 채워지는 값이라 단위 테스트에서는 확인하지 않음
         assertThat(published).isEqualTo(2);
-        then(payoutEventPublisher).should(times(2)).publishSellerPayoutCreated(commandCaptor.capture());
-        assertThat(commandCaptor.getAllValues())
-                .extracting(SellerPayoutCreatedCommand::payeeId, SellerPayoutCreatedCommand::amount)
+        then(payoutEventPublisher).should(times(2)).publishSellerPayoutCreated(createdCaptor.capture());
+        assertThat(createdCaptor.getAllValues())
+                .extracting(SellerPayoutCreated::payeeId, SellerPayoutCreated::amount)
                 .containsExactlyInAnyOrder(
                         tuple(10L, 9_700L),
                         tuple(20L, 19_400L));
@@ -372,8 +372,8 @@ class PayoutServiceTest {
 
         // then
         assertThat(published).isEqualTo(1);
-        then(payoutEventPublisher).should().publishSellerPayoutCreated(commandCaptor.capture());
-        assertThat(commandCaptor.getValue().payeeId()).isEqualTo(10L);
+        then(payoutEventPublisher).should().publishSellerPayoutCreated(createdCaptor.capture());
+        assertThat(createdCaptor.getValue().payeeId()).isEqualTo(10L);
     }
 
     // ---------- settlementTo / settlementFrom ----------

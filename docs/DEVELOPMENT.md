@@ -501,6 +501,10 @@ com.ok.order
 - 테스트에서 상품·배송·지갑 호출은 `testsupport`의 Fake 출력 포트(`FakeProductPort` 등)가 대신합니다. HTTP 응답 변환은 어댑터 DTO 단위 테스트로 확인합니다.
 - 이 구조는 `order`의 `ArchitectureTest`가 두 하위 도메인에 같은 규칙으로 검사합니다(`com.ok.order.*.<레이어>`).
 
+### payout 모듈 구조(헥사고날)
+
+`payout`도 헥사고날 구조입니다. 패키지와 의존 규칙은 정산 전용 규칙 `payout/CLAUDE.md`와 payout `ArchitectureTest`를 따릅니다.
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.
