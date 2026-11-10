@@ -131,11 +131,16 @@ interface ProductReviewControllerSpec {
 	);
 
 	@SecurityRequirements
-	@Operation(summary = "상품별 리뷰 목록", description = "노출된 상품의 리뷰를 최신순으로 조회합니다. 로그인하지 않아도 됩니다.")
+	@Operation(summary = "상품별 리뷰 목록", description = """
+		노출된 상품의 리뷰를 최신순으로 조회합니다. 로그인하지 않아도 됩니다.
+		keyword를 보내면 그 키워드를 표현한 리뷰만 조회합니다. 키워드 집계의 리뷰 수와 같은 조건이라 칩의 리뷰 수와 결과 수가 같습니다.
+		리뷰 수가 적어 칩에 뜨지 않는 키워드도 걸러집니다. 수정 뒤 아직 다시 분석하지 않은 리뷰는 빠집니다.
+		목록에 없는 키워드면 400이고, 목록에는 있지만 상품의 분류에 묻지 않는 키워드면 빈 페이지입니다.
+		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "성공"),
 		@ApiResponse(
-			responseCode = "400", description = "범위를 벗어난 page·size",
+			responseCode = "400", description = "범위를 벗어난 page·size, 키워드 목록에 없는 keyword",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
 		),
 		@ApiResponse(
@@ -146,7 +151,8 @@ interface ProductReviewControllerSpec {
 	ResponseEntity<ProductPageResponse<ProductReviewResponse>> getProductReviews(
 		@Parameter(description = "상품 ID", example = "10") Long productId,
 		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
-		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size
+		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size,
+		@Parameter(description = "리뷰 키워드 ID. 보내면 이 키워드를 표현한 리뷰만 조회합니다. 빈 값이면 거르지 않습니다", example = "C02") String keyword
 	);
 
 	@Operation(summary = "이 상품의 내 리뷰", description = """

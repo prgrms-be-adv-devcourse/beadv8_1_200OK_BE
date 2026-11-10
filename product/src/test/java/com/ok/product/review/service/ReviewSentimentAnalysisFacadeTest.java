@@ -116,7 +116,7 @@ class ReviewSentimentAnalysisFacadeTest {
 	}
 
 	private static ReviewSentimentTarget target(Long requestId) {
-		return new ReviewSentimentTarget(requestId, LocalDateTime.of(2026, 11, 1, 0, 0),
+		return new ReviewSentimentTarget(requestId, requestId * 10, LocalDateTime.of(2026, 11, 1, 0, 0),
 			new ReviewSentimentInput(requestId * 10, "청송 꿀사과", "5kg 한 상자", "아삭하고 달아요"));
 	}
 

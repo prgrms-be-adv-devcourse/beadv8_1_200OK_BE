@@ -151,7 +151,7 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 		long reviewId = writeReview(100L, "달고 맛있어요");
 
 		// then
-		List<ReviewAnalysisRequest> requests = analysisRequestRepository.findAll();
+		List<ReviewAnalysisRequest> requests = sentimentRequests();
 		assertThat(requests).hasSize(1);
 		ReviewAnalysisRequest sut = requests.getFirst();
 		assertSoftly(softly -> {
@@ -193,7 +193,7 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 
 		// then
 		LocalDateTime reviewUpdatedAt = productReviewRepository.findById(reviewId).orElseThrow().getUpdatedAt();
-		ReviewAnalysisRequest request = analysisRequestRepository.findAll().getFirst();
+		ReviewAnalysisRequest request = requestOf(reviewId);
 		SavedSentiment sut = transactionTemplate.execute(status -> SavedSentiment.from(reviewSentimentRepository.findAll().getFirst()));
 		assertThat(sut).isNotNull();
 		assertSoftly(softly -> {
@@ -448,7 +448,7 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 		editReview(reviewId, 7, "맛이 많이 싱거워요");
 
 		// then
-		List<ReviewAnalysisRequest> requests = analysisRequestRepository.findAll();
+		List<ReviewAnalysisRequest> requests = sentimentRequests();
 		assertThat(requests).hasSize(1);
 		assertThat(requests.getFirst().getStatus()).isEqualTo(ReviewAnalysisStatus.PENDING);
 	}
@@ -551,8 +551,8 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 			release.countDown();
 			List<ReviewSentimentTarget> firstTargets = first.get(5, TimeUnit.SECONDS);
 			assertSoftly(softly -> {
-				softly.assertThat(sut).extracting(target -> target.input().reviewId()).containsExactly(secondReviewId);
-				softly.assertThat(firstTargets).extracting(target -> target.input().reviewId())
+				softly.assertThat(sut).extracting(ReviewSentimentTarget::reviewId).containsExactly(secondReviewId);
+				softly.assertThat(firstTargets).extracting(ReviewSentimentTarget::reviewId)
 					.containsExactly(firstReviewId);
 			});
 		} finally {
@@ -732,9 +732,16 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	private ReviewAnalysisRequest requestOf(long reviewId) {
-		return analysisRequestRepository.findAll().stream()
+		return sentimentRequests().stream()
 			.filter(request -> request.getReviewId().equals(reviewId))
 			.findFirst().orElseThrow();
+	}
+
+	// 리뷰마다 키워드 요청도 함께 생기므로 감성 요청만 본다
+	private List<ReviewAnalysisRequest> sentimentRequests() {
+		return analysisRequestRepository.findAll().stream()
+			.filter(request -> request.getAnalysisType() == ReviewAnalysisType.SENTIMENT)
+			.toList();
 	}
 
 	private void clearReviews() {
