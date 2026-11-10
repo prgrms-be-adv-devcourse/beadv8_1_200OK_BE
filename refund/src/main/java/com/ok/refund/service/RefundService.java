@@ -3,6 +3,7 @@ package com.ok.refund.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.domain.RefundStatus;
@@ -52,6 +53,8 @@ public class RefundService {
     private static final List<RefundStatus> CANCELLING_STATUSES = List.of(RefundStatus.PROCESSING);
     // 승인 때 잠글 상태. 이 상태의 행만 처리 중으로 바뀌거나 이미 처리 중이라 집계를 바꿀 수 있다. 끝난 행(거절·철회)은 잠그지 않는다
     private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
+    // 승인 때 이미 출고됐거나 취소된 상품을 자동 거절할 때 구매자에게 보이는 사유
+    static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
 
     private final RefundRepository refundRepository;
     private final Clock clock;
@@ -135,6 +138,7 @@ public class RefundService {
     /**
      * 판매자가 승인한다. 같은 묶음의 처리 중 요청을 모아 배송비를 판단하고, 받을 수 있으면 "처리 중"으로 바꾸며 배송비를 저장한다.
      * 받을 수 없으면(취소 금액이 뺄 배송비보다 작음) 사유를 넣어 자동 거절한다. 요청됨으로 남기면 구매자가 이유를 모르고 요청도 쌓이기 때문이다.
+     * 이미 출고됐거나 취소된 상품이면 배송비를 판단하지 않고 같은 이유로 자동 거절한다.
      *
      * <p>같은 판매자 묶음의 승인을 한 줄로 세운다(#411). 묶음에서 진행 중(요청됨·처리 중)인 환불과 이번 환불의 ID를 먼저 읽고,
      * ID 오름차순으로 한 건씩 잠근 뒤 집계한다. 끝난 행(거절·철회)은 다시 처리 중이 될 수 없어 잠그지 않는다.
@@ -146,11 +150,12 @@ public class RefundService {
      * 잠금을 기다리는 동안 앞 승인이 저장한 "처리 중"이 집계에 보이지 않아 줄을 세워도 배송비가 틀린다.
      * 반드시 이 메서드가 트랜잭션을 새로 시작해야 하므로 트랜잭션 밖(Facade)에서만 부른다.
      *
-     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 배송비 값만 쓴다(출고 확인은 #412).
+     * @param orderItem 승인 직전에 주문에서 다시 받은 주문 상품 정보. 출고 여부와 배송비 값을 쓴다.
      *                  묶음을 이 값의 주문 ID로 찾으므로 환불의 주문 ID로 조회한 값이어야 한다. 다른 주문 값이면 묶음에 이 환불이 없어
      *                  {@code REFUND_NOT_FOUND}가 된다(Facade가 환불의 주문 ID로 조회한다)
      * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
-     * @throws IllegalStateException 주문 정보가 다른 주문 상품이면, 또는 이미 열린 트랜잭션 안에서 부르면 (부르는 쪽 버그)
+     * @throws IllegalStateException 주문 정보가 다른 주문 상품이면, 이미 열린 트랜잭션 안에서 부르면 (부르는 쪽 버그),
+     *                               주문 상태가 null이거나 모르는 값이면 (주문 모듈 쪽 문제, 요청됨 그대로 남는다)
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
@@ -164,10 +169,25 @@ public class RefundService {
         if (!refund.getOrderItemId().equals(orderItem.orderItemId())) {
             throw new IllegalStateException("환불과 다른 주문 상품 정보로 승인할 수 없습니다. refundId=" + refundId);
         }
+        // 요청 때 출고 전이었어도 승인 사이에 판매자가 출고했을 수 있다. 출고·취소된 상품은 취소로 돌려줄 수 없다.
+        // 상태 확인 뒤에 보는 이유: 이미 철회·거절·승인된 요청은 출고 여부와 상관없이 처리할 수 없다는 것이 진짜 이유라 그 응답(409 INVALID_REFUND_STATE)이 먼저다.
+        // 에러로 막지 않고 자동 거절하는 이유: 요청됨으로 남기면 구매자는 이유를 모른 채 기다리고, 판매자가 따로 거절해야 끝난다
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (orderItem.isNoLongerCancellable()) {
+            // 배송비 판단은 하지 않는다. 취소할 수 없는 상품이라 뺄 배송비도 없고, 배송비 칸은 0으로 남는다
+            refund.reject(SHIPPED_REJECT_REASON, now);
+            return RefundResult.from(refund);
+        }
+        // 출고 전(PREPARING)이 아닌데 아는 상태도 아니면(null, 새 상태) 자동 거절하지 않고 서버 오류(500)로 던진다.
+        // 주문 모듈의 버그나 계약 변경인데 거절로 끝내면 구매자의 요청이 그 잘못으로 조용히 사라진다.
+        // 아무것도 저장하지 않으므로 환불은 요청됨 그대로 남아 고친 뒤 다시 승인할 수 있다
+        if (!orderItem.isCancellable()) {
+            throw new IllegalStateException("알 수 없는 주문 상품 상태라 승인할 수 없습니다. refundId=" + refundId
+                    + ", status=" + orderItem.status());
+        }
         // 집계는 이 환불을 처리 중으로 바꾸기 전에 해야 한다. 바꾼 뒤에 조회하면 자동 flush로 이번 환불이 집계에 들어가고,
         // 정책이 이번 개수를 또 더해 "개수 초과"(500)가 난다
         RefundShippingFee fee = decideShippingFee(refund, orderItem);
-        LocalDateTime now = LocalDateTime.now(clock);
         if (fee.allowed()) {
             refund.approve(now, fee);
         } else {
@@ -203,6 +223,24 @@ public class RefundService {
                 .orElseThrow(() -> new RestApiException(RefundErrorCode.REFUND_NOT_FOUND));
         refund.withdraw(LocalDateTime.now(clock));
         return RefundResult.from(refund);
+    }
+
+    /**
+     * 승인 뒤 다른 모듈 호출이 실패한 단계와 이유를 남긴다. 상태는 처리 중 그대로 둔다.
+     * {@link RefundStepRunner}가 호출이 실패했을 때 부른다. 다른 모듈 호출은 트랜잭션 밖(Facade)에서 하므로
+     * 이 기록은 호출과 따로 저장되고, 호출이 실패해도 기록은 남는다.
+     *
+     * @param failureCode 에러 코드 이름, 없으면 예외 클래스 이름
+     * @throws RestApiException      처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalStateException 환불이 없으면 (시스템이 넘긴 ID라 부르는 쪽 버그)
+     */
+    @Transactional
+    public void recordFailure(Long refundId, RefundFailedStep step, String failureCode) {
+        // 같은 환불을 동시에 결정·기록하는 다른 트랜잭션과 섞이지 않게 다른 결정 메서드처럼 잠근 뒤 고친다.
+        // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)
+        Refund refund = refundRepository.findByIdForUpdate(refundId)
+                .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
+        refund.recordFailure(step, failureCode);
     }
 
     // 승인은 이 메서드가 트랜잭션을 새로 시작했을 때만 진행한다. 바깥 트랜잭션에 합류하면 두 가지가 조용히 깨진다.
