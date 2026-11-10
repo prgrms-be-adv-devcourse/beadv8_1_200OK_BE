@@ -66,6 +66,31 @@ class PaidSellerOrderTest {
         assertThat(sut.baseShippingFee()).isZero();
     }
 
+    @Test
+    void 무료배송_기준이_없어도_만들_수_있다() {
+        // when
+        PaidSellerOrder sut = new PaidSellerOrder(10L, 3_000L, null, 0L, List.of(item(100L)));
+
+        // then
+        assertThat(sut.freeShippingThreshold()).isNull();
+    }
+
+    @ParameterizedTest
+    @MethodSource("없으면_안_되는_금액")
+    void 무료배송_기준_말고_금액이_없으면_예외가_발생한다(Long baseShippingFee, Long regionSurcharge, String message) {
+        // when & then
+        assertThatThrownBy(() -> new PaidSellerOrder(10L, baseShippingFee, 50_000L, regionSurcharge, List.of(item(100L))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+    }
+
+    static Stream<Arguments> 없으면_안_되는_금액() {
+        return Stream.of(
+                Arguments.of(null, 0L, "baseShippingFee는 필수입니다."),
+                Arguments.of(3_000L, null, "regionSurcharge는 필수입니다.")
+        );
+    }
+
     private static PaidOrderItem item(Long orderItemId) {
         return new PaidOrderItem(orderItemId, "사과", "1kg", 2, 10_000L);
     }

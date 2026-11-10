@@ -1,6 +1,7 @@
 package com.ok.refund.adapter.out.order;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.common.trace.TraceHeaderInterceptor;
 import com.ok.refund.exception.RefundErrorCode;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -36,6 +37,9 @@ final class InternalRestClient {
         return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(factory)
+
+                // [추적] 받는 쪽이 어느 요청·주문의 호출인지 알 수 있도록 MDC의 추적 키를 헤더로 보낸다
+                .requestInterceptor(new TraceHeaderInterceptor())
 
                 // [2] 응답 자체를 못 받은 경우 (서버 꺼짐, 타임아웃)
                 // IOException을 그대로 두면 500이 되므로 요청을 보내는 순간을 감싸 우리 에러 코드로 바꾼다

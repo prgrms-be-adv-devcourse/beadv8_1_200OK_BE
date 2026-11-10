@@ -29,6 +29,7 @@ import com.ok.common.exception.ErrorCode;
 import com.ok.delivery.DeliverySchema;
 import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.adapter.out.carrier.MockCarrierClient;
+import com.ok.delivery.adapter.out.carrier.TrackerCarrierClient;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -63,6 +64,7 @@ class ArchitectureTest {
             .whereLayer("Application").mayOnlyBeAccessedByLayers("AdapterIn", "AdapterOut")
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "AdapterOut")
             .ignoreDependency(MockCarrierClient.class, CarrierDeliveredEvent.class)
+            .ignoreDependency(TrackerCarrierClient.class, CarrierDeliveredEvent.class)
             .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (delivery 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest

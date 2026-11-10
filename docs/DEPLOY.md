@@ -17,12 +17,13 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 - 외부에는 `/api/v1/**`과 `/bff/**`만 공개합니다. 인증·인가는 앱(JWT)이 처리합니다.
 - `/internal/**`은 모듈 간 내부 호출용이라 인증이 없습니다. nginx가 404로 막고, 앱도 같은 컨테이너(loopback)에서 온 요청만 받습니다.
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
-- app·mysql·redis·kafka는 호스트 포트를 열지 않습니다.
+- app·mysql·redis·kafka는 호스트 포트를 열지 않습니다. 앱의 관리 포트(18080: `/actuator/health`, `/actuator/prometheus`)도 호스트에 열지 않고 nginx도 프록시하지 않습니다.
+  - 모니터링(Grafana·Prometheus)만 서버의 `127.0.0.1`에 열고 SSH 터널로 봅니다([11. 모니터링](#11-모니터링-374)).
   - Redis는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다.
   - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
   - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
 - Redis는 `maxmemory 256mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성 없음(재시작하면 비워짐)입니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
-- 앱의 `/actuator/health`에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
+- 앱의 `/actuator/health`(관리 포트 18080)에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
@@ -37,7 +38,7 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
   - 파티션 하나당 256MB(`KAFKA_LOG_RETENTION_BYTES`)를 넘으면 오래된 메시지부터 지웁니다. 아직 읽히지 않은 메시지도 지워질 수 있습니다. 토픽이 늘면 `토픽 수 × 파티션 수 × 3벌 × 256MB`가 루트 디스크 여유(30GB 중 OS·도커 이미지 사용분 제외) 안에 드는지 다시 계산합니다.
   - 인스턴스를 교체하면 루트 디스크와 함께 Kafka 데이터도 사라지고 새 클러스터로 시작합니다. 원본 데이터는 DB에 있습니다.
 - **`KAFKA_CLUSTER_ID`는 처음 정한 뒤 바꾸지 않습니다.** 바꾸면 기존 볼륨과 맞지 않아 브로커가 뜨지 않습니다. 꼭 바꿔야 하면 `docker compose -f compose.prod.yml down`, `docker volume rm paldo-gotgan_kafka-1-data paldo-gotgan_kafka-2-data paldo-gotgan_kafka-3-data`로 볼륨까지 지운 뒤 배포합니다(Kafka 메시지가 모두 사라집니다).
-- Kafka 상태는 앱 헬스체크(`/actuator/health`)에 들어가지 않습니다. `docker compose ps`의 kafka 컨테이너 상태로 봅니다.
+- Kafka 상태는 앱 헬스체크(`/actuator/health`, 관리 포트 18080)에 들어가지 않습니다. `docker compose ps`의 kafka 컨테이너 상태로 봅니다.
 
 **메모리 예산 (t3.large 8GiB, 추정치)**
 
@@ -46,10 +47,14 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 | app | 2560m (`mem_limit`) |
 | redis | 384m (`mem_limit`, 데이터 상한 256m) |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
-| mysql | 제한 없음, 약 0.5~1GiB |
+| prometheus / grafana / mysqld-exporter | 512m / 256m / 64m (`mem_limit`), 합계 832m (#374) |
+| mysql | 제한 없음, 약 0.5~1GiB (부하테스트 때 `docker stats`로 실제 사용량을 본 뒤 상한을 정함) |
 | bff (프론트 레포 compose) | 256m (`mem_limit`, 힙 192m) |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 6.3~6.8GiB (여유 약 1.2~1.7GiB, mysql 사용량에 따라 달라짐) |
+| 합계 | 약 7.1~7.6GiB (여유 약 0.4~0.9GiB, mysql 사용량에 따라 달라짐) |
+
+- `mem_limit`이 있는 서비스의 상한 합계는 6072m(약 5.9GiB, bff 포함)입니다. 상한은 천장이라 실제 사용량은 이보다 작습니다.
+- 모니터링을 더하면서 여유가 크게 줄었습니다. MySQL에는 상한을 걸지 않습니다. 기본 버퍼 풀이 128MB라 사용량이 제한적이고, 한도에 걸려 OOM kill로 DB가 죽는 쪽이 더 위험하기 때문입니다.
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -67,22 +72,25 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 
 ```bash
 # 로컬: 배포 파일 복사
-scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/nginx deploy/initdb deploy/.env.prod.example ubuntu@<EIP>:/tmp/
+scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/nginx deploy/initdb deploy/monitoring deploy/.env.prod.example ubuntu@<EIP>:/tmp/
 
 # 서버
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
-mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/nginx /tmp/initdb /tmp/.env.prod.example /opt/paldo-gotgan/
+mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/nginx /tmp/initdb /tmp/monitoring /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
-chmod +x deploy.sh kafka-rollout.sh
+chmod +x deploy.sh kafka-rollout.sh monitoring/create-exporter-user.sh
 cp .env.prod.example .env && chmod 600 .env
 docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka-storage.sh random-uuid   # KAFKA_CLUSTER_ID에 넣을 값
-vi .env                      # 비밀번호·키, KAFKA_CLUSTER_ID 채우기
+vi .env                      # 비밀번호·키, KAFKA_CLUSTER_ID, GRAFANA_ADMIN_PASSWORD, MYSQL_EXPORTER_PASSWORD 채우기
 mountpoint /data             # "/data is a mountpoint"가 나와야 한다
+# 모니터링 저장 폴더. 없으면 도커가 root 소유로 만들어 컨테이너가 쓰지 못한다 (11절)
+sudo mkdir -p /data/prometheus /data/grafana && sudo chown 65534:65534 /data/prometheus && sudo chown 472:472 /data/grafana
 # JWT 서명 키 만들기 (아래 9절)
 ./deploy.sh
+monitoring/create-exporter-user.sh   # mysqld-exporter용 DB 계정 (11절)
 ```
 
 ## 3. 배포
@@ -141,6 +149,7 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 ./deploy.sh
 ```
 
+- 이전 이미지는 관리 포트 분리 전이라 `/actuator/health`를 8080에서 냅니다. 그 이미지로 롤백하면 `compose.prod.yml`의 app healthcheck(18080)가 실패하므로, 롤백할 때는 healthcheck 포트도 8080으로 되돌립니다.
 - 복구한 뒤 문제를 고쳐 다시 배포할 때 `APP_IMAGE_TAG=latest`로 되돌립니다.
 - 이미 적용된 Flyway 마이그레이션은 이미지를 되돌려도 남습니다. 이전 버전과 호환되지 않는 마이그레이션(컬럼 삭제·이름 변경)은 배포 전에 확인합니다.
 
@@ -161,12 +170,13 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options 
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
+`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, `monitoring/`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
 scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
+scp -i <키 파일> -r deploy/monitoring/. ubuntu@<EIP>:/opt/paldo-gotgan/monitoring/
 scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
 
 # 서버
@@ -363,3 +373,74 @@ BFF 컨테이너는 프론트 레포가 배포합니다(프론트 레포 `deploy
 - **BFF가 없거나 죽으면 `/api/v1/**`도 502가 납니다.** nginx는 주소를 요청마다 다시 찾으므로 BFF 없이도 뜨지만, 외부 요청은 모두 실패합니다. BFF 이상은 프론트 레포에서 이미지 태그로 롤백합니다.
 - **처음 배포할 때는 이 레포를 배포한 직후 프론트 레포의 BFF를 배포합니다.** 이 레포가 `paldo-edge`를 만들어야 BFF가 붙을 수 있고, 그 사이 몇 분은 `/api/v1/**`이 502입니다.
 - 서비스 운영 전이라 앱으로 바로 보내는 전환 스위치는 두지 않았습니다. BFF를 빼고 앱으로 바로 보내야 하면 `nginx/default.conf`의 `$bff_upstream`을 `http://app:8080`으로 바꾸고 nginx를 재시작합니다. 이때 `/bff/**`은 쓸 수 없습니다.
+
+## 11. 모니터링 (#374)
+
+앱 지표를 Prometheus가 15초마다 수집하고 Grafana로 봅니다. 구성은 `app`(관리 포트 18080) → `prometheus` → `grafana`, `mysql` → `mysqld-exporter` → `prometheus`입니다. 설정 파일은 `deploy/monitoring/`에 있고 로컬 compose와 같은 파일을 씁니다.
+
+> **기존 서버는 배포 전에 서버 `.env`에 `GRAFANA_ADMIN_PASSWORD`와 `MYSQL_EXPORTER_PASSWORD`를 추가해야 합니다.** 값이 없으면 compose가 `... 필요하다`로 실패해 배포가 막힙니다. 비밀번호는 `openssl rand -base64 24`로 만들고, `MYSQL_EXPORTER_PASSWORD`는 영문·숫자·`+/=_-`만 씁니다(SQL과 설정 파일에 그대로 들어가므로 따옴표·백슬래시·`$`는 쓰지 않습니다).
+
+> **이 변경을 처음 배포하면 mysql 컨테이너가 한 번 다시 만들어져 DB가 잠깐 끊깁니다.** 슬로우 쿼리 로그 설정(`command`)이 새로 생기기 때문입니다. 데이터는 `/data/mysql`에 있어 그대로이고, app은 재연결합니다. 점검 시간에 배포합니다.
+
+### 처음 켜기 (서버당 1회)
+
+```bash
+# 로컬: 새 배포 파일 복사 (6절)
+scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
+scp -i <키 파일> -r deploy/monitoring/. ubuntu@<EIP>:/opt/paldo-gotgan/monitoring/
+
+# 서버
+cd /opt/paldo-gotgan
+chmod +x monitoring/create-exporter-user.sh
+vi .env     # GRAFANA_ADMIN_PASSWORD, MYSQL_EXPORTER_PASSWORD 추가
+# 저장 폴더를 컨테이너 사용자가 쓸 수 있게 한다 (없으면 도커가 root 소유로 만들어 prometheus·grafana가 기동에 실패한다)
+sudo mkdir -p /data/prometheus /data/grafana
+sudo chown 65534:65534 /data/prometheus    # prometheus 컨테이너 사용자(nobody)
+sudo chown 472:472 /data/grafana           # grafana 컨테이너 사용자
+./deploy.sh
+monitoring/create-exporter-user.sh         # mysqld-exporter용 조회 전용 DB 계정
+```
+
+- `create-exporter-user.sh`는 `.env`의 `MYSQL_EXPORTER_PASSWORD`로 계정 `exporter`를 만들거나 비밀번호를 맞춥니다(몇 번 실행해도 같은 결과). 처음 한 번과 비밀번호를 바꿀 때 실행합니다. 비밀번호를 바꿨다면 `.env`를 고친 뒤 `./deploy.sh`로 exporter를 다시 띄우고 이 스크립트를 실행합니다.
+  - initdb에 넣지 않은 이유: initdb는 빈 데이터 디렉터리에서 처음 뜰 때만 돌아서 이미 운영 중인 DB에는 실행되지 않습니다.
+  - 권한은 `PROCESS`, `REPLICATION CLIENT`(전역)과 `performance_schema` 조회뿐이고 동시 접속은 3개로 제한합니다. exporter가 계정이 없어도 컨테이너는 뜨고 `mysql_up`만 0입니다.
+- Grafana에는 MySQL 데이터소스를 만들지 않습니다. MySQL 지표는 mysqld-exporter → Prometheus로 보므로 Grafana가 DB 계정을 가질 필요가 없습니다(이슈의 "Grafana DB 조회 계정 분리"는 이렇게 충족합니다).
+- `GRAFANA_ADMIN_PASSWORD`는 Grafana DB가 처음 만들어질 때만 쓰입니다. 나중에 바꾸려면 `docker compose -f compose.prod.yml exec grafana grafana cli admin reset-admin-password '<새 비밀번호>'`를 실행합니다(명령행에 남으므로 쓴 뒤 `history -c`).
+
+### 접속 (SSH 터널)
+
+Grafana(3000)와 Prometheus(9090)는 서버의 `127.0.0.1`에만 열려 있고 nginx에는 연결하지 않습니다. 내 PC에서 터널을 열어 봅니다.
+
+```bash
+ssh -i <키 파일> -L 3000:localhost:3000 -L 9090:localhost:9090 ubuntu@<EIP>
+# 브라우저: http://localhost:3000 (Grafana, 로그인 admin / GRAFANA_ADMIN_PASSWORD), http://localhost:9090 (Prometheus)
+```
+
+- 대시보드 `paldo-gotgan 개요`가 자동 등록됩니다. 상단 `application`·`instance` 변수로 모듈·인스턴스를 좁힙니다. MySQL 행은 이 변수와 무관합니다.
+- mysqld-exporter(9104)와 앱 관리 포트(18080)는 호스트에 열지 않습니다. Prometheus가 compose 네트워크로만 가져갑니다.
+- Prometheus가 수집을 못 하면 `http://localhost:9090/targets`에서 대상 상태와 오류를 봅니다.
+
+### 수집 대상 추가 (모듈별 서버)
+
+수집 대상은 `monitoring/prometheus/targets/prod/*.yml`에 있습니다(`prometheus.yml`은 고치지 않습니다). 모듈별 서버로 나뉘면 `app.yml`의 `targets`에 주소를 추가합니다.
+
+```yaml
+- targets: ['app:18080', 'wallet:18080']
+```
+
+파일을 서버에 복사하면 Prometheus가 재시작 없이 반영합니다. 앱이 `application` 라벨을 직접 달아 모듈이 구분되므로 대상 파일의 `labels`에 `application`을 넣지 않습니다.
+
+### 저장·보존
+
+- Prometheus: 7일 또는 2GB 중 먼저 닿는 쪽에서 오래된 지표부터 지웁니다. 저장 위치는 `/data/prometheus`(MySQL과 같은 EBS)이고 인스턴스를 교체해도 남습니다.
+- Grafana: `/data/grafana`. 대시보드는 `monitoring/grafana/dashboards/*.json` 파일로만 고칩니다(화면에서 고쳐도 저장되지 않습니다).
+
+### 슬로우 쿼리 로그
+
+MySQL에 `--slow_query_log=ON --long_query_time=1 --log_slow_extra=ON`을 줘서 1초 이상 걸린 쿼리를 `/var/lib/mysql/slow.log`(호스트의 `/data/mysql/slow.log`)에 남깁니다. 개수는 대시보드의 `슬로우 쿼리` 패널(`mysql_global_status_slow_queries`)로 봅니다. 1초는 부하테스트에서 병목 쿼리만 골라내려는 값이고, 더 잘게 보려면 `compose.prod.yml`의 `--long_query_time`을 낮춥니다(mysql가 다시 만들어집니다).
+
+```bash
+docker compose -f compose.prod.yml exec mysql tail -n 50 /var/lib/mysql/slow.log
+```
+
+로그는 자동으로 줄지 않으므로 부하테스트 뒤 용량이 커졌다면 `docker compose -f compose.prod.yml exec mysql sh -c ': > /var/lib/mysql/slow.log'`로 비웁니다.

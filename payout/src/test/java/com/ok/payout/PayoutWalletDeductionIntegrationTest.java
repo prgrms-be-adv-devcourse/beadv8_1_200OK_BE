@@ -2,7 +2,7 @@ package com.ok.payout;
 
 import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.payout.domain.PayoutWalletDeduction;
-import com.ok.payout.repository.PayoutWalletDeductionRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +45,7 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private PayoutWalletDeductionRepository repository;
+    private PayoutWalletDeductionJpaRepository repository;
 
     // 이 테스트에서 쓴 주문 ID (정리할 때 이 주문의 행만 지움)
     private final List<Long> usedOrderIds = new ArrayList<>();
@@ -97,6 +97,24 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
         // 2) 차감 기록은 그대로 1건
         assertThat(countDeductions(orderId)).isEqualTo(1);
         // 3) 중복이 실패(FAILED)로 남지 않음
+        assertThat(countPublications(orderId, "FAILED")).isZero();
+    }
+
+    @Test
+    void 금액이_음수인_지갑_차감_이벤트는_기록하지_않고_실패로_남지_않는다() {
+        // given: 값이 틀린 이벤트 (공용 이벤트 생성자는 음수를 막지 않으므로 입구가 걸러야 한다)
+        Long orderId = nextOrderId();
+        WalletPaymentCompletedEvent event = new WalletPaymentCompletedEvent(orderId, BUYER_ID, -1L, PAID_AT);
+
+        // when
+        publishInTransaction(event);
+
+        // then
+        // 1) 리스너가 정상 종료(COMPLETED)할 때까지 기다림 → 처리를 끝냈다는 증거. 이 뒤에야 "기록 없음"이 의미가 있다
+        await().atMost(TIMEOUT).until(() -> countPublications(orderId, "COMPLETED") == 1);
+        // 2) 차감 기록은 남기지 않음
+        assertThat(repository.existsByOrderId(orderId)).isFalse();
+        // 3) 실패(FAILED)로 남지 않아 재처리 대상이 아님
         assertThat(countPublications(orderId, "FAILED")).isZero();
     }
 

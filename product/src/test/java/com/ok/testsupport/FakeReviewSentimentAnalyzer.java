@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import com.ok.product.review.client.ReviewAnalysisFailedException;
+import com.ok.product.review.client.ReviewAnalyzerUnavailableException;
 import com.ok.product.review.client.ReviewSentimentAnalyzer;
 import com.ok.product.review.client.ReviewSentimentCriteria;
 import com.ok.product.review.domain.AspectSentiment;
@@ -23,7 +24,7 @@ import com.ok.product.review.service.dto.ReviewSentimentInput;
  * 외부 감성 분석 서비스 대신 리뷰 본문마다 넣어 둔 결과를 돌려주는 Fake.
  * {@link FakeOrderApiClient}처럼 {@code AbstractIntegrationTest}의 {@code @ComponentScan}이 주워 가고, {@code @Primary}로 운영 분석기를 대신한다.
  * 실제 분석기처럼 결과에 {@code product} 리소스에서 읽은 분류 기준 버전을 담는다.
- * 테스트가 {@link #respond}, {@link #fail}, {@link #failRetryable}로 본문별 결과를 넣고, 끝나면 {@link #clear}로 비운다.
+ * 테스트가 {@link #respond}, {@link #fail}, {@link #failRetryable}, {@link #failUnavailable}로 본문별 결과를 넣고, 끝나면 {@link #clear}로 비운다.
  */
 @Component
 @Primary
@@ -35,6 +36,7 @@ public class FakeReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 	private final Map<String, ReviewSentimentAnalysis> results = new ConcurrentHashMap<>();
 	private final Set<String> failures = ConcurrentHashMap.newKeySet();
 	private final Set<String> retryableFailures = ConcurrentHashMap.newKeySet();
+	private final Set<String> unavailableFailures = ConcurrentHashMap.newKeySet();
 	private final List<String> analyzedContents = new CopyOnWriteArrayList<>();
 
 	public FakeReviewSentimentAnalyzer(ReviewSentimentCriteria criteria) {
@@ -58,6 +60,11 @@ public class FakeReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 		retryableFailures.add(content);
 	}
 
+	// 인증 거절처럼 분석기를 쓸 수 없는 실패다
+	public void failUnavailable(String content) {
+		unavailableFailures.add(content);
+	}
+
 	// 분석기를 부르지 않아야 하는 리뷰(삭제·내용 없음)를 확인하려고 분석한 본문을 남긴다
 	public List<String> analyzedContents() {
 		return List.copyOf(analyzedContents);
@@ -67,6 +74,7 @@ public class FakeReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 		results.clear();
 		failures.clear();
 		retryableFailures.clear();
+		unavailableFailures.clear();
 		analyzedContents.clear();
 	}
 
@@ -75,6 +83,9 @@ public class FakeReviewSentimentAnalyzer implements ReviewSentimentAnalyzer {
 		analyzedContents.add(input.content());
 		if (failures.contains(input.content())) {
 			throw ReviewAnalysisFailedException.finalFailure("Fake 분석 실패", null);
+		}
+		if (unavailableFailures.contains(input.content())) {
+			throw new ReviewAnalyzerUnavailableException("Fake 감성 분석기 인증 거절", null);
 		}
 		if (retryableFailures.contains(input.content())) {
 			throw ReviewAnalysisFailedException.retryable("Fake 일시 오류", null);

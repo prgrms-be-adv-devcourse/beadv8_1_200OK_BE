@@ -78,6 +78,25 @@ class DeliveryModuleTest {
     }
 
     @Test
+    void 무료배송_기준이_없는_판매자의_결제_완료_이벤트도_처리해_부과_배송비를_저장한다(Scenario scenario) {
+        // given
+        Long orderId = 9_400_003L;
+        OrderPaidEvent event = new OrderPaidEvent(orderId, 1L, LocalDateTime.of(2026, 10, 19, 10, 0),
+                new ShippingAddress("홍길동", "010-1234-5678", "06236", "주소", "상세 주소", null),
+                List.of(new PaidSellerOrder(10L, 3_000L, null, 0L,
+                        List.of(new PaidOrderItem(orderId * 10 + 1, "상품", null, 1, 10_000_000L)))));
+
+        // when
+        scenario.publish(event)
+                .andWaitForStateChange(() -> countShipments(orderId), count -> count == 1);
+
+        // then
+        Integer chargedShippingFee = jdbcTemplate.queryForObject(
+                "SELECT charged_shipping_fee FROM shipment WHERE order_id = ?", Integer.class, orderId);
+        assertThat(chargedShippingFee).isEqualTo(3_000);
+    }
+
+    @Test
     void 같은_결제_완료_이벤트를_두_번_받아도_판매자별_shipment는_한_건이다(Scenario scenario) {
         // given
         Long orderId = 9_400_002L;

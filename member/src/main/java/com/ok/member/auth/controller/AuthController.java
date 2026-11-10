@@ -4,6 +4,7 @@ import com.ok.member.auth.controller.dto.LoginRequest;
 import com.ok.member.auth.controller.dto.TokenReissueRequest;
 import com.ok.member.auth.controller.dto.TokenResponse;
 import com.ok.member.auth.service.AuthService;
+import com.ok.member.auth.service.LoginFacade;
 import com.ok.member.auth.service.dto.TokenResult;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,12 +19,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AuthController implements AuthControllerSpec {
 
+    private final LoginFacade loginFacade;
     private final AuthService authService;
 
     @Override
     @PostMapping("/login")
     public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
-        TokenResult result = authService.login(request.toCommand());
+        TokenResult result = loginFacade.login(request.toCommand());
         return ResponseEntity.ok(TokenResponse.from(result));
     }
 
