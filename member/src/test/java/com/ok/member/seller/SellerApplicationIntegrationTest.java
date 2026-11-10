@@ -1,13 +1,13 @@
 package com.ok.member.seller;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
+import com.ok.member.seller.application.service.SellerApplicationDuplicateValidator;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
-import com.ok.member.seller.application.service.SellerApplicationDuplicateValidator;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -18,8 +18,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -67,7 +67,7 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
     JsonMapper jsonMapper;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;

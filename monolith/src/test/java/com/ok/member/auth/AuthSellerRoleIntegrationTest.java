@@ -1,15 +1,14 @@
 package com.ok.member.auth;
 
-import com.ok.PaldoGotganApplication;
-import org.springframework.boot.test.context.SpringBootTest;
 import com.jayway.jsonpath.JsonPath;
+import com.ok.PaldoGotganApplication;
 import com.ok.common.security.TokenClaims;
 import com.ok.member.auth.repository.RefreshTokenRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -52,7 +52,7 @@ class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;

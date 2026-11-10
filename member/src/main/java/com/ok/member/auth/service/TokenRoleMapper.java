@@ -1,7 +1,6 @@
 package com.ok.member.auth.service;
 
 import com.ok.common.security.TokenRoles;
-import com.ok.member.member.domain.MemberType;
 
 import java.util.List;
 
@@ -25,17 +24,15 @@ final class TokenRoleMapper {
     }
 
     /**
+     * @param admin          관리자 계정인지. 회원 유형은 회원 도메인이 판단해 넘긴다
      * @param approvedSeller 판매자 승인을 받았는지. 관리자는 판매하지 않으므로 이 값과 관계없이 {@code ADMIN}만 받는다
      */
-    static List<String> toTokenRoles(MemberType type, boolean approvedSeller) {
-        if (type == null) {
-            throw new IllegalArgumentException("type은 필수입니다.");
+    static List<String> toTokenRoles(boolean admin, boolean approvedSeller) {
+        // 관리자는 운영 전용 계정이라 구매자·판매자 권한을 함께 주지 않는다
+        if (admin) {
+            return List.of(TokenRoles.ADMIN);
         }
-        return switch (type) {
-            case USER -> approvedSeller ? List.of(TokenRoles.BUYER, TokenRoles.SELLER) : List.of(TokenRoles.BUYER);
-            // 관리자는 운영 전용 계정이라 구매자·판매자 권한을 함께 주지 않는다
-            case ADMIN -> List.of(TokenRoles.ADMIN);
-        };
+        return approvedSeller ? List.of(TokenRoles.BUYER, TokenRoles.SELLER) : List.of(TokenRoles.BUYER);
     }
 
 }

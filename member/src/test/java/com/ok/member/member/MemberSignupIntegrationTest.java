@@ -1,8 +1,8 @@
 package com.ok.member.member;
 
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberType;
-import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +38,7 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;

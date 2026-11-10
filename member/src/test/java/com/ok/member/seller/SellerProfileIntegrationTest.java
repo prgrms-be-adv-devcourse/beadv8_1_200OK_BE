@@ -1,12 +1,12 @@
 package com.ok.member.seller;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
-import com.ok.member.seller.domain.SellerProfile;
-import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.adapter.out.persistence.SellerProfileJpaRepository;
 import com.ok.member.seller.application.service.SellerProfileDuplicateValidator;
+import com.ok.member.seller.domain.SellerProfile;
+import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -57,7 +57,7 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     JsonMapper jsonMapper;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     SellerProfileJpaRepository sellerProfileRepository;

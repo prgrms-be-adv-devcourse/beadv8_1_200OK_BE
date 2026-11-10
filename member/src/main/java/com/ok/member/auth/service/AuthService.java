@@ -7,9 +7,8 @@ import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.auth.service.dto.LoginCredential;
 import com.ok.member.auth.service.dto.TokenReissueCommand;
 import com.ok.member.auth.service.dto.TokenResult;
-import com.ok.member.member.domain.Member;
-import com.ok.member.member.domain.MemberStatus;
-import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.member.application.dto.MemberAuthAccount;
+import com.ok.member.member.application.port.in.MemberAuthAccountUseCase;
 import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,16 +25,16 @@ import java.util.Optional;
 @Transactional(readOnly = true)
 public class AuthService {
 
-    private final MemberRepository memberRepository;
+    private final MemberAuthAccountUseCase memberAuthAccountUseCase;
     private final AccessTokenProvider accessTokenProvider;
     private final RefreshTokenService refreshTokenService;
     private final SellerApprovalCheckUseCase sellerApprovalCheckUseCase;
 
-    public AuthService(MemberRepository memberRepository,
+    public AuthService(MemberAuthAccountUseCase memberAuthAccountUseCase,
                        AccessTokenProvider accessTokenProvider,
                        RefreshTokenService refreshTokenService,
                        SellerApprovalCheckUseCase sellerApprovalCheckUseCase) {
-        this.memberRepository = memberRepository;
+        this.memberAuthAccountUseCase = memberAuthAccountUseCase;
         this.accessTokenProvider = accessTokenProvider;
         this.refreshTokenService = refreshTokenService;
         this.sellerApprovalCheckUseCase = sellerApprovalCheckUseCase;
@@ -49,8 +48,8 @@ public class AuthService {
      * 같은 패키지의 {@link LoginFacade}만 부를 수 있게 한다.
      */
     Optional<LoginCredential> findLoginCredential(String loginId) {
-        return memberRepository.findByLoginId(loginId)
-                .map(member -> new LoginCredential(member.getId(), member.getPassword()));
+        return memberAuthAccountUseCase.findLoginCredential(loginId)
+                .map(credential -> new LoginCredential(credential.memberId(), credential.passwordHash()));
     }
 
     /**
@@ -70,14 +69,14 @@ public class AuthService {
         // 탈퇴 회원은 아이디가 익명화될 예정이라 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다.
         // 확인한 해시와 지금 해시가 다르면 bcrypt 비교 중에 비밀번호가 바뀐 것이므로 옛 비밀번호로는 발급하지 않는다.
         // 정지 회원은 비밀번호까지 맞은 본인이므로, 왜 로그인이 안 되는지 알 수 있게 별도 코드로 알린다.
-        Member member = memberRepository.findById(credential.memberId())
-                .filter(found -> !found.isWithdrawn())
-                .filter(found -> Objects.equals(found.getPassword(), credential.passwordHash()))
+        MemberAuthAccount account = memberAuthAccountUseCase.findAuthAccount(credential.memberId())
+                .filter(found -> !found.withdrawn())
+                .filter(found -> Objects.equals(found.passwordHash(), credential.passwordHash()))
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_CREDENTIALS));
-        if (member.getStatus() == MemberStatus.SUSPENDED) {
+        if (account.suspended()) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
         }
-        return createTokens(member);
+        return createTokens(account);
     }
 
     /**
@@ -102,22 +101,22 @@ public class AuthService {
         Long memberId = refreshTokenService.consume(command.refreshToken());
 
         // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다
-        Member member = memberRepository.findById(memberId)
-                .filter(found -> !found.isWithdrawn())
+        MemberAuthAccount account = memberAuthAccountUseCase.findAuthAccount(memberId)
+                .filter(found -> !found.withdrawn())
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
-        if (member.getStatus() == MemberStatus.SUSPENDED) {
+        if (account.suspended()) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
         }
-        return createTokens(member);
+        return createTokens(account);
     }
 
     // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.
     // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다
-    private TokenResult createTokens(Member member) {
-        boolean approvedSeller = sellerApprovalCheckUseCase.isApprovedSeller(member.getId());
-        List<String> roles = TokenRoleMapper.toTokenRoles(member.getType(), approvedSeller);
-        AccessToken accessToken = accessTokenProvider.issue(member.getId(), roles);
-        IssuedRefreshToken refreshToken = refreshTokenService.issue(member.getId());
+    private TokenResult createTokens(MemberAuthAccount account) {
+        boolean approvedSeller = sellerApprovalCheckUseCase.isApprovedSeller(account.memberId());
+        List<String> roles = TokenRoleMapper.toTokenRoles(account.admin(), approvedSeller);
+        AccessToken accessToken = accessTokenProvider.issue(account.memberId(), roles);
+        IssuedRefreshToken refreshToken = refreshTokenService.issue(account.memberId());
 
         return new TokenResult(accessToken.value(), accessToken.expiresAt(),
                 refreshToken.value(), refreshToken.expiresAt());

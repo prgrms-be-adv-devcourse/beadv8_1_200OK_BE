@@ -1,6 +1,6 @@
 package com.ok.member.auth.controller.dto;
 
-import com.ok.member.member.controller.dto.SignupRequest;
+import com.ok.member.member.adapter.in.web.dto.SignupRequest;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
