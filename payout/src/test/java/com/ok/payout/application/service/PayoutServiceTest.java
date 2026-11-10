@@ -389,21 +389,24 @@ class PayoutServiceTest {
     }
 
     @Test
-    void 정산이_한_건도_없으면_조회_하한은_null이다() {
-        // given: 첫 실행
-        given(payoutRepository.findFirstByOrderByIdDesc()).willReturn(Optional.empty());
+    void 조회_하한은_마지막_정기_실행_요청일에서_18일을_뺀_0시다() {
+        // given: 정산을 만든 마지막 정기 실행의 요청 시각이 10/10 02:00
+        given(payoutQueryRepository.findLastCompletedScheduledRequestedAt())
+                .willReturn(Optional.of(LocalDateTime.of(2026, 10, 10, 2, 0)));
 
         // when
         LocalDateTime from = sut.settlementFrom();
 
-        // then
-        assertThat(from).isNull();
+        // then: 10/10 − 18일 = 09/22 00:00 (시각 02:00은 버리고 날짜 시작으로), 마지막 정산 조회는 필요 없음
+        assertThat(from).isEqualTo(LocalDateTime.of(2026, 9, 22, 0, 0));
+        then(payoutRepository).should(never()).findFirstByOrderByIdDesc();
     }
 
     @Test
-    void 조회_하한은_마지막_정산일에서_대기_15일과_여유_3일을_뺀_0시다() {
-        // given: 마지막 정산이 10/09 02:00에 생성됨
+    void 정기_실행_기록이_없으면_마지막_정산일에서_18일을_뺀_0시다() {
+        // given: 정기 실행 기록은 없고(배치 기록 삭제 등) 마지막 정산이 10/09 02:00에 생성됨
         // Payout.forSeller()로 만든 객체는 created_at이 비어 있으므로(저장 시 Auditing이 채움) 가짜 Payout을 사용
+        given(payoutQueryRepository.findLastCompletedScheduledRequestedAt()).willReturn(Optional.empty());
         Payout lastPayout = mock(Payout.class);
         given(lastPayout.getCreatedAt()).willReturn(LocalDateTime.of(2026, 10, 9, 2, 0));
         given(payoutRepository.findFirstByOrderByIdDesc()).willReturn(Optional.of(lastPayout));
@@ -411,8 +414,21 @@ class PayoutServiceTest {
         // when
         LocalDateTime from = sut.settlementFrom();
 
-        // then: 10/09 − 18일 = 09/21 00:00 (시각 02:00은 버리고 날짜 시작으로)
+        // then: 10/09 − 18일 = 09/21 00:00
         assertThat(from).isEqualTo(LocalDateTime.of(2026, 9, 21, 0, 0));
+    }
+
+    @Test
+    void 정기_실행도_정산도_없으면_조회_하한은_null이다() {
+        // given: 첫 실행
+        given(payoutQueryRepository.findLastCompletedScheduledRequestedAt()).willReturn(Optional.empty());
+        given(payoutRepository.findFirstByOrderByIdDesc()).willReturn(Optional.empty());
+
+        // when
+        LocalDateTime from = sut.settlementFrom();
+
+        // then
+        assertThat(from).isNull();
     }
 
     // ---------- 막아 둔 API: 1건 수동 실행, 수동 조정 ----------

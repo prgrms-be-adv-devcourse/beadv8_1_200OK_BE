@@ -64,7 +64,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build-logic의 ok.java-conventions)과 Hibernate 시간대(application-test.yml)가
 //   모두 Asia/Seoul로 고정되어(#93), JPA가 저장·조회하는 시각과 기준이 같기 때문이다
 // - 결과 확인은 JPA 리포지토리로 한다 (팀 규칙). JDBC는 데이터 준비·정리에만 쓴다
-// - 정산·스냅샷·draft는 이 클래스만 만들고 "마지막 정산일"이 범위 계산에 쓰이므로, 테스트 전후로 전부 비운다
+// - 정산·스냅샷·draft는 이 클래스만 만들고 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다
 class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 이 클래스 전용 주문항목 ID 번호대 (PayoutCandidateIntegrationTest는 주문항목 9_000_000, 주문 9_500_000부터 사용)
@@ -870,6 +870,111 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(secondSnapshotId))
                 .extracting(Payout::getPayeeId, Payout::getAmount)
                 .containsExactly(tuple(20L, 19_400L));
+    }
+
+    // #390: 정기 실행이 BATCH_JOB_EXECUTION_PARAMS에 실제로 저장한 requestedAt을 쿼리가 읽고 파싱해 하한을 구하는지 확인함
+    // 기대값은 첫 실행의 requestedAt 파라미터에서 계산하고, 저장된 글자를 읽어 파싱하는 일은 조회 쿼리가 함
+    // 대체 경로(마지막 정산 생성일)로도 같은 값이 나오면 쿼리를 안 써도 통과하므로, 정산 생성일을 requestedAt과 다른 날로 옮겨 둠
+    @Test
+    void 두_번째_정기_실행의_조회_하한은_첫_정기_실행_요청일에서_18일을_뺀_날이다() throws Exception {
+        // given: 첫 정기 실행이 정산을 실제로 만듦 (정산이 없으면 하한 기준이 되지 않아 검증이 의미 없음)
+        givenSettleableOrder(10L);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
+        LocalDateTime firstRequestedAt = (LocalDateTime) first.getJobParameters().getParameter("requestedAt").value();
+
+        // 정산 엔티티는 생성일을 바꿀 수 없어(불변) SQL로 옮김: 정산 생성일 날짜가 요청일 날짜와 같으면 대체 경로와 구분이 안 됨
+        LocalDateTime backdatedCreatedAt = firstRequestedAt.minusDays(10);
+        backdatePayoutCreatedAt(firstSnapshotId, backdatedCreatedAt);
+
+        // when
+        JobExecution second = payoutJobRunner.runScheduled();
+
+        // then: 요청일 기준 값이어야 하고, 대체 경로(정산 생성일 기준) 값이면 안 됨
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(second)).orElseThrow();
+        LocalDateTime fromRequestedAt = firstRequestedAt.toLocalDate().minusDays(18).atStartOfDay();
+        LocalDateTime fromFallback = backdatedCreatedAt.toLocalDate().minusDays(18).atStartOfDay();
+        assertThat(fromRequestedAt).isNotEqualTo(fromFallback);
+        assertThat(sut.getPeriodFrom()).isEqualTo(fromRequestedAt).isNotEqualTo(fromFallback);
+    }
+
+    // #390 D5: 정산·스냅샷은 지워지고 BATCH 실행 기록만 남은 실행이 하한 기준이 되면 안 됨
+    // 고아 실행 기록이 하한을 정하면 "요청일 − 18일"이고, 맞는 답은 대체 경로의 "남은 정산 생성일 − 18일"이라 둘이 다르게 만들어 둠
+    // 함께 확인: 하한이 과거로 내려가 조회 기간이 넓어져도 이미 정산된 후보는 다시 정산되지 않음 (지금 동작 유지)
+    @Test
+    void 정산이_지워진_실행_기록만_남으면_하한은_남은_정산_생성일_기준이다() throws Exception {
+        // given: 1회차는 정산을 만들되 MANUAL로 바꿔 하한 기준에서 빼고, 정산은 대체 경로(남은 정산 생성일)용으로 남기며 생성일을 옮김
+        long firstOrderId = givenSettleableOrder(10L);
+        List<Long> firstCandidateIds = candidateIdsOf(firstOrderId);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
+        LocalDateTime firstRequestedAt = (LocalDateTime) first.getJobParameters().getParameter("requestedAt").value();
+        LocalDateTime backdatedCreatedAt = firstRequestedAt.minusDays(10);
+        backdatePayoutCreatedAt(firstSnapshotId, backdatedCreatedAt);
+        jdbcTemplate.update("UPDATE payout_snapshot SET run_type = 'MANUAL' WHERE id = ?", firstSnapshotId);
+
+        // given: 2회차가 정산을 만든 뒤 그 정산·스냅샷만 지움 (BATCH_* 기록은 고아로 남음: 정기·COMPLETED·1회차보다 최신)
+        givenSettleableOrder(20L);
+        JobExecution second = payoutJobRunner.runScheduled();
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long secondSnapshotId = snapshotIdOf(second);
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isNotEmpty();
+        deleteSnapshotRows(secondSnapshotId);
+        assertThat(snapshotRepository.findById(secondSnapshotId)).isEmpty();
+        LocalDateTime secondRequestedAt = (LocalDateTime) second.getJobParameters().getParameter("requestedAt").value();
+
+        // when
+        JobExecution third = payoutJobRunner.runScheduled();
+
+        // then: 고아 기록(2회차 요청일 기준)이 아니라 남은 정산(1회차 정산 생성일) 기준이어야 함
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(third)).orElseThrow();
+        LocalDateTime expected = backdatedCreatedAt.toLocalDate().minusDays(18).atStartOfDay();
+        LocalDateTime orphanAnswer = secondRequestedAt.toLocalDate().minusDays(18).atStartOfDay();
+        assertThat(expected).isNotEqualTo(orphanAnswer);
+        assertThat(sut.getPeriodFrom()).isEqualTo(expected).isNotEqualTo(orphanAnswer);
+
+        // then: 3회차 조회 기간이 1회차 후보(20일 전 생성)를 포함하도록 넓어졌는데도, 이미 정산된 1회차 후보는 다시 정산되지 않음
+        // 먼저 후보가 3회차 기간 안에 있음을 확인해야 아래 검증이 의미 있음 (기간 밖이라 빠진 것이면 통과해도 증명이 안 됨)
+        for (Long candidateId : firstCandidateIds) {
+            LocalDateTime candidateCreatedAt = candidateRepository.findById(candidateId).orElseThrow().getCreatedAt();
+            assertThat(candidateCreatedAt).isBetween(sut.getPeriodFrom(), sut.getPeriodTo());
+        }
+        List<Long> thirdSnapshotCandidateIds = new ArrayList<>();
+        for (PayoutSnapshotItem item : snapshotItemRepository.findBySnapshotId(snapshotIdOf(third))) {
+            thirdSnapshotCandidateIds.add(item.getCandidateId());
+        }
+        assertThat(thirdSnapshotCandidateIds).doesNotContainAnyElementsOf(firstCandidateIds);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(third)))
+                .extracting(Payout::getPayeeId).doesNotContain(10L);   // 1회차 판매자의 정산은 3회차에 다시 생기지 않음
+    }
+
+    private void backdatePayoutCreatedAt(Long snapshotId, LocalDateTime createdAt) {
+        jdbcTemplate.update("UPDATE payout SET created_at = ? WHERE snapshot_id = ?", createdAt, snapshotId);
+    }
+
+    // 한 스냅샷의 정산·draft·실패·스냅샷 행만 지움 (FK 때문에 자식 테이블 먼저, 다른 실행의 행은 그대로)
+    private void deleteSnapshotRows(Long snapshotId) {
+        jdbcTemplate.update("DELETE FROM payout_item WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_seller_draft_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_seller_draft WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_system_draft_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_failure WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_snapshot_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_snapshot WHERE id = ?", snapshotId);
+    }
+
+    // 생성 20일 전(15일 지남) 판매 대금·수수료 후보를 넣어 정기 실행이 정산을 만들게 함
+    private long givenSettleableOrder(long sellerId) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderItemId = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderItemId, sellerId, 300L, createdAt);
+        return orderItemId;   // candidateIdsOf(주문 ID)에 그대로 넘길 수 있음 (이 테스트는 주문 ID = 주문항목 ID)
     }
 
     // 필수 파라미터 검사는 Job 시작 전(PayoutJobParametersValidator)에 하므로, 잘못된 실행이 FAILED 기록으로 남지 않아야 함

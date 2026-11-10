@@ -704,7 +704,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
     }
 
-    // 정산 결과는 이 클래스와 PayoutSettleIntegrationTest만 만들고 "마지막 정산일"이 배치 기간 계산에 쓰이므로 전부 비움
+    // 정산 결과는 이 클래스와 PayoutSettleIntegrationTest만 만들고 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해져, 정산·스냅샷을 비우지 않으면 배치 기간 계산이 남은 기준을 따르므로 전부 비움
     // 정산후보는 이 클래스 번호대만 지움 (다른 테스트의 후보를 건드리지 않도록)
     private void cleanUp() {
         jdbcTemplate.update("DELETE FROM payout_item");
