@@ -17,8 +17,10 @@ import java.time.LocalDateTime;
 
 import static jakarta.persistence.GenerationType.IDENTITY;
 
-// 정산 1건을 Kafka로 보내기 위한 발송 대기 기록 (outbox)
-// 메시지 본문은 저장하지 않음: payout은 바뀌지 않으므로 보낼 때 payout에서 읽음
+/**
+ * 정산 1건을 Kafka로 보내기 위한 발송 대기 기록(outbox)을 나타낸다.
+ * 메시지 본문은 저장하지 않는다. payout은 바뀌지 않으므로 보낼 때 payout에서 읽는다.
+ */
 @Entity
 @Table(name = "payout_outbox", catalog = PayoutSchema.NAME)
 @Getter
