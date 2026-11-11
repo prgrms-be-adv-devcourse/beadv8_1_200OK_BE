@@ -129,6 +129,7 @@ class PayoutJobRunnerTest {
 
         // then
         LockConfiguration config = lockProvider.requested;
+        assertThat(config).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(config.getName()).isEqualTo("payoutJob");
             softly.assertThat(config.getLockAtLeastFor()).isEqualTo(Duration.ZERO);

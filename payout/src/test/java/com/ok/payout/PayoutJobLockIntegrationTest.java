@@ -238,6 +238,11 @@ class PayoutJobLockIntegrationTest extends AbstractIntegrationTest {
                 // 진 쪽은 곧바로 거절되고, 이긴 쪽은 표 잠금에 막혀 잠금을 쥔 채 머묾
                 rejected = waitUntilOneDone(futures);
                 assertThat(isLockHeld()).isTrue();
+                // 앱이 실제로 쓴 잠금 행의 유지 시간이 5분(lockAtMostFor)이어야 죽은 서버의 잠금이 5분 뒤 풀린다는 뜻이 됨
+                Long heldMicros = jdbcTemplate.queryForObject(
+                        "SELECT TIMESTAMPDIFF(MICROSECOND, locked_at, lock_until) FROM " + LOCK_TABLE + " WHERE name = ?",
+                        Long.class, PAYOUT_JOB_NAME);
+                assertThat(heldMicros).isEqualTo(300_000_000L);
                 assertThatThrownBy(rejected::get)
                         .isInstanceOf(ExecutionException.class)
                         .cause()

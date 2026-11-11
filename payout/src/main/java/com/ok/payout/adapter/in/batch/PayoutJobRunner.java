@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.exception.PayoutErrorCode;
+import net.javacrumbs.shedlock.core.ClockProvider;
 import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 import org.springframework.batch.core.job.Job;
@@ -108,8 +109,9 @@ public class PayoutJobRunner {
                 .addLocalDateTime("requestedAt", requestedAt)
                 .addString("runType", runType.name(), false)
                 .toJobParameters();
+        // KeepAliveLockProvider가 만료를 ShedLock 자체 시계로 판단하므로, 주입 Clock이 달라도 연장이 끊기지 않게 같은 시계를 씀
         LockConfiguration lockConfig = new LockConfiguration(
-                clock.instant(), LOCK_NAME, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR);
+                ClockProvider.now(), LOCK_NAME, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR);
 
         LockingTaskExecutor.TaskResult<JobExecution> result;
         try {
