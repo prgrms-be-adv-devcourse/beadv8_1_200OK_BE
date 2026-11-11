@@ -1,6 +1,5 @@
-package com.ok.member.auth.repository;
+package com.ok.member.auth.adapter.out.persistence;
 
-import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
 import com.ok.member.auth.application.service.RefreshTokenService;
 import com.ok.member.auth.application.service.TokenHasher;
 import com.ok.member.auth.domain.IssuedRefreshToken;

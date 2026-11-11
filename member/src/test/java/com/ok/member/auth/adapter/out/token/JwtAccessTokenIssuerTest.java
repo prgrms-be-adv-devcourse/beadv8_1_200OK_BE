@@ -1,4 +1,4 @@
-package com.ok.member.auth.application.service;
+package com.ok.member.auth.adapter.out.token;
 
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -14,7 +14,6 @@ import com.ok.common.config.JwtProperties;
 import com.ok.common.config.RsaPemKeys;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.security.TokenRoles;
-import com.ok.member.auth.adapter.out.token.JwtAccessTokenIssuer;
 import com.ok.member.auth.config.JwtEncoderConfig;
 import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.member.auth.domain.AccessToken;
