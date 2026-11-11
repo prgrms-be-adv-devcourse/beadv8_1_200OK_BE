@@ -7,6 +7,8 @@ import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
+import com.ok.refund.application.port.out.WalletRefundRequest;
+import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
@@ -37,6 +39,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
@@ -58,12 +61,15 @@ class DecideRefundServiceTest {
     OrderQueryPort orderQueryPort;
     @Mock
     RefundPersistencePort refundPersistencePort;
+    @Mock
+    WalletRefundRequestPort walletRefundRequestPort;
 
     DecideRefundService sut;
 
     @BeforeEach
     void setUp() {
-        sut = new DecideRefundService(orderQueryPort, refundPersistencePort, CLOCK, new NoOpTransactionManager());
+        sut = new DecideRefundService(orderQueryPort, refundPersistencePort, walletRefundRequestPort, CLOCK,
+                new NoOpTransactionManager());
     }
 
     // 아래 다섯 테스트는 예전 파사드 테스트에서 옮겼다. 주문 호출 여부와 승인 전 확인 순서를 decide 전체 흐름으로 본다
@@ -413,6 +419,98 @@ class DecideRefundServiceTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_NOT_FOUND));
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
         then(refundPersistencePort).should(never()).update(any());
+    }
+
+    // 지갑 반환 요청(#512). 승인이 커밋된 뒤 처리 중이 된 환불만, 돌려줄 돈이 있을 때만 보낸다.
+    // 보내는지 여부와 넘긴 값 자체가 요구사항이라(돈이 나가는 약속) 호출과 값을 확인한다
+
+    @Test
+    void 승인해서_처리_중이_되면_돌려줄_금액으로_지갑에_반환을_요청한다() {
+        // given: 양말 2개(10,000원씩)를 모두 취소해 묶음 전부 취소다. 상품 20,000원 + 낸 배송비 3,000원 = 23,000원을 돌려준다
+        givenLockedBundle(requested());
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2));
+
+        // then
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        ArgumentCaptor<WalletRefundRequest> captor = ArgumentCaptor.forClass(WalletRefundRequest.class);
+        then(walletRefundRequestPort).should().requestRefund(captor.capture());
+        WalletRefundRequest sent = captor.getValue();
+        assertThat(sent).isNotNull();
+        // 같은 Long 필드가 넷이라 서로 다른 값으로 확인한다(뒤바뀌면 다른 사람에게 돈이 간다)
+        assertSoftly(softly -> {
+            softly.assertThat(sent.refundId()).isEqualTo(REFUND_ID);
+            softly.assertThat(sent.orderId()).isEqualTo(10L);
+            softly.assertThat(sent.buyerId()).isEqualTo(BUYER_ID);
+            softly.assertThat(sent.sellerId()).isEqualTo(SELLER_ID);
+            softly.assertThat(sent.amount()).isEqualTo(23_000L);
+        });
+    }
+
+    // 승인 버튼으로 왔어도 출고된 상품이면 자동 거절로 끝난다. 거절된 환불에 돈이 나가면 안 된다
+    @Test
+    void 승인_때_출고돼_자동_거절되면_지갑에_요청하지_않는다() {
+        // given
+        givenLockedBundle(requested());
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, socks("SHIPPING", 2));
+
+        // then
+        assertThat(result.status()).isEqualTo("REJECTED");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+    }
+
+    // 출고 거절과 다른 경로다(배송비 판단 뒤 거절). 이유가 달라 따로 확인한다
+    @Test
+    void 승인_때_배송비가_모자라_자동_거절되면_지갑에_요청하지_않는다() {
+        // given
+        givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 1_000L, null));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, cheapItemInFreeBundle());
+
+        // then
+        assertThat(result.status()).isEqualTo("REJECTED");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+    }
+
+    @Test
+    void 돌려줄_금액이_0원이면_지갑에_요청하지_않고_처리_중으로_승인한다() {
+        // given: 무료배송(기준 30,000원) 묶음에서 3,000원 상품을 취소하면 27,000원이 남아 무료배송이 깨진다.
+        // 기본 배송비 3,000원을 빼면 3,000 - 3,000 = 0원 환불이다. 받을 수는 있다(취소 금액 = 뺄 배송비)
+        givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "컵", "흰색", 3_000L, null));
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L,
+                List.of(new BundleItem(101L, 3_000L, 1), new BundleItem(102L, 27_000L, 1)));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, orderItem(101L, 3_000L, 1, bundle));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.status()).isEqualTo("PROCESSING");
+            softly.assertThat(result.deductedShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(result.refundAmount()).isZero();
+        });
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+    }
+
+    // 승인은 이미 커밋된 뒤라 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 돈은 나가지 않으므로 그대로 올린다.
+    // 실패 기록(WALLET)과 다시 보내기는 #516이 맡는다
+    @Test
+    void 지갑_요청이_실패하면_예외를_그대로_올리고_처리_중_저장은_이미_끝나_있다() {
+        // given
+        givenLockedBundle(requested());
+        IllegalStateException failure = new IllegalStateException("지갑 반환 요청 발행에 실패했습니다. refundId=" + REFUND_ID);
+        willThrow(failure).given(walletRefundRequestPort).requestRefund(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
+                .isSameAs(failure);
+        Refund updated = capturedUpdate();
+        assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
     }
 
     private static Refund requested() {
