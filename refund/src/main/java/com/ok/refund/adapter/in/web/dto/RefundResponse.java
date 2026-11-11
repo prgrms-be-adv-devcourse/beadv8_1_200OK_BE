@@ -20,10 +20,10 @@ public record RefundResponse(
         @Schema(description = "주문 상품 ID", example = "101")
         Long orderItemId,
 
-        @Schema(description = "상품명", example = "양말")
+        @Schema(description = "상품명", example = "감자")
         String productName,
 
-        @Schema(description = "옵션명", example = "흰색")
+        @Schema(description = "옵션명", example = "1kg")
         String optionName,
 
         @Schema(description = "취소 개수", example = "1")

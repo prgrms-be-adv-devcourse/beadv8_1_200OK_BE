@@ -70,6 +70,6 @@ class RefundableOrderItemTest {
 
     private static RefundableOrderItem orderItemWithStatus(String status) {
         BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L, List.of(new BundleItem(101L, 10_000L, 3)));
-        return new RefundableOrderItem(10L, 101L, 1L, 5L, 55L, "양말", "흰색", status, 10_000L, 3, bundle);
+        return new RefundableOrderItem(10L, 101L, 1L, 5L, 55L, "감자", "1kg", status, 10_000L, 3, bundle);
     }
 }

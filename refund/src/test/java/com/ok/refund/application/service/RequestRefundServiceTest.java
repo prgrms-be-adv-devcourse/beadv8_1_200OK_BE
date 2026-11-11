@@ -51,7 +51,7 @@ class RequestRefundServiceTest {
     @Test
     void 요청하면_주문에서_받은_값으로_요청됨을_저장한다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
@@ -75,7 +75,7 @@ class RequestRefundServiceTest {
     @Test
     void 남의_주문이면_없는_주문처럼_막는다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         RefundRequestCommand otherBuyer = new RefundRequestCommand(OTHER_BUYER_ID, 10L, 101L, 1, null);
 
         // when & then
@@ -88,7 +88,7 @@ class RequestRefundServiceTest {
     @Test
     void 출고_전이_아니면_막는다() {
         // given
-        givenOrderItem(socks("SHIPPING", 3));
+        givenOrderItem(potato("SHIPPING", 3));
 
         // when & then
         assertThatThrownBy(() -> sut.request(command(1)))
@@ -100,7 +100,7 @@ class RequestRefundServiceTest {
     @Test
     void 산_개수보다_많으면_막는다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
 
         // when & then
         assertThatThrownBy(() -> sut.request(command(4)))
@@ -112,7 +112,7 @@ class RequestRefundServiceTest {
     @Test
     void 산_개수만큼은_요청할_수_있다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
@@ -131,8 +131,8 @@ class RequestRefundServiceTest {
     // 막지 않으면 배송비 정책이 "취소 개수 합이 주문 개수를 넘는다"를 버그로 보고 500을 던진다
     @Test
     void 이미_취소된_개수를_빼고_남은_개수보다_많으면_막는다() {
-        // given: 양말 3개 중 1개는 이미 환불(완료)됐다
-        givenOrderItem(socks("PREPARING", 3));
+        // given: 감자 3개 중 1개는 이미 환불(완료)됐다
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
         given(refundPersistencePort.sumCancelledByOrderItem(10L, 5L, RefundShippingFeePolicy.CANCELLING_STATUSES))
                 .willReturn(List.of(new CancelledQuantity(101L, 1, 0)));
@@ -145,8 +145,8 @@ class RequestRefundServiceTest {
 
     @Test
     void 이미_취소된_개수를_빼고_남은_개수만큼은_요청할_수_있다() {
-        // given: 양말 3개 중 1개는 이미 환불(완료)됐다
-        givenOrderItem(socks("PREPARING", 3));
+        // given: 감자 3개 중 1개는 이미 환불(완료)됐다
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
         given(refundPersistencePort.sumCancelledByOrderItem(10L, 5L, RefundShippingFeePolicy.CANCELLING_STATUSES))
                 .willReturn(List.of(new CancelledQuantity(101L, 1, 0)));
@@ -163,7 +163,7 @@ class RequestRefundServiceTest {
     @Test
     void 저장소가_진행_중_에러를_던지면_그대로_돌려준다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class)))
                 .willThrow(new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
 
@@ -195,15 +195,15 @@ class RequestRefundServiceTest {
         return new RefundRequestCommand(BUYER_ID, 10L, 101L, quantity, "옵션을 잘못 골랐습니다.");
     }
 
-    private static RefundableOrderItem socks(String status, int boughtQuantity) {
+    private static RefundableOrderItem potato(String status, int boughtQuantity) {
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(101L, 10_000L, boughtQuantity)));
-        return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "양말", "흰색", status, 10_000L, boughtQuantity, bundle);
+        return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "감자", "1kg", status, 10_000L, boughtQuantity, bundle);
     }
 
     private static RefundableOrderItem cheapItemInFreeBundle() {
         BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(101L, 1_000L, 1), new BundleItem(102L, 49_500L, 1)));
-        return new RefundableOrderItem(10L, 101L, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", "PREPARING", 1_000L, 1, bundle);
+        return new RefundableOrderItem(10L, 101L, BUYER_ID, SELLER_ID, 55L, "감자", "1kg", "PREPARING", 1_000L, 1, bundle);
     }
 }
