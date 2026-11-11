@@ -124,6 +124,8 @@ public class PayoutJobRunner {
         }
 
         // 잠금을 못 잡아도 ShedLock은 예외를 던지지 않고 결과만 비워 돌려주므로 여기서 직접 거절함
+        // 잠금 UPDATE가 교착·잠금 대기 초과 같은 일시 DB 오류로 실패해도 ShedLock은 "못 잡음"으로 돌려줘 409가 될 수 있음
+        //   ShedLock이 원인을 알려 주지 않아 여기서는 구분할 수 없고, 원인은 ShedLock DEBUG 로그에만 남음. 구분 로그는 #524에서 다룸
         if (!result.wasExecuted()) {
             throw new RestApiException(PayoutErrorCode.PAYOUT_JOB_ALREADY_RUNNING);
         }
