@@ -3,7 +3,7 @@ package com.ok.member.auth;
 import com.jayway.jsonpath.JsonPath;
 import com.ok.PaldoGotganApplication;
 import com.ok.common.security.TokenClaims;
-import com.ok.member.auth.application.port.out.RefreshTokenRepository;
+import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
@@ -58,7 +58,7 @@ class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
     SellerApplicationJpaRepository sellerApplicationRepository;
 
     @Autowired
-    RefreshTokenRepository refreshTokenRepository;
+    RefreshTokenJpaRepository refreshTokenRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;

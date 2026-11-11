@@ -1,17 +1,16 @@
 package com.ok.member.auth.adapter.in.web.dto;
 
 import com.ok.member.auth.application.dto.TokenReissueCommand;
-import com.ok.member.auth.application.service.RefreshTokenService;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public record TokenReissueRequest(
 
-        // 발급하는 Refresh Token보다 긴 값은 해시 계산 전에 막는다. 길이는 발급 규칙(RefreshTokenService)과 같은 상수를 쓴다
+        // 발급하는 Refresh Token보다 긴 값은 해시 계산 전에 막는다. 길이는 재발급 입력이 정한 상수를 쓴다
         @Schema(description = "로그인·재발급 응답으로 받은 Refresh Token")
         @NotBlank(message = "Refresh Token은 필수입니다.")
-        @Size(max = RefreshTokenService.TOKEN_LENGTH, message = "Refresh Token 형식이 올바르지 않습니다.")
+        @Size(max = TokenReissueCommand.REFRESH_TOKEN_LENGTH, message = "Refresh Token 형식이 올바르지 않습니다.")
         String refreshToken
 ) {
 

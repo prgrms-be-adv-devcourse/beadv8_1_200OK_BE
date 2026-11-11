@@ -1,8 +1,9 @@
-package com.ok.member.auth.application.service;
+package com.ok.member.auth.adapter.out.token;
 
 import com.ok.common.config.JwtConfig;
 import com.ok.common.config.JwtProperties;
 import com.ok.common.security.TokenClaims;
+import com.ok.member.auth.application.port.out.AccessTokenIssuer;
 import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.member.auth.domain.AccessToken;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * 회원 정보로 Access Token(JWT)을 발급한다.
+ * {@link AccessTokenIssuer}의 JWT 구현. 회원 정보로 RS256 서명한 Access Token을 발급한다.
  *
  * <p>헤더
  * <ul>
@@ -48,7 +49,7 @@ import java.util.UUID;
  */
 @Component
 @RequiredArgsConstructor
-public class AccessTokenProvider {
+public class JwtAccessTokenIssuer implements AccessTokenIssuer {
 
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
@@ -58,9 +59,7 @@ public class AccessTokenProvider {
     private final Clock clock;
 
     /**
-     * Access Token을 발급한다.
-     *
-     * <p>어떤 권한을 담을지는 호출하는 쪽(로그인·재발급)이 회원 정보로 계산해 넘긴다. 이 클래스는 받은 권한을 담기만 한다.
+     * Access Token(JWT)을 서명해 발급한다.
      *
      * @param memberId 회원 id (sub claim)
      * @param roles    토큰 권한 목록 (roles claim, {@code TokenRoles}의 값)
@@ -69,6 +68,7 @@ public class AccessTokenProvider {
      *                                  null을 그대로 두면 subject가 문자열 "null"인 잘못된 토큰이 발급되므로 즉시 실패시킨다.
      * @throws IllegalArgumentException roles가 비어 있는 경우. 권한이 없는 토큰은 쓸 곳이 없어 발급하지 않는다.
      */
+    @Override
     public AccessToken issue(Long memberId, List<String> roles) {
         Objects.requireNonNull(memberId, "memberId는 null일 수 없습니다.");
         Objects.requireNonNull(roles, "roles는 null일 수 없습니다.");

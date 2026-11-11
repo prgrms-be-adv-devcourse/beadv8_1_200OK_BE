@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.application.dto.LoginCommand;
 import com.ok.member.auth.application.dto.LoginCredential;
 import com.ok.member.auth.application.dto.TokenResult;
+import com.ok.member.auth.application.port.in.LoginUseCase;
 import com.ok.member.auth.exception.AuthErrorCode;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -11,11 +12,11 @@ import org.springframework.stereotype.Component;
 /**
  * 로그인 아이디와 비밀번호로 회원을 인증하고 Access Token과 Refresh Token을 발급한다.
  * bcrypt 비교 동안 DB 커넥션을 잡지 않도록 트랜잭션 없이 실행하고, DB 작업은 {@link AuthService}의 짧은 트랜잭션에 맡긴다.
- * 그래서 이 클래스에 {@code @Transactional}을 붙이지 않고, 리포지토리를 직접 부르지 않는다.
+ * 그래서 이 클래스에 {@code @Transactional}을 붙이지 않고, 저장소와 출력 포트를 직접 부르지 않는다.
  * 배경과 어겼을 때의 영향은 {@code docs/decisions/member/425-login-connection-deadlock.md}에 있다.
  */
 @Component
-public class LoginFacade {
+public class LoginFacade implements LoginUseCase {
 
     private final AuthService authService;
     private final PasswordEncoder passwordEncoder;
@@ -43,6 +44,7 @@ public class LoginFacade {
      * @throws RestApiException 아이디가 없거나 비밀번호가 틀리거나 탈퇴한 회원이면 {@code INVALID_CREDENTIALS},
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
+    @Override
     public TokenResult login(LoginCommand command) {
         LoginCredential credential = authenticate(command);
         // 탈퇴·정지 확인은 발급 트랜잭션 안에서 최신 상태로 한다. 비밀번호가 틀리면 여기까지 오지 않으므로

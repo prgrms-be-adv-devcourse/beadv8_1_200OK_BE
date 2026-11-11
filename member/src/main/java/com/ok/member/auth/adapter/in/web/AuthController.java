@@ -4,8 +4,8 @@ import com.ok.member.auth.adapter.in.web.dto.LoginRequest;
 import com.ok.member.auth.adapter.in.web.dto.TokenReissueRequest;
 import com.ok.member.auth.adapter.in.web.dto.TokenResponse;
 import com.ok.member.auth.application.dto.TokenResult;
-import com.ok.member.auth.application.service.AuthService;
-import com.ok.member.auth.application.service.LoginFacade;
+import com.ok.member.auth.application.port.in.LoginUseCase;
+import com.ok.member.auth.application.port.in.TokenReissueUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,20 +19,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AuthController implements AuthControllerSpec {
 
-    private final LoginFacade loginFacade;
-    private final AuthService authService;
+    private final LoginUseCase loginUseCase;
+    private final TokenReissueUseCase tokenReissueUseCase;
 
     @Override
     @PostMapping("/login")
     public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
-        TokenResult result = loginFacade.login(request.toCommand());
+        TokenResult result = loginUseCase.login(request.toCommand());
         return ResponseEntity.ok(TokenResponse.from(result));
     }
 
     @Override
     @PostMapping("/reissue")
     public ResponseEntity<TokenResponse> reissue(@Valid @RequestBody TokenReissueRequest request) {
-        TokenResult result = authService.reissue(request.toCommand());
+        TokenResult result = tokenReissueUseCase.reissue(request.toCommand());
         return ResponseEntity.ok(TokenResponse.from(result));
     }
 

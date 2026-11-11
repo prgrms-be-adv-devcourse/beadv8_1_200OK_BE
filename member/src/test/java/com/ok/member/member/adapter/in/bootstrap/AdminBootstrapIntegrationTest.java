@@ -2,7 +2,7 @@ package com.ok.member.member.adapter.in.bootstrap;
 
 import com.jayway.jsonpath.JsonPath;
 import com.ok.common.security.TokenClaims;
-import com.ok.member.auth.application.port.out.RefreshTokenRepository;
+import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.application.dto.AdminAccountCommand;
 import com.ok.member.member.application.dto.AdminAccountCreation;
@@ -54,7 +54,7 @@ class AdminBootstrapIntegrationTest extends AbstractIntegrationTest {
     MemberJpaRepository memberRepository;
 
     @Autowired
-    RefreshTokenRepository refreshTokenRepository;
+    RefreshTokenJpaRepository refreshTokenRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;

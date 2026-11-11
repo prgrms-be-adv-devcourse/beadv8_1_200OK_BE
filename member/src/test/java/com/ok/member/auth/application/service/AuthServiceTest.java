@@ -5,6 +5,7 @@ import com.ok.common.security.TokenRoles;
 import com.ok.member.auth.application.dto.LoginCredential;
 import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.dto.TokenResult;
+import com.ok.member.auth.application.port.out.AccessTokenIssuer;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
@@ -52,7 +53,7 @@ class AuthServiceTest {
     MemberAuthAccountUseCase memberAuthAccountUseCase;
 
     @Mock
-    AccessTokenProvider accessTokenProvider;
+    AccessTokenIssuer accessTokenIssuer;
 
     @Mock
     RefreshTokenService refreshTokenService;
@@ -65,7 +66,7 @@ class AuthServiceTest {
 
     @BeforeEach
     void setUp() {
-        authService = new AuthService(memberAuthAccountUseCase, accessTokenProvider, refreshTokenService,
+        authService = new AuthService(memberAuthAccountUseCase, accessTokenIssuer, refreshTokenService,
                 sellerApprovalCheckUseCase);
     }
 
@@ -75,7 +76,7 @@ class AuthServiceTest {
         given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
-        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
                 .willReturn(new AccessToken("access-token", accessExpiresAt));
         given(refreshTokenService.issue(MEMBER_ID))
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));
@@ -98,7 +99,7 @@ class AuthServiceTest {
         // given
         given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalCheckUseCase.isApprovedSeller(MEMBER_ID)).willReturn(true);
-        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
@@ -114,7 +115,7 @@ class AuthServiceTest {
     void 관리자가_로그인하면_관리자_권한으로만_Access_Token을_발급한다() {
         // given: TokenRoleMapper는 boolean 두 개를 받아 순서가 바뀌어도 컴파일되므로, 관리자 여부를 제자리에 넘기는지 확인한다
         given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ADMIN));
-        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.ADMIN)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.ADMIN)))
                 .willReturn(new AccessToken("admin-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
@@ -181,7 +182,7 @@ class AuthServiceTest {
 
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
-        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
                 .willReturn(new AccessToken("new-access-token", accessExpiresAt));
         given(refreshTokenService.issue(MEMBER_ID))
                 .willReturn(new IssuedRefreshToken("new-refresh-token", refreshExpiresAt));
@@ -205,7 +206,7 @@ class AuthServiceTest {
         given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
         given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalCheckUseCase.isApprovedSeller(MEMBER_ID)).willReturn(true);
-        given(accessTokenProvider.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID))
                 .willReturn(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14))));

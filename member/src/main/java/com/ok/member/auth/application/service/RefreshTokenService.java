@@ -2,6 +2,7 @@ package com.ok.member.auth.application.service;
 
 import com.ok.common.config.JwtProperties;
 import com.ok.common.exception.RestApiException;
+import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.port.out.RefreshTokenRepository;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
@@ -31,21 +32,11 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class RefreshTokenService {
 
-    /** 토큰 원문의 무작위 바이트 수. 32바이트 = 256비트로, 추측이 현실적으로 불가능한 크기다. */
-    private static final int TOKEN_BYTES = 32;
-
     /**
      * 원문 인코딩 방식: URL-safe Base64, 패딩(=) 없음.
      * 쿠키나 URL에 그대로 넣어도 이스케이프가 필요 없는 문자(A-Z a-z 0-9 - _)만 사용한다. 32바이트 → 43자.
      */
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
-
-    /**
-     * 토큰 원문의 길이. 패딩 없는 Base64URL은 3바이트를 4자로 바꾸므로 ceil(바이트 수 * 4 / 3)자다 (32바이트 → 43자).
-     * {@link #TOKEN_BYTES}에서 계산해, 바이트 수를 바꿔도 따로 고칠 필요가 없다.
-     * 요청 검증({@code TokenReissueRequest})이 이 값을 기준으로 길이를 제한한다.
-     */
-    public static final int TOKEN_LENGTH = (TOKEN_BYTES * 4 + 2) / 3;
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProperties jwtProperties;
@@ -120,7 +111,7 @@ public class RefreshTokenService {
     }
 
     private String generateTokenValue() {
-        byte[] bytes = new byte[TOKEN_BYTES];
+        byte[] bytes = new byte[TokenReissueCommand.REFRESH_TOKEN_BYTES];
         secureRandom.nextBytes(bytes);
         return ENCODER.encodeToString(bytes);
     }

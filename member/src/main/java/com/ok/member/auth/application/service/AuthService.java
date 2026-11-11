@@ -4,6 +4,8 @@ import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.application.dto.LoginCredential;
 import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.dto.TokenResult;
+import com.ok.member.auth.application.port.in.TokenReissueUseCase;
+import com.ok.member.auth.application.port.out.AccessTokenIssuer;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
@@ -23,19 +25,19 @@ import java.util.Optional;
  */
 @Service
 @Transactional(readOnly = true)
-public class AuthService {
+public class AuthService implements TokenReissueUseCase {
 
     private final MemberAuthAccountUseCase memberAuthAccountUseCase;
-    private final AccessTokenProvider accessTokenProvider;
+    private final AccessTokenIssuer accessTokenIssuer;
     private final RefreshTokenService refreshTokenService;
     private final SellerApprovalCheckUseCase sellerApprovalCheckUseCase;
 
     public AuthService(MemberAuthAccountUseCase memberAuthAccountUseCase,
-                       AccessTokenProvider accessTokenProvider,
+                       AccessTokenIssuer accessTokenIssuer,
                        RefreshTokenService refreshTokenService,
                        SellerApprovalCheckUseCase sellerApprovalCheckUseCase) {
         this.memberAuthAccountUseCase = memberAuthAccountUseCase;
-        this.accessTokenProvider = accessTokenProvider;
+        this.accessTokenIssuer = accessTokenIssuer;
         this.refreshTokenService = refreshTokenService;
         this.sellerApprovalCheckUseCase = sellerApprovalCheckUseCase;
     }
@@ -96,6 +98,7 @@ public class AuthService {
      * @throws RestApiException 없거나 만료되었거나 이미 사용한 토큰이면, 또는 회원이 없거나 탈퇴했으면 {@code INVALID_REFRESH_TOKEN},
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
+    @Override
     @Transactional
     public TokenResult reissue(TokenReissueCommand command) {
         Long memberId = refreshTokenService.consume(command.refreshToken());
@@ -115,7 +118,7 @@ public class AuthService {
     private TokenResult createTokens(MemberAuthAccount account) {
         boolean approvedSeller = sellerApprovalCheckUseCase.isApprovedSeller(account.memberId());
         List<String> roles = TokenRoleMapper.toTokenRoles(account.admin(), approvedSeller);
-        AccessToken accessToken = accessTokenProvider.issue(account.memberId(), roles);
+        AccessToken accessToken = accessTokenIssuer.issue(account.memberId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(account.memberId());
 
         return new TokenResult(accessToken.value(), accessToken.expiresAt(),

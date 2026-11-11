@@ -14,6 +14,7 @@ import com.ok.common.config.JwtProperties;
 import com.ok.common.config.RsaPemKeys;
 import com.ok.common.security.TokenClaims;
 import com.ok.common.security.TokenRoles;
+import com.ok.member.auth.adapter.out.token.JwtAccessTokenIssuer;
 import com.ok.member.auth.config.JwtEncoderConfig;
 import com.ok.member.auth.config.JwtSigningProperties;
 import com.ok.member.auth.domain.AccessToken;
@@ -55,7 +56,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
  *   <li>{@link JwtValidationException}: 서명은 맞지만 만료, 발급자, 대상 등 검증 규칙 위반</li>
  * </ul>
  */
-class AccessTokenProviderTest {
+class JwtAccessTokenIssuerTest {
 
     private static final String ISSUER = "paldo-gotgan";
     private static final String AUDIENCE = "paldo-gotgan-api";
@@ -76,7 +77,7 @@ class AccessTokenProviderTest {
     private Clock fixedClock;
     private JwtEncoder jwtEncoder;
     private JwtDecoder jwtDecoder;
-    private AccessTokenProvider accessTokenProvider;
+    private JwtAccessTokenIssuer accessTokenIssuer;
 
     @BeforeEach
     void setUp() {
@@ -84,7 +85,7 @@ class AccessTokenProviderTest {
         fixedClock = Clock.fixed(now, ZoneId.of("Asia/Seoul"));
         jwtEncoder = jwtEncoderConfig.jwtEncoder(properties, signing);
         jwtDecoder = jwtConfig.jwtDecoder(properties, fixedClock);
-        accessTokenProvider = new AccessTokenProvider(jwtEncoder, properties, signing, fixedClock);
+        accessTokenIssuer = new JwtAccessTokenIssuer(jwtEncoder, properties, signing, fixedClock);
     }
 
     @Test
@@ -93,7 +94,7 @@ class AccessTokenProviderTest {
         List<String> roles = List.of(TokenRoles.BUYER, TokenRoles.SELLER);
 
         // when
-        AccessToken sut = accessTokenProvider.issue(1L, roles);
+        AccessToken sut = accessTokenIssuer.issue(1L, roles);
 
         // then
         Jwt jwt = jwtDecoder.decode(sut.value());
@@ -110,7 +111,7 @@ class AccessTokenProviderTest {
     @Test
     void 발급한_토큰의_헤더에_알고리즘과_타입과_키_식별자가_담긴다() {
         // when
-        AccessToken sut = accessTokenProvider.issue(1L, BUYER);
+        AccessToken sut = accessTokenIssuer.issue(1L, BUYER);
 
         // then
         Jwt jwt = jwtDecoder.decode(sut.value());
@@ -125,8 +126,8 @@ class AccessTokenProviderTest {
     @Test
     void 토큰마다_다른_jti가_발급된다() {
         // when
-        AccessToken first = accessTokenProvider.issue(1L, BUYER);
-        AccessToken second = accessTokenProvider.issue(1L, BUYER);
+        AccessToken first = accessTokenIssuer.issue(1L, BUYER);
+        AccessToken second = accessTokenIssuer.issue(1L, BUYER);
 
         // then
         String firstJti = jwtDecoder.decode(first.value()).getId();
@@ -141,7 +142,7 @@ class AccessTokenProviderTest {
     @Test
     void 발급_시각은_현재_시각이고_만료_시각은_유효기간_뒤이며_토큰의_exp와_같다() {
         // when
-        AccessToken sut = accessTokenProvider.issue(1L, BUYER);
+        AccessToken sut = accessTokenIssuer.issue(1L, BUYER);
 
         // then
         Jwt jwt = jwtDecoder.decode(sut.value());
@@ -156,7 +157,7 @@ class AccessTokenProviderTest {
     @Test
     void 회원_id가_null이면_예외가_발생한다() {
         // when & then
-        assertThatThrownBy(() -> accessTokenProvider.issue(null, BUYER))
+        assertThatThrownBy(() -> accessTokenIssuer.issue(null, BUYER))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("memberId는 null일 수 없습니다.");
     }
@@ -164,7 +165,7 @@ class AccessTokenProviderTest {
     @Test
     void 권한_목록이_null이면_예외가_발생한다() {
         // when & then
-        assertThatThrownBy(() -> accessTokenProvider.issue(1L, null))
+        assertThatThrownBy(() -> accessTokenIssuer.issue(1L, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("roles는 null일 수 없습니다.");
     }
@@ -172,7 +173,7 @@ class AccessTokenProviderTest {
     @Test
     void 권한_목록이_비어_있으면_예외가_발생한다() {
         // when & then
-        assertThatThrownBy(() -> accessTokenProvider.issue(1L, List.of()))
+        assertThatThrownBy(() -> accessTokenIssuer.issue(1L, List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("roles는 비어 있을 수 없습니다.");
     }
@@ -336,7 +337,7 @@ class AccessTokenProviderTest {
                 null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
         JwtDecoder rotatingDecoder = jwtConfig.jwtDecoder(rotating, fixedClock);
         // 교체 전에 v1으로 발급된 토큰과 교체 후 v2로 발급된 토큰
-        String v1Token = accessTokenProvider.issue(1L, BUYER).value();
+        String v1Token = accessTokenIssuer.issue(1L, BUYER).value();
         JwtEncoder v2Encoder = rsaEncoder(
                 (RSAPublicKey) v2Keys.getPublic(), (RSAPrivateKey) v2Keys.getPrivate(), "rs256-v2");
         JwsHeader v2Header = JwsHeader.with(JwtConfig.SIGNING_ALGORITHM)
@@ -361,7 +362,7 @@ class AccessTokenProviderTest {
     @Test
     void 권한을_ADMIN으로_변조한_토큰은_거부된다() {
         // given
-        String token = accessTokenProvider.issue(1L, BUYER).value();
+        String token = accessTokenIssuer.issue(1L, BUYER).value();
 
         // JWT는 header.payload.signature 구조이고, payload는 Base64URL로 인코딩된 JSON이다.
         // 공격자가 payload의 권한을 BUYER → ADMIN으로 바꾸고 서명은 그대로 둔 상황을 만든다.
@@ -382,7 +383,7 @@ class AccessTokenProviderTest {
     void 발급자가_다른_토큰은_거부된다() {
         // given
         JwtProperties otherIssuer = properties("other-service", AUDIENCE);
-        AccessTokenProvider otherProvider = new AccessTokenProvider(
+        JwtAccessTokenIssuer otherProvider = new JwtAccessTokenIssuer(
                 jwtEncoderConfig.jwtEncoder(otherIssuer, signing), otherIssuer, signing, fixedClock);
         String token = otherProvider.issue(1L, BUYER).value();
 
@@ -394,7 +395,7 @@ class AccessTokenProviderTest {
     @Test
     void AccessToken의_toString에_토큰_문자열이_노출되지_않는다() {
         // given
-        AccessToken accessToken = accessTokenProvider.issue(1L, BUYER);
+        AccessToken accessToken = accessTokenIssuer.issue(1L, BUYER);
 
         // when
         String sut = accessToken.toString();

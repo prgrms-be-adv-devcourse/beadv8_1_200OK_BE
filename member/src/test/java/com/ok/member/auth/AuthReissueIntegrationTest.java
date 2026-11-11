@@ -3,8 +3,8 @@ package com.ok.member.auth;
 import com.jayway.jsonpath.JsonPath;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.security.TokenClaims;
+import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
 import com.ok.member.auth.application.dto.TokenReissueCommand;
-import com.ok.member.auth.application.port.out.RefreshTokenRepository;
 import com.ok.member.auth.application.service.AuthService;
 import com.ok.member.auth.application.service.RefreshTokenService;
 import com.ok.member.auth.application.service.TokenHasher;
@@ -65,7 +65,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     MemberJpaRepository memberRepository;
 
     @Autowired
-    RefreshTokenRepository refreshTokenRepository;
+    RefreshTokenJpaRepository refreshTokenRepository;
 
     @Autowired
     RefreshTokenService refreshTokenService;

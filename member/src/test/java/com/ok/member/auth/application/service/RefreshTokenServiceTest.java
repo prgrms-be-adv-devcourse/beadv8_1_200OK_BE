@@ -2,6 +2,7 @@ package com.ok.member.auth.application.service;
 
 import com.ok.common.config.JwtProperties;
 import com.ok.common.exception.RestApiException;
+import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.port.out.RefreshTokenRepository;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
@@ -29,7 +30,9 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class RefreshTokenServiceTest {
@@ -86,10 +89,10 @@ class RefreshTokenServiceTest {
         IssuedRefreshToken sut = refreshTokenService.issue(1L);
 
         // then
-        // 32바이트를 패딩 없는 Base64URL로 인코딩하면 43자다. 요청 검증이 이 길이 상수를 쓰므로 실제 길이와 맞는지 함께 확인한다
+        // 32바이트를 패딩 없는 Base64URL로 인코딩하면 43자다. 요청 검증이 이 길이 상수를 쓰므로 계산식이 실제 인코딩 결과와 맞는지 확인한다
         assertThat(sut.value())
                 .matches("^[A-Za-z0-9_-]+$")
-                .hasSize(RefreshTokenService.TOKEN_LENGTH);
+                .hasSize(TokenReissueCommand.REFRESH_TOKEN_LENGTH);
     }
 
     @Test
