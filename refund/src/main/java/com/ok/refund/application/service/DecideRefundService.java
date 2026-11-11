@@ -127,7 +127,8 @@ public class DecideRefundService implements DecideRefundUseCase {
      * @throws RestApiException      없거나 남의 요청이면 {@code REFUND_NOT_FOUND}, 요청됨이 아니면 {@code INVALID_REFUND_STATE}
      * @throws IllegalStateException 주문 정보가 다른 주문 상품이면, 이미 열린 트랜잭션 안에서 부르면 (부르는 쪽 버그),
      *                               주문 상태가 null이거나 모르는 값이면 (주문 모듈 쪽 문제, 요청됨 그대로 남는다),
-     *                               지갑 반환 요청을 보내지 못했거나 돌려줄 금액이 음수면 (승인은 이미 커밋돼 처리 중으로 남는다)
+     *                               지갑 반환 요청을 보내지 못했으면 (승인은 이미 커밋돼 처리 중으로 남는다)
+     * @throws IllegalArgumentException 배송비 판단대로면 돌려줄 금액이 음수가 되면 (계산 버그, 커밋 전에 막혀 요청됨으로 남는다)
      */
     RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
         requireNoOuterTransaction();
@@ -144,13 +145,8 @@ public class DecideRefundService implements DecideRefundUseCase {
         if (!RefundStatus.PROCESSING.name().equals(result.status())) {
             return;
         }
+        // 음수는 여기 오지 않는다. 도메인 승인(Refund.approve)이 커밋 전에 막아 요청됨으로 남긴다
         long amount = result.refundAmount();
-        // 정상 흐름에서는 음수가 나오지 않는다(배송비 정책이 취소 금액보다 큰 차감을 받지 않음). 나오면 계산 버그라
-        // 조용히 넘기지 않고 드러낸다. 승인은 이미 커밋돼 처리 중으로 남고, 고친 뒤 #516의 다시 보내기로 이어 간다
-        if (amount < 0) {
-            throw new IllegalStateException("돌려줄 금액이 음수라 지갑에 요청하지 않습니다. refundId=" + result.refundId()
-                    + ", amount=" + amount);
-        }
         // 0원은 돌려줄 돈이 없어 지갑을 거치지 않는다. 예: 취소 금액이 뺄 기본 배송비와 같을 때. 다음 단계(주문 반영)는 #513이 이어 간다
         if (amount == 0) {
             return;
