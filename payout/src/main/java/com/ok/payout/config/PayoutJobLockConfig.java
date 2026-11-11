@@ -45,6 +45,9 @@ public class PayoutJobLockConfig implements DisposableBean {
     public LockingTaskExecutor payoutJobLockingTaskExecutor(DataSource dataSource, Clock clock) {
         // 자동 연장은 ShedLock 시계로 만료를 판단한다. 이 시계도 전역 Clock 빈을 따르게 해 "지금"의 기준을 하나로 둔다(#93).
         // ShedLock 시계는 JVM 전체 설정이지만 지금 ShedLock을 쓰는 곳은 정산뿐이다.
+        // 주의: Spring을 띄우는 테스트에서 Clock 빈을 고정 시계로 바꾸면 ShedLock 시계도 고정되고, static이라 컨텍스트가 닫혀도
+        // 같은 JVM의 다른 테스트에 남아 자동 연장의 만료 판단이 어긋날 수 있다. 지금 Spring 테스트는 모두 실제 시계를 쓴다.
+        // 이 호출을 별도 초기화 빈으로 옮겨도 같은 static을 바꾸므로 이 위험은 그대로라 옮기지 않는다.
         ClockProvider.setClock(clock);
         // 표 이름에 스키마를 붙여야 monolith(스키마 여러 개)에서도 정산 표를 찾는다.
         // 서버 시계가 달라도 잠금 시각이 어긋나지 않게 DB 시각을 쓴다.
