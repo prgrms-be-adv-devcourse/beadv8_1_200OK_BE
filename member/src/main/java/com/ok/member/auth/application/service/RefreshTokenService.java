@@ -34,7 +34,8 @@ public class RefreshTokenService {
 
     /**
      * 원문 인코딩 방식: URL-safe Base64, 패딩(=) 없음.
-     * 쿠키나 URL에 그대로 넣어도 이스케이프가 필요 없는 문자(A-Z a-z 0-9 - _)만 사용한다. 32바이트 → 43자.
+     * 쿠키나 URL에 그대로 넣어도 이스케이프가 필요 없는 문자(A-Z a-z 0-9 - _)만 사용한다.
+     * 발급 바이트 수와 원문 길이는 요청 검증과 맞추려고 {@link TokenReissueCommand}에 함께 둔다.
      */
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
 
