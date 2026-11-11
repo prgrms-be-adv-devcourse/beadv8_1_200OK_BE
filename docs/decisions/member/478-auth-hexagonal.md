@@ -24,7 +24,7 @@ member 모듈을 하위 도메인별로 헥사고날 구조로 옮기는 마지�
 | 회원 조회 포트가 돌려줄 타입 | auth의 `AuthAccount`(member의 `MemberAuthAccount`와 같은 필드). 로그인 조회는 기존 `LoginCredential` (사용자 결정) | 포트가 member 타입을 노출하면 application이 다른 하위 도메인에 의존해 강화한 규칙에 걸린다 |
 | 회원·판매자 호출 | `MemberAuthAdapter` 하나가 `MemberCredentialReader`, `SellerApprovalReader`를 구현 (이슈 계획대로) | 둘 다 같은 member 모듈이다. 어댑터는 값만 옮기고 탈퇴·정지 판단은 `AuthService`에 남긴다 |
 | 하위 도메인 사이 접근 규칙 | 기존 규칙을 "`port.in`·`dto`는 자기 하위 도메인, 다른 하위 도메인의 `adapter.out`, 모듈 최상위 패키지만 의존할 수 있다"로 교체 (사용자 결정, 최상위 예외는 리뷰 반영) | 새 조건이 기존 조건을 포함해, 둘 다 두면 같은 위반이 두 번 보고된다. 모듈 최상위는 다른 모듈에 공개하는 클래스 자리(CLAUDE.md)라 막지 않는다 |
-| 저장소 구현 | `RefreshTokenJpaRepository`가 포트를 상속하고 `findForUpdateById`를 `@Lock`과 함께 다시 선언 (사용자 결정) | 레포의 헥사고날 모듈이 모두 이 방식이다. 재선언 누락은 오류 없이 잠금 없는 조회가 되므로, wallet의 #505 규칙을 member `ArchitectureTest`에도 옮겼다(처음에는 member에 이미 있다고 잘못 알았다) |
+| 저장소 구현 | `RefreshTokenJpaRepository`가 포트를 상속하고 `findForUpdateById`를 `@Lock`과 함께 다시 선언 (사용자 결정) | 레포의 헥사고날 모듈이 모두 이 방식이다. 재선언 누락은 오류 없이 잠금 없는 조회가 되므로, wallet의 #505 규칙을 member `ArchitectureTest`에도 옮겼다 |
 | 토큰 발급 | `AccessTokenIssuer` 포트와 `adapter/out/token/JwtAccessTokenIssuer`. application의 `oauth2.jwt`·`nimbusds` 의존을 막는 규칙 추가 (사용자 결정) | 서명 기술을 서비스에서 떼어 낸 결과가 다시 무너지지 않게 한다 |
 | `PasswordEncoder` | application에 그대로 둠 (사용자 결정) | member의 가입·관리자 서비스도 직접 쓴다. auth만 포트로 빼면 기준이 갈린다 |
 | `TokenRoleMapper`, `TokenHasher`, `RefreshTokenService` | `application/service`로 옮기기만 함 (사용자 결정) | 이동 커밋은 내용을 바꾸지 않는다. 도메인 규칙으로 다시 분류하는 일은 범위 밖이다 |
@@ -40,7 +40,7 @@ member 모듈을 하위 도메인별로 헥사고날 구조로 옮기는 마지�
 
 - **회원 타입:** member의 `MemberAuthAccount`를 그대로 노출하는 안은 규칙 예외가 생겨 버렸다. 감수하는 것은 같은 필드의 DTO가 두 벌이라는 점이다.
 - **저장소:** 포트를 상속하지 않는 어댑터 클래스가 JPA 저장소에 위임하는 안은 포트 이름이 자유롭고 `@Lock` 위치가 명시적이지만, 위임 코드가 늘고 레포 관례와 달라 버렸다.
-- **비밀번호 확인:** `PasswordVerifier` 포트는 member 서비스 두 곳까지 바꿔야 해 별도 이슈로 미뤘다.
+- **비밀번호 확인:** `PasswordVerifier` 포트는 `PasswordEncoder`를 직접 쓰는 member 서비스 두 곳(`MemberSignupService`, `AdminAccountService`)까지 바꿔야 해 버렸다. `PasswordEncoder`가 이미 Spring 인터페이스이고 구현은 `PasswordEncoderConfig` 한 곳에서 정해 얻는 것이 작다. 검토 이슈는 만들지 않았고, 필요해지면 member 모듈 전체를 함께 바꾼다.
 - **길이 상수:** 리터럴(43)만 두는 안은 바이트 수와 연결이 끊겨 버렸다. 입력 포트에 두는 안은 포트가 발급 형식을 알게 되어 버렸다. 감수하는 것은 발급 바이트 수가 서비스가 아니라 입력 DTO에 있다는 점이다.
 - **빈 규칙:** `allowEmptyShould(true)`는 다른 하위 도메인에서 규칙이 아무것도 검사하지 않고 통과하는 것을 다시 허용해 버렸다. 옛 레이어 규칙을 지금 지우는 안은 #479 범위라 버렸다.
 - **서버 분리 대비:** "어댑터만 바꾸면 분리된다"는 설명은 버렸다. 원격 호출로 나누면 비밀번호 해시를 API로 내보내지 않도록 확인 위치를 옮기고, 트랜잭션 재확인과 장애 처리를 다시 정해야 한다. 더 흔한 형태는 auth가 아이디·비밀번호 해시·상태를 소유하는 방식인데, 이건 이번 구조로 대비되지 않는다.
