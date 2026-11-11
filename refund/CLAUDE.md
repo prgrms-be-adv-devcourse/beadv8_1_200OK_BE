@@ -7,7 +7,7 @@
 
 ## 모듈 소개
 - 구매자의 출고 전 취소 요청을 받고, 판매자가 승인·거절, 구매자가 철회한다. 승인 때 배송비를 정하고, 승인 뒤 지갑 환불·주문 반영·재고 복구(#413·#414)를 이어 간다.
-- 테스트: 레포 루트에서 `./gradlew :refund:test` (통합 테스트는 Testcontainers MySQL)
+- 테스트: 레포 루트에서 `./gradlew :refund:test` (통합 테스트는 Testcontainers MySQL·Kafka. 발행은 실제 토픽을 읽어 JSON으로 확인한다)
 
 ## 1. 패키지
 ```

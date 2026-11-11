@@ -185,6 +185,24 @@ class RefundTest {
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
     }
 
+    // 정상이면 배송비 정책이 이런 판단을 "받을 수 없음"으로 돌려준다. 계산 버그로 여기 오면 커밋 뒤가 아니라 승인 전에 막아야
+    // 트랜잭션이 되돌려져 처리 중에 갇히지 않고 요청됨으로 남는다 (지갑에 음수 금액을 요청하지 않게)
+    @Test
+    void 돌려줄_금액이_음수가_되는_판단으로_승인하면_예외를_던지고_바꾸지_않는다() {
+        // given: 1,000원짜리 1개를 취소하는데 3,000원을 빼라는 판단 → 1,000 - 3,000 = -2,000원
+        Refund refund = Refund.request(10L, 101L, 1, 1L, 2L, 55L, "양말", "흰색", 1_000L, null);
+
+        // when & then
+        assertThatThrownBy(() -> refund.approve(NOW, RefundShippingFee.deduct(3_000L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("돌려줄 금액이 음수가 되는 배송비 판단으로는 승인할 수 없습니다. amount=-2000");
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.REQUESTED);
+            softly.assertThat(refund.getDeductedShippingFeeAmount()).isZero();
+            softly.assertThat(refund.getDecidedAt()).isNull();
+        });
+    }
+
     @Test
     void 요청됨이_아니면_배송비와_함께_승인해도_막고_배송비를_저장하지_않는다() {
         // given

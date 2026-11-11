@@ -201,13 +201,20 @@ public class Refund {
      *
      * @param fee 배송비 판단 결과. 받을 수 없는 판단이면 승인하지 말고 자동 거절해야 한다
      * @throws RestApiException         요청됨이 아니면 {@code INVALID_REFUND_STATE}
-     * @throws IllegalArgumentException 받을 수 없는 판단을 넘기면 (부르는 쪽 버그)
+     * @throws IllegalArgumentException 받을 수 없는 판단을 넘기면, 판단대로면 돌려줄 금액이 음수가 되면 (부르는 쪽 버그)
      */
     public void approve(LocalDateTime now, RefundShippingFee fee) {
         // 판단 검사를 상태 검사보다 먼저 한다. 받을 수 없는 판단이 여기 오는 것은 상태와 상관없이 부르는 쪽 버그라 500으로 먼저 드러낸다.
         // API 경로에서는 서비스가 상태를 먼저 확인하고(409), 받을 수 없으면 승인 대신 자동 거절하므로 이 순서가 응답에 드러나지 않는다
         if (fee == null || !fee.allowed()) {
             throw new IllegalArgumentException("받을 수 없는 배송비 판단으로는 승인할 수 없습니다.");
+        }
+        // 돌려줄 금액이 음수가 되는 판단도 받지 않는다. 정상이면 배송비 정책이 취소 금액보다 큰 차감을 "받을 수 없음"으로 돌려줘 여기 오지 않는다.
+        // 승인 뒤(커밋 뒤)에 알게 되면 환불이 처리 중에 갇히므로, 저장 전인 여기서 막아 트랜잭션을 되돌리고 요청됨으로 남긴다
+        long refundAmount = refundAmountOf(itemAmount, fee.shippingFeeAmount(), fee.remoteAreaFeeAmount(),
+                fee.deductedShippingFeeAmount());
+        if (refundAmount < 0) {
+            throw new IllegalArgumentException("돌려줄 금액이 음수가 되는 배송비 판단으로는 승인할 수 없습니다. amount=" + refundAmount);
         }
         requireStatus(RefundStatus.REQUESTED);
         this.decidedAt = now;
@@ -222,6 +229,12 @@ public class Refund {
      * 칸마다 따로 저장하고 합계는 저장하지 않는다. 합계까지 저장하면 어긋날 수 있는 칸이 하나 늘어난다.
      */
     public long getRefundAmount() {
+        return refundAmountOf(itemAmount, shippingFeeAmount, remoteAreaFeeAmount, deductedShippingFeeAmount);
+    }
+
+    // 승인 전 검사와 저장된 칸 계산이 같은 식을 쓰도록 한곳에 둔다
+    private static long refundAmountOf(long itemAmount, long shippingFeeAmount, long remoteAreaFeeAmount,
+                                       long deductedShippingFeeAmount) {
         long added = Math.addExact(Math.addExact(itemAmount, shippingFeeAmount), remoteAreaFeeAmount);
         return Math.subtractExact(added, deductedShippingFeeAmount);
     }
