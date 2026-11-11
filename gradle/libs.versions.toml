@@ -8,6 +8,7 @@ springdoc = "3.1.1"
 archunit = "1.5.1"
 thumbnailator = "0.4.21"
 owasp-html-sanitizer = "20260924.2"
+shedlock = "7.11.0"
 
 [libraries]
 spring-boot-gradle-plugin = { module = "org.springframework.boot:spring-boot-gradle-plugin", version.ref = "spring-boot" }
@@ -20,6 +21,8 @@ springdoc-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 thumbnailator = { module = "net.coobird:thumbnailator", version.ref = "thumbnailator" }
 owasp-html-sanitizer = { module = "com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer", version.ref = "owasp-html-sanitizer" }
+shedlock-core = { module = "net.javacrumbs.shedlock:shedlock-core", version.ref = "shedlock" }
+shedlock-jdbc = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
