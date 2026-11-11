@@ -140,7 +140,7 @@ class PayoutJobRunnerTest {
     }
 
     @Test
-    void 잠금은_이름_payoutJob_최소_유지_0으로_요청한다() throws Exception {
+    void 잠금은_이름_payoutJob_최소_유지_0_최대_유지_5분으로_Clock_시각에_요청한다() throws Exception {
         // given
         PayoutJobRunner sut = new PayoutJobRunner(jobOperator, payoutJob, lockingExecutor, CLOCK, false);
         given(jobOperator.start(eq(payoutJob), any(JobParameters.class))).willReturn(new JobExecution(1L, null, new JobParameters()));
@@ -155,6 +155,7 @@ class PayoutJobRunnerTest {
             softly.assertThat(config.getName()).isEqualTo("payoutJob");
             softly.assertThat(config.getLockAtLeastFor()).isEqualTo(Duration.ZERO);
             softly.assertThat(config.getLockAtMostFor()).isEqualTo(Duration.ofMinutes(5));
+            softly.assertThat(config.getLockAtMostUntil()).isEqualTo(CLOCK.instant().plus(Duration.ofMinutes(5)));
         });
     }
 

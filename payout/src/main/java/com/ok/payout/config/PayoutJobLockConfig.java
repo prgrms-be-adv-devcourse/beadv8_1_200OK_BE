@@ -1,5 +1,6 @@
 package com.ok.payout.config;
 
+import java.time.Clock;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -12,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.ok.payout.PayoutSchema;
 
+import net.javacrumbs.shedlock.core.ClockProvider;
 import net.javacrumbs.shedlock.core.DefaultLockingTaskExecutor;
 import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
@@ -40,7 +42,10 @@ public class PayoutJobLockConfig implements DisposableBean {
     }
 
     @Bean
-    public LockingTaskExecutor payoutJobLockingTaskExecutor(DataSource dataSource) {
+    public LockingTaskExecutor payoutJobLockingTaskExecutor(DataSource dataSource, Clock clock) {
+        // 자동 연장은 ShedLock 시계로 만료를 판단한다. 이 시계도 전역 Clock 빈을 따르게 해 "지금"의 기준을 하나로 둔다(#93).
+        // ShedLock 시계는 JVM 전체 설정이지만 지금 ShedLock을 쓰는 곳은 정산뿐이다.
+        ClockProvider.setClock(clock);
         // 표 이름에 스키마를 붙여야 monolith(스키마 여러 개)에서도 정산 표를 찾는다.
         // 서버 시계가 달라도 잠금 시각이 어긋나지 않게 DB 시각을 쓴다.
         JdbcTemplateLockProvider jdbcProvider = new JdbcTemplateLockProvider(
