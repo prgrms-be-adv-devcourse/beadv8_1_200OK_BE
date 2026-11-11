@@ -22,9 +22,6 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     Optional<Order> findById(Long id);
 
     @Override
-    void deleteById(Long id);
-
-    @Override
     @Query("""
             select i from OrderItem i
             join fetch i.sellerGroup g

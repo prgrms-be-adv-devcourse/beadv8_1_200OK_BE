@@ -32,7 +32,9 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -160,9 +162,8 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
-    // 지금은 재고 선점에 실패하면 주문을 지우고 재고 해제를 시도한다. 주문을 취소 상태로 남기도록 바꾸면(#401) 이 테스트도 바꾼다
     @Test
-    void 재고_선점이_실패하면_주문이_남지_않고_주문_생성_이벤트도_나가지_않는다() throws Exception {
+    void 재고_선점이_실패하면_주문이_취소로_남고_주문_생성_이벤트는_나가지_않는다() throws Exception {
         // given
         fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
 
@@ -172,11 +173,52 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.type", endsWith("/" + OrderErrorCode.OUT_OF_STOCK.slug())));
 
         // then
+        Map<String, Object> order = jdbcTemplate.queryForMap("SELECT id, status, idempotency_key FROM "
+                + OrderSchema.NAME + ".orders WHERE buyer_id = ?", BUYER_ID);
+        Long orderId = ((Number) order.get("id")).longValue();
+        List<String> itemStatuses = jdbcTemplate.queryForList("SELECT oi.status FROM " + OrderSchema.NAME
+                + ".order_item oi JOIN " + OrderSchema.NAME + ".order_seller_group g ON oi.seller_group_id = g.id"
+                + " WHERE g.order_id = ?", String.class, orderId);
+        assertThat(order).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(countOrders()).isZero();
-            softly.assertThat(fakeProductPort.releasedOrderIds()).hasSize(1);
+            softly.assertThat(order.get("status")).isEqualTo("CANCELED");
+            softly.assertThat(order.get("idempotency_key")).isNull();
+            softly.assertThat(itemStatuses).containsOnly("CANCELED");
+            softly.assertThat(fakeProductPort.releasedOrderIds()).containsExactly(orderId);
             softly.assertThat(events.stream(OrderCreatedEvent.class).count()).isZero();
         });
+    }
+
+    @Test
+    void 재고_선점이_실패한_뒤_같은_멱등키로_다시_주문하면_새_주문이_만들어진다() throws Exception {
+        // given
+        fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
+        createOrder("key-after-cancel").andExpect(status().isConflict());
+        fakeProductPort.failAllocationWith(null);
+
+        // when
+        Long orderId = orderId(createOrder("key-after-cancel").andExpect(status().isCreated()));
+
+        // then
+        String status = jdbcTemplate.queryForObject("SELECT status FROM " + OrderSchema.NAME + ".orders WHERE id = ?",
+                String.class, orderId);
+        assertSoftly(softly -> {
+            softly.assertThat(countOrders()).isEqualTo(2);
+            softly.assertThat(status).isEqualTo("PAYMENT_PENDING");
+        });
+    }
+
+    @Test
+    void 취소된_주문은_내_주문_목록에_보이지_않는다() throws Exception {
+        // given
+        fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
+        createOrder("key-hidden").andExpect(status().isConflict());
+
+        // when & then
+        mockMvc.perform(get(ORDERS_URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(0)))
+                .andExpect(jsonPath("$.totalElements").value(0));
     }
 
     private ResultActions createOrder(String idempotencyKey) throws Exception {

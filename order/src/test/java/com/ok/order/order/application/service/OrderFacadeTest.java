@@ -240,7 +240,7 @@ class OrderFacadeTest {
     }
 
     @Test
-    void 재고_선점에_실패하면_선점을_해제하고_주문을_삭제한다() {
+    void 재고_선점에_실패하면_선점을_해제하고_주문을_취소한다() {
         // given: 주문 저장까지 성공, 재고 선점에서 실패
         given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
@@ -255,8 +255,45 @@ class OrderFacadeTest {
                 .isInstanceOfSatisfying(RestApiException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
         then(productPort).should().releaseStock(10L);
-        then(orderService).should().delete(10L);
+        then(orderService).should().cancel(10L);
         then(orderService).should(never()).publishCreated(anyLong());
+    }
+
+    @Test
+    void 생성_이벤트_발행에_실패하면_선점을_해제하고_주문을_취소한다() {
+        // given: 재고 선점까지 성공, 이벤트 발행에서 실패
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new IllegalStateException("이벤트 기록 실패"))
+                .given(orderService).publishCreated(10L);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("이벤트 기록 실패");
+        then(productPort).should().releaseStock(10L);
+        then(orderService).should().cancel(10L);
+    }
+
+    @Test
+    void 주문_취소마저_실패해도_원래_예외를_그대로_던진다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
+                .given(productPort).allocateStock(eq(10L), anyList());
+        willThrow(new IllegalStateException("DB 오류")).given(orderService).cancel(10L);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
     }
 
     @Test

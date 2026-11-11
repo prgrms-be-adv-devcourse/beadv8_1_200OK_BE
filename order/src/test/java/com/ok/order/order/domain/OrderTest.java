@@ -143,6 +143,25 @@ class OrderTest {
     }
 
     @Test
+    void 취소하면_주문과_상품_모두_취소되고_멱등키를_비운다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1), line(2L, 200L, 5_000L, 2)));
+        sut.assignIdempotencyKey("key-1");
+
+        // when
+        sut.cancel();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderStatus.CANCELED);
+            softly.assertThat(sut.getIdempotencyKey()).isNull();
+            softly.assertThat(sut.getAllItems())
+                    .extracting(OrderItem::getStatus)
+                    .containsOnly(OrderItemStatus.CANCELED);
+        });
+    }
+
+    @Test
     void 결제가_실패하면_주문과_상품_모두_결제_실패가_된다() {
         // given
         Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));

@@ -238,6 +238,16 @@ public class Order extends BaseTime {
         }
     }
 
+    // 취소 -> 주문과 상품 모두 취소. 삭제하지 않고 남겨 실패 원인과 재고 해제 여부를 추적할 수 있게 한다(#401).
+    // 멱등키는 비운다. 멱등키는 성공한 주문이 두 번 생기지 않게 하려는 것이라, 실패한 주문 때문에 같은 키로 다시 주문하지 못하면 안 된다
+    public void cancel() {
+        this.status = OrderStatus.CANCELED;
+        this.idempotencyKey = null;
+        for (OrderItem item : getAllItems()) {
+            item.cancel();
+        }
+    }
+
     // 판매자 묶음의 상품들을 '배송 중'으로 변경
     public int markShipping(Long sellerId) {
         for (OrderSellerGroup group : sellerGroups) {

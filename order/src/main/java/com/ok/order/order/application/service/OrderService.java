@@ -6,6 +6,7 @@ import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderSellerGroup;
+import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
@@ -66,17 +67,29 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         orderEventPublisher.publishOrderCreatedEvent(order.getId(), order.getBuyerId(), order.getTotalAmount());
     }
 
-    // 보상용 삭제
+    // 보상용 취소: 주문 생성 중 재고 선점·이벤트 발행이 실패한 주문을 지우지 않고 취소로 남긴다(#401)
     @Transactional
-    public void delete(Long orderId) {
-        orderRepository.deleteById(orderId);
+    public void cancel(Long orderId) {
+        Optional<Order> found = orderRepository.findById(orderId);
+        if (found.isEmpty()) {
+            log.warn("[ORDER_CANCEL_ORDER_NOT_FOUND] 취소할 주문이 없습니다. orderId={}", orderId);
+            return;
+        }
+        Order order = found.get();
+        // 결제 결과를 받은 주문은 이미 돈이 오간 상태라 취소로 덮지 않는다
+        if (!order.isPaymentPending()) {
+            log.warn("[ORDER_CANCEL_IGNORED] 결제 대기가 아닌 주문은 취소하지 않습니다. orderId={}, status={}",
+                    orderId, order.getStatus());
+            return;
+        }
+        order.cancel();
     }
 
-    // 내 주문 목록 (최신순)
+    // 내 주문 목록 (최신순). 취소된 주문은 구매자가 만든 적 없는 결과라 보여 주지 않는다
     @Override
     public Page<OrderSummaryResult> getOrders(Long buyerId, int page, int size) {
         PageRequest pageRequest = PageRequest.of(page, size);
-        return orderRepository.findByBuyerIdOrderByIdDesc(buyerId, pageRequest)
+        return orderRepository.findByBuyerIdAndStatusNotOrderByIdDesc(buyerId, OrderStatus.CANCELED, pageRequest)
                 .map(OrderSummaryResult::from);
     }
 

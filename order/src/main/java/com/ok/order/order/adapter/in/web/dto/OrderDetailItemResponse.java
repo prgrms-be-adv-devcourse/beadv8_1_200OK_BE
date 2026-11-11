@@ -13,7 +13,7 @@ public record OrderDetailItemResponse(
         @Schema(description = "주문 시점 판매가") long unitPrice,
         @Schema(description = "수량") int quantity,
         @Schema(description = "판매가 × 수량") long itemAmount,
-        @Schema(description = "상품별 상태 (PAYMENT_PENDING, PAYMENT_FAILED, PREPARING, SHIPPING, DELIVERED, PURCHASE_CONFIRMED, CANCEL_REQUESTED, REFUNDED)", example = "PREPARING") String status
+        @Schema(description = "상품별 상태 (PAYMENT_PENDING, PAYMENT_FAILED, CANCELED, PREPARING, SHIPPING, DELIVERED, PURCHASE_CONFIRMED, CANCEL_REQUESTED, REFUNDED)", example = "PREPARING") String status
 ) {
     public static OrderDetailItemResponse from(OrderDetailItemResult result) {
         return new OrderDetailItemResponse(result.orderItemId(), result.productId(), result.productOptionId(),

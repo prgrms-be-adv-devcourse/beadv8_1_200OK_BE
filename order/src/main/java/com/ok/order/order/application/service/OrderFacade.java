@@ -75,7 +75,7 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
             throw new RestApiException(OrderErrorCode.ORDER_AMOUNT_CHANGED);
         }
 
-        // 잔액 확인
+        // 잔액 확인. 실제 차감은 지갑이 주문 생성 이벤트를 받아 하고, 여기는 잔액이 모자란 주문을 미리 막는 빠른 차단용이다
         long balance = walletPort.getBalance(command.memberId());
         if (balance < order.getTotalAmount()) {
             throw new RestApiException(OrderErrorCode.INSUFFICIENT_BALANCE);
@@ -92,7 +92,7 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
             }
             // 같은 키의 요청이 거의 동시에 와서 위 조회를 둘 다 통과한 경우, 유니크 제약이 나중 요청을 막는다.
             // 재고 선점과 이벤트 발행은 먼저 저장한 요청이 하므로 여기서는 그 주문만 돌려준다.
-            // 먼저 저장된 주문이 재고 선점 실패로 그 사이 삭제됐으면 키가 풀린 상태라 다시 시도하도록 알린다
+            // 먼저 저장된 주문이 재고 선점 실패로 그 사이 취소됐으면 키를 비워 둔 상태라 다시 시도하도록 알린다
             Long savedOrderId = orderService.findIdByIdempotencyKey(command.memberId(), command.idempotencyKey())
                     .orElseThrow(() -> new RestApiException(OrderErrorCode.IDEMPOTENCY_KEY_CONFLICT));
             log.info("같은 멱등키의 동시 요청, 먼저 저장된 주문 반환. orderId={}", savedOrderId);
@@ -194,7 +194,7 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         return items;
     }
 
-    // 재고 선점 해제 + 주문 삭제
+    // 재고 선점 해제 + 주문 취소. 주문을 지우지 않고 취소로 남겨, 재고 해제가 실패해도 어떤 주문의 재고인지 추적할 수 있게 한다(#401)
     private void cancelCreatedOrder(Long orderId) {
         // 재고 선점 해제
         try {
@@ -202,11 +202,11 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         } catch(RuntimeException e) {
             log.error("재고 선점 해제 실패, orderId={}", orderId, e);
         }
-        // 주문 삭제
+        // 주문 취소. 실패하면 결제 대기로 남지만 지갑에 결제 요청이 가지 않은 주문이라 돈은 오가지 않는다
         try {
-            orderService.delete(orderId);
+            orderService.cancel(orderId);
         } catch(RuntimeException e) {
-            log.error("주문 삭제 실패, orderId={}", orderId, e);
+            log.error("주문 취소 실패, orderId={}", orderId, e);
         }
     }
 

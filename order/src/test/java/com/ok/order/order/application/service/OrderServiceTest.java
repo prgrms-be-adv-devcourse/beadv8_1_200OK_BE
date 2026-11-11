@@ -108,10 +108,46 @@ class OrderServiceTest {
     }
 
     @Test
+    void 결제_대기_주문을_취소하면_주문이_취소로_남는다() {
+        // given
+        Order order = savedOrder(10L);
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.cancel(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+    }
+
+    @Test
+    void 결제_결과를_받은_주문은_취소하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.cancel(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+    }
+
+    @Test
+    void 취소할_주문이_없으면_예외_없이_넘어간다() {
+        // given
+        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+
+        // when & then
+        sut.cancel(10L);
+    }
+
+    @Test
     void 주문_목록에는_대표_상품명과_상품_수와_총액을_담는다() {
         // given
         Page<Order> orders = new PageImpl<>(List.of(savedOrder(10L)));
-        given(orderRepository.findByBuyerIdOrderByIdDesc(eq(1L), any(Pageable.class))).willReturn(orders);
+        given(orderRepository.findByBuyerIdAndStatusNotOrderByIdDesc(eq(1L), eq(OrderStatus.CANCELED), any(Pageable.class))).willReturn(orders);
 
         // when
         Page<OrderSummaryResult> result = sut.getOrders(1L, 0, 10);

@@ -88,6 +88,11 @@ public class OrderItem extends BaseTime {
         this.status = OrderItemStatus.PAYMENT_FAILED;
     }
 
+    // 취소
+    void cancel() {
+        this.status = OrderItemStatus.CANCELED;
+    }
+
     // 배송 시작
     boolean markShipping() {
         if (status != OrderItemStatus.PREPARING) {
