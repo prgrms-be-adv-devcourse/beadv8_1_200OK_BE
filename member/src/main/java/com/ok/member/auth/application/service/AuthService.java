@@ -1,17 +1,17 @@
 package com.ok.member.auth.application.service;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.member.auth.application.dto.AuthAccount;
 import com.ok.member.auth.application.dto.LoginCredential;
 import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.dto.TokenResult;
 import com.ok.member.auth.application.port.in.TokenReissueUseCase;
 import com.ok.member.auth.application.port.out.AccessTokenIssuer;
+import com.ok.member.auth.application.port.out.MemberCredentialReader;
+import com.ok.member.auth.application.port.out.SellerApprovalReader;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
-import com.ok.member.member.application.dto.MemberAuthAccount;
-import com.ok.member.member.application.port.in.MemberAuthAccountUseCase;
-import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,19 +27,19 @@ import java.util.Optional;
 @Transactional(readOnly = true)
 public class AuthService implements TokenReissueUseCase {
 
-    private final MemberAuthAccountUseCase memberAuthAccountUseCase;
+    private final MemberCredentialReader memberCredentialReader;
     private final AccessTokenIssuer accessTokenIssuer;
     private final RefreshTokenService refreshTokenService;
-    private final SellerApprovalCheckUseCase sellerApprovalCheckUseCase;
+    private final SellerApprovalReader sellerApprovalReader;
 
-    public AuthService(MemberAuthAccountUseCase memberAuthAccountUseCase,
+    public AuthService(MemberCredentialReader memberCredentialReader,
                        AccessTokenIssuer accessTokenIssuer,
                        RefreshTokenService refreshTokenService,
-                       SellerApprovalCheckUseCase sellerApprovalCheckUseCase) {
-        this.memberAuthAccountUseCase = memberAuthAccountUseCase;
+                       SellerApprovalReader sellerApprovalReader) {
+        this.memberCredentialReader = memberCredentialReader;
         this.accessTokenIssuer = accessTokenIssuer;
         this.refreshTokenService = refreshTokenService;
-        this.sellerApprovalCheckUseCase = sellerApprovalCheckUseCase;
+        this.sellerApprovalReader = sellerApprovalReader;
     }
 
     /**
@@ -50,8 +50,7 @@ public class AuthService implements TokenReissueUseCase {
      * 같은 패키지의 {@link LoginFacade}만 부를 수 있게 한다.
      */
     Optional<LoginCredential> findLoginCredential(String loginId) {
-        return memberAuthAccountUseCase.findLoginCredential(loginId)
-                .map(credential -> new LoginCredential(credential.memberId(), credential.passwordHash()));
+        return memberCredentialReader.findLoginCredential(loginId);
     }
 
     /**
@@ -71,7 +70,7 @@ public class AuthService implements TokenReissueUseCase {
         // 탈퇴 회원은 아이디가 익명화될 예정이라 "없는 회원"과 같게 취급해 가입 이력을 드러내지 않는다.
         // 확인한 해시와 지금 해시가 다르면 bcrypt 비교 중에 비밀번호가 바뀐 것이므로 옛 비밀번호로는 발급하지 않는다.
         // 정지 회원은 비밀번호까지 맞은 본인이므로, 왜 로그인이 안 되는지 알 수 있게 별도 코드로 알린다.
-        MemberAuthAccount account = memberAuthAccountUseCase.findAuthAccount(credential.memberId())
+        AuthAccount account = memberCredentialReader.findAuthAccount(credential.memberId())
                 .filter(found -> !found.withdrawn())
                 .filter(found -> Objects.equals(found.passwordHash(), credential.passwordHash()))
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_CREDENTIALS));
@@ -104,7 +103,7 @@ public class AuthService implements TokenReissueUseCase {
         Long memberId = refreshTokenService.consume(command.refreshToken());
 
         // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다
-        MemberAuthAccount account = memberAuthAccountUseCase.findAuthAccount(memberId)
+        AuthAccount account = memberCredentialReader.findAuthAccount(memberId)
                 .filter(found -> !found.withdrawn())
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
         if (account.suspended()) {
@@ -115,8 +114,8 @@ public class AuthService implements TokenReissueUseCase {
 
     // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.
     // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다
-    private TokenResult createTokens(MemberAuthAccount account) {
-        boolean approvedSeller = sellerApprovalCheckUseCase.isApprovedSeller(account.memberId());
+    private TokenResult createTokens(AuthAccount account) {
+        boolean approvedSeller = sellerApprovalReader.isApprovedSeller(account.memberId());
         List<String> roles = TokenRoleMapper.toTokenRoles(account.admin(), approvedSeller);
         AccessToken accessToken = accessTokenIssuer.issue(account.memberId(), roles);
         IssuedRefreshToken refreshToken = refreshTokenService.issue(account.memberId());
