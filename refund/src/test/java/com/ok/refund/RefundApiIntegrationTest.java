@@ -10,6 +10,8 @@ import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +79,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     RefundJpaRepository refundJpaRepository;
     @Autowired
     FakeOrderQueryPort orderQueryPort;
+    @Autowired
+    FakeOrderCancellationPort orderCancellationPort;
 
     private MockMvc mockMvc;
 
@@ -93,6 +97,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         refundJpaRepository.deleteAllInBatch();
         // 통합 테스트는 컨텍스트(Fake 빈)를 함께 쓰므로 비우지 않으면 다른 테스트로 값이 넘어간다
         orderQueryPort.clear();
+        orderCancellationPort.clear();
     }
 
     // 구매자 요청
@@ -408,6 +413,13 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
             softly.assertThat(saved.getItemAmount()).isEqualTo(10_000L);
         });
+        // 승인 커밋 뒤 주문에 취소 수량과 뺀 배송비를 알린다(#513). 3개 중 1개라 묶음이 그대로여서 뺀 배송비는 0원이다
+        OrderCancellation reflected = orderCancellationPort.reflectedOf(refundId).orElseThrow();
+        assertSoftly(softly -> {
+            softly.assertThat(reflected.orderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+            softly.assertThat(reflected.quantity()).isEqualTo(1);
+            softly.assertThat(reflected.deductedShippingFee()).isZero();
+        });
         // 처리 중은 아직 끝나지 않았으므로 같은 상품에 두 번째 요청을 받지 않는다
         request(SOCKS_ORDER_ITEM_ID, 1)
                 .andExpect(status().isConflict())
@@ -694,6 +706,21 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(saved.getDecidedAt()).isNotNull();
             softly.assertThat(saved.getActiveOrderItemId()).isNull();
         });
+        // 자동 거절은 주문에 취소를 알리지 않는다
+        assertThat(orderCancellationPort.reflectedOf(refundId)).isEmpty();
+    }
+
+    // 승인은 커밋된 뒤라 되돌리지 않는다. 주문에 알리지 못하면 판매자는 503을 받고 환불은 처리 중에 머문다(#516에서 다시 시도)
+    @Test
+    void 승인_뒤_주문_취소_반영이_실패하면_503이고_처리_중으로_남는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        orderCancellationPort.fail();
+
+        // when & then
+        approve(SOCKS_SELLER_ID, refundId)
+                .andExpect(status().isServiceUnavailable());
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
     }
 
     @Test
