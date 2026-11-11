@@ -284,6 +284,8 @@ class PayoutJobLockIntegrationTest extends AbstractIntegrationTest {
     // 5분(lockAtMostFor)보다 오래 걸리는 정산 도중 잠금이 풀려 다른 실행이 겹칠 수 있음
     // 정산 Job 대신 빈 작업을 쓰고, 연장은 lockAtMostFor의 절반마다 일어나므로 허용 최솟값 30초로 잡아 15초쯤 기다림
     // 정산 잠금 행과 섞이지 않게 다른 이름을 씀
+    // 약 16초 걸려도 남기는 이유: 연장을 빼도 이 테스트 말고는 모두 통과함(#223 변이 시험에서 확인)
+    //   15만 행 정산이 약 6분 걸려(#304) 5분 넘는 정산이 실제로 있을 수 있으므로, 연장이 빠지면 여기서 알아야 함
     @Test
     void 실행이_길어지면_잠금_만료_시각이_자동으로_늘어난다() throws Throwable {
         // given
