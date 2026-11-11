@@ -32,7 +32,7 @@ public class JwtEncoderConfig {
      *
      * <p>인코더는 토큰 헤더의 알고리즘과 {@code kid}에 맞는 키를 골라 서명한다. 그래서 서명 키에도 같은 {@code kid}를 붙여 둔다.
      * (헤더에만 {@code kid}를 넣고 키에 없으면 "서명할 키를 찾을 수 없다"며 실패한다)
-     * 토큰을 발급할 때 JwsHeader에 {@link JwtConfig#SIGNING_ALGORITHM}과 {@code kid}를 반드시 지정해야 한다. → {@code AccessTokenProvider} 참고
+     * 토큰을 발급할 때 JwsHeader에 {@link JwtConfig#SIGNING_ALGORITHM}과 {@code kid}를 반드시 지정해야 한다. → {@code JwtAccessTokenIssuer} 참고
      *
      * @throws IllegalStateException {@code jwt.jwk-set-uri}가 지정되었거나, 서명 {@code kid}의 공개키가 검증 목록에 없거나,
      *                               개인키가 그 공개키와 짝이 아닌 경우

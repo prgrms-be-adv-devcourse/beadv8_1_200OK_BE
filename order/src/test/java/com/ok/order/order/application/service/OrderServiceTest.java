@@ -206,7 +206,7 @@ class OrderServiceTest {
     void 결제_대기_주문에_결제_완료가_오면_결제_완료되고_장바구니에서_빠진다() {
         // given
         Order order = savedOrder(10L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -224,7 +224,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -238,7 +238,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaymentFailed();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -252,7 +252,7 @@ class OrderServiceTest {
     void 결제_대기_주문에_결제_실패가_오면_결제_실패가_되고_재고를_풀어야_한다() {
         // given
         Order order = savedOrder(10L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         boolean shouldReleaseStock = sut.failPayment(10L);
@@ -271,7 +271,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaymentFailed();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         boolean shouldReleaseStock = sut.failPayment(10L);
@@ -286,7 +286,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         boolean shouldReleaseStock = sut.failPayment(10L);
@@ -301,7 +301,7 @@ class OrderServiceTest {
     @Test
     void 결제_이벤트의_주문이_없으면_예외_없이_넘어가고_재고를_풀지_않는다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then (예외를 던지면 이벤트가 계속 재처리됨)
         assertThatCode(() -> sut.completePayment(10L)).doesNotThrowAnyException();
@@ -528,7 +528,7 @@ class OrderServiceTest {
         order.registerShippingAddress("홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요");
         order.applyShippingFee(100L, new SellerShippingFee(3_000L, null, 3_000L, 0L));
         ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -561,7 +561,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);

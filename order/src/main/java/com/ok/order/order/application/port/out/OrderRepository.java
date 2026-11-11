@@ -20,6 +20,13 @@ public interface OrderRepository {
 
     Optional<Order> findById(Long id);
 
+    /**
+     * 주문을 쓰기 잠금({@code FOR UPDATE})으로 조회한다.
+     * 결제 완료·실패처럼 같은 주문의 상태를 동시에 바꿀 수 있는 곳에서 쓴다. 늦게 온 쪽이 앞의 커밋을 기다렸다가 바뀐 상태를 읽어,
+     * 상태 검증 분기가 항상 최신 상태로 동작한다.
+     */
+    Optional<Order> findByIdForUpdate(Long id);
+
     Page<Order> findByBuyerIdAndStatusNotOrderByIdDesc(Long buyerId, OrderStatus status, Pageable pageable);
 
     Optional<Order> findByIdAndBuyerId(Long id, Long buyerId);
