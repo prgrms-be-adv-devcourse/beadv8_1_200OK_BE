@@ -53,7 +53,7 @@ public record RefundResponse(
         @Schema(description = "구매자가 적은 취소 사유 (적었을 때만)", example = "옵션을 잘못 골랐습니다.")
         String cancelReason,
 
-        @Schema(description = "상태. REQUESTED(판매자 승인 대기), PROCESSING(승인되어 처리 중), REJECTED(판매자 거절), WITHDRAWN(구매자 철회)",
+        @Schema(description = "상태. REQUESTED(판매자 승인 대기), PROCESSING(승인되어 처리 중), REJECTED(판매자 거절), WITHDRAWN(구매자 철회), COMPLETED(지갑 반환 요청·주문 반영·재고 복구까지 마침)",
                 example = "REQUESTED")
         String status,
 

@@ -7,8 +7,10 @@ import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.OrderCancellation;
 import com.ok.refund.application.port.out.OrderCancellationPort;
 import com.ok.refund.application.port.out.OrderQueryPort;
+import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
+import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.application.port.out.WalletRefundRequest;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.domain.CancelledQuantity;
@@ -29,7 +31,8 @@ import java.util.List;
 
 /**
  * 판매자가 본인 상품의 환불 요청을 승인하거나 거절한다.
- * 승인은 주문 조회(구간 밖)와 묶음 잠금·판단·저장(READ COMMITTED 구간), 커밋 뒤 지갑 반환 요청과 주문 취소 반영(구간 밖)으로 나뉘고,
+ * 승인은 주문 조회(구간 밖)와 묶음 잠금·판단·저장(READ COMMITTED 구간), 커밋 뒤 지갑 반환 요청·주문 취소 반영·재고 복구(구간 밖),
+ * 완료로 바꾸기(자기 행만 잠그는 구간)로 나뉘고,
  * 거절은 주문을 부르지 않아 구간 하나로 끝난다.
  */
 @Service
@@ -44,21 +47,24 @@ public class DecideRefundService implements DecideRefundUseCase {
     private final RefundPersistencePort refundPersistencePort;
     private final WalletRefundRequestPort walletRefundRequestPort;
     private final OrderCancellationPort orderCancellationPort;
+    private final ProductStockReleasePort productStockReleasePort;
     private final Clock clock;
     // 승인 전 확인 조회용. 잠그지 않고 읽기만 한다
     private final TransactionTemplate readOnlyTransaction;
-    // 거절용. 다른 결정과 같은 기본 설정이다
+    // 거절과 완료용. 기본 설정이다
     private final TransactionTemplate transaction;
     // 승인용. 묶음 잠금 뒤 최신 값을 읽어야 해서 READ COMMITTED로 연다(approve 설명 참고)
     private final TransactionTemplate approveTransaction;
 
     public DecideRefundService(OrderQueryPort orderQueryPort, RefundPersistencePort refundPersistencePort,
                                WalletRefundRequestPort walletRefundRequestPort, OrderCancellationPort orderCancellationPort,
-                               Clock clock, PlatformTransactionManager transactionManager) {
+                               ProductStockReleasePort productStockReleasePort, Clock clock,
+                               PlatformTransactionManager transactionManager) {
         this.orderQueryPort = orderQueryPort;
         this.refundPersistencePort = refundPersistencePort;
         this.walletRefundRequestPort = walletRefundRequestPort;
         this.orderCancellationPort = orderCancellationPort;
+        this.productStockReleasePort = productStockReleasePort;
         this.clock = clock;
         this.readOnlyTransaction = new TransactionTemplate(transactionManager);
         this.readOnlyTransaction.setReadOnly(true);
@@ -78,7 +84,8 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                          승인 때 주문 호출이 실패하면 {@code ORDER_API_FAILED}, 주문 상품이 없으면 {@code ORDER_ITEM_NOT_FOUND},
      *                          거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
      * @throws IllegalStateException 승인은 커밋됐는데 지갑 반환 요청을 보내지 못했으면 (처리 중으로 남는다, {@link #approve(Long, Long, RefundableOrderItem)} 참고)
-     * @throws RestApiException 승인은 커밋됐는데 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED} (처리 중으로 남는다)
+     * @throws RestApiException 승인은 커밋됐는데 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED},
+     *                          재고 복구가 실패하면 {@code PRODUCT_API_FAILED} (둘 다 처리 중으로 남는다)
      */
     @Override
     public RefundResult decide(RefundDecisionCommand command) {
@@ -122,7 +129,8 @@ public class DecideRefundService implements DecideRefundUseCase {
      * 반드시 이 구간이 트랜잭션을 새로 시작해야 하므로 트랜잭션 밖에서만 부른다({@link #decide}가 주문 조회 뒤 부른다).
      * 패키지 안에서만 연다: 주문 정보를 받는 이 단계만 따로 검증하는 테스트가 쓴다.
      *
-     * <p>커밋한 뒤(구간 밖) 처리 중이 된 환불이면 지갑에 예치금 반환을 요청하고(#512) 이어서 주문에 취소를 알린다(#513).
+     * <p>커밋한 뒤(구간 밖) 처리 중이 된 환불이면 지갑에 예치금 반환을 요청하고(#512), 주문에 취소를 알리고(#513),
+     * 상품에 재고를 되돌려 달라고 한 뒤 완료로 바꾼다(#414). 돌려주는 결과는 마지막 상태(완료, 자동 거절이면 거절)다.
      * 구간 안에서 부르지 않는 이유: 상대가 느리면 묶음 잠금을 그만큼 오래 쥐고, 부른 뒤 커밋이 실패하면 승인되지 않은 환불이 밖에 반영된다.
      * 이 메서드 안에서 부르는 이유: 승인 결과를 만드는 곳이 여기 하나라, 이 단계만 부르는 테스트도 다음 단계 호출을 함께 확인한다.
      *
@@ -134,24 +142,24 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                               주문 상태가 null이거나 모르는 값이면 (주문 모듈 쪽 문제, 요청됨 그대로 남는다),
      *                               지갑 반환 요청을 보내지 못했으면 (승인은 이미 커밋돼 처리 중으로 남는다, 주문은 부르지 않는다)
      * @throws IllegalArgumentException 배송비 판단대로면 돌려줄 금액이 음수가 되면 (계산 버그, 커밋 전에 막혀 요청됨으로 남는다)
-     * @throws RestApiException      주문 취소 반영이 실패하면 {@code ORDER_API_FAILED} (승인은 이미 커밋돼 처리 중으로 남는다)
+     * @throws RestApiException      주문 취소 반영이 실패하면 {@code ORDER_API_FAILED}, 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}
+     *                               (승인은 이미 커밋돼 처리 중으로 남는다)
      */
     RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
         requireNoOuterTransaction();
         RefundResult result = approveTransaction.execute(status -> approveLocked(refundId, sellerId, orderItem));
-        continueAfterApproval(result);
-        return result;
+        return continueAfterApproval(result);
     }
 
-    // 승인 커밋 뒤의 단계를 차례로 부른다: 지갑 반환 요청(#512) → 주문 취소 반영(#513). 성공 흐름만 다룬다.
+    // 승인 커밋 뒤의 단계를 차례로 부른다: 지갑 반환 요청(#512) → 주문 취소 반영(#513) → 재고 복구 → 완료(#414). 성공 흐름만 다룬다.
     // 승인 버튼으로 왔어도 자동 거절(출고됨, 배송비 모자람)로 끝났을 수 있다. 처리 중이 된 환불만 다음 단계로 간다.
     // 이 확인이 없으면 거절된 환불의 상품 금액이 지갑으로 나가고 주문에도 취소가 반영된다.
     // 실패 기록 틀(RefundStepRunner)로 부르지 않는 이유: 성공 흐름만 만드는 범위다. 실패 기록과 다시 시도는 #516에서 함께 정한다(refund/CLAUDE.md 5절)
     // TODO(#516): 앞 단계가 실패하면 예외만 올라가고(판매자는 500·503, 다시 승인하면 409) 환불은 처리 중에 머문다.
     //  지갑은 Kafka에 들어간 것만 확인하고 주문을 반영하므로, 지갑이 처리에 실패해도 주문은 취소된다(지갑 완료 수신이나 outbox로 다룸)
-    private void continueAfterApproval(RefundResult result) {
+    private RefundResult continueAfterApproval(RefundResult result) {
         if (!RefundStatus.PROCESSING.name().equals(result.status())) {
-            return;
+            return result;
         }
         // 음수는 여기 오지 않는다. 도메인 승인(Refund.approve)이 커밋 전에 막아 요청됨으로 남긴다
         long amount = result.refundAmount();
@@ -164,6 +172,24 @@ public class DecideRefundService implements DecideRefundUseCase {
         // 그래서 Kafka 저장 확인(발행이 예외 없이 끝남)을 성공으로 보고 바로 주문에 알린다. 발행이 실패하면 위에서 예외가 나 주문은 부르지 않는다
         orderCancellationPort.reflectCancellation(new OrderCancellation(
                 result.refundId(), result.orderItemId(), result.quantity(), result.deductedShippingFeeAmount()));
+        // 주문에 취소를 알린 뒤 재고를 되돌린다. 주문이 실패하면 위에서 예외가 나 재고는 그대로다(배송할 수도 있는 상품의 재고를 먼저 풀지 않는다)
+        productStockReleasePort.releaseStock(new StockRelease(
+                result.refundId(), result.orderId(), result.productOptionId(), result.quantity()));
+        return complete(result.refundId());
+    }
+
+    // 모든 단계가 끝난 환불을 완료로 바꾼다. 자기 행만 잠근다. 처리 중과 완료는 둘 다 배송비 판단에서 "이미 취소된 것"이라
+    // (RefundShippingFeePolicy.CANCELLING_STATUSES) 바꿔도 같은 묶음의 집계가 변하지 않아 묶음 전체를 잠글 필요가 없다.
+    // 같은 묶음의 다른 승인이 이 행을 먼저 잠갔으면 그 승인이 커밋할 때까지 기다린다.
+    // 이 행을 잠그는 첫 조회라 승인 구간에서 읽은 옛 값을 쓰지 않는다(새 트랜잭션)
+    private RefundResult complete(Long refundId) {
+        return transaction.execute(status -> {
+            Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
+                    .orElseThrow(() -> new IllegalStateException("승인한 환불을 완료하려는데 찾을 수 없습니다. refundId=" + refundId));
+            refund.complete();
+            refundPersistencePort.update(refund);
+            return RefundResult.from(refund);
+        });
     }
 
     private RefundResult approveLocked(Long refundId, Long sellerId, RefundableOrderItem orderItem) {

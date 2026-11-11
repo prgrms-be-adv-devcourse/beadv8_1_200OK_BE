@@ -7,8 +7,9 @@ import java.time.LocalDateTime;
 /**
  * 환불 요청 한 건의 결과. 요청 API 응답과 목록 한 줄이 같은 값을 쓴다.
  * 컨트롤러가 도메인 enum을 쓰지 않도록 상태는 이름 문자열로 담는다.
- * 실패 기록 칸(#412)은 아직 보여 줄 API가 없어 담지 않는다. 완료 시각(#414) 등은 그 칸을 만드는 이슈에서 더한다.
+ * 실패 기록 칸(#412)은 아직 보여 줄 API가 없어 담지 않는다. 완료 시각 칸은 없다(완료는 승인 요청 안에서 바로 이어져 승인 시각과 같다).
  *
+ * @param productOptionId           주문에서 받은 옵션 ID. 승인 뒤 상품에 재고를 되돌려 달라고 할 때 쓴다(#414)
  * @param itemAmount                돌려줄 상품 금액 = 단가 x 개수 (원)
  * @param shippingFeeAmount         돌려줄 배송비 (원). 승인 때 정해지고 그 전에는 0
  * @param remoteAreaFeeAmount       돌려줄 도서산간 운임 (원). 승인 때 정해지고 그 전에는 0
@@ -25,6 +26,7 @@ public record RefundResult(
         int quantity,
         Long buyerId,
         Long sellerId,
+        Long productOptionId,
         String productName,
         String optionName,
         long unitPrice,
@@ -48,6 +50,7 @@ public record RefundResult(
                 refund.getQuantity(),
                 refund.getBuyerId(),
                 refund.getSellerId(),
+                refund.getProductOptionId(),
                 refund.getProductName(),
                 refund.getOptionName(),
                 refund.getUnitPrice(),

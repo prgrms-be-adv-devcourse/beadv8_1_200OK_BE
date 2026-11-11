@@ -16,6 +16,7 @@ import com.ok.refund.application.port.in.WithdrawRefundUseCase;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
+import com.ok.testsupport.FakeProductStockReleasePort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.RepeatedTest;
@@ -79,11 +80,14 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     ApplicationContext applicationContext;
     @Autowired
     FakeOrderQueryPort orderQueryPort;
+    @Autowired
+    FakeProductStockReleasePort productStockReleasePort;
 
     @AfterEach
     void tearDown() {
         refundJpaRepository.deleteAllInBatch();
         orderQueryPort.clear();
+        productStockReleasePort.clear();
     }
 
     @RepeatedTest(5)
@@ -189,7 +193,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         Long withdrawnB = request(B);
         withdrawRefundUseCase.withdraw(withdrawnB, BUYER_ID);
         Long refundB = request(B);
-        approve(refundB);
+        approveAndStopBeforeCompletion(refundB);
         Long withdrawnC = request(C);
         withdrawRefundUseCase.withdraw(withdrawnC, BUYER_ID);
         List<RefundStatus> active = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
@@ -308,6 +312,14 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     private void approve(Long refundId) {
         decideRefundService.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
+    }
+
+    // 승인 뒤 재고 복구를 실패시켜 처리 중에 멈춘 환불을 만든다(#414). 완료된 행은 끝난 상태라 잠금 대상이 아니어서,
+    // "처리 중 행은 잠근다"를 보려면 완료 전에 멈춘 행이 필요하다
+    private void approveAndStopBeforeCompletion(Long refundId) {
+        productStockReleasePort.fail();
+        assertThatThrownBy(() -> approve(refundId)).isInstanceOf(RestApiException.class);
+        productStockReleasePort.clear();
     }
 
     private static RefundableOrderItem orderItem(Long orderItemId, long unitPrice, BundleShipping bundle) {

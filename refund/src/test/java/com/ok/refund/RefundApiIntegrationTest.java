@@ -11,8 +11,10 @@ import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.refund.application.port.out.StockRelease;
 import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
+import com.ok.testsupport.FakeProductStockReleasePort;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,6 +83,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     FakeOrderQueryPort orderQueryPort;
     @Autowired
     FakeOrderCancellationPort orderCancellationPort;
+    @Autowired
+    FakeProductStockReleasePort productStockReleasePort;
 
     private MockMvc mockMvc;
 
@@ -98,6 +102,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // 통합 테스트는 컨텍스트(Fake 빈)를 함께 쓰므로 비우지 않으면 다른 테스트로 값이 넘어간다
         orderQueryPort.clear();
         orderCancellationPort.clear();
+        productStockReleasePort.clear();
     }
 
     // 구매자 요청
@@ -371,6 +376,22 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 판매자_목록을_완료로_거를_수_있다() throws Exception {
+        // given: 양말 1개 환불을 승인해 완료하고, 남은 양말로 요청을 하나 더 넣는다
+        Long completedId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        approve(SOCKS_SELLER_ID, completedId).andExpect(status().isOk());
+        requestedRefundId(SOCKS_ORDER_ITEM_ID);
+
+        // when & then
+        mockMvc.perform(get(SELLER_URL).param("status", "COMPLETED")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SOCKS_SELLER_ID, "BUYER", "SELLER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.content[0].refundId", is(completedId.intValue())))
+                .andExpect(jsonPath("$.content[0].status", is("COMPLETED")));
+    }
+
+    @Test
     void 없는_상태로_거르면_422() throws Exception {
         // when & then
         mockMvc.perform(get(SELLER_URL).param("status", "DONE")
@@ -390,8 +411,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     // 판매자 승인·거절
 
     @Test
-    void 승인하면_200과_처리_중을_돌려주고_같은_상품의_새_요청은_계속_막는다() throws Exception {
-        // given
+    void 승인하면_지갑_주문_상품까지_마치고_200과_완료를_돌려준다() throws Exception {
+        // given: 양말 3개 중 1개를 취소 요청한다
         Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
 
         // when
@@ -402,15 +423,16 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // then
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.refundId", is(refundId.intValue())))
-                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.decidedAt", notNullValue()));
         Refund saved = onlyRefund();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.COMPLETED);
             softly.assertThat(saved.getDecidedAt()).isNotNull();
-            softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+            // 끝났으므로 진행 중 칸을 비운다. 그래야 남은 2개를 다시 요청할 수 있다
+            softly.assertThat(saved.getActiveOrderItemId()).isNull();
             softly.assertThat(saved.getItemAmount()).isEqualTo(10_000L);
         });
         // 승인 커밋 뒤 주문에 취소 수량과 뺀 배송비를 알린다(#513). 3개 중 1개라 묶음이 그대로여서 뺀 배송비는 0원이다
@@ -420,7 +442,52 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(reflected.quantity()).isEqualTo(1);
             softly.assertThat(reflected.deductedShippingFee()).isZero();
         });
-        // 처리 중은 아직 끝나지 않았으므로 같은 상품에 두 번째 요청을 받지 않는다
+        // 이어서 상품에 주문 10의 옵션 55(흰색 양말) 재고 1개를 되돌려 달라고 한다(#414)
+        StockRelease released = productStockReleasePort.releasedOf(refundId).orElseThrow();
+        assertSoftly(softly -> {
+            softly.assertThat(released.orderId()).isEqualTo(ORDER_ID);
+            softly.assertThat(released.productOptionId()).isEqualTo(55L);
+            softly.assertThat(released.quantity()).isEqualTo(1);
+        });
+    }
+
+    // 완료되면 진행 중 칸이 비어 같은 상품의 남은 개수를 다시 요청할 수 있다. 남은 개수는 산 개수에서 완료된 개수를 뺀 것이다(#414)
+    @Test
+    void 완료된_뒤_같은_상품은_남은_개수까지만_다시_요청할_수_있다() throws Exception {
+        // given: 양말 3개 중 1개를 환불해 완료됐다. 남은 것은 2개다
+        approve(SOCKS_SELLER_ID, requestedRefundId(SOCKS_ORDER_ITEM_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("COMPLETED")));
+
+        // when & then: 3개는 남은 2개보다 많아 409, 2개는 받는다
+        request(SOCKS_ORDER_ITEM_ID, 3)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/refund-quantity-exceeded")));
+        request(SOCKS_ORDER_ITEM_ID, 2)
+                .andExpect(status().isCreated());
+        assertThat(refundJpaRepository.count()).isEqualTo(2);
+    }
+
+    // 처리 중은 아직 끝나지 않아 같은 상품에 두 번째 요청을 받지 않는다. 재고 복구가 실패해 완료 전에 멈춘 환불로 확인한다
+    @Test
+    void 승인_뒤_재고_복구가_실패하면_503이고_처리_중으로_남아_같은_상품의_새_요청을_막는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(SOCKS_ORDER_ITEM_ID);
+        productStockReleasePort.fail();
+
+        // when
+        ResultActions sut = approve(SOCKS_SELLER_ID, refundId);
+
+        // then
+        sut.andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type", endsWith("/refund/product-api-failed")));
+        Refund saved = onlyRefund();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(SOCKS_ORDER_ITEM_ID);
+        });
+        // 주문 반영은 이미 끝났다(재고 복구 앞 단계)
+        assertThat(orderCancellationPort.reflectedOf(refundId)).isPresent();
         request(SOCKS_ORDER_ITEM_ID, 1)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/refund-already-in-progress")));
@@ -579,14 +646,15 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         Long first = requestedRefundId(FREE_ORDER_ID, FREE_B_ORDER_ITEM_ID);
         approve(FREE_SELLER_ID, first)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.shippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.remoteAreaFeeAmount", is(0)))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.refundAmount", is(27000)));
         Long last = requestedRefundId(FREE_ORDER_ID, FREE_A_ORDER_ITEM_ID);
 
-        // when: A까지 취소하면 묶음 전부 취소라 앞에서 뺀 3,000원과 도서산간 운임 2,000원을 함께 돌려준다
+        // when: A까지 취소하면 묶음 전부 취소라 앞에서 뺀 3,000원과 도서산간 운임 2,000원을 함께 돌려준다.
+        // B는 이미 완료됐지만 취소된 것으로 세므로 "묶음 전부 취소"로 본다(#414)
         ResultActions sut = approve(FREE_SELLER_ID, last);
 
         // then
@@ -604,7 +672,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.refundAmount", is(35000)))
                 .andExpect(jsonPath("$.cancelReason", nullValue()))
-                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.requestedAt", notNullValue()))
                 .andExpect(jsonPath("$.decidedAt", notNullValue()));
@@ -618,6 +686,42 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(firstSaved.getDeductedShippingFeeAmount()).isEqualTo(3_000L);
             // 27,000 + 35,000 = 62,000원. 상자가 나가지 않았으니 구매자가 낸 돈을 모두 돌려받는다
             softly.assertThat(firstSaved.getRefundAmount() + lastSaved.getRefundAmount()).isEqualTo(62_000L);
+        });
+    }
+
+    // 완료된 환불도 "이미 취소된 것"으로 세야 다음 환불의 배송비가 맞다(#414).
+    // 판매자 8이 주문 30에 양말(301) 10,000원 + 컵(302) 25,000원 = 35,000원을 팔았다. 30,000원 이상 무료배송이라 배송비 0원, 기본 배송비 3,000원
+    @Test
+    void 완료된_환불도_세어_묶음의_마지막_환불이_앞에서_뺀_배송비를_돌려받는다() throws Exception {
+        // given: 양말을 먼저 취소하면 25,000원이 남아 무료배송이 깨져 3,000원을 빼고 7,000원을 돌려준다. 끝까지 처리돼 완료된다
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L, List.of(
+                new BundleItem(301L, 10_000L, 1), new BundleItem(302L, 25_000L, 1)));
+        orderQueryPort.put(orderItem(30L, 301L, 8L, 10_000L, 1, bundle));
+        orderQueryPort.put(orderItem(30L, 302L, 8L, 25_000L, 1, bundle));
+        Long socks = requestedRefundId(30L, 301L);
+        approve(8L, socks)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
+                .andExpect(jsonPath("$.refundAmount", is(7000)));
+        Long cup = requestedRefundId(30L, 302L);
+
+        // when: 컵까지 취소하면 묶음 전부 취소다. 완료된 양말 환불을 세어야 "전부 취소"로 보고 앞에서 뺀 3,000원을 돌려준다
+        ResultActions sut = approve(8L, cup);
+
+        // then: 25,000 + 3,000 = 28,000원. 완료를 세지 않으면 양말이 남은 것으로 보여 3,000원을 또 빼 22,000원이 된다
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.shippingFeeAmount", is(3000)))
+                .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)))
+                .andExpect(jsonPath("$.refundAmount", is(28000)));
+        Refund socksSaved = refundPersistencePort.findById(socks).orElseThrow();
+        Refund cupSaved = refundPersistencePort.findById(cup).orElseThrow();
+        assertSoftly(softly -> {
+            softly.assertThat(socksSaved.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            softly.assertThat(cupSaved.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            // 7,000 + 28,000 = 35,000원. 상자가 나가지 않았으니 구매자가 낸 돈을 모두 돌려받는다
+            softly.assertThat(socksSaved.getRefundAmount() + cupSaved.getRefundAmount()).isEqualTo(35_000L);
         });
     }
 
@@ -645,9 +749,10 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         orderQueryPort.put(orderItem(40L, 403L, FREE_SELLER_ID, 2_500L, 1, bundle));
         Long refundA = requestedRefundId(40L, 401L);
         Long refundC = requestedRefundId(40L, 403L);
+        // C는 끝까지 처리돼 완료된다. 완료도 "이미 취소된 것"으로 세어 A 승인 때 반영된다
         approve(FREE_SELLER_ID, refundC)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)));
 
         // when
@@ -721,6 +826,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         approve(SOCKS_SELLER_ID, refundId)
                 .andExpect(status().isServiceUnavailable());
         assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        // 주문이 취소를 모르면 재고도 되돌리지 않는다(#414, 배송할 수도 있는 상품을 다른 사람이 사지 않게)
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
     @Test
@@ -750,10 +857,10 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status", is("REJECTED")));
     }
 
-    // 다른 주문·다른 판매자·요청됨·철회는 이미 취소된 것으로 세지 않아야 한다. 잘못 세면 A 승인 때 기준이 이미 깨진 것으로 보여
+    // 다른 주문·다른 판매자·요청됨·철회는 이미 취소된 것으로 세지 않아야 한다(같은 묶음의 처리 중·완료만 센다). 잘못 세면 A 승인 때 기준이 이미 깨진 것으로 보여
     // 배송비를 빼지 않거나, 묶음에 없는 상품이 섞여 500이 난다
     @Test
-    void 같은_묶음의_처리_중_요청만_집계한다() throws Exception {
+    void 같은_묶음의_처리_중이나_완료된_요청만_집계한다() throws Exception {
         // given
         putFreeBundle();
         BundleShipping sameSellerOtherOrder = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
@@ -773,7 +880,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
 
         // then
         sut.andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.shippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.refundAmount", is(27000)));
@@ -816,7 +923,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         withdraw(BUYER_ID, refundId)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/invalid-refund-state")));
-        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        // 승인은 같은 요청 안에서 완료까지 간다. 완료된 환불도 철회할 수 없다
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.COMPLETED);
     }
 
     @Test
