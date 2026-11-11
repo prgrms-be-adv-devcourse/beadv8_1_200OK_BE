@@ -5,6 +5,7 @@ import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
@@ -12,6 +13,7 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -28,10 +31,12 @@ import com.tngtech.archunit.library.GeneralCodingRules;
 
 import com.ok.common.exception.ErrorCode;
 import com.ok.member.MemberSchema;
+import com.ok.member.auth.application.service.LoginFacade;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.Table;
 
 import com.tngtech.archunit.lang.ArchCondition;
@@ -40,7 +45,6 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 
 import java.util.List;
 import java.util.function.Function;
-import java.util.stream.Stream;
 
 @AnalyzeClasses(packages = {"com.ok.member", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
@@ -51,11 +55,19 @@ class ArchitectureTest {
                     .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
 
     // 헥사고날 구조로 옮긴 하위 도메인. 레이어 구조의 위치 규칙에서 빼고 아래 헥사고날 규칙으로 하위 도메인마다 검사한다.
-    // auth를 옮기면(#478) 여기에 더하고, 모두 옮기면 레이어 구조 규칙과 함께 정리한다(#479)
-    private static final List<Subdomain> HEXAGONAL_SUBDOMAINS = List.of(new Subdomain("seller"), new Subdomain("member"));
-    // auth는 패키지만 먼저 옮겨(#478) 레이어 구조의 위치 규칙에서 미리 뺀다. 헥사고날 규칙은 포트를 나눈 뒤 HEXAGONAL_SUBDOMAINS에 더해 건다
-    private static final String[] HEXAGONAL_PACKAGES = Stream.concat(
-                    HEXAGONAL_SUBDOMAINS.stream().map(Subdomain::all), Stream.of(new Subdomain("auth").all()))
+    // 세 하위 도메인을 모두 옮겼다. 레이어 구조 규칙은 #479에서 이 목록과 함께 정리한다
+    private static final List<Subdomain> HEXAGONAL_SUBDOMAINS = List.of(
+            new Subdomain("seller"), new Subdomain("member"), new Subdomain("auth"));
+
+    // 다른 하위 도메인을 부를 수 있는 위치. 하위 도메인 사이 호출을 출력 어댑터에만 두어 의존이 한 곳에서 보이게 한다
+    private static final String ANY_SUBDOMAIN_ADAPTER_OUT = "com.ok.member.*.adapter.out..";
+    // 모듈 최상위 패키지(하위 패키지 제외). 다른 모듈에 공개하는 클래스를 두는 곳이라(CLAUDE.md 모듈 경계) 유스케이스를 부를 수 있다
+    private static final String MODULE_ROOT = "com.ok.member";
+    // 이벤트를 발행하는 하위 도메인. auth는 발행하지 않아, 발행 구현체 규칙을 auth에 걸면 검사 대상이 없어 실패한다.
+    // auth가 이벤트를 발행하게 되면 여기에 더한다
+    private static final List<Subdomain> EVENT_PUBLISHING_SUBDOMAINS = List.of(new Subdomain("seller"), new Subdomain("member"));
+    private static final String[] HEXAGONAL_PACKAGES = HEXAGONAL_SUBDOMAINS.stream()
+            .map(Subdomain::all)
             .toArray(String[]::new);
 
     // 헥사고날 구조 (delivery ArchitectureTest와 같은 규칙을 하위 도메인 범위로 검사한다)
@@ -74,12 +86,65 @@ class ArchitectureTest {
             .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
     @ArchTest
-    static final ArchRule 다른_하위_도메인은_유스케이스_포트와_dto만_쓴다 = eachSubdomain(subdomain -> classes()
-            .that().resideInAPackage(subdomain.all())
-            .and().resideOutsideOfPackages(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
-            // onlyBeAccessed는 호출·필드 접근만 보므로, 타입 선언이나 클래스 참조까지 잡도록 의존 전체를 본다
-            .should().onlyHaveDependentClassesThat().resideInAPackage(subdomain.all())
-            .because("다른 하위 도메인은 유스케이스로만 부른다. 하위 도메인을 다른 서버로 나눌 때 유스케이스 호출만 원격 호출로 바꾸면 되게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
+    static final ArchRule 다른_하위_도메인은_adapter_out에서_유스케이스_포트와_dto만_쓴다 = eachSubdomain(subdomain -> CompositeArchRule
+            .of(classes()
+                    .that().resideInAPackage(subdomain.all())
+                    .and().resideOutsideOfPackages(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
+                    // onlyBeAccessed는 호출·필드 접근만 보므로, 타입 선언이나 클래스 참조까지 잡도록 의존 전체를 본다
+                    .should().onlyHaveDependentClassesThat().resideInAPackage(subdomain.all()))
+            .and(classes()
+                    .that().resideInAnyPackage(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
+                    .should().onlyHaveDependentClassesThat().resideInAnyPackage(subdomain.all(), ANY_SUBDOMAIN_ADAPTER_OUT, MODULE_ROOT))
+            .because("다른 하위 도메인은 자기 출력 어댑터(adapter.out)에서 유스케이스로만 부른다. 하위 도메인 사이 의존을 어댑터 한 곳에 모아 "
+                    + "상대 유스케이스나 DTO가 바뀌어도 서비스가 바뀌지 않게 한다. 모듈 최상위의 공개 클래스는 예외다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
+
+    // 포트는 JPA를 몰라 @Lock을 붙일 수 없다. *JpaRepository에서 다시 선언하지 않으면 Spring Data가 이름만 보고
+    // 잠금 없는 조회를 만들어 오류 없이 돈다. wallet ArchitectureTest(#505)와 같은 규칙을 member의 모든 하위 도메인에 건다.
+    // 잠금 조회는 이름(ForUpdate, ForShare)으로 찾고, 이름과 잠금 종류가 맞는지도 본다
+    @ArchTest
+    static final ArchRule 잠금_조회는_JPA_저장소에_Lock과_함께_다시_선언한다 = methods()
+            .that().areDeclaredInClassesThat().resideInAPackage("com.ok.member.*.application.port.out..")
+            .and().haveNameMatching(".*For(Update|Share).*")
+            .should(new ArchCondition<JavaMethod>("be redeclared in a *JpaRepository with a @Lock mode matching its name") {
+                @Override
+                public void check(JavaMethod portMethod, ConditionEvents events) {
+                    LockModeType expected = portMethod.getName().contains("ForUpdate")
+                            ? LockModeType.PESSIMISTIC_WRITE
+                            : LockModeType.PESSIMISTIC_READ;
+                    List<JavaClass> jpaRepositories = portMethod.getOwner().getAllSubclasses().stream()
+                            .filter(sub -> resideInAPackage("..adapter.out.persistence..").test(sub)
+                                    && sub.getSimpleName().endsWith("JpaRepository"))
+                            .toList();
+                    // 구현체마다 따로 확인해, 여럿 중 하나만 잠금을 가져도 통과하는 일을 막는다.
+                    // 구현체가 없으면 allMatch가 참이 되므로 따로 실패시킨다
+                    boolean ok = !jpaRepositories.isEmpty() && jpaRepositories.stream()
+                            .allMatch(repository -> repository.getMethods().stream()
+                                    .anyMatch(method -> method.getName().equals(portMethod.getName())
+                                            && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
+                                            && method.tryGetAnnotationOfType(Lock.class)
+                                                    .map(lock -> lock.value() == expected)
+                                                    .orElse(false)));
+                    events.add(new SimpleConditionEvent(portMethod, ok,
+                            portMethod.getFullName() + (ok ? " is" : " is not")
+                                    + " redeclared in a *JpaRepository with @Lock(" + expected + ")"));
+                }
+            })
+            .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 드러난다. Refresh Token이면 같은 토큰으로 재발급이 두 번 성공한다. 빌드에서 바로 실패하게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    // #425: 로그인은 트랜잭션 없이 bcrypt를 비교하고, DB 작업은 AuthService의 짧은 트랜잭션에 맡긴다.
+    // LoginFacade가 트랜잭션을 갖거나 출력 포트를 직접 부르면 요청 하나가 커넥션을 오래 쥐거나 둘을 쥐어 커넥션 데드락이 다시 생긴다
+    @ArchTest
+    static final ArchRule 로그인_Facade는_트랜잭션_없이_AuthService로만_DB에_닿는다 = CompositeArchRule
+            .of(noClasses()
+                    .that().haveFullyQualifiedName(LoginFacade.class.getName())
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "com.ok.member.auth.application.port.out..", "com.ok.member.auth.adapter..")
+                    .orShould().beAnnotatedWith(Transactional.class))
+            .and(noMethods()
+                    .that().areDeclaredInClassesThat().haveFullyQualifiedName(LoginFacade.class.getName())
+                    .should().beAnnotatedWith(Transactional.class))
+            .because("bcrypt 비교 동안 DB 커넥션을 잡지 않아야 로그인이 몰려도 커넥션 풀이 마르지 않는다 "
+                    + "(docs/decisions/member/425-login-connection-deadlock.md)");
 
     @ArchTest
     static final ArchRule 입력_어댑터는_유스케이스_포트와_dto만_안다 = eachSubdomain(subdomain -> noClasses()
@@ -95,6 +160,12 @@ class ArchitectureTest {
             .should().dependOnClassesThat(assignableTo(org.springframework.data.repository.Repository.class)
                     .or(resideInAnyPackage("org.springframework.data.jpa..", "jakarta.persistence..", "com.querydsl..")))
             .because("서비스는 저장소 포트에만 의존해야 영속 기술을 바꿔도 비즈니스 코드가 바뀌지 않는다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
+
+    @ArchTest
+    static final ArchRule application은_토큰_서명_기술에_의존하지_않는다 = eachSubdomain(subdomain -> noClasses()
+            .that().resideInAPackage(subdomain.pkg("application"))
+            .should().dependOnClassesThat().resideInAnyPackage("org.springframework.security.oauth2.jwt..", "com.nimbusds..")
+            .because("서비스는 토큰 발급 포트에만 의존하고 서명 방식(JWT, 키, 헤더)은 adapter.out이 맡는다. 서명 기술을 바꿔도 서비스가 바뀌지 않게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
     @ArchTest
     static final ArchRule 포트는_인터페이스다 = eachSubdomain(subdomain -> classes()
@@ -129,7 +200,7 @@ class ArchitectureTest {
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
     @ArchTest
-    static final ArchRule 헥사고날_이벤트_발행_구현체는_출력_포트를_구현한다 = eachSubdomain(subdomain -> classes()
+    static final ArchRule 헥사고날_이벤트_발행_구현체는_출력_포트를_구현한다 = eachSubdomain(EVENT_PUBLISHING_SUBDOMAINS, subdomain -> classes()
             .that(ApplicationEventPublisher에_의존하는)
             // adapter.out 밖에서 쓰는 경우는 헥사고날에서_ApplicationEventPublisher는_adapter_out만_사용한다 규칙이 막는다
             .and().resideInAPackage(subdomain.pkg("adapter.out"))
@@ -157,7 +228,11 @@ class ArchitectureTest {
     // 모듈 설정(archRule.failOnEmptyShould=false)은 대상이 없는 규칙을 통과시키므로, 여기서는 대상이 없으면 실패하게 한다.
     // 패키지 이름을 잘못 적었거나 옮긴 하위 도메인에 해당 클래스가 없으면 규칙이 아무것도 검사하지 않은 채 통과하기 때문이다
     private static ArchRule eachSubdomain(Function<Subdomain, ArchRule> rule) {
-        return CompositeArchRule.of(HEXAGONAL_SUBDOMAINS.stream()
+        return eachSubdomain(HEXAGONAL_SUBDOMAINS, rule);
+    }
+
+    private static ArchRule eachSubdomain(List<Subdomain> subdomains, Function<Subdomain, ArchRule> rule) {
+        return CompositeArchRule.of(subdomains.stream()
                 .map(rule)
                 .map(subdomainRule -> subdomainRule.allowEmptyShould(false))
                 .toList());
