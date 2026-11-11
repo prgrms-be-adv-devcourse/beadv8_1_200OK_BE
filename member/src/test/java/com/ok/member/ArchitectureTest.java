@@ -139,10 +139,12 @@ class ArchitectureTest {
                     .that().haveFullyQualifiedName(LoginFacade.class.getName())
                     .should().dependOnClassesThat().resideInAnyPackage(
                             "com.ok.member.auth.application.port.out..", "com.ok.member.auth.adapter..")
-                    .orShould().beAnnotatedWith(Transactional.class))
+                    .orShould().beAnnotatedWith(Transactional.class)
+                    .orShould().beAnnotatedWith(jakarta.transaction.Transactional.class))
             .and(noMethods()
                     .that().areDeclaredInClassesThat().haveFullyQualifiedName(LoginFacade.class.getName())
-                    .should().beAnnotatedWith(Transactional.class))
+                    .should().beAnnotatedWith(Transactional.class)
+                    .orShould().beAnnotatedWith(jakarta.transaction.Transactional.class))
             .because("bcrypt 비교 동안 DB 커넥션을 잡지 않아야 로그인이 몰려도 커넥션 풀이 마르지 않는다 "
                     + "(docs/decisions/member/425-login-connection-deadlock.md)");
 
