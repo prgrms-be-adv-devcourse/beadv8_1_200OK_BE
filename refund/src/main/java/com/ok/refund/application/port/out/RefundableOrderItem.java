@@ -9,7 +9,8 @@ import java.util.Set;
  *
  * @param status    주문 상품 상태 이름 (예: {@code PREPARING}). 주문 모듈 enum을 import하지 않으려고 문자열로 받는다
  * @param unitPrice 주문 시점 단가 (원)
- * @param quantity  산 개수
+ * @param quantity  산 개수. 환불 뒤에도 줄지 않는다고 주문 모듈과 약속했다. 남은 개수는 이 값에서 환불 기록의 개수를 빼서 구한다
+ *                  ({@code RefundOrderItemResponse} 설명 참고)
  * @param bundle    이 상품이 속한 판매자 묶음의 배송비 값. 요청·승인 때 배송비를 판단할 때 쓴다(#410)
  */
 public record RefundableOrderItem(
