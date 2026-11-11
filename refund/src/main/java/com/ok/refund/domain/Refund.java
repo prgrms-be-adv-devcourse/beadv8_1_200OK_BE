@@ -268,6 +268,18 @@ public class Refund {
     }
 
     /**
+     * 승인 뒤 단계(지갑 반환 요청, 주문 취소 반영, 재고 복구)를 모두 마치고 환불을 끝낸다. {@code PROCESSING → COMPLETED}
+     * 진행 중 칸을 비워 같은 주문 상품의 남은 개수를 다시 요청할 수 있게 한다. 이 환불의 개수와 뺀 배송비는 끝난 뒤에도
+     * 같은 묶음의 배송비 판단에 계속 쓰인다({@link RefundShippingFeePolicy#CANCELLING_STATUSES}).
+     *
+     * @throws RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void complete() {
+        requireStatus(RefundStatus.PROCESSING);
+        finish(RefundStatus.COMPLETED);
+    }
+
+    /**
      * 처리 중에 다른 모듈 호출이 실패해 멈춘 단계와 이유를 남긴다. 상태는 처리 중 그대로다.
      * 같은 환불이 다시 실패하면 마지막 실패로 덮어쓴다. 다시 처리하는 방법은 후속이라 지우는 메서드는 아직 두지 않는다.
      *

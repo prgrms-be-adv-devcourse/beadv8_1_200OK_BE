@@ -466,6 +466,43 @@ class RefundTest {
                 .hasMessage("저장된 환불을 되살리려면 ID와 상태가 필요합니다.");
     }
 
+    // 완료(#414): 승인 뒤 단계를 모두 마친 처리 중 환불만 끝낸다. 진행 중 칸을 비워 같은 상품의 남은 개수를 다시 요청할 수 있게 한다
+    @Test
+    void 처리_중을_완료하면_완료가_되고_진행_중_칸이_비워진다() {
+        // given
+        Refund sut = requested();
+        sut.approve(NOW, RefundShippingFee.none());
+
+        // when
+        sut.complete();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
+            softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+        });
+    }
+
+    // 요청됨에서 바로 완료하면 승인(배송비 판단) 없이 끝나 돈 계산이 비고, 이미 끝난 환불을 다시 완료하면 단계가 두 번 돈 것이다
+    @ParameterizedTest
+    @MethodSource("처리_중이_아닌_환불")
+    void 처리_중이_아니면_완료할_수_없다(Refund refund) {
+        // when & then
+        assertThatThrownBy(refund::complete)
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
+    static Stream<Refund> 처리_중이_아닌_환불() {
+        Refund completed = requested();
+        completed.approve(NOW, RefundShippingFee.none());
+        completed.complete();
+        Refund withdrawn = requested();
+        withdrawn.withdraw(NOW);
+        return Stream.of(requested(), completed, withdrawn);
+    }
+
     private static Refund requested() {
         return Refund.request(10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, null);
     }

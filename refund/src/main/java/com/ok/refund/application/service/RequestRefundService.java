@@ -44,7 +44,8 @@ public class RequestRefundService implements RequestRefundUseCase {
      *
      * @throws RestApiException 주문 상품이 없거나 남의 주문이면 {@code ORDER_ITEM_NOT_FOUND}, 주문 호출이 실패하면 {@code ORDER_API_FAILED},
      *                          출고 전이 아니면 {@code ORDER_ITEM_NOT_CANCELLABLE},
-     *                          산 개수보다 많으면 {@code REFUND_QUANTITY_EXCEEDED}, 개수가 1 미만이면 {@code INVALID_REFUND_QUANTITY},
+     *                          산 개수에서 이미 취소된(처리 중·완료) 개수를 뺀 것보다 많으면 {@code REFUND_QUANTITY_EXCEEDED},
+     *                          개수가 1 미만이면 {@code INVALID_REFUND_QUANTITY},
      *                          진행 중인 요청이 있으면 {@code REFUND_ALREADY_IN_PROGRESS},
      *                          무료배송 기준이 깨져 뺄 배송비보다 취소 금액이 작으면 {@code PARTIAL_CANCEL_NOT_ALLOWED}
      */
@@ -63,7 +64,7 @@ public class RequestRefundService implements RequestRefundUseCase {
         if (!orderItem.isCancellable()) {
             throw new RestApiException(RefundErrorCode.ORDER_ITEM_NOT_CANCELLABLE);
         }
-        // TODO(#414): 완료 상태가 생기면 이미 취소가 끝난 개수를 빼고 비교한다. 지금은 완료가 없어 뺄 값이 항상 0이다
+        // 산 개수만 넘는 요청은 저장 전에 바로 막는다. 이미 취소된 개수까지 뺀 비교는 저장 뒤 집계로 한 번 더 한다(아래)
         if (command.quantity() > orderItem.quantity()) {
             throw new RestApiException(RefundErrorCode.REFUND_QUANTITY_EXCEEDED);
         }
@@ -78,10 +79,26 @@ public class RequestRefundService implements RequestRefundUseCase {
         // 같은 묶음(주문 + 판매자)에서 이미 취소가 진행 중인 개수를 가져와 도메인 정책이 판단한다. 방금 저장한 요청은 요청됨이라 집계에 들어가지 않는다
         List<CancelledQuantity> cancelled = refundPersistencePort.sumCancelledByOrderItem(
                 saved.getOrderId(), saved.getSellerId(), RefundShippingFeePolicy.CANCELLING_STATUSES);
+        // 남은 개수보다 많이 요청하면 구매자 입력 문제라 409로 막는다(#414). 예: 3개 중 1개가 이미 환불(완료)됐는데 3개를 요청.
+        // 여기서 막지 않으면 배송비 정책이 "취소 개수 합이 주문 개수를 넘는다"를 주문 값과 환불 기록이 어긋난 버그로 보고 500을 던진다
+        long alreadyCancelled = cancelledQuantityOf(cancelled, saved.getOrderItemId());
+        if (command.quantity() + alreadyCancelled > orderItem.quantity()) {
+            throw new RestApiException(RefundErrorCode.REFUND_QUANTITY_EXCEEDED);
+        }
         RefundShippingFee fee = RefundShippingFeePolicy.decide(saved, orderItem.bundle(), cancelled);
         if (!fee.allowed()) {
             throw new RestApiException(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED);
         }
         return RefundResult.from(saved);
+    }
+
+    // 집계는 주문 상품별 한 줄이다. 이 상품의 줄이 없으면 이미 취소된 것이 없다
+    private static long cancelledQuantityOf(List<CancelledQuantity> cancelled, Long orderItemId) {
+        for (CancelledQuantity each : cancelled) {
+            if (each.orderItemId().equals(orderItemId)) {
+                return each.quantity();
+            }
+        }
+        return 0;
     }
 }

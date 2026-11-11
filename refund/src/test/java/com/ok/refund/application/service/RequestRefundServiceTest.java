@@ -8,7 +8,9 @@ import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
+import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.exception.RefundErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -123,6 +125,37 @@ class RequestRefundServiceTest {
             softly.assertThat(result.itemAmount()).isEqualTo(30_000L);
             softly.assertThat(result.status()).isEqualTo("REQUESTED");
         });
+    }
+
+    // 완료(#414)되면 진행 중 칸이 비어 같은 상품에 다시 요청할 수 있다. 그때는 산 개수에서 이미 취소된 개수를 뺀 만큼만 받는다.
+    // 막지 않으면 배송비 정책이 "취소 개수 합이 주문 개수를 넘는다"를 버그로 보고 500을 던진다
+    @Test
+    void 이미_취소된_개수를_빼고_남은_개수보다_많으면_막는다() {
+        // given: 양말 3개 중 1개는 이미 환불(완료)됐다
+        givenOrderItem(socks("PREPARING", 3));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.sumCancelledByOrderItem(10L, 5L, RefundShippingFeePolicy.CANCELLING_STATUSES))
+                .willReturn(List.of(new CancelledQuantity(101L, 1, 0)));
+
+        // when & then: 남은 2개보다 많은 3개
+        assertThatThrownBy(() -> sut.request(command(3)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_QUANTITY_EXCEEDED));
+    }
+
+    @Test
+    void 이미_취소된_개수를_빼고_남은_개수만큼은_요청할_수_있다() {
+        // given: 양말 3개 중 1개는 이미 환불(완료)됐다
+        givenOrderItem(socks("PREPARING", 3));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.sumCancelledByOrderItem(10L, 5L, RefundShippingFeePolicy.CANCELLING_STATUSES))
+                .willReturn(List.of(new CancelledQuantity(101L, 1, 0)));
+
+        // when
+        RefundResult result = sut.request(command(2));
+
+        // then
+        assertThat(result.quantity()).isEqualTo(2);
     }
 
     // 진행 중 중복(UNIQUE)·교착 상태를 에러 코드로 바꾸는 일은 영속 어댑터로 옮겼다(RefundPersistenceAdapterTest).
