@@ -13,6 +13,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -144,6 +145,7 @@ interface PayoutAdminControllerSpec {
     @Operation(summary = "정산 전체 수동 실행", description = """
             정산 배치를 지금 1회 실행합니다. 평소 정산은 스케줄러가 실행하며, 이 API는 관리자가 바로 1회 실행할 때 씁니다.
             관리자만 실행할 수 있습니다.
+            이미 실행 중이면 새로 시작하지 않고 409로 응답합니다.
             배치가 COMPLETED가 아니면 서버 오류(500)로 응답합니다. 실행 ID와 배치 상태는 서버 로그에 남습니다.
             실패 기록과 연결한 정식 응답은 #67에서 바뀝니다.
             """)
@@ -156,6 +158,20 @@ interface PayoutAdminControllerSpec {
             @ApiResponse(
                     responseCode = "403", description = "관리자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "409", description = "정산이 이미 실행 중",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetail.class),
+                            examples = @ExampleObject(name = "실행 중", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/payout/payout-job-already-running",
+                                      "title": "Payout job already running",
+                                      "status": 409,
+                                      "detail": "정산이 이미 실행 중입니다.",
+                                      "instance": "/api/v1/admin/payouts/run"
+                                    }
+                                    """))
             ),
             @ApiResponse(
                     responseCode = "500", description = "배치 실행 실패 (실행 ID와 배치 상태는 서버 로그에 남음)",

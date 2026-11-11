@@ -4,6 +4,8 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.exception.PayoutErrorCode;
+import net.javacrumbs.shedlock.core.LockConfiguration;
+import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParameters;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 @Component
@@ -23,8 +26,19 @@ public class PayoutJobRunner {
     // 자정 직전에 실행해도 그 사이 생긴 후보가 빠지지 않도록 하루 더 여유를 둠 (대기 일수 + 2 = 17일)
     private static final int SKIP_WAIT_SHIFT_DAYS = PayoutPolicy.SETTLEMENT_WAITING_DAYS + 2;
 
+    private static final String LOCK_NAME = "payoutJob";
+
+    // 연장(KeepAlive)이 실행 중 계속 늘려 주므로, 이 값은 서버가 죽어 연장이 멈췄을 때 잠금이 풀리는 시간임
+    private static final Duration LOCK_AT_MOST_FOR = Duration.ofMinutes(5);
+
+    // 끝나면 바로 풂: 관리자가 정산 직후 다시 실행할 수 있어야 함
+    private static final Duration LOCK_AT_LEAST_FOR = Duration.ZERO;
+
     private final JobOperator jobOperator;
     private final Job payoutJob;
+
+    // 정산 Job 동시 실행 방지용 잠금 실행기 (#223)
+    private final LockingTaskExecutor lockingTaskExecutor;
 
     // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
     // requestedAt의 날짜가 곧 정산 실행일(runDate)이 되어 정산 범위를 정하므로, 실행 환경과 상관없이 같은 시간대여야 함
@@ -41,11 +55,13 @@ public class PayoutJobRunner {
     public PayoutJobRunner(
             JobOperator jobOperator,
             Job payoutJob,
+            LockingTaskExecutor lockingTaskExecutor,
             Clock clock,
             @Value("${payout.skip-wait-run.enabled:false}") boolean skipWaitRunEnabled
     ) {
         this.jobOperator = jobOperator;
         this.payoutJob = payoutJob;
+        this.lockingTaskExecutor = lockingTaskExecutor;
         this.clock = clock;
         this.skipWaitRunEnabled = skipWaitRunEnabled;
     }
@@ -84,11 +100,32 @@ public class PayoutJobRunner {
 
     // runType은 JobInstance를 가르는 키(identifying)가 아닌 기록용(false)으로 넣음: 인스턴스는 requestedAt만으로 충분히 달라짐
     // 두 파라미터가 빠지거나 잘못된 값이면 PayoutJobParametersValidator가 Job 시작 전에 막음
+    // 정기·관리자·대기 건너뛰기 세 경로가 모두 지나는 곳에서 잠가, 어느 경로끼리든 동시에 두 번 돌지 않게 함 (#223)
+    //   정산 1건 실행 API(지금 501)를 열 때도 이 메서드를 지나야 같은 잠금이 적용됨
+    // Job이 동기로 실행되므로 잠금이 Job 끝까지 유지됨. Job을 비동기로 바꾸면 잠금이 바로 풀리니 함께 바꿔야 함
     private JobExecution start(LocalDateTime requestedAt, PayoutRunType runType) throws Exception {
         JobParameters params = new JobParametersBuilder()
                 .addLocalDateTime("requestedAt", requestedAt)
                 .addString("runType", runType.name(), false)
                 .toJobParameters();
-        return jobOperator.start(payoutJob, params);
+        LockConfiguration lockConfig = new LockConfiguration(
+                clock.instant(), LOCK_NAME, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR);
+
+        LockingTaskExecutor.TaskResult<JobExecution> result;
+        try {
+            result = lockingTaskExecutor.executeWithLock(
+                    () -> jobOperator.start(payoutJob, params), lockConfig);
+        } catch (Exception | Error e) {
+            // executeWithLock이 Throwable을 던지므로, Job이 던진 예외는 바꾸지 않고 그대로 보냄
+            throw e;
+        } catch (Throwable t) {
+            throw new IllegalStateException(t);
+        }
+
+        // 잠금을 못 잡아도 ShedLock은 예외를 던지지 않고 결과만 비워 돌려주므로 여기서 직접 거절함
+        if (!result.wasExecuted()) {
+            throw new RestApiException(PayoutErrorCode.PAYOUT_JOB_ALREADY_RUNNING);
+        }
+        return result.getResult();
     }
 }
