@@ -1,6 +1,6 @@
 package com.ok.member.auth;
 
-import com.ok.member.auth.repository.RefreshTokenRepository;
+import com.ok.member.auth.application.port.out.RefreshTokenRepository;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.testsupport.AbstractIntegrationTest;

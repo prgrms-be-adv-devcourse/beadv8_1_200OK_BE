@@ -1,9 +1,10 @@
 package com.ok.member.auth.repository;
 
+import com.ok.member.auth.application.port.out.RefreshTokenRepository;
+import com.ok.member.auth.application.service.RefreshTokenService;
+import com.ok.member.auth.application.service.TokenHasher;
 import com.ok.member.auth.domain.IssuedRefreshToken;
 import com.ok.member.auth.domain.RefreshToken;
-import com.ok.member.auth.service.RefreshTokenService;
-import com.ok.member.auth.service.TokenHasher;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

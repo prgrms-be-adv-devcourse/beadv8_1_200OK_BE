@@ -40,6 +40,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 @AnalyzeClasses(packages = {"com.ok.member", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
@@ -52,8 +53,9 @@ class ArchitectureTest {
     // 헥사고날 구조로 옮긴 하위 도메인. 레이어 구조의 위치 규칙에서 빼고 아래 헥사고날 규칙으로 하위 도메인마다 검사한다.
     // auth를 옮기면(#478) 여기에 더하고, 모두 옮기면 레이어 구조 규칙과 함께 정리한다(#479)
     private static final List<Subdomain> HEXAGONAL_SUBDOMAINS = List.of(new Subdomain("seller"), new Subdomain("member"));
-    private static final String[] HEXAGONAL_PACKAGES = HEXAGONAL_SUBDOMAINS.stream()
-            .map(Subdomain::all)
+    // auth는 패키지만 먼저 옮겨(#478) 레이어 구조의 위치 규칙에서 미리 뺀다. 헥사고날 규칙은 포트를 나눈 뒤 HEXAGONAL_SUBDOMAINS에 더해 건다
+    private static final String[] HEXAGONAL_PACKAGES = Stream.concat(
+                    HEXAGONAL_SUBDOMAINS.stream().map(Subdomain::all), Stream.of(new Subdomain("auth").all()))
             .toArray(String[]::new);
 
     // 헥사고날 구조 (delivery ArchitectureTest와 같은 규칙을 하위 도메인 범위로 검사한다)
@@ -176,9 +178,11 @@ class ArchitectureTest {
     // 레이어
 
     // freeze: 기존 위반은 archunit_store에 기준선으로 두고, 새 위반만 실패시킨다.
+    // 세 하위 도메인을 모두 헥사고날로 옮겨 controller·repository 패키지가 남지 않아, 빈 레이어를 허용한다. 이 규칙은 #479에서 지운다
     @ArchTest
     static final ArchRule 컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = freeze(layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
+            .withOptionalLayers(true)
             .layer("Controller").definedBy("..controller..")
             .layer("Service").definedBy("..service..")
             .layer("Repository").definedBy("..repository..")
