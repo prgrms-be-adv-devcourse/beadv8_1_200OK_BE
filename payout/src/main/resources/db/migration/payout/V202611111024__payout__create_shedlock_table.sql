@@ -10,3 +10,9 @@ CREATE TABLE shedlock (
     locked_by VARCHAR(255) NOT NULL,
     PRIMARY KEY (name)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+-- 잠금 행을 미리 넣어 둠: 서버가 처음 잠글 때 INSERT가 일시 오류(교착·잠금 대기 초과)로 실패해도
+-- ShedLock은 행이 있다고 기억하고 UPDATE만 하므로, 행이 없으면 그 서버는 재시작 전까지 잠금을 못 잡음
+-- lock_until을 지금으로 두어 처음부터 풀린 상태로 시작함
+INSERT INTO shedlock (name, lock_until, locked_at, locked_by)
+VALUES ('payoutJob', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), 'migration');

@@ -6,6 +6,9 @@ import com.ok.payout.adapter.in.batch.PayoutJobScheduler;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
+import net.javacrumbs.shedlock.core.ClockProvider;
+import net.javacrumbs.shedlock.core.LockConfiguration;
+import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +25,8 @@ import org.springframework.web.context.WebApplicationContext;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.Statement;
+import java.sql.Timestamp;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -68,6 +73,7 @@ class PayoutJobLockIntegrationTest extends AbstractIntegrationTest {
     private static final String ALREADY_RUNNING_TYPE = "/payout-job-already-running";
     // 동시 시작 테스트에서 기다리는 최대 시간. 정상이면 1초 안에 끝나고, 넘으면 멈춘 것이라 실패시킴
     private static final long WAIT_SECONDS = 30;
+    private static final String KEEP_ALIVE_LOCK_NAME = "payoutJobKeepAliveTest";
 
     @Autowired
     private WebApplicationContext context;
@@ -91,6 +97,9 @@ class PayoutJobLockIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private DataSource dataSource;
+
+    @Autowired
+    private LockingTaskExecutor payoutJobLockingTaskExecutor;
 
     // 보안 필터를 적용해야 토큰 검증이 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
     @BeforeEach
@@ -269,6 +278,46 @@ class PayoutJobLockIntegrationTest extends AbstractIntegrationTest {
         assertThat(executedCount).isEqualTo(1);
         assertThat(rejectedCount).isEqualTo(1);
         assertThat(payoutJobRunCount()).isEqualTo(runCountBefore + 1);
+    }
+
+    // 실제 잠금 실행기가 실행 중 잠금을 자동 연장하는지 확인: 연장(KeepAliveLockProvider)을 빼면
+    // 5분(lockAtMostFor)보다 오래 걸리는 정산 도중 잠금이 풀려 다른 실행이 겹칠 수 있음
+    // 정산 Job 대신 빈 작업을 쓰고, 연장은 lockAtMostFor의 절반마다 일어나므로 허용 최솟값 30초로 잡아 15초쯤 기다림
+    // 정산 잠금 행과 섞이지 않게 다른 이름을 씀
+    @Test
+    void 실행이_길어지면_잠금_만료_시각이_자동으로_늘어난다() throws Throwable {
+        // given
+        LockConfiguration config = new LockConfiguration(
+                ClockProvider.now(), KEEP_ALIVE_LOCK_NAME, Duration.ofSeconds(30), Duration.ZERO);
+
+        try {
+            // when
+            LockingTaskExecutor.TaskResult<Boolean> sut = payoutJobLockingTaskExecutor.executeWithLock(() -> {
+                Timestamp initial = lockUntil(KEEP_ALIVE_LOCK_NAME);
+                long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(25);
+                while (System.currentTimeMillis() < deadline) {
+                    if (lockUntil(KEEP_ALIVE_LOCK_NAME).after(initial)) {
+                        return true;
+                    }
+                    Thread.sleep(200);
+                }
+                return false;
+            }, config);
+
+            // then
+            assertThat(sut.wasExecuted()).isTrue();
+            assertThat(sut.getResult()).isTrue();
+        } finally {
+            // DELETE하지 않는 이유는 tearDown과 같음
+            jdbcTemplate.update(
+                    "UPDATE " + LOCK_TABLE + " SET lock_until = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND WHERE name = ?",
+                    KEEP_ALIVE_LOCK_NAME);
+        }
+    }
+
+    private Timestamp lockUntil(String lockName) {
+        return jdbcTemplate.queryForObject(
+                "SELECT lock_until FROM " + LOCK_TABLE + " WHERE name = ?", Timestamp.class, lockName);
     }
 
     // 둘 중 먼저 끝난 실행을 돌려줌. 둘 다 끝나거나 하나도 안 끝나면 잠금이 동시 실행을 막지 못한 것이라 실패시킴
