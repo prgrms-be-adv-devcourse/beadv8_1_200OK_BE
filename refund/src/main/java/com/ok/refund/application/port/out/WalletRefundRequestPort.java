@@ -7,11 +7,12 @@ package com.ok.refund.application.port.out;
 public interface WalletRefundRequestPort {
 
     /**
-     * 반환 요청 한 건을 보낸다. 브로커가 저장했다고 확인할 때까지 기다린다.
+     * 반환 요청 한 건을 보낸다. 브로커가 저장했다고 확인할 때까지 정해진 시간만큼 기다린다.
      * 기다리는 이유: 확인 없이 돌아오면 브로커가 거절해도 판매자는 성공 응답을 받아, 요청이 나가지 않은 환불을 아무도 모르게 된다.
      *
-     * @throws IllegalStateException 보내지 못했으면. 메시지에 {@code refundId}를 담는다.
-     *                               실패 기록(WALLET)과 다시 보내기는 아직 없어(#516) 이 예외와 오류 로그가 유일한 흔적이다
+     * @throws IllegalStateException 보내지 못했거나 기다리는 시간이 지났으면. 메시지에 {@code refundId}를 담는다.
+     *                               실패 기록(WALLET)과 다시 보내기는 아직 없어(#516), 이 예외를 받아 {@code ApiControllerAdvice}가
+     *                               남기는 오류 로그(처리되지 않은 예외)가 유일한 흔적이다. 던지는 쪽은 로그를 따로 남기지 않는다(service.md)
      */
     void requestRefund(WalletRefundRequest request);
 }
