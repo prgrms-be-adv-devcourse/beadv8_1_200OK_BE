@@ -21,7 +21,7 @@ import java.util.concurrent.TimeoutException;
 class RefundWalletKafkaAdapter implements WalletRefundRequestPort {
 
     // 저장 확인을 기다리는 최대 시간. 판매자의 승인 요청 안에서 기다리므로, Kafka 기본값(delivery.timeout.ms 120초)까지
-    // 기다리면 브로커 장애 때 요청 스레드(톰캣)를 오래 붙잡아 다른 요청까지 느려질 수 있다. 정상이면 1초 안에 끝난다 (PR #518 리뷰)
+    // 기다리면 브로커 장애 때 요청 스레드(톰캣)를 오래 붙잡아 다른 요청까지 느려질 수 있다. 정상이면 1초 안에 끝난다
     static final Duration SEND_TIMEOUT = Duration.ofSeconds(10);
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
