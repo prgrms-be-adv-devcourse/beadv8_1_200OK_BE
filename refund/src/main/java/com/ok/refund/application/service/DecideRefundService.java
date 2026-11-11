@@ -157,6 +157,8 @@ public class DecideRefundService implements DecideRefundUseCase {
     // 실패 기록 틀(RefundStepRunner)로 부르지 않는 이유: 성공 흐름만 만드는 범위다. 실패 기록과 다시 시도는 #516에서 함께 정한다(refund/CLAUDE.md 5절)
     // TODO(#516): 앞 단계가 실패하면 예외만 올라가고(판매자는 500·503, 다시 승인하면 409) 환불은 처리 중에 머문다.
     //  지갑은 Kafka에 들어간 것만 확인하고 주문을 반영하므로, 지갑이 처리에 실패해도 주문은 취소된다(지갑 완료 수신이나 outbox로 다룸)
+    //  완료(COMPLETED)도 원래는 "지갑이 돈을 돌려준 것까지 확인" 뒤여야 한다. 지갑 완료 메시지가 없어 지금은 Kafka 저장 확인을 지갑 성공으로 보고
+    //  완료까지 간다(임시). 지갑이 완료 메시지를 보내 주면 그 메시지를 받은 뒤에 완료로 바꾸도록 옮긴다
     private RefundResult continueAfterApproval(RefundResult result) {
         if (!RefundStatus.PROCESSING.name().equals(result.status())) {
             return result;
