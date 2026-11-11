@@ -213,6 +213,50 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
         assertThat(refundJpaRepository.count()).isOne();
     }
 
+    // 같은 트랜잭션에서 같은 환불을 두 번 잠금 조회하면, 두 객체 중 옛 객체로 나중에 update할 때 앞의 변경이 사라진다(#486 3번)
+    @Test
+    void 같은_트랜잭션에서_같은_환불을_두_번_잠금_조회하면_예외를_던진다() {
+        // given
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
+
+        // when & then
+        assertThatThrownBy(() -> inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            return refundPersistencePort.findByIdForUpdate(refundId);
+        })).isInstanceOf(IllegalStateException.class)
+                .hasMessage("같은 트랜잭션에서 같은 환불을 두 번 잠금 조회할 수 없습니다. 처음 잠근 객체로 바꾸고 저장해야 합니다. refundId=" + refundId);
+    }
+
+    // 막는 것은 "한 트랜잭션 안의 두 번째"뿐이다. 트랜잭션이 끝나면 기록을 지워 다음 트랜잭션은 다시 잠글 수 있어야 한다(승인 → 완료가 이 순서)
+    @Test
+    void 트랜잭션이_끝나면_같은_환불을_다시_잠금_조회할_수_있다() {
+        // given
+        Long refundId = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
+        inTransaction(() -> refundPersistencePort.findByIdForUpdate(refundId));
+
+        // when
+        Refund sut = inTransaction(() -> refundPersistencePort.findByIdForUpdate(refundId)).orElseThrow();
+
+        // then
+        assertThat(sut.getId()).isEqualTo(refundId);
+    }
+
+    // 새로 저장한 행을 같은 트랜잭션에서 잠그고 고치는 흐름은 첫 잠금 조회라 막지 않는다
+    @Test
+    void 새로_저장한_뒤_같은_트랜잭션에서_잠금_조회하고_update할_수_있다() {
+        // when
+        Long refundId = inTransaction(() -> {
+            Refund saved = refundPersistencePort.saveNew(requested(ORDER_ITEM_ID));
+            Refund locked = refundPersistencePort.findByIdForUpdate(saved.getId()).orElseThrow();
+            locked.withdraw(NOW);
+            refundPersistencePort.update(locked);
+            return saved.getId();
+        });
+
+        // then
+        assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.WITHDRAWN);
+    }
+
     private <T> T inTransaction(Supplier<T> work) {
         return new TransactionTemplate(transactionManager).execute(status -> work.get());
     }
