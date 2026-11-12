@@ -127,7 +127,8 @@ services:
     profiles: [monitoring]
     image: danielqsj/kafka-exporter:${KAFKA_EXPORTER_VERSION:-v1.11.0}
     # 브로커만 보면 되므로 DB 네트워크(db-net)에는 붙이지 않는다
-    networks: [kafka-net]
+    # monitoring-net: prometheus가 kafka-exporter:9308로 읽는다. prometheus를 kafka-net에 붙이면 브로커에도 닿게 되므로 exporter 쪽에서 맞춘다
+    networks: [kafka-net, monitoring-net]
     # 지표 수집만 하는 작은 프로세스라 작게 묶는다. 넘기면 docker stats를 보고 조정한다
     mem_limit: 64m
     # 메모리 초과 등으로 죽어도 다시 띄운다. 직접 멈춘(docker compose stop) 경우는 다시 띄우지 않는다
@@ -157,8 +158,8 @@ services:
         condition: service_healthy
       kafka-3:
         condition: service_healthy
-    # 포트는 열지 않는다. Prometheus는 compose 네트워크 안에서 kafka-exporter:9308로 읽고,
-    # #374 전에는 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics 로 직접 본다
+    # 포트는 열지 않는다. Prometheus는 monitoring-net 안에서 kafka-exporter:9308로 읽는다(#395)
+    # 직접 보려면 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics
 
   app:
     profiles: [app]
@@ -276,6 +277,21 @@ services:
         umask 077
         printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
         exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
+
+  # Redis 지표 (#395). 한 exporter가 대상 주소를 받아 여러 Redis를 읽는다(multi-target)
+  # 단일 노드든 클러스터든 이 서비스는 그대로고, 대상은 deploy/monitoring/prometheus/targets/local/redis.yml에 한 줄씩 적는다
+  redis-exporter:
+    profiles: [monitoring]
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:-v1.97.0}-alpine
+    # redis에만 닿으면 되고 prometheus가 같은 db-net에서 가져간다. 9121은 호스트에 열지 않는다
+    networks: [db-net]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # 비밀번호는 명령행 인자(--redis.password)가 아니라 환경변수로 넘겨 ps·로그에 남기지 않는다. 비어 있으면 없이 접속한다(로컬 Redis는 비밀번호가 없다)
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    mem_limit: 64m
 
   # 컨테이너별 CPU 스로틀링·메모리 지표. 호스트 포트는 열지 않고 prometheus가 monitoring-net에서 cadvisor:8080으로 읽는다
   cadvisor:

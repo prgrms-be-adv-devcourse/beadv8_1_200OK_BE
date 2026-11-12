@@ -6,7 +6,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 4,
   "editable": false,
   "refresh": "15s",
   "time": {
@@ -3309,6 +3309,816 @@
               },
               "expr": "rate(mysql_global_status_innodb_row_lock_time{job=\"mysql\"}[$__rate_interval])",
               "legendFormat": "행 락 대기 시간"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 45,
+      "title": "Redis (application 변수와 무관)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 72
+      },
+      "panels": [
+        {
+          "type": "stat",
+          "id": 46,
+          "title": "Redis 수집 상태 (redis_up)",
+          "description": "exporter가 Redis에 접속해 지표를 읽었는지. 0이면 Redis가 내려갔거나 비밀번호가 맞지 않는다. 노드마다 한 칸씩 나온다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 73
+          },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "DOWN",
+                      "color": "red"
+                    },
+                    "1": {
+                      "text": "UP",
+                      "color": "green"
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "textMode": "value_and_name",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_up{job=\"redis\"}",
+              "legendFormat": "{{{{instance}}}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 47,
+          "title": "메모리 사용량 / 최대",
+          "description": "사용 메모리(used)와 maxmemory(max). 정책이 noeviction이라 used가 max에 닿으면 쓰기가 실패한다. max가 0이면 상한이 없는 것이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 10,
+            "x": 4,
+            "y": 73
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".* max"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_memory_used_bytes{job=\"redis\"}",
+              "legendFormat": "{{instance}} used"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_memory_max_bytes{job=\"redis\"}",
+              "legendFormat": "{{instance}} max"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 48,
+          "title": "메모리 사용률 (used/max)",
+          "description": "maxmemory 대비 사용 비율. 90%를 넘으면 곧 쓰기 실패(OOM)가 난다. maxmemory가 없는 Redis는 표시하지 않는다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 10,
+            "x": 14,
+            "y": 73
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 1,
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_memory_used_bytes{job=\"redis\"} / (redis_memory_max_bytes{job=\"redis\"} > 0)",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 49,
+          "title": "연결 수",
+          "description": "현재 연결된 클라이언트 수(connected_clients). 앱 커넥션 풀 크기와 비교한다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 0,
+            "y": 80
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "redis_connected_clients{job=\"redis\"}",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 50,
+          "title": "명령 처리량 (명령/초)",
+          "description": "초당 처리한 명령 수.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 6,
+            "y": 80
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_commands_processed_total{job=\"redis\"}[$__rate_interval])",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 51,
+          "title": "키 수",
+          "description": "전체 DB의 키 개수 합. 클러스터는 노드마다 자기 슬롯의 키만 센다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 12,
+            "y": 80
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (instance) (redis_db_keys{job=\"redis\"})",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 52,
+          "title": "캐시 히트율",
+          "description": "hits/(hits+misses). 읽기가 없는 구간은 값이 비어 나온다. 캐시 용도라면 낮을 때 키 설계·TTL을 본다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 18,
+            "y": 80
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 1,
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "rate(redis_keyspace_hits_total{job=\"redis\"}[$__rate_interval]) / (rate(redis_keyspace_hits_total{job=\"redis\"}[$__rate_interval]) + rate(redis_keyspace_misses_total{job=\"redis\"}[$__rate_interval]))",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 53,
+          "title": "evicted / rejected (5분간 건수)",
+          "description": "evicted: 메모리 한도로 지운 키 수(noeviction이면 0). rejected: 연결 한도로 거절한 연결 수. 0이 아니면 한도에 닿은 것이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 87
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "increase(redis_evicted_keys_total{job=\"redis\"}[5m])",
+              "legendFormat": "{{instance}} evicted"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "increase(redis_rejected_connections_total{job=\"redis\"}[5m])",
+              "legendFormat": "{{instance}} rejected"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 54,
+      "title": "Kafka (application 변수와 무관)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "panels": [
+        {
+          "type": "stat",
+          "id": 55,
+          "title": "브로커 수",
+          "description": "지금 클러스터에 붙어 있는 브로커 수. 3대 구성이라 3보다 작으면 브로커가 내려간 것이다. 값이 없으면 exporter가 수집되지 않는 것이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 2
+                  },
+                  {
+                    "color": "green",
+                    "value": 3
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "kafka_brokers{job=\"kafka\"}",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "id": 56,
+          "title": "언더 복제 파티션",
+          "description": "복사본이 모자란 파티션 수(__consumer_offsets 포함). 평소 0이고 1 이상이면 브로커 장애나 복제 지연이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "(sum(kafka_topic_partition_under_replicated_partition{job=\"kafka\"}) or vector(0))",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 57,
+          "title": "컨슈머 그룹 랙 (그룹 / 토픽)",
+          "description": "아직 처리하지 않은 메시지 수의 합. 계속 커지면 받는 쪽이 따라가지 못하는 것이다. 컨슈머 그룹이 없으면(앱을 띄우기 전) 값이 없다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 16,
+            "x": 8,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag_sum{job=\"kafka\",topic!=\"__consumer_offsets\"})",
+              "legendFormat": "{{consumergroup}} / {{topic}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 58,
+          "title": "토픽별 발행량 (건/초)",
+          "description": "토픽에 쌓이는 메시지 증가율(파티션 current offset의 증가량 합). 내부 토픽은 뺀다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 81
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{job=\"kafka\",topic!=\"__consumer_offsets\"}[$__rate_interval]))",
+              "legendFormat": "{{topic}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 59,
+          "title": "브로커 수 / 언더 복제 파티션 추이",
+          "description": "브로커 수와 언더 복제 파티션 수의 변화. 브로커 1대를 멈추면 브로커 수가 줄고 언더 복제가 늘었다가, 다시 켜면 돌아온다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 81
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "kafka_brokers{job=\"kafka\"}",
+              "legendFormat": "브로커 수"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "(sum(kafka_topic_partition_under_replicated_partition{job=\"kafka\"}) or vector(0))",
+              "legendFormat": "언더 복제 파티션"
             }
           ]
         }

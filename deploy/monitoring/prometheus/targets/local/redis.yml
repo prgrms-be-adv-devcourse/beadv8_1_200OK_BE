@@ -1,0 +1,4 @@
+# 로컬 Redis 수집 대상 (docker-compose.yml이 /etc/prometheus/targets로 마운트)
+# 값은 exporter가 읽을 Redis 주소(host:port)다. 노드마다 한 줄씩 적는다. 노드별로 instance 라벨이 붙어 대시보드에서 따로 보인다
+# #366으로 클러스터가 되면 노드를 한 줄씩 추가한다. 예) - targets: ['redis:6379'] → ['redis-1:6379', 'redis-2:6379', ...]
+- targets: ['redis:6379']
