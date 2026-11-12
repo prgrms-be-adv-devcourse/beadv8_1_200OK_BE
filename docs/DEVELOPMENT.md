@@ -1042,3 +1042,22 @@ SELECT FROM_UNIXTIME(((111634463317819397 >> 22) + 1767225600000) / 1000) AS iss
 
 - 추적 키(`traceId`, `orderId`, `shipmentId`, `module`, `step`, `eventType`)의 MDC 이름은 [`TraceContext`](../common/src/main/java/com/ok/common/trace/TraceContext.java)의 상수입니다. 현재 진입점이 채우는 것은 `traceId`뿐이고(`/internal/` 요청은 헤더가 있으면 `orderId`, `shipmentId`도), 나머지는 `bindOrderId`, `bindShipmentId`로 범위 안에서 붙일 수 있습니다.
 - 새 진입점이 직접 범위를 열어야 하면 `try (TraceContext.Scope scope = TraceContext.open(traceId)) { ... }`로 씁니다. 닫으면 진입 전 MDC 전체로 되돌립니다.
+
+## 13. Redis 캐시 (`CacheStore`, #538)
+
+Redis는 `CacheStore` 인터페이스로만 쓴다. 클라이언트는 Lettuce(Spring Data Redis 기본)이고, Redis에 닿는 코드는 [`com.ok.common.persistence.redis`](../common/src/main/java/com/ok/common/persistence/redis) 한 곳에 있다. 서비스는 `RedisTemplate`, `StringRedisTemplate`, Lettuce 타입을 직접 쓰지 않는다(monolith의 `ArchitectureTest`가 막는다). 나중에 클라이언트나 저장소가 바뀌어도 이 패키지의 구현체만 바뀐다.
+
+```java
+private final CacheStore cacheStore;
+
+cacheStore.put("delivery:shipping-fee:63100", fee, Duration.ofMinutes(10));    // 저장 (TTL 필수)
+Optional<ShippingFee> cached = cacheStore.get("delivery:shipping-fee:63100", ShippingFee.class);
+cacheStore.evict("delivery:shipping-fee:63100");                                // 지우기
+```
+
+- **키**는 `모듈:도메인:식별자` 형식으로 호출하는 쪽이 만든다. 다른 모듈과 겹치지 않게 모듈 이름을 앞에 둔다.
+- **TTL은 필수**이고 1밀리초 이상이다. 운영 Redis는 메모리가 차도 키를 지우지 않고 쓰기를 거절(`noeviction`)하므로, 만료 없는 키가 쌓이면 모든 쓰기가 막힌다.
+- **값은 JSON 문자열**로 저장하고 타입 정보(클래스 이름 등)는 싣지 않는다. 읽는 쪽이 `get(key, 타입)`으로 타입을 정한다(Kafka 메시지와 같은 방식). 직렬화는 앱의 `JsonMapper`를 쓰고 JDK 직렬화는 쓰지 않는다.
+- 저장된 값을 읽지 못하면(배포로 클래스 모양이 바뀐 경우 등) 오류 대신 **캐시 미스**로 돌려주고 그 키를 지운다. 오류로 두면 TTL이 끝날 때까지 같은 키가 계속 실패한다.
+- `List<X>`처럼 제네릭 타입을 바로 읽는 메서드는 아직 없다. 필요한 사용처가 생기면 그때 더한다.
+- 테스트는 인터페이스의 Fake가 아직 없다. Redis를 쓰는 통합 테스트는 `AbstractIntegrationTest`가 띄우는 Redis 컨테이너를 쓴다.
