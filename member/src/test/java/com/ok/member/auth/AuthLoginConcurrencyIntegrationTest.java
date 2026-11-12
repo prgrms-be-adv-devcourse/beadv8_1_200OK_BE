@@ -1,6 +1,6 @@
 package com.ok.member.auth;
 
-import com.ok.member.auth.repository.RefreshTokenRepository;
+import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -56,7 +56,7 @@ class AuthLoginConcurrencyIntegrationTest extends AbstractIntegrationTest {
     MemberJpaRepository memberRepository;
 
     @Autowired
-    RefreshTokenRepository refreshTokenRepository;
+    RefreshTokenJpaRepository refreshTokenRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;

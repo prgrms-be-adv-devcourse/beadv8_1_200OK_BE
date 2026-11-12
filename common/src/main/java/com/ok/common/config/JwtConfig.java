@@ -65,7 +65,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 public class JwtConfig {
 
     /**
-     * 서명 알고리즘(RS256). 발급(AccessTokenProvider)과 검증(jwtDecoder)이 같은 값을 쓰도록 한 곳에서 정한다.
+     * 서명 알고리즘(RS256). 발급(JwtAccessTokenIssuer)과 검증(jwtDecoder)이 같은 값을 쓰도록 한 곳에서 정한다.
      */
     public static final SignatureAlgorithm SIGNING_ALGORITHM = SignatureAlgorithm.RS256;
 

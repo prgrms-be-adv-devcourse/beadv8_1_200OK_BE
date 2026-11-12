@@ -5,7 +5,7 @@ import com.ok.common.config.JwtProperties;
 import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.media.MediaUrlResolver;
-import com.ok.member.auth.controller.JwksController;
+import com.ok.member.auth.adapter.in.web.JwksController;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.application.dto.SignupCommand;
 import com.ok.member.member.application.port.in.MemberSignupUseCase;
@@ -55,7 +55,7 @@ public class MemberModuleTest {
     @MockitoBean
     MediaUrlResolver mediaUrlResolver;
 
-    // JwtProperties도 common 모듈의 타입이라 같은 이유로 걸러진다. 토큰 발급(JwtEncoder, AccessTokenProvider 등)은
+    // JwtProperties도 common 모듈의 타입이라 같은 이유로 걸러진다. 토큰 발급(JwtEncoder, JwtAccessTokenIssuer 등)은
     // 이 테스트에서 쓰지 않고 컨텍스트가 뜨는 데만 필요하므로 가짜로 둔다. (JwtEncoder는 진짜 키가 있어야 만들 수 있어 함께 가짜로 둔다)
     @MockitoBean
     JwtProperties jwtProperties;

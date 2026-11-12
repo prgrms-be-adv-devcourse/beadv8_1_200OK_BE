@@ -92,7 +92,9 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     @Transactional
     @Override
     public void completePayment(Long orderId) {
-        Optional<Order> found = orderRepository.findById(orderId);
+        // 결제 실패와 동시에 처리되면 둘 다 결제 대기를 읽고 나중 커밋이 앞의 상태를 덮어쓴다(#398).
+        // 잠금으로 늦게 온 쪽이 바뀐 상태를 읽게 해, 아래 상태 분기가 항상 최신 상태로 동작하게 한다
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 완료 대상 주문이 없습니다. orderId={}", orderId);
             return;
@@ -118,7 +120,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
 
     @Transactional
     public boolean failPayment(Long orderId) {
-        Optional<Order> found = orderRepository.findById(orderId);
+        // completePayment와 같은 이유로 잠금 조회한다(#398)
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 실패 대상 주문이 없습니다. orderId={}", orderId);
             return false;
