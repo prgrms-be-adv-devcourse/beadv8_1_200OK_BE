@@ -39,6 +39,8 @@ import jakarta.persistence.Table;
 import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
+import java.util.List;
+import java.util.Optional;
 
 @AnalyzeClasses(packages = {"com.ok.wallet", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
@@ -136,19 +138,46 @@ class ArchitectureTest {
             .should(new ArchCondition<JavaMethod>("have a @Lock mode matching its name") {
                 @Override
                 public void check(JavaMethod method, ConditionEvents events) {
-                    String name = method.getName();
-                    LockModeType expected = name.contains("ForUpdate") ? LockModeType.PESSIMISTIC_WRITE
-                            : name.contains("ForShare") ? LockModeType.PESSIMISTIC_READ
-                            : null;
-                    boolean ok = expected != null && method.tryGetAnnotationOfType(Lock.class)
-                            .map(lock -> lock.value() == expected)
-                            .orElse(false);
+                    boolean ok = hasLockMatchingName(method, method.getName());
                     events.add(new SimpleConditionEvent(method, ok, method.getFullName()
                             + (ok ? " has" : " does not have") + " a @Lock mode matching its name"
                             + " (ForUpdate = PESSIMISTIC_WRITE, ForShare = PESSIMISTIC_READ)"));
                 }
             })
             .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 이중 차감 같은 문제로 드러난다. 빌드에서 바로 실패하게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    // 어댑터의 잠금 조회를 잠금 없는 JPA 메서드(findByMemberId 등)에 이어도 컴파일은 되고 잠금만 오류 없이 빠진다.
+    // 어댑터가 부르는 JPA 저장소 메서드가 모두 이름과 같은 종류의 @Lock을 가졌는지 본다. 하나도 부르지 않아도 실패한다
+    @ArchTest
+    static final ArchRule 어댑터의_잠금_조회는_같은_종류의_잠금_조회만_부른다 = methods()
+            .that().areDeclaredInClassesThat(assignableTo(resideInAPackage("..application.port.out..")))
+            .and().areDeclaredInClassesThat().resideInAPackage("..adapter.out..")
+            .and().haveNameMatching(".*For(Update|Share).*")
+            .should(new ArchCondition<JavaMethod>("call only JPA repository methods whose @Lock mode matches its name") {
+                @Override
+                public void check(JavaMethod method, ConditionEvents events) {
+                    List<JavaMethod> repositoryMethods = method.getMethodCallsFromSelf().stream()
+                            .filter(call -> call.getTargetOwner().isAssignableTo(org.springframework.data.repository.Repository.class))
+                            .map(call -> call.getTarget().resolveMember())
+                            .flatMap(Optional::stream)
+                            .toList();
+                    boolean ok = !repositoryMethods.isEmpty() && repositoryMethods.stream()
+                            .allMatch(target -> hasLockMatchingName(target, method.getName()));
+                    events.add(new SimpleConditionEvent(method, ok, method.getFullName()
+                            + (ok ? " calls" : " does not call") + " only JPA repository methods with a @Lock mode matching its name, calls: "
+                            + repositoryMethods.stream().map(JavaMethod::getFullName).toList()));
+                }
+            })
+            .because("어댑터에서 잠금 조회를 잘못 이으면 구조 규칙과 컴파일러 모두 통과하고 동시 요청 때만 드러난다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    private static boolean hasLockMatchingName(JavaMethod method, String name) {
+        LockModeType expected = name.contains("ForUpdate") ? LockModeType.PESSIMISTIC_WRITE
+                : name.contains("ForShare") ? LockModeType.PESSIMISTIC_READ
+                : null;
+        return expected != null && method.tryGetAnnotationOfType(Lock.class)
+                .map(lock -> lock.value() == expected)
+                .orElse(false);
+    }
 
     @ArchTest
     static final ArchRule ApplicationEventPublisher는_adapter_out만_사용한다 = noClasses()
