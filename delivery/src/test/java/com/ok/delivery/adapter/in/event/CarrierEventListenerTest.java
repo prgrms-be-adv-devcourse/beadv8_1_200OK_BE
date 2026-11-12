@@ -35,7 +35,7 @@ class CarrierEventListenerTest {
         sut.on(event);
 
         // then
-        then(carrierTrackingUseCase).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890");
+        then(carrierTrackingUseCase).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890", LocalDateTime.of(2026, 10, 21, 10, 0));
     }
 
     @Test

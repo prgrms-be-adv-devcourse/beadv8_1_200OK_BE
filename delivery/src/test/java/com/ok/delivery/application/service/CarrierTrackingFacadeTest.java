@@ -8,16 +8,20 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
 class CarrierTrackingFacadeTest {
+
+    private static final LocalDateTime SHIPPED_AT = LocalDateTime.of(2026, 10, 21, 10, 0);
 
     @Mock
     CarrierClient carrierClient;
@@ -31,25 +35,25 @@ class CarrierTrackingFacadeTest {
     @Test
     void 송장_추적을_택배사에_요청한다() {
         // when
-        sut.requestTracking(1L, "CJ_LOGISTICS", "1234567890");
+        sut.requestTracking(1L, "CJ_LOGISTICS", "1234567890", SHIPPED_AT);
 
         // then
-        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890");
+        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890", SHIPPED_AT);
     }
 
     @Test
     void 배송_중인_shipment를_모두_다시_추적_요청한다() {
         // given
         given(shipmentService.getShippingShipments()).willReturn(List.of(
-                new ShippingShipmentResult(1L, "CJ_LOGISTICS", "1111111111"),
-                new ShippingShipmentResult(2L, "HANJIN", "2222222222")));
+                new ShippingShipmentResult(1L, "CJ_LOGISTICS", "1111111111", SHIPPED_AT),
+                new ShippingShipmentResult(2L, "HANJIN", "2222222222", SHIPPED_AT)));
 
         // when
         sut.requestTrackingForShippingShipments();
 
         // then
-        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1111111111");
-        then(carrierClient).should().requestTracking(2L, "HANJIN", "2222222222");
+        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1111111111", SHIPPED_AT);
+        then(carrierClient).should().requestTracking(2L, "HANJIN", "2222222222", SHIPPED_AT);
     }
 
     @Test
@@ -61,6 +65,6 @@ class CarrierTrackingFacadeTest {
         sut.requestTrackingForShippingShipments();
 
         // then
-        then(carrierClient).should(never()).requestTracking(anyLong(), anyString(), anyString());
+        then(carrierClient).should(never()).requestTracking(anyLong(), anyString(), anyString(), any());
     }
 }

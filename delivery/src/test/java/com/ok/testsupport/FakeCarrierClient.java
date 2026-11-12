@@ -3,6 +3,8 @@ package com.ok.testsupport;
 import com.ok.delivery.application.port.out.CarrierClient;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+
 /**
  * 통합 테스트에서 택배사 연동을 대신한다. 추적 요청을 받아도 아무 일도 하지 않아 배송 완료를 알리지 않는다.
  *
@@ -16,6 +18,6 @@ import org.springframework.stereotype.Component;
 public class FakeCarrierClient implements CarrierClient {
 
     @Override
-    public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
+    public void requestTracking(Long shipmentId, String carrier, String trackingNumber, LocalDateTime shippedAt) {
     }
 }
