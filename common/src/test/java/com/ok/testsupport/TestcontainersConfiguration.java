@@ -29,8 +29,6 @@ public class TestcontainersConfiguration {
 
     private static MySQLContainer mysql;
 
-    private static KafkaContainer kafka;
-
     /**
      * 접속 기본 DB는 {@code ok.schema} 속성이 정한다. 모듈 테스트는 자기 모듈 스키마를, 속성이 없는 monolith 테스트는 컨테이너의 기본 DB를 쓴다.
      */
@@ -87,25 +85,16 @@ public class TestcontainersConfiguration {
      * 앱의 Kafka 접속 주소를 테스트 컨테이너로 바꾼다.
      * 이 빈이 있으면 {@code spring.kafka.bootstrap-servers} 대신 이 주소를 쓰므로, 발행·수신 코드에 테스트용 분기가 필요 없다.
      */
+    // 컨테이너는 Kafka만 켜는 KafkaTestcontainersConfiguration과 JVM 안에서 하나를 공유한다
     @Bean
     KafkaConnectionDetails kafkaConnectionDetails(@Value("${KAFKA_VERSION:4.2.1}") String kafkaVersion) {
-        KafkaContainer container = startKafka(kafkaVersion);
+        KafkaContainer container = KafkaTestcontainersConfiguration.startKafka(kafkaVersion);
         return new KafkaConnectionDetails() {
             @Override
             public List<String> getBootstrapServers() {
                 return List.of(container.getBootstrapServers());
             }
         };
-    }
-
-    private static synchronized KafkaContainer startKafka(String kafkaVersion) {
-        if (kafka == null) {
-            // 운영·compose와 같은 apache/kafka 이미지. 테스트는 브로커 1대라 복제 수 3을 요구하는 설정은 쓰지 않는다
-            KafkaContainer container = new KafkaContainer(DockerImageName.parse("apache/kafka:" + kafkaVersion));
-            container.start();
-            kafka = container;
-        }
-        return kafka;
     }
 
 }

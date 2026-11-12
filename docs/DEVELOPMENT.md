@@ -863,6 +863,8 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
 - Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
 - Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:18080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
 - 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`TestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
+- Kafka만 필요한 슬라이스 테스트는 `@Import(KafkaTestcontainersConfiguration.class)`로 MySQL 없이 Kafka 컨테이너만 켭니다(예시는 `common`의 `TestKafkaConsumerTest`). `TestcontainersConfiguration`과 같은 브로커를 공유하므로 두 설정을 한 컨텍스트에 함께 import하지 않습니다.
+- 보낸 메시지의 JSON을 그대로 확인하려면 `@Import(TestKafkaConsumer.class)`로 테스트용 컨슈머를 켭니다. `test-topic`의 메시지를 문자열로 모아 `getReceivedMessage(timeout, unit)`로 꺼내고, 토픽은 테스트가 만들며, 파티션을 받은 뒤(`isAssigned()`)에 보내야 받습니다. 위 두 클래스에 `@TestConfiguration`·`@TestComponent`를 붙이지 않은 이유는 `AbstractIntegrationTest`가 `com.ok`를 스캔해서 붙이면 모든 통합 테스트에 켜지기 때문입니다.
 - 토픽의 메시지는 테스트마다 지워지지 않습니다. 메시지를 확인하는 테스트는 자기가 만든 키(예: `payoutId`)로 걸러서 셉니다.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.
 
