@@ -6,7 +6,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "editable": false,
   "refresh": "15s",
   "time": {
@@ -3812,6 +3812,313 @@
               },
               "expr": "increase(redis_rejected_connections_total{job=\"redis\"}[5m])",
               "legendFormat": "{{instance}} rejected"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 54,
+      "title": "Kafka (application 변수와 무관)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "panels": [
+        {
+          "type": "stat",
+          "id": 55,
+          "title": "브로커 수",
+          "description": "지금 클러스터에 붙어 있는 브로커 수. 3대 구성이라 3보다 작으면 브로커가 내려간 것이다. 값이 없으면 exporter가 수집되지 않는 것이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 2
+                  },
+                  {
+                    "color": "green",
+                    "value": 3
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "kafka_brokers{job=\"kafka\"}",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "id": 56,
+          "title": "언더 복제 파티션",
+          "description": "복사본이 모자란 파티션 수(__consumer_offsets 포함). 평소 0이고 1 이상이면 브로커 장애나 복제 지연이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "(sum(kafka_topic_partition_under_replicated_partition{job=\"kafka\"}) or vector(0))",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 57,
+          "title": "컨슈머 그룹 랙 (그룹 / 토픽)",
+          "description": "아직 처리하지 않은 메시지 수의 합. 계속 커지면 받는 쪽이 따라가지 못하는 것이다. 컨슈머 그룹이 없으면(앱을 띄우기 전) 값이 없다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 16,
+            "x": 8,
+            "y": 74
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag_sum{job=\"kafka\",topic!=\"__consumer_offsets\"})",
+              "legendFormat": "{{consumergroup}} / {{topic}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 58,
+          "title": "토픽별 발행량 (건/초)",
+          "description": "토픽에 쌓이는 메시지 증가율(파티션 current offset의 증가량 합). 내부 토픽은 뺀다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 81
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{job=\"kafka\",topic!=\"__consumer_offsets\"}[$__rate_interval]))",
+              "legendFormat": "{{topic}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "id": 59,
+          "title": "브로커 수 / 언더 복제 파티션 추이",
+          "description": "브로커 수와 언더 복제 파티션 수의 변화. 브로커 1대를 멈추면 브로커 수가 줄고 언더 복제가 늘었다가, 다시 켜면 돌아온다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 81
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "kafka_brokers{job=\"kafka\"}",
+              "legendFormat": "브로커 수"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "(sum(kafka_topic_partition_under_replicated_partition{job=\"kafka\"}) or vector(0))",
+              "legendFormat": "언더 복제 파티션"
             }
           ]
         }

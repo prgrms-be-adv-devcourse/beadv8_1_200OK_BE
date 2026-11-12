@@ -1,0 +1,3 @@
+# 로컬 Kafka exporter 수집 대상 (docker-compose.yml의 monitoring 프로파일)
+# monitoring-net 안에서 서비스 이름으로 닿는다. exporter는 호스트 포트를 열지 않는다
+- targets: ['kafka-exporter:9308']
