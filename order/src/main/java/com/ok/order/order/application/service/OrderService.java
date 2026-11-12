@@ -70,19 +70,18 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     // 보상용 취소: 주문 생성 중 재고 선점·이벤트 발행이 실패한 주문을 지우지 않고 취소로 남긴다(#401)
     @Transactional
     public void cancel(Long orderId) {
-        Optional<Order> found = orderRepository.findById(orderId);
+        // 결제 완료·실패와 같은 잠금으로 줄을 세운다(#398). 지금 호출하는 주문 생성 중 취소는 지갑이 주문을 모르는 상태라
+        // 겹칠 결제 결과가 없지만, 결제 대기 주문 정리(#402)에서 재사용하면 늦게 온 결제 완료와 겹칠 수 있다
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.warn("[ORDER_CANCEL_ORDER_NOT_FOUND] 취소할 주문이 없습니다. orderId={}", orderId);
             return;
         }
         Order order = found.get();
-        // 결제 결과를 받은 주문은 이미 돈이 오간 상태라 취소로 덮지 않는다
-        if (!order.isPaymentPending()) {
+        if (!order.cancel()) {
             log.warn("[ORDER_CANCEL_IGNORED] 결제 대기가 아닌 주문은 취소하지 않습니다. orderId={}, status={}",
                     orderId, order.getStatus());
-            return;
         }
-        order.cancel();
     }
 
     // 내 주문 목록 (최신순). 취소된 주문은 구매자가 만든 적 없는 결과라 보여 주지 않는다

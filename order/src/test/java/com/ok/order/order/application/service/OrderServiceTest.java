@@ -111,7 +111,7 @@ class OrderServiceTest {
     void 결제_대기_주문을_취소하면_주문이_취소로_남는다() {
         // given
         Order order = savedOrder(10L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.cancel(10L);
@@ -125,7 +125,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.cancel(10L);
@@ -137,7 +137,7 @@ class OrderServiceTest {
     @Test
     void 취소할_주문이_없으면_예외_없이_넘어간다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then
         sut.cancel(10L);
