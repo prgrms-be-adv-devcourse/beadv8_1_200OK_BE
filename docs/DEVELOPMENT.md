@@ -116,7 +116,7 @@ docker inspect -f '{{.Name}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' 
 ```
 
 - 컨테이너 이름은 프로젝트 이름(`server`)을 따라 `server-<서비스>-1`입니다. `cluster`의 첫 브로커는 `server-kafka-1-1`입니다.
-- 앱 설정으로 실제 Redis·Kafka에 붙는지는 `./gradlew :monolith:infraTest`로 확인합니다(아래 "인프라 연결 확인 테스트").
+- 앱 설정으로 실제 Redis·Kafka에 붙는지는 `./gradlew :common:infraTest`로 확인합니다(아래 "인프라 연결 확인 테스트").
 
 ### 멈추기와 초기화
 
@@ -183,15 +183,15 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 
 ### 인프라 연결 확인 테스트 (#530)
 
-compose로 띄운 실제 Redis·Kafka에 앱 설정(`application.yaml`)으로 붙는지 확인합니다. Testcontainers가 아니라 떠 있는 컨테이너를 쓰므로 `@Tag("infraTest")`로 표시해 기본 `test`(CI 포함)에서는 빠지고, 아래 태스크로만 돕니다.
+compose로 띄운 실제 Redis·Kafka에 앱과 같은 접속 설정으로 붙는지 확인합니다. `common`의 공통 기반(`common-redis.yaml`, Kafka 접속 환경변수)을 확인하는 테스트라 `common`에 있습니다(`com.ok.common.config`의 `RedisInfraConnectionTest`, `KafkaInfraConnectionTest`). Testcontainers가 아니라 떠 있는 컨테이너를 쓰므로 `@Tag("infraTest")`로 표시해 기본 `test`(CI 포함)에서는 빠지고, 아래 태스크로만 돕니다.
 
 ```bash
 docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single 이 있어야 kafka가 뜬다
-./gradlew :monolith:infraTest
+./gradlew :common:infraTest
 ```
 
 - Redis: PING, 값 저장·조회, AOF 켜짐(`appendonly yes`, `everysec`), `noeviction`, `maxmemory`가 컨테이너 한도(512m)보다 작은지
-- Kafka: 브로커 연결과 클러스터 조회, 앱의 `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(`single`과 `cluster` 모두 통과)
+- Kafka: 브로커 연결과 클러스터 조회, `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(`single`과 `cluster` 모두 통과). 연결만 확인하므로 값은 문자열로 보내고, 앱의 JSON 직렬화는 따로 검증한다
 - 접속 주소는 앱과 같이 `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS` 환경변수로 바꿉니다. 인프라가 꺼져 있으면 실패합니다(Redis는 2초, Kafka는 10초 안에).
 
 ### 로컬 Kafka 지표 확인 (#396)

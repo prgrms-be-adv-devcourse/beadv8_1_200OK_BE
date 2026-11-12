@@ -32,27 +32,6 @@ dependencies {
     developmentOnly("org.springframework.boot:spring-boot-docker-compose") // 앱 실행 시 docker compose 자동 기동 (DOCKER_COMPOSE_ENABLED)
 }
 
-// 떠 있는 Redis·Kafka가 필요한 테스트(@Tag("infraTest"), #530)는 기본 test(CI 포함)에서 뺀다
-tasks.test {
-    useJUnitPlatform {
-        excludeTags("infraTest")
-    }
-}
-
-val infraTest by tasks.registering(Test::class) {
-    description = "compose로 띄운 실제 Redis·Kafka에 앱 설정으로 붙는지 확인한다"
-    group = "verification"
-    testClassesDirs = sourceSets.test.get().output.classesDirs
-    classpath = sourceSets.test.get().runtimeClasspath
-    useJUnitPlatform {
-        includeTags("infraTest")
-    }
-    // 인프라 상태는 Gradle이 모르는 입력이라 매번 다시 돌린다
-    outputs.upToDateWhen { false }
-    // 공통 설정의 jacocoTestReport가 일반 test(Testcontainers)를 먼저 돌려서 뗀다
-    setFinalizedBy(emptyList<Any>())
-}
-
 // .env와 docker-compose.yml을 저장소 루트에서 찾으므로 bootRun 실행 디렉터리를 루트로 둔다
 tasks.bootRun {
     workingDir = rootProject.projectDir

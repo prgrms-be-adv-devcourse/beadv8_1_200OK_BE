@@ -1,4 +1,4 @@
-package com.ok.config;
+package com.ok.common.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -9,21 +9,23 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.data.redis.test.autoconfigure.DataRedisTest;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.test.context.ContextConfiguration;
-
-import com.ok.PaldoGotganApplication;
 
 /**
- * 앱 설정으로 compose가 띄운 실제 Redis에 붙는지 검증한다 (#530).
- * 떠 있는 컨테이너가 필요해 기본 test에서는 빠지고 {@code :monolith:infraTest}에서만 돈다.
+ * 앱이 가져다 쓰는 common-redis.yaml 설정으로 compose가 띄운 실제 Redis에 붙는지 검증한다 (#530).
+ * 떠 있는 컨테이너가 필요해 기본 test에서는 빠지고 {@code :common:infraTest}에서만 돈다.
  */
 @Tag("infraTest")
-@DataRedisTest
-@ContextConfiguration(classes = PaldoGotganApplication.class)
+@DataRedisTest(properties = "spring.config.import=classpath:common-redis.yaml")
 class RedisInfraConnectionTest {
+
+    // common에는 애플리케이션 클래스가 없어 슬라이스가 찾을 설정을 직접 둔다
+    @SpringBootConfiguration
+    static class TestApplication {
+    }
 
     private static final String TEST_KEY = "infra-connection-test";
 
