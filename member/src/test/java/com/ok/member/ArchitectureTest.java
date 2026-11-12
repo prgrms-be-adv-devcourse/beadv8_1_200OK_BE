@@ -12,6 +12,7 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,10 +50,14 @@ import java.util.stream.Stream;
 @AnalyzeClasses(packages = {"com.ok.member", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
 
-    private static final DescribedPredicate<JavaClass> ApplicationEventPublisher에_의존하는 = DescribedPredicate.describe(
-            "use ApplicationEventPublisher",
+    // 발행 도구를 직접 쓰는 클래스 = 발행 구현체로 본다. 아래 이벤트_발행_도구는_adapter_out만_사용한다와 같은 두 도구 기준이다.
+    // KafkaTemplate 대신 상위 인터페이스(KafkaOperations)로 받아도 걸리도록 KafkaOperations 기준으로 검사한다
+    private static final DescribedPredicate<JavaClass> 발행_도구에_의존하는 = DescribedPredicate.describe(
+            "use ApplicationEventPublisher or KafkaOperations",
             javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
-                    .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
+                    .map(dependency -> dependency.getTargetClass())
+                    .anyMatch(target -> target.isAssignableTo(ApplicationEventPublisher.class)
+                            || target.isAssignableTo(KafkaOperations.class)));
 
     // member 모듈의 하위 도메인. 아래 헥사고날 규칙을 하위 도메인마다 검사한다.
     // 새 하위 도메인을 만들면 여기에 더한다. 빠뜨리면 하위_도메인_목록_밖에_클래스를_두지_않는다 규칙이 실패한다
@@ -206,12 +211,13 @@ class ArchitectureTest {
 
     // 하위 도메인 밖(모듈 최상위, config)도 검사하도록 모듈 전체를 본다
     @ArchTest
-    static final ArchRule ApplicationEventPublisher는_adapter_out만_사용한다 = noClasses()
+    static final ArchRule 이벤트_발행_도구는_adapter_out만_사용한다 = noClasses()
             .that().resideInAPackage("com.ok.member..")
             .and().resideOutsideOfPackage(ANY_SUBDOMAIN_ADAPTER_OUT)
             .should().dependOnClassesThat().areAssignableTo(ApplicationEventPublisher.class)
+            .orShould().dependOnClassesThat().areAssignableTo(KafkaOperations.class)
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out)가 발행 방식을 맡는다. "
-                    + "발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
+                    + "발행 방식(스프링 이벤트, Kafka)을 바꿔도 서비스가 바뀌지 않게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule 이벤트_클래스는_adapter만_사용한다 = classes()
@@ -224,12 +230,12 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule 이벤트_발행_구현체는_출력_포트를_구현한다 = eachSubdomain(EVENT_PUBLISHING_SUBDOMAINS, subdomain -> classes()
-            .that(ApplicationEventPublisher에_의존하는)
-            // adapter.out 밖에서 쓰는 경우는 ApplicationEventPublisher는_adapter_out만_사용한다 규칙이 막는다
+            .that(발행_도구에_의존하는)
+            // adapter.out 밖에서 쓰는 경우는 이벤트_발행_도구는_adapter_out만_사용한다 규칙이 막는다
             .and().resideInAPackage(subdomain.pkg("adapter.out"))
             .should().implement(resideInAPackage(subdomain.pkg("application.port.out")))
             .because("서비스는 출력 포트만 알고, adapter.out의 구현체가 발행 방식을 맡는다. "
-                    + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
+                    + "발행 방식(스프링 이벤트, Kafka)을 바꿀 때 구현체만 바꾸게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
     @ArchTest
     static final ArchRule RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = eachSubdomain(subdomain -> classes()
