@@ -41,8 +41,10 @@ import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 @AnalyzeClasses(packages = {"com.ok.member", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
@@ -52,7 +54,8 @@ class ArchitectureTest {
             javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
                     .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
 
-    // member 모듈의 하위 도메인. 아래 헥사고날 규칙을 하위 도메인마다 검사한다. 새 하위 도메인을 만들면 여기에 더한다
+    // member 모듈의 하위 도메인. 아래 헥사고날 규칙을 하위 도메인마다 검사한다.
+    // 새 하위 도메인을 만들면 여기에 더한다. 빠뜨리면 하위_도메인_목록_밖에_클래스를_두지_않는다 규칙이 실패한다
     private static final List<Subdomain> SUBDOMAINS = List.of(
             new Subdomain("seller"), new Subdomain("member"), new Subdomain("auth"));
 
@@ -60,11 +63,24 @@ class ArchitectureTest {
     private static final String ANY_SUBDOMAIN_ADAPTER_OUT = "com.ok.member.*.adapter.out..";
     // 모듈 최상위 패키지(하위 패키지 제외). 다른 모듈에 공개하는 클래스를 두는 곳이라(CLAUDE.md 모듈 경계) 유스케이스를 부를 수 있다
     private static final String MODULE_ROOT = "com.ok.member";
+    // 하위 도메인에 속하지 않는 모듈 전용 설정(Flyway). 하위 도메인 밖에 둘 수 있는 유일한 하위 패키지다
+    private static final String MODULE_CONFIG = "com.ok.member.config..";
     // 이벤트를 발행하는 하위 도메인. auth는 발행하지 않아, 발행 구현체 규칙을 auth에 걸면 검사 대상이 없어 실패한다.
     // auth가 이벤트를 발행하게 되면 여기에 더한다
     private static final List<Subdomain> EVENT_PUBLISHING_SUBDOMAINS = List.of(new Subdomain("seller"), new Subdomain("member"));
+    private static final String[] SUBDOMAIN_PACKAGES = SUBDOMAINS.stream()
+            .map(Subdomain::all)
+            .toArray(String[]::new);
 
     // 헥사고날 구조 (delivery ArchitectureTest와 같은 규칙을 하위 도메인 범위로 검사한다)
+
+    // 아래 규칙 대부분은 SUBDOMAINS의 패키지만 검사하므로, 목록에 없는 하위 도메인은 구조 규칙에 걸리지 않는다
+    @ArchTest
+    static final ArchRule 하위_도메인_목록_밖에_클래스를_두지_않는다 = classes()
+            .that().resideInAPackage("com.ok.member..")
+            .should().resideInAnyPackage(concat(SUBDOMAIN_PACKAGES, MODULE_ROOT, MODULE_CONFIG))
+            .because("새 하위 도메인을 SUBDOMAINS에 더하지 않으면 헥사고날 규칙이 아무것도 검사하지 않은 채 통과한다. "
+                    + "모듈 최상위는 다른 모듈에 공개하는 클래스, config는 모듈 전용 설정 자리다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule 헥사고날_레이어는_한_방향으로만_의존한다 = eachSubdomain(subdomain -> layeredArchitecture()
@@ -243,6 +259,10 @@ class ArchitectureTest {
                 .map(rule)
                 .map(subdomainRule -> subdomainRule.allowEmptyShould(false))
                 .toList());
+    }
+
+    private static String[] concat(String[] packages, String... more) {
+        return Stream.concat(Arrays.stream(packages), Arrays.stream(more)).toArray(String[]::new);
     }
 
     private record Subdomain(String name) {
