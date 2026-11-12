@@ -80,10 +80,10 @@ docker compose up -d
 
 ### 로컬 모니터링 (#374)
 
-앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
+앱 지표(Prometheus), MySQL 지표(mysqld-exporter), Redis 지표(redis-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
 
 ```bash
-docker compose --profile monitoring up -d       # 기본 서비스에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
+docker compose --profile monitoring up -d       # 기본 서비스에 Prometheus, Grafana, mysqld-exporter, redis-exporter, cAdvisor를 더해 실행
 deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를 바꿀 때도). 로컬은 아래 COMPOSE_FILE을 붙인다
 ```
 
@@ -91,6 +91,10 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 - Grafana: `http://localhost:3000` (`admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`, 기본 `admin`), Prometheus: `http://localhost:9090`. 둘 다 `127.0.0.1`에만 열립니다. 대시보드 `paldo-gotgan 개요`가 자동 등록됩니다.
 - 앱 지표는 컨테이너로 띄운 앱(`--profile app`)의 관리 포트(`app:18080`)를 가져옵니다. 운영과 같은 주소입니다. IDE나 `:monolith:bootRun`으로 내 PC에서 앱을 띄우는 경우에는 `deploy/monitoring/prometheus/targets/local/app.yml`의 대상을 `host.docker.internal:18080`으로 바꿉니다(재시작 없이 반영되고, 이 변경은 커밋하지 않습니다).
 - 대시보드는 위에서부터 주요 지표(트래픽·지연 P50/P95/P99·에러 4xx/5xx·포화도) 현재값과 색 임계값, API별 p95 상위 10 표, 원인 분석(JVM·커넥션 풀), 컨테이너 포화도, MySQL 순서입니다. 색 임계값은 글의 기준(CPU 80%, 풀 사용률 90%)과 시작값이라 서비스의 평소 값에 맞춰 `deploy/monitoring/grafana/dashboards/overview.json`에서 조정합니다. 앱 재시작은 그래프에 주황색 마커로 표시됩니다(`process_start_time_seconds` 변화).
+- Redis 지표(#395)는 `redis-exporter`(호스트 포트 없음)가 모읍니다. 대시보드 맨 아래 `Redis` 행(접힘)에서 메모리 사용량·사용률(`maxmemory 256mb`, `noeviction`이라 한도에 닿으면 쓰기가 실패), 연결 수, 명령 처리량, 키 수, 캐시 히트율, evicted/rejected 건수를 봅니다. 읽기 명령이 없는 구간의 히트율은 비어 나옵니다.
+  - exporter 한 대가 대상 주소를 받아 여러 Redis를 읽습니다. 대상은 `deploy/monitoring/prometheus/targets/local/redis.yml`에 `host:port`로 적고(재시작 없이 반영), 노드마다 `instance` 라벨이 붙어 대시보드에 노드별로 나옵니다. #366으로 클러스터가 되어도 exporter와 `redis` 잡은 그대로이고 이 파일에 노드를 한 줄씩 추가하면 됩니다.
+  - 비밀번호는 exporter의 `REDIS_PASSWORD` 환경변수로 받습니다(명령행·로그에 남지 않음). 로컬은 `.env`의 `REDIS_PASSWORD`가 비어 있어 없이 접속하고, 값이 있으면 그 비밀번호로 접속합니다. 운영에는 아직 exporter를 올리지 않았고(별도 결정) `targets/prod`에 대상 파일이 없어 운영 Prometheus의 `redis` 잡은 비어 있습니다.
+  - 확인: Prometheus(`http://localhost:9090/targets`)에서 `redis` 잡이 `UP`이고, 대시보드 `Redis` 행에서 메모리 사용량·히트율이 보입니다.
 - 컨테이너 CPU 스로틀링은 cAdvisor가 모읍니다(`docker compose --profile monitoring`에 함께 뜸, 호스트 포트 없음, 대상은 `deploy/monitoring/prometheus/targets/local/cadvisor.yml`). 스로틀링은 CPU 사용률이 낮아 보여도 CPU limit에 걸려 멈춘 비율이라 P99를 키웁니다. 컨테이너 CPU limit은 서비스에 `cpus`를 주어야 생기고(기본으로는 어느 서비스에도 걸려 있지 않음), limit이 없는 컨테이너는 스로틀 비율이 0이라 대시보드에 값이 없습니다(`-`).
 - 스로틀링을 재현하려면 `docker run --rm --cpus 0.2 busybox sh -c 'while :; do :; done'`를 실행하고 대시보드의 `container` 변수에서 그 컨테이너를 고르면 스로틀 비율이 100%에 가깝게 오릅니다.
 - Docker Desktop(Mac)에서는 cAdvisor가 도커 소켓을 직접 연결해야 컨테이너를 찾습니다(compose에 이미 연결해 둠). 이렇게 하면 `name` 라벨이 채워져 컨테이너 이름으로 고를 수 있음을 확인했습니다(Docker Desktop 4.92). 그래도 `name`이 비어 나오면 대시보드의 `container` 변수에 아무것도 뜨지 않으니, `container_cpu_cfs_throttled_periods_total` 같은 지표를 Prometheus에서 `id` 라벨(`/docker/<컨테이너 ID>`)로 직접 골라 봅니다. Linux(EC2)에서의 동작은 아직 확인하지 않았습니다.
@@ -182,6 +186,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 | `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
+| `REDIS_EXPORTER_VERSION` | Redis 지표 수집 이미지 버전 (`monitoring` 프로파일, 알파인 태그) | `v1.97.0` |
 | `KAFKA_EXPORTER_VERSION` | Kafka 지표 수집 이미지 버전 (`monitoring` 프로파일) | `v1.11.0` |
 | `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림) | `19092` / `29092` / `39092` |
 | `KAFKA_BOOTSTRAP_SERVERS` | 앱이 접속할 브로커 3대 | `localhost:19092,localhost:29092,localhost:39092` |

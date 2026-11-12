@@ -277,6 +277,21 @@ services:
         printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
         exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
 
+  # Redis 지표 (#395). 한 exporter가 대상 주소를 받아 여러 Redis를 읽는다(multi-target)
+  # 단일 노드든 클러스터든 이 서비스는 그대로고, 대상은 deploy/monitoring/prometheus/targets/local/redis.yml에 한 줄씩 적는다
+  redis-exporter:
+    profiles: [monitoring]
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:-v1.97.0}-alpine
+    # redis에만 닿으면 되고 prometheus가 같은 db-net에서 가져간다. 9121은 호스트에 열지 않는다
+    networks: [db-net]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # 비밀번호는 명령행 인자(--redis.password)가 아니라 환경변수로 넘겨 ps·로그에 남기지 않는다. 비어 있으면 없이 접속한다(로컬 Redis는 비밀번호가 없다)
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    mem_limit: 64m
+
   # 컨테이너별 CPU 스로틀링·메모리 지표. 호스트 포트는 열지 않고 prometheus가 monitoring-net에서 cadvisor:8080으로 읽는다
   cadvisor:
     profiles: [monitoring]

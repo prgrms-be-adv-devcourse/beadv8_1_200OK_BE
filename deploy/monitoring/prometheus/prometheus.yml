@@ -1,5 +1,5 @@
 # Prometheus 수집 설정. 로컬(docker-compose.yml)과 운영(deploy/compose.prod.yml)이 같은 파일을 마운트한다 (#374)
-# 수집 대상은 이 파일이 아니라 targets/ 아래 파일로 나눠서(app*.yml은 app 잡, cadvisor*.yml은 cadvisor 잡), 대상이 바뀌어도 이 파일은 고치지 않는다
+# 수집 대상은 이 파일이 아니라 targets/ 아래 파일로 나눠서(app*.yml은 app 잡, cadvisor*.yml은 cadvisor 잡, redis*.yml은 redis 잡), 대상이 바뀌어도 이 파일은 고치지 않는다
 global:
   # 15초면 부하테스트 때 지연·커넥션 풀 변화를 따라가기에 충분하고, 7일·2GB 보존 상한 안에서 저장량도 작다
   scrape_interval: 15s
@@ -30,3 +30,20 @@ scrape_configs:
     file_sd_configs:
       - files:
           - /etc/prometheus/targets/cadvisor*.yml
+
+  # Redis 지표 (#395). redis-exporter 한 대가 대상 Redis들을 읽는다(multi-target). 비밀번호는 exporter 쪽 환경변수로 넣는다
+  # 대상 파일(targets/redis*.yml)에는 Redis 주소(host:port)만 적고, 아래 relabel이 그 주소를 exporter의 target 파라미터로 바꾼다
+  # 그래서 단일 노드든 클러스터든 잡은 그대로고 대상 파일에 노드를 한 줄씩 더하면 된다. instance 라벨은 Redis 주소로 남는다
+  # 운영에는 아직 exporter가 없어 targets/prod에 redis 파일을 두지 않는다(대상이 없으면 이 잡은 비어 있다)
+  - job_name: redis
+    metrics_path: /scrape
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/redis*.yml
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: redis-exporter:9121
