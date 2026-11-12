@@ -3,6 +3,7 @@ package com.ok.common.persistence.redis;
 import java.time.Duration;
 import java.util.Optional;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +31,13 @@ class RedisCacheStore implements CacheStore {
         if (type == null) {
             throw new IllegalArgumentException("읽을 타입은 필수입니다.");
         }
-        String json = redisTemplate.opsForValue().get(key);
+        String json;
+        try {
+            json = redisTemplate.opsForValue().get(key);
+        } catch (DataAccessException e) {
+            log.warn("Redis에 접근하지 못해 캐시 미스로 처리한다. key={}", key, e);
+            return Optional.empty();
+        }
         if (json == null) {
             return Optional.empty();
         }
@@ -38,7 +45,7 @@ class RedisCacheStore implements CacheStore {
             return Optional.ofNullable(jsonMapper.readValue(json, type));
         } catch (JacksonException e) {
             log.warn("캐시 값을 읽지 못해 지운다. key={}, type={}", key, type.getSimpleName(), e);
-            redisTemplate.delete(key);
+            deleteQuietly(key);
             return Optional.empty();
         }
     }
@@ -52,13 +59,26 @@ class RedisCacheStore implements CacheStore {
         if (ttl == null || ttl.toMillis() < 1) {
             throw new IllegalArgumentException("TTL은 1밀리초 이상이어야 합니다.");
         }
-        redisTemplate.opsForValue().set(key, jsonMapper.writeValueAsString(value), ttl);
+        try {
+            redisTemplate.opsForValue().set(key, jsonMapper.writeValueAsString(value), ttl);
+        } catch (DataAccessException e) {
+            log.warn("Redis에 접근하지 못해 캐시에 저장하지 못했다. 다음 조회는 캐시 미스가 된다. key={}", key, e);
+        }
     }
 
     @Override
     public void evict(String key) {
         requireKey(key);
         redisTemplate.delete(key);
+    }
+
+    // 읽지 못한 값을 지우는 것은 캐시 미스로 돌려주기 위한 정리일 뿐이라, 지우지 못해도 미스로 돌려준다. 남은 값은 TTL이 끝나면 사라진다
+    private void deleteQuietly(String key) {
+        try {
+            redisTemplate.delete(key);
+        } catch (DataAccessException e) {
+            log.warn("읽지 못한 캐시 값을 지우지 못했다. TTL이 끝나면 사라진다. key={}", key, e);
+        }
     }
 
     private static void requireKey(String key) {

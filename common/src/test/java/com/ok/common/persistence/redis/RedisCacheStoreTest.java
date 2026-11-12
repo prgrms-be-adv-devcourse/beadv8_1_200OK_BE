@@ -3,6 +3,8 @@ package com.ok.common.persistence.redis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -21,9 +23,17 @@ import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.data.redis.test.autoconfigure.DataRedisTest;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import com.ok.testsupport.RedisTestcontainersConfiguration;
+
+import tools.jackson.databind.json.JsonMapper;
 
 // 앱과 같이 Redis 리포지터리를 끈다. common에는 @SpringBootApplication이 없어 켜 두면 리포지터리가 스캔할 패키지를 찾지 못한다
 @DataRedisTest(properties = "spring.data.redis.repositories.enabled=false")
@@ -49,10 +59,18 @@ class RedisCacheStoreTest {
     @Autowired
     StringRedisTemplate redisTemplate;
 
+    @Autowired
+    JsonMapper jsonMapper;
+
+    private LettuceConnectionFactory brokenConnectionFactory;
+
     // 컨테이너를 JVM 안의 다른 Redis 테스트와 공유하므로, 이 테스트가 넣은 키를 남기지 않는다
     @AfterEach
     void tearDown() {
         redisTemplate.delete(KEY);
+        if (brokenConnectionFactory != null) {
+            brokenConnectionFactory.destroy();
+        }
     }
 
     @Test
@@ -214,6 +232,66 @@ class RedisCacheStoreTest {
         assertThatThrownBy(() -> sut.get(KEY, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("읽을 타입은 필수입니다.");
+    }
+
+    // 캐시는 없어도 본 흐름이 동작해야 하므로 Redis 장애를 읽기에서는 캐시 미스로 흡수한다
+    @Test
+    void Redis에_접근할_수_없으면_조회는_캐시_미스로_돌려준다() {
+        // given
+        CacheStore brokenSut = storeWithBrokenRedis();
+
+        // when
+        Optional<CachedItem> actual = brokenSut.get(KEY, CachedItem.class);
+
+        // then
+        assertThat(actual).isEmpty();
+    }
+
+    // 저장하지 못해도 다음 조회가 캐시 미스가 될 뿐이라 쓰기에서도 흡수한다
+    @Test
+    void Redis에_접근할_수_없으면_저장은_오류_없이_끝난다() {
+        // given
+        CacheStore brokenSut = storeWithBrokenRedis();
+
+        // when & then
+        brokenSut.put(KEY, new CachedItem("캡", 1, BigDecimal.ONE, LocalDateTime.of(2026, 1, 1, 0, 0)), TTL);
+    }
+
+    // 삭제를 삼키면 낡은 값이 TTL이 끝날 때까지 남는 것을 호출한 쪽이 알 수 없어, 삭제만 예외를 그대로 올린다
+    @Test
+    void Redis에_접근할_수_없으면_삭제는_예외를_그대로_올린다() {
+        // given
+        CacheStore brokenSut = storeWithBrokenRedis();
+
+        // when & then
+        assertThatThrownBy(() -> brokenSut.evict(KEY)).isInstanceOf(DataAccessException.class);
+    }
+
+    // 읽지 못한 값을 지우는 것은 캐시 미스로 돌려주기 위한 정리일 뿐이라, 지우지 못해도 조회는 오류 없이 미스가 된다
+    @Test
+    void 읽을_수_없는_값을_지우지_못해도_캐시_미스로_돌려준다() {
+        // given
+        StringRedisTemplate template = mock(StringRedisTemplate.class);
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        given(template.opsForValue()).willReturn(valueOperations);
+        given(valueOperations.get(KEY)).willReturn("이건 JSON이 아니다");
+        given(template.delete(KEY)).willThrow(new RedisConnectionFailureException("연결 끊김"));
+        CacheStore unremovableSut = new RedisCacheStore(template, jsonMapper);
+
+        // when
+        Optional<CachedItem> actual = unremovableSut.get(KEY, CachedItem.class);
+
+        // then
+        assertThat(actual).isEmpty();
+    }
+
+    // 접속할 수 없는 포트로 향하는 저장소로 Redis 장애를 흉내 낸다. 명령 제한 시간을 짧게 둬 테스트가 오래 걸리지 않게 한다
+    private CacheStore storeWithBrokenRedis() {
+        brokenConnectionFactory = new LettuceConnectionFactory(new RedisStandaloneConfiguration("localhost", 1),
+                LettuceClientConfiguration.builder().commandTimeout(Duration.ofMillis(500)).build());
+        brokenConnectionFactory.afterPropertiesSet();
+        return new RedisCacheStore(new StringRedisTemplate(brokenConnectionFactory), jsonMapper);
     }
 
 }
