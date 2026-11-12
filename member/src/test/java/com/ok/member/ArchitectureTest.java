@@ -48,14 +48,18 @@ import java.util.stream.Stream;
 @AnalyzeClasses(packages = {"com.ok.member", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
 
-    // 발행 도구를 직접 쓰는 클래스 = 발행 구현체로 본다. 아래 이벤트_발행_도구는_adapter_out만_사용한다와 같은 두 도구 기준이다.
+    // 이벤트 발행 도구. 발행 구현체를 알아보는 조건과 이벤트_발행_도구는_adapter_out만_사용한다 규칙이 함께 써서,
+    // 도구를 더할 때 한쪽만 고치는 일이 없게 한다.
     // KafkaTemplate 대신 상위 인터페이스(KafkaOperations)로 받아도 걸리도록 KafkaOperations 기준으로 검사한다
+    private static final DescribedPredicate<JavaClass> 발행_도구 = assignableTo(ApplicationEventPublisher.class)
+            .or(assignableTo(KafkaOperations.class))
+            .as("ApplicationEventPublisher or KafkaOperations");
+
+    // 발행 도구를 직접 쓰는 클래스 = 발행 구현체로 본다
     private static final DescribedPredicate<JavaClass> 발행_도구에_의존하는 = DescribedPredicate.describe(
-            "use ApplicationEventPublisher or KafkaOperations",
+            "use " + 발행_도구.getDescription(),
             javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
-                    .map(dependency -> dependency.getTargetClass())
-                    .anyMatch(target -> target.isAssignableTo(ApplicationEventPublisher.class)
-                            || target.isAssignableTo(KafkaOperations.class)));
+                    .anyMatch(dependency -> 발행_도구.test(dependency.getTargetClass())));
 
     // member 모듈의 하위 도메인. 아래 헥사고날 규칙을 하위 도메인마다 검사한다.
     // 새 하위 도메인을 만들면 여기에 더한다. 빠뜨리면 하위_도메인_목록_밖에_클래스를_두지_않는다 규칙이 실패한다
@@ -209,8 +213,7 @@ class ArchitectureTest {
     static final ArchRule 이벤트_발행_도구는_adapter_out만_사용한다 = noClasses()
             .that().resideInAPackage("com.ok.member..")
             .and().resideOutsideOfPackage(ANY_SUBDOMAIN_ADAPTER_OUT)
-            .should().dependOnClassesThat().areAssignableTo(ApplicationEventPublisher.class)
-            .orShould().dependOnClassesThat().areAssignableTo(KafkaOperations.class)
+            .should().dependOnClassesThat(발행_도구)
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out)가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, Kafka)을 바꿔도 서비스가 바뀌지 않게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
 
@@ -232,7 +235,8 @@ class ArchitectureTest {
             // adapter.out 밖에서 쓰는 경우는 이벤트_발행_도구는_adapter_out만_사용한다 규칙이 막는다
             .and().resideInAPackage(ANY_SUBDOMAIN_ADAPTER_OUT)
             .should().implement(resideInAPackage("com.ok.member.*.application.port.out.."))
-            // 발행 구현체가 있으므로, 패턴을 잘못 적어 아무것도 검사하지 않은 채 통과하지 않게 한다
+            // 발행 구현체가 있으므로, 패턴을 잘못 적어 아무것도 검사하지 않은 채 통과하지 않게 한다.
+            // 이 규칙이 "검사한 클래스가 없다"로 실패하면 member가 이벤트 발행을 모두 없앤 것이니 이 규칙도 지운다
             .allowEmptyShould(false)
             .because("서비스는 출력 포트만 알고, adapter.out의 구현체가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, Kafka)을 바꿀 때 구현체만 바꾸게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
