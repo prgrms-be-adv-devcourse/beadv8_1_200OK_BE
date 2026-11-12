@@ -65,7 +65,10 @@ public record RefundResponse(
         LocalDateTime requestedAt,
 
         @Schema(description = "판매자가 승인·거절하거나 구매자가 철회한 시각 (요청됨이면 없음)")
-        LocalDateTime decidedAt
+        LocalDateTime decidedAt,
+
+        @Schema(description = "승인 뒤 지갑 반환 요청·주문 반영·재고 복구를 모두 마쳐 완료된 시각 (완료 전이면 없음)")
+        LocalDateTime completedAt
 ) {
 
     public static RefundResponse from(RefundResult result) {
@@ -86,6 +89,7 @@ public record RefundResponse(
                 result.status(),
                 result.rejectReason(),
                 result.requestedAt(),
-                result.decidedAt());
+                result.decidedAt(),
+                result.completedAt());
     }
 }

@@ -31,6 +31,7 @@ final class RefundMapper {
                 entity.getStatus(),
                 entity.getRejectReason(),
                 entity.getDecidedAt(),
+                entity.getCompletedAt(),
                 entity.getFailedStep(),
                 entity.getFailureCode(),
                 entity.getActiveOrderItemId(),
@@ -56,13 +57,14 @@ final class RefundMapper {
         return entity;
     }
 
-    // 바뀔 수 있는 칸만 옮긴다: 상태, 거절 사유, 결정 시각, 진행 중 칸, 배송비 세 칸, 실패 단계·이유.
+    // 바뀔 수 있는 칸만 옮긴다: 상태, 거절 사유, 결정 시각, 완료 시각, 진행 중 칸, 배송비 세 칸, 실패 단계·이유.
     // 나머지 칸은 요청 때 정해져 바뀌지 않으므로 옮기지 않는다. 그래서 수정 때 이미 저장된 주문·금액 칸을 덮어쓸 일이 없다
     static void applyMutableState(Refund refund, RefundJpaEntity entity) {
         entity.changeMutableState(
                 refund.getStatus(),
                 refund.getRejectReason(),
                 refund.getDecidedAt(),
+                refund.getCompletedAt(),
                 refund.getActiveOrderItemId(),
                 refund.getShippingFeeAmount(),
                 refund.getRemoteAreaFeeAmount(),

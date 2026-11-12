@@ -51,6 +51,10 @@ public class Refund {
     // 판매자가 승인·거절하거나 구매자가 철회한 시각. 요청됨인 동안에는 아직 정해지지 않아 null이다
     private LocalDateTime decidedAt;
 
+    // 승인 뒤 단계를 모두 마쳐 완료된 시각(#414). 완료 전에는 아직 정해지지 않아 null이다.
+    // 지금은 승인과 같은 요청에서 바로 완료돼 decidedAt과 거의 같지만, 지갑 완료 메시지 뒤로 완료를 옮기면(#516) 달라진다
+    private LocalDateTime completedAt;
+
     // 처리 중에 다른 모듈 호출이 실패했을 때만 값이 있다(#412). 실패가 없는 것이 정상이라 null을 허용한다
     private RefundFailedStep failedStep;
 
@@ -85,6 +89,7 @@ public class Refund {
             RefundStatus status,
             String rejectReason,
             LocalDateTime decidedAt,
+            LocalDateTime completedAt,
             RefundFailedStep failedStep,
             String failureCode,
             Long activeOrderItemId,
@@ -108,6 +113,7 @@ public class Refund {
         this.status = status;
         this.rejectReason = rejectReason;
         this.decidedAt = decidedAt;
+        this.completedAt = completedAt;
         this.failedStep = failedStep;
         this.failureCode = failureCode;
         this.activeOrderItemId = activeOrderItemId;
@@ -150,7 +156,7 @@ public class Refund {
         long itemAmount = Math.multiplyExact(unitPrice, quantity);
         // 배송비 세 칸은 승인 때 정하므로 0으로 시작하고, 진행 중 칸은 이 주문 상품으로 채워 UNIQUE가 중복 요청을 막게 한다
         return new Refund(null, orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
-                unitPrice, itemAmount, 0L, 0L, 0L, cancelReason, RefundStatus.REQUESTED, null, null, null, null,
+                unitPrice, itemAmount, 0L, 0L, 0L, cancelReason, RefundStatus.REQUESTED, null, null, null, null, null,
                 orderItemId, null);
     }
 
@@ -181,6 +187,7 @@ public class Refund {
             RefundStatus status,
             String rejectReason,
             LocalDateTime decidedAt,
+            LocalDateTime completedAt,
             RefundFailedStep failedStep,
             String failureCode,
             Long activeOrderItemId,
@@ -191,7 +198,7 @@ public class Refund {
         }
         return new Refund(id, orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
                 unitPrice, itemAmount, shippingFeeAmount, remoteAreaFeeAmount, deductedShippingFeeAmount, cancelReason,
-                status, rejectReason, decidedAt, failedStep, failureCode, activeOrderItemId, createdAt);
+                status, rejectReason, decidedAt, completedAt, failedStep, failureCode, activeOrderItemId, createdAt);
     }
 
     /**
@@ -272,10 +279,12 @@ public class Refund {
      * 진행 중 칸을 비워 같은 주문 상품의 남은 개수를 다시 요청할 수 있게 한다. 이 환불의 개수와 뺀 배송비는 끝난 뒤에도
      * 같은 묶음의 배송비 판단에 계속 쓰인다({@link RefundShippingFeePolicy#CANCELLING_STATUSES}).
      *
+     * @param now 완료된 시각. {@code completedAt}에 남긴다
      * @throws RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
      */
-    public void complete() {
+    public void complete(LocalDateTime now) {
         requireStatus(RefundStatus.PROCESSING);
+        this.completedAt = now;
         finish(RefundStatus.COMPLETED);
     }
 

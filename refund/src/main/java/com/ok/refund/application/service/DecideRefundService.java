@@ -188,7 +188,7 @@ public class DecideRefundService implements DecideRefundUseCase {
         return transaction.execute(status -> {
             Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
                     .orElseThrow(() -> new IllegalStateException("승인한 환불을 완료하려는데 찾을 수 없습니다. refundId=" + refundId));
-            refund.complete();
+            refund.complete(LocalDateTime.now(clock));
             refundPersistencePort.update(refund);
             return RefundResult.from(refund);
         });

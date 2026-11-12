@@ -538,7 +538,9 @@ class DecideRefundServiceTest {
             softly.assertThat(updates.getFirst().getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(completed.getStatus()).isEqualTo(RefundStatus.COMPLETED);
             softly.assertThat(completed.getActiveOrderItemId()).isNull();
+            softly.assertThat(completed.getCompletedAt()).isEqualTo(NOW);
             softly.assertThat(result.status()).isEqualTo("COMPLETED");
+            softly.assertThat(result.completedAt()).isEqualTo(NOW);
         });
     }
 
@@ -667,7 +669,7 @@ class DecideRefundServiceTest {
                 refund.getSellerId(), refund.getProductOptionId(), refund.getProductName(), refund.getOptionName(),
                 refund.getUnitPrice(), refund.getItemAmount(), refund.getShippingFeeAmount(), refund.getRemoteAreaFeeAmount(),
                 refund.getDeductedShippingFeeAmount(), refund.getCancelReason(), refund.getStatus(), refund.getRejectReason(),
-                refund.getDecidedAt(), refund.getFailedStep(), refund.getFailureCode(), refund.getActiveOrderItemId(),
+                refund.getDecidedAt(), refund.getCompletedAt(), refund.getFailedStep(), refund.getFailureCode(), refund.getActiveOrderItemId(),
                 refund.getCreatedAt());
     }
 

@@ -422,11 +422,12 @@ class RefundTest {
     void 복원하면_저장된_칸을_모두_그대로_가진다() {
         // given
         LocalDateTime createdAt = LocalDateTime.of(2026, 11, 3, 9, 0);
+        LocalDateTime completedAt = LocalDateTime.of(2026, 11, 4, 10, 5);
 
         // when
         Refund sut = Refund.restore(7L, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 3_000L, 2_000L, 1_000L,
-                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, RefundFailedStep.ORDER, "ORDER_API_FAILED", 101L,
-                createdAt);
+                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, completedAt, RefundFailedStep.ORDER, "ORDER_API_FAILED",
+                101L, createdAt);
 
         // then
         assertThat(sut).isNotNull();
@@ -449,6 +450,7 @@ class RefundTest {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(sut.getRejectReason()).isNull();
             softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(completedAt);
             softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
             softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
             softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
@@ -461,26 +463,28 @@ class RefundTest {
     void ID_없이_복원하면_예외를_던진다() {
         // when & then
         assertThatThrownBy(() -> Refund.restore(null, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 0L, 0L, 0L,
-                null, RefundStatus.REQUESTED, null, null, null, null, 101L, null))
+                null, RefundStatus.REQUESTED, null, null, null, null, null, 101L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("저장된 환불을 되살리려면 ID와 상태가 필요합니다.");
     }
 
     // 완료(#414): 승인 뒤 단계를 모두 마친 처리 중 환불만 끝낸다. 진행 중 칸을 비워 같은 상품의 남은 개수를 다시 요청할 수 있게 한다
     @Test
-    void 처리_중을_완료하면_완료가_되고_진행_중_칸이_비워진다() {
+    void 처리_중을_완료하면_완료가_되고_완료_시각이_남고_진행_중_칸이_비워진다() {
         // given
         Refund sut = requested();
         sut.approve(NOW, RefundShippingFee.none());
+        LocalDateTime completedAt = NOW.plusMinutes(5);
 
         // when
-        sut.complete();
+        sut.complete(completedAt);
 
         // then
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
             softly.assertThat(sut.getActiveOrderItemId()).isNull();
             softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(completedAt);
         });
     }
 
@@ -489,7 +493,7 @@ class RefundTest {
     @MethodSource("처리_중이_아닌_환불")
     void 처리_중이_아니면_완료할_수_없다(Refund refund) {
         // when & then
-        assertThatThrownBy(refund::complete)
+        assertThatThrownBy(() -> refund.complete(NOW))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
     }
@@ -497,7 +501,7 @@ class RefundTest {
     static Stream<Refund> 처리_중이_아닌_환불() {
         Refund completed = requested();
         completed.approve(NOW, RefundShippingFee.none());
-        completed.complete();
+        completed.complete(NOW);
         Refund withdrawn = requested();
         withdrawn.withdraw(NOW);
         return Stream.of(requested(), completed, withdrawn);

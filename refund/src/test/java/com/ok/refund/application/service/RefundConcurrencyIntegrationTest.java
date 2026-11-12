@@ -32,6 +32,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -72,6 +73,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
     RefundPersistencePort refundPersistencePort;
+    @Autowired
+    Clock clock;
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
@@ -291,7 +294,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<?> holding = executor.submit(() -> completing.executeWithoutResult(status -> {
                 Refund lockedPotato = refundPersistencePort.findByIdForUpdate(potato).orElseThrow();
-                lockedPotato.complete();
+                lockedPotato.complete(LocalDateTime.now(clock));
                 refundPersistencePort.update(lockedPotato);
                 locked.countDown();
                 await(release);

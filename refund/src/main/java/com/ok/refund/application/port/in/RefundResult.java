@@ -7,7 +7,8 @@ import java.time.LocalDateTime;
 /**
  * 환불 요청 한 건의 결과. 요청 API 응답과 목록 한 줄이 같은 값을 쓴다.
  * 컨트롤러가 도메인 enum을 쓰지 않도록 상태는 이름 문자열로 담는다.
- * 실패 기록 칸(#412)은 아직 보여 줄 API가 없어 담지 않는다. 완료 시각 칸은 없다(완료는 승인 요청 안에서 바로 이어져 승인 시각과 같다).
+ * 실패 기록 칸(#412)은 아직 보여 줄 API가 없어 담지 않는다. 완료 시각은 지금 승인 시각과 거의 같지만,
+ * 지갑 완료 메시지 뒤로 완료를 옮기면(#516) 달라져 따로 담는다.
  *
  * @param productOptionId           주문에서 받은 옵션 ID. 승인 뒤 상품에 재고를 되돌려 달라고 할 때 쓴다(#414)
  * @param itemAmount                돌려줄 상품 금액 = 단가 x 개수 (원)
@@ -18,6 +19,7 @@ import java.time.LocalDateTime;
  * @param rejectReason              판매자가 적은 거절 사유(자동 거절이면 시스템 사유). 거절이 아니면 {@code null}
  * @param requestedAt               요청한 시각 (행을 만든 시각)
  * @param decidedAt                 승인·거절·철회한 시각. 요청됨이면 {@code null}
+ * @param completedAt               승인 뒤 단계를 모두 마쳐 완료된 시각. 완료 전이면 {@code null}
  */
 public record RefundResult(
         Long refundId,
@@ -39,7 +41,8 @@ public record RefundResult(
         String status,
         String rejectReason,
         LocalDateTime requestedAt,
-        LocalDateTime decidedAt
+        LocalDateTime decidedAt,
+        LocalDateTime completedAt
 ) {
 
     public static RefundResult from(Refund refund) {
@@ -63,6 +66,7 @@ public record RefundResult(
                 refund.getStatus().name(),
                 refund.getRejectReason(),
                 refund.getCreatedAt(),
-                refund.getDecidedAt());
+                refund.getDecidedAt(),
+                refund.getCompletedAt());
     }
 }

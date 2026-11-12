@@ -130,7 +130,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status", is("REQUESTED")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.requestedAt", notNullValue()))
-                .andExpect(jsonPath("$.decidedAt", nullValue()));
+                .andExpect(jsonPath("$.decidedAt", nullValue()))
+                .andExpect(jsonPath("$.completedAt", nullValue()));
         Refund saved = onlyRefund();
         assertThat(saved).isNotNull();
         // 응답은 저장한 객체로 만들어 DB 값과 다를 수 있으므로, 다시 읽은 행의 모든 칸을 따로 확인한다
@@ -425,12 +426,14 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.refundId", is(refundId.intValue())))
                 .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
-                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+                .andExpect(jsonPath("$.decidedAt", notNullValue()))
+                .andExpect(jsonPath("$.completedAt", notNullValue()));
         Refund saved = onlyRefund();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.COMPLETED);
             softly.assertThat(saved.getDecidedAt()).isNotNull();
+            softly.assertThat(saved.getCompletedAt()).isNotNull();
             // 끝났으므로 진행 중 칸을 비운다. 그래야 남은 2개를 다시 요청할 수 있다
             softly.assertThat(saved.getActiveOrderItemId()).isNull();
             softly.assertThat(saved.getItemAmount()).isEqualTo(10_000L);
@@ -507,7 +510,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("REJECTED")))
                 .andExpect(jsonPath("$.rejectReason", is("이미 포장을 마쳤습니다.")))
-                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+                .andExpect(jsonPath("$.decidedAt", notNullValue()))
+                .andExpect(jsonPath("$.completedAt", nullValue()));
         Refund saved = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
@@ -675,7 +679,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.requestedAt", notNullValue()))
-                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+                .andExpect(jsonPath("$.decidedAt", notNullValue()))
+                .andExpect(jsonPath("$.completedAt", notNullValue()));
         Refund firstSaved = refundPersistencePort.findById(first).orElseThrow();
         Refund lastSaved = refundPersistencePort.findById(last).orElseThrow();
         assertThat(lastSaved).isNotNull();
@@ -899,7 +904,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // then
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.status", is("WITHDRAWN")))
-                .andExpect(jsonPath("$.decidedAt", notNullValue()));
+                .andExpect(jsonPath("$.decidedAt", notNullValue()))
+                .andExpect(jsonPath("$.completedAt", nullValue()));
         Refund saved = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
