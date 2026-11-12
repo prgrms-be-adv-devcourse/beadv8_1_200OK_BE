@@ -78,6 +78,7 @@
    POST /internal/v1/orders/items/{orderItemId}/refunds/{refundId}/revert
    ```
    - 그 `refundId`로 더했던 취소 수량을 뺀다. 그 반영으로 바뀐 주문 상품 상태(예: 모두 취소되어 `REFUNDED`)도 되돌린다.
+   - 그 `refundId`로 받은 뺀 배송비(`deductedShippingFee`)도 함께 되돌린다. 남겨 두면 구매확정 때 판매자 몫 배송비가 틀어진다.
    - 같은 `refundId`로 두 번 와도 한 번만 뺀다(두 번째는 아무것도 안 하고 성공 응답).
    - 반영한 적 없는 `refundId`면 아무것도 안 하고 성공 응답. 환불이 다시 시도하다 보면 이런 요청이 갈 수 있다.
    - 언제 부르나: 지갑이 다시 해도 실패했을 때, 또는 재고가 다시 해도 실패했을 때(2-3 표). 정상 운영에서는 거의 없어야 한다.
