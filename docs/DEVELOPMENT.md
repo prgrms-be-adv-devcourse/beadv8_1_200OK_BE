@@ -105,6 +105,19 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 - 로컬 compose의 MySQL 서비스에 슬로우 쿼리 설정이 생겨서, 이 변경을 받은 뒤 처음 `docker compose up -d`를 하면 mysql 컨테이너가 한 번 다시 만들어집니다(`data/mysql`은 그대로).
 - Grafana·Prometheus 데이터는 이름 있는 볼륨이라 `docker compose --profile monitoring down -v`를 하면 지워집니다(Kafka 볼륨도 함께 지워지니 주의).
 
+### 인프라 연결 확인 테스트 (#530)
+
+compose로 띄운 실제 Redis·Kafka에 앱 설정(`application.yaml`)으로 붙는지 확인합니다. Testcontainers가 아니라 떠 있는 컨테이너를 쓰므로 `@Tag("infraTest")`로 표시해 기본 `test`(CI 포함)에서는 빠지고, 아래 태스크로만 돕니다.
+
+```bash
+docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single 이 있어야 kafka가 뜬다
+./gradlew :monolith:infraTest
+```
+
+- Redis: PING, 값 저장·조회, AOF 켜짐(`appendonly yes`, `everysec`), `noeviction`, `maxmemory`가 컨테이너 한도(512m)보다 작은지
+- Kafka: 브로커 연결과 클러스터 조회, 앱의 `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(`single`과 `cluster` 모두 통과)
+- 접속 주소는 앱과 같이 `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS` 환경변수로 바꿉니다. 인프라가 꺼져 있으면 실패합니다(Redis는 2초, Kafka는 10초 안에).
+
 ### 로컬 Kafka 지표 확인 (#396)
 
 `monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
