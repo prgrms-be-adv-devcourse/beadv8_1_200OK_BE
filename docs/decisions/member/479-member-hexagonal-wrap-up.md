@@ -29,6 +29,7 @@ member 헥사고날 전환(#475)의 마지막 단계다. #476~#478 동안 옛 �
 | 옛 레이어 규칙 | 레이어 순서, `..event..`·`..service..`·`..controller..`·`..repository..` 기준 규칙을 지우고, 남길 뜻은 모듈 전체 헥사고날 규칙으로 바꿈(`Service`는 `application.service`, 엔티티는 `domain`, 이벤트 클래스는 `adapter`) | 옛 패키지가 남지 않아 대상이 없다. order `ArchitectureTest`와 같은 모양으로 맞춰 모듈 사이에서 규칙을 비교하기 쉽게 한다 |
 | Kafka 발행 | 발행 도구 기준을 `ApplicationEventPublisher` 또는 `KafkaOperations`로 넓혀, `adapter.out`에서만 쓰고 출력 포트를 구현하게 함 (사용자 결정) | Kafka로 옮기면 `KafkaTemplate`을 쓰는 클래스를 발행 구현체로 알아보지 못해, 서비스가 직접 써도 통과한다. `KafkaOperations` 기준이라 상위 타입으로 받아도 걸린다(refund·payout과 같다) |
 | 발행 도구 규칙 범위 | 하위 도메인별이 아니라 `com.ok.member..` 전체 | 모듈 최상위와 `config`도 발행 도구를 쓰면 안 된다 |
+| 발행 구현체 규칙 범위 | #478의 `EVENT_PUBLISHING_SUBDOMAINS`(seller, member) 목록을 지우고 모듈 전체(`com.ok.member.*.adapter.out..`)에 걸고, 대상이 없으면 실패 (PR 리뷰 반영, 사용자 확인) | 목록이면 auth가 발행을 시작하고 목록에 더하지 않았을 때 검사를 건너뛴다. 다른 하위 도메인의 출력 포트를 구현하는 것은 하위 도메인 사이 규칙이 막는 것을 임시 클래스로 확인했다 |
 | 이벤트 클래스 규칙 | `onlyBeAccessed` 대신 `onlyHaveDependentClassesThat`(의존 전체) (구현 중 정함) | `onlyBeAccessed`는 호출·필드 접근만 봐서, 서비스가 이벤트 타입을 필드로만 들고 있으면 통과하는 것을 임시 클래스로 확인했다. 같은 파일의 하위 도메인 사이 규칙도 같은 이유로 의존 기준이다 |
 | 규칙 이름 | `헥사고날_` 접두어를 빼 order·wallet과 같은 이름으로 | 옛 규칙과 구분하려던 접두어라 이제 필요 없다 |
 | 컨벤션 원문 범위 | 2절 첫머리에 "헥사고날 모듈은 레이어 패키지·발행 인터페이스·DTO 위치 대신 `DEVELOPMENT.md`의 모듈별 구조를 따른다"를 넣고, member 옛 트리 예시를 product(product/review)로 바꿈. `structure.md`에 같은 내용 반영 (사용자 결정) | 레이어 구조로 남은 모듈(media, product)이 있어 레이어 규칙은 그대로 유효하다. 어느 모듈이 헥사고날인지는 `CLAUDE.md` 한 곳에만 두어 목록이 두 곳에서 어긋나지 않게 한다 |
@@ -41,7 +42,8 @@ member 헥사고날 전환(#475)의 마지막 단계다. #476~#478 동안 옛 �
 
 ## 건드릴 때 주의
 
-- 새 하위 도메인을 만들면 `SUBDOMAINS`에 더한다. 이벤트를 발행하면 `EVENT_PUBLISHING_SUBDOMAINS`에도 더한다(발행하지 않는 하위 도메인을 넣으면 빈 규칙으로 실패한다).
+- 새 하위 도메인을 만들면 `SUBDOMAINS`에 더한다. 이벤트 발행 구현체 규칙은 모듈 전체에 걸려 있어 따로 등록하지 않는다.
+- 발행 구현체 규칙은 대상이 없으면 실패한다. member의 모든 이벤트 발행을 없애면 이 규칙도 함께 정리한다.
 - 하위 도메인 밖에 둘 수 있는 곳은 모듈 최상위(다른 모듈에 공개하는 클래스)와 `com.ok.member.config`뿐이다. 다른 하위 패키지가 필요하면 경계 규칙의 허용 목록을 함께 고친다.
 - 컨트롤러·저장소 위치 규칙은 하위 도메인 안만 검사한다. 모듈 최상위나 `config`에 두는 것은 리뷰에서 본다.
 - 컨벤션 2절의 하위 도메인 예시는 product다. product가 헥사고날로 바뀌면 하위 도메인이 있는 다른 레이어 모듈로 바꾸거나, 그런 모듈이 없으면 예시를 지운다.

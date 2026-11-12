@@ -68,9 +68,6 @@ class ArchitectureTest {
     private static final String MODULE_ROOT = "com.ok.member";
     // 하위 도메인에 속하지 않는 모듈 전용 설정(Flyway). 하위 도메인 밖에 둘 수 있는 유일한 하위 패키지다
     private static final String MODULE_CONFIG = "com.ok.member.config..";
-    // 이벤트를 발행하는 하위 도메인. auth는 발행하지 않아, 발행 구현체 규칙을 auth에 걸면 검사 대상이 없어 실패한다.
-    // auth가 이벤트를 발행하게 되면 여기에 더한다
-    private static final List<Subdomain> EVENT_PUBLISHING_SUBDOMAINS = List.of(new Subdomain("seller"), new Subdomain("member"));
     private static final String[] SUBDOMAIN_PACKAGES = SUBDOMAINS.stream()
             .map(Subdomain::all)
             .toArray(String[]::new);
@@ -226,14 +223,19 @@ class ArchitectureTest {
             .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 유스케이스를 호출하고, "
                     + "발행 포트는 값을 받는다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
 
+    // 발행하는 하위 도메인 목록을 따로 두지 않도록 모듈 전체를 본다. 하위 도메인마다 걸면 발행하지 않는 auth가 빈 규칙으로 실패하고,
+    // 목록으로 고르면 새로 발행하는 하위 도메인을 빠뜨렸을 때 검사를 건너뛴다.
+    // 다른 하위 도메인의 출력 포트를 구현하는 것은 다른_하위_도메인은_adapter_out에서_유스케이스_포트와_dto만_쓴다 규칙이 막는다
     @ArchTest
-    static final ArchRule 이벤트_발행_구현체는_출력_포트를_구현한다 = eachSubdomain(EVENT_PUBLISHING_SUBDOMAINS, subdomain -> classes()
+    static final ArchRule 이벤트_발행_구현체는_출력_포트를_구현한다 = classes()
             .that(발행_도구에_의존하는)
             // adapter.out 밖에서 쓰는 경우는 이벤트_발행_도구는_adapter_out만_사용한다 규칙이 막는다
-            .and().resideInAPackage(subdomain.pkg("adapter.out"))
-            .should().implement(resideInAPackage(subdomain.pkg("application.port.out")))
+            .and().resideInAPackage(ANY_SUBDOMAIN_ADAPTER_OUT)
+            .should().implement(resideInAPackage("com.ok.member.*.application.port.out.."))
+            // 발행 구현체가 있으므로, 패턴을 잘못 적어 아무것도 검사하지 않은 채 통과하지 않게 한다
+            .allowEmptyShould(false)
             .because("서비스는 출력 포트만 알고, adapter.out의 구현체가 발행 방식을 맡는다. "
-                    + "발행 방식(스프링 이벤트, Kafka)을 바꿀 때 구현체만 바꾸게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)"));
+                    + "발행 방식(스프링 이벤트, Kafka)을 바꿀 때 구현체만 바꾸게 한다 (member 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule RestController는_Controller로_끝나고_adapter_in_web_패키지에_있다 = eachSubdomain(subdomain -> classes()
@@ -255,11 +257,7 @@ class ArchitectureTest {
     // 모듈 설정(archRule.failOnEmptyShould=false)은 대상이 없는 규칙을 통과시키므로, 여기서는 대상이 없으면 실패하게 한다.
     // 패키지 이름을 잘못 적었거나 옮긴 하위 도메인에 해당 클래스가 없으면 규칙이 아무것도 검사하지 않은 채 통과하기 때문이다
     private static ArchRule eachSubdomain(Function<Subdomain, ArchRule> rule) {
-        return eachSubdomain(SUBDOMAINS, rule);
-    }
-
-    private static ArchRule eachSubdomain(List<Subdomain> subdomains, Function<Subdomain, ArchRule> rule) {
-        return CompositeArchRule.of(subdomains.stream()
+        return CompositeArchRule.of(SUBDOMAINS.stream()
                 .map(rule)
                 .map(subdomainRule -> subdomainRule.allowEmptyShould(false))
                 .toList());
