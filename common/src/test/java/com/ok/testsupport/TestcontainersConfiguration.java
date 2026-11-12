@@ -1,21 +1,18 @@
 package com.ok.testsupport;
 
 import java.nio.file.Path;
-import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
-import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.mysql.MySQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 /**
- * 테스트용 MySQL·Kafka 컨테이너를 JVM 전체에서 하나씩만 띄워 모든 테스트 컨텍스트가 공유하게 한다 (#151, #339).
- * <p>컨테이너를 빈으로 등록하지 않고 접속 정보({@link JdbcConnectionDetails}, {@link KafkaConnectionDetails})만 빈으로 등록하는 이유
+ * 테스트용 MySQL 컨테이너를 JVM 전체에서 하나만 띄워 모든 테스트 컨텍스트가 공유하게 한다 (#151). Redis는 {@link RedisTestcontainersConfiguration}, Kafka는 {@link KafkaTestcontainersConfiguration}이 따로 맡는다.
+ * <p>컨테이너를 빈으로 등록하지 않고 접속 정보({@link JdbcConnectionDetails})만 빈으로 등록하는 이유
  * <ul>
  *   <li>컨테이너를 {@code @Bean}으로 등록하면 컨텍스트마다 컨테이너가 새로 뜬다. 컨텍스트 캐시는 JVM이 끝날 때까지 컨텍스트를 닫지 않아서 컨테이너가 계속 쌓인다</li>
  *   <li>같은 컨테이너 객체를 빈으로 돌려줘도 Spring Boot가 컨텍스트를 닫을 때 컨테이너 빈을 {@code close()}해서, 한 컨텍스트가 닫히면 다른 컨텍스트의 DB까지 멈춘다</li>
@@ -79,22 +76,6 @@ public class TestcontainersConfiguration {
             throw new IllegalStateException("스키마 초기화 폴더를 알 수 없다. Gradle로 실행하거나 -D" + INITDB_DIR_PROPERTY + "=<저장소>/deploy/initdb 를 지정한다");
         }
         return Path.of(dir);
-    }
-
-    /**
-     * 앱의 Kafka 접속 주소를 테스트 컨테이너로 바꾼다.
-     * 이 빈이 있으면 {@code spring.kafka.bootstrap-servers} 대신 이 주소를 쓰므로, 발행·수신 코드에 테스트용 분기가 필요 없다.
-     */
-    // 컨테이너는 Kafka만 켜는 KafkaTestcontainersConfiguration과 JVM 안에서 하나를 공유한다
-    @Bean
-    KafkaConnectionDetails kafkaConnectionDetails(@Value("${KAFKA_VERSION:4.2.1}") String kafkaVersion) {
-        KafkaContainer container = KafkaTestcontainersConfiguration.startKafka(kafkaVersion);
-        return new KafkaConnectionDetails() {
-            @Override
-            public List<String> getBootstrapServers() {
-                return List.of(container.getBootstrapServers());
-            }
-        };
     }
 
 }
