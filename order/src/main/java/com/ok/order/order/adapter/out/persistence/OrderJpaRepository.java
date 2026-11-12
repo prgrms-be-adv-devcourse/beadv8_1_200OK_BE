@@ -30,9 +30,6 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     Optional<Order> findByIdForUpdate(@Param("id") Long id);
 
     @Override
-    void deleteById(Long id);
-
-    @Override
     @Query("""
             select i from OrderItem i
             join fetch i.sellerGroup g

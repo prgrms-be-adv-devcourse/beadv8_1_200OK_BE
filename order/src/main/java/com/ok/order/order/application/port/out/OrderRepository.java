@@ -3,6 +3,7 @@ package com.ok.order.order.application.port.out;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
+import com.ok.order.order.domain.OrderStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -26,9 +27,7 @@ public interface OrderRepository {
      */
     Optional<Order> findByIdForUpdate(Long id);
 
-    void deleteById(Long id);
-
-    Page<Order> findByBuyerIdOrderByIdDesc(Long buyerId, Pageable pageable);
+    Page<Order> findByBuyerIdAndStatusNotOrderByIdDesc(Long buyerId, OrderStatus status, Pageable pageable);
 
     Optional<Order> findByIdAndBuyerId(Long id, Long buyerId);
 

@@ -3,10 +3,15 @@ package com.ok.order.order.domain;
 import com.ok.common.exception.RestApiException;
 import com.ok.order.order.exception.OrderErrorCode;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -140,6 +145,55 @@ class OrderTest {
                     .extracting(OrderItem::getStatus)
                     .containsOnly(OrderItemStatus.PREPARING);
         });
+    }
+
+    @Test
+    void 취소하면_주문과_상품_모두_취소되고_멱등키를_비운다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1), line(2L, 200L, 5_000L, 2)));
+        sut.assignIdempotencyKey("key-1");
+
+        // when
+        boolean canceled = sut.cancel();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(canceled).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderStatus.CANCELED);
+            softly.assertThat(sut.getIdempotencyKey()).isNull();
+            softly.assertThat(sut.getAllItems())
+                    .extracting(OrderItem::getStatus)
+                    .containsOnly(OrderItemStatus.CANCELED);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("결제_결과를_받은_주문")
+    void 결제_결과를_받은_주문은_취소해도_바뀌지_않는다(Consumer<Order> paymentResult, OrderStatus status, OrderItemStatus itemStatus) {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.assignIdempotencyKey("key-1");
+        paymentResult.accept(sut);
+
+        // when
+        boolean canceled = sut.cancel();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(canceled).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(status);
+            softly.assertThat(sut.getIdempotencyKey()).isEqualTo("key-1");
+            softly.assertThat(sut.getAllItems())
+                    .extracting(OrderItem::getStatus)
+                    .containsOnly(itemStatus);
+        });
+    }
+
+    static Stream<Arguments> 결제_결과를_받은_주문() {
+        return Stream.of(
+                Arguments.of((Consumer<Order>) Order::markPaid, OrderStatus.PAID, OrderItemStatus.PREPARING),
+                Arguments.of((Consumer<Order>) Order::markPaymentFailed, OrderStatus.PAYMENT_FAILED, OrderItemStatus.PAYMENT_FAILED)
+        );
     }
 
     @Test
