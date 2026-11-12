@@ -12,6 +12,8 @@ paths:
 
 `com.ok` 바로 아래 패키지가 하나의 모듈이다.
 
+헥사고날 구조(`application`, `adapter/in`, `adapter/out`) 모듈은 이 절의 레이어 패키지·발행 인터페이스 위치와 DTO 위치(`api.md`, `service.md`) 대신 `docs/DEVELOPMENT.md`의 모듈별 구조와 그 모듈의 `ArchitectureTest`를 따른다. 모듈 간 규칙, `common`, 역할별 접미사는 그대로 따르되, 모듈 문서가 따로 정한 것은 그 문서가 우선한다. 어느 모듈이 헥사고날 구조인지는 루트 `CLAUDE.md`에 있다.
+
 - 하위 도메인이 없는 모듈: 모듈 바로 아래에 `controller`, `service`, `domain`, `repository`를 둔다.
 - 성격이 다른 하위 도메인으로 나뉘는 모듈: `모듈/하위 도메인/레이어` 구조로 둔다.
 - 하위 도메인이 하나뿐이면 패키지를 한 단계 더 만들지 않는다(`core` 같은 의미 없는 패키지 금지).
@@ -40,9 +42,9 @@ com.ok.wallet
 └── config         모듈 전용 설정
 
 // O: 하위 도메인이 있는 경우
-com.ok.member
-├── member  (controller, service, domain, repository)
-└── auth    (controller, service, config)
+com.ok.product
+├── product  (controller, service, domain, repository)
+└── review   (controller, service, domain, repository)
 
 // X
 com.ok.wallet
