@@ -9,6 +9,7 @@ import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundQuantityPolicy;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.exception.RefundErrorCode;
@@ -81,8 +82,7 @@ public class RequestRefundService implements RequestRefundUseCase {
                 saved.getOrderId(), saved.getSellerId(), RefundShippingFeePolicy.CANCELLING_STATUSES);
         // 남은 개수보다 많이 요청하면 구매자 입력 문제라 409로 막는다(#414). 예: 3개 중 1개가 이미 환불(완료)됐는데 3개를 요청.
         // 여기서 막지 않으면 배송비 정책이 "취소 개수 합이 주문 개수를 넘는다"를 주문 값과 환불 기록이 어긋난 버그로 보고 500을 던진다
-        long alreadyCancelled = cancelledQuantityOf(cancelled, saved.getOrderItemId());
-        if (command.quantity() + alreadyCancelled > orderItem.quantity()) {
+        if (!RefundQuantityPolicy.isWithinRemaining(command.quantity(), orderItem.quantity(), saved.getOrderItemId(), cancelled)) {
             throw new RestApiException(RefundErrorCode.REFUND_QUANTITY_EXCEEDED);
         }
         RefundShippingFee fee = RefundShippingFeePolicy.decide(saved, orderItem.bundle(), cancelled);
@@ -90,15 +90,5 @@ public class RequestRefundService implements RequestRefundUseCase {
             throw new RestApiException(RefundErrorCode.PARTIAL_CANCEL_NOT_ALLOWED);
         }
         return RefundResult.from(saved);
-    }
-
-    // 집계는 주문 상품별 한 줄이다. 이 상품의 줄이 없으면 이미 취소된 것이 없다
-    private static long cancelledQuantityOf(List<CancelledQuantity> cancelled, Long orderItemId) {
-        for (CancelledQuantity each : cancelled) {
-            if (each.orderItemId().equals(orderItemId)) {
-                return each.quantity();
-            }
-        }
-        return 0;
     }
 }
