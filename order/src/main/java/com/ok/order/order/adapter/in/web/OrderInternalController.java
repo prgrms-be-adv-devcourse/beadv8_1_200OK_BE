@@ -1,9 +1,11 @@
 package com.ok.order.order.adapter.in.web;
 
+import com.ok.order.order.adapter.in.web.dto.OrderItemForRefundResponse;
 import com.ok.order.order.adapter.in.web.dto.RecordOrderItemRefundRequest;
 import com.ok.order.order.adapter.in.web.dto.ReviewCandidateRequest;
 import com.ok.order.order.adapter.in.web.dto.ReviewCandidateResponse;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
+import com.ok.order.order.application.port.in.GetOrderItemForRefundUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
 import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
 import jakarta.validation.Valid;
@@ -27,6 +29,7 @@ import java.util.List;
 public class OrderInternalController implements OrderInternalControllerSpec {
 
     private final GetReviewCandidatesUseCase getReviewCandidates;
+    private final GetOrderItemForRefundUseCase getOrderItemForRefund;
     private final RecordOrderItemRefundUseCase recordOrderItemRefund;
 
     @Override
@@ -46,6 +49,16 @@ public class OrderInternalController implements OrderInternalControllerSpec {
 
         // 응답
         return ResponseEntity.ok(responses);
+    }
+
+    @Override
+    @GetMapping("/{orderId}/items/{orderItemId}")
+    public ResponseEntity<OrderItemForRefundResponse> getOrderItemForRefund(
+            @PathVariable Long orderId,
+            @PathVariable Long orderItemId
+    ) {
+        return ResponseEntity.ok(OrderItemForRefundResponse.from(
+                getOrderItemForRefund.getOrderItemForRefund(orderId, orderItemId)));
     }
 
     @Override

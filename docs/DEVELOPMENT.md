@@ -507,7 +507,7 @@ com.ok.order
 └── order/
     ├── domain/, exception/
     ├── application/
-    │   ├── port/in/           주문서·주문 생성·조회·구매확정·결제 결과·배송 상태·리뷰 후보·환불 취소 반영 유스케이스
+    │   ├── port/in/           주문서·주문 생성·조회·구매확정·결제 결과·배송 상태·리뷰 후보·환불용 주문 상품 조회·환불 취소 반영 유스케이스
     │   ├── port/out/          OrderRepository, OrderEventPublisher, ProductPort, DeliveryPort, WalletPort
     │   ├── service/           OrderFacade(외부 호출 조율), OrderService(트랜잭션)
     │   └── dto/

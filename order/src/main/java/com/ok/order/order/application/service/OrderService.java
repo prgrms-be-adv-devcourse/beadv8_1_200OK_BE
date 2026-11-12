@@ -9,6 +9,7 @@ import com.ok.order.order.domain.OrderSellerGroup;
 import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.application.dto.OrderDetailResult;
+import com.ok.order.order.application.dto.OrderItemForRefundResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
@@ -16,6 +17,7 @@ import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.CompletePaymentUseCase;
 import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
+import com.ok.order.order.application.port.in.GetOrderItemForRefundUseCase;
 import com.ok.order.order.application.port.in.GetOrderUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
 import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
@@ -41,7 +43,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, UpdateShippingStatusUseCase,
-        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, RecordOrderItemRefundUseCase {
+        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, GetOrderItemForRefundUseCase,
+        RecordOrderItemRefundUseCase {
 
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
@@ -101,6 +104,16 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         Order order = orderRepository.findByIdAndBuyerId(orderId, buyerId)
                 .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
         return OrderDetailResult.from(order);
+    }
+
+    // 환불용 주문 상품 조회 (환불 모듈 내부 API용). 구매자는 확인하지 않고 환불이 buyerId로 직접 확인한다
+    @Override
+    public OrderItemForRefundResult getOrderItemForRefund(Long orderId, Long orderItemId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
+        OrderItem item = order.findItem(orderItemId)
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+        return OrderItemForRefundResult.from(order, item);
     }
 
     // 결제 완료
