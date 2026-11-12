@@ -212,7 +212,7 @@ public class PayoutService implements PayoutUseCase {
             String cause = null;
             for (PayoutFailure failure : entry.getValue()) {
                 sellerIds.add(failure.getSellerId());
-                // 사유는 원인 후보(AMOUNT_MISMATCH)의 상세로 남김 (함께 보류된 ORDER_LOCKED 상세는 원인이 아님)
+                // 사유는 원인 후보(AMOUNT_MISMATCH)의 상세로 남김 (함께 보류된 ORDER_HELD 상세는 원인이 아님)
                 if (cause == null && failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
                     cause = failure.getDetail();
                 }

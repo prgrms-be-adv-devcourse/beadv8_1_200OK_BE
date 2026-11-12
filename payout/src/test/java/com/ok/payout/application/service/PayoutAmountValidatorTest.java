@@ -125,9 +125,9 @@ class PayoutAmountValidatorTest {
                 .containsExactly(
                         tuple(1001L, PayoutFailureReason.AMOUNT_MISMATCH, feeDetail),   // 대금
                         tuple(1001L, PayoutFailureReason.AMOUNT_MISMATCH, feeDetail),   // 수수료
-                        tuple(1002L, PayoutFailureReason.ORDER_LOCKED, lockedDetail),
-                        tuple(1002L, PayoutFailureReason.ORDER_LOCKED, lockedDetail),
-                        tuple(null, PayoutFailureReason.ORDER_LOCKED, lockedDetail));   // 배송비
+                        tuple(1002L, PayoutFailureReason.ORDER_HELD, lockedDetail),
+                        tuple(1002L, PayoutFailureReason.ORDER_HELD, lockedDetail),
+                        tuple(null, PayoutFailureReason.ORDER_HELD, lockedDetail));   // 배송비
     }
 
     @Test
@@ -243,7 +243,7 @@ class PayoutAmountValidatorTest {
         PayoutFailure locked = sut.get(sut.size() - 1);
         assertThat(locked).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(locked.getReason()).isEqualTo(PayoutFailureReason.ORDER_LOCKED);
+            softly.assertThat(locked.getReason()).isEqualTo(PayoutFailureReason.ORDER_HELD);
             softly.assertThat(locked.getDetail()).hasSize(PayoutFailure.MAX_DETAIL_LENGTH).endsWith("...");
         });
     }

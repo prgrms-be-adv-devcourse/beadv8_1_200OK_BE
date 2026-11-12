@@ -45,12 +45,15 @@ import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.batch.core.repository.JobRepository;
 import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
@@ -80,6 +83,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private static final LocalDateTime FROM = LocalDateTime.of(2026, 9, 21, 0, 0);
     private static final LocalDateTime TO = LocalDateTime.of(2026, 9, 25, 0, 0);
     private static final int LIMIT = PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE;
+
+    // 실패 사유 이름 변경(ORDER_LOCKED → ORDER_HELD, #391) 마이그레이션. 옛 이름 행을 넣고 다시 실행해 결과를 확인함
+    private static final String ORDER_HELD_RENAME_MIGRATION =
+            "db/migration/payout/V202611121209__payout__update_order_locked_to_order_held_in_payout_failure.sql";
 
     @Autowired
     private PayoutService payoutService;
@@ -1230,9 +1237,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactlyInAnyOrder(
                         tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
                         tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
-                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_LOCKED),
-                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_LOCKED),
-                        tuple(null, 20L, PayoutFailureReason.ORDER_LOCKED));   // 배송비
+                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_HELD),
+                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_HELD),
+                        tuple(null, 20L, PayoutFailureReason.ORDER_HELD));   // 배송비
 
         // then: 정산은 주문 Y만
         assertThat(payoutRepository.findBySnapshotId(snapshotId))
@@ -1376,6 +1383,25 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                         "수수료 불일치: 기대값 306, 실제값 500 (판매 금액 10200 기준)"));
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
         assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+    }
+
+    @Test
+    void 옛_이름_ORDER_LOCKED로_저장된_실패_기록은_이름_변경_마이그레이션_뒤_ORDER_HELD로_읽힌다() {
+        // given: 이름을 바꾸기 전(#391 전)에 저장된 실패 기록 1건
+        // Flyway는 컨테이너를 띄울 때 이미 모든 마이그레이션을 적용했으므로, 옛 이름 행을 넣은 뒤 같은 SQL 파일을 다시 실행해 확인함
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 1_000L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        insertFailure(snapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), orderX, 10L, "ORDER_LOCKED");
+
+        // when
+        new ResourceDatabasePopulator(new ClassPathResource(ORDER_HELD_RENAME_MIGRATION))
+                .execute(Objects.requireNonNull(jdbcTemplate.getDataSource()));
+
+        // then: JPA가 예외 없이 enum으로 읽음 (옛 이름이 남아 있으면 enum 변환에 실패해 예외가 남)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.ORDER_HELD);
     }
 
     @Test
@@ -1774,11 +1800,16 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // draft된 후보에 실패 기록이 있는 상황 (draft 대상 조회 조건이 실패 후보를 거르지 못한 것과 같은 상태)
     private void insertFailure(Long snapshotId, Long candidateId, long orderId, Long sellerId) {
+        insertFailure(snapshotId, candidateId, orderId, sellerId, PayoutFailureReason.DEDUCTION_MISSING.name());
+    }
+
+    // 사유 이름을 글자로 받는 이유: 지금 enum에 없는 옛 이름(ORDER_LOCKED, #391)으로 저장된 행을 만들 때도 씀
+    private void insertFailure(Long snapshotId, Long candidateId, long orderId, Long sellerId, String reasonName) {
         LocalDateTime now = LocalDateTime.now();
         jdbcTemplate.update(
                 "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) " +
                         "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
-                snapshotId, candidateId, orderId, sellerId, PayoutFailureReason.DEDUCTION_MISSING.name(), "테스트", now, now);
+                snapshotId, candidateId, orderId, sellerId, reasonName, "테스트", now, now);
     }
 
     // 주문·판매자·타입으로 정산후보 id 하나를 찾음 (JPA 조회)
