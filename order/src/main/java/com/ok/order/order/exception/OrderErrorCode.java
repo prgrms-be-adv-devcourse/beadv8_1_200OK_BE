@@ -21,6 +21,11 @@ public enum OrderErrorCode implements ErrorCode {
     ALREADY_PURCHASE_CONFIRMED(HttpStatus.CONFLICT, "Already purchase confirmed", "이미 구매확정된 상품입니다."),
     PURCHASE_CONFIRM_NOT_ALLOWED(HttpStatus.CONFLICT, "Purchase confirm not allowed", "배송 완료된 상품만 구매확정할 수 있습니다."),
 
+    // 환불 취소 반영
+    REFUND_NOT_ALLOWED_STATUS(HttpStatus.CONFLICT, "Refund not allowed status", "출고 전(배송 준비) 상품만 환불을 반영할 수 있습니다."),
+    REFUND_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Refund quantity exceeded", "환불 수량 합계가 주문 수량을 넘습니다."),
+    REFUND_ID_CONFLICT(HttpStatus.CONFLICT, "Refund id conflict", "같은 환불 ID로 다른 내용이 이미 반영되었습니다."),
+
     // 상품
     PRODUCT_OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Product option not found", "상품 옵션을 찾을 수 없습니다."),
     PRODUCT_NOT_ON_SALE(HttpStatus.CONFLICT, "Product not on sale", "판매 중인 상품이 아닙니다."),

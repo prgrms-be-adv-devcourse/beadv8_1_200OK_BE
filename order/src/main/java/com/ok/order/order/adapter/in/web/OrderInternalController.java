@@ -1,17 +1,21 @@
 package com.ok.order.order.adapter.in.web;
 
 import com.ok.order.order.adapter.in.web.dto.OrderItemForRefundResponse;
+import com.ok.order.order.adapter.in.web.dto.RecordOrderItemRefundRequest;
 import com.ok.order.order.adapter.in.web.dto.ReviewCandidateRequest;
 import com.ok.order.order.adapter.in.web.dto.ReviewCandidateResponse;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.port.in.GetOrderItemForRefundUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
+import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,6 +30,7 @@ public class OrderInternalController implements OrderInternalControllerSpec {
 
     private final GetReviewCandidatesUseCase getReviewCandidates;
     private final GetOrderItemForRefundUseCase getOrderItemForRefund;
+    private final RecordOrderItemRefundUseCase recordOrderItemRefund;
 
     @Override
     @GetMapping("/review-candidates")
@@ -54,5 +59,15 @@ public class OrderInternalController implements OrderInternalControllerSpec {
     ) {
         return ResponseEntity.ok(OrderItemForRefundResponse.from(
                 getOrderItemForRefund.getOrderItemForRefund(orderId, orderItemId)));
+    }
+
+    @Override
+    @PostMapping("/items/{orderItemId}/refunds")
+    public ResponseEntity<Void> recordRefund(
+            @PathVariable Long orderItemId,
+            @Valid @RequestBody RecordOrderItemRefundRequest request
+    ) {
+        recordOrderItemRefund.recordRefund(request.toCommand(orderItemId));
+        return ResponseEntity.noContent().build();
     }
 }
