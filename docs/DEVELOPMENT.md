@@ -47,22 +47,98 @@ cp .env.example .env
 
 ## 3. 로컬 실행
 
-```bash
-# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka·Redis(AOF)는 도커 볼륨에 데이터 저장)
-# Kafka는 프로파일로 켠다(#530). .env에 COMPOSE_PROFILES=single 이 있어야 뜬다(.env.example에 있음). 없으면 --profile single 을 붙인다
-docker compose up -d
+처음이면 위에서부터 순서대로 따라 하면 됩니다. 명령은 모두 저장소 루트에서 실행합니다.
 
-# 2) 앱 실행 (기본 프로파일 dev)
+### 한눈에 보기
+
+`docker compose`가 띄우는 것은 **프로파일**로 나뉩니다. 프로파일이 없는 서비스는 항상 뜨고, 프로파일이 있는 서비스는 그 프로파일을 켰을 때만 뜹니다.
+
+| 서비스 | 프로파일 | 호스트 포트 | 비고 |
+|---|---|---|---|
+| `mysql` | 없음(항상) | `3306` | 데이터는 `data/mysql` |
+| `redis` | 없음(항상) | `6379` (`127.0.0.1`만) | AOF, 메모리 한도 512m, 비밀번호 없음 |
+| `kafka` (브로커 1대) | `single` | `19092` (`127.0.0.1`만) | 메모리 한도 1024m. 평소 쓰는 구성 |
+| `kafka-1`~`kafka-3` (브로커 3대) | `cluster` | `19092`, `29092`, `39092` | `single`과 함께 켜지 않는다 |
+| `prometheus`, `grafana`, `mysqld-exporter`, `cadvisor`, `kafka-exporter` | `monitoring` | `9090`, `3000` (`127.0.0.1`만) | 모니터링 |
+| `app` | `app` | `8080` (`APP_PORT`) | 앱까지 컨테이너로 실행 |
+
+**프로파일을 켜는 방법은 두 가지이고, 섞어 쓰면 안 됩니다.**
+
+1. `.env`의 `COMPOSE_PROFILES`에 쉼표로 적는다(권장). 예: `COMPOSE_PROFILES=single,monitoring`. 그러면 `docker compose up -d`만 하면 됩니다.
+2. 명령줄에 `--profile`을 붙인다. 이때 **`.env`의 `COMPOSE_PROFILES`는 무시됩니다.** `.env`에 `single`이 있어도 `--profile monitoring`만 주면 Kafka는 빠집니다.
+
+| 명령 | 뜨는 Kafka |
+|---|---|
+| `.env`에 `COMPOSE_PROFILES=single` 두고 `docker compose up -d` | `kafka` |
+| `.env`에 `COMPOSE_PROFILES=single,monitoring` 두고 `docker compose up -d` | `kafka` + 모니터링 |
+| `docker compose --profile single --profile monitoring up -d` | `kafka` + 모니터링 |
+| `docker compose --profile monitoring up -d` | **없음.** `kafka-exporter`만 떠서 브로커에 붙지 못한다 |
+
+### 처음 한 번만 준비
+
+1. Docker를 켭니다. Compose는 2.20 이상이어야 합니다(`docker compose version`). `depends_on`의 `required`를 쓰기 때문입니다.
+2. `cp .env.example .env`를 실행합니다. 이 파일에 `COMPOSE_PROFILES=single`이 들어 있어 Kafka(브로커 1대)까지 뜹니다. `.env`가 이미 있으면 이 줄이 있는지 확인합니다.
+3. 앱을 실행할 때는 JWT 키(`keys/`)가 필요합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
+
+### 상황별 실행
+
+| 하고 싶은 것 | 방법 | 뜨는 것 |
+|---|---|---|
+| 평소 개발(앱은 IDE나 `bootRun`) | `docker compose up -d` 후 `./gradlew :monolith:bootRun` | mysql, redis, kafka |
+| 모니터링도 같이 | `.env`에 `COMPOSE_PROFILES=single,monitoring`을 적고 `docker compose up -d` | 위 + prometheus, grafana 등 |
+| 앱까지 컨테이너로 | `docker compose --profile single --profile app up -d --build` (JWT 키 필요) | 위 + app |
+| Kafka 브로커 3대 | `.env`에 `COMPOSE_PROFILES=cluster`. 컨테이너 앱이면 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`도 | kafka-1~3 |
+| 앱이 compose를 대신 켜게 | `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 적고 `bootRun` | mysql, redis, kafka |
+
+모니터링과 앱 컨테이너의 자세한 사용법은 아래 "로컬 모니터링", "앱까지 컨테이너(docker compose)로 실행"을 봅니다.
+
+### 앱 실행
+
+```bash
 ./gradlew :monolith:bootRun            # 모든 모듈을 함께 (포트 8080)
 ./gradlew :wallet:bootRun              # 또는 모듈 하나만 단독으로 (6절 참고)
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
-  이때 DB(mysql)와 Redis만 기동하고 앱 컨테이너는 만들지 않습니다.
+  이때 DB(mysql), Redis, Kafka(`.env`의 `COMPOSE_PROFILES`)만 기동하고 앱 컨테이너는 만들지 않습니다.
 - Swagger UI: `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
 - 현재는 로그인 없이 모든 요청을 허용합니다 (`config/SecurityConfig`). 인증을 구현하면 교체하세요.
-- 로컬 DB를 처음 상태로 되돌리려면 앱과 DB를 끄고 `docker compose down` 후 `rm -rf data/mysql`
-  (데이터가 모두 삭제됩니다).
+
+### 잘 떴는지 확인
+
+```bash
+docker compose ps                                           # mysql, redis, kafka가 모두 healthy인지
+docker compose exec redis redis-cli ping                    # PONG
+docker compose exec redis redis-cli config get appendonly   # yes (AOF가 켜짐)
+docker compose exec kafka sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list'   # 오류 없이 끝나면 브로커가 응답한다
+# 메모리 한도와 swap 한도가 같으면 swap을 쓰지 않는다 (Redis 536870912, Kafka 1073741824)
+docker inspect -f '{{.Name}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' server-redis-1 server-kafka-1
+```
+
+- 컨테이너 이름은 프로젝트 이름(`server`)을 따라 `server-<서비스>-1`입니다. `cluster`의 첫 브로커는 `server-kafka-1-1`입니다.
+- 앱 설정으로 실제 Redis·Kafka에 붙는지는 `./gradlew :monolith:infraTest`로 확인합니다(아래 "인프라 연결 확인 테스트").
+
+### 멈추기와 초기화
+
+| 하고 싶은 것 | 명령 | 데이터 |
+|---|---|---|
+| 잠시 멈춤 | `docker compose stop` (다시 켜려면 `start`) | 그대로 |
+| 컨테이너 삭제 | `docker compose down` | 그대로(MySQL은 `data/mysql`, Kafka·Redis는 도커 볼륨) |
+| Kafka·Redis·모니터링 데이터까지 삭제 | `docker compose down -v` | 도커 볼륨이 지워진다(토픽·메시지·AOF·지표). MySQL의 `data/mysql`은 그대로 |
+| MySQL까지 처음 상태로 | `docker compose down` 후 `rm -rf data/mysql` | 모두 삭제 |
+
+`stop`, `start`, `down`은 프로파일을 주지 않아도 이 프로젝트의 컨테이너 전체에 적용됩니다(프로파일이 있는 서비스 포함). 반대로 `up -d`는 켠 프로파일의 서비스만 올리고, 켜지 않은 프로파일의 컨테이너가 이미 떠 있어도 멈추지 않습니다. 그래서 `cluster`에서 `single`로 바꿀 때는 먼저 `docker compose down`으로 내립니다.
+
+### 문제가 생기면
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `docker compose ps`에 `kafka`가 없다. 앱이 Kafka에 붙지 못한다 | Kafka 프로파일이 켜지지 않았다. `.env`에 `COMPOSE_PROFILES`가 없거나, `--profile`을 줘서 `.env` 값이 무시됐다 | `.env`에 `COMPOSE_PROFILES=single`을 넣거나 명령에 `--profile single`을 붙인다 |
+| `port is already allocated`(`6379`, `19092`, `3306`) | 다른 프로젝트의 컨테이너가 같은 포트를 쓴다. `single`과 `cluster`를 함께 켜도 `19092`가 겹친다 | 다른 쪽을 내리거나 `.env`의 `REDIS_PORT`, `KAFKA_1_PORT`, `MYSQL_PORT`를 바꾼다. Kafka 포트를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꾼다 |
+| Redis나 Kafka가 갑자기 종료됐다(`Exited (137)`) | 메모리 한도를 넘어 OOM kill됐다. swap을 쓰지 않아 한도에서 바로 죽는다 | `docker inspect -f '{{.State.OOMKilled}}' server-redis-1`이 `true`면 한도 초과다 |
+| `single`↔`cluster`를 바꾼 뒤 컨테이너 앱이 브로커를 못 찾는다 | 앱이 `kafka:9092`(`single`의 기본 주소)로 붙는데 `cluster`에는 없다 | `cluster`면 `.env`에 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣는다 |
+| Kafka가 뜨지 않고 다시 시작을 반복한다 | `CLUSTER_ID`나 `KAFKA_VERSION`을 바꿔 기존 볼륨과 맞지 않는다 | `docker compose down -v`로 볼륨까지 지우고 다시 시작한다(메시지가 사라진다) |
+| compose가 `required`를 모르는 속성이라고 한다 | Compose가 2.20보다 오래됐다 | Docker를 업데이트한다 |
 
 ### 로컬 Kafka (#318)
 
@@ -87,10 +163,10 @@ Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정
 
 ### 로컬 모니터링 (#374)
 
-앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
+앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. **`--profile`을 주면 `.env`의 `COMPOSE_PROFILES`가 대신 무시되므로**, Kafka 프로파일(`single`)도 함께 적어야 Kafka가 같이 뜹니다. `.env`에 `COMPOSE_PROFILES=single,monitoring`으로 적어 두면 `docker compose up -d`만으로 같습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
 
 ```bash
-docker compose --profile monitoring up -d       # 기본 서비스에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
+docker compose --profile single --profile monitoring up -d   # 기본 서비스와 Kafka에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
 deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를 바꿀 때도). 로컬은 아래 COMPOSE_FILE을 붙인다
 ```
 
@@ -98,12 +174,12 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 - Grafana: `http://localhost:3000` (`admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`, 기본 `admin`), Prometheus: `http://localhost:9090`. 둘 다 `127.0.0.1`에만 열립니다. 대시보드 `paldo-gotgan 개요`가 자동 등록됩니다.
 - 앱 지표는 컨테이너로 띄운 앱(`--profile app`)의 관리 포트(`app:18080`)를 가져옵니다. 운영과 같은 주소입니다. IDE나 `:monolith:bootRun`으로 내 PC에서 앱을 띄우는 경우에는 `deploy/monitoring/prometheus/targets/local/app.yml`의 대상을 `host.docker.internal:18080`으로 바꿉니다(재시작 없이 반영되고, 이 변경은 커밋하지 않습니다).
 - 대시보드는 위에서부터 주요 지표(트래픽·지연 P50/P95/P99·에러 4xx/5xx·포화도) 현재값과 색 임계값, API별 p95 상위 10 표, 원인 분석(JVM·커넥션 풀), 컨테이너 포화도, MySQL 순서입니다. 색 임계값은 글의 기준(CPU 80%, 풀 사용률 90%)과 시작값이라 서비스의 평소 값에 맞춰 `deploy/monitoring/grafana/dashboards/overview.json`에서 조정합니다. 앱 재시작은 그래프에 주황색 마커로 표시됩니다(`process_start_time_seconds` 변화).
-- 컨테이너 CPU 스로틀링은 cAdvisor가 모읍니다(`docker compose --profile monitoring`에 함께 뜸, 호스트 포트 없음, 대상은 `deploy/monitoring/prometheus/targets/local/cadvisor.yml`). 스로틀링은 CPU 사용률이 낮아 보여도 CPU limit에 걸려 멈춘 비율이라 P99를 키웁니다. 컨테이너 CPU limit은 서비스에 `cpus`를 주어야 생기고(기본으로는 어느 서비스에도 걸려 있지 않음), limit이 없는 컨테이너는 스로틀 비율이 0이라 대시보드에 값이 없습니다(`-`).
+- 컨테이너 CPU 스로틀링은 cAdvisor가 모읍니다(`monitoring` 프로파일에 함께 뜸, 호스트 포트 없음, 대상은 `deploy/monitoring/prometheus/targets/local/cadvisor.yml`). 스로틀링은 CPU 사용률이 낮아 보여도 CPU limit에 걸려 멈춘 비율이라 P99를 키웁니다. 컨테이너 CPU limit은 서비스에 `cpus`를 주어야 생기고(기본으로는 어느 서비스에도 걸려 있지 않음), limit이 없는 컨테이너는 스로틀 비율이 0이라 대시보드에 값이 없습니다(`-`).
 - 스로틀링을 재현하려면 `docker run --rm --cpus 0.2 busybox sh -c 'while :; do :; done'`를 실행하고 대시보드의 `container` 변수에서 그 컨테이너를 고르면 스로틀 비율이 100%에 가깝게 오릅니다.
 - Docker Desktop(Mac)에서는 cAdvisor가 도커 소켓을 직접 연결해야 컨테이너를 찾습니다(compose에 이미 연결해 둠). 이렇게 하면 `name` 라벨이 채워져 컨테이너 이름으로 고를 수 있음을 확인했습니다(Docker Desktop 4.92). 그래도 `name`이 비어 나오면 대시보드의 `container` 변수에 아무것도 뜨지 않으니, `container_cpu_cfs_throttled_periods_total` 같은 지표를 Prometheus에서 `id` 라벨(`/docker/<컨테이너 ID>`)로 직접 골라 봅니다. Linux(EC2)에서의 동작은 아직 확인하지 않았습니다.
 - 슬로우 쿼리 로그(1초 이상)는 MySQL에 항상 켜져 있고(`docker compose exec mysql tail /var/lib/mysql/slow.log`), 개수는 대시보드의 MySQL 행에서 봅니다.
 - 로컬 compose의 MySQL 서비스에 슬로우 쿼리 설정이 생겨서, 이 변경을 받은 뒤 처음 `docker compose up -d`를 하면 mysql 컨테이너가 한 번 다시 만들어집니다(`data/mysql`은 그대로).
-- Grafana·Prometheus 데이터는 이름 있는 볼륨이라 `docker compose --profile monitoring down -v`를 하면 지워집니다(Kafka 볼륨도 함께 지워지니 주의).
+- Grafana·Prometheus 데이터는 이름 있는 볼륨이라 `docker compose down -v`를 하면 지워집니다(Kafka 볼륨도 함께 지워지니 주의).
 
 ### 인프라 연결 확인 테스트 (#530)
 
@@ -123,7 +199,7 @@ docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single �
 `monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
 
 ```bash
-docker compose --profile monitoring up -d
+docker compose --profile single --profile monitoring up -d
 # 지표 보기. 포트를 열지 않으므로 컨테이너 안에서 조회한다
 # Kafka 내부 토픽(__consumer_offsets)은 파티션이 50개라 줄이 많아 뺀다
 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^kafka_brokers|under_replicated|consumergroup_lag_sum' | grep -v __consumer_offsets
@@ -144,14 +220,14 @@ docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^
 
 ### 앱까지 컨테이너(docker compose)로 실행
 
-`docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
+`docker compose up -d`는 DB, Redis, Kafka(`.env`의 `COMPOSE_PROFILES`)만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다. 이때도 `--profile`을 주면 `.env`의 `COMPOSE_PROFILES`가 무시되므로 `single`(또는 `cluster`)을 함께 적습니다.
 
 먼저 JWT 키(`keys/`)를 만들어야 합니다. 앱이 기동할 때 키 파일을 읽는데, 이미지에는 키가 없고 compose가 저장소 루트의 `keys/`를 컨테이너의 `/app/keys`에 읽기 전용으로 연결합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
 
 ```bash
-docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, 앱 실행
+docker compose --profile single --profile app up -d --build   # 이미지 빌드 후 DB, Redis, Kafka, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
-docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
+docker compose down                          # 종료 (data/mysql 은 유지됨)
 ```
 
 - DB, Redis, 켜진 프로파일의 Kafka(`single`이면 1대, `cluster`면 3대)가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).

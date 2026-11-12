@@ -43,6 +43,7 @@ x-kafka-environment: &kafka-environment
 # 인프라 자원 한계로 운영은 브로커 1대로 간다. 위 클러스터 설정은 값을 바꾸지 않고 그대로 두고, 인프라가 확장되면 cluster 프로파일로 다시 쓴다
 # 클러스터 설정에서 단일이라 달라지는 값만 덮어쓴다. 컨트롤러가 1대뿐이라 쿼럼도 1대이고, 복사본이 없으니 복제·최소 동기화 수는 모두 1이다
 # 앱의 acks=all은 그대로 둬도 동기화 대상이 리더 1대뿐이라 발행이 막히지 않는다
+# 로컬 docker-compose.yml의 같은 이름 블록과 값이 같아야 로컬과 운영이 어긋나지 않는다. 한쪽을 고치면 다른 쪽도 고친다
 x-kafka-single-environment: &kafka-single-environment
   <<: *kafka-environment
   KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -127,8 +128,8 @@ services:
       - |
         umask 077
         printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
-        exec redis-server /tmp/redis.conf --maxmemory 340mb --maxmemory-policy noeviction --save '' --appendonly yes --appendfsync everysec
-    # 한도를 넘지 못하게 막는다. maxmemory 340mb(기존 비율 256/384과 같은 2/3)에 AOF 재작성(fork) 중 늘어나는 메모리와 오버헤드 여유를 더한 값이다
+        exec redis-server /tmp/redis.conf --maxmemory 256mb --maxmemory-policy noeviction --save '' --appendonly yes --appendfsync everysec
+    # 한도를 넘지 못하게 막는다. maxmemory 256mb(한도의 절반)에 AOF 재작성(fork) 중 늘어나는 메모리와 오버헤드 여유를 더한 값이다. 340mb에서는 쓰기가 몰릴 때 OOM kill이 재현됐다(#536)
     mem_limit: 512m
     # memswap_limit을 mem_limit과 같게 두면 swap을 쓰지 못한다. swap에 올라가면 Redis 응답이 디스크 속도로 느려지므로, 느려지기보다 한도에서 죽는 쪽을 택한다
     memswap_limit: 512m

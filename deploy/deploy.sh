@@ -13,12 +13,20 @@ HEALTH_INTERVAL=5
 exec 9>/tmp/paldo-deploy.lock
 flock -n 9 || { echo "이미 배포 중이다" >&2; exit 1; }
 
+# 셸 환경에 있으면 그 값을, 없으면 .env의 값을 돌려준다. compose가 읽는 값과 같아지도록 작은·큰따옴표, 줄 끝 공백과 주석, CRLF의 \r을 걷어 낸다
+env_value() {
+  local name="$1" value="${!1:-}"
+  if [ -z "$value" ] && [ -f .env ]; then
+    value=$(grep -E "^${name}=" .env | tail -1 | cut -d= -f2- | tr -d '\r' \
+      | sed -E "s/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//; s/^[\"']//; s/[\"']$//" || true)
+  fi
+  printf '%s' "$value"
+}
+
 # Kafka 구성은 프로파일로 고른다 (#530). single(브로커 1대)과 cluster(브로커 3대) 중 하나만 켠다
-# compose도 .env의 COMPOSE_PROFILES를 읽지만, 아래에서 어느 구성인지 알아야 해서 같은 값을 직접 구한다
-# 셸 환경에 있으면 그 값을, 없으면 .env의 값을, 둘 다 없으면 single이다
-if [ -z "${COMPOSE_PROFILES:-}" ] && [ -f .env ]; then
-  COMPOSE_PROFILES=$(grep -E '^COMPOSE_PROFILES=' .env | tail -1 | cut -d= -f2- | tr -d '"' || true)
-fi
+# compose도 .env의 COMPOSE_PROFILES를 읽지만, 아래에서 어느 구성인지 알아야 해서 같은 값을 직접 구한다. 값이 없으면 single이다
+# 정리한 값을 환경변수로 내보내, compose가 .env의 원본 대신 이 값을 쓰게 한다
+export COMPOSE_PROFILES="$(env_value COMPOSE_PROFILES)"
 export COMPOSE_PROFILES="${COMPOSE_PROFILES:-single}"
 
 HAS_SINGLE=0
@@ -26,12 +34,21 @@ HAS_CLUSTER=0
 case ",${COMPOSE_PROFILES}," in *,single,*) HAS_SINGLE=1 ;; esac
 case ",${COMPOSE_PROFILES}," in *,cluster,*) HAS_CLUSTER=1 ;; esac
 if [ "$HAS_SINGLE" = 1 ] && [ "$HAS_CLUSTER" = 1 ]; then
-  echo "COMPOSE_PROFILES에 single과 cluster를 함께 쓸 수 없다 (Kafka가 두 벌 뜬다): $COMPOSE_PROFILES" >&2
+  echo "COMPOSE_PROFILES에 single과 cluster를 함께 쓸 수 없다 (Kafka가 두 벌 뜬다). 읽은 값: [$COMPOSE_PROFILES]" >&2
   exit 1
 fi
 if [ "$HAS_SINGLE" = 0 ] && [ "$HAS_CLUSTER" = 0 ]; then
-  echo "COMPOSE_PROFILES에 single이나 cluster가 필요하다 (Kafka가 뜨지 않는다): $COMPOSE_PROFILES" >&2
+  echo "COMPOSE_PROFILES에 single이나 cluster가 필요하다 (Kafka가 뜨지 않는다). 읽은 값: [$COMPOSE_PROFILES]" >&2
   exit 1
+fi
+
+# cluster에서 이 값이 없으면 앱이 단일 브로커 주소(kafka:9092)로 붙어 뜨지 못한다. 배포를 시작하기 전에 막는다
+if [ "$HAS_CLUSTER" = 1 ]; then
+  export KAFKA_INTERNAL_BOOTSTRAP_SERVERS="$(env_value KAFKA_INTERNAL_BOOTSTRAP_SERVERS)"
+  if [ -z "$KAFKA_INTERNAL_BOOTSTRAP_SERVERS" ]; then
+    echo "cluster에는 .env에 KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092 가 필요하다 (앱이 브로커를 찾지 못한다)" >&2
+    exit 1
+  fi
 fi
 
 docker compose pull app
@@ -46,8 +63,14 @@ if [ "$HAS_CLUSTER" = 1 ]; then
 else
   # 3대 클러스터로 돌던 서버가 single로 바뀌면(.env를 바꿨거나, 값이 없어 기본값 single이 된 경우) 꺼진 프로파일의 브로커는 compose가 멈추지 않아
   # 계속 떠서 메모리를 쓰고, 앱은 새 단일 브로커로 붙어 두 벌이 따로 돈다. 조용히 구성이 바뀌지 않도록 여기서 멈춘다
-  if [ -n "$(docker compose --profile cluster ps -q kafka-1 kafka-2 kafka-3 2>/dev/null)" ]; then
-    echo "배포 중단: 클러스터 브로커(kafka-1~3)가 아직 떠 있다. 클러스터를 계속 쓰려면 .env에 COMPOSE_PROFILES=cluster 를," >&2
+  # restart: unless-stopped라 재시작 중(restarting)인 브로커도 곧 다시 뜨므로 함께 본다. 확인 자체가 실패하면 없다고 보지 않고 멈춘다
+  REMAINING=$(docker compose --profile cluster ps -q --status running --status restarting kafka-1 kafka-2 kafka-3) || {
+    echo "배포 중단: 클러스터 브로커가 남아 있는지 확인하지 못했다" >&2
+    exit 1
+  }
+  if [ -n "$REMAINING" ]; then
+    echo "배포 중단: 클러스터 브로커(kafka-1~3)가 아직 떠 있다." >&2
+    echo "클러스터를 계속 쓰려면 .env에 COMPOSE_PROFILES=cluster 와 KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092 를 함께 넣는다." >&2
     echo "single로 바꾸려면 docs/DEPLOY.md의 '3대 클러스터로 돌던 서버를 single로 바꿀 때' 절차로 기존 브로커를 먼저 멈춘다" >&2
     exit 1
   fi

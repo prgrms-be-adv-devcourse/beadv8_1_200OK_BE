@@ -46,6 +46,7 @@ x-kafka-environment: &kafka-environment
 # ---------- Kafka 단일 브로커 (#530) ----------
 # 인프라 자원 한계로 운영은 브로커 1대로 간다(deploy/compose.prod.yml). 로컬도 같은 구성으로 띄우고, 위 클러스터 설정은 그대로 둔다
 # 클러스터 설정에서 단일이라 달라지는 값만 덮어쓴다: 컨트롤러 쿼럼 1대, 복제·최소 동기화 수 1, 힙
+# deploy/compose.prod.yml의 같은 이름 블록과 값이 같아야 로컬과 운영이 어긋나지 않는다. 한쪽을 고치면 다른 쪽도 고친다
 x-kafka-single-environment: &kafka-single-environment
   <<: *kafka-environment
   KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -90,8 +91,8 @@ services:
     networks: [db-net]
     # 운영과 같은 상한으로 두어, 상한에 닿았을 때(noeviction이라 쓰기 실패) 동작을 로컬에서 먼저 볼 수 있게 한다
     # 영속성은 운영과 같이 AOF만 켠다(#530). RDB 스냅샷은 끈다
-    command: ['redis-server', '--maxmemory', '340mb', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'yes', '--appendfsync', 'everysec']
-    # maxmemory 340mb에 AOF 재작성(fork) 중 늘어나는 메모리와 오버헤드 여유를 더한 값 (운영과 동일)
+    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'yes', '--appendfsync', 'everysec']
+    # maxmemory 256mb에 AOF 재작성(fork) 중 늘어나는 메모리와 오버헤드 여유를 더한 값(한도의 절반)이다. 운영과 동일. 340mb에서는 쓰기가 몰릴 때 OOM kill이 재현됐다(#536)
     mem_limit: 512m
     # mem_limit과 같게 두면 swap을 쓰지 못한다 (운영과 동일)
     memswap_limit: 512m

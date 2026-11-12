@@ -22,9 +22,10 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
   - Redis는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다.
   - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
   - Kafka 브로커는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
-- Redis는 단일 인스턴스입니다(#530). `maxmemory 340mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성은 AOF(`appendfsync everysec`, 재시작·강제 종료해도 최대 1초 분량만 잃음)이고 RDB는 끕니다.
-  - 컨테이너는 `mem_limit` 512m, `memswap_limit` 512m(같은 값이라 swap을 쓰지 못함)입니다. `maxmemory`보다 큰 한도는 AOF 재작성(fork) 중 늘어나는 메모리를 위한 여유입니다. 쓰기가 많은 상태에서 재작성이 겹치면 컨테이너 메모리가 `maxmemory`보다 약 140MB까지 더 늘었고(로컬 실측, 한도 512m 안), 쓰기가 더 많아질 것 같으면 `maxmemory`를 낮춥니다.
+- Redis는 단일 인스턴스입니다(#530). `maxmemory 256mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성은 AOF(`appendfsync everysec`, 재시작·강제 종료해도 최대 1초 분량만 잃음)이고 RDB는 끕니다.
+  - 컨테이너는 `mem_limit` 512m, `memswap_limit` 512m(같은 값이라 swap을 쓰지 못함)입니다. `maxmemory`는 한도의 절반이고, 나머지는 AOF 재작성(fork) 중 늘어나는 메모리를 위한 여유입니다. 340mb로 두었을 때는 쓰기가 몰리면 한도에 닿아 OOM kill이 재현됐습니다(리뷰에서 확인). 로컬에서 `maxmemory`까지 채운 뒤 전체 키를 25초 동안 덮어쓰면서 AOF 재작성을 13회 요청하는 시험에서 컨테이너 최대 메모리는 256mb가 약 320MB였고 340mb는 한도(512MB)까지 올랐습니다. 쓰기가 더 많아질 것 같으면 `maxmemory`를 더 낮춥니다. 서버(EC2)에서의 실측은 아직 없습니다.
   - AOF 파일은 도커 볼륨(`redis-data`)에 있어 컨테이너를 다시 만들어도 남고, 인스턴스를 교체하면 루트 디스크와 함께 사라집니다. 캐시·락 데이터를 다시 만들 수 있다는 전제는 그대로이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 백업을 다시 정합니다.
+  - AOF 재작성은 프로세스를 복제(fork)하므로 Redis는 호스트의 `vm.overcommit_memory=1`을 권장합니다. 서버(EC2)의 값은 아직 확인하지 않았고, 배포 전에 `sysctl vm.overcommit_memory`로 확인합니다.
 - 앱의 `/actuator/health`(관리 포트 18080)에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
@@ -54,7 +55,7 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 | 구성 | 예산 |
 |---|---|
 | app | 2560m (`mem_limit`) |
-| redis | 512m (`mem_limit`, `memswap_limit` 512m으로 swap 금지, 데이터 상한 340m) (#530) |
+| redis | 512m (`mem_limit`, `memswap_limit` 512m으로 swap 금지, 데이터 상한 256m) (#530) |
 | kafka (single) | 1024m (`mem_limit`, `memswap_limit` 1024m으로 swap 금지, 힙 576m) (#530). cluster는 대당 680m(힙 384m), 합계 약 2GiB |
 | prometheus / grafana / mysqld-exporter | 512m / 256m / 64m (`mem_limit`), 합계 832m (#374) |
 | mysql | 제한 없음, 약 0.5~1GiB (부하테스트 때 `docker stats`로 실제 사용량을 본 뒤 상한을 정함) |
@@ -127,6 +128,7 @@ cd /opt/paldo-gotgan && ./deploy.sh
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
 - `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
 - app보다 먼저 Kafka를 처리합니다. `COMPOSE_PROFILES`가 `single`(기본)이면 `docker compose up -d --wait kafka`로 브로커를 올려 healthy를 기다리고(최대 180초, 이미지·설정이 바뀌어 다시 만드는 동안 Kafka가 잠시 멈춤), 실패하면 브로커 로그를 출력하고 배포를 중단합니다.
+  - 이때 앱은 이전 버전으로 계속 도는데 Kafka는 내려가 있을 수 있습니다. `docker compose -f compose.prod.yml logs kafka`로 원인을 보고, 설정(`.env`, `compose.prod.yml`) 문제면 고친 뒤 `./deploy.sh`를 다시 실행합니다. 브로커 데이터가 손상됐으면 볼륨(`paldo-gotgan_kafka-data`)을 지우고 새로 시작합니다(Kafka 메시지는 사라지고 원본은 DB에 있습니다).
 - `cluster`이면 `kafka-rollout.sh`가 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
 
 | cluster일 때 Kafka 상태 | 처리 |
