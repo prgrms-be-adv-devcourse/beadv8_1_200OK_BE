@@ -212,7 +212,7 @@ class RefundStepRunnerTest {
 
     // 실패 기록은 처리 중인 환불에만 남길 수 있다. 승인까지 마친 환불을 잠금 조회 결과로 준다
     private void givenProcessingRefund() {
-        Refund refund = Refund.request(10L, 101L, 2, 1L, 5L, 55L, "양말", "흰색", 10_000L, null);
+        Refund refund = Refund.request(10L, 101L, 2, 1L, 5L, 55L, "감자", "1kg", 10_000L, null);
         refund.approve(NOW, RefundShippingFee.none());
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund));
     }

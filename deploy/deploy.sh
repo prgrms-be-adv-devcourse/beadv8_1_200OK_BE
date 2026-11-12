@@ -22,6 +22,13 @@ if ! ./kafka-rollout.sh; then
   exit 1
 fi
 
+# Redis 노드도 같은 이유로 app보다 먼저 1대씩 처리한다 (#366)
+# 마스터는 복제본에 역할을 넘긴 뒤 다시 띄워서, 아래 up -d app이 노드 6대를 한꺼번에 다시 만들어 Redis가 멈추는 일을 막는다
+if ! ./redis-rollout.sh; then
+  echo "배포 실패: Redis 노드 처리 중 오류가 발생했다" >&2
+  exit 1
+fi
+
 # nginx가 app healthy를 기다리므로 전체를 한 번에 up -d 하면 app이 비정상일 때 로그를 찍기 전에 실패한다.
 # 그래서 app(과 mysql)만 먼저 올리고 healthy를 확인한 뒤 나머지를 올린다
 if ! docker compose up -d app; then

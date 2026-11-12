@@ -59,6 +59,45 @@ x-kafka-service: &kafka-service
     start_period: 60s
     start_interval: 5s
 
+# ---------- Redis 노드 6대가 같이 쓰는 설정 (#366) ----------
+# 마스터 3 + 복제본 3의 클러스터다. 마스터가 죽으면 복제본이 마스터가 되고(장애 조치), 앱은 새 마스터를 스스로 찾아간다
+# 운영(deploy/compose.prod.yml)과 같은 값이고, 다른 점은 비밀번호가 없다는 것과 호스트 포트를 연다는 것이다
+# 노드가 재시작으로 IP가 바뀌어도 서로 다시 찾도록 피어 목록을 준다 (deploy/redis-cluster-rejoin.sh)
+x-redis-environment: &redis-environment
+  REDIS_PEERS: "redis-1.localhost:7001 redis-2.localhost:7002 redis-3.localhost:7003 redis-4.localhost:7004 redis-5.localhost:7005 redis-6.localhost:7006"
+
+x-redis-service: &redis-service
+  image: redis:${REDIS_VERSION:-8.10}-alpine
+  networks: [db-net]
+  # maxmemory 64mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 768m이므로 운영 EC2 실측 후 조정한다 (운영과 동일)
+  mem_limit: 128m
+  # 설정 값의 이유
+  # - cluster-config-file: 노드 ID가 담겨, 볼륨에 두어야 재시작해도 같은 노드로 돌아온다 (docs/DEPLOY.md)
+  # - cluster-node-timeout 5000: 기본 15초는 장애 감지가 느리다
+  # - cluster-require-full-coverage no: 마스터 1대가 죽어도 나머지 슬롯은 계속 서비스한다
+  # - cluster-announce-hostname + preferred-endpoint-type hostname: 앱(클라이언트)이 노드 IP가 아니라 이름으로 접속한다
+  #   노드끼리는 이름이 아니라 nodes.conf의 IP로 찾으므로, IP가 바뀐 노드는 redis-cluster-rejoin.sh가 CLUSTER MEET으로 다시 붙인다
+  #   이름은 redis-N.localhost다. 내 PC에서는 *.localhost가 127.0.0.1로 풀리고, 컨테이너 안에서는 네트워크 별칭으로 풀려 양쪽에서 접속된다
+  # - noeviction은 #319 그대로(정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
+  # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
+  #   기본값(replica 256mb)이 mem_limit(128m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다
+  #   상한을 넘으면 느린 복제본의 연결이 끊기고 다시 동기화하지만 마스터는 살아남는다
+  command:
+    - sh
+    - -c
+    - >-
+      sh /redis-cluster-rejoin.sh & exec redis-server --port "$$NODE_PORT" --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --cluster-require-full-coverage no
+      --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname
+      --maxmemory 64mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no
+      --repl-backlog-size 4mb --client-output-buffer-limit "replica 32mb 16mb 60"
+  healthcheck:
+    # 클러스터가 아직 만들어지지 않았거나 슬롯이 비면 fail이라 unhealthy다. 앱은 6대 모두 healthy여야 시작한다
+    test: ['CMD-SHELL', 'redis-cli -p "$$NODE_PORT" cluster info | grep -q cluster_state:ok']
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
 services:
   mysql:
     extends:
@@ -68,21 +107,104 @@ services:
     ports:
       - "${MYSQL_PORT:-3306}:3306"
 
-  redis:
+  # 노드 6대(마스터 3 + 복제본 3)는 이름·포트·볼륨만 다르다. 마스터·복제본 짝은 redis-cluster-init이 정한다 (#366)
+  # 호스트 포트를 7001~7006으로 고정하는 이유: 클라이언트는 노드가 알려 주는 주소로 다시 접속하므로, 알리는 포트가 호스트에서 닿는 포트와 같아야 한다
+  redis-1:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7001, NODE_HOSTNAME: "redis-1.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-1.localhost]
+    ports:
+      - "127.0.0.1:7001:7001"
+    volumes:
+      - redis-1-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-2:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7002, NODE_HOSTNAME: "redis-2.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-2.localhost]
+    ports:
+      - "127.0.0.1:7002:7002"
+    volumes:
+      - redis-2-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-3:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7003, NODE_HOSTNAME: "redis-3.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-3.localhost]
+    ports:
+      - "127.0.0.1:7003:7003"
+    volumes:
+      - redis-3-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-4:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7004, NODE_HOSTNAME: "redis-4.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-4.localhost]
+    ports:
+      - "127.0.0.1:7004:7004"
+    volumes:
+      - redis-4-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-5:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7005, NODE_HOSTNAME: "redis-5.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-5.localhost]
+    ports:
+      - "127.0.0.1:7005:7005"
+    volumes:
+      - redis-5-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-6:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7006, NODE_HOSTNAME: "redis-6.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-6.localhost]
+    ports:
+      - "127.0.0.1:7006:7006"
+    volumes:
+      - redis-6-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  # 노드 6대를 클러스터로 묶고 끝나는 1회성 서비스. 이미 묶여 있으면 아무것도 하지 않는다 (deploy/redis-cluster-init.sh)
+  # 노드의 healthcheck가 cluster_state:ok라 클러스터를 만들기 전에는 healthy가 될 수 없으므로, 노드가 healthy가 아니라 started이면 시작한다
+  redis-cluster-init:
     image: redis:${REDIS_VERSION:-8.10}-alpine
     networks: [db-net]
-    # 운영과 같은 상한으로 두어, 상한에 닿았을 때(noeviction이라 쓰기 실패) 동작을 로컬에서 먼저 볼 수 있게 한다
-    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'noeviction']
-    # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값 (운영과 동일)
-    mem_limit: 384m
-    ports:
-      # 로컬 Redis는 비밀번호가 없어 loopback에만 연다(LAN 노출 방지). 컨테이너 안의 앱은 compose 네트워크로 접속한다
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 20
+    restart: "no"
+    depends_on:
+      redis-1:
+        condition: service_started
+      redis-2:
+        condition: service_started
+      redis-3:
+        condition: service_started
+      redis-4:
+        condition: service_started
+      redis-5:
+        condition: service_started
+      redis-6:
+        condition: service_started
+    environment:
+      REDIS_NODES: redis-1.localhost:7001 redis-2.localhost:7002 redis-3.localhost:7003 redis-4.localhost:7004 redis-5.localhost:7005 redis-6.localhost:7006
+    volumes:
+      - ./deploy/redis-cluster-init.sh:/redis-cluster-init.sh:ro
+    command: ['sh', '/redis-cluster-init.sh']
 
   # 브로커 3대는 이름·번호·외부 포트만 다르다
   # 외부 포트는 127.0.0.1에만 열어 같은 네트워크의 다른 기기가 붙지 못하게 한다 (인증 없는 PLAINTEXT라서)
@@ -169,9 +291,21 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
-      redis:
+      # mysql과 같이 Redis 6대도 healthy(cluster_state:ok)가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다 (#366)
+      redis-1:
         condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+      redis-4:
+        condition: service_healthy
+      redis-5:
+        condition: service_healthy
+      redis-6:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
       # mysql과 같이 Kafka 3대도 healthy가 된 뒤에 앱을 띄운다 (#318)
       kafka-1:
         condition: service_healthy
@@ -189,9 +323,9 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-paldogotgan}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER:-myuser}
       DB_PASSWORD: ${MYSQL_PASSWORD:-password}
-      # .env의 REDIS_PORT는 호스트 포트라 컨테이너 안에서는 고정값으로 덮는다 (DB_URL과 같은 이유)
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      # 노드 이름(redis-N.localhost)이 호스트에서도 컨테이너에서도 같은 포트로 닿아, 호스트용 .env 값과 같다
+      # 그래도 .env에 다른 값이 있어도 컨테이너 안에서는 이 값이 되도록 명시한다 (DB_URL과 같은 이유) (#366)
+      REDIS_CLUSTER_NODES: redis-1.localhost:7001,redis-2.localhost:7002,redis-3.localhost:7003,redis-4.localhost:7004,redis-5.localhost:7005,redis-6.localhost:7006
       # .env의 KAFKA_BOOTSTRAP_SERVERS(localhost:...)는 내 PC에서 실행하는 앱용이라 컨테이너 안에서는 자기 자신을 가리킨다
       # DB_URL과 같은 이유로 compose 네트워크의 브로커 이름으로 덮는다 (#318)
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
@@ -304,7 +438,14 @@ services:
 # 브로커마다 따로 둔다. 같은 볼륨을 나눠 쓰면 서로의 데이터를 덮어써 망가진다
 # 폴더를 직접 연결하지 않고 이름 있는 볼륨을 쓰는 이유: Windows 폴더는 컨테이너 사용자(appuser) 권한과 맞지 않아 기동에 실패하기 쉽다
 # docker compose down -v 를 하면 지워지고 새 클러스터로 다시 시작한다 (토픽·메시지도 모두 사라짐)
+# Redis도 노드마다 따로 둔다. 볼륨에는 노드 ID(nodes.conf)와 RDB가 들어 있어, 지우면 6대를 모두 지워 새 클러스터로 시작해야 한다 (#366)
 volumes:
+  redis-1-data:
+  redis-2-data:
+  redis-3-data:
+  redis-4-data:
+  redis-5-data:
+  redis-6-data:
   kafka-1-data:
   kafka-2-data:
   kafka-3-data:

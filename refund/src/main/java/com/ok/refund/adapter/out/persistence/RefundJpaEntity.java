@@ -86,6 +86,9 @@ public class RefundJpaEntity extends BaseTime {
     @Column(name = "decided_at")
     private LocalDateTime decidedAt;
 
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "failed_step", length = 30)
     private RefundFailedStep failedStep;
@@ -130,6 +133,7 @@ public class RefundJpaEntity extends BaseTime {
             RefundStatus status,
             String rejectReason,
             LocalDateTime decidedAt,
+            LocalDateTime completedAt,
             Long activeOrderItemId,
             long shippingFeeAmount,
             long remoteAreaFeeAmount,
@@ -140,6 +144,7 @@ public class RefundJpaEntity extends BaseTime {
         this.status = status;
         this.rejectReason = rejectReason;
         this.decidedAt = decidedAt;
+        this.completedAt = completedAt;
         this.activeOrderItemId = activeOrderItemId;
         this.shippingFeeAmount = shippingFeeAmount;
         this.remoteAreaFeeAmount = remoteAreaFeeAmount;

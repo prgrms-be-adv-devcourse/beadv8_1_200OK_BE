@@ -16,11 +16,15 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.sql.SQLException;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 출력 포트 {@link RefundPersistencePort}를 JPA로 구현한다. 도메인과 {@link RefundJpaEntity}를 {@link RefundMapper}로 바꿔 주고받는다.
@@ -43,6 +47,8 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     private static final int PAGE_SIZE = 25;
     // 최신순. 같은 시각이면 나중에 만든 요청이 먼저 오도록 ID를 함께 쓴다(페이지 사이에 순서가 흔들리지 않게)
     private static final Sort LATEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+    // 트랜잭션마다 이미 잠금 조회한 환불 ID를 담아 두는 자리의 열쇠(findByIdForUpdate 설명 참고)
+    private static final Object LOCKED_IDS_KEY = new Object();
 
     private final RefundJpaRepository refundJpaRepository;
     private final EntityManager entityManager;
@@ -121,9 +127,52 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     }
 
     // 트랜잭션에서 그 행의 첫 조회여야 한다. 앞서 읽어 둔 엔티티가 컨텍스트에 있으면 잠금은 걸려도 잠금 전 값이 그대로 쓰인다
+    // 같은 트랜잭션에서 같은 환불을 두 번 잠금 조회하면 막는다(#486 3번). 두 번째 조회는 같은 엔티티에서 새 도메인 객체를 만들어 주는데,
+    // 앞의 객체를 계속 쥐고 있다가 나중에 update하면 뒤 객체로 바꾼 내용을 옛 값으로 덮어쓴다. 한 트랜잭션에서 한 환불은 한 번만 잠그고
+    // 그 객체 하나로 바꾸고 저장하게 한다. update를 여러 번 부르는 것("잠금 → update → 집계 → 다시 update")과
+    // 새로 저장한 뒤 잠금 조회하는 것("saveNew → findByIdForUpdate")은 첫 잠금 조회라 막지 않는다
     @Override
     public Optional<Refund> findByIdForUpdate(Long id) {
+        rememberLockedOnce(id);
         return refundJpaRepository.findByIdForUpdate(id).map(RefundMapper::toDomain);
+    }
+
+    // 트랜잭션에 묶인 자리(TransactionSynchronizationManager)에 잠근 ID를 적고, 트랜잭션이 끝나면 지운다.
+    // 트랜잭션 밖이면 적을 자리가 없어 검사하지 않는다(그때는 FOR UPDATE 자체가 실패한다).
+    // 안에서 새 트랜잭션(REQUIRES_NEW)이 열리면 바깥 목록을 떼어 두고 돌아올 때 다시 붙여, 트랜잭션마다 따로 센다.
+    // 떼어 두지 않으면 안쪽이 잠근 ID가 바깥 목록에 남아, 바깥에서 처음 잠그는 환불도 두 번째로 보고 막는다
+    @SuppressWarnings("unchecked")
+    private static void rememberLockedOnce(Long id) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        Set<Long> locked = (Set<Long>) TransactionSynchronizationManager.getResource(LOCKED_IDS_KEY);
+        if (locked == null) {
+            Set<Long> created = new HashSet<>();
+            TransactionSynchronizationManager.bindResource(LOCKED_IDS_KEY, created);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                // 안에서 새 트랜잭션이 열리면 이 트랜잭션의 목록을 떼어 둔다. 안쪽은 빈 자리에서 자기 목록을 새로 만든다
+                @Override
+                public void suspend() {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(LOCKED_IDS_KEY);
+                }
+
+                // 안쪽이 끝나 이 트랜잭션으로 돌아오면 떼어 둔 목록을 다시 붙인다
+                @Override
+                public void resume() {
+                    TransactionSynchronizationManager.bindResource(LOCKED_IDS_KEY, created);
+                }
+
+                @Override
+                public void afterCompletion(int status) {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(LOCKED_IDS_KEY);
+                }
+            });
+            locked = created;
+        }
+        if (!locked.add(id)) {
+            throw new IllegalStateException("같은 트랜잭션에서 같은 환불을 두 번 잠금 조회할 수 없습니다. 처음 잠근 객체로 바꾸고 저장해야 합니다. refundId=" + id);
+        }
     }
 
     @Override

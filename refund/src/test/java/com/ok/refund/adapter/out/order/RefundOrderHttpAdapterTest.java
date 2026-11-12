@@ -38,7 +38,7 @@ class RefundOrderHttpAdapterTest {
               "orderId": 10, "orderItemId": 101,
               "buyerId": 1, "sellerId": 5,
               "productOptionId": 55,
-              "productName": "양말", "optionName": "흰색",
+              "productName": "감자", "optionName": "1kg",
               "status": "PREPARING",
               "unitPrice": 10000, "quantity": 3, "refundedQuantity": 1,
               "sellerGroup": {
@@ -103,8 +103,8 @@ class RefundOrderHttpAdapterTest {
             softly.assertThat(orderItem.buyerId()).isEqualTo(1L);
             softly.assertThat(orderItem.sellerId()).isEqualTo(5L);
             softly.assertThat(orderItem.productOptionId()).isEqualTo(55L);
-            softly.assertThat(orderItem.productName()).isEqualTo("양말");
-            softly.assertThat(orderItem.optionName()).isEqualTo("흰색");
+            softly.assertThat(orderItem.productName()).isEqualTo("감자");
+            softly.assertThat(orderItem.optionName()).isEqualTo("1kg");
             softly.assertThat(orderItem.status()).isEqualTo("PREPARING");
             softly.assertThat(orderItem.unitPrice()).isEqualTo(10_000L);
             softly.assertThat(orderItem.quantity()).isEqualTo(3);
@@ -235,7 +235,7 @@ class RefundOrderHttpAdapterTest {
                   "orderId": 10, "orderItemId": 101,
                   "buyerId": 1, "sellerId": 5,
                   "productOptionId": 55,
-                  "productName": "양말", "optionName": "흰색",
+                  "productName": "감자", "optionName": "1kg",
                   "status": "PREPARING",
                   "quantity": 3
                 }
