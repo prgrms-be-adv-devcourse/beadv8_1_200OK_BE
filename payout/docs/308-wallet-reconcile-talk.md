@@ -144,9 +144,10 @@
 
 ### 안건 2. 입금 이벤트를 다시 보내는 길
 
-- 지갑은 지금 Spring 이벤트로만 입금한다. Kafka 토픽 `payout.seller-payout-created`는 받지 않는다.
-- 선택지: #343으로 지갑이 Kafka 수신을 한 뒤 기존 토픽으로 다시 보냄 / 그 전에는 정산이 Spring 이벤트로 다시 냄.
-- 물을 것: #343 계획과 시점. 전환하면 같은 정산이 두 길로 오므로 정산의 이중 발행 제거(`TODO(#339)`)와 시점을 맞춰야 한다.
+- 지금 정산은 확정 때 두 길로 보낸다: Spring 이벤트(지갑이 받아 입금)와 Kafka `payout.seller-payout-created`(지갑이 아직 받지 않음) (`PayoutService.java:356-362`).
+- 정산 제안: 지갑이 #343으로 Kafka 수신을 하고, 다시 보내는 입금 이벤트도 기존 토픽 `payout.seller-payout-created`로 보낸다. 같은 `payoutId`라 이미 입금됐으면 지갑이 넘어간다.
+- 지갑이 Kafka로 받게 되면 정산은 Spring 이벤트 발행을 지운다(`PayoutModuleEventPublisher.java:7`의 `TODO(#343)`). 그 전까지는 같은 정산이 두 길로 오므로 지갑의 중복 방지가 두 길 모두에 걸려야 한다.
+- 물을 것: #343 시점. 대사의 "다시 보내기"는 #343 뒤에야 지갑 입금으로 이어진다.
 
 ### 안건 3. 비교 기준
 
