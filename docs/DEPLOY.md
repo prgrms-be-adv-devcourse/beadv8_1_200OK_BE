@@ -1,13 +1,13 @@
 # 배포 가이드
 
-EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
+EC2 한 대에 nginx·앱·MySQL·Redis(클러스터 6노드)·Kafka를 Docker 컨테이너로 띄워 수동으로 배포하는 방법입니다.
 서버(EC2) 자체를 만드는 방법은 [`INFRA.md`](INFRA.md)를 보세요.
 
 ## 1. 구성
 
 ```
 인터넷 ──80──▶ nginx ──/api/v1/**, /bff/**──▶ bff ──/api/v1/**──▶ app ──▶ mysql
-                 │                              (프론트 레포가 배포)        └──▶ redis
+                 │                              (프론트 레포가 배포)        └──▶ redis-1 ~ redis-6 (클러스터 1개)
                  └─ 그 외 경로(/internal, /actuator 등) → 404
                                                                     └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
 ```
@@ -19,15 +19,46 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
   - 그래서 내부 API 클라이언트의 `app.internal-api.base-url`은 기본값(`http://localhost:8080`)을 유지해야 합니다. nginx 주소로 바꾸면 내부 호출이 막힙니다.
 - app·mysql·redis·kafka는 호스트 포트를 열지 않습니다. 앱의 관리 포트(18080: `/actuator/health`, `/actuator/prometheus`)도 호스트에 열지 않고 nginx도 프록시하지 않습니다.
   - 모니터링(Grafana·Prometheus)만 서버의 `127.0.0.1`에 열고 SSH 터널로 봅니다([11. 모니터링](#11-모니터링-374)).
-  - Redis는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다.
+  - Redis 6대는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다. 6대가 같은 비밀번호를 씁니다(복제본이 마스터에 붙으려면 필요).
   - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
   - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
-- Redis는 `maxmemory 256mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성 없음(재시작하면 비워짐)입니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
+- Redis는 노드당 `maxmemory 64mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음)입니다. 영속성은 [Redis (#366)](#redis-366) 절을 봅니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
 - 앱의 `/actuator/health`(관리 포트 18080)에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
 - 이미지: GHCR `ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan` (비공개 패키지). 서버는 pull 전용 토큰으로 로그인해 받습니다.
 - 앱은 1개만 띄웁니다. 배포 중 수십 초간 요청이 실패합니다. 여러 개를 띄우려면 정산 스케줄러 중복 실행 문제를 먼저 해결해야 합니다.
+
+### Redis (#366)
+
+- 클러스터 1개에 노드 6대(`redis-1`~`redis-6`)입니다. 마스터 3대가 키(슬롯)를 나눠 맡고, 마스터마다 복제본이 1대씩 붙습니다. 이미지는 `redis:${REDIS_VERSION}-alpine`입니다. 어느 노드가 마스터인지는 고정이 아닙니다. 장애 조치나 배포 뒤에는 역할이 바뀌어 있을 수 있습니다.
+- **마스터가 죽으면 복제본이 몇 초 안에 마스터가 되고(장애 조치), 앱은 새 마스터를 스스로 찾아갑니다.** 노드 1대 고장과 리더 변경은 버팁니다. 그러나 **6대가 같은 EC2에 있어서 EC2가 죽거나 다시 시작하면 6대가 함께 내려갑니다.** 서버를 나눠 대비하는 구성이 아닙니다.
+- 같은 이유로 처리량도 EC2 1대의 CPU·메모리 안에서만 늘어납니다.
+- **마스터 2대가 동시에 죽으면 자동 장애 조치가 되지 않고 클러스터 전체가 멈춥니다.** 노드 장애 판정과 복제본 승격은 마스터 과반(3대 중 2대)의 동의가 필요한데, 살아 있는 마스터가 1대뿐이면 과반을 못 채웁니다. 살아남은 마스터도 `CLUSTERDOWN`으로 모든 요청을 거부하고(`cluster-require-full-coverage no`여도 같음), 죽은 노드는 `fail`이 아니라 `fail?`(의심)에 머뭅니다. 마스터 1대와 복제본 1대가 죽는 경우와 달리 사람이 복구해야 합니다.
+  1. 먼저 죽은 마스터를 다시 띄웁니다(`docker compose -f compose.prod.yml up -d redis-N`). `nodes.conf`가 볼륨에 있어 같은 노드로 돌아옵니다.
+  2. 바로 띄울 수 없으면 죽은 마스터의 복제본에서 강제 승격합니다: `docker compose -f compose.prod.yml exec redis-N redis-cli cluster failover takeover`. 마스터 과반의 합의 없이 승격하므로 복제가 따라잡지 못한 최신 쓰기를 잃을 수 있습니다. 한 대를 승격하면 과반이 복구되어 나머지 복제본은 자동으로 승격됩니다.
+  - 로컬 시험(마스터 2대 `SIGKILL`): 40초 뒤에도 승격 없이 `cluster_state:fail`이었고, 복제본 1대에 `takeover`를 하자 약 6초 뒤 `cluster_state:ok`가 되었습니다.
+- app은 노드 6대가 모두 healthy(`cluster_state:ok`)이고 `redis-cluster-init`이 끝난 뒤 시작합니다. 클러스터 구성에 실패하면 app이 뜨지 않고 배포가 실패합니다.
+- **영속성:** 노드마다 도커 볼륨(`redis-N-data`)에 노드 ID(`nodes.conf`)와 가벼운 RDB 스냅샷(`save 900 1`, `save 300 100`)을 둡니다. AOF는 켜지 않습니다(디스크 쓰기·메모리·CPU 크레딧 부담). 그래서 **노드가 비정상 종료하면 마지막 스냅샷 뒤의 쓰기(몇 분치)를 잃을 수 있고**, 복제본이 있는 노드는 복제본에서 다시 동기화합니다. EC2 재부팅처럼 6대가 함께 내려갔다 올라오면 스냅샷으로 복구합니다. **노드끼리는 이름이 아니라 `nodes.conf`에 적힌 IP로 서로를 찾습니다**(`cluster-announce-hostname`은 앱에게 알려 주는 접속 주소일 뿐입니다). 그래서 6대가 모두 새 IP로 올라오면 그대로는 서로를 못 찾아 `CLUSTERDOWN`이 풀리지 않습니다. 이를 막으려고 각 노드 컨테이너가 `redis-cluster-rejoin.sh`를 함께 실행합니다. 이 스크립트는 5초마다 피어 이름(`REDIS_PEERS`)을 DNS로 풀어 현재 IP를 얻고, 그 주소로 아직 모르는 피어가 있으면 `CLUSTER MEET`을 보냅니다. IP를 고정하지 않으므로 노드를 늘릴 때는 `REDIS_PEERS`에 추가하면 됩니다. 로컬과 운영 compose에서 6대를 역순으로 다시 띄우거나 옛 IP를 다른 컨테이너가 차지한 상태로 올려도 3초 안에 6대 모두 `cluster_state:ok`가 되었고 스냅샷 데이터가 복구되었습니다. 처음 클러스터를 만들기 전(`cluster_known_nodes=1`)에는 MEET을 보내지 않습니다. 보내면 `redis-cli --cluster create`가 "빈 노드가 아니다"라며 거부합니다.
+  - 복제본이 처음부터 다시 동기화(full sync)할 때 마스터 메모리는 데이터가 거의 찬 상태(58.3/64MB, 49,344키)에서 컨테이너 기준 최대 약 76MiB였습니다(`mem_limit` 128m, `OOMKilled` 없음). 복제본을 멈춘 채 쓰기를 더해 복제 백로그(4mb)를 넘긴 뒤 다시 띄워 풀 싱크를 일으켰고, `docker stats`를 1초 간격으로 쟀습니다. 마스터가 쌓는 복제 버퍼에는 상한(`client-output-buffer-limit replica 32mb 16mb 60`)을 둡니다.
+  - AOF가 필요해지면 `compose.prod.yml`의 `--appendonly no`를 `yes --appendfsync everysec`로 바꿉니다. 켜기 전에 아래 메모리·CPU 크레딧 실측으로 여유를 확인합니다.
+  - 락·중복 방지 키는 장애 조치 순간에도 사라질 수 있습니다. Redis는 이들의 정합성을 보장하지 않으므로 DB 유니크 제약 같은 최종 방어선을 둡니다([DEVELOPMENT.md](DEVELOPMENT.md)의 로컬 Redis 클러스터 절).
+- **배포:** `./deploy.sh`가 app보다 먼저 `redis-rollout.sh`를 실행합니다. 노드를 1대씩 다시 띄우고, 마스터는 복제본에 역할을 넘긴(`CLUSTER FAILOVER`) 뒤 다시 띄웁니다. 설정이 바뀌지 않은 노드는 건드리지 않습니다. 쓰기 부하 중에 노드 6대를 다시 띄운 로컬 시험에서 앱 요청 약 1,100개 중 7개가 타임아웃(약 8초 구간)이었고 이후에는 오류가 없었습니다. 전환 순간에 일시 오류가 날 수 있습니다. `docker compose up -d`를 직접 실행하면 6대가 동시에 다시 만들어져 Redis가 멈추니 쓰지 않습니다.
+  - 일부 노드만 내려가 있거나, 복제본이 없는 마스터가 있으면 `redis-rollout.sh`가 중단합니다. 원인을 보고 노드를 살린 뒤 다시 배포합니다.
+- **볼륨이 일부만 사라졌을 때:** `redis-cluster-init`이 클러스터를 새로 만들지 않고 어느 노드가 몇 대를 아는지 출력한 채 실패합니다(기존 데이터 보호). 데이터를 버려도 되면 아래처럼 6대를 모두 지우고 다시 시작합니다.
+  ```bash
+  docker compose -f compose.prod.yml stop redis-1 redis-2 redis-3 redis-4 redis-5 redis-6 app
+  docker compose -f compose.prod.yml rm -f redis-1 redis-2 redis-3 redis-4 redis-5 redis-6 redis-cluster-init
+  docker volume rm paldo-gotgan_redis-1-data paldo-gotgan_redis-2-data paldo-gotgan_redis-3-data paldo-gotgan_redis-4-data paldo-gotgan_redis-5-data paldo-gotgan_redis-6-data
+  ./deploy.sh
+  ```
+- **장애 조치 확인:** 마스터 하나를 죽였을 때 복제본이 승격되는지 로컬에서 확인할 수 있습니다(`docker-compose.yml`, 운영 서버에서는 하지 않습니다).
+  1. `docker compose exec redis-1 redis-cli -p 7001 cluster nodes`로 마스터 하나를 고릅니다.
+  2. `docker kill <그 컨테이너>`로 비정상 종료합니다.
+  3. 몇 초 안에 그 복제본이 `master`가 되고 `cluster_state:ok`가 유지되어야 합니다. 앱은 재시작 없이 복구합니다.
+  4. `docker compose start <그 서비스>`로 다시 올리면 같은 노드 ID의 복제본으로 합류합니다(`master_link_status:up`).
+  - 로컬 시험 결과: 마스터를 `SIGKILL`하면 약 9초 뒤 승격(`cluster-node-timeout` 5초 + 선거). 그 사이 앱 설정으로 붙은 클라이언트는 약 1,040회 중 9회가 타임아웃이었고, 승격 직후부터 재시작 없이 복구했습니다.
+- 클러스터 상태는 앱 헬스체크(`/actuator/health`)에 연결 여부로만 들어갑니다. 노드별 상태는 `docker compose ps`와 [5. 확인 명령](#5-확인-명령)으로 봅니다.
 
 ### Kafka (#318)
 
@@ -45,16 +76,17 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 | 구성 | 예산 |
 |---|---|
 | app | 2560m (`mem_limit`) |
-| redis | 384m (`mem_limit`, 데이터 상한 256m) |
+| redis 6대 | 대당 128m (`mem_limit`, 데이터 상한 64m), 합계 768m |
 | kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
 | prometheus / grafana / mysqld-exporter | 512m / 256m / 64m (`mem_limit`), 합계 832m (#374) |
 | mysql | 제한 없음, 약 0.5~1GiB (부하테스트 때 `docker stats`로 실제 사용량을 본 뒤 상한을 정함) |
 | bff (프론트 레포 compose) | 256m (`mem_limit`, 힙 192m) |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 7.1~7.6GiB (여유 약 0.4~0.9GiB, mysql 사용량에 따라 달라짐) |
+| 합계 | 약 7.5~8.0GiB (여유 약 0.0~0.5GiB, mysql 사용량에 따라 달라짐) |
 
-- `mem_limit`이 있는 서비스의 상한 합계는 6072m(약 5.9GiB, bff 포함)입니다. 상한은 천장이라 실제 사용량은 이보다 작습니다.
-- 모니터링을 더하면서 여유가 크게 줄었습니다. MySQL에는 상한을 걸지 않습니다. 기본 버퍼 풀이 128MB라 사용량이 제한적이고, 한도에 걸려 OOM kill로 DB가 죽는 쪽이 더 위험하기 때문입니다.
+- `mem_limit`이 있는 서비스의 상한 합계는 6456m(약 6.3GiB, bff 포함)입니다. 상한은 천장이라 실제 사용량은 이보다 작습니다.
+- 모니터링을 더하고 Redis를 단일 노드(384m)에서 6대(768m)로 바꾸면서 여유가 거의 없어졌습니다. mysql 사용량이 크면 t3.large로는 모자랄 수 있어, 배포 뒤 `free -m`과 `docker stats`로 실제 사용량을 확인하고 노드 `mem_limit`이나 인스턴스 크기를 정합니다.
+- MySQL에는 상한을 걸지 않습니다. 기본 버퍼 풀이 128MB라 사용량이 제한적이고, 한도에 걸려 OOM kill로 DB가 죽는 쪽이 더 위험하기 때문입니다.
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
 
@@ -72,16 +104,16 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 
 ```bash
 # 로컬: 배포 파일 복사
-scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/nginx deploy/initdb deploy/monitoring deploy/.env.prod.example ubuntu@<EIP>:/tmp/
+scp -i <키 파일> -r deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/redis-cluster-rejoin.sh deploy/nginx deploy/initdb deploy/monitoring deploy/.env.prod.example ubuntu@<EIP>:/tmp/
 
 # 서버
 ssh -i <키 파일> ubuntu@<EIP>
 docker login ghcr.io -u <GitHub 사용자>   # Password: 에 pull 전용 토큰 (화면에 표시되지 않음)
 chmod 600 ~/.docker/config.json             # 토큰이 base64로만 저장되므로 다른 사용자가 읽지 못하게 한다
 sudo mkdir -p /opt/paldo-gotgan && sudo chown ubuntu:ubuntu /opt/paldo-gotgan
-mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/nginx /tmp/initdb /tmp/monitoring /tmp/.env.prod.example /opt/paldo-gotgan/
+mv /tmp/compose.prod.yml /tmp/deploy.sh /tmp/kafka-rollout.sh /tmp/redis-rollout.sh /tmp/redis-cluster-init.sh /tmp/redis-cluster-rejoin.sh /tmp/nginx /tmp/initdb /tmp/monitoring /tmp/.env.prod.example /opt/paldo-gotgan/
 cd /opt/paldo-gotgan
-chmod +x deploy.sh kafka-rollout.sh monitoring/create-exporter-user.sh
+chmod +x deploy.sh kafka-rollout.sh redis-rollout.sh redis-cluster-init.sh monitoring/create-exporter-user.sh
 cp .env.prod.example .env && chmod 600 .env
 docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka-storage.sh random-uuid   # KAFKA_CLUSTER_ID에 넣을 값
 vi .env                      # 비밀번호·키, KAFKA_CLUSTER_ID, GRAFANA_ADMIN_PASSWORD, MYSQL_EXPORTER_PASSWORD 채우기
@@ -127,15 +159,16 @@ cd /opt/paldo-gotgan && ./deploy.sh
 | 일부만 살아 있음 | 배포를 중단합니다. 이 상태에서 1대를 더 내리면 클러스터가 멈추기 때문입니다. `docker compose -f compose.prod.yml ps`, `logs kafka-N`으로 원인을 보고 브로커를 살린 뒤 다시 배포합니다 |
 
 - `KAFKA_VERSION`을 올릴 때도 `.env`만 바꾸고 `./deploy.sh`를 실행하면 위 순서로 1대씩 바뀝니다. 버전을 내리는 것은 Kafka가 보장하지 않으므로 하지 않습니다.
+- app보다 먼저 `redis-rollout.sh`가 Redis 노드 6대를 처리합니다. 처리 방식은 [Redis (#366)](#redis-366) 절을 봅니다.
 - **Kafka가 추가된 버전을 처음 배포하는 기존 서버**는 아래 순서로 준비합니다. `.env`에 `KAFKA_VERSION`, `KAFKA_CLUSTER_ID`가 없으면 compose가 `KAFKA_CLUSTER_ID가 필요하다`로 실패합니다.
 
 ```bash
 # 로컬: 새 배포 파일 복사
-scp -i <키 파일> deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
+scp -i <키 파일> deploy/compose.prod.yml deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/redis-cluster-rejoin.sh ubuntu@<EIP>:/opt/paldo-gotgan/
 
 # 서버
 cd /opt/paldo-gotgan
-chmod +x deploy.sh kafka-rollout.sh
+chmod +x deploy.sh kafka-rollout.sh redis-rollout.sh redis-cluster-init.sh
 echo "KAFKA_VERSION=4.2.1" >> .env
 echo "KAFKA_CLUSTER_ID=$(docker run --rm apache/kafka:4.2.1 /opt/kafka/bin/kafka-storage.sh random-uuid)" >> .env
 ./deploy.sh
@@ -159,7 +192,9 @@ sed -i 's/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=<이전 SHA>/' .env
 docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy인지)
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
-docker compose -f compose.prod.yml exec redis redis-cli ping      # Redis 확인 (PONG)
+docker compose -f compose.prod.yml ps redis-1 redis-2 redis-3 redis-4 redis-5 redis-6   # Redis 6대가 healthy인지
+docker compose -f compose.prod.yml exec redis-1 redis-cli cluster info | grep -E 'cluster_state|cluster_known_nodes'   # cluster_state:ok, 6대
+docker compose -f compose.prod.yml exec redis-1 redis-cli cluster nodes   # 마스터 3 + 복제본 3과 각 역할 (slave에 fail이 붙으면 죽은 노드)
 docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
 # Kafka 클러스터 상태(투표자 3대, 리더)와 복사가 덜 된 파티션(없어야 정상). CLI도 JVM을 띄우므로 힙을 작게 준다
 docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status'
@@ -170,12 +205,12 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost/internal/v1/products/options 
 
 ## 6. 배포 파일 갱신
 
-`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka 이미지는 `KAFKA_VERSION`이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, `monitoring/`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다.
+`deploy.sh`는 앱 이미지만 새로 받습니다(Kafka·Redis 이미지는 버전이 바뀌었을 때만 받습니다). `compose.prod.yml`, `deploy.sh`, `kafka-rollout.sh`, `redis-rollout.sh`, `redis-cluster-init.sh`, `redis-cluster-rejoin.sh`, `monitoring/`나 `nginx/default.conf`가 바뀌면 아래 순서로 반영합니다. `deploy.sh`가 `redis-rollout.sh`를 부르므로 이 파일들은 함께 복사합니다.
 
 ```bash
 # 로컬: 기존 파일 위에 덮어쓴다 (디렉터리를 mv로 옮기면 기존 디렉터리 안에 중첩되므로 목적지 경로를 직접 지정한다)
 scp -i <키 파일> deploy/compose.prod.yml ubuntu@<EIP>:/opt/paldo-gotgan/compose.prod.yml
-scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh ubuntu@<EIP>:/opt/paldo-gotgan/
+scp -i <키 파일> deploy/deploy.sh deploy/kafka-rollout.sh deploy/redis-rollout.sh deploy/redis-cluster-init.sh deploy/redis-cluster-rejoin.sh ubuntu@<EIP>:/opt/paldo-gotgan/
 scp -i <키 파일> -r deploy/monitoring/. ubuntu@<EIP>:/opt/paldo-gotgan/monitoring/
 scp -i <키 파일> deploy/nginx/default.conf ubuntu@<EIP>:/opt/paldo-gotgan/nginx/default.conf
 
@@ -185,7 +220,11 @@ cd /opt/paldo-gotgan
 docker compose -f compose.prod.yml restart nginx
 ```
 
-- **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). app은 Redis가 healthy가 된 뒤에 시작하므로, 형식이 틀려 Redis가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
+- **Redis가 단일 노드에서 클러스터(6노드)로 바뀐 버전을 처음 배포하는 기존 서버**(#366)는 아래를 확인합니다.
+  - 새 `compose.prod.yml`과 함께 `redis-rollout.sh`, `redis-cluster-init.sh`, `redis-cluster-rejoin.sh`를 복사하고 `chmod +x` 합니다(위 명령). `.env`의 `REDIS_PASSWORD`, `REDIS_VERSION`은 그대로 씁니다. `REDIS_HOST`·`REDIS_PORT`는 더 이상 읽지 않습니다.
+  - 메모리 여유부터 봅니다. 노드 6대(합계 `mem_limit` 768m)가 옛 단일 Redis(384m)를 대신하므로 합계가 약 0.38GiB 늘어납니다. 예산 표대로면 여유가 0.0~0.5GiB뿐이므로 `free -m`으로 실제 여유를 확인한 뒤 진행합니다.
+  - `./deploy.sh`가 옛 단일 `redis` 컨테이너를 먼저 지우고(데이터는 옮기지 않습니다) 6대를 띄워 클러스터로 묶습니다. 옛 컨테이너와 새 노드가 동시에 메모리를 쓰지 않게 하려는 순서입니다. 이 순간 앱의 Redis 헬스가 잠깐 `DOWN`일 수 있습니다.
+  - **새로 비밀번호를 정하는 경우**는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). 형식이 틀려 노드가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 
 - Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
