@@ -8,7 +8,9 @@ import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
+import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundShippingFeePolicy;
 import com.ok.refund.exception.RefundErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,7 +51,7 @@ class RequestRefundServiceTest {
     @Test
     void 요청하면_주문에서_받은_값으로_요청됨을_저장한다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
@@ -73,7 +75,7 @@ class RequestRefundServiceTest {
     @Test
     void 남의_주문이면_없는_주문처럼_막는다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         RefundRequestCommand otherBuyer = new RefundRequestCommand(OTHER_BUYER_ID, 10L, 101L, 1, null);
 
         // when & then
@@ -86,7 +88,7 @@ class RequestRefundServiceTest {
     @Test
     void 출고_전이_아니면_막는다() {
         // given
-        givenOrderItem(socks("SHIPPING", 3));
+        givenOrderItem(potato("SHIPPING", 3));
 
         // when & then
         assertThatThrownBy(() -> sut.request(command(1)))
@@ -98,7 +100,7 @@ class RequestRefundServiceTest {
     @Test
     void 산_개수보다_많으면_막는다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
 
         // when & then
         assertThatThrownBy(() -> sut.request(command(4)))
@@ -110,7 +112,7 @@ class RequestRefundServiceTest {
     @Test
     void 산_개수만큼은_요청할_수_있다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // when
@@ -125,12 +127,43 @@ class RequestRefundServiceTest {
         });
     }
 
+    // 완료(#414)되면 진행 중 칸이 비어 같은 상품에 다시 요청할 수 있다. 그때는 산 개수에서 이미 취소된 개수를 뺀 만큼만 받는다.
+    // 막지 않으면 배송비 정책이 "취소 개수 합이 주문 개수를 넘는다"를 버그로 보고 500을 던진다
+    @Test
+    void 이미_취소된_개수를_빼고_남은_개수보다_많으면_막는다() {
+        // given: 감자 3개 중 1개는 이미 환불(완료)됐다
+        givenOrderItem(potato("PREPARING", 3));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.sumCancelledByOrderItem(10L, 5L, RefundShippingFeePolicy.CANCELLING_STATUSES))
+                .willReturn(List.of(new CancelledQuantity(101L, 1, 0)));
+
+        // when & then: 남은 2개보다 많은 3개
+        assertThatThrownBy(() -> sut.request(command(3)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REFUND_QUANTITY_EXCEEDED));
+    }
+
+    @Test
+    void 이미_취소된_개수를_빼고_남은_개수만큼은_요청할_수_있다() {
+        // given: 감자 3개 중 1개는 이미 환불(완료)됐다
+        givenOrderItem(potato("PREPARING", 3));
+        given(refundPersistencePort.saveNew(any(Refund.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(refundPersistencePort.sumCancelledByOrderItem(10L, 5L, RefundShippingFeePolicy.CANCELLING_STATUSES))
+                .willReturn(List.of(new CancelledQuantity(101L, 1, 0)));
+
+        // when
+        RefundResult result = sut.request(command(2));
+
+        // then
+        assertThat(result.quantity()).isEqualTo(2);
+    }
+
     // 진행 중 중복(UNIQUE)·교착 상태를 에러 코드로 바꾸는 일은 영속 어댑터로 옮겼다(RefundPersistenceAdapterTest).
     // 서비스는 포트가 던진 에러를 그대로 돌려줘야 한다
     @Test
     void 저장소가_진행_중_에러를_던지면_그대로_돌려준다() {
         // given
-        givenOrderItem(socks("PREPARING", 3));
+        givenOrderItem(potato("PREPARING", 3));
         given(refundPersistencePort.saveNew(any(Refund.class)))
                 .willThrow(new RestApiException(RefundErrorCode.REFUND_ALREADY_IN_PROGRESS));
 
@@ -162,15 +195,15 @@ class RequestRefundServiceTest {
         return new RefundRequestCommand(BUYER_ID, 10L, 101L, quantity, "옵션을 잘못 골랐습니다.");
     }
 
-    private static RefundableOrderItem socks(String status, int boughtQuantity) {
+    private static RefundableOrderItem potato(String status, int boughtQuantity) {
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(101L, 10_000L, boughtQuantity)));
-        return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "양말", "흰색", status, 10_000L, boughtQuantity, bundle);
+        return new RefundableOrderItem(10L, 101L, BUYER_ID, 5L, 55L, "감자", "1kg", status, 10_000L, boughtQuantity, bundle);
     }
 
     private static RefundableOrderItem cheapItemInFreeBundle() {
         BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(101L, 1_000L, 1), new BundleItem(102L, 49_500L, 1)));
-        return new RefundableOrderItem(10L, 101L, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", "PREPARING", 1_000L, 1, bundle);
+        return new RefundableOrderItem(10L, 101L, BUYER_ID, SELLER_ID, 55L, "감자", "1kg", "PREPARING", 1_000L, 1, bundle);
     }
 }

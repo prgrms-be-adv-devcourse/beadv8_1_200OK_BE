@@ -20,10 +20,10 @@ public record RefundResponse(
         @Schema(description = "주문 상품 ID", example = "101")
         Long orderItemId,
 
-        @Schema(description = "상품명", example = "양말")
+        @Schema(description = "상품명", example = "감자")
         String productName,
 
-        @Schema(description = "옵션명", example = "흰색")
+        @Schema(description = "옵션명", example = "1kg")
         String optionName,
 
         @Schema(description = "취소 개수", example = "1")
@@ -53,7 +53,7 @@ public record RefundResponse(
         @Schema(description = "구매자가 적은 취소 사유 (적었을 때만)", example = "옵션을 잘못 골랐습니다.")
         String cancelReason,
 
-        @Schema(description = "상태. REQUESTED(판매자 승인 대기), PROCESSING(승인되어 처리 중), REJECTED(판매자 거절), WITHDRAWN(구매자 철회)",
+        @Schema(description = "상태. REQUESTED(판매자 승인 대기), PROCESSING(승인되어 처리 중), REJECTED(판매자 거절), WITHDRAWN(구매자 철회), COMPLETED(지갑 반환 요청·주문 반영·재고 복구까지 마침)",
                 example = "REQUESTED")
         String status,
 
@@ -65,7 +65,10 @@ public record RefundResponse(
         LocalDateTime requestedAt,
 
         @Schema(description = "판매자가 승인·거절하거나 구매자가 철회한 시각 (요청됨이면 없음)")
-        LocalDateTime decidedAt
+        LocalDateTime decidedAt,
+
+        @Schema(description = "승인 뒤 지갑 반환 요청·주문 반영·재고 복구를 모두 마쳐 완료된 시각 (완료 전이면 없음)")
+        LocalDateTime completedAt
 ) {
 
     public static RefundResponse from(RefundResult result) {
@@ -86,6 +89,7 @@ public record RefundResponse(
                 result.status(),
                 result.rejectReason(),
                 result.requestedAt(),
-                result.decidedAt());
+                result.decidedAt(),
+                result.completedAt());
     }
 }

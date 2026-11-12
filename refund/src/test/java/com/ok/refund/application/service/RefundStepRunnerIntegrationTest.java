@@ -17,6 +17,7 @@ import com.ok.refund.application.port.in.RequestRefundUseCase;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
+import com.ok.testsupport.FakeProductStockReleasePort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -55,12 +56,15 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     FakeOrderQueryPort orderQueryPort;
     @Autowired
+    FakeProductStockReleasePort productStockReleasePort;
+    @Autowired
     PlatformTransactionManager transactionManager;
 
     @AfterEach
     void tearDown() {
         refundJpaRepository.deleteAllInBatch();
         orderQueryPort.clear();
+        productStockReleasePort.clear();
     }
 
     @Test
@@ -134,7 +138,11 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         orderQueryPort.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 77L, "상품", "옵션",
                 RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 1, bundle));
         Long refundId = requestRefundUseCase.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null)).refundId();
-        decideRefundUseCase.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
+        // 승인 뒤 재고 복구를 실패시켜 완료 전에 멈춘다(#414). 실패 기록은 처리 중인 환불에만 남길 수 있다
+        productStockReleasePort.fail();
+        assertThatThrownBy(() -> decideRefundUseCase.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null)))
+                .isInstanceOf(RestApiException.class);
+        productStockReleasePort.clear();
         return refundId;
     }
 }

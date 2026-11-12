@@ -96,6 +96,6 @@ class RefundPersistenceAdapterTest {
     }
 
     private static Refund requested() {
-        return Refund.request(10L, 101L, 1, 1L, 5L, 55L, "양말", "흰색", 10_000L, null);
+        return Refund.request(10L, 101L, 1, 1L, 5L, 55L, "감자", "1kg", 10_000L, null);
     }
 }

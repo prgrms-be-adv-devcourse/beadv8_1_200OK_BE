@@ -16,6 +16,7 @@ import com.ok.refund.application.port.in.WithdrawRefundUseCase;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
+import com.ok.testsupport.FakeProductStockReleasePort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.RepeatedTest;
@@ -31,6 +32,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -72,6 +74,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     RefundPersistencePort refundPersistencePort;
     @Autowired
+    Clock clock;
+    @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
     PlatformTransactionManager transactionManager;
@@ -79,11 +83,14 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     ApplicationContext applicationContext;
     @Autowired
     FakeOrderQueryPort orderQueryPort;
+    @Autowired
+    FakeProductStockReleasePort productStockReleasePort;
 
     @AfterEach
     void tearDown() {
         refundJpaRepository.deleteAllInBatch();
         orderQueryPort.clear();
+        productStockReleasePort.clear();
     }
 
     @RepeatedTest(5)
@@ -189,7 +196,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         Long withdrawnB = request(B);
         withdrawRefundUseCase.withdraw(withdrawnB, BUYER_ID);
         Long refundB = request(B);
-        approve(refundB);
+        approveAndStopBeforeCompletion(refundB);
         Long withdrawnC = request(C);
         withdrawRefundUseCase.withdraw(withdrawnC, BUYER_ID);
         List<RefundStatus> active = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
@@ -265,6 +272,58 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // 완료로 바꿀 때는 자기 행만 잠근다(#414). 처리 중과 완료를 둘 다 "이미 취소된 것"으로 세서, 바꾸는 중에 같은 묶음의 다른 승인이 와도
+    // 그 승인의 판단이 달라지지 않는다는 전제다. 여기서는 완료 트랜잭션이 감자 행을 잠근 채 커밋하지 않은 동안 배추를 승인해, 배추가 잠금에서
+    // 기다렸다가 완료된 감자를 취소된 것으로 세는지 본다. 완료 트랜잭션은 DecideRefundService.complete와 같은 일(잠금 조회 → complete → update)을
+    // 직접 한다. 서비스 안의 완료 구간을 원하는 때에 멈출 방법이 없어서다
+    @Test
+    void 감자를_완료로_바꾸는_동안_배추를_승인해도_기다렸다가_완료된_감자를_세어_배송비를_돌려준다() throws Exception {
+        // given: 감자(A) 10,000 + 배추(B) 25,000 = 35,000원 무료배송(기준 30,000원, 기본 배송비 3,000원, 낸 배송비 0원)
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L,
+                List.of(new BundleItem(A, 10_000L, 1), new BundleItem(B, 25_000L, 1)));
+        orderQueryPort.put(orderItem(A, 10_000L, bundle));
+        orderQueryPort.put(orderItem(B, 25_000L, bundle));
+        Long potato = request(A);
+        Long cabbage = request(B);
+        // 감자를 승인하면 남은 25,000원이 기준 아래라 3,000원을 빼고 7,000원을 돌려준다. 재고 단계에서 멈춰 처리 중으로 둔다
+        approveAndStopBeforeCompletion(potato);
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        TransactionTemplate completing = new TransactionTemplate(transactionManager);
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<?> holding = executor.submit(() -> completing.executeWithoutResult(status -> {
+                Refund lockedPotato = refundPersistencePort.findByIdForUpdate(potato).orElseThrow();
+                lockedPotato.complete(LocalDateTime.now(clock));
+                refundPersistencePort.update(lockedPotato);
+                locked.countDown();
+                await(release);
+            }));
+            assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+
+            // when: 감자 완료가 커밋되기 전에 배추를 승인한다
+            Future<String> approvingCabbage = executor.submit(() -> resultOf(() -> approve(cabbage)));
+
+            // then: 배추 승인은 진행 중인 감자 행을 잠그려다 기다린다
+            assertThatThrownBy(() -> approvingCabbage.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+            release.countDown();
+            holding.get(30, TimeUnit.SECONDS);
+            assertThat(approvingCabbage.get(30, TimeUnit.SECONDS)).isEqualTo(SUCCESS);
+        }
+        Refund savedPotato = refundPersistencePort.findById(potato).orElseThrow();
+        Refund savedCabbage = refundPersistencePort.findById(cabbage).orElseThrow();
+        assertThat(savedCabbage).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(savedPotato.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            softly.assertThat(savedPotato.getRefundAmount()).isEqualTo(7_000L);
+            softly.assertThat(savedCabbage.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            // 완료된 감자를 세면 묶음 전부 취소라 앞에서 뺀 3,000원을 돌려준다: 25,000 + 3,000 = 28,000원.
+            // 완료를 세지 않으면 감자가 남은 것으로 보여 3,000원을 또 빼 22,000원이 된다
+            softly.assertThat(savedCabbage.getShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(savedCabbage.getRefundAmount()).isEqualTo(28_000L);
+        });
+    }
+
     // 바깥 트랜잭션에 합류하면 위의 동시 승인 테스트들이 지키는 동작이 조용히 깨진다. 바깥이 기본 격리 수준이면 READ COMMITTED가
     // 무시되고, 바깥이 READ COMMITTED여도 바깥에서 먼저 읽은 옛 엔티티로 판단할 수 있다. 그래서 격리 수준과 상관없이 바로 실패해야 한다
     @ParameterizedTest
@@ -308,6 +367,14 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     private void approve(Long refundId) {
         decideRefundService.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
+    }
+
+    // 승인 뒤 재고 복구를 실패시켜 처리 중에 멈춘 환불을 만든다(#414). 완료된 행은 끝난 상태라 잠금 대상이 아니어서,
+    // "처리 중 행은 잠근다"를 보려면 완료 전에 멈춘 행이 필요하다
+    private void approveAndStopBeforeCompletion(Long refundId) {
+        productStockReleasePort.fail();
+        assertThatThrownBy(() -> approve(refundId)).isInstanceOf(RestApiException.class);
+        productStockReleasePort.clear();
     }
 
     private static RefundableOrderItem orderItem(Long orderItemId, long unitPrice, BundleShipping bundle) {

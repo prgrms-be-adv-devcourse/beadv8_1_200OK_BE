@@ -25,7 +25,7 @@ class RefundTest {
     @Test
     void 요청하면_요청됨으로_만들고_상품_금액을_계산하고_진행_중_칸을_채운다() {
         // when
-        Refund sut = Refund.request(10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, "옵션을 잘못 골랐습니다.");
+        Refund sut = Refund.request(10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, "옵션을 잘못 골랐습니다.");
 
         // then
         assertThat(sut).isNotNull();
@@ -36,8 +36,8 @@ class RefundTest {
             softly.assertThat(sut.getBuyerId()).isEqualTo(1L);
             softly.assertThat(sut.getSellerId()).isEqualTo(2L);
             softly.assertThat(sut.getProductOptionId()).isEqualTo(55L);
-            softly.assertThat(sut.getProductName()).isEqualTo("양말");
-            softly.assertThat(sut.getOptionName()).isEqualTo("흰색");
+            softly.assertThat(sut.getProductName()).isEqualTo("감자");
+            softly.assertThat(sut.getOptionName()).isEqualTo("1kg");
             softly.assertThat(sut.getUnitPrice()).isEqualTo(10_000L);
             softly.assertThat(sut.getItemAmount()).isEqualTo(20_000L);
             softly.assertThat(sut.getCancelReason()).isEqualTo("옵션을 잘못 골랐습니다.");
@@ -64,7 +64,7 @@ class RefundTest {
     @Test
     void 취소_사유는_없어도_된다() {
         // when
-        Refund sut = Refund.request(10L, 101L, 1, 1L, 2L, 55L, "양말", "흰색", 10_000L, null);
+        Refund sut = Refund.request(10L, 101L, 1, 1L, 2L, 55L, "감자", "1kg", 10_000L, null);
 
         // then
         assertThat(sut.getCancelReason()).isNull();
@@ -74,7 +74,7 @@ class RefundTest {
     @MethodSource("일보다_작은_개수")
     void 개수가_1_미만이면_막는다(int quantity) {
         // when & then
-        assertThatThrownBy(() -> Refund.request(10L, 101L, quantity, 1L, 2L, 55L, "양말", "흰색", 10_000L, null))
+        assertThatThrownBy(() -> Refund.request(10L, 101L, quantity, 1L, 2L, 55L, "감자", "1kg", 10_000L, null))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_QUANTITY));
     }
@@ -86,7 +86,7 @@ class RefundTest {
     @Test
     void 주문에서_받은_ID가_비면_표준_예외로_막는다() {
         // when & then
-        assertThatThrownBy(() -> Refund.request(10L, 101L, 1, 1L, null, 55L, "양말", "흰색", 10_000L, null))
+        assertThatThrownBy(() -> Refund.request(10L, 101L, 1, 1L, null, 55L, "감자", "1kg", 10_000L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("주문·주문 상품·구매자·판매자·옵션 ID는 필수입니다.");
     }
@@ -94,7 +94,7 @@ class RefundTest {
     @Test
     void 주문에서_받은_이름이_비면_표준_예외로_막는다() {
         // when & then
-        assertThatThrownBy(() -> Refund.request(10L, 101L, 1, 1L, 2L, 55L, null, "흰색", 10_000L, null))
+        assertThatThrownBy(() -> Refund.request(10L, 101L, 1, 1L, 2L, 55L, null, "1kg", 10_000L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("상품명과 옵션명은 필수입니다.");
     }
@@ -102,7 +102,7 @@ class RefundTest {
     @Test
     void 단가가_음수면_표준_예외로_막는다() {
         // when & then
-        assertThatThrownBy(() -> Refund.request(10L, 101L, 1, 1L, 2L, 55L, "양말", "흰색", -1L, null))
+        assertThatThrownBy(() -> Refund.request(10L, 101L, 1, 1L, 2L, 55L, "감자", "1kg", -1L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("단가는 0 이상이어야 합니다.");
     }
@@ -110,7 +110,7 @@ class RefundTest {
     @Test
     void 상품_금액이_long을_넘으면_막는다() {
         // when & then
-        assertThatThrownBy(() -> Refund.request(10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", Long.MAX_VALUE, null))
+        assertThatThrownBy(() -> Refund.request(10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", Long.MAX_VALUE, null))
                 .isInstanceOf(ArithmeticException.class);
     }
 
@@ -190,7 +190,7 @@ class RefundTest {
     @Test
     void 돌려줄_금액이_음수가_되는_판단으로_승인하면_예외를_던지고_바꾸지_않는다() {
         // given: 1,000원짜리 1개를 취소하는데 3,000원을 빼라는 판단 → 1,000 - 3,000 = -2,000원
-        Refund refund = Refund.request(10L, 101L, 1, 1L, 2L, 55L, "양말", "흰색", 1_000L, null);
+        Refund refund = Refund.request(10L, 101L, 1, 1L, 2L, 55L, "감자", "1kg", 1_000L, null);
 
         // when & then
         assertThatThrownBy(() -> refund.approve(NOW, RefundShippingFee.deduct(3_000L)))
@@ -422,11 +422,12 @@ class RefundTest {
     void 복원하면_저장된_칸을_모두_그대로_가진다() {
         // given
         LocalDateTime createdAt = LocalDateTime.of(2026, 11, 3, 9, 0);
+        LocalDateTime completedAt = LocalDateTime.of(2026, 11, 4, 10, 5);
 
         // when
-        Refund sut = Refund.restore(7L, 10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, 20_000L, 3_000L, 2_000L, 1_000L,
-                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, RefundFailedStep.ORDER, "ORDER_API_FAILED", 101L,
-                createdAt);
+        Refund sut = Refund.restore(7L, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 3_000L, 2_000L, 1_000L,
+                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, completedAt, RefundFailedStep.ORDER, "ORDER_API_FAILED",
+                101L, createdAt);
 
         // then
         assertThat(sut).isNotNull();
@@ -438,8 +439,8 @@ class RefundTest {
             softly.assertThat(sut.getBuyerId()).isEqualTo(1L);
             softly.assertThat(sut.getSellerId()).isEqualTo(2L);
             softly.assertThat(sut.getProductOptionId()).isEqualTo(55L);
-            softly.assertThat(sut.getProductName()).isEqualTo("양말");
-            softly.assertThat(sut.getOptionName()).isEqualTo("흰색");
+            softly.assertThat(sut.getProductName()).isEqualTo("감자");
+            softly.assertThat(sut.getOptionName()).isEqualTo("1kg");
             softly.assertThat(sut.getUnitPrice()).isEqualTo(10_000L);
             softly.assertThat(sut.getItemAmount()).isEqualTo(20_000L);
             softly.assertThat(sut.getShippingFeeAmount()).isEqualTo(3_000L);
@@ -449,6 +450,7 @@ class RefundTest {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(sut.getRejectReason()).isNull();
             softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(completedAt);
             softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
             softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
             softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
@@ -460,13 +462,52 @@ class RefundTest {
     @Test
     void ID_없이_복원하면_예외를_던진다() {
         // when & then
-        assertThatThrownBy(() -> Refund.restore(null, 10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, 20_000L, 0L, 0L, 0L,
-                null, RefundStatus.REQUESTED, null, null, null, null, 101L, null))
+        assertThatThrownBy(() -> Refund.restore(null, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 0L, 0L, 0L,
+                null, RefundStatus.REQUESTED, null, null, null, null, null, 101L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("저장된 환불을 되살리려면 ID와 상태가 필요합니다.");
     }
 
+    // 완료(#414): 승인 뒤 단계를 모두 마친 처리 중 환불만 끝낸다. 진행 중 칸을 비워 같은 상품의 남은 개수를 다시 요청할 수 있게 한다
+    @Test
+    void 처리_중을_완료하면_완료가_되고_완료_시각이_남고_진행_중_칸이_비워진다() {
+        // given
+        Refund sut = requested();
+        sut.approve(NOW, RefundShippingFee.none());
+        LocalDateTime completedAt = NOW.plusMinutes(5);
+
+        // when
+        sut.complete(completedAt);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
+            softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(completedAt);
+        });
+    }
+
+    // 요청됨에서 바로 완료하면 승인(배송비 판단) 없이 끝나 돈 계산이 비고, 이미 끝난 환불을 다시 완료하면 단계가 두 번 돈 것이다
+    @ParameterizedTest
+    @MethodSource("처리_중이_아닌_환불")
+    void 처리_중이_아니면_완료할_수_없다(Refund refund) {
+        // when & then
+        assertThatThrownBy(() -> refund.complete(NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
+    static Stream<Refund> 처리_중이_아닌_환불() {
+        Refund completed = requested();
+        completed.approve(NOW, RefundShippingFee.none());
+        completed.complete(NOW);
+        Refund withdrawn = requested();
+        withdrawn.withdraw(NOW);
+        return Stream.of(requested(), completed, withdrawn);
+    }
+
     private static Refund requested() {
-        return Refund.request(10L, 101L, 2, 1L, 2L, 55L, "양말", "흰색", 10_000L, null);
+        return Refund.request(10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, null);
     }
 }

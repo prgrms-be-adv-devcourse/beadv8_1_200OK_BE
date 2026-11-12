@@ -3,9 +3,9 @@ package com.ok.refund.domain;
 /**
  * 환불 요청 상태.
  *
- * <p>{@code REQUESTED → PROCESSING | REJECTED | WITHDRAWN}. 처리 중에서 요청됨으로 돌아가는 길은 두지 않는다.
+ * <p>{@code REQUESTED → PROCESSING | REJECTED | WITHDRAWN}, {@code PROCESSING → COMPLETED}. 처리 중에서 요청됨으로 돌아가는 길은 두지 않는다.
  * 승인한 뒤에는 지갑 환불·주문 반영·재고 복구가 차례로 진행되어(#413~#414), 되돌리면 이미 움직인 돈·재고와 어긋난다.
- * 완료(#414) 상태는 그 이슈에서 더한다. 이미 출고돼 승인할 수 없는 경우(#412)는 상태를 바꾸지 않고 "요청됨"으로 둔다.
+ * 이미 출고돼 승인할 수 없는 경우(#412)는 자동 거절로 끝낸다.
  */
 public enum RefundStatus {
 
@@ -16,5 +16,11 @@ public enum RefundStatus {
     /** 판매자가 거절함 (사유 필수). 끝난 상태 */
     REJECTED,
     /** 구매자가 승인 전에 거둠. 끝난 상태 */
-    WITHDRAWN
+    WITHDRAWN,
+    /**
+     * 승인 뒤 지갑 반환 요청·주문 취소 반영·재고 복구를 모두 마침(#414). 끝난 상태. 취소된 개수에는 계속 센다.
+     * 원래 뜻은 "지갑이 구매자에게 돈을 돌려준 것까지 확인됨"이다. 지금은 지갑이 완료를 알려 주는 메시지가 없어서(지갑 팀과 약속 없음)
+     * 반환 요청이 Kafka에 들어간 것을 지갑 단계 성공으로 보고 완료로 바꾼다. 그래서 지갑이 처리에 실패해도 완료로 남을 수 있다(임시)
+     */
+    COMPLETED
 }
