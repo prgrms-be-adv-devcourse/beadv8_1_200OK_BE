@@ -442,7 +442,7 @@ com.ok.wallet
 - 엔티티를 도메인 모델과 나누지 않습니다. 잔액 변경과 충전 완료는 엔티티 값만 바꾸고 저장은 변경 감지에 맡기므로, 나누면 저장이 빠졌을 때 오류 없이 잔액이 반영되지 않습니다.
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
 - 잠금 조회는 이름에 `ForUpdate`/`ForShare`를 넣고, `*JpaRepository`에만 `@Lock`을 붙입니다(`ForUpdate`는 `PESSIMISTIC_WRITE`, `ForShare`는 `PESSIMISTIC_READ`). 어댑터가 `@Lock`이 붙은 메서드를 직접 부르므로 포트 쪽에서 다시 선언하는 단계가 없습니다.
-- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 더해 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지, JPA 저장소의 포트 상속 금지, 잠금 조회 이름과 `@Lock` 종류가 맞는지 검사).
+- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 더해 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지, JPA 저장소의 포트 상속 금지, 잠금 조회 이름과 `@Lock` 종류가 맞는지, 어댑터의 잠금 조회가 같은 종류의 `@Lock` 메서드만 부르는지 검사).
 
 ### member 모듈 구조(헥사고날)
 
