@@ -32,6 +32,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -45,6 +46,8 @@ import org.springframework.batch.core.launch.JobOperator;
 import org.springframework.batch.core.repository.JobRepository;
 import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -1210,7 +1213,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 수수료가_틀리면_원인은_금액_불일치_같은_주문의_다른_판매자_후보는_보류되고_Job은_완료된다() throws Exception {
+    void 수수료가_틀리면_원인은_수수료_불일치_같은_주문의_다른_판매자_후보는_보류되고_Job은_완료된다() throws Exception {
         // given: 주문 X에 판매자 10(수수료 500, 계산은 309)과 판매자 20(정상 + 배송비), 주문 Y(판매자 30)는 정상
         LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
         long orderX = nextOrderItemId();
@@ -1235,8 +1238,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getSellerId, PayoutFailure::getReason)
                 .containsExactlyInAnyOrder(
-                        tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
-                        tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
+                        tuple(wrongItem, 10L, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(wrongItem, 10L, PayoutFailureReason.FEE_MISMATCH),
                         tuple(rightItem, 20L, PayoutFailureReason.ORDER_HELD),
                         tuple(rightItem, 20L, PayoutFailureReason.ORDER_HELD),
                         tuple(null, 20L, PayoutFailureReason.ORDER_HELD));   // 배송비
@@ -1245,6 +1248,44 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(snapshotId))
                 .extracting(Payout::getPayeeId, Payout::getAmount)
                 .containsExactlyInAnyOrder(tuple(30L, 9_700L), tuple(null, 300L));
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void 수수료_불일치는_주문상품마다_ERROR_로그를_1번_남기고_잠금_로그에_원인을_남기며_다음_스냅샷에서도_빠진다(CapturedOutput output) {
+        // given: 주문 X에 판매자 10의 주문상품(수수료 500, 계산은 309)과 판매자 20의 정상 주문상품·배송비
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 40_000L);
+        long wrongItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, wrongItem, 10L, 9_800L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, wrongItem, 10L, 500L, createdAt);
+        long rightItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, rightItem, 20L, 19_400L, createdAt);
+        insertShippingFee(orderX, 20L, 3_000L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+
+        // when
+        payoutService.validate(snapshotId);
+        Long nextSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 원인 주문상품은 FEE_MISMATCH, 나머지는 ORDER_HELD
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(wrongItem, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(wrongItem, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(rightItem, PayoutFailureReason.ORDER_HELD),
+                        tuple(null, PayoutFailureReason.ORDER_HELD));
+        // then: 잠금은 나누기 전(AMOUNT_MISMATCH)과 같이 유지되어, 미정산인데도 다음 스냅샷에 들어가지 않음
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+        // then: 대금·수수료 두 후보가 실패해도 ERROR는 주문상품당 1번 (#302 알림이 두 번 가지 않게)
+        assertThat(countMatches(output.getAll(), "[정산-시스템문제] 수수료 불일치 orderItemId=" + wrongItem + System.lineSeparator()))
+                .isEqualTo(1);
+        // then: 잠금 WARN의 사유가 비지 않고 원인(수수료 불일치) 상세로 남음 (FEE_MISMATCH를 원인으로 못 찾으면 사유=null)
+        assertThat(output.getAll())
+                .contains("정산 주문 잠금. snapshotId=" + snapshotId + ", orderId=" + orderX
+                        + ", 사유=수수료 불일치: 기대값 309, 실제값 500 (판매 금액 10300 기준)");
     }
 
     @Test
@@ -1376,10 +1417,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = settleAll(FROM, TO);
         Long nextSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 수수료 후보가 금액 불일치로 빠지고, 수수료 검사로 잠긴 주문도 다음 스냅샷에 들어가지 않음
+        // then: 수수료 후보가 수수료 불일치로 빠지고, 수수료 검사로 잠긴 주문도 다음 스냅샷에 들어가지 않음
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getReason, PayoutFailure::getDetail)
-                .containsExactly(tuple(PayoutFailureReason.AMOUNT_MISMATCH,
+                .containsExactly(tuple(PayoutFailureReason.FEE_MISMATCH,
                         "수수료 불일치: 기대값 306, 실제값 500 (판매 금액 10200 기준)"));
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
         assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
@@ -1824,6 +1865,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     private long nextOrderItemId() {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
+    }
+
+    // 글 안에 찾는 글이 몇 번 나오는지 셈 (로그가 정해진 횟수만 남았는지 확인용)
+    private static int countMatches(String text, String target) {
+        int count = 0;
+        int from = text.indexOf(target);
+        while (from >= 0) {
+            count++;
+            from = text.indexOf(target, from + target.length());
+        }
+        return count;
     }
 
     // 주문의 정산후보 id 목록 (JPA 조회)

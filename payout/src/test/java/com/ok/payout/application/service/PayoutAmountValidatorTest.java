@@ -107,7 +107,7 @@ class PayoutAmountValidatorTest {
     // ---------- 수수료 ----------
 
     @Test
-    void 수수료가_계산과_다르면_원인_주문상품은_금액_불일치_같은_주문의_나머지는_보류다() {
+    void 수수료가_계산과_다르면_원인_주문상품은_수수료_불일치_같은_주문의_나머지는_보류다() {
         // given: 주문상품 1001(판매자 10)은 수수료 500(계산 309), 주문상품 1002(판매자 20)는 정상, 배송비(판매자 10)
         givenNormalOrderItem(ORDER_ID, 1001L, 10L, 9_800L, 500L);
         givenNormalOrderItem(ORDER_ID, 1002L, 20L, 19_400L, 600L);
@@ -123,8 +123,8 @@ class PayoutAmountValidatorTest {
         assertThat(sut)
                 .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getReason, PayoutFailure::getDetail)
                 .containsExactly(
-                        tuple(1001L, PayoutFailureReason.AMOUNT_MISMATCH, feeDetail),   // 대금
-                        tuple(1001L, PayoutFailureReason.AMOUNT_MISMATCH, feeDetail),   // 수수료
+                        tuple(1001L, PayoutFailureReason.FEE_MISMATCH, feeDetail),   // 대금
+                        tuple(1001L, PayoutFailureReason.FEE_MISMATCH, feeDetail),   // 수수료
                         tuple(1002L, PayoutFailureReason.ORDER_HELD, lockedDetail),
                         tuple(1002L, PayoutFailureReason.ORDER_HELD, lockedDetail),
                         tuple(null, PayoutFailureReason.ORDER_HELD, lockedDetail));   // 배송비
@@ -142,7 +142,7 @@ class PayoutAmountValidatorTest {
 
         // then: 후보 4건에 4건, 같은 후보 ID가 두 번 나오지 않음 (실패 기록 UK 위반 방지)
         assertThat(sut).extracting(PayoutFailure::getCandidateId).containsExactly(1L, 2L, 3L, 4L);
-        assertThat(sut).extracting(PayoutFailure::getReason).containsOnly(PayoutFailureReason.AMOUNT_MISMATCH);
+        assertThat(sut).extracting(PayoutFailure::getReason).containsOnly(PayoutFailureReason.FEE_MISMATCH);
     }
 
     @Test

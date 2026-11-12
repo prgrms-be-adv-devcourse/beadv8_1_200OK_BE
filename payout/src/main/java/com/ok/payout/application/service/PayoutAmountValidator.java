@@ -17,14 +17,14 @@ import java.util.Map;
 //   PayoutDraftValidator(결과 검증) = 우리 코드가 만든 draft가 맞는지 → 틀리면 코드 버그 (그 주문을 잠그거나, 코드 고장이면 Job 전체를 멈춤, #290)
 //
 // 판정 단위는 주문: 이번 스냅샷에 들어온 같은 주문의 후보를 묶어 먼저 판정한 뒤 실패 목록을 한 번에 돌려줌
-//   주문상품마다 바로 실패를 만들면, 한 주문에 틀린 주문상품이 2개일 때 같은 후보가 AMOUNT_MISMATCH와 ORDER_HELD로 두 번 기록됨
+//   주문상품마다 바로 실패를 만들면, 한 주문에 틀린 주문상품이 2개일 때 같은 후보가 FEE_MISMATCH와 ORDER_HELD로 두 번 기록됨
 //   → 실패 기록 UK(snapshot_id, candidate_id) 위반 → validate 롤백 → 같은 데이터라 매 배치 같은 이유로 실패
 // 아직 구매확정되지 않은 같은 주문의 상품은 기다리지 않음: 들어온 상품만 판정하고, 나머지는 들어오는 배치에서 판정
 //
 // 검사 순서 (앞 검사에 걸린 주문은 뒤 검사를 하지 않음 → 후보당 실패 기록 1건)
 //   0) 차감 기록 없음(DEDUCTION_MISSING): 이 클래스 밖에서 먼저 걸러짐 (차감 기록이 있는 주문의 후보만 여기로 옴)
 //   1) 초과 청구: 그 주문 후보 합계 > 지갑 차감액이면 이번 스냅샷의 그 주문 후보 전부 AMOUNT_MISMATCH
-//   2) 수수료: 주문상품의 원래 수수료 ≠ 수수료 계산이면 그 주문상품 후보는 AMOUNT_MISMATCH, 같은 주문 나머지는 ORDER_HELD
+//   2) 수수료: 주문상품의 원래 수수료 ≠ 수수료 계산이면 그 주문상품 후보는 FEE_MISMATCH, 같은 주문 나머지는 ORDER_HELD (#391 전에는 AMOUNT_MISMATCH)
 final class PayoutAmountValidator {
 
     // 초과 청구 실패 상세. 어느 주문상품이 틀렸는지 알 수 없다는 한계를 함께 남김 (관리자가 상세만 보고 원인을 한 상품으로 오해하지 않게)
@@ -92,7 +92,7 @@ final class PayoutAmountValidator {
             for (PayoutCandidateItem candidate : orderTargets) {
                 String mismatchDetail = candidate.getOrderItemId() == null ? null : feeMismatches.get(candidate.getOrderItemId());
                 if (mismatchDetail != null) {
-                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.AMOUNT_MISMATCH, mismatchDetail));
+                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.FEE_MISMATCH, mismatchDetail));
                 } else {
                     failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.ORDER_HELD, lockedDetail));
                 }
