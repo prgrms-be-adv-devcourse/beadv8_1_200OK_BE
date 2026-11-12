@@ -14,6 +14,7 @@ import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.PayoutWalletDeduction;
+import com.ok.payout.domain.PayoutWalletDeductionConflict;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutFailureJpaRepository;
@@ -24,6 +25,7 @@ import com.ok.payout.adapter.out.persistence.PayoutSnapshotItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSystemDraftItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionConflictJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.payout.adapter.in.batch.PayoutJobScheduler;
 import com.ok.payout.application.service.PayoutService;
@@ -135,6 +137,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutFailureJpaRepository failureRepository;
+
+    @Autowired
+    private PayoutWalletDeductionConflictJpaRepository conflictRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -1092,7 +1097,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = settleAll(FROM, TO);
 
         // then: 주문 X 후보 2건이 초과 청구로 빠지고, 정산은 주문 Y만
-        String detail = "주문 합계 초과: 차감액 9999, 후보 합계 10000 (어느 주문상품이 틀렸는지 판별 불가)";
+        // 이 테스트는 주문 ID = 주문상품 ID라, 넘게 만든 주문상품·혼자 넘는 주문상품이 주문 X의 번호로 나옴
+        String detail = "초과 청구: 결제 9999, 후보 합계 10000, 넘친 금액 1, 넘게 만든 주문상품 " + orderX
+                + ", 이미 지급 0, 혼자 넘는 주문상품 " + orderX + ", 판매자 1명, 지갑 금액 충돌 없음";
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason, PayoutFailure::getDetail)
                 .containsExactly(
@@ -1190,6 +1197,41 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                         tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH),
                         tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH));
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void 초과_청구_상세는_실제_정산_항목과_생성_순서로_근거를_계산하고_주문상품_목록을_WARN으로_남긴다(CapturedOutput output) {
+        // given: 주문 X(결제 15,000)의 주문상품 1(판매자 10, 10,000)이 지난 배치에 정산됨
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 15_000L);
+        long firstItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, firstItem, 10L, 9_700L, TO.minusDays(2));
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, firstItem, 10L, 300L, TO.minusDays(2));
+        settleAll(FROM, TO);
+        // 그 뒤 주문상품 2(판매자 20, 6,000)가 들어옴. id는 더 크지만 생성 시각은 주문상품 1보다 이름
+        //   → id 순이면 주문상품 2가, 생성 순(created_at)이면 주문상품 1이 누적합을 넘김. 생성 순으로 계산하는지 확인
+        long secondItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, secondItem, 20L, 5_820L, TO.minusDays(3));
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 180L, TO.minusDays(3));
+        // 지갑에서 이 주문에 20,000 이벤트가 온 적이 있음 (차감 기록은 15,000 그대로)
+        conflictRepository.save(PayoutWalletDeductionConflict.create(orderX, 15_000L, 20_000L));
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 이미 지급은 payout_item이 있는 주문상품 1의 10,000, 판매자는 주문 전체 기준 2명
+        String detail = "초과 청구: 결제 15000, 후보 합계 16000, 넘친 금액 1000, 넘게 만든 주문상품 " + firstItem
+                + ", 이미 지급 10000(주문상품 " + firstItem + "), 혼자 넘는 주문상품 없음, 판매자 2명"
+                + ", 지갑 금액 충돌 있음(받은 금액 20000)";
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(
+                        tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH, detail),
+                        tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH, detail));
+        // then: 상세가 잘려도 원인을 찾을 수 있게 주문상품 전체 목록(생성 순, 주문상품별 합계)이 WARN으로 남음
+        assertThat(output.getAll()).contains("정산 초과 청구 주문상품 목록. snapshotId=" + snapshotId + ", orderId=" + orderX
+                + ", 주문상품별 합계={" + secondItem + "=6000, " + firstItem + "=10000}");
     }
 
     @Test
@@ -1908,6 +1950,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
         // 지갑 차감 기록도 이 클래스 번호대만 지움 (후보를 넣을 때 같은 주문 ID로 함께 넣음)
         jdbcTemplate.update("DELETE FROM payout_wallet_deduction WHERE order_id > ? AND order_id <= ?",
+                ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
+        jdbcTemplate.update("DELETE FROM payout_wallet_deduction_conflict WHERE order_id > ? AND order_id <= ?",
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
     }
 }

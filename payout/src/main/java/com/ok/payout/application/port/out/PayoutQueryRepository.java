@@ -6,6 +6,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -80,6 +81,16 @@ public interface PayoutQueryRepository {
     // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
     // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
     List<PayoutCandidateItem> findOriginalSaleCandidatesInSnapshot(Long snapshotId);
+
+    // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서(created_at, id)로, 이미 정산됐는지와 함께
+    // 범위는 초과 청구 합계(sumCandidateAmountByOrderInSnapshot)와 같음: 그 주문의 후보 전부 (스냅샷 밖·이미 정산·조정 포함)
+    //   범위가 다르면 근거의 누적합이 합계와 어긋나 "넘게 만든 주문상품"을 잘못 찾음
+    // 이미 정산됨 = payout_item에 그 후보가 있음 (후보 1건 = 정산 항목 최대 1건, UK candidate_id라 조인해도 줄이 늘지 않음)
+    // 초과 청구에 걸린 주문만 넘기므로 보통 몇 건뿐임 (빈 목록을 넘기지 않음)
+    List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds);
+
+    // 초과 청구 근거용(#391): 주문들의 지갑 금액 충돌에서 받은 금액 (주문 ID → 받은 금액 목록, 기록 순서). 충돌이 없는 주문은 결과에 없음
+    Map<Long, List<Long>> findReceivedConflictAmountsByOrder(Collection<Long> orderIds);
 
     // 정산 목록 (관리자·판매자 조회). null인 조건은 걸지 않음
     // 정렬은 확정 시각 최신순 고정. 같은 시각에 확정된 정산이 여러 건이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
