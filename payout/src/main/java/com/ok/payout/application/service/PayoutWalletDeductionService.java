@@ -33,6 +33,7 @@ public class PayoutWalletDeductionService implements PayoutWalletDeductionUseCas
     //     동시에 두 번 처리되면 둘 다 확인을 통과할 수 있는데, 이때는 DB UK가 한쪽을 막고 막힌 쪽은 예외로 롤백됨
     //     → Kafka 오류 처리기가 다시 보내면 그때는 이 확인에 걸려 무시됨 (차감 기록 UK와 같은 방식)
     //     → Spring 이벤트 입구(PayoutWalletEventListener)로 온 경우는 막힌 처리가 이벤트 발행 기록에 실패로 남고, 앱을 다시 켤 때 다시 처리되어 이 확인에 걸려 무시됨
+    //       TODO(#343): 지갑이 Spring 발행을 지워 Spring 입구(PayoutWalletEventListener)를 지울 때 바로 위 줄도 지운다
     @Transactional
     @Override
     public void saveDeduction(WalletPaymentCompletedCommand command) {
