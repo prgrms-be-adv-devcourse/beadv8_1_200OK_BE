@@ -139,7 +139,8 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
 
     // 트랜잭션에 묶인 자리(TransactionSynchronizationManager)에 잠근 ID를 적고, 트랜잭션이 끝나면 지운다.
     // 트랜잭션 밖이면 적을 자리가 없어 검사하지 않는다(그때는 FOR UPDATE 자체가 실패한다).
-    // 환불은 트랜잭션 안에서 새 트랜잭션을 열지 않으므로(서비스가 열린 트랜잭션 안에서 부르는 것을 막음) 자리를 트랜잭션마다 따로 나누지 않는다
+    // 안에서 새 트랜잭션(REQUIRES_NEW)이 열리면 바깥 목록을 떼어 두고 돌아올 때 다시 붙여, 트랜잭션마다 따로 센다.
+    // 떼어 두지 않으면 안쪽이 잠근 ID가 바깥 목록에 남아, 바깥에서 처음 잠그는 환불도 두 번째로 보고 막는다
     @SuppressWarnings("unchecked")
     private static void rememberLockedOnce(Long id) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -147,14 +148,27 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
         }
         Set<Long> locked = (Set<Long>) TransactionSynchronizationManager.getResource(LOCKED_IDS_KEY);
         if (locked == null) {
-            locked = new HashSet<>();
-            TransactionSynchronizationManager.bindResource(LOCKED_IDS_KEY, locked);
+            Set<Long> created = new HashSet<>();
+            TransactionSynchronizationManager.bindResource(LOCKED_IDS_KEY, created);
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                // 안에서 새 트랜잭션이 열리면 이 트랜잭션의 목록을 떼어 둔다. 안쪽은 빈 자리에서 자기 목록을 새로 만든다
+                @Override
+                public void suspend() {
+                    TransactionSynchronizationManager.unbindResourceIfPossible(LOCKED_IDS_KEY);
+                }
+
+                // 안쪽이 끝나 이 트랜잭션으로 돌아오면 떼어 둔 목록을 다시 붙인다
+                @Override
+                public void resume() {
+                    TransactionSynchronizationManager.bindResource(LOCKED_IDS_KEY, created);
+                }
+
                 @Override
                 public void afterCompletion(int status) {
                     TransactionSynchronizationManager.unbindResourceIfPossible(LOCKED_IDS_KEY);
                 }
             });
+            locked = created;
         }
         if (!locked.add(id)) {
             throw new IllegalStateException("같은 트랜잭션에서 같은 환불을 두 번 잠금 조회할 수 없습니다. 처음 잠근 객체로 바꾸고 저장해야 합니다. refundId=" + id);

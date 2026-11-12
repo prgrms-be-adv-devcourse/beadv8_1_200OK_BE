@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -31,6 +32,7 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 6, 10, 0);
     private static final Long ORDER_ID = 70L;
     private static final Long ORDER_ITEM_ID = 701L;
+    private static final Long CABBAGE_ORDER_ITEM_ID = 702L;
     private static final Long SELLER_ID = 7L;
 
     @Autowired
@@ -255,6 +257,48 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.WITHDRAWN);
+    }
+
+    // 안쪽 새 트랜잭션이 잠근 ID는 안쪽 목록에만 남아야 한다. 섞이면 바깥에서 처음 잠그는 환불을 두 번째로 보고 막는다
+    @Test
+    void 안에서_새_트랜잭션이_잠근_환불은_바깥에서_처음_잠글_수_있다() {
+        // given
+        Long potato = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long cabbage = inTransaction(() -> refundPersistencePort.saveNew(requested(CABBAGE_ORDER_ITEM_ID))).getId();
+        TransactionTemplate inner = requiresNew();
+
+        // when
+        Refund sut = inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(potato);
+            inner.execute(status -> refundPersistencePort.findByIdForUpdate(cabbage));
+            return refundPersistencePort.findByIdForUpdate(cabbage);
+        }).orElseThrow();
+
+        // then
+        assertThat(sut.getId()).isEqualTo(cabbage);
+    }
+
+    // 안쪽이 끝나 돌아오면 바깥 목록을 다시 붙여야 한다. 붙이지 않으면 바깥에서 같은 환불을 두 번 잠가도 모른다
+    @Test
+    void 안쪽_새_트랜잭션이_끝나도_바깥이_잠근_환불은_다시_잠글_수_없다() {
+        // given
+        Long potato = inTransaction(() -> refundPersistencePort.saveNew(requested(ORDER_ITEM_ID))).getId();
+        Long cabbage = inTransaction(() -> refundPersistencePort.saveNew(requested(CABBAGE_ORDER_ITEM_ID))).getId();
+        TransactionTemplate inner = requiresNew();
+
+        // when & then
+        assertThatThrownBy(() -> inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(potato);
+            inner.execute(status -> refundPersistencePort.findByIdForUpdate(cabbage));
+            return refundPersistencePort.findByIdForUpdate(potato);
+        })).isInstanceOf(IllegalStateException.class)
+                .hasMessage("같은 트랜잭션에서 같은 환불을 두 번 잠금 조회할 수 없습니다. 처음 잠근 객체로 바꾸고 저장해야 합니다. refundId=" + potato);
+    }
+
+    private TransactionTemplate requiresNew() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return template;
     }
 
     private <T> T inTransaction(Supplier<T> work) {
