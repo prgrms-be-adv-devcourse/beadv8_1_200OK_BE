@@ -4,6 +4,8 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundResult;
+import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.refund.application.port.out.OrderCancellationPort;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
@@ -63,13 +65,15 @@ class DecideRefundServiceTest {
     RefundPersistencePort refundPersistencePort;
     @Mock
     WalletRefundRequestPort walletRefundRequestPort;
+    @Mock
+    OrderCancellationPort orderCancellationPort;
 
     DecideRefundService sut;
 
     @BeforeEach
     void setUp() {
-        sut = new DecideRefundService(orderQueryPort, refundPersistencePort, walletRefundRequestPort, CLOCK,
-                new NoOpTransactionManager());
+        sut = new DecideRefundService(orderQueryPort, refundPersistencePort, walletRefundRequestPort, orderCancellationPort,
+                CLOCK, new NoOpTransactionManager());
     }
 
     // 아래 다섯 테스트는 예전 파사드 테스트에서 옮겼다. 주문 호출 여부와 승인 전 확인 순서를 decide 전체 흐름으로 본다
@@ -448,9 +452,54 @@ class DecideRefundServiceTest {
         });
     }
 
+    // 주문 취소 반영(#513). 지갑 완료를 기다리지 않고 발행이 끝나면 바로 주문에 알린다(지갑과 완료 메시지 약속이 없음).
+    // 순서가 요구사항이다: 발행이 실패하면 주문을 부르지 않아야 하므로 발행 → 주문 순서를 확인한다
+    @Test
+    void 지갑에_반환을_요청한_뒤_주문에_취소_수량과_뺀_배송비를_알린다() {
+        // given: 무료배송(기준 50,000원) 묶음에서 30,000원짜리 1개를 취소해 30,000원이 남는다. 기본 배송비 3,000원을 빼고 27,000원을 돌려준다
+        givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "셔츠", "기본", 30_000L, null));
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(101L, 30_000L, 1), new BundleItem(102L, 30_000L, 1)));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, orderItem(101L, 30_000L, 1, bundle));
+
+        // then
+        assertThat(result.refundAmount()).isEqualTo(27_000L);
+        InOrder order = inOrder(walletRefundRequestPort, orderCancellationPort);
+        then(walletRefundRequestPort).should(order).requestRefund(any());
+        ArgumentCaptor<OrderCancellation> captor = ArgumentCaptor.forClass(OrderCancellation.class);
+        then(orderCancellationPort).should(order).reflectCancellation(captor.capture());
+        OrderCancellation sent = captor.getValue();
+        assertThat(sent).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sent.refundId()).isEqualTo(REFUND_ID);
+            softly.assertThat(sent.orderItemId()).isEqualTo(101L);
+            softly.assertThat(sent.quantity()).isEqualTo(1);
+            softly.assertThat(sent.deductedShippingFee()).isEqualTo(3_000L);
+        });
+    }
+
+    // 주문이 실패해도 승인은 이미 커밋돼 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 주문은 취소를 모르므로 그대로 올린다.
+    // 실패 기록(ORDER)과 다시 시도는 #516이 맡는다
+    @Test
+    void 주문_취소_반영이_실패하면_예외를_그대로_올리고_처리_중_저장은_이미_끝나_있다() {
+        // given
+        givenLockedBundle(requested());
+        RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        willThrow(failure).given(orderCancellationPort).reflectCancellation(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, socks("PREPARING", 2)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+        Refund updated = capturedUpdate();
+        assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+    }
+
     // 승인 버튼으로 왔어도 출고된 상품이면 자동 거절로 끝난다. 거절된 환불에 돈이 나가면 안 된다
     @Test
-    void 승인_때_출고돼_자동_거절되면_지갑에_요청하지_않는다() {
+    void 승인_때_출고돼_자동_거절되면_지갑에도_주문에도_알리지_않는다() {
         // given
         givenLockedBundle(requested());
 
@@ -460,11 +509,12 @@ class DecideRefundServiceTest {
         // then
         assertThat(result.status()).isEqualTo("REJECTED");
         then(walletRefundRequestPort).should(never()).requestRefund(any());
+        then(orderCancellationPort).should(never()).reflectCancellation(any());
     }
 
     // 출고 거절과 다른 경로다(배송비 판단 뒤 거절). 이유가 달라 따로 확인한다
     @Test
-    void 승인_때_배송비가_모자라_자동_거절되면_지갑에_요청하지_않는다() {
+    void 승인_때_배송비가_모자라_자동_거절되면_지갑에도_주문에도_알리지_않는다() {
         // given
         givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 1_000L, null));
 
@@ -474,10 +524,11 @@ class DecideRefundServiceTest {
         // then
         assertThat(result.status()).isEqualTo("REJECTED");
         then(walletRefundRequestPort).should(never()).requestRefund(any());
+        then(orderCancellationPort).should(never()).reflectCancellation(any());
     }
 
     @Test
-    void 돌려줄_금액이_0원이면_지갑에_요청하지_않고_처리_중으로_승인한다() {
+    void 돌려줄_금액이_0원이면_지갑을_거치지_않고_바로_주문에_알린다() {
         // given: 무료배송(기준 30,000원) 묶음에서 3,000원 상품을 취소하면 27,000원이 남아 무료배송이 깨진다.
         // 기본 배송비 3,000원을 빼면 3,000 - 3,000 = 0원 환불이다. 받을 수는 있다(취소 금액 = 뺄 배송비)
         givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "컵", "흰색", 3_000L, null));
@@ -495,6 +546,10 @@ class DecideRefundServiceTest {
             softly.assertThat(result.refundAmount()).isZero();
         });
         then(walletRefundRequestPort).should(never()).requestRefund(any());
+        // 돌려줄 돈은 없어도 주문은 취소 수량과 뺀 배송비(판매자 몫)를 알아야 한다
+        ArgumentCaptor<OrderCancellation> captor = ArgumentCaptor.forClass(OrderCancellation.class);
+        then(orderCancellationPort).should().reflectCancellation(captor.capture());
+        assertThat(captor.getValue().deductedShippingFee()).isEqualTo(3_000L);
     }
 
     // 승인은 이미 커밋된 뒤라 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 돈은 나가지 않으므로 그대로 올린다.
@@ -511,6 +566,8 @@ class DecideRefundServiceTest {
                 .isSameAs(failure);
         Refund updated = capturedUpdate();
         assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        // 지갑에 요청이 나가지 않았는데 주문에 취소를 알리면 돈은 안 나갔는데 주문만 취소된다
+        then(orderCancellationPort).should(never()).reflectCancellation(any());
     }
 
     private static Refund requested() {

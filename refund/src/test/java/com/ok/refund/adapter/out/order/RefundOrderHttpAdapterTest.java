@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
+import com.ok.refund.application.port.out.OrderCancellation;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -53,6 +54,8 @@ class RefundOrderHttpAdapterTest {
     private final AtomicInteger status = new AtomicInteger(200);
     private final AtomicReference<String> body = new AtomicReference<>("");
     private final AtomicReference<String> path = new AtomicReference<>();
+    private final AtomicReference<String> method = new AtomicReference<>();
+    private final AtomicReference<String> requestBody = new AtomicReference<>();
     private HttpServer server;
     private RefundOrderHttpAdapter sut;
 
@@ -61,6 +64,8 @@ class RefundOrderHttpAdapterTest {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/", exchange -> {
             path.set(exchange.getRequestURI().getPath());
+            method.set(exchange.getRequestMethod());
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] bytes = body.get().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status.get(), bytes.length == 0 ? -1 : bytes.length);
@@ -248,6 +253,48 @@ class RefundOrderHttpAdapterTest {
 
         // when & then
         assertThatThrownBy(() -> sut.getOrderItem(10L, 101L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+    }
+
+    // 주문 ② 취소 반영. 요청 모양(경로·필드 이름)이 주문과의 약속이라, 어긋나면 주문 쪽에서 값이 비어 받으므로 실제 요청을 확인한다
+
+    @Test
+    void 취소_반영은_요청서_경로로_refundId와_수량과_뺀_배송비를_보낸다() {
+        // given: 성공 상태 코드가 요청서에 없어 본문 없는 204로 답한다
+        status.set(204);
+
+        // when
+        sut.reflectCancellation(new OrderCancellation(7L, 101L, 2, 3_000L));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(method.get()).isEqualTo("POST");
+            softly.assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
+            softly.assertThat(requestBody.get()).isEqualToIgnoringWhitespace(
+                    "{\"refundId\":7,\"quantity\":2,\"deductedShippingFee\":3000}");
+        });
+    }
+
+    @Test
+    void 취소_반영은_200도_성공으로_본다() {
+        // given: 성공 코드가 정해지지 않아 2xx 전부를 성공으로 본다
+        status.set(200);
+        body.set("{}");
+
+        // when & then: 예외 없이 끝난다
+        sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+        assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
+    }
+
+    // 404(주문 상품 없음)·409(합계 초과, 수량이 다름)도 일시적 실패와 같은 코드다. 구분은 #516
+    @Test
+    void 취소_반영이_오류_상태를_받으면_ORDER_API_FAILED() {
+        // given
+        status.set(409);
+
+        // when & then
+        assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
     }

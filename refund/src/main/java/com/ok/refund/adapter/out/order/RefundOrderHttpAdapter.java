@@ -1,10 +1,13 @@
 package com.ok.refund.adapter.out.order;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.refund.adapter.out.order.dto.RefundOrderCancellationRequest;
 import com.ok.refund.adapter.out.order.dto.RefundOrderItemResponse;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
+import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.refund.application.port.out.OrderCancellationPort;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,9 +20,10 @@ import java.util.List;
 /**
  * 주문 모듈 내부 API를 HTTP로 부른다. 경로와 응답 모양은 주문 팀 API가 나오기 전까지 요청서 기준 가정이다.
  * 이름에 Refund를 붙인 이유: 다른 모듈에도 주문 호출 클라이언트가 있어, monolith에서 빈 이름이 겹치면 앱이 뜨지 않는다.
+ * 조회(①)와 취소 반영(②)은 포트를 나눴지만 같은 주문 내부 API라 주소·타임아웃·실패 처리를 함께 쓰려고 한 어댑터가 둘 다 구현한다.
  */
 @Component
-public class RefundOrderHttpAdapter implements OrderQueryPort {
+public class RefundOrderHttpAdapter implements OrderQueryPort, OrderCancellationPort {
 
     private final RestClient restClient;
 
@@ -59,6 +63,18 @@ public class RefundOrderHttpAdapter implements OrderQueryPort {
                 response.unitPrice(),
                 response.quantity(),
                 toBundle(response.sellerGroup()));
+    }
+
+    // 요청서 ②: POST /internal/v1/orders/items/{orderItemId}/refunds. 성공 상태 코드는 요청서에 없어 2xx 전부를 성공으로 본다(주문 #28 구현 때 확인).
+    // 실패(연결 실패·타임아웃·4xx·5xx)는 InternalRestClient가 모두 ORDER_API_FAILED로 바꾼다. 404·409(합계 초과, 같은 refundId인데 수량이 다름)를
+    // 일시적 실패와 나누지 않는 이유: 성공 흐름만 만드는 범위라 구분해도 다르게 처리할 길이 아직 없다(#516에서 구분)
+    @Override
+    public void reflectCancellation(OrderCancellation cancellation) {
+        restClient.post()
+                .uri("/items/{orderItemId}/refunds", cancellation.orderItemId())
+                .body(RefundOrderCancellationRequest.from(cancellation))
+                .retrieve()
+                .toBodilessEntity();
     }
 
     // 값 검사(음수, 빈 목록, 중복 상품)는 BundleShipping·BundleItem 생성자가 한다
