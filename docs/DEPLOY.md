@@ -9,7 +9,7 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 인터넷 ──80──▶ nginx ──/api/v1/**, /bff/**──▶ bff ──/api/v1/**──▶ app ──▶ mysql
                  │                              (프론트 레포가 배포)        └──▶ redis
                  └─ 그 외 경로(/internal, /actuator 등) → 404
-                                                                    └──▶ kafka-1, kafka-2, kafka-3 (클러스터 1개)
+                                                                    └──▶ kafka (단일 브로커. cluster 프로파일이면 kafka-1, kafka-2, kafka-3)
 ```
 
 - 외부 요청은 모두 프론트 BFF를 거쳐 앱에 닿습니다. BFF는 같은 EC2에 있지만 프론트 레포의 별도 compose 프로젝트(`/opt/paldo-gotgan-bff`)로 뜹니다. 배포·롤백은 프론트 레포 `deploy/README.md`를 따르고, 이 레포의 `deploy.sh`는 BFF를 건드리지 않습니다. 이 레포에는 nginx 경로와 공유 네트워크만 있습니다([10. BFF](#10-bff)).
@@ -21,8 +21,10 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
   - 모니터링(Grafana·Prometheus)만 서버의 `127.0.0.1`에 열고 SSH 터널로 봅니다([11. 모니터링](#11-모니터링-374)).
   - Redis는 보안 그룹에도 6379 규칙이 없어 compose 네트워크 안에서만 닿고, 그래도 `REDIS_PASSWORD`로 인증합니다.
   - Kafka는 compose 네트워크 안에서만 닿고(보안 그룹에도 규칙 없음), 인증 없는 PLAINTEXT로 통신합니다.
-  - Kafka 3대는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
-- Redis는 `maxmemory 256mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성 없음(재시작하면 비워짐)입니다. 캐시·락 데이터를 다시 만들 수 있다는 전제이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 영속성을 다시 정합니다.
+  - Kafka 브로커는 별도 네트워크(`kafka-net`)에 있고, app만 이 네트워크와 기본 네트워크(mysql·nginx·redis)에 함께 붙습니다. mysql·nginx·redis는 Kafka에 닿지 않습니다.
+- Redis는 단일 인스턴스입니다(#530). `maxmemory 340mb`, `noeviction`(상한에 닿으면 쓰기 실패, 키를 몰래 지우지 않음), 영속성은 AOF(`appendfsync everysec`, 재시작·강제 종료해도 최대 1초 분량만 잃음)이고 RDB는 끕니다.
+  - 컨테이너는 `mem_limit` 512m, `memswap_limit` 512m(같은 값이라 swap을 쓰지 못함)입니다. `maxmemory`보다 큰 한도는 AOF 재작성(fork) 중 늘어나는 메모리를 위한 여유입니다. 쓰기가 많은 상태에서 재작성이 겹치면 컨테이너 메모리가 `maxmemory`보다 약 140MB까지 더 늘었고(로컬 실측, 한도 512m 안), 쓰기가 더 많아질 것 같으면 `maxmemory`를 낮춥니다.
+  - AOF 파일은 도커 볼륨(`redis-data`)에 있어 컨테이너를 다시 만들어도 남고, 인스턴스를 교체하면 루트 디스크와 함께 사라집니다. 캐시·락 데이터를 다시 만들 수 있다는 전제는 그대로이므로, 지켜야 할 데이터(토큰 등)를 넣게 되면 정책과 백업을 다시 정합니다.
 - 앱의 `/actuator/health`(관리 포트 18080)에는 Redis 상태가 들어갑니다. Redis에 연결하지 못하면 `DOWN`이 되어 app이 unhealthy로 보이고 배포 헬스체크도 실패합니다. redis 컨테이너 자체의 상태는 `docker compose ps`로 봅니다.
 - 파일: 레포의 `deploy/` → 서버의 `/opt/paldo-gotgan`
 - 주소: `http://2000k.duckdns.org` (DuckDNS 무료 도메인, EIP를 가리킨다)
@@ -31,13 +33,20 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 
 ### Kafka (#318)
 
-- 클러스터 1개에 브로커 3대(`kafka-1`~`kafka-3`), 브로커와 컨트롤러를 한 프로세스에서 돌리는 KRaft combined 모드입니다. 이미지는 `apache/kafka:${KAFKA_VERSION}`입니다.
-- 메시지는 3대에 복사되고 2대 이상에 저장돼야 발행 성공입니다(`min.insync.replicas=2`, 앱은 `acks=all`). 그래서 **브로커 1대 고장은 버티지만, 같은 EC2라 EC2가 죽으면 3대가 함께 죽고 처리량도 늘지 않습니다.** 장애 대비용 구성입니다.
-- app은 mysql과 Kafka 3대가 모두 healthy가 된 뒤 시작합니다. 브로커가 healthy가 되지 못하면 app이 뜨지 않고 배포가 실패합니다.
-- 데이터는 루트 디스크의 도커 볼륨(`kafka-N-data`)에 둡니다. `/data`(EBS)는 MySQL 전용이라 Kafka가 디스크를 채워도 MySQL은 멈추지 않습니다.
-  - 파티션 하나당 256MB(`KAFKA_LOG_RETENTION_BYTES`)를 넘으면 오래된 메시지부터 지웁니다. 아직 읽히지 않은 메시지도 지워질 수 있습니다. 토픽이 늘면 `토픽 수 × 파티션 수 × 3벌 × 256MB`가 루트 디스크 여유(30GB 중 OS·도커 이미지 사용분 제외) 안에 드는지 다시 계산합니다.
+- Kafka는 프로파일로 고릅니다(#530). 서버 `.env`의 `COMPOSE_PROFILES`가 `single`(기본, 비우면 `single`)이면 브로커 1대, `cluster`면 3대입니다. 둘을 함께 쓰거나 둘 다 빼면 `deploy.sh`가 거부합니다. 이미지는 `apache/kafka:${KAFKA_VERSION}`이고, 브로커와 컨트롤러를 한 프로세스에서 돌리는 KRaft combined 모드입니다.
+- **single (현재 운영 구성).** 브로커 1대(`kafka`)이고 복제·최소 동기화가 모두 1입니다(앱은 `acks=all` 그대로). 인프라 자원 한계로 이 구성을 씁니다. 대신 **브로커나 볼륨에 문제가 생기면 Kafka가 멈추고 메시지가 사라질 수 있으며**, 이미지·설정을 바꿔 다시 만드는 동안 Kafka가 잠시 멈춥니다(원본 데이터는 DB에 있습니다).
+  - 컨테이너는 `mem_limit` 1024m, `memswap_limit` 1024m(같은 값이라 swap을 쓰지 못함)이고 힙은 576m입니다. 한도를 넘으면 swap으로 버티지 않고 OOM kill로 재시작됩니다. 나머지는 OS 페이지 캐시가 쓰므로 `docker stats`의 사용량이 한도 가까이 보여도 정상일 수 있습니다(캐시는 회수됨. 1KB 메시지 100만 건을 `acks=all`로 발행한 로컬 시험에서 컨테이너 메모리가 최대 한도까지 찼지만 OOM 없이 `healthy`를 유지했습니다).
+- **cluster (인프라 확장용으로 남겨 둔 구성).** 브로커 3대(`kafka-1`~`kafka-3`), 메시지가 3대에 복사되고 2대 이상에 저장돼야 발행 성공입니다(`min.insync.replicas=2`). 브로커 1대 고장은 버티지만, 같은 EC2라 EC2가 죽으면 3대가 함께 죽고 처리량도 늘지 않습니다. 설정 값은 바꾸지 않고 프로파일만 붙여 두었습니다. 대당 `mem_limit` 680m입니다. `cluster`를 쓰려면 `.env`에 `COMPOSE_PROFILES=cluster`와 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣습니다.
+- app은 mysql과 켜진 프로파일의 Kafka가 모두 healthy가 된 뒤 시작합니다(꺼진 프로파일의 브로커는 `required: false`로 건너뜀). 브로커가 healthy가 되지 못하면 app이 뜨지 않고 배포가 실패합니다.
+- 데이터는 루트 디스크의 도커 볼륨(`single`은 `kafka-data`, `cluster`는 `kafka-N-data`)에 둡니다. 쿼럼 구성이 달라 서로의 볼륨을 쓸 수 없고, 한쪽으로 바꾸면 다른 쪽의 메시지는 보이지 않습니다. `/data`(EBS)는 MySQL 전용이라 Kafka가 디스크를 채워도 MySQL은 멈추지 않습니다.
+  - 파티션 하나당 256MB(`KAFKA_LOG_RETENTION_BYTES`)를 넘으면 오래된 메시지부터 지웁니다. 아직 읽히지 않은 메시지도 지워질 수 있습니다. 토픽이 늘면 `토픽 수 × 파티션 수 × 복사본 수(single 1, cluster 3) × 256MB`가 루트 디스크 여유(30GB 중 OS·도커 이미지 사용분 제외) 안에 드는지 다시 계산합니다.
   - 인스턴스를 교체하면 루트 디스크와 함께 Kafka 데이터도 사라지고 새 클러스터로 시작합니다. 원본 데이터는 DB에 있습니다.
-- **`KAFKA_CLUSTER_ID`는 처음 정한 뒤 바꾸지 않습니다.** 바꾸면 기존 볼륨과 맞지 않아 브로커가 뜨지 않습니다. 꼭 바꿔야 하면 `docker compose -f compose.prod.yml down`, `docker volume rm paldo-gotgan_kafka-1-data paldo-gotgan_kafka-2-data paldo-gotgan_kafka-3-data`로 볼륨까지 지운 뒤 배포합니다(Kafka 메시지가 모두 사라집니다).
+- **`KAFKA_CLUSTER_ID`는 처음 정한 뒤 바꾸지 않습니다.** 바꾸면 기존 볼륨과 맞지 않아 브로커가 뜨지 않습니다. 꼭 바꿔야 하면 `docker compose -f compose.prod.yml down`, `docker volume rm paldo-gotgan_kafka-data paldo-gotgan_kafka-1-data paldo-gotgan_kafka-2-data paldo-gotgan_kafka-3-data`로 볼륨까지 지운 뒤 배포합니다(Kafka 메시지가 모두 사라집니다). `single`과 `cluster`는 같은 값을 쓰며 볼륨이 따로라 서로 영향이 없습니다.
+- **3대 클러스터로 돌던 서버를 `single`로 바꿀 때**는 `./deploy.sh`만 실행하면 안 됩니다. 꺼진 프로파일의 컨테이너(`kafka-1`~`kafka-3`)는 compose가 멈추지 않아 계속 떠서 메모리 약 2GiB를 쓰고(로컬 시험에서 확인), 앱은 새 단일 브로커로 붙어 두 벌이 따로 돕니다. 그래서 `.env`에 값이 없어 기본값 `single`이 된 기존 서버에서도 `deploy.sh`는 클러스터 브로커가 떠 있으면 `배포 중단`으로 멈춥니다. 클러스터를 그대로 쓰려면 `.env`에 `COMPOSE_PROFILES=cluster`와 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS`를 넣고, `single`로 바꾸려면 아래 순서를 따릅니다.
+  1. 아직 읽히지 않은 메시지(컨슈머 랙)가 없는지 확인하고, 있으면 버려도 되는지 정합니다. `single`은 새 볼륨으로 시작하므로 기존 3대의 메시지는 옮겨지지 않습니다.
+  2. `docker compose -f compose.prod.yml --profile cluster stop kafka-1 kafka-2 kafka-3`로 기존 브로커를 멈춥니다. 볼륨은 남기고 되돌릴 일이 없을 때만 `rm`, `docker volume rm`으로 지웁니다.
+  3. `.env`에 `COMPOSE_PROFILES=single`(또는 값을 비움)을 두고 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS` 줄은 지우거나 주석으로 둡니다.
+  4. `./deploy.sh`를 실행합니다. Redis도 설정이 바뀌어 컨테이너가 한 번 다시 만들어지며 그때 캐시 데이터는 비워집니다.
 - Kafka 상태는 앱 헬스체크(`/actuator/health`, 관리 포트 18080)에 들어가지 않습니다. `docker compose ps`의 kafka 컨테이너 상태로 봅니다.
 
 **메모리 예산 (t3.large 8GiB, 추정치)**
@@ -45,15 +54,15 @@ EC2 한 대에 nginx·앱·MySQL·Redis·Kafka를 Docker 컨테이너로 띄워 
 | 구성 | 예산 |
 |---|---|
 | app | 2560m (`mem_limit`) |
-| redis | 384m (`mem_limit`, 데이터 상한 256m) |
-| kafka 3대 | 대당 680m (`mem_limit`, 힙 384m), 합계 약 2GiB |
+| redis | 512m (`mem_limit`, `memswap_limit` 512m으로 swap 금지, 데이터 상한 340m) (#530) |
+| kafka (single) | 1024m (`mem_limit`, `memswap_limit` 1024m으로 swap 금지, 힙 576m) (#530). cluster는 대당 680m(힙 384m), 합계 약 2GiB |
 | prometheus / grafana / mysqld-exporter | 512m / 256m / 64m (`mem_limit`), 합계 832m (#374) |
 | mysql | 제한 없음, 약 0.5~1GiB (부하테스트 때 `docker stats`로 실제 사용량을 본 뒤 상한을 정함) |
 | bff (프론트 레포 compose) | 256m (`mem_limit`, 힙 192m) |
 | nginx, OS·Docker | 약 0.6GiB |
-| 합계 | 약 7.1~7.6GiB (여유 약 0.4~0.9GiB, mysql 사용량에 따라 달라짐) |
+| 합계 (single 기준) | 약 6.2~6.7GiB (여유 약 1.3~1.8GiB, mysql 사용량에 따라 달라짐). cluster는 Kafka가 약 1GiB 더 늘어 약 7.1~7.6GiB(#530 전의 계산) |
 
-- `mem_limit`이 있는 서비스의 상한 합계는 6072m(약 5.9GiB, bff 포함)입니다. 상한은 천장이라 실제 사용량은 이보다 작습니다.
+- `mem_limit`이 있는 서비스의 상한 합계는 single 기준 5184m(약 5.1GiB, bff 포함), cluster 기준 6072m(약 5.9GiB)입니다. 상한은 천장이라 실제 사용량은 이보다 작습니다. single 합계는 위 표의 항목을 더해 다시 계산한 추정치이고 서버에서 실측하지는 않았습니다.
 - 모니터링을 더하면서 여유가 크게 줄었습니다. MySQL에는 상한을 걸지 않습니다. 기본 버퍼 풀이 128MB라 사용량이 제한적이고, 한도에 걸려 OOM kill로 DB가 죽는 쪽이 더 위험하기 때문입니다.
 
 로컬에서 잰 브로커 사용량은 대기 상태 대당 약 290~350MiB입니다. 서버에서는 `free -m`, `docker stats --no-stream`으로 확인합니다.
@@ -117,9 +126,10 @@ cd /opt/paldo-gotgan && ./deploy.sh
 - 빌드만 다시 하려면 Actions 탭에서 `Docker Image` → Run workflow로 실행합니다. `semi`가 아닌 브랜치를 고르면 빌드는 건너뜁니다.
 - 패키지에 Actions 쓰기 권한이 있어야 합니다. GHCR 패키지 설정 → Manage Actions access에서 이 레포를 Write로 추가합니다. 없으면 push가 `denied`로 실패합니다.
 - `deploy.sh`는 app(과 mysql)을 먼저 올려 healthy를 확인한 뒤 nginx까지 올리고 `배포 성공`을 출력합니다. app 기동에 실패하거나 2분 안에 healthy가 되지 않으면 앱 로그를 출력하고 실패합니다.
-- app보다 먼저 `kafka-rollout.sh`가 Kafka를 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
+- app보다 먼저 Kafka를 처리합니다. `COMPOSE_PROFILES`가 `single`(기본)이면 `docker compose up -d --wait kafka`로 브로커를 올려 healthy를 기다리고(최대 180초, 이미지·설정이 바뀌어 다시 만드는 동안 Kafka가 잠시 멈춤), 실패하면 브로커 로그를 출력하고 배포를 중단합니다.
+- `cluster`이면 `kafka-rollout.sh`가 처리합니다. 설정이 바뀐 서비스를 compose가 동시에 다시 만들면 3대가 함께 내려가 Kafka가 멈추기 때문에, 상태에 따라 나눠 처리합니다.
 
-| Kafka 상태 | 처리 |
+| cluster일 때 Kafka 상태 | 처리 |
 |---|---|
 | 떠 있는 브로커가 없음 (첫 배포, `down` 뒤) | 3대를 동시에 띄웁니다. 3대 중 2대가 모여야 시작하므로 1대씩 띄우면 끝없이 기다립니다 |
 | 3대 모두 healthy | 1대씩 다시 띄우고, healthy와 복사 따라잡기(복사 덜 된 파티션 0개)를 기다린 뒤 다음 브로커로 갑니다. 설정·버전이 그대로면 다시 만들지 않아 바로 지나갑니다 |
@@ -160,8 +170,10 @@ docker compose -f compose.prod.yml ps                 # 상태 (app이 healthy�
 docker compose -f compose.prod.yml logs -f app        # 앱 로그
 docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
 docker compose -f compose.prod.yml exec redis redis-cli ping      # Redis 확인 (PONG)
-docker compose -f compose.prod.yml ps kafka-1 kafka-2 kafka-3    # Kafka 3대가 healthy인지
-# Kafka 클러스터 상태(투표자 3대, 리더)와 복사가 덜 된 파티션(없어야 정상). CLI도 JVM을 띄우므로 힙을 작게 준다
+docker compose -f compose.prod.yml ps kafka                      # Kafka(single)가 healthy인지. cluster는 kafka-1 kafka-2 kafka-3
+docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' paldo-gotgan-kafka-1 paldo-gotgan-redis-1   # 한도와 swap 한도가 같아야 swap을 안 씀
+docker compose -f compose.prod.yml exec redis sh -c 'redis-cli config get appendonly'   # AOF가 켜졌는지 (yes)
+# 아래는 cluster 기준(투표자 3대, 리더)이고 복사가 덜 된 파티션은 없어야 정상이다. single은 kafka-1 대신 kafka로, 투표자가 1대다. CLI도 JVM을 띄우므로 힙을 작게 준다
 docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status'
 docker compose -f compose.prod.yml exec kafka-1 sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions'
 curl -s -o /dev/null -w '%{http_code}\n' localhost/api/v1/products/categories   # 200
@@ -187,7 +199,7 @@ docker compose -f compose.prod.yml restart nginx
 
 - **Redis가 추가된 버전을 처음 배포하는 기존 서버**는 `compose.prod.yml`을 바꾸기 전에 서버 `.env`에 `REDIS_PASSWORD`(`openssl rand -base64 24`)와 `REDIS_VERSION=8.10`을 추가합니다. 값이 없으면 compose가 `REDIS_PASSWORD가 필요하다`로 실패합니다. 비밀번호는 base64 문자(영문·숫자·`+/=`)만 씁니다(설정 파일에 따옴표로 감싸 넣으므로 `"`, 역슬래시, `$`는 쓰지 않습니다). app은 Redis가 healthy가 된 뒤에 시작하므로, 형식이 틀려 Redis가 계속 재시작하면 app이 뜨지 않고 배포가 실패합니다. 새로 만든 서버는 `.env.prod.example`에 항목이 있습니다.
 
-- Kafka 설정이 바뀐 `compose.prod.yml`도 `./deploy.sh`가 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 3대가 동시에 다시 만들어지니 쓰지 않습니다.
+- Kafka 설정이 바뀐 `compose.prod.yml`은 `./deploy.sh`가 처리합니다. `single`은 브로커를 다시 만들고, `cluster`는 브로커를 1대씩 다시 띄웁니다. `docker compose up -d`를 직접 실행하면 `cluster`에서는 3대가 동시에 다시 만들어지니 쓰지 않습니다.
 - nginx는 설정 파일 하나를 bind mount합니다. 파일을 교체하면 inode가 바뀌어 실행 중인 컨테이너는 옛 파일을 계속 읽으므로, 반드시 nginx를 재시작합니다.
 
 ## 7. pull 토큰 교체

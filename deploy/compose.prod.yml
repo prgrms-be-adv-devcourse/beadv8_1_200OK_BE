@@ -3,7 +3,10 @@
 # 예외로 grafana·prometheus는 서버의 127.0.0.1에만 연다. 외부에서는 SSH 터널로만 본다 (docs/DEPLOY.md 모니터링)
 name: paldo-gotgan
 
-# ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
+# Kafka는 프로파일로 고른다(#530). single(브로커 1대, 기본)과 cluster(브로커 3대)는 둘 중 하나만 켠다
+# 서버 .env의 COMPOSE_PROFILES로 정하고, 비어 있으면 deploy.sh가 single로 둔다. 둘을 함께 켜면 deploy.sh가 거부한다
+
+# ---------- Kafka 브로커 3대(cluster)가 같이 쓰는 설정 (#318) ----------
 # 클러스터 1개에 브로커 3대, KRaft combined 모드다. 로컬 docker-compose.yml과 같은 구성이고, 다른 점은
 # 외부 포트를 열지 않는 것(EXTERNAL listener 없음), 메모리 제한, 디스크 용량 상한, 클러스터 ID를 .env에서 받는 것이다
 # 같은 EC2에 3대를 두므로 브로커 1대 고장은 버티지만 EC2가 죽으면 3대가 함께 죽고, 처리량도 늘지 않는다 (장애 대비용)
@@ -35,6 +38,21 @@ x-kafka-environment: &kafka-environment
   KAFKA_LOG_SEGMENT_BYTES: 67108864
   # 힙은 비율이 아니라 고정값으로 잡는다. Kafka는 힙보다 OS 페이지 캐시를 많이 써서 mem_limit 안에 그 자리를 남겨야 한다 (384/680)
   KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+
+# ---------- Kafka 단일 브로커 (#530) ----------
+# 인프라 자원 한계로 운영은 브로커 1대로 간다. 위 클러스터 설정은 값을 바꾸지 않고 그대로 두고, 인프라가 확장되면 cluster 프로파일로 다시 쓴다
+# 클러스터 설정에서 단일이라 달라지는 값만 덮어쓴다. 컨트롤러가 1대뿐이라 쿼럼도 1대이고, 복사본이 없으니 복제·최소 동기화 수는 모두 1이다
+# 앱의 acks=all은 그대로 둬도 동기화 대상이 리더 1대뿐이라 발행이 막히지 않는다
+x-kafka-single-environment: &kafka-single-environment
+  <<: *kafka-environment
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+  KAFKA_MIN_INSYNC_REPLICAS: 1
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  # mem_limit 1024m에서 힙은 클러스터와 같은 비율(384/680)로 잡는다. 나머지는 OS 페이지 캐시와 헬스체크 JVM이 쓴다
+  KAFKA_HEAP_OPTS: -Xms576m -Xmx576m
 
 x-kafka-service: &kafka-service
   image: apache/kafka:${KAFKA_VERSION:?KAFKA_VERSION이 필요하다}
@@ -101,25 +119,47 @@ services:
       # healthcheck의 redis-cli가 비밀번호를 인자 없이 쓰게 한다
       REDISCLI_AUTH: ${REDIS_PASSWORD}
     # 비밀번호를 --requirepass 인자로 넘기면 호스트의 ps에 보이므로, 인자 대신 컨테이너 안 설정 파일로 넘긴다
-    # 사용처(캐시·락)가 정해지지 않아 키를 몰래 지우지 않는 noeviction으로 두고, 다시 만들 수 있는 데이터라 영속성(RDB·AOF)은 끈다
+    # 사용처(캐시·락)가 정해지지 않아 키를 몰래 지우지 않는 noeviction으로 둔다
+    # 영속성은 AOF만 켠다(#530). 쓰기 명령을 파일에 남기고 1초마다 디스크에 반영(everysec)해, 재시작해도 최대 1초 분량만 잃는다. RDB 스냅샷은 끈다
     command:
       - sh
       - -c
       - |
         umask 077
         printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
-        exec redis-server /tmp/redis.conf --maxmemory 256mb --maxmemory-policy noeviction --save '' --appendonly no
-    # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값
-    mem_limit: 384m
+        exec redis-server /tmp/redis.conf --maxmemory 340mb --maxmemory-policy noeviction --save '' --appendonly yes --appendfsync everysec
+    # 한도를 넘지 못하게 막는다. maxmemory 340mb(기존 비율 256/384과 같은 2/3)에 AOF 재작성(fork) 중 늘어나는 메모리와 오버헤드 여유를 더한 값이다
+    mem_limit: 512m
+    # memswap_limit을 mem_limit과 같게 두면 swap을 쓰지 못한다. swap에 올라가면 Redis 응답이 디스크 속도로 느려지므로, 느려지기보다 한도에서 죽는 쪽을 택한다
+    memswap_limit: 512m
+    # AOF 파일(/data/appendonlydir)을 컨테이너를 다시 만들어도 남기는 도커 볼륨. 인스턴스를 교체하면 루트 디스크와 함께 사라진다
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # 브로커 3대는 이름·번호만 다르다. 1대씩 다시 띄우는 순서는 deploy.sh가 맡는다
+  # 단일 브로커 (#530). single 프로파일일 때만 뜬다. 볼륨과 노드는 클러스터와 따로 둬서 서로의 데이터를 건드리지 않는다
+  kafka:
+    <<: *kafka-service
+    profiles: [single]
+    # 클러스터용 680m를 덮어쓴다. 힙(576m)과 OS 페이지 캐시, 헬스체크 JVM이 이 한도 안에서 함께 쓴다
+    mem_limit: 1024m
+    # mem_limit과 같게 두면 swap을 쓰지 못한다. 한도를 넘으면 swap으로 버티지 않고 OOM kill로 재시작된다
+    memswap_limit: 1024m
+    environment:
+      <<: *kafka-single-environment
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # 브로커 3대는 이름·번호만 다르다. 인프라가 확장되면 cluster 프로파일로 쓴다(이때 single은 끈다). 1대씩 다시 띄우는 순서는 deploy.sh가 맡는다
   kafka-1:
     <<: *kafka-service
+    profiles: [cluster]
     environment:
       <<: *kafka-environment
       KAFKA_NODE_ID: 1
@@ -129,6 +169,7 @@ services:
 
   kafka-2:
     <<: *kafka-service
+    profiles: [cluster]
     environment:
       <<: *kafka-environment
       KAFKA_NODE_ID: 2
@@ -138,6 +179,7 @@ services:
 
   kafka-3:
     <<: *kafka-service
+    profiles: [cluster]
     environment:
       <<: *kafka-environment
       KAFKA_NODE_ID: 3
@@ -158,14 +200,21 @@ services:
       # 대신 Redis가 healthy가 되지 못하면(예: REDIS_PASSWORD 형식 오류) 앱이 뜨지 않고 배포가 실패한다
       redis:
         condition: service_healthy
-      # mysql과 같이 Kafka 3대도 healthy가 된 뒤에 앱을 띄운다 (#318)
+      # mysql과 같이 Kafka도 healthy가 된 뒤에 앱을 띄운다 (#318)
       # 대신 브로커가 healthy가 되지 못하면 앱이 뜨지 않고 배포가 실패한다. 헬스체크 오판으로 배포가 자주 막히면 service_started로 바꾼다
+      # single이면 kafka, cluster면 kafka-1~3만 켜지므로 꺼진 프로파일의 서비스는 required: false로 건너뛴다
+      kafka:
+        condition: service_healthy
+        required: false
       kafka-1:
         condition: service_healthy
+        required: false
       kafka-2:
         condition: service_healthy
+        required: false
       kafka-3:
         condition: service_healthy
+        required: false
     # env_file을 쓰지 않고 앱이 쓰는 값만 넘긴다. MYSQL_ROOT_PASSWORD 같은 값이 앱 컨테이너에 들어가지 않게 하기 위함이다
     environment:
       SPRING_PROFILES_ACTIVE: prod
@@ -176,8 +225,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # 브로커 3대를 모두 적어, 1대가 죽어 있어도 나머지로 처음 접속한다
-      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      # 기본은 단일 브로커다. cluster 프로파일이면 .env에 KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092 를 넣는다
+      # 클러스터는 3대를 모두 적어, 1대가 죽어 있어도 나머지로 처음 접속한다
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_INTERNAL_BOOTSTRAP_SERVERS:-kafka:9092}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY가 필요하다}
       JEV_API_KEY: ${JEV_API_KEY:?JEV_API_KEY가 필요하다}
       AWS_REGION: ${AWS_REGION:?AWS_REGION이 필요하다}
@@ -190,8 +240,8 @@ services:
       # 남겨 두는 이유: APP_IMAGE_TAG만 바꾸는 표준 롤백(docs/DEPLOY.md 4절)으로 이전 이미지가 뜨게 하기 위해서다
       # TODO(#313): RS256 버전이 운영에서 안정된 뒤 서버 .env의 JWT_SECRET과 함께 이 줄을 지운다
       JWT_SECRET: ${JWT_SECRET:-}
-      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(384m)·Kafka(3대 약 2GB)·모니터링(832m)을 함께 올리면
-      # 남는 메모리(약 0.7~1.2GiB)가 이 앱 하나보다 작아, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
+      # 컨테이너 메모리 제한(mem_limit) 기준으로 힙을 잡는다. t3.large(8GB)에 MySQL·Redis(512m)·Kafka(단일 1GB, 클러스터면 3대 약 2GB)·모니터링(832m)을 함께 올리면
+      # 남는 메모리가 이 앱 하나보다 작을 수 있어, 앱 인스턴스를 더 띄우려면 메모리 예산을 다시 잡아야 한다 (docs/DEPLOY.md)
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
     volumes:
       # 서버의 /opt/paldo-gotgan/keys. JWT 키 PEM과 그 설정(jwt.yaml)을 둔다. 앱은 application-prod.yml에서 jwt.yaml을 읽는다
@@ -311,7 +361,10 @@ networks:
 
 # 브로커마다 따로 둔다. 도커 볼륨이라 루트 디스크(/var/lib/docker)에 쌓인다
 # 인스턴스를 교체하면 루트 디스크와 함께 사라져 아직 안 읽힌 메시지도 사라진다. 원본 데이터는 DB에 있으므로 받아들인다
+# 단일 브로커(kafka-data)와 클러스터(kafka-N-data)는 쿼럼 구성이 달라 볼륨을 나눠 쓸 수 없다
 volumes:
+  redis-data:
+  kafka-data:
   kafka-1-data:
   kafka-2-data:
   kafka-3-data:

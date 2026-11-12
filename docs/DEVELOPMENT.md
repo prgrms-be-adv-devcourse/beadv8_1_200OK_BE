@@ -48,7 +48,8 @@ cp .env.example .env
 ## 3. 로컬 실행
 
 ```bash
-# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka는 도커 볼륨에 데이터 저장, Redis는 볼륨 없이 재시작하면 비워짐)
+# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka·Redis(AOF)는 도커 볼륨에 데이터 저장)
+# Kafka는 프로파일로 켠다(#530). .env에 COMPOSE_PROFILES=single 이 있어야 뜬다(.env.example에 있음). 없으면 --profile single 을 붙인다
 docker compose up -d
 
 # 2) 앱 실행 (기본 프로파일 dev)
@@ -65,12 +66,18 @@ docker compose up -d
 
 ### 로컬 Kafka (#318)
 
-`docker compose up -d`는 MySQL과 함께 Kafka 브로커 3대(`kafka-1`~`kafka-3`)를 띄웁니다. 운영과 같은 구성(클러스터 1개, 브로커 3대, KRaft combined)입니다.
+Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정하고(`.env.example`에는 `single`), 둘 중 하나만 켭니다. 운영(`deploy/compose.prod.yml`)과 같은 두 구성이 있습니다.
 
-- 내 PC에서는 `localhost:19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서).
-- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값이 위 3대라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
-- 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다. 상태는 `docker compose ps`에서 `healthy`로 확인합니다.
-- 메시지는 3대에 복사되고 2대 이상에 저장돼야 발행 성공입니다. 그래서 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고, 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다.
+| 프로파일 | 구성 | 메모리 | 쓰는 때 |
+|---|---|---|---|
+| `single` (기본) | 브로커 1대(`kafka`), 복제·최소 동기화 1 | `mem_limit` 1024m, swap 금지 | 평소. 인프라 자원 한계로 운영도 이 구성이다 |
+| `cluster` | 브로커 3대(`kafka-1`~`kafka-3`), 복제 3·최소 동기화 2 | 한도 없음(Docker 메모리 약 2GB) | 인프라가 확장돼 3대를 쓸 때 다시 쓰려고 설정을 그대로 남겨 둔 구성 |
+
+- 내 PC에서는 `single`이면 `localhost:19092`, `cluster`면 `19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서). 두 프로파일은 같은 `KAFKA_1_PORT`를 쓰므로 함께 켜면 포트가 겹쳐 시작에 실패합니다.
+- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값의 첫 주소(`localhost:19092`)가 `single`의 브로커라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
+- 상태는 `docker compose ps`에서 `healthy`로 확인합니다. `cluster`는 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다.
+- `cluster`에서는 메시지가 3대에 복사되고 2대 이상에 저장돼야 발행 성공이라, 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다. `single`은 브로커가 멈추면 Kafka 전체가 멈춥니다.
+- `single`에서 `cluster`로 바꾸려면(또는 반대로) 켜 둔 쪽을 먼저 내립니다(`docker compose down`). 볼륨이 서로 달라(`kafka-data`, `kafka-N-data`) 한쪽의 메시지는 다른 쪽에서 보이지 않습니다.
 - Kafka만 처음 상태로 되돌리려면 `docker compose down -v`로 볼륨까지 지웁니다(토픽·메시지가 모두 사라지고 새 클러스터로 시작합니다).
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
@@ -109,13 +116,14 @@ docker compose --profile monitoring up -d
 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^kafka_brokers|under_replicated|consumergroup_lag_sum' | grep -v __consumer_offsets
 ```
 
-- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 브로커 3대가 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 켜진 프로파일(`single`이면 브로커 1대, `cluster`면 3대)이 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 기본은 `single`의 `kafka:9092`를 봅니다. `cluster`로 쓰면 `.env`에 `KAFKA_EXPORTER_SERVER_1=kafka-1:9092`, `KAFKA_EXPORTER_SERVER_2=kafka-2:9092`, `KAFKA_EXPORTER_SERVER_3=kafka-3:9092`를 넣습니다.
 - 확인 명령과 헬스체크는 이미지 안의 `wget`(BusyBox)을 씁니다. `KAFKA_EXPORTER_VERSION`을 올리면 위 명령이 그대로 되는지 다시 확인합니다.
 - 주로 보는 값
-  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `3`
+  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `1`(`single`) 또는 `3`(`cluster`)
   - `kafka_topic_partition_under_replicated_partition`: 복사본이 모자란 파티션이면 `1`. 평소 모두 `0`
   - `kafka_consumergroup_lag_sum`: 그룹·토픽별 랙. 계속 커지면 받는 쪽이 따라가지 못하는 것
-- 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다.
+- `cluster`에서 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다. `single`은 복사본이 없어 언더 복제가 항상 `0`입니다.
 - 컨슈머 그룹이 하나도 없으면(앱을 띄우기 전) 랙 값은 나오지 않습니다.
 - 띄운 직후 첫 조회에서 `Cannot get consumer group: broker not connected` 로그가 나올 수 있습니다. 브로커 연결이 준비되기 전이라 다음 조회부터는 나오지 않습니다.
 - 그룹 오프셋은 조회만 하고 컨슈머 그룹에 가입하지 않으므로 앱 컨슈머에 영향을 주지 않습니다.
@@ -133,9 +141,9 @@ docker compose --profile app logs -f app     # 앱 로그
 docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 ```
 
-- DB, Redis, Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).
-- 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름(`kafka-1:9092,...`)으로 덮어씁니다. `.env`의 `localhost:...`는 컨테이너 안에서 앱 자신을 가리키기 때문입니다.
-- Kafka 3대는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
+- DB, Redis, 켜진 프로파일의 Kafka(`single`이면 1대, `cluster`면 3대)가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).
+- 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름으로 덮어씁니다. 기본은 `kafka:9092`(`single`)이고, `cluster`면 `.env`에 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣습니다. `.env`의 `KAFKA_BOOTSTRAP_SERVERS`(`localhost:...`)는 컨테이너 안에서 앱 자신을 가리키기 때문에 쓰지 않습니다.
+- Kafka 브로커는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
@@ -183,8 +191,11 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 | `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
 | `KAFKA_EXPORTER_VERSION` | Kafka 지표 수집 이미지 버전 (`monitoring` 프로파일) | `v1.11.0` |
-| `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림) | `19092` / `29092` / `39092` |
-| `KAFKA_BOOTSTRAP_SERVERS` | 앱이 접속할 브로커 3대 | `localhost:19092,localhost:29092,localhost:39092` |
+| `COMPOSE_PROFILES` | 켤 compose 프로파일. Kafka는 `single`(브로커 1대) 또는 `cluster`(3대) 중 하나만 (#530). 모니터링은 `monitoring`을 쉼표로 더한다 | 없음(`.env.example`은 `single`). 비우면 Kafka가 뜨지 않음 |
+| `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림). `single`은 `KAFKA_1_PORT`만 씀 | `19092` / `29092` / `39092` |
+| `KAFKA_BOOTSTRAP_SERVERS` | 내 PC에서 실행하는 앱이 접속할 브로커. `single`이면 첫 주소만 맞으면 됨 | `localhost:19092,localhost:29092,localhost:39092` |
+| `KAFKA_INTERNAL_BOOTSTRAP_SERVERS` | 컨테이너로 띄운 앱(`app` 프로파일)이 접속할 브로커. `cluster`일 때만 지정 | `kafka:9092` |
+| `KAFKA_EXPORTER_SERVER_1` ~ `_3` | Kafka 지표 수집기가 볼 브로커. `cluster`일 때만 지정 | `kafka:9092` |
 | `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`) |
 
 ### 새 설정값을 환경변수로 추가하는 방법

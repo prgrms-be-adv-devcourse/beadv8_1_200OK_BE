@@ -13,7 +13,10 @@ networks:
     name: monitoring-net
     driver: bridge
 
-# ---------- Kafka 브로커 3대가 같이 쓰는 설정 (#318) ----------
+# Kafka는 프로파일로 고른다(#530). single(브로커 1대)과 cluster(브로커 3대) 중 하나만 켠다
+# 프로파일을 정하지 않으면 Kafka가 뜨지 않으니 .env에 COMPOSE_PROFILES=single 을 둔다 (.env.example, docs/DEVELOPMENT.md)
+
+# ---------- Kafka 브로커 3대(cluster)가 같이 쓰는 설정 (#318) ----------
 # 클러스터 1개에 브로커 3대, 브로커와 컨트롤러를 한 프로세스에서 같이 돌리는 KRaft combined 모드다
 # 운영(deploy/compose.prod.yml)과 같은 구성으로 띄워 "로컬에선 되는데 운영에선 안 되는" 차이를 줄인다
 # apache/kafka 이미지는 KAFKA_* 환경변수를 하나라도 넣으면 이미지 기본 설정을 전혀 쓰지 않으므로, 필요한 값을 모두 적는다
@@ -39,6 +42,20 @@ x-kafka-environment: &kafka-environment
   KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
   # 넣지 않으면 Kafka 기본 힙이 1GB라 3대면 힙만 3GB가 된다. 운영과 같은 값으로 맞춘다
   KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+
+# ---------- Kafka 단일 브로커 (#530) ----------
+# 인프라 자원 한계로 운영은 브로커 1대로 간다(deploy/compose.prod.yml). 로컬도 같은 구성으로 띄우고, 위 클러스터 설정은 그대로 둔다
+# 클러스터 설정에서 단일이라 달라지는 값만 덮어쓴다: 컨트롤러 쿼럼 1대, 복제·최소 동기화 수 1, 힙
+x-kafka-single-environment: &kafka-single-environment
+  <<: *kafka-environment
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+  KAFKA_MIN_INSYNC_REPLICAS: 1
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  # mem_limit 1024m에서 운영과 같은 힙이다
+  KAFKA_HEAP_OPTS: -Xms576m -Xmx576m
 
 x-kafka-service: &kafka-service
   image: apache/kafka:${KAFKA_VERSION:-4.2.1}
@@ -72,9 +89,15 @@ services:
     image: redis:${REDIS_VERSION:-8.10}-alpine
     networks: [db-net]
     # 운영과 같은 상한으로 두어, 상한에 닿았을 때(noeviction이라 쓰기 실패) 동작을 로컬에서 먼저 볼 수 있게 한다
-    command: ['redis-server', '--maxmemory', '256mb', '--maxmemory-policy', 'noeviction']
-    # maxmemory 256mb에 데이터 외 오버헤드 여유를 더한 값 (운영과 동일)
-    mem_limit: 384m
+    # 영속성은 운영과 같이 AOF만 켠다(#530). RDB 스냅샷은 끈다
+    command: ['redis-server', '--maxmemory', '340mb', '--maxmemory-policy', 'noeviction', '--save', '', '--appendonly', 'yes', '--appendfsync', 'everysec']
+    # maxmemory 340mb에 AOF 재작성(fork) 중 늘어나는 메모리와 오버헤드 여유를 더한 값 (운영과 동일)
+    mem_limit: 512m
+    # mem_limit과 같게 두면 swap을 쓰지 못한다 (운영과 동일)
+    memswap_limit: 512m
+    # AOF 파일(/data/appendonlydir)이 컨테이너를 다시 만들어도 남는다. docker compose down -v 를 하면 지워진다
+    volumes:
+      - redis-data:/data
     ports:
       # 로컬 Redis는 비밀번호가 없어 loopback에만 연다(LAN 노출 방지). 컨테이너 안의 앱은 compose 네트워크로 접속한다
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -84,11 +107,30 @@ services:
       timeout: 3s
       retries: 20
 
-  # 브로커 3대는 이름·번호·외부 포트만 다르다
+  # 단일 브로커 (#530). single 프로파일일 때만 뜬다. 볼륨은 클러스터와 따로 둬서 서로의 데이터를 건드리지 않는다
+  # 외부 포트는 클러스터의 kafka-1과 같은 KAFKA_1_PORT를 쓴다. 그래서 .env의 기존 KAFKA_BOOTSTRAP_SERVERS(첫 주소 localhost:19092)가 그대로 맞고,
+  # single과 cluster를 함께 켜면 포트가 겹쳐 시작에 실패한다
+  kafka:
+    <<: *kafka-service
+    profiles: [single]
+    # 운영과 같은 한도다. 한도를 넘으면 swap으로 버티지 않고 OOM kill로 재시작된다
+    mem_limit: 1024m
+    memswap_limit: 1024m
+    environment:
+      <<: *kafka-single-environment
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_1_PORT:-19092}
+    ports:
+      - "127.0.0.1:${KAFKA_1_PORT:-19092}:9094"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # 브로커 3대는 이름·번호·외부 포트만 다르다. 인프라가 확장되면 cluster 프로파일로 쓴다(이때 single은 끈다)
   # 외부 포트는 127.0.0.1에만 열어 같은 네트워크의 다른 기기가 붙지 못하게 한다 (인증 없는 PLAINTEXT라서)
   # EXTERNAL로 알려 주는 주소(localhost:포트)가 PC에서 다시 접속하는 주소라, 열어 둔 호스트 포트와 같아야 한다
   kafka-1:
     <<: *kafka-service
+    profiles: [cluster]
     environment:
       <<: *kafka-environment
       KAFKA_NODE_ID: 1
@@ -100,6 +142,7 @@ services:
 
   kafka-2:
     <<: *kafka-service
+    profiles: [cluster]
     environment:
       <<: *kafka-environment
       KAFKA_NODE_ID: 2
@@ -111,6 +154,7 @@ services:
 
   kafka-3:
     <<: *kafka-service
+    profiles: [cluster]
     environment:
       <<: *kafka-environment
       KAFKA_NODE_ID: 3
@@ -143,20 +187,28 @@ services:
       start_period: 20s
       start_interval: 5s
     command:
-      # 3대를 모두 적는다. 1대만 적으면 그 브로커를 멈췄을 때 클러스터 정보를 못 얻어, 브로커 1대 장애를 확인할 수 없다
+      # 기본은 단일 브로커(kafka:9092)다. 같은 주소가 세 번 들어가지만 exporter는 문제없이 한 브로커로 수집한다
+      # cluster 프로파일이면 .env에 KAFKA_EXPORTER_SERVER_1~3=kafka-1:9092, kafka-2:9092, kafka-3:9092 를 넣는다.
+      # 클러스터는 3대를 모두 적는다. 1대만 적으면 그 브로커를 멈췄을 때 클러스터 정보를 못 얻어, 브로커 1대 장애를 확인할 수 없다
       # 컨테이너 안이므로 브로커끼리 쓰는 INTERNAL 주소를 쓴다 (localhost:19092 같은 EXTERNAL은 컨테이너 자신을 가리킨다)
-      - --kafka.server=kafka-1:9092
-      - --kafka.server=kafka-2:9092
-      - --kafka.server=kafka-3:9092
-    # 시작할 때 브로커에 못 붙으면 바로 종료되므로, 앱과 같이 3대가 healthy가 된 뒤에 띄운다
-    # 이미 떠 있는 exporter는 그 뒤에 브로커 1대가 멈춰도 나머지로 계속 수집한다
+      - --kafka.server=${KAFKA_EXPORTER_SERVER_1:-kafka:9092}
+      - --kafka.server=${KAFKA_EXPORTER_SERVER_2:-kafka:9092}
+      - --kafka.server=${KAFKA_EXPORTER_SERVER_3:-kafka:9092}
+    # 시작할 때 브로커에 못 붙으면 바로 종료되므로, 켜진 프로파일의 브로커가 healthy가 된 뒤에 띄운다
+    # 꺼진 프로파일의 브로커는 required: false로 건너뛴다. 이미 떠 있는 exporter는 그 뒤에 브로커 1대가 멈춰도 나머지로 계속 수집한다
     depends_on:
+      kafka:
+        condition: service_healthy
+        required: false
       kafka-1:
         condition: service_healthy
+        required: false
       kafka-2:
         condition: service_healthy
+        required: false
       kafka-3:
         condition: service_healthy
+        required: false
     # 포트는 열지 않는다. Prometheus는 compose 네트워크 안에서 kafka-exporter:9308로 읽고,
     # #374 전에는 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics 로 직접 본다
 
@@ -172,13 +224,20 @@ services:
       # mysql과 같이 Redis도 healthy가 된 뒤에 앱을 띄워, 기동 직후 Redis 연결이 실패할 여지를 없앤다
       redis:
         condition: service_healthy
-      # mysql과 같이 Kafka 3대도 healthy가 된 뒤에 앱을 띄운다 (#318)
+      # mysql과 같이 Kafka도 healthy가 된 뒤에 앱을 띄운다 (#318)
+      # single이면 kafka, cluster면 kafka-1~3만 켜지므로 꺼진 프로파일의 서비스는 required: false로 건너뛴다
+      kafka:
+        condition: service_healthy
+        required: false
       kafka-1:
         condition: service_healthy
+        required: false
       kafka-2:
         condition: service_healthy
+        required: false
       kafka-3:
         condition: service_healthy
+        required: false
     env_file:
       - path: .env
         required: false
@@ -194,7 +253,8 @@ services:
       REDIS_PORT: 6379
       # .env의 KAFKA_BOOTSTRAP_SERVERS(localhost:...)는 내 PC에서 실행하는 앱용이라 컨테이너 안에서는 자기 자신을 가리킨다
       # DB_URL과 같은 이유로 compose 네트워크의 브로커 이름으로 덮는다 (#318)
-      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      # 기본은 단일 브로커다. cluster 프로파일이면 .env에 KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092 를 넣는다
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_INTERNAL_BOOTSTRAP_SERVERS:-kafka:9092}
     # JWT 키 폴더를 읽기 전용으로 연결한다. 앱 기본 설정(application.yaml)이 file:keys/... 로 실행 디렉터리 기준 경로를 읽고
     # 컨테이너의 작업 디렉터리가 /app 이라 /app/keys 에 파일이 있어야 한다. 개인키를 이미지에 넣을 수 없어 마운트하며, 앱은 읽기만 하므로 ro
     volumes:
@@ -302,9 +362,12 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
 
 # 브로커마다 따로 둔다. 같은 볼륨을 나눠 쓰면 서로의 데이터를 덮어써 망가진다
+# 단일 브로커(kafka-data)와 클러스터(kafka-N-data)는 쿼럼 구성이 달라 볼륨을 나눠 쓸 수 없다
 # 폴더를 직접 연결하지 않고 이름 있는 볼륨을 쓰는 이유: Windows 폴더는 컨테이너 사용자(appuser) 권한과 맞지 않아 기동에 실패하기 쉽다
 # docker compose down -v 를 하면 지워지고 새 클러스터로 다시 시작한다 (토픽·메시지도 모두 사라짐)
 volumes:
+  redis-data:
+  kafka-data:
   kafka-1-data:
   kafka-2-data:
   kafka-3-data:
