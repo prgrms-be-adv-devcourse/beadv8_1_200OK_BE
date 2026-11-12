@@ -14,6 +14,7 @@ import com.ok.order.order.application.dto.OrderDetailItemResult;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
+import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
@@ -568,5 +569,75 @@ class OrderServiceTest {
 
         // then
         then(orderEventPublisher).should(never()).publishOrderPaidEvent(any());
+    }
+
+    // ---------- 환불 반영 뒤 구매확정 (#28) ----------
+
+    // 출고 전에 환불을 반영한 뒤 배송 완료된 주문 (사과 10,000원 × 2개, 판매자 100, 구매자 배송비 0원)
+    private Order deliveredOrderAfterRefund(int refundQuantity, long deductedShippingFee) {
+        Order order = savedOrder(10L);
+        order.markPaid();
+        order.getAllItems().get(0).recordRefund(7L, refundQuantity, deductedShippingFee);
+        order.markDelivered(100L, NOW.minusDays(1));
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
+        return order;
+    }
+
+    @Test
+    void 일부_환불된_상품을_구매확정하면_환불분을_뺀_금액과_뺀_배송비를_더한_배송비로_이벤트를_발행한다() {
+        // given: 2개 중 1개 환불, 환불에서 기본 배송비 3,000원을 뺐다
+        Order order = deliveredOrderAfterRefund(1, 3_000L);
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.confirmPurchase(1L, 10L, 1L);
+
+        // then
+        then(orderEventPublisher).should().publishOrderProductConfirmedEvent(10L, 1L, 100L, 10_000L, 3_000L);
+    }
+
+    @Test
+    void 모두_환불된_상품은_구매확정해도_정산용_이벤트를_발행하지_않는다() {
+        // given
+        Order order = deliveredOrderAfterRefund(2, 0L);
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.confirmPurchase(1L, 10L, 1L);
+
+        // then
+        assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+        then(orderEventPublisher).should(never())
+                .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    // ---------- 환불 취소 반영 (#28) ----------
+
+    @Test
+    void 환불_취소를_반영할_주문_상품이_없으면_404다() {
+        // given
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(new RecordOrderItemRefundCommand(1L, 7L, 1, 0L)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+    }
+
+    @Test
+    void 같은_환불_ID가_다른_주문_상품에_이미_반영됐으면_거절한다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        ReflectionTestUtils.setField(item, "id", 1L);
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+        given(orderRepository.findOrderItemIdByRefundId(7L)).willReturn(Optional.of(2L));
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(new RecordOrderItemRefundCommand(1L, 7L, 1, 0L)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.REFUND_ID_CONFLICT));
+        assertThat(item.refundedQuantity()).isZero();
     }
 }

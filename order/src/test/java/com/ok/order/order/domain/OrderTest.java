@@ -450,4 +450,155 @@ class OrderTest {
 
         assertThat(sut.findItem(999L)).isEmpty();
     }
+
+    // ---------- 환불 취소 반영 (#28) ----------
+
+    // 결제 완료로 출고 전(배송 준비)이 된 주문 상품 (판매자 100, 10,000원 × 3개)
+    private OrderItem preparingItem() {
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        order.markPaid();
+        return order.getAllItems().get(0);
+    }
+
+    @Test
+    void 출고_전_상품에_환불을_기록하면_환불_수량만큼_정산할_상품_금액이_줄고_상태는_그대로다() {
+        // given
+        OrderItem sut = preparingItem();
+
+        // when
+        boolean recorded = sut.recordRefund(7L, 1, 0L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(recorded).isTrue();
+            softly.assertThat(sut.refundedQuantity()).isEqualTo(1);
+            softly.assertThat(sut.confirmedItemAmount()).isEqualTo(20_000L);
+            softly.assertThat(sut.isFullyRefunded()).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+        });
+    }
+
+    @Test
+    void 같은_환불_ID가_같은_내용으로_다시_오면_기록하지_않는다() {
+        // given
+        OrderItem sut = preparingItem();
+        sut.recordRefund(7L, 1, 3_000L);
+
+        // when
+        boolean recorded = sut.recordRefund(7L, 1, 3_000L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(recorded).isFalse();
+            softly.assertThat(sut.refundedQuantity()).isEqualTo(1);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("같은_환불_ID의_다른_내용")
+    void 같은_환불_ID가_다른_내용으로_오면_거절한다(int quantity, long deductedShippingFee) {
+        // given
+        OrderItem sut = preparingItem();
+        sut.recordRefund(7L, 1, 3_000L);
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(7L, quantity, deductedShippingFee))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.REFUND_ID_CONFLICT));
+    }
+
+    static Stream<Arguments> 같은_환불_ID의_다른_내용() {
+        return Stream.of(
+                Arguments.of(2, 3_000L),   // 수량이 다름
+                Arguments.of(1, 0L));      // 뺀 배송비가 다름
+    }
+
+    @ParameterizedTest
+    @MethodSource("출고_전이_아닌_주문")
+    void 출고_전이_아니면_환불을_기록할_수_없다(Consumer<Order> progress) {
+        // given
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        progress.accept(order);
+        OrderItem sut = order.getAllItems().get(0);
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(7L, 1, 0L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.REFUND_NOT_ALLOWED_STATUS));
+        assertThat(sut.refundedQuantity()).isZero();
+    }
+
+    static Stream<Consumer<Order>> 출고_전이_아닌_주문() {
+        return Stream.of(
+                order -> { },                                   // 결제 대기
+                order -> {                                      // 배송 중
+                    order.markPaid();
+                    order.markShipping(100L);
+                },
+                order -> {                                      // 배송 완료
+                    order.markPaid();
+                    order.markDelivered(100L, NOW);
+                });
+    }
+
+    @Test
+    void 환불_수량_합계가_주문_수량을_넘으면_거절한다() {
+        // given
+        OrderItem sut = preparingItem();
+        sut.recordRefund(7L, 2, 0L);
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(8L, 2, 0L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.REFUND_QUANTITY_EXCEEDED));
+        assertThat(sut.refundedQuantity()).isEqualTo(2);
+    }
+
+    @Test
+    void 모두_환불하면_정산할_상품_금액이_없다() {
+        // given
+        OrderItem sut = preparingItem();
+
+        // when
+        sut.recordRefund(7L, 1, 0L);
+        sut.recordRefund(8L, 2, 0L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isFullyRefunded()).isTrue();
+            softly.assertThat(sut.confirmedItemAmount()).isZero();
+        });
+    }
+
+    @Test
+    void 판매자_몫_배송비는_묶음_배송비에_묶음_안_환불에서_뺀_배송비를_더한다() {
+        // given: 무료배송 묶음(구매자 배송비 0원)에서 일부 환불로 기준 아래가 되어 환불이 기본 배송비 3,000원을 뺐다
+        Order order = Order.create(1L, List.of(line(1L, 100L, 30_000L, 1), line(2L, 100L, 20_000L, 1)));
+        order.applyShippingFee(100L, new SellerShippingFee(3_000L, 50_000L, 0L, 0L));
+        order.markPaid();
+        OrderItem refunded = order.getAllItems().get(0);
+        refunded.recordRefund(7L, 1, 3_000L);
+
+        // when
+        long sut = refunded.getSellerGroup().shippingFeeForPayout();
+
+        // then
+        assertThat(sut).isEqualTo(3_000L);
+    }
+
+    @Test
+    void 구매자가_배송비를_냈고_뺀_배송비가_없으면_판매자_몫_배송비는_묶음_배송비_그대로다() {
+        // given
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 2)));
+        order.applyShippingFee(100L, new SellerShippingFee(3_000L, null, 3_000L, 0L));
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        item.recordRefund(7L, 1, 0L);
+
+        // when
+        long sut = item.getSellerGroup().shippingFeeForPayout();
+
+        // then
+        assertThat(sut).isEqualTo(3_000L);
+    }
 }

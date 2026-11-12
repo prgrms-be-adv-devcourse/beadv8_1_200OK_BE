@@ -11,12 +11,14 @@ import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
+import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.CompletePaymentUseCase;
 import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.GetOrderUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
+import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
 import com.ok.order.order.application.port.in.UpdateShippingStatusUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import com.ok.order.order.application.port.out.OrderRepository;
@@ -25,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -38,7 +41,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, UpdateShippingStatusUseCase,
-        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase {
+        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, RecordOrderItemRefundUseCase {
 
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
@@ -231,15 +234,51 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     }
 
     // 구매확정 이벤트 발행
+    // 환불 반영된 수량은 상품 금액에서 빼고, 환불에서 뺀 배송비는 판매자 몫 배송비에 더한다(#28)
     private void publishConfirmed(Order order, OrderItem item) {
+        // 모두 환불된 상품은 정산할 금액이 없다. 0원 정산 후보를 만들지 않도록 보내지 않는다
+        if (item.isFullyRefunded()) {
+            log.info("[ORDER_CONFIRM_SKIPPED_FULLY_REFUNDED] 모두 환불된 주문 상품이라 구매확정 이벤트를 보내지 않습니다. orderId={}, orderItemId={}",
+                    order.getId(), item.getId());
+            return;
+        }
         OrderSellerGroup group = item.getSellerGroup();
         orderEventPublisher.publishOrderProductConfirmedEvent(
                 order.getId(),
                 item.getId(),
                 group.getSellerId(),
-                item.getItemAmount(),     // TODO 부분 환불 정책이 정해지면 환불 수량 제외 (#28)
-                group.getShippingFee()
+                item.confirmedItemAmount(),
+                group.shippingFeeForPayout()
         );
+    }
+
+    // 환불 취소 반영 (환불 모듈 내부 API용).
+    // READ COMMITTED로 연다. 잠금 조회의 하위 쿼리(주문 상품 → 주문 ID)는 일반 조회라 REPEATABLE READ에서는 잠금을 기다리기 전에
+    // 스냅샷을 고정한다. 그러면 잠금을 얻은 뒤에도 앞 요청이 커밋한 환불 기록이 안 보여 합계가 주문 수량을 넘는다(동시성 테스트로 재현).
+    // 내부 API 컨트롤러가 트랜잭션 없이 부르므로 이 격리 수준이 그대로 적용된다
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Override
+    public void recordRefund(RecordOrderItemRefundCommand command) {
+        // 주문을 잠가 같은 주문 상품의 환불이 차례로 최신 기록을 보고 합계를 확인하게 한다
+        Order order = orderRepository.findByOrderItemIdForUpdate(command.orderItemId())
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+        OrderItem item = order.findItem(command.orderItemId())
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+
+        // 같은 환불 ID가 다른 주문 상품에 기록돼 있으면 유니크 제약 위반(500) 대신 내용 불일치로 알린다
+        orderRepository.findOrderItemIdByRefundId(command.refundId())
+                .filter(recordedOrderItemId -> !recordedOrderItemId.equals(command.orderItemId()))
+                .ifPresent(recordedOrderItemId -> {
+                    throw new RestApiException(OrderErrorCode.REFUND_ID_CONFLICT);
+                });
+
+        if (item.recordRefund(command.refundId(), command.quantity(), command.deductedShippingFee())) {
+            log.info("[ORDER_REFUND_RECORDED] 환불 취소를 반영했습니다. orderItemId={}, refundId={}, quantity={}, deductedShippingFee={}",
+                    command.orderItemId(), command.refundId(), command.quantity(), command.deductedShippingFee());
+        } else {
+            log.info("[ORDER_REFUND_ALREADY_RECORDED] 이미 반영된 환불입니다. orderItemId={}, refundId={}",
+                    command.orderItemId(), command.refundId());
+        }
     }
 
     // 자동 구매확정 대상 주문 ID

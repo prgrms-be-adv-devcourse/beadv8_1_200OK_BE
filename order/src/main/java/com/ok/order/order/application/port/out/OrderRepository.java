@@ -27,6 +27,19 @@ public interface OrderRepository {
      */
     Optional<Order> findByIdForUpdate(Long id);
 
+    /**
+     * 주문 상품이 속한 주문을 쓰기 잠금({@code FOR UPDATE})으로 조회한다.
+     * 환불 취소 반영은 주문 상품 ID만 알고 오므로 이 메서드로 주문을 잠근다.
+     * 주문 ID를 찾는 부분이 일반 조회라, REPEATABLE READ에서 부르면 잠금을 기다리기 전에 스냅샷이 고정되어
+     * 잠금을 얻은 뒤에도 앞 요청이 커밋한 기록이 보이지 않는다. READ COMMITTED 트랜잭션에서 부른다.
+     */
+    Optional<Order> findByOrderItemIdForUpdate(Long orderItemId);
+
+    /**
+     * 환불 ID로 이미 기록된 환불의 주문 상품 ID를 조회한다.
+     */
+    Optional<Long> findOrderItemIdByRefundId(Long refundId);
+
     Page<Order> findByBuyerIdAndStatusNotOrderByIdDesc(Long buyerId, OrderStatus status, Pageable pageable);
 
     Optional<Order> findByIdAndBuyerId(Long id, Long buyerId);
