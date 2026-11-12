@@ -108,6 +108,8 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 
 `com.ok` 바로 아래 패키지가 하나의 모듈이다. 모듈 목록과 설명은 [`DEVELOPMENT.md`](DEVELOPMENT.md)의 모듈 구조를 본다.
 
+헥사고날 구조(`application`, `adapter/in`, `adapter/out`) 모듈은 2.1의 레이어 패키지·발행 인터페이스 위치와 2.3의 DTO 위치 대신 [`DEVELOPMENT.md`의 모듈별 구조](DEVELOPMENT.md#6-모듈-구조-gradle-서브프로젝트--spring-modulith)와 그 모듈의 `ArchitectureTest`를 따른다. 모듈 간 규칙(2.2), `common`(2.4), 네이밍(3절)은 그대로 따르되, 모듈 문서가 따로 정한 것은 그 문서가 우선한다. 어느 모듈이 헥사고날 구조인지는 루트 `CLAUDE.md`에 있다.
+
 ### 2.1 모듈 내부 구조
 
 **규칙**
@@ -155,17 +157,18 @@ com.ok.wallet
 ├── event          이벤트 리스너, 발행 인터페이스 구현체
 └── config         모듈 전용 설정
 
-// 좋은 예: 하위 도메인이 있는 모듈 (member 모듈의 회원과 인증)
-com.ok.member
-├── member
+// 좋은 예: 하위 도메인이 있는 모듈 (product 모듈의 상품과 리뷰)
+com.ok.product
+├── product
 │   ├── controller
 │   ├── service
 │   ├── domain
 │   └── repository
-└── auth
+└── review
     ├── controller
     ├── service
-    └── config
+    ├── domain
+    └── repository
 
 // 나쁜 예: 하위 도메인이 하나뿐인데 의미 없는 패키지를 하나 더 만든다
 com.ok.wallet
@@ -198,12 +201,12 @@ com.ok.wallet
 **이유**: 컨트롤러 계층과 서비스 계층의 입출력 타입을 패키지로 나누면, 어느 계층이 쓰는 타입인지 경로만 보고 알 수 있다. 중첩 `record`는 파일을 키우고 다른 곳에서 찾기 어렵다. 웹 응답 타입의 책임은 프레젠테이션 레이어에 있다. 프레젠테이션과 영속성은 바뀔 수 있어도 비즈니스(서비스)는 그 영향을 받지 않아야 하므로, 서비스가 컨트롤러의 타입(`*Response`)을 알면 안 된다. 반대로 컨트롤러가 엔티티를 알면 엔티티 변경이 API 응답까지 번지고, 지연 로딩 필드를 트랜잭션 밖에서 읽게 된다.
 
 ```
-// 좋은 예
-com.ok.member
+// 좋은 예 (product 모듈의 상품)
+com.ok.product.product
 ├── controller
-│   └── dto        SignupRequest, SignupResponse
+│   └── dto        ProductCreateRequest, ProductCreateResponse
 └── service
-    └── dto        SignupCommand
+    └── dto        ProductCreateCommand
 ```
 
 ```java

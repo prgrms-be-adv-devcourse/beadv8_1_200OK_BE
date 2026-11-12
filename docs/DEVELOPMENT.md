@@ -443,9 +443,7 @@ com.ok.wallet
 
 ### member 모듈 구조(헥사고날)
 
-`member`는 연동이 Kafka로 바뀌는 것에 대비해 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮겼습니다. 하위 도메인마다 그 아래에 같은 패키지를 둡니다.
-
-> 전환 상태: `seller`(#476), `member`(#477), `auth`(#478) 완료. 옮기기 전 레이어 구조 규칙(`ArchitectureTest`, CONVENTION.md)의 정리는 #479에서 합니다.
+`member`는 모듈별 서버 배포와 Kafka 연동에 대비해(#475) 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮겼습니다(#476~#479). 진입점은 유스케이스 포트만, 서비스는 출력 포트만 알고, 하위 도메인 사이 호출은 출력 어댑터에 모읍니다.
 
 ```
 com.ok.member.seller
@@ -486,13 +484,14 @@ com.ok.member.auth
 - 의존 방향은 `adapter.in` → `application`(`port.in`, `dto`) → `domain`, `adapter.out` → `application.port.out`, `domain`입니다. 컨트롤러는 `port.in`의 유스케이스 인터페이스만 알고, 서비스는 JPA 저장소를 모르고 `port.out` 인터페이스에만 의존합니다.
 - 저장소 포트(`*Repository`)는 Spring Data `Repository`를 상속하지 않습니다. `adapter/out/persistence`의 Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로입니다.
 - `application`은 JPA와 Spring Data 저장소에 의존하지 않지만, Spring의 `Page`, `Pageable`, `Sort`와 DAO 예외(`DataIntegrityViolationException`, `OptimisticLockingFailureException`)는 씁니다. 영속 기술이 아닌 Spring 추상화라 허용하고, `ArchitectureTest`도 막지 않습니다.
-- 이벤트 발행은 `port.out`의 발행 인터페이스로 하고, `ApplicationEventPublisher`와 `common.event`의 이벤트 클래스는 `adapter/out/event`의 구현체에서만 씁니다.
+- 이벤트 발행은 `port.out`의 발행 인터페이스로 하고, 발행 도구(`ApplicationEventPublisher`, `KafkaOperations`)와 `common.event`의 이벤트 클래스는 `adapter/out/event`의 구현체에서만 씁니다. 발행을 Kafka로 바꿔도 구현체가 출력 포트를 구현해야 합니다.
 - 다른 하위 도메인은 그 하위 도메인의 `port.in`과 `dto`만, 그것도 자기 `adapter/out`에서만 씁니다. 서비스는 자기 출력 포트만 알고, 출력 어댑터가 상대 유스케이스를 불러 자기 DTO로 바꿉니다. 예를 들어 `auth`의 `AuthService`는 `MemberCredentialReader`, `SellerApprovalReader` 포트만 쓰고, `adapter/out/member/MemberAuthAdapter`가 `MemberAuthAccountUseCase`(로그인 정보와 관리자·탈퇴·정지 여부)와 `SellerApprovalCheckUseCase`(판매자 승인 여부)를 부릅니다. 유스케이스는 엔티티나 도메인 enum 대신 판단 결과를 값으로 돌려줍니다. 하위 도메인 사이 의존이 출력 어댑터 한 곳에 모여, 상대 하위 도메인의 유스케이스나 DTO가 바뀌어도 서비스는 바뀌지 않습니다.
 - 다른 하위 도메인을 부르는 출력 어댑터는 부르는 대상 이름으로 `adapter/out/<대상>` 패키지에 두고, `<대상><용도>Adapter`로 짓습니다(예: `auth/adapter/out/member/MemberAuthAdapter`). 같은 member 모듈인 `member`와 `seller`를 함께 부르면 어댑터 하나로 묶습니다. `order`의 장바구니처럼 같은 모듈 안의 유스케이스를 바로 부르지 않고 어댑터를 두는 이유는, 서비스가 다른 하위 도메인의 타입을 모르게 해 의존을 한 곳에서 보이게 하기 위해서입니다.
 - 하위 도메인을 서버로 나눌지는 정하지 않았습니다. 이 경계가 있어도 서버를 나누면 어댑터 교체만으로 끝나지 않습니다. 비밀번호 해시를 API로 내보내지 않도록 비밀번호 확인 위치를 옮기고, 같은 트랜잭션 안에서 하던 계정 확인과 원격 호출의 장애 처리를 다시 정해야 합니다. 분리를 검토할 조건과 방식은 #478의 결정 기록(`docs/decisions/member/`)에 있습니다.
 - 포트와 `JpaRepository`가 같은 메서드(`findById`, `save`, `saveAndFlush`)를 서로 다른 제네릭 형태로 물려주어, `*JpaRepository` 타입으로 부르면 모호한 호출 오류가 납니다. 이런 메서드는 `*JpaRepository`에서 다시 선언해 하나로 합칩니다.
 - 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다.
-- 이 구조는 `member`의 `ArchitectureTest`가 옮긴 하위 도메인 목록(`HEXAGONAL_SUBDOMAINS`)마다 같은 규칙으로 검사합니다(레이어 방향, 입력 어댑터 제한, 입력 포트의 도메인 의존 금지, application의 영속·토큰 서명 기술 의존 금지, 포트 규칙, 이름·위치, 다른 하위 도메인은 `adapter.out`에서 `port.in`과 `dto`만 사용, 잠금 조회의 `@Lock` 재선언, `LoginFacade`의 트랜잭션·출력 포트 의존 금지). 모듈 최상위 패키지(`com.ok.member`)는 다른 모듈에 공개하는 클래스 자리라 유스케이스를 쓸 수 있습니다. 이벤트 발행 구현체 규칙은 이벤트를 발행하는 하위 도메인(`seller`, `member`)에만 적용합니다.
+- 이 구조는 `member`의 `ArchitectureTest`가 하위 도메인 목록(`SUBDOMAINS`)마다 같은 규칙으로 검사합니다(레이어 방향, 입력 어댑터 제한, 입력 포트의 도메인 의존 금지, application의 영속·토큰 서명 기술 의존 금지, 포트 규칙, 이름·위치, 다른 하위 도메인은 `adapter.out`에서 `port.in`과 `dto`만 사용, 잠금 조회의 `@Lock` 재선언, `LoginFacade`의 트랜잭션·출력 포트 의존 금지). 모듈 최상위 패키지(`com.ok.member`)는 다른 모듈에 공개하는 클래스 자리라 유스케이스를 쓸 수 있습니다. 이벤트 발행 구현체 규칙은 하위 도메인 목록 대신 모듈 전체에 걸어, 이벤트를 발행하지 않는 하위 도메인(`auth`)도 발행을 시작하면 따로 등록하지 않아도 검사됩니다.
+- 새 하위 도메인을 만들면 `SUBDOMAINS`에 더합니다. 목록 밖 패키지는 위 규칙이 검사하지 않으므로, 하위 도메인·모듈 최상위·`config` 밖에 클래스가 생기면 `ArchitectureTest`가 실패합니다.
 
 ### order 모듈 구조(헥사고날)
 
