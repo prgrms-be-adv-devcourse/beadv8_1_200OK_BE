@@ -81,7 +81,8 @@
 4. 환불용 조회(①)와 취소 수량 반영(②) API 일정을 알려 주세요. 지금 dev에 없어서 배포 앱에서는 환불이 동작하지 않는다.
 
 ### 지갑
-1. 받는 메시지(`refund.refund-approved`)는 그대로다. 보내는 때만 "판매자 승인 직후"에서 "주문 반영 뒤"로 바뀐다.
+1. `refund.refund-approved`를 받아 돈을 돌려주는 처리(#34)를 해 주세요. 지금 dev에는 받는 코드가 없다.
+   메시지 모양은 #512에서 보내는 그대로다. 보내는 때만 "판매자 승인 직후"에서 "주문 반영 뒤"로 바뀐다.
 2. **11/12에 주신 결과 메시지 모양 그대로 붙여 주세요.** 이름·필드·사유를 바꾸지 않고 그대로 받는다.
    - 완료 `wallet.wallet-refund-completed`, 실패 `wallet.wallet-refund-failed`, 키 `orderId`
    - 필드 `refundId`, `orderId`, `buyerId`, `amount`, 실패일 때만 `reason`
@@ -90,13 +91,14 @@
 3. **돌려준 돈 다시 가져오기 (새로, 실패 처리용)**
    - 언제: 지갑 뒤 단계(재고)가 다시 해도 실패했을 때(2-3 표). 정상 운영에서는 거의 없어야 한다.
    - 같은 `refundId`로 두 번 와도 한 번만 가져온다. 돌려준 적 없는 `refundId`면 아무것도 안 하고 성공으로 답한다.
-   - 받는 방식은 지갑이 편한 쪽으로 정한다. 지금 반환 요청처럼 Kafka 메시지(예: `refund.refund-revert-requested`)와 결과 메시지, 또는 HTTP API.
+   - 받는 방식은 지갑이 편한 쪽으로 정한다. 지금 반환 요청처럼 Kafka 메시지(예: `refund.refund-wallet-revert-requested`)와 결과 메시지, 또는 HTTP API.
    - **정해 주실 것**: 구매자가 그 돈을 이미 써서 잔액이 모자라면 어떻게 할지 (잔액을 마이너스로 둘지, 가져오기 실패로 답하고 관리자에게 넘길지)
 4. 반환 근거 키를 `refundId` 기준으로 둔다(예: `REFUND:{refundId}`). 같은 주문 상품을 나눠 환불하면 두 번째 반환이 막히지 않아야 한다.
 
 ### 상품
 - 새로 할 일은 없다. 재고 일부 되돌리기(#363)를 지금처럼 부른다.
 - 상품 쪽 되돌리기는 필요 없다. 재고 되돌리기가 마지막 단계라, 그 뒤에 실패해서 재고 해제를 다시 취소할 경우가 없다.
+- 재고 해제를 Kafka 메시지로 받고 싶으면 그렇게 바꿔도 된다(4절). 원하지 않으면 #363 HTTP 그대로 쓴다.
 - 다시 시도 기준을 맞추고 싶다. 다른 의견이 있으면 알려 주세요.
   - 다시 시도: 응답 없음·5xx, `ALLOCATION_IN_PROGRESS`(409, 메시지가 "잠시 후 다시 요청해주세요")
   - 다시 하지 않고 실패 처리로: `ALLOCATION_NOT_FOUND`(404), `RELEASE_QUANTITY_EXCEEDED`, `ALLOCATION_ALREADY_RELEASED`, `PARTIAL_RELEASE_MISMATCH`(409)
@@ -107,8 +109,10 @@
 
 | 보내는 쪽 → 받는 쪽 | 토픽 (제안) | 필드 (제안) |
 | --- | --- | --- |
-| 환불 → 주문 | `refund.refund-revert-requested` | `refundId`, `orderId`, `orderItemId`, `quantity` |
+| 환불 → 주문 | `refund.refund-order-revert-requested` | `refundId`, `orderId`, `orderItemId`, `quantity` |
 | 주문 → 환불 | `order.order-refund-reverted` | `refundId`, `orderId`, `orderItemId` |
+
+토픽 이름은 받는 모듈마다 나눈다(지갑은 `refund.refund-wallet-revert-requested`, 주문은 `refund.refund-order-revert-requested`). 한 이름을 같이 쓰면, 주문만 되돌리면 되는 경우(지갑 실패)에도 지갑이 메시지를 받게 된다.
 
 | | HTTP (기본안) | Kafka (선택안) |
 | --- | --- | --- |
