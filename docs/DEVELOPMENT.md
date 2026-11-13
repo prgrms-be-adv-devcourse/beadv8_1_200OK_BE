@@ -601,11 +601,12 @@ com.ok.member.seller
 com.ok.member.auth
 ├── config/               JWT 서명 키 설정, 비밀번호 인코더
 ├── application/
-│   ├── port/in/          LoginUseCase, TokenReissueUseCase
+│   ├── port/in/          LoginUseCase, TokenReissueUseCase, RefreshTokenCleanupUseCase
 │   ├── port/out/         RefreshTokenRepository, AccessTokenIssuer, MemberCredentialReader, SellerApprovalReader
-│   └── service/          LoginFacade(트랜잭션 밖 비밀번호 확인), AuthService(트랜잭션), RefreshTokenService
+│   └── service/          LoginFacade(트랜잭션 밖 비밀번호 확인), AuthService(트랜잭션), RefreshTokenService, RefreshTokenCleanupService
 └── adapter/
     ├── in/web/           AuthController, JwksController
+    ├── in/scheduler/     RefreshTokenCleanupScheduler (만료된 Refresh Token 정리)
     ├── out/persistence/  RefreshTokenJpaRepository
     ├── out/token/        JwtAccessTokenIssuer (JWT 서명)
     └── out/member/       MemberAuthAdapter (member·seller 유스케이스 호출)
