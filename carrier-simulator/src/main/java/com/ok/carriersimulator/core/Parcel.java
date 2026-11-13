@@ -3,6 +3,7 @@ package com.ok.carriersimulator.core;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -19,8 +20,13 @@ final class Parcel {
     private final double factor;
     // 이력에 나타나는 순서로 정렬한 단계. 이력 끼어듦 시나리오는 일어난 순서와 나타나는 순서가 다르다
     private final List<Scenario.Step> stepsByVisibility;
+    // 언제나 사건 시각 순이다. 시각이 같으면 나타난 순서를 지킨다
     private final List<Entry> entries = new ArrayList<>();
     private int materialized;
+    // 알림으로 이미 알린 사건 수
+    private int notified;
+    // 다음 변화 시각 순서 줄에 들어 있는지. 같은 송장이 두 번 들어가지 않게 한다
+    private boolean scheduled;
     private boolean manual;
     private WebhookRegistration registration;
     private long queryCount;
@@ -52,7 +58,7 @@ final class Parcel {
                 break;
             }
             Instant time = playback.realTimeOf(virtualStart.plus(scale(step.occursAt())), now);
-            entries.add(new Entry(new TrackingEvent(step.status(), time, step.location(), step.description())));
+            add(new TrackingEvent(step.status(), time, step.location(), step.description()));
             materialized++;
             created++;
         }
@@ -70,17 +76,35 @@ final class Parcel {
     }
 
     /**
-     * 시각 순으로 정렬한 사건. 시각이 같으면 나타난 순서를 지킨다.
+     * 시각 순으로 정렬한 사건. 돌려준 목록은 바꿀 수 없고, 잠금 밖으로 내보낼 때는 복사해야 한다.
      */
     List<Entry> entries() {
-        return entries.stream()
-                .sorted(Comparator.comparing(entry -> entry.event.time()))
-                .toList();
+        return Collections.unmodifiableList(entries);
     }
 
     StatusCode lastStatus() {
-        List<Entry> sorted = entries();
-        return sorted.isEmpty() ? null : sorted.getLast().event.status();
+        return entries.isEmpty() ? null : entries.getLast().event.status();
+    }
+
+    /**
+     * 아직 알리지 않은 사건 수를 돌려주고, 모두 알린 것으로 표시한다.
+     */
+    int takeUnnotified() {
+        int count = entries.size() - notified;
+        notified = entries.size();
+        return count;
+    }
+
+    boolean scheduled() {
+        return scheduled;
+    }
+
+    void scheduled(boolean scheduled) {
+        this.scheduled = scheduled;
+    }
+
+    boolean hasActiveRegistration(Instant now) {
+        return registration != null && registration.activeAt(now);
     }
 
     void queried(Instant now) {
@@ -93,7 +117,7 @@ final class Parcel {
      */
     void pin(TrackingEvent event) {
         manual = true;
-        entries.add(new Entry(event));
+        add(event);
     }
 
     ParcelView view() {
@@ -118,6 +142,15 @@ final class Parcel {
 
     void register(WebhookRegistration registration) {
         this.registration = registration;
+    }
+
+    // 이력 끼어듦처럼 더 이른 시각의 사건이 나중에 생기면 제자리를 찾아 넣는다
+    private void add(TrackingEvent event) {
+        int index = entries.size();
+        while (index > 0 && entries.get(index - 1).event.time().isAfter(event.time())) {
+            index--;
+        }
+        entries.add(index, new Entry(event));
     }
 
     private Duration scale(Duration duration) {

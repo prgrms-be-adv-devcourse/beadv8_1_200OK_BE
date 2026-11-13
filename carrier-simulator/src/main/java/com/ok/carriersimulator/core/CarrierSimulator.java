@@ -4,12 +4,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.PriorityQueue;
 import java.util.Random;
 
 /**
@@ -22,6 +25,8 @@ public final class CarrierSimulator {
 
     private static final int MAX_LATENCY_SAMPLES = 100_000;
     private static final int MAX_PAGE_SIZE = 200;
+    private static final int MAX_CALLBACK_RECORDS = 10_000;
+    private static final Duration MAX_RETRY_DELAY = Duration.ofMinutes(5);
     private static final String NOT_FOUND_LABEL = "없는 송장";
 
     private final SimulatorSettings settings;
@@ -33,6 +38,16 @@ public final class CarrierSimulator {
     private final List<Parcel> parcelOrder = new ArrayList<>();
     private final Deque<Long> detectionNanos = new ArrayDeque<>();
     private final Random faultRandom;
+    private final Random shuffleRandom;
+    private final CallbackQueue callbackQueue = new CallbackQueue();
+    private final Deque<CallbackRecord> callbackRecords = new ArrayDeque<>();
+    // 알림 등록이 있는 송장을 "다음 사건이 보이는 가상 시각" 순으로 둔다. 송장을 전부 훑지 않고 때가 된 것만 꺼낸다
+    private final PriorityQueue<Scheduled> schedule = new PriorityQueue<>(
+            Comparator.comparing(Scheduled::virtualTime).thenComparingLong(Scheduled::sequence));
+    private long nextScheduleSequence;
+    private long nextCallbackId = 1;
+    private Instant lastDispatchAt;
+    private DispatchSettings dispatch;
     private FaultSettings faults = FaultSettings.none();
 
     public CarrierSimulator(SimulatorSettings settings, Instant now) {
@@ -40,6 +55,8 @@ public final class CarrierSimulator {
         this.playback = new PlaybackClock(now, settings.secondsPerDay());
         this.tokens = new TokenRegistry(settings.tokenTtl());
         this.faultRandom = new Random(settings.seed());
+        this.shuffleRandom = new Random(settings.seed() + 1);
+        this.dispatch = settings.dispatch();
     }
 
     /**
@@ -84,7 +101,104 @@ public final class CarrierSimulator {
             return;
         }
         Parcel parcel = findOrCreate(key, now);
+        boolean renewal = parcel.hasActiveRegistration(now);
         parcel.register(new WebhookRegistration(callbackUrl, expirationTime));
+        if (!renewal) {
+            // 처음 등록하면 알림이 한 번 간다(Delivery Tracker와 같은 규칙). 등록 전에 일어난 사건은 이 한 건으로 갈음한다
+            parcel.materialize(playback, now);
+            parcel.takeUnnotified();
+            enqueue(parcel.key(), callbackUrl, 1, now);
+        }
+        schedule(parcel);
+    }
+
+    /**
+     * 지금 보낼 알림을 꺼낸다. 먼저 등록된 송장 중 상태가 바뀐 것의 알림을 대기 줄에 넣고,
+     * 꺼내는 간격이 지났으면 한 번에 정한 개수까지 돌려준다. 꺼낸 알림은 결과를 {@link #completeCallback}으로 알려야 한다.
+     */
+    public synchronized List<CallbackAttempt> pollDueCallbacks(Instant now) {
+        advance(now);
+        if (dispatch.paused()) {
+            return List.of();
+        }
+        if (lastDispatchAt != null && now.isBefore(lastDispatchAt.plus(dispatch.interval()))) {
+            return List.of();
+        }
+        List<CallbackAttempt> due = new ArrayList<>();
+        while (due.size() < dispatch.batchSize()) {
+            CallbackAttempt attempt = callbackQueue.pollDue(now);
+            if (attempt == null) {
+                break;
+            }
+            Parcel parcel = parcels.get(attempt.key());
+            // 등록이 만료됐거나 송장을 지웠으면 보내지 않는다
+            if (parcel != null && parcel.hasActiveRegistration(now)) {
+                due.add(attempt);
+            }
+        }
+        if (due.isEmpty()) {
+            return due;
+        }
+        // 실제로 꺼냈을 때만 간격을 센다. 비어 있다가 막 들어온 알림이 한 간격을 기다리지 않게 한다
+        lastDispatchAt = now;
+        if (faults.shuffleCallbacks()) {
+            Collections.shuffle(due, shuffleRandom);
+        }
+        return due;
+    }
+
+    /**
+     * 알림을 보낸 결과를 기록한다. 실패했으면 간격을 늘려(1초, 2초, 4초… 최대 5분) 만료 시각 전까지 다시 보낸다.
+     */
+    public synchronized void completeCallback(CallbackAttempt attempt, CallbackOutcome outcome, Instant now) {
+        Parcel parcel = parcels.get(attempt.key());
+        callbackRecords.addFirst(new CallbackRecord(now.minusMillis(outcome.elapsedMillis()), attempt.key(),
+                parcel == null ? null : parcel.lastStatus(), outcome.responseCode(), outcome.failure(),
+                outcome.elapsedMillis(), attempt.attemptNo()));
+        if (callbackRecords.size() > MAX_CALLBACK_RECORDS) {
+            callbackRecords.removeLast();
+        }
+        if (outcome.success()) {
+            stats.record(Metric.CALLBACK_OK, now);
+            return;
+        }
+        stats.record(Metric.CALLBACK_FAIL, now);
+        if (parcel == null || parcel.registration() == null) {
+            return;
+        }
+        Instant retryAt = now.plus(retryDelay(attempt.attemptNo()));
+        if (retryAt.isBefore(parcel.registration().expirationTime())) {
+            callbackQueue.add(new CallbackAttempt(nextCallbackId++, attempt.key(), attempt.callbackUrl(),
+                    attempt.attemptNo() + 1), retryAt);
+        }
+    }
+
+    public synchronized DispatchSettings dispatch() {
+        return dispatch;
+    }
+
+    public synchronized void updateDispatch(DispatchSettings dispatch) {
+        if (dispatch == null) {
+            throw new IllegalArgumentException("전송 설정은 필수입니다.");
+        }
+        this.dispatch = dispatch;
+    }
+
+    /**
+     * 보낸 알림의 기록을 최근 순으로 돌려준다.
+     *
+     * @param numberPrefix 송장 번호 앞자리. 비어 있으면 거르지 않는다
+     * @param limit        돌려줄 개수. 1 이상 1,000 이하
+     */
+    public synchronized List<CallbackRecord> callbackRecords(String numberPrefix, int limit) {
+        if (limit < 1 || limit > 1_000) {
+            throw new IllegalArgumentException("기록 개수는 1 이상 1,000 이하여야 합니다.");
+        }
+        String prefix = numberPrefix == null ? "" : numberPrefix.strip();
+        return callbackRecords.stream()
+                .filter(record -> record.key().trackingNumber().startsWith(prefix))
+                .limit(limit)
+                .toList();
     }
 
     public synchronized String issueToken(Instant now) {
@@ -230,6 +344,7 @@ public final class CarrierSimulator {
     public synchronized void clearStats() {
         stats.clear();
         detectionNanos.clear();
+        callbackRecords.clear();
     }
 
     /**
@@ -239,6 +354,50 @@ public final class CarrierSimulator {
         clearStats();
         parcels.clear();
         parcelOrder.clear();
+        callbackQueue.clear();
+        schedule.clear();
+        lastDispatchAt = null;
+    }
+
+    // 등록된 송장 중 새 사건이 보일 때가 된 것을 찾아 알림을 넣는다
+    private void advance(Instant now) {
+        Instant virtualNow = playback.virtualNow(now);
+        while (!schedule.isEmpty() && !schedule.peek().virtualTime().isAfter(virtualNow)) {
+            Parcel parcel = schedule.poll().parcel();
+            parcel.scheduled(false);
+            // 모두 지운 뒤 남아 있던 항목은 건너뛴다
+            if (parcels.get(parcel.key()) != parcel || !parcel.hasActiveRegistration(now)) {
+                continue;
+            }
+            parcel.materialize(playback, now);
+            int changes = parcel.takeUnnotified();
+            for (int i = 0; i < changes; i++) {
+                enqueue(parcel.key(), parcel.registration().callbackUrl(), faults.callbackCopies(), now);
+            }
+            schedule(parcel);
+        }
+    }
+
+    private void schedule(Parcel parcel) {
+        Instant next = parcel.nextVisibleVirtualTime();
+        if (next == null || parcel.scheduled()) {
+            return;
+        }
+        parcel.scheduled(true);
+        schedule.add(new Scheduled(next, nextScheduleSequence++, parcel));
+    }
+
+    private void enqueue(ParcelKey key, String callbackUrl, int copies, Instant now) {
+        for (int i = 0; i < copies; i++) {
+            callbackQueue.add(new CallbackAttempt(nextCallbackId++, key, callbackUrl, 1), now);
+        }
+    }
+
+    private static Duration retryDelay(int attemptNo) {
+        // 지수가 커지면 넘치므로 상한(5분)에 닿는 지점에서 끊는다
+        int exponent = Math.min(attemptNo - 1, 20);
+        Duration delay = Duration.ofSeconds(1L << exponent);
+        return delay.compareTo(MAX_RETRY_DELAY) > 0 ? MAX_RETRY_DELAY : delay;
     }
 
     private Parcel findOrCreate(ParcelKey key, Instant now) {
@@ -287,6 +446,9 @@ public final class CarrierSimulator {
     }
 
     private long pendingCallbacks() {
-        return 0;
+        return callbackQueue.size();
+    }
+
+    private record Scheduled(Instant virtualTime, long sequence, Parcel parcel) {
     }
 }
