@@ -251,6 +251,69 @@ class RefundTest {
     }
 
     @Test
+    void 승인_뒤_거절하면_사유와_시각을_남기고_배송비를_0으로_되돌리고_진행_중_칸을_비운다() {
+        // given: 배송비 세 칸에 서로 다른 값을 넣어 세 칸 모두 0이 되는지 본다
+        Refund sut = requested();
+        sut.approve(NOW, new RefundShippingFee(3_000L, 2_000L, 1_000L, true));
+        LocalDateTime rejectedAt = NOW.plusMinutes(1);
+
+        // when
+        sut.rejectAfterApproval("주문이 취소 반영을 거절했습니다.", rejectedAt);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(sut.getRejectReason()).isEqualTo("주문이 취소 반영을 거절했습니다.");
+            softly.assertThat(sut.getDecidedAt()).isEqualTo(rejectedAt);
+            softly.assertThat(sut.getCompletedAt()).isNull();
+            softly.assertThat(sut.getShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("처리_중이_아닌_네_상태의_환불")
+    void 처리_중이_아니면_승인_뒤_거절할_수_없다(Refund refund) {
+        // when & then
+        assertThatThrownBy(() -> refund.rejectAfterApproval("사유", NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
+    static Stream<Named<Refund>> 처리_중이_아닌_네_상태의_환불() {
+        Refund rejected = requested();
+        rejected.reject("사유", NOW);
+        Refund withdrawn = requested();
+        withdrawn.withdraw(NOW);
+        Refund completed = requested();
+        completed.approve(NOW, RefundShippingFee.none());
+        completed.complete(NOW);
+        // 이름을 붙여야 실패했을 때 어느 상태가 통과했는지 보인다
+        return Stream.of(
+                Named.of("요청됨", requested()),
+                Named.of("거절", rejected),
+                Named.of("철회", withdrawn),
+                Named.of("완료", completed));
+    }
+
+    @ParameterizedTest
+    @MethodSource("비어_있는_거절_사유")
+    void 승인_뒤_거절은_사유가_필수다(String reason) {
+        // given
+        Refund refund = requested();
+        refund.approve(NOW, RefundShippingFee.none());
+
+        // when & then
+        assertThatThrownBy(() -> refund.rejectAfterApproval(reason, NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REJECT_REASON_REQUIRED));
+        assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+    }
+
+    @Test
     void 철회하면_철회가_되고_진행_중_칸을_비운다() {
         // given
         Refund sut = requested();

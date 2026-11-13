@@ -263,6 +263,29 @@ public class Refund {
     }
 
     /**
+     * 승인한 뒤 주문이 취소 반영을 거절해 환불을 거절로 끝낸다. {@code PROCESSING → REJECTED}
+     * 주문이 거절했다는 것은 돈·재고가 아직 움직이지 않았다는 뜻이라 되돌릴 것이 없다. 그래서 거절로 끝내 같은 상품에 새 요청을 받는다.
+     * 승인 때 정한 배송비 세 칸은 0으로 되돌린다. 거절된 환불에는 돌려줄 배송비가 없고, 같은 묶음의 다른 요청이
+     * 이 요청의 배송비 판단을 보지 않게 해야 하기 때문이다(필드 주석 "요청됨·거절·철회에서는 0이다"와 같은 규칙).
+     * {@code decidedAt}은 판매자 승인 시각에서 이 거절 시각으로 덮어쓴다. 최종 결정이 거절이기 때문이다.
+     *
+     * @throws RestApiException 사유가 비었으면 {@code REJECT_REASON_REQUIRED}, 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void rejectAfterApproval(String reason, LocalDateTime now) {
+        // 기존 reject와 같은 순서다. 사유 검사가 먼저라 끝난 요청이어도 사유가 비면 사유 없음으로 막는다
+        if (reason == null || reason.isBlank()) {
+            throw new RestApiException(RefundErrorCode.REJECT_REASON_REQUIRED);
+        }
+        requireStatus(RefundStatus.PROCESSING);
+        this.rejectReason = reason;
+        this.decidedAt = now;
+        this.shippingFeeAmount = 0L;
+        this.remoteAreaFeeAmount = 0L;
+        this.deductedShippingFeeAmount = 0L;
+        finish(RefundStatus.REJECTED);
+    }
+
+    /**
      * 구매자가 승인 전에 요청을 거둔다. {@code REQUESTED → WITHDRAWN}
      * 승인한 뒤에는 배송·돈 처리가 이어지므로 철회를 받지 않는다.
      *

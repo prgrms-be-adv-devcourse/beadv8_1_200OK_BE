@@ -7,10 +7,10 @@ package com.ok.refund.domain;
  */
 public enum RefundFailedStep {
 
+    /** 주문 취소 수량 반영 (#413). 주문을 먼저 반영해 거절당하면 돈이 움직이기 전에 끝낸다 */
+    ORDER,
     /** 지갑 예치금 반환 (#413) */
     WALLET,
-    /** 주문 취소 수량 반영 (#413) */
-    ORDER,
     /** 상품 재고 되돌리기 (#414) */
     PRODUCT
 }

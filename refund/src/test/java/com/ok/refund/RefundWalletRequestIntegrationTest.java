@@ -7,7 +7,9 @@ import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
+import com.ok.testsupport.FakeProductStockReleasePort;
 import com.ok.testsupport.TestAccessTokens;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -70,6 +72,10 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     RefundJpaRepository refundJpaRepository;
     @Autowired
     FakeOrderQueryPort orderQueryPort;
+    @Autowired
+    FakeOrderCancellationPort orderCancellationPort;
+    @Autowired
+    FakeProductStockReleasePort productStockReleasePort;
     // yaml(spring.kafka)과 테스트 컨테이너 주소로 자동 설정된 컨슈머 팩토리
     @Autowired
     ConsumerFactory<?, ?> consumerFactory;
@@ -89,6 +95,8 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         refundJpaRepository.deleteAllInBatch();
         // 통합 테스트는 컨텍스트(Fake 빈)를 함께 쓰므로 비우지 않으면 다른 테스트로 값이 넘어간다
         orderQueryPort.clear();
+        orderCancellationPort.clear();
+        productStockReleasePort.clear();
     }
 
     @Test
@@ -138,6 +146,26 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(readMessagesOf(refundId, before)).isEmpty();
+    }
+
+    // 승인 때는 출고 전이었는데 주문에 알리는 사이 출고됐다. 주문을 지갑보다 먼저 부르므로 돈이 나가기 전에 거절로 끝나야 한다
+    @Test
+    void 승인_뒤_주문이_반영을_거절하면_REJECTED로_응답하고_반환_요청을_보내지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        orderCancellationPort.markShipped(ORDER_ITEM_ID);
+        Map<TopicPartition, Long> before = endOffsets();
+
+        // when
+        approve(refundId)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("REJECTED")))
+                .andExpect(jsonPath("$.rejectReason", is("이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.")));
+
+        // then
+        assertThat(readMessagesOf(refundId, before)).isEmpty();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+        assertThat(orderCancellationPort.reflectedOf(refundId)).isEmpty();
     }
 
     // ---------- 도우미: 요청·승인 ----------

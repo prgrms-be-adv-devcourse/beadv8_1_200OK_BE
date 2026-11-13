@@ -3,8 +3,10 @@ package com.ok.refund.domain;
 /**
  * 환불 요청 상태.
  *
- * <p>{@code REQUESTED → PROCESSING | REJECTED | WITHDRAWN}, {@code PROCESSING → COMPLETED}. 처리 중에서 요청됨으로 돌아가는 길은 두지 않는다.
+ * <p>{@code REQUESTED → PROCESSING | REJECTED | WITHDRAWN}, {@code PROCESSING → COMPLETED | REJECTED}. 처리 중에서 요청됨으로 돌아가는 길은 두지 않는다.
  * 승인한 뒤에는 지갑 환불·주문 반영·재고 복구가 차례로 진행되어(#413~#414), 되돌리면 이미 움직인 돈·재고와 어긋난다.
+ * {@code PROCESSING → REJECTED}는 승인 뒤 주문이 취소 반영을 거절했을 때만 쓴다. 이때는 돈·재고가 움직이기 전이라 되돌릴 것이 없어,
+ * 요청됨으로 되돌리는 것이 아니라 거절로 끝낸다.
  * 이미 출고돼 승인할 수 없는 경우(#412)는 자동 거절로 끝낸다.
  */
 public enum RefundStatus {
@@ -13,7 +15,7 @@ public enum RefundStatus {
     REQUESTED,
     /** 판매자가 승인해 처리를 시작함. 아직 진행 중이라 같은 상품에 새 요청을 받지 않는다 */
     PROCESSING,
-    /** 판매자가 거절함 (사유 필수). 끝난 상태 */
+    /** 판매자 거절, 자동 거절, 승인 뒤 주문 거절을 포함한다 (사유 필수). 끝난 상태 */
     REJECTED,
     /** 구매자가 승인 전에 거둠. 끝난 상태 */
     WITHDRAWN,

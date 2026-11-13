@@ -5,6 +5,7 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.refund.application.port.out.OrderCancellationResult;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -265,10 +266,11 @@ class RefundOrderHttpAdapterTest {
         status.set(204);
 
         // when
-        sut.reflectCancellation(new OrderCancellation(7L, 101L, 2, 3_000L));
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 2, 3_000L));
 
         // then
         assertSoftly(softly -> {
+            softly.assertThat(result.rejected()).isFalse();
             softly.assertThat(method.get()).isEqualTo("POST");
             softly.assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
             softly.assertThat(requestBody.get()).isEqualToIgnoringWhitespace(
@@ -282,20 +284,74 @@ class RefundOrderHttpAdapterTest {
         status.set(200);
         body.set("{}");
 
-        // when & then: 예외 없이 끝난다
-        sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+        // when
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then: 예외 없이 반영됨으로 끝난다
+        assertThat(result.rejected()).isFalse();
         assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
     }
 
-    // 404(주문 상품 없음)·409(합계 초과, 수량이 다름)도 일시적 실패와 같은 코드다. 구분은 #516
+    // 409만 거절 결과다. 404 같은 그 밖의 오류 상태는 일시적 실패와 같은 코드다
     @Test
     void 취소_반영이_오류_상태를_받으면_ORDER_API_FAILED() {
-        // given
-        status.set(409);
+        // given: 409가 아닌 오류 상태
+        status.set(500);
 
         // when & then
         assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+    }
+
+    @Test
+    void 취소_반영이_409면_거절_결과와_주문의_설명을_돌려준다() {
+        // given: 이유 이름(type)은 about:blank라 보지 않고 detail만 쓴다
+        status.set(409);
+        body.set("""
+                { "type": "about:blank", "title": "Conflict", "status": 409, "detail": "이미 출고된 상품입니다." }""");
+
+        // when
+        OrderCancellationResult sut = this.sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.rejected()).isTrue();
+            softly.assertThat(sut.orderDetail()).isEqualTo("이미 출고된 상품입니다.");
+        });
+    }
+
+    @Test
+    void 취소_반영이_409인데_설명이_없으면_설명_없음으로_채운다() {
+        // given: 본문이 비어 있다. 설명이 없다고 거절을 실패로 바꾸면 안 된다
+        status.set(409);
+
+        // when
+        OrderCancellationResult sut = this.sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.rejected()).isTrue();
+            softly.assertThat(sut.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+        });
+    }
+
+    @Test
+    void 취소_반영이_409인데_본문이_깨졌으면_설명_없음으로_채운다() {
+        // given
+        status.set(409);
+        body.set("not json");
+
+        // when
+        OrderCancellationResult sut = this.sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.rejected()).isTrue();
+            softly.assertThat(sut.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+        });
     }
 }
