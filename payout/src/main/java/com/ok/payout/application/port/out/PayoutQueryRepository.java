@@ -131,4 +131,9 @@ public interface PayoutQueryRepository {
     // 그 주문들의 미정산 후보 중 createdAt < to인 것 (#549, 조회 기간의 하한 없음, id 오름차순)
     // 잠긴 주문의 후보는 뺌. orderIds가 비면 조회하지 않고 빈 목록
     List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to);
+
+    // 그 주문들 중 createdAt < to인 미정산 후보가 남은 주문 ID (#549, 중복 없음, 조회 기간의 하한 없음)
+    // 조건은 findUnsettledCandidatesOfOrdersBefore와 같고 주문 ID만 돌려줌: 멈춘 주문 수를 셀 때 후보 엔티티를 다 불러오지 않으려는 것
+    // 잠긴 주문은 뺌. orderIds가 비면 조회하지 않고 빈 목록
+    List<Long> findOrderIdsWithUnsettledCandidatesBefore(Collection<Long> orderIds, LocalDateTime to);
 }

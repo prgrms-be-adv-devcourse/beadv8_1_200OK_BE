@@ -194,10 +194,8 @@ public class PayoutService implements PayoutUseCase {
         //   대가: 멈춘 주문이 #301로 해결되기 전까지는 매 실행마다 같은 주문이 다시 세어짐 (사용자가 감수하기로 함)
         //   이미 정산된 후보와 잠긴 주문은 이 조회가 빼므로 세지 않음 (잠긴 주문은 아래 잠금 로그가 따로 알림)
         // 실패를 저장하는 시점이 아니라 스냅샷을 만들 때 남기는 이유: 실행이 FAILED로 끝나면 그 실패는 횟수에 안 세므로, 저장 시점에는 멈춤이 확정이 아님
-        Set<Long> reportedStoppedOrderIds = new HashSet<>();
-        for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(new ArrayList<>(stoppedOrderIds), to)) {
-            reportedStoppedOrderIds.add(candidate.getOrderId());
-        }
+        //   후보 엔티티 대신 주문 ID만 중복 없이 받음: 멈춘 주문이 쌓여도 매 실행 불러오는 양이 주문 수만큼으로 그침
+        List<Long> reportedStoppedOrderIds = payoutQueryRepository.findOrderIdsWithUnsettledCandidatesBefore(stoppedOrderIds, to);
         if (!reportedStoppedOrderIds.isEmpty()) {
             log.warn("{}번 실패한 주문이라 스냅샷에서 제외. snapshotId={}, 제외 주문 수={}",
                     PayoutPolicy.MAX_FAILED_RUNS, snapshot.getId(), reportedStoppedOrderIds.size());

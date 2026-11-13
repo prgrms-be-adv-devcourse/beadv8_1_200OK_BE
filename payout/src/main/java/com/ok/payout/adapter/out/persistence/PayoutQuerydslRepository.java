@@ -100,6 +100,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // COUNT(DISTINCT snapshot_id)인 이유: 스냅샷 1개 = 실행 1번이라, 한 실행에서 같은 주문의 후보 여러 건이 실패해도 1번으로 세려는 것
     // payout_item이 없는 후보의 실패만 세는 이유: 이미 정산된 후보의 실패는 더 막을 일이 아님 (unsettledInPeriod와 같은 "미정산" 기준)
     // STATUS = 'COMPLETED'만 세는 이유: FAILED로 끝난 실행의 실패 기록은 주문 탓이 아닐 수 있어 횟수에 넣지 않음
+    // 매 실행 실패 기록 전체를 훑어 기록이 쌓일수록 느려지는 것은 알고 둠: 지금 규모에서는 문제없고, 대량에서의 시간은 #304에서 잼
     @Override
     public Map<Long, Long> countFailedRunsByOrder() {
         List<?> rows = entityManager.createNativeQuery(
@@ -123,6 +124,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 다시 검사할 주문들의 미정산 후보 (#549): 조회 기간 하한 없이 createdAt < to
     // 하한이 없는 이유: 실패한 주문의 후보는 이전 실행의 조회 기간 안에 있었어도 기간 하한이 올라가 지금은 기간 밖이라, 하한을 두면 다시 못 잡음
     // unsettledInPeriod(null, to)를 그대로 써 미정산·상한 기준을 스냅샷 대상 조회와 같게 하고, 잠긴 주문은 같은 방식으로 뺌
+    // IN 목록을 나눠 보내지 않음: 1~2번 실패한 주문만 들어와 지금 규모에서는 짧음. 잠긴 주문도 목록에 남아 길어질 수 있어 대량에서는 #304에서 봄
     @Override
     public List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to) {
         // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
@@ -133,6 +135,22 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .selectFrom(payoutCandidateItem)
                 .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
                 .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // 멈춘 주문 수 세기용 (#549): 위 조회와 같은 조건에서 주문 ID만 중복 없이 뽑음 (후보 엔티티를 불러오지 않음)
+    // 조건을 위 조회와 따로 쓰면 둘이 어긋나 "다시 넣는 대상"과 "세는 대상"이 달라지므로 같은 조건 메서드를 그대로 씀
+    @Override
+    public List<Long> findOrderIdsWithUnsettledCandidatesBefore(Collection<Long> orderIds, LocalDateTime to) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .select(payoutCandidateItem.orderId)
+                .distinct()
+                .from(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
                 .fetch();
     }
 

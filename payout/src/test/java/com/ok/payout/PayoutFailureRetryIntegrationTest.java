@@ -204,6 +204,33 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 멈춘_주문_수를_셀_주문_ID는_후보_조회와_같은_조건에서_중복_없이_고른다() throws Exception {
+        // given: 상한 이전 후보 2건인 주문 X, 상한 정각 후보만 있는 주문 W, 금액 불일치로 잠긴 주문 Y, 넘기지 않을 주문 Z
+        LocalDateTime to = LocalDateTime.of(2026, 11, 1, 0, 0);
+        // 실제 Job은 오래된 후보를 정산해 버리므로, 후보를 넣기 전에 실행부터 함 (실패 기록을 붙일 스냅샷만 필요)
+        Long snapshotId = runCompleted();
+        long orderX = nextOrderId();
+        long orderW = nextOrderId();
+        long orderY = nextOrderId();
+        long orderZ = nextOrderId();
+        insertCandidate(orderX, to.minusYears(1));
+        insertCandidate(orderX, to.minusSeconds(1));
+        insertCandidate(orderW, to);                              // 상한 정각 → 제외 (<)
+        long yBefore = insertCandidate(orderY, to.minusDays(1));
+        insertCandidate(orderZ, to.minusDays(1));
+        insertFailure(snapshotId, yBefore, orderY, PayoutFailureReason.AMOUNT_MISMATCH);   // 주문을 잠그는 사유
+
+        // when
+        List<Long> sut = payoutQueryRepository.findOrderIdsWithUnsettledCandidatesBefore(
+                List.of(orderX, orderW, orderY), to);
+
+        // then: 후보가 2건인 X도 한 번만. 상한 뒤 후보뿐인 W, 잠긴 Y, 넘기지 않은 Z는 빠짐
+        assertThat(sut).containsExactly(orderX);
+        // 주문을 하나도 안 넘기면 질의하지 않고 빈 목록
+        assertThat(payoutQueryRepository.findOrderIdsWithUnsettledCandidatesBefore(List.of(), to)).isEmpty();
+    }
+
+    @Test
     void 다시_넣을_주문의_후보_조회는_이미_정산된_후보를_돌려주지_않는다() throws Exception {
         // given: 한 주문에 오래된 후보(실제 Job이 정산함)와, 그 뒤에 들어온 미정산 후보
         // 정산된 후보는 실제 Job으로 만든다: payout_item이 실제로 생겨야 "미정산 조건"이 의미 있음
