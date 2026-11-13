@@ -105,7 +105,7 @@ public class RefundStepRunner {
         String name = e.getClass().getSimpleName();
         // 만일을 대비한 처리: 그 자리에서 만든 이름 없는 예외(new RuntimeException() { })는 짧은 이름이 빈 값이라,
         // 그대로 넘기면 Refund.recordFailure가 "이유가 비었다"며 거부해 진짜 실패가 기록되지 않는다. 지금 환불 코드에는 없지만
-        // #413·#414에서 이 틀로 부르는 호출이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
+        // 이 틀로 부르는 호출(지금은 HandleWalletRefundResultService의 재고 복구, #544)이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
         if (name.isEmpty()) {
             name = e.getClass().getName();
         }

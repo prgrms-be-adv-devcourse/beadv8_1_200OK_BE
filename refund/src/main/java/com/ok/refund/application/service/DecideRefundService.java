@@ -170,7 +170,8 @@ public class DecideRefundService implements DecideRefundUseCase {
     // 되돌릴 수 없어, 돈은 나갔는데 상품은 배송되는 일이 생긴다. 주문이 거절하면 지갑·재고를 부르지 않고 거절로 끝낸다.
     // 지갑 발행이 실패하면 주문은 이미 취소를 기록한 상태다. 나중에 같은 refundId로 다시 보내면 주문이 성공으로 답하므로(멱등)
     // 다시 시도(#545)가 지갑 요청부터 이어 갈 수 있다.
-    // 실패 기록 틀(RefundStepRunner)로 부르지 않는 이유: 실패 기록과 다시 시도는 #516에서 함께 정한다(refund/CLAUDE.md 5절)
+    // 승인 요청 안의 단계를 실패 기록 틀(RefundStepRunner)로 부르지 않는 이유: 실패 기록과 다시 시도는 #516에서 함께 정한다(refund/CLAUDE.md 5절).
+    // 지갑 완료 뒤의 재고 복구는 HandleWalletRefundResultService가 틀로 부른다(#544, 끝까지 실패하면 PRODUCT를 기록하기로 정함)
     // TODO(#516): 앞 단계가 실패하면 예외만 올라가고(판매자는 500·503, 다시 승인하면 409) 환불은 처리 중에 머문다.
     //  주문이 먼저 취소를 기록한 뒤 지갑 발행이 실패하면 주문만 취소된 채 남는다(다시 시도나 outbox로 다룸)
     private RefundResult continueAfterApproval(RefundResult result) {
