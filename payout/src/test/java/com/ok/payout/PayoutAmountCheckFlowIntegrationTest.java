@@ -124,7 +124,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 결제_금액보다_큰_구매확정이_들어온_주문만_잠기고_다음_배치에서도_빠진다() throws Exception {
+    void 결제_금액보다_큰_구매확정이_들어온_주문은_잠기지_않고_다음_배치에서_다시_검사되어_또_빠진다() throws Exception {
         // given: 정상 주문(판매자 C, 9,000원 결제·확정)과, 15,000원 결제인데 20,000원으로 구매확정된 주문(판매자 A·B)
         givenPayment(NORMAL_ORDER_ID, 9_000L);
         givenConfirmed(NORMAL_ORDER_ID, 3_000_201L, SELLER_C, 9_000L, 0L);
@@ -150,11 +150,15 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
                 .extracting(Payout::getPayeeId, Payout::getAmount)
                 .containsExactlyInAnyOrder(tuple(SELLER_C, 8_730L), tuple(null, 270L));
 
-        // then: 2차는 잠긴 주문을 스냅샷에 넣지 않아 대상이 없음 (정산·실패 기록도 새로 생기지 않음)
+        // then: 2차는 잠그지 않은(#552) 틀린 주문을 다시 검사하고, 입력이 그대로라 같은 금액 불일치로 또 빠짐 (돈이 나가지 않음)
         assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         Long secondSnapshotId = snapshotIdOf(second);
-        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
-        assertThat(failureRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).hasSize(4);
+        assertThat(failureRepository.findBySnapshotId(secondSnapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
+                .containsOnly(tuple(TAMPERED_ORDER_ID, PayoutFailureReason.AMOUNT_MISMATCH))
+                .hasSize(4);
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
     }
 
     // ---------- 도우미 ----------

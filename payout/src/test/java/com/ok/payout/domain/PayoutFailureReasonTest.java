@@ -15,15 +15,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PayoutFailureReasonTest {
 
     @Test
-    void 주문을_잠그는_사유는_초과_청구_수수료_결과_검증_불일치뿐이다() {
+    void 주문을_잠그는_사유는_결과_검증_불일치뿐이다() {
         // when
         List<PayoutFailureReason> sut = PayoutFailureReason.orderLockingReasons();
 
-        // then: #391 1단계는 잠금 동작을 바꾸지 않음. FEE_MISMATCH는 나누기 전(AMOUNT_MISMATCH)처럼 잠그고, 함께 보류된 ORDER_HELD는 잠그지 않음
-        assertThat(sut).containsExactly(
-                PayoutFailureReason.AMOUNT_MISMATCH,
-                PayoutFailureReason.FEE_MISMATCH,
-                PayoutFailureReason.VERIFY_MISMATCH);
+        // then: #552부터 금액 불일치(AMOUNT_MISMATCH·FEE_MISMATCH)는 잠그지 않고 다시 검사함. 코드 버그인 결과 검증 불일치만 잠금
+        assertThat(sut).containsExactly(PayoutFailureReason.VERIFY_MISMATCH);
+    }
+
+    @Test
+    void 실패_횟수에_세지_않는_사유는_수수료_불일치와_그_때문에_함께_보류된_것뿐이다() {
+        // when
+        List<PayoutFailureReason> sut = PayoutFailureReason.uncountedReasons();
+
+        // then: 시스템 문제라 횟수로 멈추지 않고 고칠 때까지 다시 검사함 (#552). 초과 청구는 세어 3번이면 멈춤(#549)
+        assertThat(sut).containsExactly(PayoutFailureReason.FEE_MISMATCH, PayoutFailureReason.ORDER_HELD);
     }
 
     // 사유를 새로 더할 때 범주를 빠뜨리지 않게 모든 사유를 돌며 확인
