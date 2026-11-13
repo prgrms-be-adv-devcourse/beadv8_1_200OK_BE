@@ -9,6 +9,7 @@ import com.ok.wallet.application.dto.TossConfirmResult;
 import com.ok.wallet.application.port.out.TossPaymentsClient;
 import com.ok.wallet.domain.TermsType;
 import com.ok.wallet.exception.WalletErrorCode;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,12 +61,14 @@ class ChargeServiceTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).deleteAll();
+        deleteTermsAgreements();
     }
 
     @AfterEach
     void tearDown() {
-        cleanUp();
+        deleteTermsAgreements();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     // 충전 요청
@@ -407,16 +410,8 @@ class ChargeServiceTest extends AbstractIntegrationTest {
                 """, Long.class, memberId, referenceKey);
     }
 
-    // FK 때문에 원장을 지갑보다 먼저 지운다. 이 클래스의 회원 데이터만 지운다.
-    private void cleanUp() {
+    private void deleteTermsAgreements() {
         for (Long memberId : List.of(MEMBER_ID, OTHER_MEMBER_ID)) {
-            jdbcTemplate.update("""
-                    DELETE l FROM buyer_wallet_ledger l
-                    JOIN buyer_wallet w ON l.buyer_wallet_id = w.id
-                    WHERE w.member_id = ?
-                    """, memberId);
-            jdbcTemplate.update("DELETE FROM buyer_wallet WHERE member_id = ?", memberId);
-            jdbcTemplate.update("DELETE FROM wallet_charge WHERE member_id = ?", memberId);
             jdbcTemplate.update("DELETE FROM wallet_terms_agreement WHERE member_id = ?", memberId);
         }
     }

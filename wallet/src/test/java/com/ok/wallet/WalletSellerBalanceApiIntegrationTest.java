@@ -3,6 +3,7 @@ package com.ok.wallet;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import com.ok.wallet.application.service.SellerWalletService;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,8 +13,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
-
-import java.util.List;
 
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -44,12 +43,12 @@ class WalletSellerBalanceApiIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
 
     @AfterEach
     void tearDown() {
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     @Test
@@ -97,17 +96,5 @@ class WalletSellerBalanceApiIntegrationTest extends AbstractIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(OTHER_SELLER_ID, "SELLER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balance").value(5_000));
-    }
-
-    // FK 때문에 원장을 지갑보다 먼저 지운다. 이 클래스의 회원 데이터만 지운다.
-    private void cleanUp() {
-        for (Long memberId : List.of(SELLER_ID, OTHER_SELLER_ID)) {
-            jdbcTemplate.update("""
-                    DELETE l FROM seller_wallet_ledger l
-                    JOIN seller_wallet w ON l.seller_wallet_id = w.id
-                    WHERE w.member_id = ?
-                    """, memberId);
-            jdbcTemplate.update("DELETE FROM seller_wallet WHERE member_id = ?", memberId);
-        }
     }
 }

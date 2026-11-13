@@ -4,6 +4,7 @@ import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.common.event.WalletPaymentFailedEvent;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.dto.OrderPaymentCommand;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,12 +41,12 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
 
     @AfterEach
     void tearDown() {
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     @Test
@@ -154,16 +155,5 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     private long balanceOf(Long memberId) {
         return jdbcTemplate.queryForObject(
                 "SELECT balance FROM buyer_wallet WHERE member_id = ?", Long.class, memberId);
-    }
-
-    // FK 때문에 원장을 지갑보다 먼저 지운다. 이 클래스의 회원 데이터만 지운다.
-    private void cleanUp() {
-        jdbcTemplate.update("DELETE FROM wallet_order_payment WHERE buyer_id = ?", BUYER_ID);
-        jdbcTemplate.update("""
-                DELETE l FROM buyer_wallet_ledger l
-                JOIN buyer_wallet w ON l.buyer_wallet_id = w.id
-                WHERE w.member_id = ?
-                """, BUYER_ID);
-        jdbcTemplate.update("DELETE FROM buyer_wallet WHERE member_id = ?", BUYER_ID);
     }
 }
