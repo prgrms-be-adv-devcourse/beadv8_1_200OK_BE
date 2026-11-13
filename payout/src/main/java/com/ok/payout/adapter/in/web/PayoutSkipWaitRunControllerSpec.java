@@ -21,7 +21,7 @@ interface PayoutSkipWaitRunControllerSpec {
             정산 대기 기간(15일)을 기다리지 않고 지금 있는 미정산 후보를 정산합니다. 발표·연동 테스트용 임시 기능입니다.
             관리자만 실행할 수 있습니다.
             정산 기록이 실제로 남습니다. 이미 정산된 후보는 다시 정산하지 않습니다.
-            서버 설정으로 꺼져 있으면(기본값) 정산을 시작하지 않고 409로 응답합니다.
+            서버 설정으로 꺼져 있거나(기본값) 정산이 이미 실행 중이면 정산을 시작하지 않고 409로 응답합니다.
             배치가 COMPLETED가 아니면 서버 오류(500)로 응답합니다. 실행 ID와 배치 상태는 서버 로그에 남습니다.
             """)
     @ApiResponses({
@@ -34,20 +34,31 @@ interface PayoutSkipWaitRunControllerSpec {
                     responseCode = "403", description = "관리자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
-            // 클라이언트가 "꺼져 있음"을 다른 오류와 구분해야 하므로 예시를 둔다
+            // 클라이언트가 두 경우를 구분해야 하므로 예시를 각각 둔다
             @ApiResponse(
-                    responseCode = "409", description = "대기 건너뛰기 실행이 서버 설정으로 꺼져 있음",
+                    responseCode = "409", description = "대기 건너뛰기 실행이 서버 설정으로 꺼져 있거나, 정산이 이미 실행 중",
                     content = @Content(mediaType = "application/problem+json",
                             schema = @Schema(implementation = ProblemDetail.class),
-                            examples = @ExampleObject(name = "꺼짐", value = """
-                                    {
-                                      "type": "https://api.example.com/problems/payout/skip-wait-run-disabled",
-                                      "title": "Skip wait run disabled",
-                                      "status": 409,
-                                      "detail": "정산 대기 건너뛰기 실행이 꺼져 있습니다.",
-                                      "instance": "/api/v1/admin/payouts/run/skip-wait"
-                                    }
-                                    """))
+                            examples = {
+                                    @ExampleObject(name = "꺼짐", value = """
+                                            {
+                                              "type": "https://api.example.com/problems/payout/skip-wait-run-disabled",
+                                              "title": "Skip wait run disabled",
+                                              "status": 409,
+                                              "detail": "정산 대기 건너뛰기 실행이 꺼져 있습니다.",
+                                              "instance": "/api/v1/admin/payouts/run/skip-wait"
+                                            }
+                                            """),
+                                    @ExampleObject(name = "실행 중", value = """
+                                            {
+                                              "type": "https://api.example.com/problems/payout/payout-job-already-running",
+                                              "title": "Payout job already running",
+                                              "status": 409,
+                                              "detail": "정산이 이미 실행 중입니다.",
+                                              "instance": "/api/v1/admin/payouts/run/skip-wait"
+                                            }
+                                            """)
+                            })
             ),
             @ApiResponse(
                     responseCode = "500", description = "배치 실행 실패 (실행 ID와 배치 상태는 서버 로그에 남음)",

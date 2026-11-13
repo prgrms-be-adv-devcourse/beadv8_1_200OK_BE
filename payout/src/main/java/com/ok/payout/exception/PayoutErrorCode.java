@@ -35,6 +35,8 @@ public enum PayoutErrorCode implements ErrorCode {
     PAYOUT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Payout access denied", "정산을 조회할 권한이 없습니다."),
     // 대기 건너뛰기 실행 스위치(payout.skip-wait-run.enabled)가 꺼져 있음 (#485). 요청 자체는 정상이나 현재 서버 설정과 맞지 않아 409
     SKIP_WAIT_RUN_DISABLED(HttpStatus.CONFLICT, "Skip wait run disabled", "정산 대기 건너뛰기 실행이 꺼져 있습니다."),
+    // 정산 Job이 이미 실행 중이라 다른 실행을 거절함 (동시 실행 방지 잠금, #223)
+    PAYOUT_JOB_ALREADY_RUNNING(HttpStatus.CONFLICT, "Payout job already running", "정산이 이미 실행 중입니다."),
     // 형태만 공개하고 실제 동작은 막아 둔 API(1건 수동 실행, 수동 조정)를 표시하는 임시 코드
     // 두 API가 모두 열리면 이 항목도 지움. 막아 둔 이유는 각 API의 TODO(논의 필요) 주석 참고
     FEATURE_NOT_SUPPORTED(HttpStatus.NOT_IMPLEMENTED, "Feature not supported", "아직 지원하지 않는 기능입니다.");
