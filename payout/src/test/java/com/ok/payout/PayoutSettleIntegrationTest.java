@@ -154,6 +154,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    // 이 테스트가 주문 저장을 막는 트리거를 만들었는지 (#534, unblockOrderDraftItem 참고)
+    private boolean orderDraftItemBlocked;
+
     // 이전 테스트가 중간에 실패해 남긴 데이터가 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
     void setUp() {
@@ -1680,10 +1683,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(systemDraftItemRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutSystemDraftItem::getOrderId)
                 .containsOnly(normalOrder);
+
+        // then: 오류가 사라진 다음 실행에서 실패했던 주문만 정산됨 (하루 늦어질 뿐 빠지지 않음, 정상 주문은 두 번 정산되지 않음)
+        JobExecution next = payoutJobRunner.runScheduled();
+        assertThat(next.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(next)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(20L, 9_700L), tuple(null, 300L));
     }
 
     @Test
-    void 판매자_단위_오류면_주문별로_다시_해도_모든_주문이_실패로_남는다() {
+    void 판매자_단위_오류면_모든_주문이_실패로_남는다() {
         // given: 판매자 20의 주문 2개. 판매자 draft 자체가 막혀(UK 위반) 어느 주문으로 시험해도 실패함
         long order1 = nextOrderItemId();
         insertCandidate(PayoutEventType.SALE_AMOUNT, order1, 20L, 9_700L, TO.minusDays(2));
@@ -1694,8 +1704,12 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         blockSellerDraft(snapshotId, 20L);
 
         // when
-        PayoutDraftResult drafted = payoutService.draft(snapshotId, LIMIT);
-        unblockSellerDraft(snapshotId, 20L);
+        PayoutDraftResult drafted;
+        try {
+            drafted = payoutService.draft(snapshotId, LIMIT);
+        } finally {
+            unblockSellerDraft(snapshotId, 20L);
+        }
 
         // then: 주문마다 시험했지만 모두 실패 → 두 주문 후보 모두 실패 기록, 판매자 20은 실패 판매자
         assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1));
@@ -1951,14 +1965,20 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 트리거는 테이블에 남으므로 반드시 unblockOrderDraftItem으로 지움 (cleanUp에서도 지움)
     private void blockOrderDraftItem(long orderId) {
         unblockOrderDraftItem();
+        orderDraftItemBlocked = true;
         executeAsRoot(
                 "CREATE TRIGGER " + BLOCK_ORDER_TRIGGER + " BEFORE INSERT ON payout_seller_draft_item FOR EACH ROW " +
                         "BEGIN IF NEW.order_id = " + orderId + " THEN " +
                         "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '" + BLOCK_ORDER_MESSAGE + "'; END IF; END");
     }
 
+    // 트리거를 만든 테스트에서만 root로 접속해 지움: 모든 테스트가 root로 접속하면 root 접속 문제 하나로 이 클래스 테스트가 전부 깨짐
     private void unblockOrderDraftItem() {
+        if (!orderDraftItemBlocked) {
+            return;
+        }
         executeAsRoot("DROP TRIGGER IF EXISTS " + BLOCK_ORDER_TRIGGER);
+        orderDraftItemBlocked = false;
     }
 
     // 트리거는 root로 만듦: 테스트 MySQL은 바이너리 로그가 켜져 있어, 앱 계정(SUPER 권한 없음)으로는 트리거를 만들 수 없음

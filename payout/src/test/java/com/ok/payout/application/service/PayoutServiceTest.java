@@ -296,15 +296,19 @@ class PayoutServiceTest {
         PayoutCandidateItem amount200 = withId(PayoutCandidateItem.ofSaleAmount(200L, 2001L, 10L, 19_400L), 3L);
         given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, 100)).willReturn(sellerIds);
         given(payoutQueryRepository.findUndraftedCandidates(SNAPSHOT_ID, sellerIds)).willReturn(List.of(amount100, amount200));
+        // 판매자 전체 저장과 합친 저장은 같은 후보 목록이라, 첫 번째·두 번째 호출의 예외를 다르게 둬 어느 예외로 기록했는지 구분함
+        IllegalStateException sellerFailure = new IllegalStateException("판매자 10 저장 실패");
         IllegalStateException mergedFailure = new IllegalStateException("합친 저장 실패");
-        // 판매자 전체 저장과 합친 저장은 같은 후보 목록이라 두 번 다 실패함
-        willThrow(mergedFailure).given(payoutSellerDraftService).saveDraft(SNAPSHOT_ID, 10L, List.of(amount100, amount200));
+        willThrow(sellerFailure).willThrow(mergedFailure)
+                .given(payoutSellerDraftService).saveDraft(SNAPSHOT_ID, 10L, List.of(amount100, amount200));
 
         // when
         PayoutDraftResult drafted = sut.draft(SNAPSHOT_ID, 100);
 
-        // then: 통과한 두 주문의 후보를 합친 저장의 예외로 한 번에 기록하고 실패 판매자로 셈
+        // then: 주문마다 시험한 뒤, 통과한 두 주문의 후보를 합친 저장의 예외로 한 번에 기록하고 실패 판매자로 셈
         assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1));
+        then(payoutSellerDraftService).should().trySaveDraft(SNAPSHOT_ID, 10L, List.of(amount100));
+        then(payoutSellerDraftService).should().trySaveDraft(SNAPSHOT_ID, 10L, List.of(amount200));
         then(payoutSellerDraftService).should(times(2)).saveDraft(SNAPSHOT_ID, 10L, List.of(amount100, amount200));
         then(payoutSellerDraftService).should().recordUnexpectedError(SNAPSHOT_ID, List.of(amount100, amount200), mergedFailure);
     }
