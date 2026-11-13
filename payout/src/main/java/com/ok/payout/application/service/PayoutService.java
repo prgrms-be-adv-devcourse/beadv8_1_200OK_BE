@@ -152,13 +152,10 @@ public class PayoutService implements PayoutUseCase {
 
         // 1) 기간 안 후보에서 멈춘 주문의 후보를 뺌: 주문 단위로 멈추므로 그 주문의 다른 후보(스스로는 실패하지 않은 것, 뒤늦게 들어온 것)도 같이 빠짐
         //    이미 정산된 후보(다른 판매자가 통과한 것 등)는 미정산 조회에 안 나와 영향이 없음
-        //    같은 주문이 여러 후보여도 1건으로 세려고, 빠진 주문 ID를 따로 모음 (로그용)
         List<PayoutCandidateItem> candidates = new ArrayList<>();
         Set<Long> candidateIds = new HashSet<>();
-        Set<Long> removedStoppedOrderIds = new HashSet<>();
         for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to)) {
             if (stoppedOrderIds.contains(candidate.getOrderId())) {
-                removedStoppedOrderIds.add(candidate.getOrderId());
                 continue;
             }
             candidates.add(candidate);
@@ -191,10 +188,19 @@ public class PayoutService implements PayoutUseCase {
         // 이번 조회 기간에서 잠긴 주문(#195, #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
         // (0건이면 매일 같은 로그가 남아 생략)
         // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
-        // 멈춰서 뺀 주문이 있는 날만 WARN: 3번 실패해 정산에서 빠진 주문은 사람이 확인해야 하므로 INFO보다 높게 남김 (0건이면 생략)
+        // 멈춘 주문이 있는 날만 WARN: MAX_FAILED_RUNS번 실패해 정산에서 빠진 주문은 사람이 확인해야 하므로 INFO보다 높게 남김 (0건이면 생략)
+        // 세는 대상: 멈춘 주문 중 잠기지 않았고, 상한(to) 전의 미정산 후보가 남아 있는 주문 (같은 주문의 후보가 여러 건이어도 1건)
+        //   기간 안 후보만 세면, 기간 밖에서 다시 넣어져 3번째로 실패한 주문은 멈춰도 WARN이 한 번도 안 남기 때문에 기간과 상관없이 셈 (#549 완료 조건 2)
+        //   대가: 멈춘 주문이 #301로 해결되기 전까지는 매 실행마다 같은 주문이 다시 세어짐 (사용자가 감수하기로 함)
+        //   이미 정산된 후보와 잠긴 주문은 이 조회가 빼므로 세지 않음 (잠긴 주문은 아래 잠금 로그가 따로 알림)
         // 실패를 저장하는 시점이 아니라 스냅샷을 만들 때 남기는 이유: 실행이 FAILED로 끝나면 그 실패는 횟수에 안 세므로, 저장 시점에는 멈춤이 확정이 아님
-        if (!removedStoppedOrderIds.isEmpty()) {
-            log.warn("3번 실패한 주문이라 스냅샷에서 제외. snapshotId={}, 제외 주문 수={}", snapshot.getId(), removedStoppedOrderIds.size());
+        Set<Long> reportedStoppedOrderIds = new HashSet<>();
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(new ArrayList<>(stoppedOrderIds), to)) {
+            reportedStoppedOrderIds.add(candidate.getOrderId());
+        }
+        if (!reportedStoppedOrderIds.isEmpty()) {
+            log.warn("{}번 실패한 주문이라 스냅샷에서 제외. snapshotId={}, 제외 주문 수={}",
+                    PayoutPolicy.MAX_FAILED_RUNS, snapshot.getId(), reportedStoppedOrderIds.size());
         }
         long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
         if (lockedCount > 0) {

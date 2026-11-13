@@ -204,8 +204,9 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 결제_기록이_늦게_와도_3번_안이면_다음_실행에서_정산된다() throws Exception {
+    void 두번_실패한_주문은_멈추지_않고_다음_스냅샷에_들어간다() throws Exception {
         // given: 정산 대기 중인 후보의 주문이 성공한 실행 2번에서 실패 (MAX_FAILED_RUNS=3 미만)
+        // 결제 기록이 늦게 오는 상황이나 정산 결과까지는 재현하지 않고, 스냅샷 포함 여부만 확인함
         long order = nextOrderId();
         long candidate = insertRecentCandidate(order);
         insertFailure(runCompleted(), candidate, order, PayoutFailureReason.DEDUCTION_MISSING);
@@ -236,6 +237,29 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
 
         // then: 주문 A의 후보는 모두 빠지고 B만 남음. 로그의 제외 주문 수는 후보 수(2)가 아니라 주문 수(1)
         assertThat(candidateIdsOf(snapshotId)).containsExactly(candidateB);
+        assertThat(output.getAll()).contains("3번 실패한 주문이라 스냅샷에서 제외. snapshotId=" + snapshotId + ", 제외 주문 수=1");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void 기간_밖에서_3번째로_실패해_멈춘_주문도_다음_스냅샷에서_빠지고_WARN으로_남는다(CapturedOutput output) throws Exception {
+        // given: 조회 기간 밖(30일 전) 후보의 주문이 성공한 실행 3번에서 실패
+        //        (2번 실패 → 기간 밖에서 다시 넣어짐 → 3번째 실패한 상황. 실패 기록은 SQL로 넣음)
+        // 실제 Job은 오래된 후보를 정산해 버리므로, 후보를 넣기 전에 실행 3번을 먼저 함
+        Long first = runCompleted();
+        Long second = runCompleted();
+        Long third = runCompleted();
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(first, candidate, order, PayoutFailureReason.DEDUCTION_MISSING);
+        insertFailure(second, candidate, order, PayoutFailureReason.DEDUCTION_MISSING);
+        insertFailure(third, candidate, order, PayoutFailureReason.DEDUCTION_MISSING);
+
+        // when
+        Long snapshotId = createSnapshotNow();
+
+        // then: 기간 안 목록에도 다시 넣기에도 없어 빠지지만, 멈춘 주문 수 1이 WARN으로 남음
+        assertThat(candidateIdsOf(snapshotId)).isEmpty();
         assertThat(output.getAll()).contains("3번 실패한 주문이라 스냅샷에서 제외. snapshotId=" + snapshotId + ", 제외 주문 수=1");
     }
 
@@ -304,7 +328,7 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 한_실행_안에서_다른_판매자의_통과한_상품은_정산된다() throws Exception {
+    void 멈춘_주문이어도_이미_정산된_다른_판매자_몫은_그대로_남는다() throws Exception {
         // given: 한 주문에 판매자 10(오래된 후보)·판매자 20(대기 중 후보). 실제 Job이 판매자 10 몫을 정산함
         // 판매자 20의 실패는 SQL로 넣음: 실제 Job으로 한 판매자만 실패시키려면 아직 없는 스냅샷 ID에 막는 행이 필요해 만들 수 없음
         long order = nextOrderId();
@@ -312,14 +336,15 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
         long failed = insertCandidate(order, LocalDateTime.now(), 20L);
         Long firstSnapshotId = runCompleted();
         assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).as("준비: 판매자 10 몫이 정산됨").isNotEmpty();
-        insertFailure(firstSnapshotId, failed, order, PayoutFailureReason.UNEXPECTED_ERROR);
-        insertFailure(runCompleted(), failed, order, PayoutFailureReason.UNEXPECTED_ERROR);
-        insertFailure(runCompleted(), failed, order, PayoutFailureReason.UNEXPECTED_ERROR);
+        insertFailure(firstSnapshotId, failed, order, 20L, PayoutFailureReason.UNEXPECTED_ERROR);
+        insertFailure(runCompleted(), failed, order, 20L, PayoutFailureReason.UNEXPECTED_ERROR);
+        insertFailure(runCompleted(), failed, order, 20L, PayoutFailureReason.UNEXPECTED_ERROR);
 
         // when
         List<Long> sut = snapshotCandidateIds();
 
-        // then: 주문이 멈춰 판매자 20의 후보는 빠지고, 이미 정산된 판매자 10의 후보는 미정산이 아니라 들어가지 않으며 정산 결과는 그대로
+        // then: 주문이 멈춰 판매자 20의 후보는 빠지고, 이미 정산된 판매자 10의 후보는 미정산이 아니라 들어가지 않음
+        //       이미 만들어진 판매자 10의 정산 결과는 그대로 남음 (한 실행 안에서 판매자별로 통과시키는 것 자체는 여기서 증명하지 않음)
         assertThat(sut).doesNotContain(failed, passed);
         assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
     }
@@ -409,11 +434,15 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void insertFailure(Long snapshotId, long candidateId, long orderId, PayoutFailureReason reason) {
+        insertFailure(snapshotId, candidateId, orderId, 10L, reason);
+    }
+
+    private void insertFailure(Long snapshotId, long candidateId, long orderId, long sellerId, PayoutFailureReason reason) {
         LocalDateTime now = LocalDateTime.now();
         jdbcTemplate.update(
                 "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) "
-                        + "VALUES (?, ?, ?, NULL, 10, ?, ?, ?, ?)",
-                snapshotId, candidateId, orderId, reason.name(), "테스트", now, now);
+                        + "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, orderId, sellerId, reason.name(), "테스트", now, now);
     }
 
     // 스냅샷을 직접 만들고(가짜 실행 ID라 실패 횟수에 영향 없음) 들어간 후보 ID를 돌려줌
