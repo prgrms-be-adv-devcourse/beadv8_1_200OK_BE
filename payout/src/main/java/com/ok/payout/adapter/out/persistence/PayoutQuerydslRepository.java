@@ -24,7 +24,6 @@ import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.JPQLSubQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -102,54 +101,24 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // payout_item이 없는 후보의 실패만 세는 이유: 이미 정산된 후보의 실패는 더 막을 일이 아님 (unsettledInPeriod와 같은 "미정산" 기준)
     // STATUS = 'COMPLETED'만 세는 이유: FAILED로 끝난 실행의 실패 기록은 주문 탓이 아닐 수 있어 횟수에 넣지 않음
     // 매 실행 실패 기록 전체를 훑어 기록이 쌓일수록 느려지는 것은 알고 둠: 지금 규모에서는 문제없고, 대량에서의 시간은 #304에서 잼
-    // 세지 않는 사유(PayoutFailureReason.uncountedReasons, #552: 수수료 불일치와 그 때문에 함께 보류된 것)는 뺌
-    //   사유 이름을 SQL에 직접 쓰지 않고 enum에서 뽑아 넘김: 세지 않는 사유가 늘어도 쿼리를 고치지 않게 (사유는 이름 글자로 저장됨)
     @Override
     public Map<Long, Long> countFailedRunsByOrder() {
-        List<String> uncountedReasonNames = new ArrayList<>();
-        for (PayoutFailureReason reason : PayoutFailureReason.uncountedReasons()) {
-            uncountedReasonNames.add(reason.name());
-        }
-        // 빈 NOT IN 목록은 DB마다 동작이 달라, 세지 않는 사유가 없으면 조건을 붙이지 않음
-        String uncountedCondition = uncountedReasonNames.isEmpty() ? "" : "AND f.reason NOT IN (:uncountedReasons) ";
-        Query query = entityManager.createNativeQuery(
-                "SELECT f.order_id, COUNT(DISTINCT f.snapshot_id) "
-                        + "FROM " + PayoutSchema.NAME + ".payout_failure f "
-                        + "JOIN " + PayoutSchema.NAME + ".payout_snapshot s ON s.id = f.snapshot_id "
-                        + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
-                        + "WHERE e.STATUS = 'COMPLETED' "
-                        + uncountedCondition
-                        + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
-                        + "WHERE pi.candidate_id = f.candidate_id) "
-                        + "GROUP BY f.order_id");
-        if (!uncountedReasonNames.isEmpty()) {
-            query.setParameter("uncountedReasons", uncountedReasonNames);
-        }
-        List<?> rows = query.getResultList();
+        List<?> rows = entityManager.createNativeQuery(
+                        "SELECT f.order_id, COUNT(DISTINCT f.snapshot_id) "
+                                + "FROM " + PayoutSchema.NAME + ".payout_failure f "
+                                + "JOIN " + PayoutSchema.NAME + ".payout_snapshot s ON s.id = f.snapshot_id "
+                                + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
+                                + "WHERE e.STATUS = 'COMPLETED' "
+                                + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
+                                + "WHERE pi.candidate_id = f.candidate_id) "
+                                + "GROUP BY f.order_id")
+                .getResultList();
         Map<Long, Long> counts = new HashMap<>();
         for (Object row : rows) {
             Object[] columns = (Object[]) row;
             counts.put(((Number) columns[0]).longValue(), ((Number) columns[1]).longValue());
         }
         return counts;
-    }
-
-    // 횟수와 상관없이 다시 검사할 주문 (#552): 세지 않는 사유(수수료 불일치 등)의 실패가 아직 정산 안 된 후보에 남은 주문
-    // 실행이 COMPLETED로 끝났는지는 보지 않음: 세는 것이 아니라 다시 넣을지만 정하므로, 실패한 실행의 기록이어도 다시 검사해 손해가 없음
-    //   → Spring Batch 표를 읽지 않아 Querydsl로 씀
-    // 이미 정산된 후보의 실패는 뺌: 고쳐 배포한 뒤 정산되면 더는 다시 넣지 않음 (countFailedRunsByOrder와 같은 "미정산" 기준)
-    @Override
-    public List<Long> findOrderIdsWithUncountedFailures() {
-        return queryFactory
-                .select(payoutFailure.orderId)
-                .distinct()
-                .from(payoutFailure)
-                .where(payoutFailure.reason.in(PayoutFailureReason.uncountedReasons()),
-                        JPAExpressions.selectOne()
-                                .from(payoutItem)
-                                .where(payoutItem.candidateId.eq(payoutFailure.candidateId))
-                                .notExists())
-                .fetch();
     }
 
     // 다시 검사할 주문들의 미정산 후보 (#549): 조회 기간 하한 없이 createdAt < to
@@ -185,7 +154,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .fetch();
     }
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 결과 검증 불일치뿐)
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
     @Override
     public List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
         return queryFactory
@@ -421,7 +390,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
-    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 실패로 보지 않음
+    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
     // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
     // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
     // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
@@ -695,9 +664,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
 
     // 후보의 주문이 잠겼는지: 그 주문에 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
     // 스냅샷 번호와 상관없이 주문 단위로 봄 → 잠긴 뒤 새로 들어온 같은 주문의 후보(나중에 구매확정된 상품, 조정 등)도 빠짐
-    // 잠그는 사유: 결과 검증 불일치(verify, #290). 금액 검사 불일치(#195)는 #552부터 잠그지 않고 다시 검사함
+    // 잠그는 사유: 수수료 불일치(validate, #195·#391), 결과 검증 불일치(verify, #290). 초과 청구(#195)는 #552부터 잠그지 않고 다시 검사함
     // 잠금을 남긴 Job이 이후 Step에서 FAILED로 끝나도 실패 기록은 남아 잠금이 유지됨
-    //   (결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
+    //   (수수료 불일치는 입력에 대한 판정이라 재실행해도 다시 잠기고, 결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
     //    실패한 Job의 판정을 지울 이유가 없음)
     private BooleanExpression lockedOrder() {
         return JPAExpressions.selectOne()

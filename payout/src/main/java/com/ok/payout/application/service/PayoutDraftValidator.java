@@ -16,7 +16,7 @@ import java.util.Set;
 
 // verifyStep 결과 검증 판정 (#290). DB 조회·저장은 PayoutService.verify가 하고, 여기는 받은 값으로 판정만 함
 // validateStep의 PayoutAmountValidator와 역할이 다름:
-//   PayoutAmountValidator(입력 검증) = 들어온 금액이 맞는지 → 틀린 주문만 이번 정산에서 뺌 (#552부터 잠그지 않고 다음 실행에서 다시 검사)
+//   PayoutAmountValidator(입력 검증) = 들어온 금액이 맞는지 → 틀린 주문만 뺌 (초과 청구는 다음 실행에서 다시 검사, 수수료 불일치는 잠금, #552)
 //   여기(결과 검증) = 입력 검증을 통과한 데이터로 우리 코드가 draft를 제대로 만들었는지 → 틀리면 코드 버그
 //
 // 판정은 두 갈래 (어긋났을 때 무엇을 믿을 수 있는지가 달라서)

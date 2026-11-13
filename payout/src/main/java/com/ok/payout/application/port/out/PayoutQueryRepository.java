@@ -16,7 +16,7 @@ import java.util.Optional;
  */
 public interface PayoutQueryRepository {
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 결과 검증 불일치뿐)
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
     List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to);
 
     // 스냅샷 대상 조건(기간 안 미정산)에는 맞지만 주문이 잠겨 뺀 후보 수 (스냅샷 생성 로그용)
@@ -76,7 +76,7 @@ public interface PayoutQueryRepository {
     Map<Long, Long> findDeductionAmountByOrderInSnapshot(Long snapshotId);
 
     // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
-    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 실패로 보지 않음
+    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
     // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
     // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
     // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
@@ -122,15 +122,11 @@ public interface PayoutQueryRepository {
     Optional<LocalDateTime> findLastCompletedScheduledRequestedAt();
 
     // 주문마다 "성공(COMPLETED)한 실행 중 그 주문의 미정산 후보에 실패 기록이 남은 실행 수" (#549, 주문 ID → 실행 수)
-    // 실행 1번 = 스냅샷 1건: 한 실행에서 같은 주문의 실패 기록이 여러 줄이어도 1번으로 셈. 사유는 가리지 않되 세지 않는 사유(#552, PayoutFailureReason.uncountedReasons)는 뺌
+    // 실행 1번 = 스냅샷 1건: 한 실행에서 같은 주문의 실패 기록이 여러 줄이어도 1번으로 셈. 실패 사유는 가리지 않음
     // 이미 정산된(payout_item 있는) 후보의 실패는 세지 않음: 나중에 정산됐다면 더는 막을 일이 아님
     // FAILED로 끝난 실행의 실패는 세지 않음: 중간에 멈춘 실행은 주문 탓이 아닐 수 있어 횟수를 올리지 않음
     // 0번인 주문은 결과에 없음
     Map<Long, Long> countFailedRunsByOrder();
-
-    // 세지 않는 사유(#552, 수수료 불일치와 그 때문에 함께 보류된 것)의 실패가 미정산 후보에 남은 주문 ID (중복 없음)
-    // 이 주문들은 횟수와 상관없이 조회 기간 밖이어도 매 실행 다시 검사함. 실행이 COMPLETED였는지는 보지 않음
-    List<Long> findOrderIdsWithUncountedFailures();
 
     // 그 주문들의 미정산 후보 중 createdAt < to인 것 (#549, 조회 기간의 하한 없음, id 오름차순)
     // 잠긴 주문의 후보는 뺌. orderIds가 비면 조회하지 않고 빈 목록

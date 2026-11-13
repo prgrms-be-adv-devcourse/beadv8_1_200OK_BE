@@ -1326,7 +1326,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     @ExtendWith(OutputCaptureExtension.class)
-    void 수수료_불일치는_주문상품마다_ERROR_로그를_1번_남기고_제외_로그에_원인을_남기며_다음_스냅샷에서_다시_검사된다(CapturedOutput output) {
+    void 수수료_불일치는_주문상품마다_ERROR_로그를_1번_남기고_제외_로그에_원인을_남기며_잠겨_다음_스냅샷에서도_빠진다(CapturedOutput output) {
         // given: 주문 X에 판매자 10의 주문상품(수수료 500, 계산은 309)과 판매자 20의 정상 주문상품·배송비
         LocalDateTime createdAt = TO.minusDays(1);
         long orderX = nextOrderItemId();
@@ -1351,8 +1351,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                         tuple(wrongItem, PayoutFailureReason.FEE_MISMATCH),
                         tuple(rightItem, PayoutFailureReason.ORDER_HELD),
                         tuple(null, PayoutFailureReason.ORDER_HELD));
-        // then: 잠그지 않아(#552) 네 후보 모두 다음 스냅샷에 다시 들어감 (고쳐 배포하면 그때 정산되도록)
-        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).hasSize(4);
+        // then: 수수료 불일치는 다시 검사해도 풀릴 길이 없어 잠금 유지(#552) → 미정산인데도 다음 스냅샷에 들어가지 않음
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
         // then: 대금·수수료 두 후보가 실패해도 ERROR는 주문상품당 1번 (#302 알림이 두 번 가지 않게)
         assertThat(countMatches(output.getAll(), "[정산-시스템문제] 수수료 불일치 orderItemId=" + wrongItem + System.lineSeparator()))
                 .isEqualTo(1);
@@ -1481,7 +1481,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 이미_정산된_대금과_짝을_맞춰_나중에_온_수수료가_틀리면_빠지고_다음_스냅샷에서_다시_검사된다() {
+    void 이미_정산된_대금과_짝을_맞춰_나중에_온_수수료가_틀리면_잠기고_다음_스냅샷에서_빠진다() {
         // given: 판매 대금 9,700이 먼저 정산된 뒤 같은 주문상품의 수수료 500이 들어옴 (판매 금액 10,200의 수수료는 306)
         // 위 테스트의 반대 경우: 스냅샷 밖(정산된) 대금을 가져오지 못하면 짝이 없어 검사를 건너뛰므로 이 테스트가 실패함
         LocalDateTime createdAt = TO.minusDays(1);
@@ -1494,41 +1494,13 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = settleAll(FROM, TO);
         Long nextSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 수수료 후보가 수수료 불일치로 빠지고, 잠그지 않아(#552) 다음 스냅샷에 그 수수료 후보만 다시 들어감 (정산된 대금은 안 들어감)
+        // then: 수수료 후보가 수수료 불일치로 빠지고, 수수료 검사로 잠긴 주문도 다음 스냅샷에 들어가지 않음
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getReason, PayoutFailure::getDetail)
                 .containsExactly(tuple(PayoutFailureReason.FEE_MISMATCH,
                         "수수료 불일치: 기대값 306, 실제값 500 (판매 금액 10200 기준)"));
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
-        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId))
-                .extracting(PayoutSnapshotItem::getAmount)
-                .containsExactly(500L);
-    }
-
-    @Test
-    void 수수료_불일치는_원인을_고치면_다음_배치에서_사람_손_없이_정산된다() {
-        // given: 같은 주문상품의 대금 9,700과 수수료 500 (판매 금액 10,200의 수수료는 306이라 불일치) → 1차 배치에서 빠짐
-        LocalDateTime createdAt = TO.minusDays(1);
-        long orderX = nextOrderItemId();
-        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
-        insertCandidate(PayoutEventType.SALE_FEE, orderX, 10L, 500L, createdAt);
-        Long firstSnapshotId = settleAll(FROM, TO);
-        assertThat(failureRepository.findBySnapshotId(firstSnapshotId))
-                .as("준비: 1차는 수수료 불일치로 빠짐")
-                .extracting(PayoutFailure::getReason)
-                .containsOnly(PayoutFailureReason.FEE_MISMATCH);
-        // 원인을 고친 상황: 수수료가 계산과 맞는 값(판매 금액 10,000의 3% = 300)이 됨
-        //   실제로는 코드·정책을 고쳐 배포하는 경우. 후보는 바뀌지 않는 엔티티라 테스트에서는 SQL로 고침
-        correctCandidateAmount(candidateIdOf(orderX, 10L, PayoutEventType.SALE_FEE), 300L);
-
-        // when: 2차 배치
-        Long secondSnapshotId = settleAll(FROM, TO);
-
-        // then: 잠그지 않았으므로(#552) 다시 검사해 통과하고, 판매자 몫과 시스템 몫 수수료가 정산됨
-        assertThat(failureRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
-        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId))
-                .extracting(Payout::getPayeeId, Payout::getAmount)
-                .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(null, 300L));
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
     }
 
     @Test
@@ -1796,12 +1768,6 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 차감 기록 엔티티는 금액을 바꾸는 메서드가 없고(처음 온 값을 유지, #391 충돌 기록) 정상 경로로는 바꿀 수 없어 SQL로 바꿈
     private void correctDeductionAmount(long orderId, long amount) {
         jdbcTemplate.update("UPDATE payout_wallet_deduction SET amount = ? WHERE order_id = ?", amount, orderId);
-    }
-
-    // 수수료 불일치의 원인을 고친 상황을 만듦: 후보 금액을 맞는 값으로 바꿈 (#552)
-    // 실제로는 코드·정책을 고쳐 배포하는 경우라 정상 경로가 없고, 후보 엔티티는 금액을 바꾸는 메서드가 없어 SQL로 바꿈
-    private void correctCandidateAmount(long candidateId, long amount) {
-        jdbcTemplate.update("UPDATE payout_candidate_items SET amount = ? WHERE id = ?", amount, candidateId);
     }
 
     // 판매 대금 후보 1건 (주문항목 ID는 자동 발급)

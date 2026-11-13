@@ -368,69 +368,6 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 수수료_불일치는_3번_넘게_실패해도_멈추지_않고_기간_밖이어도_다시_넣는다() throws Exception {
-        // given: 조회 기간 밖(30일 전) 후보를 가진 주문이 성공한 실행 4번에서 모두 수수료 불일치(원인)와 함께 보류(같은 주문의 다른 후보)로 실패
-        Long[] runs = {runCompleted(), runCompleted(), runCompleted(), runCompleted()};
-        long order = nextOrderId();
-        long feeCandidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
-        long heldCandidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
-        for (Long run : runs) {
-            insertFailure(run, feeCandidate, order, PayoutFailureReason.FEE_MISMATCH);
-            insertFailure(run, heldCandidate, order, PayoutFailureReason.ORDER_HELD);
-        }
-
-        // when
-        Map<Long, Long> counts = payoutQueryRepository.countFailedRunsByOrder();
-        List<Long> sut = snapshotCandidateIds();
-
-        // then: 시스템 문제라 횟수에 세지 않고(#552), 고쳐 배포하면 저절로 정산되도록 매 실행 다시 넣음
-        assertThat(counts).doesNotContainKey(order);
-        assertThat(sut).containsExactly(feeCandidate, heldCandidate);
-    }
-
-    @Test
-    void 다른_사유로_3번_실패해_멈춘_주문은_수수료_불일치가_남아도_다시_넣지_않는다() throws Exception {
-        // given: 기간 밖 후보 2건인 주문. 한 후보는 결제 기록 없음으로 성공한 실행 3번 실패, 다른 후보는 수수료 불일치 1번
-        Long firstRun = runCompleted();
-        Long secondRun = runCompleted();
-        Long thirdRun = runCompleted();
-        long order = nextOrderId();
-        long missingCandidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
-        long feeCandidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
-        insertFailure(firstRun, missingCandidate, order, PayoutFailureReason.DEDUCTION_MISSING);
-        insertFailure(secondRun, missingCandidate, order, PayoutFailureReason.DEDUCTION_MISSING);
-        insertFailure(thirdRun, missingCandidate, order, PayoutFailureReason.DEDUCTION_MISSING);
-        insertFailure(thirdRun, feeCandidate, order, PayoutFailureReason.FEE_MISMATCH);
-
-        // when
-        List<Long> sut = snapshotCandidateIds();
-
-        // then: 멈춤이 앞섬. 수수료 불일치를 세지 않는다고 다시 넣으면 사람이 확인하기로 한 주문이 다시 검사됨
-        assertThat(sut).doesNotContain(missingCandidate, feeCandidate);
-    }
-
-    @Test
-    void 세지_않는_사유의_실패가_남은_주문_조회는_이미_정산된_후보의_실패를_빼고_주문을_한_번만_돌려준다() throws Exception {
-        // given: 한 주문의 오래된 후보(실제 Job이 정산함)와 미정산 후보 2건. 정산된 후보에도 수수료 불일치 기록이 남아 있음
-        long settledOrder = nextOrderId();
-        long settled = insertCandidate(settledOrder, LocalDateTime.now().minusDays(20));
-        Long snapshotId = runCompleted();
-        assertThat(payoutRepository.findBySnapshotId(snapshotId)).as("준비: 오래된 후보가 정산됨").isNotEmpty();
-        long order = nextOrderId();
-        long first = insertRecentCandidate(order);
-        long second = insertRecentCandidate(order);
-        insertFailure(snapshotId, settled, settledOrder, PayoutFailureReason.FEE_MISMATCH);
-        insertFailure(snapshotId, first, order, PayoutFailureReason.FEE_MISMATCH);
-        insertFailure(snapshotId, second, order, PayoutFailureReason.ORDER_HELD);
-
-        // when
-        List<Long> sut = payoutQueryRepository.findOrderIdsWithUncountedFailures();
-
-        // then: 정산된 후보의 실패만 남은 주문은 빠지고(고쳐서 정산됐으면 더 넣을 일 없음), 기록이 2줄인 주문도 1번만
-        assertThat(sut).containsExactly(order);
-    }
-
-    @Test
     void 세번을_못_채우고_조회_기간_밖으로_밀린_실패_주문은_다시_넣는다() throws Exception {
         // given: 실행을 먼저 하고(실제 Job이 오래된 후보를 정산하지 않게), 조회 기간 밖(30일 전) 후보를 둠
         Long runSnapshotId = runCompleted();
