@@ -204,6 +204,46 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 다시_넣을_주문의_후보_조회는_이미_정산된_후보를_돌려주지_않는다() throws Exception {
+        // given: 한 주문에 오래된 후보(실제 Job이 정산함)와, 그 뒤에 들어온 미정산 후보
+        // 정산된 후보는 실제 Job으로 만든다: payout_item이 실제로 생겨야 "미정산 조건"이 의미 있음
+        LocalDateTime to = LocalDateTime.now().plusDays(1);
+        long order = nextOrderId();
+        long settled = insertCandidate(order, LocalDateTime.now().minusDays(20));
+        Long snapshotId = runCompleted();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId)).as("준비: 오래된 후보가 정산됨").isNotEmpty();
+        long unsettled = insertRecentCandidate(order);
+
+        // when
+        List<PayoutCandidateItem> sut = payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(List.of(order), to);
+
+        // then: 상한 이전이고 같은 주문이어도 정산된 후보는 빠지고 미정산 후보만 나옴
+        //       (미정산 조건이 빠지면 정산된 후보가 다시 들어가 이중 정산 시도가 됨)
+        assertThat(sut).extracting(PayoutCandidateItem::getId).containsExactly(unsettled);
+        assertThat(sut).extracting(PayoutCandidateItem::getId).doesNotContain(settled);
+    }
+
+    @Test
+    void 같은_주문의_서로_다른_후보가_실행마다_나눠_실패해도_주문_단위로_3번이_차면_멈춘다() throws Exception {
+        // given: 한 주문의 후보 둘(판매자 10·20). 성공한 실행 3번의 실패가 실행1 → 후보 A, 실행2 → 후보 B, 실행3 → 후보 A로 갈림
+        // 후보 한 개에는 최대 2번이라, 후보별로 세면 3번이 안 차 멈추지 않음. 이슈 결정은 "실행 1번 = 1번, 주문 단위"
+        long order = nextOrderId();
+        long candidateA = insertCandidate(order, LocalDateTime.now(), 10L);
+        long candidateB = insertCandidate(order, LocalDateTime.now(), 20L);
+        insertFailure(runCompleted(), candidateA, order, 10L, PayoutFailureReason.UNEXPECTED_ERROR);
+        insertFailure(runCompleted(), candidateB, order, 20L, PayoutFailureReason.UNEXPECTED_ERROR);
+        insertFailure(runCompleted(), candidateA, order, 10L, PayoutFailureReason.UNEXPECTED_ERROR);
+
+        // when
+        Map<Long, Long> counts = payoutQueryRepository.countFailedRunsByOrder();
+        List<Long> sut = snapshotCandidateIds();
+
+        // then: 주문 단위로 3번이라 두 후보 모두 다음 스냅샷에서 빠짐
+        assertThat(counts).containsEntry(order, 3L);
+        assertThat(sut).doesNotContain(candidateA, candidateB);
+    }
+
+    @Test
     void 두번_실패한_주문은_멈추지_않고_다음_스냅샷에_들어간다() throws Exception {
         // given: 정산 대기 중인 후보의 주문이 성공한 실행 2번에서 실패 (MAX_FAILED_RUNS=3 미만)
         // 결제 기록이 늦게 오는 상황이나 정산 결과까지는 재현하지 않고, 스냅샷 포함 여부만 확인함
