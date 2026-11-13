@@ -41,8 +41,13 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
     void 잔액과_원장이_맞는_지갑은_어긋남이_없다() {
         // given
         long buyerWalletId = insertWallet(WalletKind.BUYER, 1L, 8_000);
-        insertLedger(WalletKind.BUYER, buyerWalletId, "CHARGE", 10_000, 10_000);
-        insertLedger(WalletKind.BUYER, buyerWalletId, "PAYMENT", 3_000, 7_000);
+        insertCharge(1L, 10_000, "COMPLETED", "pay-1");
+        insertLedger(WalletKind.BUYER, buyerWalletId, "CHARGE", 10_000, 10_000, "CHARGE:pay-1");
+        insertOrderPayment(100L, 1L, 3_000, "PAID");
+        insertLedger(WalletKind.BUYER, buyerWalletId, "PAYMENT", 3_000, 7_000, "PAYMENT:100");
+        insertOrderPayment(101L, 1L, 50_000, "FAILED");
+        insertCharge(1L, 5_000, "FAILED", "pay-2");
+        insertCharge(1L, 5_000, "IN_PROGRESS", null);
         insertLedger(WalletKind.BUYER, buyerWalletId, "REFUND", 1_000, 8_000);
         long sellerWalletId = insertWallet(WalletKind.SELLER, 2L, 7_000);
         insertLedger(WalletKind.SELLER, sellerWalletId, "PAYOUT", 5_000, 5_000);
@@ -131,6 +136,178 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 원장이_없는_완료_충전_건을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertCharge(1L, 5_000, "COMPLETED", "pay-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("wallet_id"), row -> row.get("check_item"), row -> row.get("expected"))
+                .containsExactly(tuple(walletId, "CHARGE_WITHOUT_LEDGER", "CHARGE:pay-1"));
+    }
+
+    // 토스 승인 뒤 실패로 처리된 충전 건은 잔액에 반영되면 안 된다
+    @Test
+    void 원장이_있는_실패_충전_건을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
+        insertCharge(1L, 5_000, "FAILED", "pay-1");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("FAILED_CHARGE_WITH_LEDGER", ledgerId));
+    }
+
+    // 시험들이 충전 함수를 직접 불러 충전 건 없이 원장을 만들므로, 이 방향은 검사하지 않는다
+    @Test
+    void 충전_건이_없는_충전_원장은_어긋남이_아니다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
+        insertLedger(WalletKind.BUYER, walletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches).isEmpty();
+    }
+
+    @Test
+    void 원장이_없는_결제_성공_기록을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertOrderPayment(100L, 1L, 3_000, "PAID");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("wallet_id"), row -> row.get("check_item"), row -> row.get("expected"))
+                .containsExactly(tuple(walletId, "PAID_WITHOUT_LEDGER", "PAYMENT:100"));
+    }
+
+    @Test
+    void 원장이_있는_결제_실패_기록을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 7_000);
+        insertLedger(WalletKind.BUYER, walletId, "CHARGE", 10_000, 10_000);
+        insertOrderPayment(100L, 1L, 3_000, "FAILED");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "PAYMENT", 3_000, 7_000, "PAYMENT:100");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("FAILED_PAYMENT_WITH_LEDGER", ledgerId));
+    }
+
+    @Test
+    void 결제_처리_기록이_없는_결제_원장을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 7_000);
+        insertLedger(WalletKind.BUYER, walletId, "CHARGE", 10_000, 10_000);
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "PAYMENT", 3_000, 7_000, "PAYMENT:100");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("PAYMENT_LEDGER_WITHOUT_RECORD", ledgerId));
+    }
+
+    @Test
+    void 충전_건과_원장의_금액이_다르면_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
+        insertCharge(1L, 3_000, "COMPLETED", "pay-1");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactly(tuple("CHARGE_LEDGER_MISMATCH", ledgerId,
+                        "member=1, amount=3000", "member=1, amount=5000"));
+    }
+
+    // 충전 건은 회원 1의 것인데 원장은 회원 2의 지갑에 들어간 경우다
+    @Test
+    void 충전_건과_원장의_주인이_다르면_잡는다() {
+        // given
+        insertWallet(WalletKind.BUYER, 1L, 0);
+        long otherWalletId = insertWallet(WalletKind.BUYER, 2L, 5_000);
+        insertCharge(1L, 5_000, "COMPLETED", "pay-1");
+        long ledgerId = insertLedger(WalletKind.BUYER, otherWalletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactly(tuple("CHARGE_LEDGER_MISMATCH", ledgerId,
+                        "member=1, amount=5000", "member=2, amount=5000"));
+    }
+
+    @Test
+    void 결제_기록과_원장의_금액이_다르면_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
+        insertLedger(WalletKind.BUYER, walletId, "CHARGE", 10_000, 10_000);
+        insertOrderPayment(100L, 1L, 3_000, "PAID");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "PAYMENT", 5_000, 5_000, "PAYMENT:100");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactly(tuple("PAYMENT_LEDGER_MISMATCH", ledgerId,
+                        "member=1, amount=3000", "member=1, amount=5000"));
+    }
+
+    // 결제 기록은 회원 1의 것인데 회원 2의 지갑에서 빠져나간 경우다
+    @Test
+    void 결제_기록과_원장의_주인이_다르면_잡는다() {
+        // given
+        insertWallet(WalletKind.BUYER, 1L, 0);
+        long otherWalletId = insertWallet(WalletKind.BUYER, 2L, 7_000);
+        insertLedger(WalletKind.BUYER, otherWalletId, "CHARGE", 10_000, 10_000);
+        insertOrderPayment(100L, 1L, 3_000, "PAID");
+        long ledgerId = insertLedger(WalletKind.BUYER, otherWalletId, "PAYMENT", 3_000, 7_000, "PAYMENT:100");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactly(tuple("PAYMENT_LEDGER_MISMATCH", ledgerId,
+                        "member=1, amount=3000", "member=2, amount=3000"));
+    }
+
+    @Test
     void 어긋남이_있으면_데이터를_모두_지운_뒤_실패한다() {
         // given
         long walletId = insertWallet(WalletKind.BUYER, 1L, 6_000);
@@ -163,14 +340,33 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 "SELECT id FROM " + kind.walletTable() + " WHERE member_id = ?", Long.class, memberId);
     }
 
+    // 짝 맞추기와 상관없는 원장은 참조 키가 겹치지 않게 아무 값이나 붙인다
     private long insertLedger(WalletKind kind, long walletId, String type, long amount, long balanceAfter) {
-        String referenceKey = type + ":" + walletId + "-" + System.nanoTime();
+        return insertLedger(kind, walletId, type, amount, balanceAfter, type + "-" + walletId + "-" + System.nanoTime());
+    }
+
+    private long insertLedger(WalletKind kind, long walletId, String type, long amount, long balanceAfter,
+                              String referenceKey) {
         jdbcTemplate.update("INSERT INTO " + kind.ledgerTable() + " (" + kind.walletIdColumn()
                         + ", type, amount, balance_after, reference_key, created_at, updated_at)"
                         + " VALUES (?, ?, ?, ?, ?, NOW(6), NOW(6))",
                 walletId, type, amount, balanceAfter, referenceKey);
         return jdbcTemplate.queryForObject(
                 "SELECT id FROM " + kind.ledgerTable() + " WHERE reference_key = ?", Long.class, referenceKey);
+    }
+
+    private void insertCharge(long memberId, long amount, String status, String paymentKey) {
+        jdbcTemplate.update("""
+                INSERT INTO wallet_charge (charge_no, member_id, amount, status, payment_key, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, NOW(6), NOW(6))
+                """, "CHG_" + System.nanoTime(), memberId, amount, status, paymentKey);
+    }
+
+    private void insertOrderPayment(long orderId, long buyerId, long amount, String status) {
+        jdbcTemplate.update("""
+                INSERT INTO wallet_order_payment (order_id, buyer_id, amount, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, NOW(6), NOW(6))
+                """, orderId, buyerId, amount, status);
     }
 
     private long countWalletRows() {
