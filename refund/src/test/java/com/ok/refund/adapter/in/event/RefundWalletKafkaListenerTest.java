@@ -1,0 +1,132 @@
+package com.ok.refund.adapter.in.event;
+
+import com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage;
+import com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage;
+import com.ok.refund.application.port.in.HandleWalletRefundResultUseCase;
+import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
+import com.ok.refund.application.port.in.WalletRefundFailedCommand;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.then;
+
+// 단위 테스트: 값 검사와 입력 포트 호출 (Kafka·Spring 없이 메서드를 직접 부른다)
+@ExtendWith(MockitoExtension.class)
+class RefundWalletKafkaListenerTest {
+
+    @Mock
+    private HandleWalletRefundResultUseCase useCase;
+
+    @InjectMocks
+    private RefundWalletKafkaListener sut;
+
+    @Test
+    void 정상_완료_메시지는_값을_그대로_입력_포트에_넘긴다() {
+        // given
+        WalletRefundCompletedMessage message = new WalletRefundCompletedMessage(11L, 22L, 33L, 4_000L);
+
+        // when
+        sut.onWalletRefundCompleted(message);
+
+        // then: 같은 타입 필드가 여러 개라 필드마다 다른 값으로 순서를 확인한다
+        ArgumentCaptor<WalletRefundCompletedCommand> captor = ArgumentCaptor.forClass(WalletRefundCompletedCommand.class);
+        then(useCase).should().completeAfterWalletRefund(captor.capture());
+        WalletRefundCompletedCommand command = captor.getValue();
+        assertThat(command).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(command.refundId()).isEqualTo(11L);
+            softly.assertThat(command.orderId()).isEqualTo(22L);
+            softly.assertThat(command.buyerId()).isEqualTo(33L);
+            softly.assertThat(command.amount()).isEqualTo(4_000L);
+        });
+    }
+
+    @Test
+    void 정상_실패_메시지는_값을_그대로_입력_포트에_넘긴다() {
+        // given
+        WalletRefundFailedMessage message = new WalletRefundFailedMessage(11L, 22L, 33L, 4_000L, "WALLET_NOT_FOUND");
+
+        // when
+        sut.onWalletRefundFailed(message);
+
+        // then
+        ArgumentCaptor<WalletRefundFailedCommand> captor = ArgumentCaptor.forClass(WalletRefundFailedCommand.class);
+        then(useCase).should().recordWalletRefundFailure(captor.capture());
+        WalletRefundFailedCommand command = captor.getValue();
+        assertThat(command).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(command.refundId()).isEqualTo(11L);
+            softly.assertThat(command.orderId()).isEqualTo(22L);
+            softly.assertThat(command.buyerId()).isEqualTo(33L);
+            softly.assertThat(command.amount()).isEqualTo(4_000L);
+            softly.assertThat(command.reason()).isEqualTo("WALLET_NOT_FOUND");
+        });
+    }
+
+    @Test
+    void 이유가_100자인_실패_메시지는_받아들인다() {
+        // given: 컬럼 길이와 같은 경계값
+        WalletRefundFailedMessage message = new WalletRefundFailedMessage(1L, 2L, 3L, 1L, "a".repeat(100));
+
+        // when
+        sut.onWalletRefundFailed(message);
+
+        // then
+        then(useCase).should().recordWalletRefundFailure(any(WalletRefundFailedCommand.class));
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_완료_메시지")
+    void 값이_잘못된_완료_메시지는_입력_포트를_부르지_않고_거절한다(WalletRefundCompletedMessage message) {
+        // when & then
+        assertThatThrownBy(() -> sut.onWalletRefundCompleted(message))
+                .isInstanceOf(IllegalArgumentException.class);
+        then(useCase).shouldHaveNoInteractions();
+    }
+
+    static Stream<Arguments> 잘못된_완료_메시지() {
+        return Stream.of(
+                Arguments.of(new WalletRefundCompletedMessage(null, 2L, 3L, 1_000L)),
+                Arguments.of(new WalletRefundCompletedMessage(1L, null, 3L, 1_000L)),
+                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, null, 1_000L)),
+                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, 3L, null)),
+                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, 3L, 0L)),
+                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, 3L, -1L)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_실패_메시지")
+    void 값이_잘못된_실패_메시지는_입력_포트를_부르지_않고_거절한다(WalletRefundFailedMessage message) {
+        // when & then
+        assertThatThrownBy(() -> sut.onWalletRefundFailed(message))
+                .isInstanceOf(IllegalArgumentException.class);
+        then(useCase).shouldHaveNoInteractions();
+    }
+
+    static Stream<Arguments> 잘못된_실패_메시지() {
+        return Stream.of(
+                Arguments.of(new WalletRefundFailedMessage(null, 2L, 3L, 1_000L, "X")),
+                Arguments.of(new WalletRefundFailedMessage(1L, null, 3L, 1_000L, "X")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, null, 1_000L, "X")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, null, "X")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 0L, "X")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, -1L, "X")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, null)),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "   ")),
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "a".repeat(101))));
+    }
+}
