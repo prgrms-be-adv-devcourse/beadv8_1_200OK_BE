@@ -1,5 +1,6 @@
 -- 지갑 잔액과 원장이 맞는지 검사한다. 어긋난 줄만 돌려주므로 0줄이면 모두 맞다.
 -- 시험 정리 단계와 로컬 기준점 측정에 같이 쓰고, 잔액과 원장을 같은 시점으로 비교하려고 한 문장으로 쓴다.
+-- 시험 코드는 끝 세미콜론 하나만 떼고 실행하므로, 세미콜론 뒤에는 주석이나 다른 문장을 쓰지 않는다.
 -- 새 원장 유형을 만들면 아래 CASE에 증감 방향을 넣는다. 넣지 않으면 UNKNOWN_LEDGER_TYPE으로 잡힌다.
 -- 원장은 지갑 잠금을 쥔 채로만 들어가므로 원장 번호 순서를 처리 순서로 본다.
 WITH buyer_ledger AS (
@@ -62,7 +63,7 @@ FROM seller_wallet w
 LEFT JOIN seller_ledger l ON l.wallet_id = w.id AND l.reverse_order = 1
 WHERE COALESCE(l.balance_after, 0) <> w.balance
 UNION ALL
--- 충전은 충전 건 쪽에서만 본다. 시험들이 chargeByPayment를 직접 불러 충전 건 없는 원장을 만들기 때문이다
+-- 충전은 충전 건 쪽에서만 본다. 시험들이 chargeByPayment를 직접 불러 충전 건 없는 원장을 만들어서, 반대 방향은 시험 준비를 고친 뒤 켠다
 SELECT 'BUYER', w.id, 'CHARGE_WITHOUT_LEDGER', NULL,
        CONCAT('CHARGE:', c.payment_key), NULL
 FROM wallet_charge c
