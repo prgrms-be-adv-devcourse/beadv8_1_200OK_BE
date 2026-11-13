@@ -55,11 +55,11 @@ jwt:
     private-key: file:${OK_ROOT_DIR:.}/keys/rs256-v1-private.pem
 auth:
   refresh-token:
-    # 만료된 Refresh Token 정리. 값을 빼면 스케줄러의 기본값(매일 4시, 1000행씩)을 쓴다.
+    # 만료된 Refresh Token 정리. 값을 빼면 스케줄러의 기본값(매시 정각, 1000행씩)을 쓴다.
     # 부하 테스트처럼 짧게 돌릴 때는 AUTH_REFRESH_TOKEN_CLEANUP_CRON(예: "*/30 * * * * *"), AUTH_REFRESH_TOKEN_CLEANUP_BATCH_SIZE
     # 환경 변수나 -D로 덮어쓴다. cron을 "-"로 두면 정리하지 않는다
     cleanup:
-      cron: "0 0 4 * * *"
+      cron: "0 0 * * * *"
       batch-size: 1000
 management:
   endpoints:

@@ -1,7 +1,7 @@
 ---
 issue: 83
 module: member
-summary: 만료 Refresh Token이 쌓이던 문제를 재발급 시 같은 행을 갱신(행 = 세션)하고 만료 행을 매일 묶음 삭제하는 방식으로 해결. 4가지 방식을 부하 테스트로 비교해 골랐다
+summary: 만료 Refresh Token이 쌓이던 문제를 재발급 시 같은 행을 갱신(행 = 세션)하고 만료 행을 매시 묶음 삭제하는 방식으로 해결. 4가지 방식을 부하 테스트로 비교해 골랐다
 status: 확정
 date: 2026-11-14
 paths: [member/src/main/java/com/ok/member/auth/application/service/RefreshTokenService.java, member/src/main/java/com/ok/member/auth/application/service/RefreshTokenCleanupService.java, member/src/main/java/com/ok/member/auth/adapter/out/persistence/RefreshTokenJpaRepository.java, member/src/main/java/com/ok/member/auth/adapter/in/scheduler/RefreshTokenCleanupScheduler.java, member/src/main/java/com/ok/member/auth/domain/RefreshToken.java]
@@ -29,7 +29,7 @@ related: [49, 478]
 | 같은 토큰 동시 재발급 | 해시로 id만 잠금 없이 찾고 → 기본 키 행을 `PESSIMISTIC_WRITE`로 잠근 뒤 → 해시를 다시 비교 | 행을 지우지 않고 해시만 바꾸므로, 잠금 뒤에 해시를 다시 비교하지 않으면 같은 토큰이 두 번 쓰인다. 해시로 바로 잠그면 없는 해시일 때 인덱스 구간이 잠겨 다른 토큰 저장을 막는다 |
 | 정리 DELETE | `WHERE expires_at < :now ORDER BY expires_at, id LIMIT :batchSize`를 짧은 트랜잭션으로 반복 | `idx_refresh_token_expires_at`(#49)를 범위로 읽어 만료된 구간만 잠근다. 한 번에 다 지우면 긴 트랜잭션이 잠금과 undo 로그를 오래 쥔다 |
 | 정리 기준 시각 | 시작할 때 한 번 정한 `now` | 정리하는 동안 새로 만료되는 행을 쫓느라 끝나지 않는 일을 막는다. 같은 기준으로 지우므로 서버 여러 대에서 겹쳐 돌아도 결과가 같아, 분산 락(ShedLock)을 두지 않았다 |
-| 정리 주기·묶음 크기 | 매일 04:00(Asia/Seoul), 1,000개. `auth.refresh-token.cleanup.cron`, `batch-size`로 바꿈 | 행 갱신 방식에서는 정리할 행이 버려진 세션뿐이라 하루 한 번이면 충분하다. 운영에서 늘리거나 끌 수 있게 설정으로 뺐다(cron `-`이면 꺼짐) |
+| 정리 주기·묶음 크기 | 매시 정각(Asia/Seoul), 1,000개. `auth.refresh-token.cleanup.cron`, `batch-size`로 바꿈 | 운영 서버는 하루 중 업무 시간에만 떠 있고, cron은 꺼져 있던 동안 놓친 실행을 나중에 돌리지 않는다. 처음 정한 새벽 4시는 한 번도 돌지 않으므로, 떠 있는 동안 매시간 돌린다 (사용자 결정). 한 시간치 만료 행만 지워 양이 작고, 부하 테스트에서 10초마다 돌려도 재발급 p95가 기존과 비슷했다. 운영에서 바꾸거나 끌 수 있게 설정으로 뺐다(cron `-`이면 꺼짐) |
 | 쓴 토큰 해시 | `previous_token_hash`를 두지 않음. 쓴 토큰은 없던 토큰과 같은 401 | 재사용 탐지는 별도 이슈에서 토큰 형식 `<family id>.<secret>`으로 설계한다. family id(PK)로 행을 찾으면 쓴 해시를 따로 둘 필요가 없다 (사용자 결정: "83은 그대로 마무리하고 재사용 탐지 이슈에서 변경") |
 | `rotated_at` 컬럼 | 추가(NULL 허용) | 재사용 탐지에서 네트워크 재시도를 위한 유예 시간 판단에 쓸 예정이다. 로그인 직후 행과 재발급된 행을 구분한다 |
 
