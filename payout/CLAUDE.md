@@ -15,7 +15,7 @@
 | `adapter/in/web` | 컨트롤러, `*Spec`, 요청·응답 DTO(`dto/`) |
 | `adapter/in/event` | Spring·Kafka 리스너, Kafka 메시지 DTO(`dto/`) |
 | `adapter/in/batch` | 정산 Job 설정, 시작기(`PayoutJobRunner`), 스케줄러 |
-| `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회, JPA 엔티티가 아닌 표(Spring Batch 실행 기록)를 읽는 네이티브 SQL(`EntityManager`, 표 이름에 `PayoutSchema.NAME`) |
+| `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회, JPA로 할 수 없는 곳의 네이티브 SQL(아래 "주의") |
 | `adapter/out/event` | 이벤트 발행 구현체 |
 | `config`, `exception` | 모듈 전용 설정, `PayoutErrorCode` |
 
@@ -42,6 +42,10 @@
 
 - `adapter/in/web`은 경로가 `controller`가 아니라 `api.md`가 자동으로 로드되지 않는다. 직접 읽고 따른다.
 - 저장소 포트에 메서드를 더하면 쿼리 애노테이션(`@Query`, `@Modifying`, `@EntityGraph`)은 `adapter/out/persistence`의 `*JpaRepository`에 `@Override`로 다시 선언한다. 포트에는 Spring Data를 두지 않는다.
+- 네이티브 SQL은 되도록 쓰지 않는다. 조회는 Querydsl, 저장은 Spring Data JPA로 한다. JPA로 할 수 없을 때만 쓰고, 그 메서드 주석에 "왜 JPA로 안 되는지"를 적는다. 지금 쓰는 곳은 세 곳이다.
+  - JPA 엔티티가 아닌 Spring Batch 실행 기록(`BATCH_*`)을 읽음: `PayoutQuerydslRepository`의 `findLastCompletedScheduledRequestedAt`(#390), `countFailedRunsByOrder`(#549, 성공한 실행만 걸러 주문별로 세는 일을 DB 안에서 끝내려고. 자바에서 거르면 실패가 쌓일수록 옮기는 줄이 늘어남)
+  - MySQL 전용 "없으면 넣기"(`INSERT ... ON DUPLICATE KEY`): `PayoutCandidateItemJpaRepository`의 `insertShippingFeeIfAbsent`(#309)
+  - 이유: SQL 문자열은 표·열 이름을 틀려도 컴파일 때 잡히지 않고, 표 이름 앞 스키마(`PayoutSchema.NAME`)를 빠뜨리면 로컬 테스트는 통과해도 운영에서만 실패한다(`entity.md`). (사용자 결정, 2026-11-13)
 
 ## 팀 규칙과 다르게 쓰는 것
 
