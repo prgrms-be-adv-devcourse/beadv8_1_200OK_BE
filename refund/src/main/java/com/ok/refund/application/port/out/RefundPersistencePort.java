@@ -38,6 +38,9 @@ public interface RefundPersistencePort {
     /**
      * 환불 행을 쓰기 잠금({@code SELECT ... FOR UPDATE})으로 조회한다. 승인·거절·철회·실패 기록처럼 상태를 바꿀 때 쓴다.
      * 트랜잭션에서 그 행의 첫 조회로 불러야 한다. 같은 행을 잠그기 전에 읽어 두면 잠금 전 상태가 그대로 쓰인다.
+     * 한 트랜잭션에서 같은 환불은 한 번만 잠금 조회한다. 두 번 조회한 두 객체를 따로 저장하면 앞의 변경이 사라진다.
+     *
+     * @throws IllegalStateException 같은 트랜잭션에서 같은 환불을 이미 잠금 조회했으면 (부르는 쪽 버그)
      */
     Optional<Refund> findByIdForUpdate(Long id);
 

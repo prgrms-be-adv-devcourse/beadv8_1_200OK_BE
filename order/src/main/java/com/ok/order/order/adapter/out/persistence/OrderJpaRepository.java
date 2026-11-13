@@ -29,6 +29,19 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     @Query("select o from Order o where o.id = :id")
     Optional<Order> findByIdForUpdate(@Param("id") Long id);
 
+    // 하위 쿼리의 주문 상품·판매자 묶음 행은 잠그지 않고 바깥의 주문 행만 잠근다(MySQL 잠금 읽기는 하위 쿼리에 번지지 않는다)
+    @Override
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select o from Order o
+            where o.id = (select i.sellerGroup.order.id from OrderItem i where i.id = :orderItemId)
+            """)
+    Optional<Order> findByOrderItemIdForUpdate(@Param("orderItemId") Long orderItemId);
+
+    @Override
+    @Query("select r.orderItem.id from OrderItemRefund r where r.refundId = :refundId")
+    Optional<Long> findOrderItemIdByRefundId(@Param("refundId") Long refundId);
+
     @Override
     @Query("""
             select i from OrderItem i

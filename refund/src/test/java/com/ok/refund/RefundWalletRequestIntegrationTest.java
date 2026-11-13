@@ -49,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // - 토픽 메시지는 테스트마다 지워지지 않는다(다른 승인 통합 테스트도 같은 토픽에 보냄). 그래서 승인 직전의 끝 위치부터 읽고,
 //   키(orderId)는 여러 환불이 같을 수 있어 값의 refundId로 이번 환불의 메시지를 걸러 본다
 // - 값은 문자열로 읽어 JSON 그대로 확인한다. 지갑은 환불 클래스가 아니라 이 JSON 모양으로 읽기 때문이다
-// 예시: 구매자 1이 판매자 5의 양말(주문 상품 101) 3개를 주문 30으로 샀다. 10,000원씩, 배송비 3,000원을 냈다
+// 예시: 구매자 1이 판매자 5의 감자(주문 상품 101) 3개를 주문 30으로 샀다. 10,000원씩, 배송비 3,000원을 냈다
 class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
 
     private static final String BUYER_URL = "/api/v1/refunds";
@@ -81,7 +81,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
-        orderQueryPort.put(socks("PREPARING"));
+        orderQueryPort.put(potato("PREPARING"));
     }
 
     @AfterEach
@@ -100,7 +100,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         // when
         approve(refundId)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("PROCESSING")))
+                .andExpect(jsonPath("$.status", is("COMPLETED")))
                 .andExpect(jsonPath("$.refundAmount", is(10000)));
 
         // then: 이번 환불의 메시지가 정확히 한 건, 키는 orderId
@@ -128,7 +128,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     void 승인_때_출고돼_자동_거절되면_반환_요청을_보내지_않는다() throws Exception {
         // given
         Long refundId = requestedRefundId();
-        orderQueryPort.put(socks("SHIPPING"));
+        orderQueryPort.put(potato("SHIPPING"));
         Map<TopicPartition, Long> before = endOffsets();
 
         // when
@@ -163,10 +163,10 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                         """));
     }
 
-    private static RefundableOrderItem socks(String status) {
+    private static RefundableOrderItem potato(String status) {
         BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(ORDER_ITEM_ID, 10_000L, 3)));
-        return new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", status,
+        return new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 55L, "감자", "1kg", status,
                 10_000L, 3, bundle);
     }
 

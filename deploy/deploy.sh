@@ -23,7 +23,7 @@ env_value() {
   printf '%s' "$value"
 }
 
-# Kafka 구성은 프로파일로 고른다 (#530). single(브로커 1대)과 cluster(브로커 3대) 중 하나만 켠다
+# Kafka와 Redis 구성은 프로파일로 고른다 (#530). single(Kafka 브로커 1대, Redis 1대)과 cluster(브로커 3대, Redis 6대) 중 하나만 켠다
 # compose도 .env의 COMPOSE_PROFILES를 읽지만, 아래에서 어느 구성인지 알아야 해서 같은 값을 직접 구한다. 값이 없으면 single이다
 # 정리한 값을 환경변수로 내보내, compose가 .env의 원본 대신 이 값을 쓰게 한다
 export COMPOSE_PROFILES="$(env_value COMPOSE_PROFILES)"
@@ -34,11 +34,11 @@ HAS_CLUSTER=0
 case ",${COMPOSE_PROFILES}," in *,single,*) HAS_SINGLE=1 ;; esac
 case ",${COMPOSE_PROFILES}," in *,cluster,*) HAS_CLUSTER=1 ;; esac
 if [ "$HAS_SINGLE" = 1 ] && [ "$HAS_CLUSTER" = 1 ]; then
-  echo "COMPOSE_PROFILES에 single과 cluster를 함께 쓸 수 없다 (Kafka가 두 벌 뜬다). 읽은 값: [$COMPOSE_PROFILES]" >&2
+  echo "COMPOSE_PROFILES에 single과 cluster를 함께 쓸 수 없다 (Kafka·Redis가 두 벌 뜬다). 읽은 값: [$COMPOSE_PROFILES]" >&2
   exit 1
 fi
 if [ "$HAS_SINGLE" = 0 ] && [ "$HAS_CLUSTER" = 0 ]; then
-  echo "COMPOSE_PROFILES에 single이나 cluster가 필요하다 (Kafka가 뜨지 않는다). 읽은 값: [$COMPOSE_PROFILES]" >&2
+  echo "COMPOSE_PROFILES에 single이나 cluster가 필요하다 (Kafka·Redis가 뜨지 않는다). 읽은 값: [$COMPOSE_PROFILES]" >&2
   exit 1
 fi
 
@@ -51,6 +51,13 @@ if [ "$HAS_CLUSTER" = 1 ]; then
   fi
 fi
 
+# 앱이 Redis에 붙는 방식(common-redis.yaml)을 프로파일에서 정해 넘긴다. cluster인데 single 방식으로 붙으면 앱이 뜨지 못한다
+if [ "$HAS_CLUSTER" = 1 ]; then
+  export REDIS_MODE=cluster
+else
+  export REDIS_MODE=single
+fi
+
 docker compose pull app
 
 if [ "$HAS_CLUSTER" = 1 ]; then
@@ -61,24 +68,34 @@ if [ "$HAS_CLUSTER" = 1 ]; then
     exit 1
   fi
 else
-  # 3대 클러스터로 돌던 서버가 single로 바뀌면(.env를 바꿨거나, 값이 없어 기본값 single이 된 경우) 꺼진 프로파일의 브로커는 compose가 멈추지 않아
-  # 계속 떠서 메모리를 쓰고, 앱은 새 단일 브로커로 붙어 두 벌이 따로 돈다. 조용히 구성이 바뀌지 않도록 여기서 멈춘다
-  # restart: unless-stopped라 재시작 중(restarting)인 브로커도 곧 다시 뜨므로 함께 본다. 확인 자체가 실패하면 없다고 보지 않고 멈춘다
-  REMAINING=$(docker compose --profile cluster ps -q --status running --status restarting kafka-1 kafka-2 kafka-3) || {
-    echo "배포 중단: 클러스터 브로커가 남아 있는지 확인하지 못했다" >&2
+  # 클러스터로 돌던 서버가 single로 바뀌면(.env를 바꿨거나, 값이 없어 기본값 single이 된 경우) 꺼진 프로파일의 브로커와 Redis 노드는 compose가 멈추지 않아
+  # 계속 떠서 메모리를 쓰고, 앱은 새 단일 구성으로 붙어 두 벌이 따로 돈다. 조용히 구성이 바뀌지 않도록 여기서 멈춘다
+  # restart: unless-stopped라 재시작 중(restarting)인 컨테이너도 곧 다시 뜨므로 함께 본다. 확인 자체가 실패하면 없다고 보지 않고 멈춘다
+  REMAINING=$(docker compose --profile cluster ps -q --status running --status restarting \
+    kafka-1 kafka-2 kafka-3 redis-1 redis-2 redis-3 redis-4 redis-5 redis-6) || {
+    echo "배포 중단: 클러스터 컨테이너가 남아 있는지 확인하지 못했다" >&2
     exit 1
   }
   if [ -n "$REMAINING" ]; then
-    echo "배포 중단: 클러스터 브로커(kafka-1~3)가 아직 떠 있다." >&2
+    echo "배포 중단: 클러스터 컨테이너(kafka-1~3, redis-1~6)가 아직 떠 있다." >&2
     echo "클러스터를 계속 쓰려면 .env에 COMPOSE_PROFILES=cluster 와 KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092 를 함께 넣는다." >&2
-    echo "single로 바꾸려면 docs/DEPLOY.md의 '3대 클러스터로 돌던 서버를 single로 바꿀 때' 절차로 기존 브로커를 먼저 멈춘다" >&2
+    echo "single로 바꾸려면 docs/DEPLOY.md의 '클러스터로 돌던 서버를 single로 바꿀 때' 절차로 기존 컨테이너를 먼저 멈춘다" >&2
     exit 1
   fi
-  # 단일 브로커는 넘겨받을 상대가 없어, 설정이나 버전이 바뀌면 다시 만드는 동안 Kafka가 잠시 멈춘다
-  # 브로커가 healthy가 될 때까지 기다린 뒤 app을 올린다
-  if ! docker compose up -d --wait --wait-timeout 180 kafka; then
-    echo "배포 실패: Kafka 브로커가 healthy가 되지 않았다" >&2
-    docker compose logs --tail 100 kafka >&2
+  # 단일 브로커와 단일 Redis는 넘겨받을 상대가 없어, 설정이나 버전이 바뀌면 다시 만드는 동안 잠시 멈춘다
+  # 둘이 healthy가 될 때까지 기다린 뒤 app을 올린다
+  if ! docker compose up -d --wait --wait-timeout 180 kafka redis; then
+    echo "배포 실패: Kafka 브로커나 Redis가 healthy가 되지 않았다" >&2
+    docker compose logs --tail 100 kafka redis >&2
+    exit 1
+  fi
+fi
+
+if [ "$HAS_CLUSTER" = 1 ]; then
+  # Redis 노드도 같은 이유로 app보다 먼저 1대씩 처리한다 (#366)
+  # 마스터는 복제본에 역할을 넘긴 뒤 다시 띄워서, 아래 up -d app이 노드 6대를 한꺼번에 다시 만들어 Redis가 멈추는 일을 막는다
+  if ! ./redis-rollout.sh; then
+    echo "배포 실패: Redis 노드 처리 중 오류가 발생했다" >&2
     exit 1
   fi
 fi

@@ -1,6 +1,5 @@
 package com.ok.wallet.adapter.out.persistence;
 
-import com.ok.wallet.application.port.out.ChargeRepository;
 import com.ok.wallet.domain.Charge;
 import com.ok.wallet.domain.ChargeStatus;
 import org.springframework.data.jpa.repository.Modifying;
@@ -9,12 +8,16 @@ import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 // 충전 건은 상태가 바뀌므로 저장·조회와 조건부 상태 변경만 두고, 삭제 메서드는 두지 않는다.
-public interface ChargeJpaRepository extends Repository<Charge, Long>, ChargeRepository {
+public interface ChargeJpaRepository extends Repository<Charge, Long> {
+
+    Charge save(Charge charge);
+
+    Optional<Charge> findByChargeNo(String chargeNo);
 
     // 일괄 UPDATE는 Auditing을 거치지 않아 수정 시각을 직접 넣는다.
-    @Override
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         UPDATE Charge c
@@ -28,7 +31,6 @@ public interface ChargeJpaRepository extends Repository<Charge, Long>, ChargeRep
                        @Param("now") LocalDateTime now);
 
     // 일괄 UPDATE는 Auditing을 거치지 않아 수정 시각을 직접 넣는다.
-    @Override
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             UPDATE Charge c
@@ -44,7 +46,6 @@ public interface ChargeJpaRepository extends Repository<Charge, Long>, ChargeRep
                             @Param("failureMessage") String failureMessage,
                             @Param("now") LocalDateTime now);
 
-    @Override
     @Query("SELECT COALESCE(SUM(c.amount), 0) FROM Charge c WHERE c.memberId = :memberId AND c.status = :status")
     long sumAmountByMemberIdAndStatus(@Param("memberId") Long memberId, @Param("status") ChargeStatus status);
 }

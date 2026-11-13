@@ -98,7 +98,7 @@ class WithdrawRefundServiceTest {
     }
 
     private static Refund requested() {
-        return Refund.request(10L, 101L, 2, BUYER_ID, SELLER_ID, 55L, "양말", "흰색", 10_000L, null);
+        return Refund.request(10L, 101L, 2, BUYER_ID, SELLER_ID, 55L, "감자", "1kg", 10_000L, null);
     }
 
     // update에 넘긴 환불. 정확히 한 번 불러야 한다(두 번이면 상태 변경 경로가 꼬인 것이다)
