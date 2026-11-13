@@ -30,9 +30,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-// 주문 응답은 요청서에 적은 필드 이름으로 약속했다. 이름이 어긋나면 컴파일은 되고 값만 0이나 null로 들어와
-// 조용히 틀리므로, 요청서 모양의 JSON이 그대로 옮겨 담기는지 JDK 내장 서버로 확인한다.
-// 주문 팀 API가 아직 없어 실제 주문 모듈 대신 이 서버가 요청서대로 응답한다
+// 주문 응답의 경로와 필드 이름이 주문 API(조회 #533, 취소 반영 #542)와의 약속이다. 이름이 어긋나면 컴파일은 되고
+// 값만 0이나 null로 들어와 조용히 틀리므로, 같은 모양의 JSON이 그대로 옮겨 담기는지 JDK 내장 서버로 확인한다
 class RefundOrderHttpAdapterTest {
 
     private static final String ITEMS_JSON = """
@@ -124,16 +123,16 @@ class RefundOrderHttpAdapterTest {
         body.set(VALID_BODY);
 
         // when
-        BundleShipping sut = this.sut.getOrderItem(10L, 101L).bundle();
+        BundleShipping bundle = sut.getOrderItem(10L, 101L).bundle();
 
         // then
-        assertThat(sut).isNotNull();
+        assertThat(bundle).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.shippingFee()).isEqualTo(1_000L);
-            softly.assertThat(sut.remoteAreaFee()).isEqualTo(2_000L);
-            softly.assertThat(sut.baseShippingFee()).isEqualTo(3_000L);
-            softly.assertThat(sut.freeShippingThreshold()).isEqualTo(50_000L);
-            softly.assertThat(sut.items()).containsExactly(
+            softly.assertThat(bundle.shippingFee()).isEqualTo(1_000L);
+            softly.assertThat(bundle.remoteAreaFee()).isEqualTo(2_000L);
+            softly.assertThat(bundle.baseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(bundle.freeShippingThreshold()).isEqualTo(50_000L);
+            softly.assertThat(bundle.items()).containsExactly(
                     new BundleItem(101L, 10_000L, 3),
                     new BundleItem(102L, 5_000L, 1));
         });
@@ -268,7 +267,7 @@ class RefundOrderHttpAdapterTest {
 
     @Test
     void 취소_반영은_요청서_경로로_refundId와_수량과_뺀_배송비를_보낸다() {
-        // given: 성공 상태 코드가 요청서에 없어 본문 없는 204로 답한다
+        // given: 주문 API(#542)처럼 본문 없는 204로 답한다
         status.set(204);
 
         // when
@@ -329,7 +328,7 @@ class RefundOrderHttpAdapterTest {
                     // 연결을 끊는 것이 목적이라 읽기 실패는 무시한다
                 }
             });
-            RefundOrderHttpAdapter sut = new RefundOrderHttpAdapter("http://localhost:" + socket.getLocalPort());
+            sut = new RefundOrderHttpAdapter("http://localhost:" + socket.getLocalPort());
 
             // when & then
             assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
@@ -347,13 +346,13 @@ class RefundOrderHttpAdapterTest {
                 { "type": "about:blank", "title": "Conflict", "status": 409, "detail": "이미 출고된 상품입니다." }""");
 
         // when
-        OrderCancellationResult sut = this.sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
 
         // then
-        assertThat(sut).isNotNull();
+        assertThat(result).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.rejected()).isTrue();
-            softly.assertThat(sut.orderDetail()).isEqualTo("이미 출고된 상품입니다.");
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("이미 출고된 상품입니다.");
         });
     }
 
@@ -363,13 +362,13 @@ class RefundOrderHttpAdapterTest {
         status.set(409);
 
         // when
-        OrderCancellationResult sut = this.sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
 
         // then
-        assertThat(sut).isNotNull();
+        assertThat(result).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.rejected()).isTrue();
-            softly.assertThat(sut.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("주문 응답에 설명 없음");
         });
     }
 
@@ -380,13 +379,13 @@ class RefundOrderHttpAdapterTest {
         body.set("not json");
 
         // when
-        OrderCancellationResult sut = this.sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
 
         // then
-        assertThat(sut).isNotNull();
+        assertThat(result).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.rejected()).isTrue();
-            softly.assertThat(sut.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("주문 응답에 설명 없음");
         });
     }
 }

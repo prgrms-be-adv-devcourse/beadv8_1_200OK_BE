@@ -275,7 +275,7 @@ class RefundTest {
     }
 
     @ParameterizedTest
-    @MethodSource("처리_중이_아닌_네_상태의_환불")
+    @MethodSource("처리_중이_아닌_상태의_환불")
     void 처리_중이_아니면_승인_뒤_거절할_수_없다(Refund refund) {
         // when & then
         assertThatThrownBy(() -> refund.rejectAfterApproval("사유", NOW))
@@ -283,7 +283,7 @@ class RefundTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
     }
 
-    static Stream<Named<Refund>> 처리_중이_아닌_네_상태의_환불() {
+    static Stream<Named<Refund>> 처리_중이_아닌_상태의_환불() {
         Refund rejected = requested();
         rejected.reject("사유", NOW);
         Refund withdrawn = requested();

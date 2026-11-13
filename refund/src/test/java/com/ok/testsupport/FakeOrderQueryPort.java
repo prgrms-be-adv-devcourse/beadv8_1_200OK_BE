@@ -11,8 +11,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 주문 모듈 내부 API 대신 메모리에 넣어 둔 주문 상품을 돌려주는 Fake.
- * 주문 팀 API가 아직 없고, 통합 테스트는 웹 서버 없이(MOCK) 돌아 HTTP로 부를 수 없어 대신 쓴다.
+ * 주문 모듈 조회 API(주문 ①, #533) 대신 메모리에 넣어 둔 주문 상품을 돌려주는 Fake.
+ * 통합 테스트는 웹 서버 없이(MOCK) 돌아 HTTP로 부를 수 없어 대신 쓴다.
  * {@code AbstractIntegrationTest}의 {@code @ComponentScan}이 주워 가고 {@code @Primary}로 실제 클라이언트를 대신한다.
  * 테스트마다 {@link #clear}로 비운다. 동시 요청 테스트에서도 쓰도록 동시성 컬렉션을 쓴다.
  */
