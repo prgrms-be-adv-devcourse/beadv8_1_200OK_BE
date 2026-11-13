@@ -338,10 +338,10 @@ public class PayoutService implements PayoutUseCase {
     // payout 생성·지갑 이벤트(commitStep)와 Kafka 발송(publishStep)은 검증 이후 단계에서 함
     //
     // 판매자 단위 격리(#90): 판매자마다 저장 트랜잭션을 따로 둠 (PayoutSellerDraftService, REQUIRES_NEW)
-    //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 후보 전체를 UNEXPECTED_ERROR로 기록한 뒤 다음 판매자로 넘어감
+    //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 주문별로 다시 저장해 본 뒤(#534, retryByOrder) 실패한 주문의 후보만 UNEXPECTED_ERROR로 기록하고 다음 판매자로 넘어감
     //   → 같은 회차의 다른 판매자와 이후 회차는 계속 처리되고, 일부만 실패하면 Job도 멈추지 않음 (전에는 회차 전체가 롤백되고 Job이 FAILED)
     //   실패로 기록된 후보는 다음 회차의 조회 조건(조건 ④)에서 빠지므로, 실패한 판매자를 다시 뽑는 무한 반복은 없음
-    //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
+    //   실패한 주문은 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
     // 판매자 수에는 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
     // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 일부 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
     //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
@@ -391,18 +391,79 @@ public class PayoutService implements PayoutUseCase {
             } catch (RuntimeException e) {
                 // 예외를 다시 던지지 않고 기록으로 남기므로 팀 로그 규칙의 "던질 때 로그 금지"에 해당하지 않음
                 // 그대로 묻히지 않게 스택 트레이스까지 WARN으로 남김 (계속 진행하지만 원인 확인이 필요한 이상)
-                log.warn("정산 draft 판매자 처리 실패, 이 판매자만 제외하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
+                log.warn("정산 draft 판매자 처리 실패, 주문별로 다시 시도하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
                         snapshotId, sellerId, sellerCandidates.size(), e);
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
                 // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify가 "draft 누락"으로 그 주문들을 잠금 (#290)
                 //   → 일시적 오류였어도 관리자가 풀어야 하므로, 여기서 멈추는 편이 원인이 분명하고 뒷수습도 적음
                 // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중 (지금은 위 이유로 Job을 멈춤)
                 //   다른 방법 후보: 실패 기록 저장 재시도, 기록 없이 그 판매자만 건너뛰고 verify 규칙에서 따로 허용 등 → 어떻게 할지 #52에서 정함
-                payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
-                failedSellerCount++;
+                // 판매자 전체가 아니라 오류를 일으킨 주문만 실패로 남기려고 주문별로 다시 시도함 (#534)
+                if (!retryByOrder(snapshotId, sellerId, sellerCandidates, e)) {
+                    failedSellerCount++;
+                }
             }
         }
         return new PayoutDraftResult(sellerIds.size(), failedSellerCount);
+    }
+
+    // 판매자 저장이 실패한 뒤, 후보를 주문별로 나눠 다시 저장해 봄 (#534). 저장된 주문이 하나라도 있으면 true
+    //   예) 판매자 A의 주문 100(오류 원인)과 주문 200(정상) → 200만 그날 정산, 100 후보만 UNEXPECTED_ERROR
+    //   전에는 어느 주문 때문인지 몰라 판매자 후보 전부를 실패로 남겨, 정상 주문도 하루 늦어지고 #549 실패 횟수도 함께 쌓였음
+    // 순서
+    //   1. 주문마다 시험 저장(trySaveDraft: 써 보고 롤백). 실패한 주문은 그 주문의 예외로 바로 실패 기록
+    //   2. 통과한 주문을 모아 판매자 draft 1건으로 진짜 저장 (판매자 draft는 스냅샷당 판매자 1건이라 주문마다 저장할 수 없음)
+    //   3. 진짜 저장마저 실패하면(주문 하나씩은 되는데 합치면 안 되는 경우) 통과했던 주문도 그 예외로 실패 기록
+    // 주문이 1개뿐이면 다시 해도 같은 저장이라 시험 없이 바로 실패 기록
+    // 다시 시도 상한은 두지 않음(사용자 결정): 주문마다 시험 저장 1번
+    //   대가: DB 연결이 끊기는 등 주문과 상관없는 오류면 모든 주문이 시험 저장에서 실패해, 주문 수만큼 시간이 더 걸림
+    //   그 경우 실패 기록 저장도 실패할 가능성이 커서, 보통 첫 기록에서 예외가 나가 Job이 멈춤 (위 catch 주석과 같은 이유)
+    // 판매자 안에서 주문으로 나누므로, 한 주문에 판매자가 여럿이면 그 판매자 몫만 나뉨 (다른 판매자 후보는 각자 판매자 저장에서 처리)
+    private boolean retryByOrder(Long snapshotId, Long sellerId, List<PayoutCandidateItem> sellerCandidates,
+                                 RuntimeException sellerFailure) {
+        Map<Long, List<PayoutCandidateItem>> candidatesByOrder = new LinkedHashMap<>();
+        for (PayoutCandidateItem candidate : sellerCandidates) {
+            Long orderId = candidate.getOrderId();
+            if (!candidatesByOrder.containsKey(orderId)) {
+                candidatesByOrder.put(orderId, new ArrayList<>());
+            }
+            candidatesByOrder.get(orderId).add(candidate);
+        }
+        if (candidatesByOrder.size() == 1) {
+            payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, sellerFailure);
+            return false;
+        }
+
+        List<PayoutCandidateItem> passedCandidates = new ArrayList<>();
+        int passedOrderCount = 0;
+        for (Map.Entry<Long, List<PayoutCandidateItem>> entry : candidatesByOrder.entrySet()) {
+            List<PayoutCandidateItem> orderCandidates = entry.getValue();
+            try {
+                payoutSellerDraftService.trySaveDraft(snapshotId, sellerId, orderCandidates);
+                passedCandidates.addAll(orderCandidates);
+                passedOrderCount++;
+            } catch (RuntimeException orderFailure) {
+                // 스택 트레이스는 판매자 실패 WARN에 이미 남김. 주문마다 또 남기면 DB 장애 때 주문 수만큼 쌓여 예외 종류·메시지만 남김
+                log.warn("정산 draft 주문 처리 실패. snapshotId={}, sellerId={}, orderId={}, 예외={}: {}",
+                        snapshotId, sellerId, entry.getKey(), orderFailure.getClass().getSimpleName(), orderFailure.getMessage());
+                payoutSellerDraftService.recordUnexpectedError(snapshotId, orderCandidates, orderFailure);
+            }
+        }
+        if (passedCandidates.isEmpty()) {
+            return false;
+        }
+
+        try {
+            payoutSellerDraftService.saveDraft(snapshotId, sellerId, passedCandidates);
+        } catch (RuntimeException mergedFailure) {
+            log.warn("정산 draft 주문별 다시 시도 후 합친 저장 실패, 통과한 주문도 실패로 기록. snapshotId={}, sellerId={}, 주문 수={}",
+                    snapshotId, sellerId, passedOrderCount, mergedFailure);
+            payoutSellerDraftService.recordUnexpectedError(snapshotId, passedCandidates, mergedFailure);
+            return false;
+        }
+        log.warn("정산 draft 주문별 다시 시도로 일부 주문 저장. snapshotId={}, sellerId={}, 저장한 주문 수={}, 실패한 주문 수={}",
+                snapshotId, sellerId, passedOrderCount, candidatesByOrder.size() - passedOrderCount);
+        return true;
     }
 
     // 검증을 통과한 draft를 payout·payout_item으로 확정

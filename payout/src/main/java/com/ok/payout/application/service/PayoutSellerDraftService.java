@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +42,25 @@ public class PayoutSellerDraftService {
     // 정산후보 하나는 판매자 몫·시스템 몫 중 한 곳에만 들어감 (isSystemShare 기준)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void saveDraft(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
+        save(snapshotId, sellerId, candidates);
+    }
+
+    // 판매자 저장(saveDraft)이 실패했을 때, 주문 하나의 후보가 저장되는지만 시험함 (#534)
+    // saveDraft와 똑같이 저장하고 DB에 실제로 보내(flush) 오류가 나는지 본 뒤, 일부러 롤백해 아무것도 남기지 않음
+    //   주문마다 진짜로 저장하지 않는 이유: 판매자 draft는 스냅샷당 판매자 1건(UK snapshot_id, seller_id)이고
+    //   @Immutable이라 합계를 나중에 고칠 수 없음 → 통과한 주문을 모아 saveDraft로 한 번에 저장함 (PayoutService.retryByOrder)
+    // 오류가 나면 예외가 그대로 나가고 이 트랜잭션은 롤백됨
+    // setRollbackOnly: 예외 없이 이 트랜잭션을 롤백으로 끝내라는 표시. REQUIRES_NEW로 새로 시작한 트랜잭션이라
+    //   끝날 때 조용히 롤백되고(UnexpectedRollbackException 없음) 바깥 트랜잭션에는 영향이 없음
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void trySaveDraft(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
+        save(snapshotId, sellerId, candidates);
+        // 롤백으로 끝나는 트랜잭션은 커밋 때 flush하지 않으므로, 여기서 직접 보내야 DB 오류(제약 조건 위반 등)가 드러남
+        payoutSellerDraftRepository.flush();
+        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+    }
+
+    private void save(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
         List<PayoutCandidateItem> sellerShare = new ArrayList<>();
         List<PayoutSystemDraftItem> systemItems = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
