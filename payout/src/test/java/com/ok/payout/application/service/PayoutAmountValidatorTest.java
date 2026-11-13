@@ -144,7 +144,7 @@ class PayoutAmountValidatorTest {
 
     @Test
     void 누적합을_넘게_만든_후보가_배송비면_배송비로_남긴다() {
-        // given: 대금 9,700까지는 결제 10,000 안, 뒤에 들어온 배송비 3,000이 넘김
+        // given: 대금 9,700 + 수수료 300 = 10,000까지는 결제 12,000 안, 뒤에 들어온 배송비 3,000이 넘김 (합계 13,000)
         givenNormalOrderItem(ORDER_ID, 1001L, 10L, 9_700L, 300L);
         targets.add(shippingFee(ORDER_ID, 10L, 3_000L));
         givenOrder(ORDER_ID, 13_000L, 12_000L);

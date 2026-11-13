@@ -238,7 +238,7 @@ public class PayoutService implements PayoutUseCase {
     // 수수료 불일치(FEE_MISMATCH)로 기록한 주문상품마다 ERROR 1번 (#391)
     // ERROR로 남기는 이유(사용자 결정): 수수료 불일치는 정상 경로에서는 생기지 않아 시스템 문제일 가능성이 커서, 알림(#302 슬랙 전송)으로 바로 알리려고 함
     //   팀 로그 규칙(service.md "로그")은 ERROR를 "처리되지 못한 예외"로 정해 두었는데, 여기는 예외 없이 실패로 기록하고 계속 진행하는 경우라 규칙과 다름
-    //   (규칙 문서를 바꿀지는 팀 논의 필요. #302에서 알림을 붙일 때 이 로그 모양을 그대로 찾도록 메시지 모양을 고정함)
+    //   (정산 모듈 규칙 payout/CLAUDE.md "팀 규칙과 다르게 쓰는 것"에 예외로 적음. #302에서 알림을 붙일 때 이 로그 모양을 그대로 찾도록 메시지 모양을 고정함)
     // 같은 주문상품의 대금·수수료 두 후보가 함께 실패하므로, 주문상품 ID로 한 번만 남김 (같은 문제로 알림이 두 번 가지 않게)
     private void logFeeMismatches(List<PayoutFailure> amountFailures) {
         Set<Long> loggedOrderItemIds = new LinkedHashSet<>();
