@@ -5,6 +5,7 @@ import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
+import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
 import com.ok.payout.application.port.out.SellerTotalRow;
 import com.ok.payout.application.port.out.SnapshotItemRow;
@@ -31,6 +32,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +48,7 @@ import static com.ok.payout.domain.QPayoutSellerDraftItem.payoutSellerDraftItem;
 import static com.ok.payout.domain.QPayoutSnapshotItem.payoutSnapshotItem;
 import static com.ok.payout.domain.QPayoutSystemDraftItem.payoutSystemDraftItem;
 import static com.ok.payout.domain.QPayoutWalletDeduction.payoutWalletDeduction;
+import static com.ok.payout.domain.QPayoutWalletDeductionConflict.payoutWalletDeductionConflict;
 
 /**
  * 정산 조회 전용 저장소 출력 포트({@link PayoutQueryRepository})의 QueryDSL 구현.
@@ -342,6 +345,59 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                                 .where(payoutSnapshotItem.snapshotId.eq(snapshotId))))
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
+    }
+
+    // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서로, 이미 정산됐는지와 함께
+    //   SQL) SELECT c.*, pi.id FROM payout_candidate_items c LEFT JOIN payout_item pi ON pi.candidate_id = c.id
+    //        WHERE c.order_id IN (...) ORDER BY c.created_at, c.id
+    // 정산 여부는 select에 조건식을 두지 않고 payout_item id를 읽어 Java에서 null 여부로 정함 (JPQL select의 조건식 지원에 기대지 않으려고)
+    @Override
+    public List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds) {
+        List<Tuple> rows = queryFactory
+                .select(payoutCandidateItem.id,
+                        payoutCandidateItem.orderId,
+                        payoutCandidateItem.orderItemId,
+                        payoutCandidateItem.sellerId,
+                        payoutCandidateItem.amount,
+                        payoutCandidateItem.createdAt,
+                        payoutItem.id)
+                .from(payoutCandidateItem)
+                .leftJoin(payoutItem).on(payoutItem.candidateId.eq(payoutCandidateItem.id))
+                .where(payoutCandidateItem.orderId.in(orderIds))
+                .orderBy(payoutCandidateItem.createdAt.asc(), payoutCandidateItem.id.asc())
+                .fetch();
+        List<OverchargeCandidateRow> result = new ArrayList<>();
+        for (Tuple row : rows) {
+            result.add(new OverchargeCandidateRow(
+                    row.get(payoutCandidateItem.id),
+                    row.get(payoutCandidateItem.orderId),
+                    row.get(payoutCandidateItem.orderItemId),
+                    row.get(payoutCandidateItem.sellerId),
+                    row.get(payoutCandidateItem.amount),
+                    row.get(payoutCandidateItem.createdAt),
+                    row.get(payoutItem.id) != null));
+        }
+        return result;
+    }
+
+    // 초과 청구 근거용(#391): 주문들의 지갑 금액 충돌에서 받은 금액 (주문 ID → 받은 금액 목록, 기록 순서)
+    @Override
+    public Map<Long, List<Long>> findReceivedConflictAmountsByOrder(Collection<Long> orderIds) {
+        List<Tuple> rows = queryFactory
+                .select(payoutWalletDeductionConflict.orderId, payoutWalletDeductionConflict.receivedAmount)
+                .from(payoutWalletDeductionConflict)
+                .where(payoutWalletDeductionConflict.orderId.in(orderIds))
+                .orderBy(payoutWalletDeductionConflict.id.asc())
+                .fetch();
+        Map<Long, List<Long>> amounts = new HashMap<>();
+        for (Tuple row : rows) {
+            Long orderId = row.get(payoutWalletDeductionConflict.orderId);
+            if (!amounts.containsKey(orderId)) {
+                amounts.put(orderId, new ArrayList<>());
+            }
+            amounts.get(orderId).add(row.get(payoutWalletDeductionConflict.receivedAmount));
+        }
+        return amounts;
     }
 
     // 정산 목록 (관리자·판매자 조회). null인 조건은 걸지 않음

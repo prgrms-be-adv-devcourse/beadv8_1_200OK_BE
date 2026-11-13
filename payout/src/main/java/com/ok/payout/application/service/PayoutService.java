@@ -20,6 +20,7 @@ import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
+import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.SnapshotItemRow;
 import com.ok.payout.application.port.out.PayoutRepository;
 import com.ok.payout.application.port.out.PayoutSellerDraftRepository;
@@ -57,6 +58,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -162,7 +164,7 @@ public class PayoutService implements PayoutUseCase {
     // 검사 순서: 차감 기록 없음(#194) → 금액 검사(초과 청구 → 수수료, #195). 앞 검사에 걸린 후보는 뒤 검사 대상에서 빠짐 (후보당 실패 1건)
     // 모든 검사 결과를 모아 한 번에 저장: 같은 트랜잭션이라 중간에 실패하면 이번 검증의 기록이 하나도 남지 않음
     //
-    // 금액 검사에 걸린 주문은 잠김(AMOUNT_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
+    // 금액 검사에 걸린 주문은 잠김(초과 청구 AMOUNT_MISMATCH, 수수료 FEE_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
     // 잠금은 이후 Step이 실패해 Job이 FAILED로 끝나도 유지됨 (입력 금액에 대한 판정이라 재실행해도 다시 잠김)
     @Override
     @Transactional
@@ -179,20 +181,75 @@ public class PayoutService implements PayoutUseCase {
         // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (createSnapshot 주석 참고)
         // 1)과 2)의 조회가 같은 시점의 데이터를 본다는 전제: MySQL 기본 격리 수준(REPEATABLE READ)이라 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
         //   READ COMMITTED로 바꾸면 1)과 2) 사이에 들어온 차감 기록 때문에 같은 후보가 두 번 실패로 잡혀 UK 위반 → 매 배치 실패할 수 있음
+        List<PayoutCandidateItem> targets = payoutQueryRepository.findCandidatesWithDeduction(snapshotId);
+        Map<Long, Long> totals = payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId);
+        Map<Long, Long> deductions = payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId);
+        List<PayoutCandidateItem> originals = payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId);
+
+        // 초과 청구 근거(#391): 초과 청구에 걸리는 주문만 후보 전체·지갑 금액 충돌을 다시 읽음 (걸린 주문이 없으면 조회하지 않음)
+        //   같은 트랜잭션(REPEATABLE READ)이라 위 합계 조회와 같은 시점의 데이터를 봄 → 근거의 누적합이 합계와 맞음
+        //   판정 공식은 PayoutAmountValidator.overchargedOrderIds 한곳에 둬서, 여기서 고른 주문과 validate가 초과 청구로 보는 주문이 같음
+        Set<Long> overchargedOrderIds = PayoutAmountValidator.overchargedOrderIds(totals, deductions);
+        List<OverchargeCandidateRow> overchargeCandidates = List.of();
+        Map<Long, List<Long>> conflictAmounts = Map.of();
+        if (!overchargedOrderIds.isEmpty()) {
+            overchargeCandidates = payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds);
+            conflictAmounts = payoutQueryRepository.findReceivedConflictAmountsByOrder(overchargedOrderIds);
+        }
+
         List<PayoutFailure> amountFailures = PayoutAmountValidator.validate(snapshotId, new PayoutAmountValidator.Input(
-                payoutQueryRepository.findCandidatesWithDeduction(snapshotId),
-                payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId),
-                payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId),
-                payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId)));
+                targets, totals, deductions, originals, overchargeCandidates, conflictAmounts));
         failures.addAll(amountFailures);
 
         payoutFailureRepository.saveAll(failures);
 
         logLockedOrders(snapshotId, amountFailures);
+        logOverchargedOrderItems(snapshotId, amountFailures, overchargeCandidates);
+        logFeeMismatches(amountFailures);
         // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
         log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}, 금액 검사로 제외한 후보 수={}",
                 snapshotId, missing.size(), amountFailures.size());
         return failures.size();
+    }
+
+    // 초과 청구로 실패를 기록한 주문마다 주문상품 전체 목록을 WARN (#391)
+    // 실패 상세는 255자라 주문상품이 많으면 잘림 → 원인을 찾을 때 볼 전체 목록(주문상품별 합계, 배송비 포함)은 로그에 남김
+    // 이번 스냅샷 후보가 모두 이미 실패로 기록돼 새 실패가 없는 주문(같은 스냅샷 재검증)은 남기지 않음
+    private void logOverchargedOrderItems(Long snapshotId, List<PayoutFailure> amountFailures,
+                                          List<OverchargeCandidateRow> overchargeCandidates) {
+        Set<Long> overchargedOrderIds = new LinkedHashSet<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                overchargedOrderIds.add(failure.getOrderId());
+            }
+        }
+        for (Long orderId : overchargedOrderIds) {
+            List<OverchargeCandidateRow> orderRows = new ArrayList<>();
+            for (OverchargeCandidateRow row : overchargeCandidates) {
+                if (row.orderId().equals(orderId)) {
+                    orderRows.add(row);
+                }
+            }
+            log.warn("정산 초과 청구 주문상품 목록. snapshotId={}, orderId={}, 주문상품별 합계={}",
+                    snapshotId, orderId, PayoutAmountValidator.amountsByOrderItem(orderRows));
+        }
+    }
+
+    // 수수료 불일치(FEE_MISMATCH)로 기록한 주문상품마다 ERROR 1번 (#391)
+    // ERROR로 남기는 이유(사용자 결정): 수수료 불일치는 정상 경로에서는 생기지 않아 시스템 문제일 가능성이 커서, 알림(#302 슬랙 전송)으로 바로 알리려고 함
+    //   팀 로그 규칙(service.md "로그")은 ERROR를 "처리되지 못한 예외"로 정해 두었는데, 여기는 예외 없이 실패로 기록하고 계속 진행하는 경우라 규칙과 다름
+    //   (정산 모듈 규칙 payout/CLAUDE.md "팀 규칙과 다르게 쓰는 것"에 예외로 적음. #302에서 알림을 붙일 때 이 로그 모양을 그대로 찾도록 메시지 모양을 고정함)
+    // 같은 주문상품의 대금·수수료 두 후보가 함께 실패하므로, 주문상품 ID로 한 번만 남김 (같은 문제로 알림이 두 번 가지 않게)
+    private void logFeeMismatches(List<PayoutFailure> amountFailures) {
+        Set<Long> loggedOrderItemIds = new LinkedHashSet<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (failure.getReason() != PayoutFailureReason.FEE_MISMATCH) {
+                continue;
+            }
+            if (loggedOrderItemIds.add(failure.getOrderItemId())) {
+                log.error("[정산-시스템문제] 수수료 불일치 orderItemId={}", failure.getOrderItemId());
+            }
+        }
     }
 
     // 주문이 새로 잠길 때마다 WARN: 잠긴 주문은 저절로 풀리지 않아(TODO(#52)) 사람이 원인을 확인해야 함
@@ -212,8 +269,11 @@ public class PayoutService implements PayoutUseCase {
             String cause = null;
             for (PayoutFailure failure : entry.getValue()) {
                 sellerIds.add(failure.getSellerId());
-                // 사유는 원인 후보(AMOUNT_MISMATCH)의 상세로 남김 (함께 보류된 ORDER_LOCKED 상세는 원인이 아님)
-                if (cause == null && failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                // 사유는 원인 후보(주문을 잠그는 사유: 초과 청구 AMOUNT_MISMATCH, 수수료 FEE_MISMATCH)의 상세로 남김
+                //   (함께 보류된 ORDER_HELD 상세는 원인이 아님)
+                // 사유 이름 대신 locksOrder로 고르는 이유: #391에서 수수료를 FEE_MISMATCH로 나눴을 때 이름으로 고르면 놓쳐 사유=null이 됨
+                //   "이 주문을 잠근 원인"이 곧 잠그는 사유라, 잠그는 사유가 늘어도 여기를 고치지 않게 함
+                if (cause == null && failure.getReason().isLocksOrder()) {
                     cause = failure.getDetail();
                 }
             }

@@ -3,6 +3,8 @@ package com.ok.payout;
 import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionConflictJpaRepository;
+import com.ok.payout.domain.PayoutWalletDeductionConflict;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.awaitility.Awaitility.await;
 
@@ -47,6 +50,9 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private PayoutWalletDeductionJpaRepository repository;
 
+    @Autowired
+    private PayoutWalletDeductionConflictJpaRepository conflictRepository;
+
     // 이 테스트에서 쓴 주문 ID (정리할 때 이 주문의 행만 지움)
     private final List<Long> usedOrderIds = new ArrayList<>();
 
@@ -55,6 +61,7 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
     void tearDown() {
         for (Long orderId : usedOrderIds) {
             jdbcTemplate.update("DELETE FROM payout_wallet_deduction WHERE order_id = ?", orderId);
+            jdbcTemplate.update("DELETE FROM payout_wallet_deduction_conflict WHERE order_id = ?", orderId);
         }
         usedOrderIds.clear();
     }
@@ -128,6 +135,46 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> repository.save(PayoutWalletDeduction.create(orderId, BUYER_ID, 13_000L, PAID_AT)))
                 .rootCause()
                 .hasMessageContaining("uk_payout_wallet_deduction_order_id");
+    }
+
+    @Test
+    void 저장된_금액과_다른_차감_이벤트가_두_번_와도_차감_기록은_그대로이고_충돌은_1건만_남으며_실패로_남지_않는다() {
+        // given: 15,000으로 차감 기록 저장
+        Long orderId = nextOrderId();
+        publishInTransaction(new WalletPaymentCompletedEvent(orderId, BUYER_ID, 15_000L, PAID_AT));
+        await().atMost(TIMEOUT).until(() -> repository.existsByOrderId(orderId));
+
+        // when: 같은 주문에 20,000 이벤트가 두 번 옴 (금액이 다른 이벤트 + 그 재전달)
+        // 재전달은 첫 처리가 끝난 뒤 보냄: 리스너는 비동기라 바로 이어 보내면 두 처리가 동시에 돌아 UK에 막힌 쪽이 FAILED로 남음
+        //   (동시 처리는 UK가 막는 경로라 아래 DB 테스트가 따로 확인함)
+        WalletPaymentCompletedEvent conflicting = new WalletPaymentCompletedEvent(orderId, BUYER_ID, 20_000L, PAID_AT);
+        publishInTransaction(conflicting);
+        await().atMost(TIMEOUT).until(() -> countPublications(orderId, "COMPLETED") == 2);
+        publishInTransaction(conflicting);
+
+        // then
+        // 1) 세 번 모두 처리 완료(COMPLETED)될 때까지 기다림 → 리스너가 실제로 세 번 실행됐다는 증거
+        await().atMost(TIMEOUT).until(() -> countPublications(orderId, "COMPLETED") == 3);
+        // 2) 저장된 차감 금액은 먼저 온 15,000 그대로
+        assertThat(repository.findByOrderId(orderId).orElseThrow().getAmount()).isEqualTo(15_000L);
+        // 3) 충돌은 (저장 15,000, 받음 20,000) 1건만
+        assertThat(conflictRepository.findAllByOrderId(orderId))
+                .extracting(PayoutWalletDeductionConflict::getStoredAmount, PayoutWalletDeductionConflict::getReceivedAmount)
+                .containsExactly(tuple(15_000L, 20_000L));
+        // 4) 충돌은 오류가 아니라 기록하고 끝난 것 → 실패(FAILED)로 남지 않음
+        assertThat(countPublications(orderId, "FAILED")).isZero();
+    }
+
+    @Test
+    void 같은_주문의_같은_받은_금액_충돌은_DB에서도_두_번_저장할_수_없다() {
+        // given: 서비스를 거치지 않고 저장 (동시에 두 번 처리되어 존재 확인을 둘 다 통과한 상황)
+        Long orderId = nextOrderId();
+        conflictRepository.save(PayoutWalletDeductionConflict.create(orderId, 15_000L, 20_000L));
+
+        // when & then
+        assertThatThrownBy(() -> conflictRepository.save(PayoutWalletDeductionConflict.create(orderId, 15_000L, 20_000L)))
+                .rootCause()
+                .hasMessageContaining("uk_payout_wallet_deduction_conflict_order_id_received_amount");
     }
 
     // 겹치지 않는 주문 ID를 만들고, 정리 대상으로 기록

@@ -1,0 +1,86 @@
+package com.ok.payout.domain;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+// 실패 사유 enum의 고정값 확인 (DB 칸 없이 enum으로 계산하는 값이라, 값이 바뀌면 과거 기록의 동작도 함께 바뀜)
+class PayoutFailureReasonTest {
+
+    @Test
+    void 주문을_잠그는_사유는_초과_청구_수수료_결과_검증_불일치뿐이다() {
+        // when
+        List<PayoutFailureReason> sut = PayoutFailureReason.orderLockingReasons();
+
+        // then: #391 1단계는 잠금 동작을 바꾸지 않음. FEE_MISMATCH는 나누기 전(AMOUNT_MISMATCH)처럼 잠그고, 함께 보류된 ORDER_HELD는 잠그지 않음
+        assertThat(sut).containsExactly(
+                PayoutFailureReason.AMOUNT_MISMATCH,
+                PayoutFailureReason.FEE_MISMATCH,
+                PayoutFailureReason.VERIFY_MISMATCH);
+    }
+
+    // 사유를 새로 더할 때 범주를 빠뜨리지 않게 모든 사유를 돌며 확인
+    @ParameterizedTest
+    @EnumSource(PayoutFailureReason.class)
+    void 모든_사유에는_범주가_있다(PayoutFailureReason reason) {
+        // when
+        PayoutFailureCategory sut = reason.getCategory();
+
+        // then
+        assertThat(sut).isNotNull();
+    }
+
+    @ParameterizedTest
+    @MethodSource("사유별_범주")
+    void 사유의_범주는_정해진_값이다(PayoutFailureReason reason, PayoutFailureCategory expected) {
+        // when
+        PayoutFailureCategory sut = reason.getCategory();
+
+        // then
+        assertThat(sut).isEqualTo(expected);
+    }
+
+    // #391에서 정한 매핑. ORDER_HELD는 수수료 불일치 때만 생기므로 원인을 따라 SYSTEM
+    static Stream<Arguments> 사유별_범주() {
+        return Stream.of(
+                Arguments.of(PayoutFailureReason.DEDUCTION_MISSING, PayoutFailureCategory.SOURCE_DATA),
+                Arguments.of(PayoutFailureReason.ORDER_MISSING, PayoutFailureCategory.SOURCE_DATA),
+                Arguments.of(PayoutFailureReason.AMOUNT_MISMATCH, PayoutFailureCategory.SOURCE_DATA),
+                Arguments.of(PayoutFailureReason.FEE_MISMATCH, PayoutFailureCategory.SYSTEM),
+                Arguments.of(PayoutFailureReason.UNEXPECTED_ERROR, PayoutFailureCategory.SYSTEM),
+                Arguments.of(PayoutFailureReason.VERIFY_MISMATCH, PayoutFailureCategory.SYSTEM),
+                Arguments.of(PayoutFailureReason.ORDER_HELD, PayoutFailureCategory.SYSTEM));
+    }
+
+    @Test
+    void 사유별_범주_매핑은_모든_사유를_다룬다() {
+        // when: 위 매핑 목록에 든 사유
+        List<Object> mapped = 사유별_범주().map(arguments -> arguments.get()[0]).toList();
+
+        // then: 사유가 늘었는데 매핑 확인을 빠뜨리면 여기서 걸림
+        assertThat(mapped).containsExactlyInAnyOrder((Object[]) PayoutFailureReason.values());
+    }
+
+    @Test
+    void 대사_문제_범주를_쓰는_사유는_아직_없다() {
+        // given: #308(대사)용으로 미리 둔 범주
+        int count = 0;
+
+        // when
+        for (PayoutFailureReason reason : PayoutFailureReason.values()) {
+            if (reason.getCategory() == PayoutFailureCategory.RECONCILIATION) {
+                count++;
+            }
+        }
+
+        // then
+        assertThat(count).isZero();
+    }
+}

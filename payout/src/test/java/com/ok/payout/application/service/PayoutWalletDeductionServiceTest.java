@@ -1,6 +1,8 @@
 package com.ok.payout.application.service;
 
 import com.ok.payout.domain.PayoutWalletDeduction;
+import com.ok.payout.domain.PayoutWalletDeductionConflict;
+import com.ok.payout.application.port.out.PayoutWalletDeductionConflictRepository;
 import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
 import com.ok.payout.application.port.in.WalletPaymentCompletedCommand;
 import org.junit.jupiter.api.Test;
@@ -12,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -33,6 +36,9 @@ class PayoutWalletDeductionServiceTest {
     @Mock
     private PayoutWalletDeductionRepository repository;
 
+    @Mock
+    private PayoutWalletDeductionConflictRepository conflictRepository;
+
     @InjectMocks
     private PayoutWalletDeductionService sut;
 
@@ -40,11 +46,15 @@ class PayoutWalletDeductionServiceTest {
     @Captor
     private ArgumentCaptor<PayoutWalletDeduction> deductionCaptor;
 
+    // save()에 넘어간 충돌 기록을 꺼낼 공간
+    @Captor
+    private ArgumentCaptor<PayoutWalletDeductionConflict> conflictCaptor;
+
     @Test
     void 처음_받은_지갑_차감_이벤트는_값을_그대로_저장한다() {
         // given
         WalletPaymentCompletedCommand command = new WalletPaymentCompletedCommand(ORDER_ID, BUYER_ID, 13_000L, PAID_AT);
-        given(repository.existsByOrderId(ORDER_ID)).willReturn(false);
+        given(repository.findByOrderId(ORDER_ID)).willReturn(Optional.empty());
 
         // when
         sut.saveDeduction(command);
@@ -59,17 +69,59 @@ class PayoutWalletDeductionServiceTest {
             softly.assertThat(saved.getAmount()).isEqualTo(13_000L);
             softly.assertThat(saved.getDeductedAt()).isEqualTo(PAID_AT);
         });
+        verify(conflictRepository, never()).save(any());
     }
 
     @Test
-    void 이미_저장된_주문의_지갑_차감_이벤트는_예외_없이_저장하지_않는다() {
-        // given: 같은 주문의 차감 기록이 이미 있음 (이벤트 재전달 상황)
+    void 이미_저장된_주문의_같은_금액_지갑_차감_이벤트는_예외_없이_아무것도_저장하지_않는다() {
+        // given: 같은 주문·같은 금액의 차감 기록이 이미 있음 (이벤트 재전달 상황)
         WalletPaymentCompletedCommand command = new WalletPaymentCompletedCommand(ORDER_ID, BUYER_ID, 13_000L, PAID_AT);
-        given(repository.existsByOrderId(ORDER_ID)).willReturn(true);
+        given(repository.findByOrderId(ORDER_ID)).willReturn(Optional.of(storedDeduction(13_000L)));
 
         // when & then
         // 중복 이벤트는 오류가 아니라 이미 처리된 건 → 예외 없이 조용히 끝나야 함 (멱등)
         assertThatCode(() -> sut.saveDeduction(command)).doesNotThrowAnyException();
         verify(repository, never()).save(any());
+        verify(conflictRepository, never()).save(any());
+    }
+
+    @Test
+    void 이미_저장된_주문에_다른_금액이_오면_충돌을_1건_기록하고_차감_기록은_바꾸지_않는다() {
+        // given: 15,000으로 저장된 주문에 20,000 이벤트
+        WalletPaymentCompletedCommand command = new WalletPaymentCompletedCommand(ORDER_ID, BUYER_ID, 20_000L, PAID_AT);
+        given(repository.findByOrderId(ORDER_ID)).willReturn(Optional.of(storedDeduction(15_000L)));
+        given(conflictRepository.existsByOrderIdAndReceivedAmount(ORDER_ID, 20_000L)).willReturn(false);
+
+        // when
+        sut.saveDeduction(command);
+
+        // then: 충돌에는 저장된 금액과 받은 금액이 둘 다 남고, 차감 기록은 새로 저장하지 않음
+        verify(conflictRepository).save(conflictCaptor.capture());
+        PayoutWalletDeductionConflict saved = conflictCaptor.getValue();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getOrderId()).isEqualTo(ORDER_ID);
+            softly.assertThat(saved.getStoredAmount()).isEqualTo(15_000L);
+            softly.assertThat(saved.getReceivedAmount()).isEqualTo(20_000L);
+        });
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void 이미_기록된_같은_금액_충돌이_다시_오면_다시_저장하지_않는다() {
+        // given: 15,000으로 저장된 주문에 20,000 충돌이 이미 기록됨 (Kafka 재전달 상황)
+        WalletPaymentCompletedCommand command = new WalletPaymentCompletedCommand(ORDER_ID, BUYER_ID, 20_000L, PAID_AT);
+        given(repository.findByOrderId(ORDER_ID)).willReturn(Optional.of(storedDeduction(15_000L)));
+        given(conflictRepository.existsByOrderIdAndReceivedAmount(ORDER_ID, 20_000L)).willReturn(true);
+
+        // when & then
+        assertThatCode(() -> sut.saveDeduction(command)).doesNotThrowAnyException();
+        verify(conflictRepository, never()).save(any());
+        verify(repository, never()).save(any());
+    }
+
+    // 이미 저장되어 있는 차감 기록
+    private PayoutWalletDeduction storedDeduction(long amount) {
+        return PayoutWalletDeduction.create(ORDER_ID, BUYER_ID, amount, PAID_AT);
     }
 }
