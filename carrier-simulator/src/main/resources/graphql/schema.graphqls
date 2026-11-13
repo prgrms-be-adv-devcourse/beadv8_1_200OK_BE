@@ -1,0 +1,81 @@
+# Delivery Tracker(tracker.delivery) API 스키마에서 이 서버가 흉내 내는 부분이다.
+# 타입과 필드 이름은 공식 문서(https://tracker.delivery/docs/api-schema)와 같아야 한다. 바꾸면 delivery가 실제 서비스와 다른 응답을 받는다.
+
+scalar DateTime
+
+type Query {
+  track(carrierId: ID!, trackingNumber: String!): TrackInfo
+}
+
+type Mutation {
+  registerTrackWebhook(input: RegisterTrackWebhookInput!): Boolean
+}
+
+input RegisterTrackWebhookInput {
+  carrierId: ID!
+  trackingNumber: String!
+  callbackUrl: String!
+  expirationTime: DateTime!
+}
+
+type TrackInfo {
+  trackingNumber: String!
+  lastEvent: TrackEvent
+  events(first: Int, after: String, last: Int, before: String): TrackEventConnection
+  sender: ContactInfo
+  recipient: ContactInfo
+}
+
+type TrackEvent {
+  status: TrackEventStatus!
+  time: DateTime
+  location: Location
+  contact: ContactInfo
+  description: String
+}
+
+type TrackEventStatus {
+  code: TrackEventStatusCode!
+  name: String
+}
+
+enum TrackEventStatusCode {
+  UNKNOWN
+  INFORMATION_RECEIVED
+  AT_PICKUP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  ATTEMPT_FAIL
+  DELIVERED
+  AVAILABLE_FOR_PICKUP
+  EXCEPTION
+}
+
+type TrackEventConnection {
+  edges: [TrackEventEdge]
+  pageInfo: PageInfo!
+}
+
+type TrackEventEdge {
+  node: TrackEvent
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type Location {
+  countryCode: String
+  postalCode: String
+  name: String
+}
+
+type ContactInfo {
+  name: String
+  location: Location
+  phoneNumber(allowInvalidFormat: Boolean): String
+}
