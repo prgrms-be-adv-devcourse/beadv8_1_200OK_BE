@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:fragment="head(title)">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- 실시간 연결 없이 고른 간격마다 화면 전체를 다시 읽는다 -->
+    <meta http-equiv="refresh" th:if="${refresh > 0}" th:content="${refresh}">
+    <title th:text="${title} + ' - 가짜 택배사'">가짜 택배사</title>
+    <style>
+        :root { --bg: #f5f6f8; --panel: #ffffff; --line: #d9dde3; --text: #1f2933; --muted: #6b7785;
+                --accent: #2563eb; --ok: #2563eb; --error: #dc2626; --warn: #d97706; --good: #16a34a; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text);
+               font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; font-size: 14px; }
+        header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 0 20px; }
+        .bar { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; min-height: 48px; }
+        .brand { font-weight: 700; }
+        nav a { color: var(--muted); text-decoration: none; margin-right: 16px; padding: 14px 0; display: inline-block; }
+        nav a.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+        .refresh { margin-left: auto; color: var(--muted); font-size: 12px; }
+        .refresh a { color: var(--muted); margin-left: 8px; text-decoration: none; }
+        .refresh a.active { color: var(--accent); font-weight: 700; }
+        main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 18px; margin: 0 0 16px; }
+        h2 { font-size: 14px; margin: 0 0 10px; }
+        .flash { margin: 12px 20px 0; padding: 10px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); }
+        .flash.message { border-color: var(--good); }
+        .flash.error { border-color: var(--error); color: var(--error); }
+        .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .tile, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+        .tile .num { font-size: 22px; font-weight: 700; }
+        .tile .cap, .note { color: var(--muted); font-size: 12px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+        .scroll { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+        th { color: var(--muted); font-weight: 500; font-size: 12px; }
+        .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+        form.row, .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+        input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; background: #fff; }
+        input[type=number] { width: 90px; }
+        textarea { width: 100%; min-height: 90px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+        button { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+        button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+        button.danger { background: transparent; color: var(--error); border-color: var(--error); }
+        svg.chart { width: 100%; height: auto; display: block; }
+        svg.chart .axis { stroke: var(--line); }
+        svg.chart text { fill: var(--muted); font-size: 10px; }
+        rect.track_ok, rect.callback_ok { fill: var(--ok); }
+        rect.track_error, rect.callback_fail { fill: var(--error); }
+        rect.track_not_found { fill: var(--warn); }
+        .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 6px; }
+        .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+        .hbar { display: grid; grid-template-columns: 90px 1fr 60px; gap: 8px; align-items: center; margin-bottom: 6px; }
+        .hbar .track { background: var(--bg); border-radius: 3px; height: 14px; }
+        .hbar .fill { background: var(--accent); border-radius: 3px; height: 14px; }
+        .hbar .count { text-align: right; }
+        .ok { color: var(--good); }
+        .bad { color: var(--error); }
+        a { color: var(--accent); }
+    </style>
+</head>
+<body>
+<header th:fragment="header">
+    <div class="bar">
+        <span class="brand">가짜 택배사</span>
+        <nav>
+            <a th:each="item : ${navItems}" th:href="${item.href}" th:text="${item.label}"
+               th:classappend="${item.active} ? 'active'">메뉴</a>
+        </nav>
+        <span class="refresh">새로고침
+            <a th:each="link : ${refreshLinks}" th:href="${link.href}" th:text="${link.label}"
+               th:classappend="${link.active} ? 'active'">끔</a>
+        </span>
+    </div>
+    <p class="flash message" th:if="${message}" th:text="${message}">처리했습니다.</p>
+    <p class="flash error" th:if="${error}" th:text="${error}">잘못된 값입니다.</p>
+</header>
+</body>
+</html>
