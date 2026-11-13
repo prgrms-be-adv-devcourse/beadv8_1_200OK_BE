@@ -24,7 +24,8 @@ import io.lettuce.core.cluster.ClusterTopologyRefreshOptions.RefreshTrigger;
  * Redis 연결은 처음 쓸 때 맺으므로 컨테이너 없이 설정 값만 확인한다.
  */
 // 앱이 import하는 것과 같은 방식으로 읽는다. Redis 리포지터리를 끄는 값도 이 파일에 있다
-@DataRedisTest(properties = "spring.config.import=classpath:common-redis.yaml")
+// 클러스터 설정은 REDIS_MODE=cluster 일 때만 더해진다. 기본(단일)은 RedisSingleModeTest가 확인한다 (#530)
+@DataRedisTest(properties = {"spring.config.import=classpath:common-redis.yaml", "REDIS_MODE=cluster"})
 class RedisSettingsTest {
 
     // common에는 애플리케이션 클래스가 없어 슬라이스가 찾을 설정을 직접 둔다

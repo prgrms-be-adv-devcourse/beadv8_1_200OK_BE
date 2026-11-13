@@ -16,7 +16,7 @@ import com.ok.PaldoGotganApplication;
  * monolith가 application.yaml의 spring.config.import로 common-redis.yaml을 가져오는지 검증한다.
  * 설정 값 자체는 common의 RedisSettingsTest가 확인한다.
  */
-@DataRedisTest
+@DataRedisTest(properties = "REDIS_MODE=cluster")
 @ContextConfiguration(classes = PaldoGotganApplication.class)
 class RedisSettingsTest {
 
