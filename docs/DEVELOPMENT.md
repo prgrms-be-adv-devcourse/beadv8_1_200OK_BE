@@ -159,8 +159,13 @@ Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
 - Kafka 상태는 앱 헬스체크(`/actuator/health`, 관리 포트 18080)에 들어가지 않습니다. 앱은 메시지를 보내거나 받을 때 처음 브로커에 접속하므로, 브로커가 꺼져 있어도 기동은 됩니다.
-- 메시지 키는 문자열, 값은 JSON(Jackson)입니다. 메시지 헤더에 보내는 쪽 Java 클래스 이름(타입 헤더)을 싣지 않으므로, 받는 쪽은 리스너(토픽)마다 읽을 타입을 정합니다. 값을 JSON으로 읽지 못한 메시지 때문에 컨슈머가 멈추지 않도록 역직렬화 실패는 오류 처리로 넘깁니다(`ErrorHandlingDeserializer`). 설정은 `monolith`의 `application.yaml`의 `spring.kafka`에만 있습니다.
-- 의존성(`spring-boot-starter-kafka`)은 `common`이 `api`로 모든 모듈에 노출합니다. 모듈 yaml에는 Kafka 설정을 두지 않으므로, 모듈을 단독 실행하며 Kafka를 쓰게 되면 `monolith`의 `spring.kafka` 블록을 그대로 복사합니다. 직렬화 설정이 모듈마다 다르면 보내는 쪽과 받는 쪽이 메시지를 서로 읽지 못합니다.
+- 메시지 키는 문자열, 값은 JSON입니다. 접속 주소와 직렬화·역직렬화 설정은 `common`의 [`common-kafka.yaml`](../common/src/main/resources/common-kafka.yaml) 한 곳에 있고, Kafka를 쓰는 앱(`monolith`, `refund`, `payout`)이 `spring.config.import`로 가져옵니다(#538).
+  - **JSON 모양:** 날짜·시간은 ISO-8601 문자열(`"2026-10-30T14:00:00"`), 금액은 JSON 숫자이고, 값이 없는 필드도 이름을 남기고 `null`입니다. 보내는 쪽 클래스 이름(타입 헤더)은 싣지 않습니다.
+  - **필드가 달라질 때:** 받는 쪽은 모르는 필드가 와도 읽고 빠진 필드는 `null`로 읽습니다. 그래서 보내는 쪽이 필드를 더해도 받는 쪽이 멈추지 않습니다. 필드 이름 변경·삭제나 타입 변경은 받는 쪽이 읽지 못하므로 두 모듈을 함께 바꿉니다.
+  - **읽을 타입:** 타입 헤더가 없어 받는 쪽이 리스너(토픽)마다 정합니다(`@KafkaListener`의 `properties = "spring.json.value.default.type=..."`).
+  - **읽을 수 없는 메시지:** JSON으로 읽지 못한 메시지는 예외를 던지지 않고(`ErrorHandlingDeserializer`) 컨슈머 오류 처리기로 넘어가 ERROR 로그를 남기고 건너뜁니다. 컨슈머가 같은 메시지에서 멈추지 않고, 원본 바이트는 오류 헤더에 남습니다. 보관(DLT)은 #388에서 정합니다.
+  - 이 동작은 `KafkaSerializationTest`(common)와 `PayoutKafkaReceiveIntegrationTest`가 확인합니다.
+- 의존성(`spring-boot-starter-kafka`)은 `common`이 `api`로 모든 모듈에 노출합니다. 모듈을 단독 실행하며 Kafka를 쓰게 되면 그 모듈 yaml의 `spring.config.import`에 `classpath:common-kafka.yaml`을 더합니다(설정을 복사하지 않습니다). 직렬화 설정이 앱마다 다르면 보내는 쪽과 받는 쪽이 메시지를 서로 읽지 못하기 때문입니다.
 
 ### 로컬 모니터링 (#374)
 
@@ -983,9 +988,11 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
 - MySQL 컨테이너는 서브프로젝트의 테스트 실행(JVM) 한 번에 하나만 뜨고 그 안의 모든 테스트 컨텍스트가 같은 DB를 씁니다. 컨테이너가 모듈 스키마를 모두 만들며, 모듈 테스트는 자기 모듈 스키마를, `monolith` 테스트는 기본 스키마를 접속 DB로 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
-- Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 기동 시간 때문에 **단일 노드**로 띄우며(접속 정보 빈이 `cluster.nodes` 속성보다 우선), 클러스터 모드 접속은 `common`의 `RedisClusterConnectionTest`(클러스터 모드 컨테이너 1개)가 따로 검증합니다. 장애 조치는 자동 테스트가 없고 위 로컬 Redis 클러스터 절의 절차로 확인합니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
+- MySQL(`TestcontainersConfiguration`), Redis(`RedisTestcontainersConfiguration`), Kafka(`KafkaTestcontainersConfiguration`) 컨테이너는 설정이 하나씩 따로 있고, `AbstractIntegrationTest`가 셋을 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis와 Kafka를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 기동 시간 때문에 **단일 노드**로 띄우며(접속 정보 빈이 `cluster.nodes` 속성보다 우선), 클러스터 모드 접속은 `common`의 `RedisClusterConnectionTest`(클러스터 모드 컨테이너 1개)가 따로 검증합니다. 장애 조치는 자동 테스트가 없고 위 로컬 Redis 클러스터 절의 절차로 확인합니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
 - Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:18080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
-- 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`TestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
+- 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`KafkaTestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
+- 슬라이스 테스트는 필요한 설정만 `@Import`합니다. Kafka만 필요하면 `@Import(KafkaTestcontainersConfiguration.class)`입니다(예시는 `common`의 `TestKafkaConsumerTest`). `@DataJpaTest`의 `TestcontainersConfiguration`은 이제 MySQL만 켭니다.
+- 보낸 메시지의 JSON을 그대로 확인하려면 `@Import(TestKafkaConsumer.class)`로 테스트용 컨슈머를 켭니다. `test-topic`의 메시지를 문자열로 모아 `getReceivedMessage(timeout, unit)`로 꺼내고, 토픽은 테스트가 만들며, 파티션을 받은 뒤(`isAssigned()`)에 보내야 받습니다. 위 두 클래스에 `@TestConfiguration`·`@TestComponent`를 붙이지 않은 이유는 `AbstractIntegrationTest`가 `com.ok`를 스캔해서 붙이면 모든 통합 테스트에 켜지기 때문입니다.
 - 토픽의 메시지는 테스트마다 지워지지 않습니다. 메시지를 확인하는 테스트는 자기가 만든 키(예: `payoutId`)로 걸러서 셉니다.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.
 

@@ -2,16 +2,21 @@ package com.ok.payout;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.AbstractMessageListenerContainer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
@@ -41,6 +46,9 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    private ProducerFactory<String, Object> producerFactory;
 
     @Autowired
     private PayoutCandidateItemJpaRepository candidateRepository;
@@ -181,6 +189,27 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
         assertThat(deductionRepository.findByOrderId(badOrderId)).isEmpty();
     }
 
+    // 값을 JSON으로 읽지 못하는 메시지(보내는 쪽 오류, 깨진 바이트)는 역직렬화 단계에서 실패한다(ErrorHandlingDeserializer)
+    // 이 실패가 컨슈머를 같은 메시지에서 멈추게 하지 않고, 뒤 메시지를 정상 처리해야 한다 (#538)
+    @Test
+    void JSON이_아닌_메시지는_건너뛰고_다음_메시지를_처리한다() {
+        // given
+        long goodOrderId = nextOrderId();
+        Map<String, Object> goodMessage = Map.of(
+                "orderId", goodOrderId,
+                "buyerId", 5L,
+                "amount", 13_000L,
+                "paidAt", "2026-10-30T14:00:00");
+
+        // when: 같은 키(같은 파티션)로 JSON이 아닌 문자열 뒤에 정상 메시지를 보냄
+        stringKafkaTemplate().send(PayoutTopics.WALLET_PAYMENT_COMPLETED, "same-key", "이건 JSON이 아니다");
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, "same-key", goodMessage);
+
+        // then: 정상 메시지가 처리되면 깨진 메시지가 컨슈머를 막지 않은 것이다
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(deductionRepository.findByOrderId(goodOrderId)).isPresent());
+    }
+
     @Test
     void 정산_Kafka_리스너는_정산_오류_처리기를_쓴다() {
         // given: 정산 그룹으로 받는 리스너 (구매확정, 결제 완료)
@@ -209,6 +238,13 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
                 "totalItemPrice", totalItemPrice,
                 "sellerShippingPrice", sellerShippingPrice);
         kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(orderId), message);
+    }
+
+    // 앱의 발행 설정(접속 주소)은 그대로 쓰고 값만 JSON 변환 없이 문자열로 보낸다
+    private KafkaTemplate<String, String> stringKafkaTemplate() {
+        Map<String, Object> config = new HashMap<>(producerFactory.getConfigurationProperties());
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(config, new StringSerializer(), new StringSerializer()));
     }
 
     private long nextOrderId() {

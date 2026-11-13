@@ -7,7 +7,8 @@ spring:
   application:
     name: refund
   config:
-    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-async.yaml
+    # Kafka 접속·직렬화 설정은 common-kafka.yaml 한 곳에서 관리한다. 앱마다 다르면 서로 메시지를 읽지 못한다 (#538)
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-kafka.yaml,classpath:common-async.yaml
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_refund?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
     username: ${DB_USERNAME:myuser}
@@ -34,30 +35,7 @@ spring:
   modulith:
     events:
       republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
-  # Kafka 접속·직렬화 설정. monolith application.yaml의 spring.kafka 블록을 그대로 복사했다 (monolith yaml 9-10행 안내, #512)
-  # 환불을 단독으로 띄우거나 환불 모듈 테스트를 돌릴 때 쓴다. 없으면 값 직렬화가 기본(문자열)이라 메시지 객체를 보내지 못한다
-  # 직렬화가 monolith와 다르면 받는 쪽(지갑)이 메시지를 못 읽으므로 monolith를 바꿀 때 같이 바꾼다
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}
-    producer:
-      # 브로커 min.insync.replicas=2와 짝이다. 3대 중 2대 이상에 저장돼야 발행 성공으로 본다
-      acks: all
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
-      properties:
-        # 받는 쪽이 보내는 쪽 Java 클래스를 몰라도 되도록 타입 헤더를 싣지 않는다
-        spring.json.add.type.headers: false
-    consumer:
-      # 기본은 앱 이름(refund). 서비스로 나누면 서비스마다 그룹이 달라져 같은 이벤트를 각자 받는다
-      group-id: ${KAFKA_CONSUMER_GROUP_ID:${spring.application.name}}
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      # JSON으로 못 읽는 메시지 하나 때문에 컨슈머가 같은 메시지에서 멈추지 않게 실패를 오류 처리로 넘긴다
-      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
-      properties:
-        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
-        # 타입 헤더가 없으므로 읽을 타입은 리스너(토픽)마다 정한다
-        spring.json.use.type.headers: false
+
 app:
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
