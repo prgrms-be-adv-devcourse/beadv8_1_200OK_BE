@@ -49,6 +49,10 @@ public class SellerWalletService implements SellerWalletUseCase {
 
     // 지갑을 만드는 경로를 하나로 둔다. 같은 클래스의 @Transactional 메서드를 부르면 프록시를 거치지 않으므로 private 메서드로 나눈다
     private void insertIfMissing(Long memberId) {
+        // 그대로 두면 DB의 NOT NULL 제약 오류로 터져, 호출하는 쪽의 잘못인지 DB 문제인지 바로 알기 어렵다
+        if (memberId == null) {
+            throw new IllegalArgumentException("회원 ID는 필수입니다.");
+        }
         if (!sellerWalletRepository.existsByMemberId(memberId)) {
             sellerWalletRepository.insertIfAbsent(memberId, LocalDateTime.now(clock));
         }

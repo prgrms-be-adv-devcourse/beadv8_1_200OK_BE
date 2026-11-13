@@ -74,6 +74,15 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         assertThat(countSellerWallets(2L)).isEqualTo(1);
     }
 
+    @Test
+    void 회원_ID가_없으면_지갑을_만들지_않고_예외가_난다() {
+        // when & then
+        assertThatThrownBy(() -> sellerWalletService.getOrCreate(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("회원 ID는 필수입니다.");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seller_wallet", Long.class)).isZero();
+    }
+
     // depositPayout
 
     @Test
