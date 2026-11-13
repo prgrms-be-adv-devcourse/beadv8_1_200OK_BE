@@ -1324,6 +1324,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // then: 대금·수수료 두 후보가 실패해도 ERROR는 주문상품당 1번 (#302 알림이 두 번 가지 않게)
         assertThat(countMatches(output.getAll(), "[정산-시스템문제] 수수료 불일치 orderItemId=" + wrongItem + System.lineSeparator()))
                 .isEqualTo(1);
+        // then: 등급이 ERROR (정산 모듈 규칙: 시스템 문제 알림은 ERROR. #302 알림이 이 등급의 로그를 찾음)
+        assertThat(output.getAll())
+                .containsPattern("ERROR .*\\[정산-시스템문제\\] 수수료 불일치 orderItemId=" + wrongItem);
         // then: 잠금 WARN의 사유가 비지 않고 원인(수수료 불일치) 상세로 남음 (FEE_MISMATCH를 원인으로 못 찾으면 사유=null)
         assertThat(output.getAll())
                 .contains("정산 주문 잠금. snapshotId=" + snapshotId + ", orderId=" + orderX
