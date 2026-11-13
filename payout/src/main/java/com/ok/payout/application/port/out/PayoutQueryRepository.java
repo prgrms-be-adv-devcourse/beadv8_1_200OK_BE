@@ -120,4 +120,15 @@ public interface PayoutQueryRepository {
     // 마지막 "정기(SCHEDULED) 실행이 COMPLETED이고 정산을 1건 이상 만든" 배치 실행의 requestedAt (#390)
     // 정산 조회 하한을 정할 때 쓴다. 조건에 맞는 실행이 없으면 빈 값
     Optional<LocalDateTime> findLastCompletedScheduledRequestedAt();
+
+    // 주문마다 "성공(COMPLETED)한 실행 중 그 주문의 미정산 후보에 실패 기록이 남은 실행 수" (#549, 주문 ID → 실행 수)
+    // 실행 1번 = 스냅샷 1건: 한 실행에서 같은 주문의 실패 기록이 여러 줄이어도 1번으로 셈. 실패 사유는 가리지 않음
+    // 이미 정산된(payout_item 있는) 후보의 실패는 세지 않음: 나중에 정산됐다면 더는 막을 일이 아님
+    // FAILED로 끝난 실행의 실패는 세지 않음: 중간에 멈춘 실행은 주문 탓이 아닐 수 있어 횟수를 올리지 않음
+    // 0번인 주문은 결과에 없음
+    Map<Long, Long> countFailedRunsByOrder();
+
+    // 그 주문들의 미정산 후보 중 createdAt < to인 것 (#549, 조회 기간의 하한 없음, id 오름차순)
+    // 잠긴 주문의 후보는 뺌. orderIds가 비면 조회하지 않고 빈 목록
+    List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to);
 }

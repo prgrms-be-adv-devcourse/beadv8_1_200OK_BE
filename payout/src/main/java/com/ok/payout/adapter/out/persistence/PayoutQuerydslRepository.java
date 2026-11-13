@@ -52,7 +52,7 @@ import static com.ok.payout.domain.QPayoutWalletDeductionConflict.payoutWalletDe
 
 /**
  * 정산 조회 전용 저장소 출력 포트({@link PayoutQueryRepository})의 QueryDSL 구현.
- * 마지막 정기 실행 요청일(#390)만은 Spring Batch 메타 테이블을 함께 읽어야 해서 EntityManager로 네이티브 SQL 1개를 직접 실행한다.
+ * 마지막 정기 실행 요청일(#390)과 주문별 실패 실행 수(#549)는 Spring Batch 메타 테이블을 함께 읽어야 해서 EntityManager로 네이티브 SQL을 직접 실행한다.
  */
 @Repository
 @RequiredArgsConstructor
@@ -93,6 +93,47 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
             return Optional.empty();
         }
         return Optional.of(LocalDateTime.parse((String) rows.get(0)));
+    }
+
+    // 주문별로 "성공한 실행 중 실패 기록이 남은 실행 수" (#549)
+    // 네이티브 SQL인 이유와 스키마 이름을 붙이는 이유는 findLastCompletedScheduledRequestedAt과 같음 (Spring Batch 메타 테이블을 함께 읽음)
+    // COUNT(DISTINCT snapshot_id)인 이유: 스냅샷 1개 = 실행 1번이라, 한 실행에서 같은 주문의 후보 여러 건이 실패해도 1번으로 세려는 것
+    // payout_item이 없는 후보의 실패만 세는 이유: 이미 정산된 후보의 실패는 더 막을 일이 아님 (unsettledInPeriod와 같은 "미정산" 기준)
+    // STATUS = 'COMPLETED'만 세는 이유: FAILED로 끝난 실행의 실패 기록은 주문 탓이 아닐 수 있어 횟수에 넣지 않음
+    @Override
+    public Map<Long, Long> countFailedRunsByOrder() {
+        List<?> rows = entityManager.createNativeQuery(
+                        "SELECT f.order_id, COUNT(DISTINCT f.snapshot_id) "
+                                + "FROM " + PayoutSchema.NAME + ".payout_failure f "
+                                + "JOIN " + PayoutSchema.NAME + ".payout_snapshot s ON s.id = f.snapshot_id "
+                                + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
+                                + "WHERE e.STATUS = 'COMPLETED' "
+                                + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
+                                + "WHERE pi.candidate_id = f.candidate_id) "
+                                + "GROUP BY f.order_id")
+                .getResultList();
+        Map<Long, Long> counts = new HashMap<>();
+        for (Object row : rows) {
+            Object[] columns = (Object[]) row;
+            counts.put(((Number) columns[0]).longValue(), ((Number) columns[1]).longValue());
+        }
+        return counts;
+    }
+
+    // 다시 검사할 주문들의 미정산 후보 (#549): 조회 기간 하한 없이 createdAt < to
+    // 하한이 없는 이유: 실패한 주문의 후보는 이전 실행의 조회 기간 안에 있었어도 기간 하한이 올라가 지금은 기간 밖이라, 하한을 두면 다시 못 잡음
+    // unsettledInPeriod(null, to)를 그대로 써 미정산·상한 기준을 스냅샷 대상 조회와 같게 하고, 잠긴 주문은 같은 방식으로 뺌
+    @Override
+    public List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
     }
 
     // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
