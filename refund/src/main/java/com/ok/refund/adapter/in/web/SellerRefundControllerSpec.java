@@ -25,14 +25,16 @@ interface SellerRefundControllerSpec {
 
     @Operation(summary = "환불 요청 승인·거절",
             description = "본인 상품에 온 \"요청됨\" 환불을 승인하거나 거절한다. 승인하면 PROCESSING(처리 중)이 되고 되돌릴 수 없다. "
-                    + "이어서 같은 요청 안에서 주문에 취소를 알리고 → 지갑에 반환을 요청하고 → 상품 재고를 되돌린 뒤 COMPLETED(완료)로 응답한다. "
+                    + "이어서 같은 요청 안에서 주문에 취소를 알리고 → 돌려줄 돈이 있으면 지갑에 반환을 요청한 뒤 PROCESSING(처리 중)으로 응답한다. "
+                    + "재고 복구와 COMPLETED(완료)는 지갑이 돈을 돌려줬다고 알린 뒤에 바뀐다. "
+                    + "돌려줄 돈이 0원이면 지갑을 거치지 않고 재고를 되돌린 뒤 COMPLETED로 응답한다. "
                     + "승인 뒤 주문이 취소 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고 REJECTED로 응답한다. "
                     + "승인할 때 주문을 다시 조회해 같은 판매자 묶음의 배송비를 정하고 응답 금액 칸에 담는다. "
                     + "승인했어도 그사이 같은 묶음의 다른 요청이 먼저 승인돼 취소 금액이 뺄 배송비보다 적어졌으면 REJECTED(자동 거절)로 응답하고, "
                     + "거절 사유에 그 이유를 넣는다. "
                     + "거절하면 REJECTED가 되고, 구매자는 같은 상품에 다시 요청할 수 있다. 거절 사유는 필수다. 거절은 주문을 조회하지 않는다.")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "처리 성공 (승인은 COMPLETED, 거절은 REJECTED). 승인 요청이어도 자동 거절이면 REJECTED. "
+            @ApiResponse(responseCode = "200", description = "처리 성공 (승인은 돌려줄 돈이 있으면 PROCESSING, 0원이면 COMPLETED, 거절은 REJECTED). 승인 요청이어도 자동 거절이면 REJECTED. "
                     + "승인 때 이미 출고됐거나 취소된 상품이거나, 승인 뒤 주문이 취소 반영을 거절하면 \"이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.\" 사유로 REJECTED다"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),
             @ApiResponse(responseCode = "403", description = "판매자가 아님"),
@@ -44,7 +46,7 @@ interface SellerRefundControllerSpec {
                     + "이미 처리된 요청이어도 사유 없이 거절하면 409가 아니라 이 응답이다. "
                     + "요청 값 검증 실패 (VALIDATION_FAILED). 결정 값 오류, 사유 255자 초과 등"),
             @ApiResponse(responseCode = "503", description = "승인 때 주문 정보를 확인하지 못함 (ORDER_API_FAILED). 요청됨 그대로 남는다. "
-                    + "승인 뒤 주문 취소 반영(ORDER_API_FAILED)이나 재고 복구(PRODUCT_API_FAILED)가 실패하면 처리 중으로 남는다")
+                    + "승인 뒤 주문 취소 반영(ORDER_API_FAILED)이나 0원 환불의 재고 복구(PRODUCT_API_FAILED)가 실패하면 처리 중으로 남는다")
     })
     ResponseEntity<RefundResponse> decide(Long sellerId, Long refundId, RefundDecisionRequest request);
 }

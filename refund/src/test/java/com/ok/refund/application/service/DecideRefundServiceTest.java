@@ -94,11 +94,11 @@ class DecideRefundServiceTest {
         // when
         RefundResult result = sut.decide(new RefundDecisionCommand(REFUND_ID, SELLER_ID, RefundDecision.APPROVE, null));
 
-        // then: 다시 조회한 주문 정보로 승인 구간까지 가서 처리 중이 되고, 뒤 단계를 마쳐 완료로 끝난다
+        // then: 다시 조회한 주문 정보로 승인 구간까지 가서 처리 중이 되고, 돌려줄 돈이 있어 지갑 요청에서 멈춘다
         assertThat(result).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(result.refundId()).isEqualTo(REFUND_ID);
-            softly.assertThat(result.status()).isEqualTo("COMPLETED");
+            softly.assertThat(result.status()).isEqualTo("PROCESSING");
         });
     }
 
@@ -176,10 +176,10 @@ class DecideRefundServiceTest {
         // when
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
 
-        // then: 돌려주는 결과는 뒤 단계까지 마친 마지막 상태(완료)다. 승인 구간이 저장한 값은 아래에서 본다
+        // then: 돌려줄 돈이 있어 지갑 요청에서 멈추므로 처리 중이다(완료는 지갑 완료 메시지 뒤). 승인 구간이 저장한 값은 아래에서 본다
         assertThat(result).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(result.status()).isEqualTo("COMPLETED");
+            softly.assertThat(result.status()).isEqualTo("PROCESSING");
             softly.assertThat(result.decidedAt()).isEqualTo(NOW);
         });
         // 명시적 저장(#481): update를 부르지 않으면 바꾼 상태가 DB에 남지 않으므로, 호출과 넘긴 값 자체가 요구사항이다
@@ -447,7 +447,7 @@ class DecideRefundServiceTest {
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
 
         // then
-        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(result.status()).isEqualTo("PROCESSING");
         ArgumentCaptor<WalletRefundRequest> captor = ArgumentCaptor.forClass(WalletRefundRequest.class);
         then(walletRefundRequestPort).should().requestRefund(captor.capture());
         WalletRefundRequest sent = captor.getValue();
@@ -540,11 +540,11 @@ class DecideRefundServiceTest {
         assertThat(capturedUpdates()).hasSize(1);
     }
 
-    // 재고 복구(#414). 주문 반영 뒤 상품에 환불 개수만큼 재고를 되돌려 달라고 하고, 성공하면 완료로 바꾼다.
-    // 순서(주문 → 지갑 → 상품)와 넘긴 값이 요구사항이라 호출 순서와 값을 확인한다
+    // 돌려줄 돈이 있으면 지갑 요청까지만 하고 처리 중으로 응답한다(#544). 재고 복구와 완료는 지갑 완료 메시지를 받은 뒤라
+    // 이 요청에서 재고를 부르거나 완료로 저장하면 지갑이 돈을 돌려주기도 전에 끝난 환불이 된다
     @Test
-    void 주문에_알린_뒤_상품에_재고를_되돌려_달라고_하고_완료로_바꾼다() {
-        // given: 감자 2개(10,000원씩, 옵션 55)를 모두 취소한다
+    void 돌려줄_돈이_있으면_지갑_요청까지만_하고_재고와_완료는_부르지_않는다() {
+        // given
         givenLockedBundle(requested());
         givenOrderReflects();
 
@@ -552,9 +552,36 @@ class DecideRefundServiceTest {
         RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
 
         // then
-        InOrder order = inOrder(orderCancellationPort, walletRefundRequestPort, productStockReleasePort);
+        InOrder order = inOrder(orderCancellationPort, walletRefundRequestPort);
         then(orderCancellationPort).should(order).reflectCancellation(any());
         then(walletRefundRequestPort).should(order).requestRefund(any());
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        // 승인 구간 저장(처리 중) 한 번뿐이다. 완료 구간 저장이 없다
+        List<Refund> updates = capturedUpdates();
+        assertThat(updates).hasSize(1);
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(updates.getFirst().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(updates.getFirst().getCompletedAt()).isNull();
+            softly.assertThat(result.status()).isEqualTo("PROCESSING");
+            softly.assertThat(result.completedAt()).isNull();
+        });
+    }
+
+    // 0원 환불(#414). 지갑을 거치지 않아 기다릴 메시지가 없으므로, 주문 반영 뒤 상품에 환불 개수만큼 재고를 되돌려 달라고 하고
+    // 성공하면 같은 요청 안에서 완료로 바꾼다. 순서(주문 → 상품)와 넘긴 값이 요구사항이라 호출 순서와 값을 확인한다
+    @Test
+    void 돌려줄_금액이_0원이면_주문에_알린_뒤_재고를_되돌려_달라고_하고_완료로_바꾼다() {
+        // given
+        givenZeroAmountRefund();
+        givenOrderReflects();
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, zeroAmountItem());
+
+        // then
+        InOrder order = inOrder(orderCancellationPort, productStockReleasePort);
+        then(orderCancellationPort).should(order).reflectCancellation(any());
         ArgumentCaptor<StockRelease> captor = ArgumentCaptor.forClass(StockRelease.class);
         then(productStockReleasePort).should(order).releaseStock(captor.capture());
         StockRelease sent = captor.getValue();
@@ -564,7 +591,7 @@ class DecideRefundServiceTest {
             softly.assertThat(sent.refundId()).isEqualTo(REFUND_ID);
             softly.assertThat(sent.orderId()).isEqualTo(10L);
             softly.assertThat(sent.productOptionId()).isEqualTo(55L);
-            softly.assertThat(sent.quantity()).isEqualTo(2);
+            softly.assertThat(sent.quantity()).isEqualTo(1);
         });
         // 승인 구간 저장(처리 중) → 완료 구간 저장(완료, 진행 중 칸 비움) 두 번이다
         List<Refund> updates = capturedUpdates();
@@ -580,18 +607,19 @@ class DecideRefundServiceTest {
         });
     }
 
-    // 승인·주문·지갑은 이미 끝나 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 재고는 묶인 채라 그대로 올린다.
-    // 완료로 바꾸지 않아 처리 중으로 남는다. 실패 기록(PRODUCT)과 다시 시도는 #516이 맡는다
+    // 승인·주문은 이미 끝나 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 재고는 묶인 채라 그대로 올린다.
+    // 완료로 바꾸지 않아 처리 중으로 남는다. 돌려줄 돈이 있으면 재고 복구는 지갑 완료 메시지 뒤라 0원 환불만 해당한다.
+    // 실패 기록(PRODUCT)과 다시 시도는 #516이 맡는다
     @Test
-    void 재고_복구가_실패하면_예외를_그대로_올리고_완료로_바꾸지_않는다() {
+    void 돌려줄_금액이_0원일_때_재고_복구가_실패하면_예외를_그대로_올리고_완료로_바꾸지_않는다() {
         // given
-        givenLockedBundle(requested());
+        givenZeroAmountRefund();
         givenOrderReflects();
         RestApiException failure = new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
         willThrow(failure).given(productStockReleasePort).releaseStock(any());
 
         // when & then
-        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2)))
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, zeroAmountItem()))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
         List<Refund> updates = capturedUpdates();
@@ -633,15 +661,12 @@ class DecideRefundServiceTest {
 
     @Test
     void 돌려줄_금액이_0원이면_지갑을_거치지_않고_주문과_재고만_부른다() {
-        // given: 무료배송(기준 30,000원) 묶음에서 3,000원 상품을 취소하면 27,000원이 남아 무료배송이 깨진다.
-        // 기본 배송비 3,000원을 빼면 3,000 - 3,000 = 0원 환불이다. 받을 수는 있다(취소 금액 = 뺄 배송비)
-        givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "배추", "1kg", 3_000L, null));
+        // given
+        givenZeroAmountRefund();
         givenOrderReflects();
-        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L,
-                List.of(new BundleItem(101L, 3_000L, 1), new BundleItem(102L, 27_000L, 1)));
 
         // when
-        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, orderItem(101L, 3_000L, 1, bundle));
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, zeroAmountItem());
 
         // then
         assertThat(result).isNotNull();
@@ -677,6 +702,18 @@ class DecideRefundServiceTest {
         then(orderCancellationPort).should().reflectCancellation(any());
         then(productStockReleasePort).should(never()).releaseStock(any());
         assertThat(capturedUpdates()).hasSize(1);
+    }
+
+    // 무료배송(기준 30,000원) 묶음에서 3,000원 상품을 취소하면 27,000원이 남아 무료배송이 깨진다.
+    // 기본 배송비 3,000원을 빼면 3,000 - 3,000 = 0원 환불이다. 받을 수는 있다(취소 금액 = 뺄 배송비)
+    private void givenZeroAmountRefund() {
+        givenLockedBundle(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "배추", "1kg", 3_000L, null));
+    }
+
+    private static RefundableOrderItem zeroAmountItem() {
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L,
+                List.of(new BundleItem(101L, 3_000L, 1), new BundleItem(102L, 27_000L, 1)));
+        return orderItem(101L, 3_000L, 1, bundle);
     }
 
     // 주문이 취소를 반영했다고 답하게 한다

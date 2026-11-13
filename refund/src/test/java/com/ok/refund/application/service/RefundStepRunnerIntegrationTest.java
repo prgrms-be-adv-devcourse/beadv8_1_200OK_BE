@@ -138,11 +138,9 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         orderQueryPort.put(new RefundableOrderItem(ORDER_ID, ORDER_ITEM_ID, BUYER_ID, SELLER_ID, 77L, "상품", "옵션",
                 RefundableOrderItem.CANCELLABLE_STATUS, 10_000L, 1, bundle));
         Long refundId = requestRefundUseCase.request(new RefundRequestCommand(BUYER_ID, ORDER_ID, ORDER_ITEM_ID, 1, null)).refundId();
-        // 승인 뒤 재고 복구를 실패시켜 완료 전에 멈춘다(#414). 실패 기록은 처리 중인 환불에만 남길 수 있다
-        productStockReleasePort.fail();
-        assertThatThrownBy(() -> decideRefundUseCase.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null)))
-                .isInstanceOf(RestApiException.class);
-        productStockReleasePort.clear();
+        // 돌려줄 돈이 있으면 승인은 지갑 요청까지만 하고 처리 중으로 응답한다(#544). 지갑 완료 메시지는 보내지 않아 처리 중으로 남는다.
+        // 실패 기록은 처리 중인 환불에만 남길 수 있다
+        decideRefundUseCase.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
         return refundId;
     }
 }

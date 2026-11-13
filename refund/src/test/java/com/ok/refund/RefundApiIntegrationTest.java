@@ -15,6 +15,7 @@ import com.ok.refund.application.port.out.StockRelease;
 import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
 import com.ok.testsupport.FakeProductStockReleasePort;
+import com.ok.testsupport.RefundWalletResultSender;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,6 +86,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     FakeOrderCancellationPort orderCancellationPort;
     @Autowired
     FakeProductStockReleasePort productStockReleasePort;
+    // 돌려줄 돈이 있는 승인은 처리 중으로 끝나고 완료는 지갑 완료 메시지가 와야 한다(#544). 지갑 대신 메시지를 실제 Kafka로 보낸다
+    @Autowired
+    RefundWalletResultSender walletResultSender;
 
     private MockMvc mockMvc;
 
@@ -381,6 +385,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // given: 감자 1개 환불을 승인해 완료하고, 남은 감자로 요청을 하나 더 넣는다
         Long completedId = requestedRefundId(POTATO_ORDER_ITEM_ID);
         approve(POTATO_SELLER_ID, completedId).andExpect(status().isOk());
+        walletResultSender.completeByWallet(completedId);
         requestedRefundId(POTATO_ORDER_ITEM_ID);
 
         // when & then
@@ -412,7 +417,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     // 판매자 승인·거절
 
     @Test
-    void 승인하면_지갑_주문_상품까지_마치고_200과_완료를_돌려준다() throws Exception {
+    void 승인하면_주문과_지갑_요청까지_마치고_200과_처리_중을_돌려주고_지갑_완료_뒤_상품까지_마쳐_완료된다() throws Exception {
         // given: 감자 3개 중 1개를 취소 요청한다
         Long refundId = requestedRefundId(POTATO_ORDER_ITEM_ID);
 
@@ -421,13 +426,19 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 {"decision": "APPROVE"}
                 """);
 
-        // then
+        // then: 돌려줄 돈이 있어 지갑 결과를 기다리는 처리 중으로 응답하고, 재고는 아직 되돌리지 않는다
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.refundId", is(refundId.intValue())))
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.decidedAt", notNullValue()))
-                .andExpect(jsonPath("$.completedAt", notNullValue()));
+                .andExpect(jsonPath("$.completedAt", nullValue()));
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+
+        // when: 지갑이 완료 메시지를 보낸다
+        walletResultSender.completeByWallet(refundId);
+
+        // then
         Refund saved = onlyRefund();
         assertThat(saved).isNotNull();
         assertSoftly(softly -> {
@@ -457,10 +468,11 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     // 완료되면 진행 중 칸이 비어 같은 상품의 남은 개수를 다시 요청할 수 있다. 남은 개수는 산 개수에서 완료된 개수를 뺀 것이다(#414)
     @Test
     void 완료된_뒤_같은_상품은_남은_개수까지만_다시_요청할_수_있다() throws Exception {
-        // given: 감자 3개 중 1개를 환불해 완료됐다. 남은 것은 2개다
+        // given: 감자 3개 중 1개를 환불해 완료됐다(승인 → 지갑 완료 메시지). 남은 것은 2개다
         approve(POTATO_SELLER_ID, requestedRefundId(POTATO_ORDER_ITEM_ID))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")));
+                .andExpect(jsonPath("$.status", is("PROCESSING")));
+        walletResultSender.completeByWallet(onlyRefund().getId());
 
         // when & then: 3개는 남은 2개보다 많아 409, 2개는 받는다
         request(POTATO_ORDER_ITEM_ID, 3)
@@ -471,26 +483,28 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         assertThat(refundJpaRepository.count()).isEqualTo(2);
     }
 
-    // 처리 중은 아직 끝나지 않아 같은 상품에 두 번째 요청을 받지 않는다. 재고 복구가 실패해 완료 전에 멈춘 환불로 확인한다
+    // 처리 중은 아직 끝나지 않아 같은 상품에 두 번째 요청을 받지 않는다. 승인 뒤 지갑 완료를 기다리는 환불로 확인한다.
+    // 예전에는 재고 복구를 실패시켜 완료 전에 멈췄지만, 재고 복구는 이제 지갑 완료 메시지를 받은 뒤라(#544) 승인 응답에서 실패하지 않는다
+    // (재고 복구 실패는 HandleWalletRefundResultService 단위 테스트가 맡는다)
     @Test
-    void 승인_뒤_재고_복구가_실패하면_503이고_처리_중으로_남아_같은_상품의_새_요청을_막는다() throws Exception {
+    void 승인_뒤_지갑_완료를_기다리는_처리_중이면_같은_상품의_새_요청을_막는다() throws Exception {
         // given
         Long refundId = requestedRefundId(POTATO_ORDER_ITEM_ID);
-        productStockReleasePort.fail();
 
         // when
         ResultActions sut = approve(POTATO_SELLER_ID, refundId);
 
         // then
-        sut.andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.type", endsWith("/refund/product-api-failed")));
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("PROCESSING")));
         Refund saved = onlyRefund();
         assertSoftly(softly -> {
             softly.assertThat(saved.getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(saved.getActiveOrderItemId()).isEqualTo(POTATO_ORDER_ITEM_ID);
         });
-        // 주문 반영은 이미 끝났다(재고 복구 앞 단계)
+        // 주문 반영은 이미 끝났고, 재고 복구는 지갑 완료 뒤라 아직이다
         assertThat(orderCancellationPort.reflectedOf(refundId)).isPresent();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
         request(POTATO_ORDER_ITEM_ID, 1)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/refund-already-in-progress")));
@@ -650,18 +664,20 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         Long first = requestedRefundId(FREE_ORDER_ID, FREE_B_ORDER_ITEM_ID);
         approve(FREE_SELLER_ID, first)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.shippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.remoteAreaFeeAmount", is(0)))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.refundAmount", is(27000)));
+        // 지갑이 반환을 마쳐 완료된다
+        walletResultSender.completeByWallet(first);
         Long last = requestedRefundId(FREE_ORDER_ID, FREE_A_ORDER_ITEM_ID);
 
         // when: A까지 취소하면 묶음 전부 취소라 앞에서 뺀 3,000원과 도서산간 운임 2,000원을 함께 돌려준다.
         // B는 이미 완료됐지만 취소된 것으로 세므로 "묶음 전부 취소"로 본다(#414)
         ResultActions sut = approve(FREE_SELLER_ID, last);
 
-        // then
+        // then: 응답은 지갑 결과를 기다리는 처리 중이고, 지갑 완료 메시지를 받으면 완료된다
         sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.refundId", is(last.intValue())))
                 .andExpect(jsonPath("$.orderId", is(20)))
@@ -676,11 +692,12 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.refundAmount", is(35000)))
                 .andExpect(jsonPath("$.cancelReason", nullValue()))
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.requestedAt", notNullValue()))
                 .andExpect(jsonPath("$.decidedAt", notNullValue()))
-                .andExpect(jsonPath("$.completedAt", notNullValue()));
+                .andExpect(jsonPath("$.completedAt", nullValue()));
+        walletResultSender.completeByWallet(last);
         Refund firstSaved = refundPersistencePort.findById(first).orElseThrow();
         Refund lastSaved = refundPersistencePort.findById(last).orElseThrow();
         assertThat(lastSaved).isNotNull();
@@ -706,9 +723,10 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         Long potato = requestedRefundId(30L, 301L);
         approve(8L, potato)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.refundAmount", is(7000)));
+        walletResultSender.completeByWallet(potato);
         Long cabbage = requestedRefundId(30L, 302L);
 
         // when: 배추까지 취소하면 묶음 전부 취소다. 완료된 감자 환불을 세어야 "전부 취소"로 보고 앞에서 뺀 3,000원을 돌려준다
@@ -716,10 +734,11 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
 
         // then: 25,000 + 3,000 = 28,000원. 완료를 세지 않으면 감자가 남은 것으로 보여 3,000원을 또 빼 22,000원이 된다
         sut.andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.shippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.refundAmount", is(28000)));
+        walletResultSender.completeByWallet(cabbage);
         Refund potatoSaved = refundPersistencePort.findById(potato).orElseThrow();
         Refund cabbageSaved = refundPersistencePort.findById(cabbage).orElseThrow();
         assertSoftly(softly -> {
@@ -757,8 +776,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // C는 끝까지 처리돼 완료된다. 완료도 "이미 취소된 것"으로 세어 A 승인 때 반영된다
         approve(FREE_SELLER_ID, refundC)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(0)));
+        walletResultSender.completeByWallet(refundC);
 
         // when
         ResultActions sut = approve(FREE_SELLER_ID, refundA);
@@ -885,7 +905,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
 
         // then
         sut.andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.shippingFeeAmount", is(0)))
                 .andExpect(jsonPath("$.deductedShippingFeeAmount", is(3000)))
                 .andExpect(jsonPath("$.refundAmount", is(27000)));
@@ -929,8 +949,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         withdraw(BUYER_ID, refundId)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type", endsWith("/refund/invalid-refund-state")));
-        // 승인은 같은 요청 안에서 완료까지 간다. 완료된 환불도 철회할 수 없다
-        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.COMPLETED);
+        // 승인된 환불은 지갑 결과를 기다리는 처리 중이고, 철회해도 바뀌지 않는다
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
     }
 
     @Test

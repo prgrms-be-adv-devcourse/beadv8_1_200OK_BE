@@ -33,8 +33,10 @@ import java.util.List;
 
 /**
  * 판매자가 본인 상품의 환불 요청을 승인하거나 거절한다.
- * 승인은 주문 조회(구간 밖)와 묶음 잠금·판단·저장(READ COMMITTED 구간), 커밋 뒤 주문 취소 반영·지갑 반환 요청·재고 복구(구간 밖),
- * 완료로 바꾸기(자기 행만 잠그는 구간)로 나뉜다. 커밋 뒤 주문이 취소 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고
+ * 승인은 주문 조회(구간 밖)와 묶음 잠금·판단·저장(READ COMMITTED 구간), 커밋 뒤 주문 취소 반영·지갑 반환 요청(구간 밖)으로 나뉜다.
+ * 돌려줄 돈이 있으면 지갑 요청을 보낸 데서 멈추고 처리 중으로 응답한다. 재고 복구와 완료는 지갑 완료 메시지를 받은 뒤
+ * {@link HandleWalletRefundResultService}가 한다. 돌려줄 돈이 0원이면 지갑을 거치지 않아 같은 요청 안에서 재고 복구 →
+ * 완료로 바꾸기(자기 행만 잠그는 구간)까지 간다. 커밋 뒤 주문이 취소 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고
  * 거절로 바꾸기(자기 행만 잠그는 구간)로 끝낸다.
  * 판매자의 거절 결정은 주문을 부르지 않아 구간 하나로 끝난다.
  */
@@ -88,7 +90,8 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                          승인 때 주문 호출이 실패하면 {@code ORDER_API_FAILED}, 주문 상품이 없으면 {@code ORDER_ITEM_NOT_FOUND},
      *                          거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
      * @throws RestApiException 승인은 커밋됐는데 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED},
-     *                          재고 복구가 실패하면 {@code PRODUCT_API_FAILED} (둘 다 처리 중으로 남는다)
+     *                          0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED} (둘 다 처리 중으로 남는다.
+     *                          돌려줄 돈이 있으면 재고 복구는 지갑 완료 메시지를 받은 뒤라 이 응답에 오지 않는다)
      * @throws IllegalStateException 승인은 커밋됐는데 지갑 반환 요청을 보내지 못했으면 (처리 중으로 남는다, 주문은 이미 반영됐다,
      *                               {@link #approve(Long, Long, RefundableOrderItem)} 참고)
      */
@@ -135,8 +138,10 @@ public class DecideRefundService implements DecideRefundUseCase {
      * 패키지 안에서만 연다: 주문 정보를 받는 이 단계만 따로 검증하는 테스트가 쓴다.
      *
      * <p>커밋한 뒤(구간 밖) 처리 중이 된 환불이면 주문에 취소를 알리고(#513), 주문이 반영하면 지갑에 예치금 반환을 요청하고(#512),
-     * 상품에 재고를 되돌려 달라고 한 뒤 완료로 바꾼다(#414). 주문이 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고 거절로 끝낸다.
-     * 돌려주는 결과는 마지막 상태(완료, 자동 거절이나 주문 거절이면 거절)다.
+     * 돌려줄 돈이 있으면 거기서 멈추고 처리 중으로 돌려준다. 재고 복구와 완료는 지갑 완료 메시지를 받은 뒤에 한다(#544).
+     * 0원이면 지갑을 거치지 않으므로 상품에 재고를 되돌려 달라고 한 뒤 완료로 바꾼다(#414).
+     * 주문이 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고 거절로 끝낸다.
+     * 돌려주는 결과는 마지막 상태(돈이 있으면 처리 중, 0원이면 완료, 자동 거절이나 주문 거절이면 거절)다.
      * 구간 안에서 부르지 않는 이유: 상대가 느리면 묶음 잠금을 그만큼 오래 쥐고, 부른 뒤 커밋이 실패하면 승인되지 않은 환불이 밖에 반영된다.
      * 이 메서드 안에서 부르는 이유: 승인 결과를 만드는 곳이 여기 하나라, 이 단계만 부르는 테스트도 다음 단계 호출을 함께 확인한다.
      *
@@ -148,7 +153,7 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                               주문 상태가 null이거나 모르는 값이면 (주문 모듈 쪽 문제, 요청됨 그대로 남는다),
      *                               지갑 반환 요청을 보내지 못했으면 (승인은 이미 커밋돼 처리 중으로 남는다, 주문은 이미 반영됐고 재고는 부르지 않는다)
      * @throws IllegalArgumentException 배송비 판단대로면 돌려줄 금액이 음수가 되면 (계산 버그, 커밋 전에 막혀 요청됨으로 남는다)
-     * @throws RestApiException      주문 취소 반영이 실패하면 {@code ORDER_API_FAILED}, 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}
+     * @throws RestApiException      주문 취소 반영이 실패하면 {@code ORDER_API_FAILED}, 0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}
      *                               (승인은 이미 커밋돼 처리 중으로 남는다)
      */
     RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {
@@ -157,7 +162,8 @@ public class DecideRefundService implements DecideRefundUseCase {
         return continueAfterApproval(result);
     }
 
-    // 승인 커밋 뒤의 단계를 차례로 부른다: 주문 취소 반영(#513) → 지갑 반환 요청(#512) → 재고 복구 → 완료(#414). 성공 흐름이 중심이다.
+    // 승인 커밋 뒤의 단계를 차례로 부른다: 주문 취소 반영(#513) → 지갑 반환 요청(#512). 돌려줄 돈이 있으면 여기서 멈추고 처리 중으로 응답한다(#544).
+    // 재고 복구와 완료는 지갑 완료 메시지를 받은 뒤 HandleWalletRefundResultService가 한다. 0원만 지갑을 거치지 않아 재고 복구 → 완료(#414)까지 간다.
     // 승인 버튼으로 왔어도 자동 거절(출고됨, 배송비 모자람)로 끝났을 수 있다. 처리 중이 된 환불만 다음 단계로 간다.
     // 이 확인이 없으면 거절된 환불의 상품 금액이 지갑으로 나가고 주문에도 취소가 반영된다.
     // 주문을 지갑보다 먼저 부르는 이유: 승인 사이에 출고된 상품은 주문이 반영을 거절한다. 지갑을 먼저 부르면 이미 나간 반환 요청을
@@ -167,8 +173,6 @@ public class DecideRefundService implements DecideRefundUseCase {
     // 실패 기록 틀(RefundStepRunner)로 부르지 않는 이유: 실패 기록과 다시 시도는 #516에서 함께 정한다(refund/CLAUDE.md 5절)
     // TODO(#516): 앞 단계가 실패하면 예외만 올라가고(판매자는 500·503, 다시 승인하면 409) 환불은 처리 중에 머문다.
     //  주문이 먼저 취소를 기록한 뒤 지갑 발행이 실패하면 주문만 취소된 채 남는다(다시 시도나 outbox로 다룸)
-    //  완료(COMPLETED)도 원래는 "지갑이 돈을 돌려준 것까지 확인" 뒤여야 한다. 지갑 완료 메시지가 없어 지금은 Kafka 저장 확인을 지갑 성공으로 보고
-    //  완료까지 간다(임시). 지갑이 완료 메시지를 보내 주면 그 메시지를 받은 뒤에 완료로 바꾸도록 옮긴다
     private RefundResult continueAfterApproval(RefundResult result) {
         if (!RefundStatus.PROCESSING.name().equals(result.status())) {
             return result;
@@ -180,13 +184,15 @@ public class DecideRefundService implements DecideRefundUseCase {
         }
         // 음수는 여기 오지 않는다. 도메인 승인(Refund.approve)이 커밋 전에 막아 요청됨으로 남긴다
         long amount = result.refundAmount();
-        // 0원은 돌려줄 돈이 없어 지갑을 거치지 않는다. 예: 취소 금액이 뺄 기본 배송비와 같을 때
         if (amount > 0) {
             walletRefundRequestPort.requestRefund(new WalletRefundRequest(
                     result.refundId(), result.orderId(), result.buyerId(), result.sellerId(), amount));
+            // 발행이 끝났어도 지갑이 돈을 돌려줬다는 뜻은 아니다(Kafka에 들어갔을 뿐). 재고 복구와 완료는 지갑의 완료 메시지를 받은 뒤
+            // HandleWalletRefundResultService가 한다. 그래서 처리 중 그대로 응답한다. 발행이 실패하면 예외가 나 이 줄에 오지 않는다
+            return result;
         }
-        // 지갑 완료를 기다리지 않는다. 지갑과는 반환 요청을 Kafka로 보내는 것만 약속했고 완료 메시지 약속은 없다(#513, 11/11 결정).
-        // 그래서 Kafka 저장 확인(발행이 예외 없이 끝남)을 성공으로 보고 재고 복구로 간다. 발행이 실패하면 예외가 나 재고는 부르지 않는다
+        // 0원은 돌려줄 돈이 없어 지갑을 거치지 않으니 기다릴 메시지도 없다. 예: 취소 금액이 뺄 기본 배송비와 같을 때.
+        // 그래서 이 요청 안에서 재고 복구 → 완료까지 간다
         productStockReleasePort.releaseStock(new StockRelease(
                 result.refundId(), result.orderId(), result.productOptionId(), result.quantity()));
         return complete(result.refundId());
