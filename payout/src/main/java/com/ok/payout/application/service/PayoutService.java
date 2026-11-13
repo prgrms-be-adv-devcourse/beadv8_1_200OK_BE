@@ -56,6 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -127,6 +128,7 @@ public class PayoutService implements PayoutUseCase {
     // 헤더와 목록을 한 트랜잭션에서 만들어, 중간에 실패하면 둘 다 남지 않음 (반쪽짜리 스냅샷 방지)
     // 이후 Step은 이 목록만 보고 처리하므로, 배치 도중 새로 생긴 정산후보는 다음 배치로 넘어감
     // 잠긴 주문(금액 검사 #195, 결과 검증 #290)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
+    // 성공한 실행에서 PayoutPolicy.MAX_FAILED_RUNS번 실패한 주문도 스냅샷에서 뺌(멈춤), 1번 이상 그 미만이면 조회 기간 밖이어도 다시 넣음 (#549)
     //
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
@@ -136,7 +138,45 @@ public class PayoutService implements PayoutUseCase {
     public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to, PayoutRunType runType) {
         PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to, runType));
 
-        List<PayoutCandidateItem> candidates = payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to);
+        // 주문별 "성공한 실행에서 실패한 횟수"(#549)로 주문을 나눔: MAX_FAILED_RUNS번 이상이면 멈춘 주문, 1번 이상 그 미만이면 다시 넣을 주문
+        Map<Long, Long> failedRunCounts = payoutQueryRepository.countFailedRunsByOrder();
+        Set<Long> stoppedOrderIds = new HashSet<>();
+        List<Long> retryOrderIds = new ArrayList<>();
+        for (Map.Entry<Long, Long> entry : failedRunCounts.entrySet()) {
+            if (entry.getValue() >= PayoutPolicy.MAX_FAILED_RUNS) {
+                stoppedOrderIds.add(entry.getKey());
+            } else {
+                retryOrderIds.add(entry.getKey());
+            }
+        }
+
+        // 1) 기간 안 후보에서 멈춘 주문의 후보를 뺌: 주문 단위로 멈추므로 그 주문의 다른 후보(스스로는 실패하지 않은 것, 뒤늦게 들어온 것)도 같이 빠짐
+        //    이미 정산된 후보(다른 판매자가 통과한 것 등)는 미정산 조회에 안 나와 영향이 없음
+        //    같은 주문이 여러 후보여도 1건으로 세려고, 빠진 주문 ID를 따로 모음 (로그용)
+        List<PayoutCandidateItem> candidates = new ArrayList<>();
+        Set<Long> candidateIds = new HashSet<>();
+        Set<Long> removedStoppedOrderIds = new HashSet<>();
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to)) {
+            if (stoppedOrderIds.contains(candidate.getOrderId())) {
+                removedStoppedOrderIds.add(candidate.getOrderId());
+                continue;
+            }
+            candidates.add(candidate);
+            candidateIds.add(candidate.getId());
+        }
+
+        // 2) 아직 멈추지 않은 실패 주문(1~2번)의 후보를 조회 기간 하한 없이 다시 넣음
+        //    조회 기간 하한은 정기 실행마다 올라가서, 실패한 주문의 후보가 기간 밖으로 밀려 영영 못 잡히는 것을 막으려는 것 (상한 to는 그대로)
+        //    잠긴 주문은 이 조회가 이미 빼므로 다시 들어오지 않음
+        //    1)에서 이미 들어온 후보는 ID로 걸러 한 번만 넣음
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(retryOrderIds, to)) {
+            if (candidateIds.add(candidate.getId())) {
+                candidates.add(candidate);
+            }
+        }
+        // 두 조회가 각각 ID 오름차순이라 합친 뒤 다시 정렬: 스냅샷 항목이 후보 ID 순으로 들어가도록 (기존 동작과 같음)
+        candidates.sort(Comparator.comparing(PayoutCandidateItem::getId));
+
         List<PayoutSnapshotItem> items = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
             items.add(PayoutSnapshotItem.create(snapshot.getId(), candidate));
@@ -151,6 +191,11 @@ public class PayoutService implements PayoutUseCase {
         // 이번 조회 기간에서 잠긴 주문(#195, #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
         // (0건이면 매일 같은 로그가 남아 생략)
         // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
+        // 멈춰서 뺀 주문이 있는 날만 WARN: 3번 실패해 정산에서 빠진 주문은 사람이 확인해야 하므로 INFO보다 높게 남김 (0건이면 생략)
+        // 실패를 저장하는 시점이 아니라 스냅샷을 만들 때 남기는 이유: 실행이 FAILED로 끝나면 그 실패는 횟수에 안 세므로, 저장 시점에는 멈춤이 확정이 아님
+        if (!removedStoppedOrderIds.isEmpty()) {
+            log.warn("3번 실패한 주문이라 스냅샷에서 제외. snapshotId={}, 제외 주문 수={}", snapshot.getId(), removedStoppedOrderIds.size());
+        }
         long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
         if (lockedCount > 0) {
             log.info("잠긴 주문이라 스냅샷에서 제외. snapshotId={}, 제외 후보 수={}", snapshot.getId(), lockedCount);
