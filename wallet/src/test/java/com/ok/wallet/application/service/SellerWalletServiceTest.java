@@ -231,6 +231,43 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         }
     }
 
+    @Test
+    void 지갑이_없는_판매자에게_서로_다른_정산이_동시에_와도_지갑은_하나만_생기고_모두_입금된다() throws Exception {
+        // given: 판매자 지갑은 첫 정산금 입금 때 생기므로, 첫 입금들이 동시에 지갑을 만들려는 상황
+        Long sellerId = 19L;
+        int threadCount = 10;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> results = new ArrayList<>();
+
+        try {
+            // when
+            for (int i = 0; i < threadCount; i++) {
+                long payoutId = PAYOUT_ID + 200 + i;
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    sellerWalletService.depositPayout(sellerId, payoutId, 1_000);
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<?> result : results) {
+                result.get(30, TimeUnit.SECONDS);
+            }
+
+            // then
+            assertThat(countSellerWallets(sellerId)).isEqualTo(1);
+            assertThat(balanceOf(sellerId)).isEqualTo(10_000);
+            assertThat(countLedgers(sellerId)).isEqualTo(threadCount);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
     private long countSellerWallets(Long memberId) {
         return jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM seller_wallet WHERE member_id = ?", Long.class, memberId);
