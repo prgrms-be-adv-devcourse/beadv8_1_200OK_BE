@@ -3,9 +3,10 @@ plugins {
 }
 
 // 도메인 모듈(common, monolith 제외)로 deploy/initdb/modules.txt를 만든다. 직접 고치지 않고 모듈을 바꾼 뒤 generateInitDb를 실행한다
+// carrier-simulator는 DB 스키마가 없는 시험용 서버라 뺀다 (#559)
 val initDbModulesFile = layout.projectDirectory.file("deploy/initdb/modules.txt")
 val initDbModulesContent = subprojects.map { it.name }
-    .filterNot { it == "common" || it == "monolith" }
+    .filterNot { it == "common" || it == "monolith" || it == "carrier-simulator" }
     .sorted()
     .joinToString(
         separator = "\n",
