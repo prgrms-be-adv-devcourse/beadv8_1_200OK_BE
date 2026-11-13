@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{layout :: head('실험 설정')}"></head>
+<body>
+<header th:replace="~{layout :: header}"></header>
+<main>
+    <h1>실험 설정</h1>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>시간</h2>
+            <form class="row" method="post" action="/settings/speed">
+                <input type="hidden" name="refresh" th:value="${refresh}">
+                가상 하루를 <input type="text" name="secondsPerDay" th:value="${secondsPerDay}" size="6"> 초로 재생
+                <button type="submit">적용</button>
+            </form>
+            <div class="row">
+                <form method="post" action="/settings/pause" th:unless="${paused}">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit" class="ghost">일시정지</button>
+                </form>
+                <form method="post" action="/settings/resume" th:if="${paused}">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit">다시 재생</button>
+                </form>
+                <form method="post" action="/settings/skip-day">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit" class="ghost">하루 건너뛰기</button>
+                </form>
+                <span th:if="${paused}" class="bad">일시정지 상태입니다.</span>
+            </div>
+            <p class="note">정상 배송은 가상 30시간이 걸립니다. 하루를 10초로 재생하면 12.5초에 끝납니다. 속도를 바꿔도 이미 일어난 사건의 시각은 바뀌지 않습니다.</p>
+        </div>
+
+        <div class="panel">
+            <h2>일부러 넣는 장애</h2>
+            <form method="post" action="/settings/faults">
+                <input type="hidden" name="refresh" th:value="${refresh}">
+                <div class="row">조회·등록 응답을 <input type="number" name="responseDelayMillis" th:value="${responseDelayMillis}" min="0" max="60000"> 밀리초 늦게</div>
+                <div class="row">조회·등록 요청의 <input type="number" name="errorPercent" th:value="${errorPercent}" min="0" max="100"> %에 오류 응답</div>
+                <div class="row">상태가 바뀔 때 같은 알림을 <input type="number" name="callbackCopies" th:value="${callbackCopies}" min="1" max="10"> 건 보냄</div>
+                <div class="row">
+                    <label><input type="checkbox" name="shuffleCallbacks" th:checked="${shuffleCallbacks}"> 한 번에 꺼낸 알림의 순서를 섞음</label>
+                    <button type="submit">적용</button>
+                </div>
+            </form>
+            <form class="row" method="post" action="/settings/expire-tokens">
+                <input type="hidden" name="refresh" th:value="${refresh}">
+                <button type="submit" class="ghost">발급한 토큰 모두 만료시키기</button>
+            </form>
+        </div>
+
+        <div class="panel">
+            <h2>정리</h2>
+            <div class="row">
+                <form method="post" action="/settings/clear-stats">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit" class="ghost">통계만 지우기</button>
+                </form>
+                <form method="post" action="/settings/clear-all">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit" class="danger">송장까지 모두 지우기</button>
+                </form>
+            </div>
+            <p class="note">"모두 지우기"는 송장, 대기 중인 알림, 통계를 지우고 되돌릴 수 없습니다. 속도와 장애 설정은 남습니다. 모든 상태는 메모리에만 있어 서버를 다시 띄워도 지워집니다.</p>
+        </div>
+    </div>
+</main>
+</body>
+</html>

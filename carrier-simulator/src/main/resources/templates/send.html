@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{layout :: head('보내기')}"></head>
+<body>
+<header th:replace="~{layout :: header}"></header>
+<main>
+    <h1>보내기</h1>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>보내는 속도</h2>
+            <form method="post" action="/send/settings">
+                <input type="hidden" name="refresh" th:value="${refresh}">
+                <div class="row">
+                    <input type="text" name="intervalSeconds" th:value="${intervalSeconds}" size="5"> 초마다
+                    <input type="number" name="batchSize" th:value="${batchSize}" min="1" max="10000"> 건씩 보냄
+                </div>
+                <div class="row">
+                    동시에 <input type="number" name="concurrency" th:value="${concurrency}" min="1" max="200"> 건까지 함께 보냄
+                    <button type="submit">적용</button>
+                </div>
+            </form>
+            <div class="row">
+                <form method="post" action="/send/pause" th:unless="${dispatchPaused}">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit" class="ghost">보내기 멈춤</button>
+                </form>
+                <form method="post" action="/send/resume" th:if="${dispatchPaused}">
+                    <input type="hidden" name="refresh" th:value="${refresh}">
+                    <button type="submit">이어서 보내기</button>
+                </form>
+                <span th:if="${dispatchPaused}" class="bad">멈춤 상태입니다.</span>
+                <span class="note" th:text="'보내려고 기다리는 알림 ' + ${pendingCallbacks} + '건'">보내려고 기다리는 알림 0건</span>
+            </div>
+            <p class="note">상태가 바뀐 송장의 알림이 대기 줄에 쌓이고, 여기서 정한 속도로 나갑니다. 앞 묶음이 다 나가기 전에는 다음 묶음을 꺼내지 않습니다.</p>
+        </div>
+
+        <div class="panel">
+            <h2>송장 번호를 지정해서 보내기</h2>
+            <form method="post" action="/send/manual">
+                <input type="hidden" name="refresh" th:value="${refresh}">
+                <textarea name="trackingNumbers" placeholder="송장 번호를 한 줄에 하나씩 (최대 1,000개)"></textarea>
+                <div class="row" style="margin-top:8px">
+                    <label>택배사
+                        <select name="carrierId">
+                            <option th:each="carrier : ${carriers}" th:value="${carrier}" th:text="${carrier}">kr.cjlogistics</option>
+                        </select>
+                    </label>
+                    <label>상태
+                        <select name="status">
+                            <option th:each="status : ${statuses}" th:value="${status}" th:text="${status.displayName()}"
+                                    th:selected="${status.displayName() == '배송 완료'}">배송 완료</option>
+                        </select>
+                    </label>
+                    <label>같은 알림을 <input type="number" name="times" value="1" min="1" max="100"> 번</label>
+                </div>
+                <div class="row">
+                    <label>받는 곳 <input type="text" name="callbackUrl" size="38" placeholder="비우면 송장에 등록된 주소로 보냄"></label>
+                    <button type="submit">지금 보내기</button>
+                </div>
+            </form>
+            <p class="note">아무 번호나 넣을 수 있습니다. 이렇게 보낸 송장은 시나리오가 더 진행하지 않고, 지정한 상태가 마지막 상태로 남습니다.</p>
+        </div>
+    </div>
+
+    <div class="tiles">
+        <div class="tile"><div class="num" th:text="${sentCount}">0</div><div class="cap">보낸 알림</div></div>
+        <div class="tile"><div class="num ok" th:text="${okCount}">0</div><div class="cap">도착 확인 (2XX 응답)</div></div>
+        <div class="tile"><div class="num bad" th:text="${failCount}">0</div><div class="cap">실패 (오류 응답, 시간 초과)</div></div>
+        <div class="tile"><div class="num" th:text="${averageMillis}">-</div><div class="cap">평균 응답 시간</div></div>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>시간대별 보낸 알림 수 (10초 단위, 최근 5분)</h2>
+            <svg class="chart" th:attr="viewBox='0 0 ' + ${chart.width} + ' ' + ${chart.height + 16}" role="img"
+                 aria-label="시간대별 보낸 알림 수 막대그래프">
+                <line class="axis" x1="0" th:attr="y1=${chart.height},x2=${chart.width},y2=${chart.height}"/>
+                <rect th:each="bar : ${chart.bars}" th:class="${bar.kind}"
+                      th:attr="x=${bar.x},y=${bar.y},width=${bar.width},height=${bar.height}"/>
+                <text x="0" th:attr="y=${chart.height + 13}" th:text="${chartFrom}">00:00:00</text>
+                <text th:attr="x=${chart.width},y=${chart.height + 13}" text-anchor="end">지금</text>
+                <text x="0" y="10" th:text="'최대 ' + ${chart.max} + '건'">최대 0건</text>
+            </svg>
+            <div class="legend">
+                <span><span class="dot" style="background:var(--ok)"></span>도착 확인</span>
+                <span><span class="dot" style="background:var(--error)"></span>실패</span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>보낸 기록 (최근 100건)</h2>
+            <form class="row" method="get" action="/send">
+                <input type="hidden" name="refresh" th:value="${refresh}" th:if="${refresh > 0}">
+                <label>번호 앞자리 <input type="text" name="prefix" th:value="${prefix}" size="14"></label>
+                <button type="submit" class="ghost">찾기</button>
+            </form>
+            <div class="scroll">
+                <table>
+                    <thead>
+                    <tr><th>보낸 시각</th><th>송장 번호</th><th>그때 상태</th><th>받는 쪽 응답</th><th>걸린 시간</th><th>시도</th></tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="record : ${records}">
+                        <td th:text="${record.sentAt}">00:00:00</td>
+                        <td class="mono" th:text="${record.trackingNumber}">901000000001</td>
+                        <td th:text="${record.status}">배송 완료</td>
+                        <td th:text="${record.response}" th:class="${record.success} ? 'ok' : 'bad'">200</td>
+                        <td th:text="${record.elapsed}">0ms</td>
+                        <td th:text="${record.attemptNo}">1</td>
+                    </tr>
+                    <tr th:if="${#lists.isEmpty(records)}"><td colspan="6" class="note">보낸 알림이 없습니다.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>
