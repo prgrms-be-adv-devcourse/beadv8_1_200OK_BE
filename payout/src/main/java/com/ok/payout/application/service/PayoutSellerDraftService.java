@@ -55,7 +55,8 @@ public class PayoutSellerDraftService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void trySaveDraft(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
         save(snapshotId, sellerId, candidates);
-        // 롤백으로 끝나는 트랜잭션은 커밋 때 flush하지 않으므로, 여기서 직접 보내야 DB 오류(제약 조건 위반 등)가 드러남
+        // 롤백으로 끝나는 트랜잭션은 커밋 때 flush하지 않음. 지금은 ID를 IDENTITY로 만들어 저장하는 순간 INSERT가 나가므로 없어도 오류가 드러나지만,
+        //   쓰기를 모아 보내는 방식(배치 INSERT 등)으로 바뀌어도 시험이 DB 오류를 놓치지 않게 직접 보냄
         payoutSellerDraftRepository.flush();
         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
     }
@@ -80,7 +81,7 @@ public class PayoutSellerDraftService {
         }
     }
 
-    // saveDraft가 실패한 판매자의 후보 전체를 UNEXPECTED_ERROR로 기록
+    // 저장에 실패한 후보를 UNEXPECTED_ERROR로 기록 (판매자 후보 전체, 또는 주문별 다시 시도에서 실패한 주문의 후보, #534)
     // saveDraft와 다른 트랜잭션이어야 함: 실패한 saveDraft 트랜잭션은 이미 롤백돼 그 안에서는 저장할 수 없음
     // 기록된 후보는 이번 스냅샷의 draft 대상에서 빠져(PayoutQueryRepository 조건 ④) 같은 판매자를 다시 잡지 않음
     @Transactional(propagation = Propagation.REQUIRES_NEW)
