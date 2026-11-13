@@ -2,6 +2,7 @@ package com.ok.refund;
 
 import com.jayway.jsonpath.JsonPath;
 import com.ok.refund.adapter.out.event.RefundTopics;
+import com.ok.refund.adapter.out.persistence.RefundJpaEntity;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
@@ -167,6 +168,17 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         assertThat(readMessagesOf(refundId, before)).isEmpty();
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
         assertThat(orderCancellationPort.reflectedOf(refundId)).isEmpty();
+        // then: 저장된 행도 거절로 끝났다. 거절이면 배송비 정산은 0, 같은 상품의 진행 중 칸은 비어 다시 환불을 요청할 수 있다
+        RefundJpaEntity sut = refundJpaRepository.findById(refundId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(sut.getRejectReason()).isNotBlank();
+            softly.assertThat(sut.getShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
+        });
     }
 
     // 주문에 알리지 못하면(장애) 지갑보다 먼저 멈춰야 한다. 주문이 모르는 취소의 돈이 나가면 배송될 수도 있는 상품값을 돌려주게 된다

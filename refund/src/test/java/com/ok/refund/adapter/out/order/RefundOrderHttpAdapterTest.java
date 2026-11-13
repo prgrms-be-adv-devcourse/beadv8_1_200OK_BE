@@ -11,14 +11,20 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -292,16 +298,45 @@ class RefundOrderHttpAdapterTest {
         assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
     }
 
-    // 409만 거절 결과다. 404 같은 그 밖의 오류 상태는 일시적 실패와 같은 코드다
-    @Test
-    void 취소_반영이_오류_상태를_받으면_ORDER_API_FAILED() {
-        // given: 409가 아닌 오류 상태
-        status.set(500);
+    // 409만 거절 결과다. 404 같은 그 밖의 오류 상태는 일시적 실패와 같은 코드다.
+    // 4xx 전체나 404를 반영됨·거절로 잘못 묶으면 주문이 모르는 취소의 돈이 나가거나 환불이 잘못 닫히므로 상태마다 확인한다
+    @ParameterizedTest
+    @MethodSource("_409가_아닌_오류_상태")
+    void 취소_반영이_409가_아닌_오류_상태를_받으면_ORDER_API_FAILED(int errorStatus) {
+        // given
+        status.set(errorStatus);
 
         // when & then
         assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+    }
+
+    static Stream<Integer> _409가_아닌_오류_상태() {
+        return Stream.of(400, 401, 403, 404, 500, 503);
+    }
+
+    // 요청은 받았는데 응답을 주지 않고 연결을 끊는 경우. 읽기 타임아웃(3초)과 같은 경로(응답 상태줄 읽기 실패)지만 기다리지 않으려고 연결을 닫는다
+    @Test
+    void 취소_반영_응답을_읽지_못하면_ORDER_API_FAILED() throws IOException {
+        // given: 요청을 읽은 뒤 응답 없이 소켓을 끊는 서버. JDK HttpServer는 응답 없이 끊기가 어려워 소켓으로 직접 연다
+        server.stop(0);
+        try (ServerSocket socket = new ServerSocket(0, 0, InetAddress.getByName("localhost"))) {
+            Thread acceptor = Thread.ofVirtual().start(() -> {
+                try (Socket client = socket.accept()) {
+                    client.getInputStream().read(new byte[4096]);
+                } catch (IOException ignored) {
+                    // 연결을 끊는 것이 목적이라 읽기 실패는 무시한다
+                }
+            });
+            RefundOrderHttpAdapter sut = new RefundOrderHttpAdapter("http://localhost:" + socket.getLocalPort());
+
+            // when & then
+            assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
+                    .isInstanceOfSatisfying(RestApiException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+            acceptor.interrupt();
+        }
     }
 
     @Test

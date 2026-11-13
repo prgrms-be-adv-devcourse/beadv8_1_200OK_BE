@@ -14,6 +14,7 @@ import com.ok.refund.application.port.out.RefundableOrderItem;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
@@ -80,18 +81,25 @@ public class RefundOrderHttpAdapter implements OrderQueryPort, OrderCancellation
     // 오류 상태를 여기서 직접 ORDER_API_FAILED로 바꾼다(응답을 못 받은 IOException은 InternalRestClient의 인터셉터가 같은 코드로 바꾼다)
     @Override
     public OrderCancellationResult reflectCancellation(OrderCancellation cancellation) {
-        return restClient.post()
-                .uri("/items/{orderItemId}/refunds", cancellation.orderItemId())
-                .body(RefundOrderCancellationRequest.from(cancellation))
-                .exchange((request, response) -> {
-                    if (response.getStatusCode().is2xxSuccessful()) {
-                        return OrderCancellationResult.reflected();
-                    }
-                    if (response.getStatusCode().value() == 409) {
-                        return OrderCancellationResult.rejected(readDetail(response));
-                    }
-                    throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
-                });
+        try {
+            return restClient.post()
+                    .uri("/items/{orderItemId}/refunds", cancellation.orderItemId())
+                    .body(RefundOrderCancellationRequest.from(cancellation))
+                    .exchange((request, response) -> {
+                        if (response.getStatusCode().is2xxSuccessful()) {
+                            return OrderCancellationResult.reflected();
+                        }
+                        if (response.getStatusCode().value() == 409) {
+                            return OrderCancellationResult.rejected(readDetail(response));
+                        }
+                        throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+                    });
+        } catch (ResourceAccessException e) {
+            // POST는 응답 상태줄을 람다 안의 getStatusCode()에서 처음 읽는다. 그 시점은 InternalRestClient 인터셉터(요청을 보내는 순간만 감쌈) 밖이라
+            // 읽기 타임아웃·연결 끊김이 인터셉터 대신 ResourceAccessException으로 올라와 500이 된다. 여기서 같은 코드로 바꿔 503으로 맞춘다.
+            // 람다가 던진 RestApiException은 이 예외가 아니라 그대로 올라간다
+            throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        }
     }
 
     // 본문이 비었거나 깨졌거나 detail이 없어도 거절 자체는 유효하다. 설명이 없다고 거절을 실패로 바꾸면 안 되므로 채워서 돌려준다
