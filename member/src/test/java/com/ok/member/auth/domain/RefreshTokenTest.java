@@ -76,4 +76,54 @@ class RefreshTokenTest {
         );
     }
 
+    @Test
+    void 회전하면_새_해시와_회전_일시와_만료_일시로_바뀐다() {
+        // given
+        RefreshToken sut = RefreshToken.create(1L, "old-hash", EXPIRES_AT);
+        LocalDateTime rotatedAt = EXPIRES_AT.minusDays(1);
+        LocalDateTime newExpiresAt = rotatedAt.plusDays(14);
+
+        // when
+        sut.rotate("new-hash", rotatedAt, newExpiresAt);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getMemberId()).isEqualTo(1L);
+            softly.assertThat(sut.getTokenHash()).isEqualTo("new-hash");
+            softly.assertThat(sut.getRotatedAt()).isEqualTo(rotatedAt);
+            softly.assertThat(sut.getExpiresAt()).isEqualTo(newExpiresAt);
+        });
+    }
+
+    @Test
+    void 생성만_하면_회전_일시가_없다() {
+        // when
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+
+        // then
+        assertThat(sut.getRotatedAt()).isNull();
+    }
+
+    @ParameterizedTest
+    @MethodSource("회전_필수값이_null인_입력")
+    void 회전_필수값이_null이면_회전하지_않는다(String newTokenHash, LocalDateTime rotatedAt, LocalDateTime newExpiresAt,
+                                    String message) {
+        // given
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+
+        // when & then
+        assertThatThrownBy(() -> sut.rotate(newTokenHash, rotatedAt, newExpiresAt))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage(message);
+        assertThat(sut.getTokenHash()).isEqualTo("hash");
+    }
+
+    static Stream<Arguments> 회전_필수값이_null인_입력() {
+        return Stream.of(
+                Arguments.of(null, EXPIRES_AT, EXPIRES_AT, "newTokenHash는 null일 수 없습니다."),
+                Arguments.of("new-hash", null, EXPIRES_AT, "rotatedAt은 null일 수 없습니다."),
+                Arguments.of("new-hash", EXPIRES_AT, null, "newExpiresAt은 null일 수 없습니다.")
+        );
+    }
+
 }

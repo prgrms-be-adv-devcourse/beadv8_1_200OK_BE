@@ -11,6 +11,7 @@ import com.ok.member.auth.application.port.out.MemberCredentialReader;
 import com.ok.member.auth.application.port.out.SellerApprovalReader;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
+import com.ok.member.auth.domain.RotatedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,19 +78,19 @@ public class AuthService implements TokenReissueUseCase {
         if (account.suspended()) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
         }
-        return createTokens(account);
+        return createTokens(account, refreshTokenService.issue(account.memberId()));
     }
 
     /**
      * Refresh Token으로 새 Access Token과 Refresh Token을 발급한다.
      *
-     * <p>쓴 Refresh Token은 지우고 새로 발급한다(rotation). 한 토큰은 한 번만 쓰이므로, 같은 토큰을 가진
+     * <p>쓴 Refresh Token은 같은 세션 행에서 새 토큰으로 바꾼다(rotation). 한 토큰은 한 번만 쓰이므로, 같은 토큰을 가진
      * 정상 사용자와 탈취자 중 먼저 쓴 쪽만 재발급에 성공한다.
-     * 단, 이미 쓴 토큰이 다시 들어와도 처음부터 없던 토큰과 구분하지 못해 그 회원의 다른 토큰을 폐기하지는 않는다.
-     * 그래서 탈취자가 먼저 재발급하면 탈취자 쪽 토큰이 계속 유효하다. 재사용을 탐지해 모두 폐기하는 처리는 후속 과제다.
+     * 쓴 토큰은 행에 남지 않아 처음부터 없던 토큰과 같은 응답으로 거절만 하고
+     * 그 세션을 폐기하지는 않는다. 그래서 탈취자가 먼저 재발급하면 탈취자 쪽 토큰이 계속 유효하다. 재사용 탐지와 폐기는 후속 과제다.
      *
      * <p>회원 정보를 다시 읽어 최신 상태와 권한으로 발급한다. 판매자 승인처럼 권한이 바뀌어도 재로그인 없이 반영된다.
-     * 토큰 삭제와 새 토큰 저장은 한 트랜잭션에서 처리해, 중간에 실패하면 기존 토큰이 그대로 남는다.
+     * 토큰 회전과 회원 확인은 한 트랜잭션에서 처리해, 중간에 실패하면 회전이 취소되어 기존 토큰이 그대로 남는다.
      *
      * <p>이 트랜잭션은 사용한 토큰의 행 잠금을 끝까지 쥐고 있다. 같은 토큰의 다른 요청이 그동안 기다리므로,
      * 외부 호출이나 비용이 큰 작업(bcrypt 등)을 이 안에 넣지 않는다.
@@ -100,25 +101,25 @@ public class AuthService implements TokenReissueUseCase {
     @Override
     @Transactional
     public TokenResult reissue(TokenReissueCommand command) {
-        Long memberId = refreshTokenService.consume(command.refreshToken());
+        RotatedRefreshToken rotated = refreshTokenService.rotate(command.refreshToken());
 
         // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다
-        AuthAccount account = memberCredentialReader.findAuthAccount(memberId)
+        AuthAccount account = memberCredentialReader.findAuthAccount(rotated.memberId())
                 .filter(found -> !found.withdrawn())
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
         if (account.suspended()) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
         }
-        return createTokens(account);
+        return createTokens(account, rotated.issued());
     }
 
     // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.
-    // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다
-    private TokenResult createTokens(AuthAccount account) {
+    // 승인 여부는 회원 유형과 관계없이 조회한다. 관리자는 신청할 수 없어 항상 false지만, 유형에 따라 조회를 건너뛰면 규칙이 하나 더 생긴다.
+    // Refresh Token은 로그인이면 새 세션으로 발급한 것을, 재발급이면 같은 세션에서 회전한 것을 받는다
+    private TokenResult createTokens(AuthAccount account, IssuedRefreshToken refreshToken) {
         boolean approvedSeller = sellerApprovalReader.isApprovedSeller(account.memberId());
         List<String> roles = TokenRoleMapper.toTokenRoles(account.admin(), approvedSeller);
         AccessToken accessToken = accessTokenIssuer.issue(account.memberId(), roles);
-        IssuedRefreshToken refreshToken = refreshTokenService.issue(account.memberId());
 
         return new TokenResult(accessToken.value(), accessToken.expiresAt(),
                 refreshToken.value(), refreshToken.expiresAt());
