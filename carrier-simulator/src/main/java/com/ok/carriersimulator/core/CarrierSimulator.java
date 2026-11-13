@@ -27,6 +27,10 @@ public final class CarrierSimulator {
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MAX_CALLBACK_RECORDS = 10_000;
     private static final Duration MAX_RETRY_DELAY = Duration.ofMinutes(5);
+    private static final int MAX_DUMMIES_PER_CALL = 100_000;
+    private static final int MAX_MANUAL_KEYS = 1_000;
+    // 화면에서 만든 등록의 수명. delivery가 보통 등록하는 길이(48시간)와 같게 둔다
+    private static final Duration SELF_REGISTRATION_TTL = Duration.ofHours(48);
     private static final String NOT_FOUND_LABEL = "없는 송장";
 
     private final SimulatorSettings settings;
@@ -46,6 +50,7 @@ public final class CarrierSimulator {
             Comparator.comparing(Scheduled::virtualTime).thenComparingLong(Scheduled::sequence));
     private long nextScheduleSequence;
     private long nextCallbackId = 1;
+    private long nextDummySequence = 1;
     private Instant lastDispatchAt;
     private DispatchSettings dispatch;
     private FaultSettings faults = FaultSettings.none();
@@ -100,16 +105,85 @@ public final class CarrierSimulator {
             }
             return;
         }
-        Parcel parcel = findOrCreate(key, now);
-        boolean renewal = parcel.hasActiveRegistration(now);
-        parcel.register(new WebhookRegistration(callbackUrl, expirationTime));
-        if (!renewal) {
-            // 처음 등록하면 알림이 한 번 간다(Delivery Tracker와 같은 규칙). 등록 전에 일어난 사건은 이 한 건으로 갈음한다
-            parcel.materialize(playback, now);
-            parcel.takeUnnotified();
-            enqueue(parcel.key(), callbackUrl, 1, now);
+        register(findOrCreate(key, now), callbackUrl, expirationTime, now);
+    }
+
+    /**
+     * 시험용 더미 송장을 만든다. 번호는 고른 시나리오로 읽히는 번호이고 순번은 1부터 이어진다.
+     *
+     * @param count       만들 개수. 1 이상 100,000 이하
+     * @param callbackUrl 알림 받을 주소. 주면 48시간짜리 등록까지 한 것으로 보고 알림을 보낸다. 비어 있으면 송장만 만든다
+     * @return 만든 송장의 키. 만든 순서다
+     */
+    public synchronized List<ParcelKey> createDummies(Scenario scenario, String carrierId, int count, String callbackUrl,
+                                                      Instant now) {
+        if (scenario == null) {
+            throw new IllegalArgumentException("시나리오는 필수입니다.");
         }
-        schedule(parcel);
+        if (count < 1 || count > MAX_DUMMIES_PER_CALL) {
+            throw new IllegalArgumentException("더미 송장 개수는 1 이상 100,000 이하여야 합니다.");
+        }
+        List<ParcelKey> created = new ArrayList<>(count);
+        while (created.size() < count) {
+            ParcelKey key = new ParcelKey(carrierId, scenario.trackingNumber(nextDummySequence++));
+            // 같은 번호를 누가 먼저 조회해 송장이 이미 있으면 그 순번은 건너뛴다
+            if (parcels.containsKey(key)) {
+                continue;
+            }
+            Parcel parcel = findOrCreate(key, now);
+            if (hasText(callbackUrl)) {
+                register(parcel, callbackUrl.strip(), now.plus(SELF_REGISTRATION_TTL), now);
+            }
+            created.add(key);
+        }
+        return created;
+    }
+
+    /**
+     * 송장의 상태를 지정한 값으로 바꾸고 알림을 보낸다. 내가 보낸 것이 받는 쪽에 도착했는지 확인하는 용도다.
+     * 이렇게 보낸 송장은 시나리오가 더 진행하지 않는다. 받는 쪽이 다시 조회했을 때 지정한 상태가 마지막으로 보여야 하기 때문이다.
+     *
+     * @param keys        대상 송장. 없던 송장이면 그 사건 하나만 있는 송장으로 만든다. 1개 이상 1,000개 이하
+     * @param times       같은 알림을 보낼 횟수. 1 이상 100 이하
+     * @param callbackUrl 알림 받을 주소. 비어 있으면 송장에 등록된 주소로 보낸다
+     * @throws IllegalArgumentException 주소를 주지 않았는데 등록이 없는 송장이 있으면. 이때는 아무 송장도 바꾸지 않는다
+     */
+    public synchronized void sendManual(List<ParcelKey> keys, StatusCode status, int times, String callbackUrl,
+                                        Instant now) {
+        if (keys == null || keys.isEmpty() || keys.size() > MAX_MANUAL_KEYS) {
+            throw new IllegalArgumentException("송장 번호는 1개 이상 1,000개 이하로 넣어야 합니다.");
+        }
+        if (status == null) {
+            throw new IllegalArgumentException("상태는 필수입니다.");
+        }
+        if (times < 1 || times > 100) {
+            throw new IllegalArgumentException("보낼 횟수는 1 이상 100 이하여야 합니다.");
+        }
+        boolean hasUrl = hasText(callbackUrl);
+        if (!hasUrl) {
+            for (ParcelKey key : keys) {
+                Parcel parcel = parcels.get(key);
+                if (parcel == null || !parcel.hasActiveRegistration(now)) {
+                    throw new IllegalArgumentException(
+                            "받는 곳 주소를 넣지 않았는데 알림 등록이 없는 송장입니다: " + key.trackingNumber());
+                }
+            }
+        }
+        for (ParcelKey key : keys) {
+            boolean existed = parcels.containsKey(key);
+            Parcel parcel = findOrCreate(key, now);
+            // 있던 송장은 지금까지 보인 사건을 남긴다. 없던 송장은 시나리오의 사건 없이 지정한 사건 하나만 갖는다
+            if (existed) {
+                parcel.materialize(playback, now);
+            }
+            parcel.pin(new TrackingEvent(status, now, null, "수동 전송"));
+            // 지정한 사건은 아래에서 직접 알리므로 상태 변화 알림이 또 나가지 않게 한다
+            parcel.takeUnnotified();
+            if (hasUrl) {
+                parcel.register(new WebhookRegistration(callbackUrl.strip(), now.plus(SELF_REGISTRATION_TTL)));
+            }
+            enqueue(key, parcel.registration().callbackUrl(), times, now);
+        }
     }
 
     /**
@@ -357,6 +431,7 @@ public final class CarrierSimulator {
         callbackQueue.clear();
         schedule.clear();
         lastDispatchAt = null;
+        nextDummySequence = 1;
     }
 
     // 등록된 송장 중 새 사건이 보일 때가 된 것을 찾아 알림을 넣는다
@@ -398,6 +473,22 @@ public final class CarrierSimulator {
         int exponent = Math.min(attemptNo - 1, 20);
         Duration delay = Duration.ofSeconds(1L << exponent);
         return delay.compareTo(MAX_RETRY_DELAY) > 0 ? MAX_RETRY_DELAY : delay;
+    }
+
+    private void register(Parcel parcel, String callbackUrl, Instant expirationTime, Instant now) {
+        boolean renewal = parcel.hasActiveRegistration(now);
+        parcel.register(new WebhookRegistration(callbackUrl, expirationTime));
+        if (!renewal) {
+            // 처음 등록하면 알림이 한 번 간다(Delivery Tracker와 같은 규칙). 등록 전에 일어난 사건은 이 한 건으로 갈음한다
+            parcel.materialize(playback, now);
+            parcel.takeUnnotified();
+            enqueue(parcel.key(), callbackUrl, 1, now);
+        }
+        schedule(parcel);
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private Parcel findOrCreate(ParcelKey key, Instant now) {
