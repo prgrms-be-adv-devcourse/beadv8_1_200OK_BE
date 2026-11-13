@@ -22,7 +22,8 @@ import java.util.function.Supplier;
 public class RefundStepRunner {
 
     // refund.failure_code 칸 길이와 같아야 한다(마이그레이션 V202611051722)
-    static final int MAX_FAILURE_CODE_LENGTH = 100;
+    // 입력 어댑터의 같은 값과 일치하는지 테스트(어댑터 쪽)가 보려고 public으로 연다
+    public static final int MAX_FAILURE_CODE_LENGTH = 100;
 
     private final RefundPersistencePort refundPersistencePort;
     // 실패 기록 전용 구간. run이 바깥 트랜잭션을 막아 두므로 이 구간은 항상 새로 시작해 호출 실패와 상관없이 커밋된다

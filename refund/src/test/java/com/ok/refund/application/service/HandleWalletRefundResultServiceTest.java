@@ -289,6 +289,19 @@ class HandleWalletRefundResultServiceTest {
     }
 
     @Test
+    void 실패_메시지의_주문이_환불과_다르면_기록하지_않고_넘긴다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+
+        // when
+        sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
+
+        // then
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    @Test
     void 읽은_뒤_잠그기_전에_완료되면_실패를_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
@@ -308,7 +321,12 @@ class HandleWalletRefundResultServiceTest {
     }
 
     private static WalletRefundFailedCommand failed(String reason) {
-        return new WalletRefundFailedCommand(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT, reason);
+        return failed(ORDER_ID, reason);
+    }
+
+    // long으로 받아 새 Long 객체가 되게 한다(주문 비교가 equals인지 보려는 것, completed와 같은 이유)
+    private static WalletRefundFailedCommand failed(long orderId, String reason) {
+        return new WalletRefundFailedCommand(REFUND_ID, orderId, BUYER_ID, AMOUNT, reason);
     }
 
     // 저장된 환불을 되살린다. 단가 10,000 x 2개, 배송비 0이라 돌려줄 금액은 20,000원

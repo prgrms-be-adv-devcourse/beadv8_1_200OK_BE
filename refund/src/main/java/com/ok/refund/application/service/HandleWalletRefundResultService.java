@@ -33,6 +33,18 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     // 지갑이 알려 준 금액·주문이 환불과 다를 때 failureCode에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
     static final String RESULT_MISMATCH = "RESULT_MISMATCH";
 
+    // 로그 문구(label)와 분기를 분리하려고 둔 종류. 문구를 고쳐도 분기가 바뀌지 않게 한다
+    private enum ResultKind {
+        COMPLETED("완료"),
+        FAILED("실패");
+
+        private final String label;
+
+        ResultKind(String label) {
+            this.label = label;
+        }
+    }
+
     private final RefundPersistencePort refundPersistencePort;
     private final ProductStockReleasePort productStockReleasePort;
     private final RefundStepRunner refundStepRunner;
@@ -59,7 +71,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     public void completeAfterWalletRefund(WalletRefundCompletedCommand command) {
         Long refundId = command.refundId();
         Refund refund = readOnlyTransaction.execute(status -> refundPersistencePort.findById(refundId).orElse(null));
-        if (!isProcessingOrLog(refund, refundId, "완료")) {
+        if (!isProcessingOrLog(refund, refundId, ResultKind.COMPLETED)) {
             return;
         }
         // 지갑이 돌려준 금액·주문이 환불이 요청한 것과 다르면 완료하지 않는다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다
@@ -81,7 +93,14 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     public void recordWalletRefundFailure(WalletRefundFailedCommand command) {
         Long refundId = command.refundId();
         Refund refund = readOnlyTransaction.execute(status -> refundPersistencePort.findById(refundId).orElse(null));
-        if (!isProcessingOrLog(refund, refundId, "실패")) {
+        if (!isProcessingOrLog(refund, refundId, ResultKind.FAILED)) {
+            return;
+        }
+        // 다른 주문의 실패를 이 환불에 붙이면 엉뚱한 환불에 실패가 남는다. 완료 경로와 같이 equals로 비교하고, 기록하지 않고 넘긴다.
+        // 예외를 던지면 오류 처리기가 같은 메시지를 다시 시도해 줄이 막히므로 던지지 않는다. 금액은 실패 메시지에서 비교하지 않는다(결정 그대로)
+        if (!refund.getOrderId().equals(command.orderId())) {
+            log.error("지갑 반환 실패 메시지의 주문이 환불과 달라 기록하지 않고 넘김. refundId={}, 환불 orderId={}, 메시지 orderId={}",
+                    refundId, refund.getOrderId(), command.orderId());
             return;
         }
         if (isSameFailure(refund, command.reason())) {
@@ -112,21 +131,21 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     // 이미 완료된 환불의 완료 메시지는 같은 메시지가 두 번 온 정상(지갑은 첫 결과만 다시 보낸다)이라 INFO.
     // 완료된 환불에 실패 메시지가 오면 중복이 아니라 앞선 완료 결과와 모순이므로 ERROR로 사람이 확인하게 한다(상태는 바꾸지 않는다).
     // 그 밖(요청됨·거절·철회, 없는 환불)도 지갑이 돈을 움직인 환불이 이 상태일 수 없어 ERROR
-    private boolean isProcessingOrLog(Refund refund, Long refundId, String kind) {
+    private boolean isProcessingOrLog(Refund refund, Long refundId, ResultKind kind) {
         if (refund == null) {
-            log.error("지갑 반환 {} 메시지의 환불이 없어 넘김. refundId={}", kind, refundId);
+            log.error("지갑 반환 {} 메시지의 환불이 없어 넘김. refundId={}", kind.label, refundId);
             return false;
         }
         if (refund.getStatus() == RefundStatus.COMPLETED) {
-            if ("실패".equals(kind)) {
+            if (kind == ResultKind.FAILED) {
                 log.error("이미 완료된 환불에 지갑 반환 실패 메시지가 와 넘김(앞선 완료 결과와 모순, 확인 필요). refundId={}", refundId);
             } else {
-                log.info("이미 완료된 환불의 지갑 반환 {} 메시지라 넘김. refundId={}", kind, refundId);
+                log.info("이미 완료된 환불의 지갑 반환 {} 메시지라 넘김. refundId={}", kind.label, refundId);
             }
             return false;
         }
         if (refund.getStatus() != RefundStatus.PROCESSING) {
-            log.error("처리 중이 아닌 환불의 지갑 반환 {} 메시지라 넘김. refundId={}, status={}", kind, refundId, refund.getStatus());
+            log.error("처리 중이 아닌 환불의 지갑 반환 {} 메시지라 넘김. refundId={}, status={}", kind.label, refundId, refund.getStatus());
             return false;
         }
         return true;
