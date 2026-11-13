@@ -45,15 +45,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 // - 결과 확인은 포트(PayoutQueryRepository)와 JPA 리포지토리로 한다. JDBC는 데이터 준비·정리에만 씀
 class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
 
-    // 이 클래스 전용 주문 ID 번호대 (다른 통합 테스트는 2_000_000, 3_000_000, 4_000_000, 6_000_000, 8_000_000~ 사용)
+    // 이 클래스 전용 주문 ID 번호대 (다른 통합 테스트와 겹치지 않게 5_000_000~5_100_000을 씀. 새 테스트를 만들면 이 범위를 피함)
     private static final long ORDER_ID_START = 5_000_000L;
     private static final long ORDER_ID_END = 5_100_000L;
     private static final AtomicLong ORDER_ID_SEQ = new AtomicLong(ORDER_ID_START);
 
-    // 주문항목 ID 번호대: 주문 ID와 겹치지 않게 따로 발급 (UK(주문항목, 타입)이라 후보마다 달라야 함)
     // 직접 만드는 스냅샷의 가짜 실행 ID (실제 배치 실행 ID와 겹치지 않게 큰 값)
     private static final AtomicLong SNAPSHOT_EXECUTION_ID_SEQ = new AtomicLong(900_000_000L);
 
+    // 주문항목 ID 번호대: 주문 ID와 겹치지 않게 따로 발급 (UK(주문항목, 타입)이라 후보마다 달라야 함)
     private static final AtomicLong ORDER_ITEM_ID_SEQ = new AtomicLong(15_000_000L);
 
     @Autowired
