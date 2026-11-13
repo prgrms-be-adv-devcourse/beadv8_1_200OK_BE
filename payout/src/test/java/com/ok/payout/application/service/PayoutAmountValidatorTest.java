@@ -325,6 +325,23 @@ class PayoutAmountValidatorTest {
         assertThat(sut).isEmpty();
     }
 
+    @Test
+    void 원래_후보_없이_조정만_있는_주문은_예외_없이_금액_불일치로_뺀다() {
+        // given: 주문에 조정 후보만 있고 차감 기록은 있음. 합계는 조정을 빼서(#552) 이 주문의 키가 없음
+        PayoutCandidateItem adjustmentOnly = adjustment(ORDER_ID, 1001L, 10L, 5_000L);
+        targets.add(adjustmentOnly);
+        deductions.put(ORDER_ID, 10_000L);
+
+        // when: 합계를 그대로 꺼내면 NPE로 validate가 롤백되어 Job 전체가 실패했음
+        List<PayoutFailure> sut = validate();
+
+        // then: 검사할 기준이 없어 내보내지 않고 금액 불일치로 뺌
+        assertThat(sut)
+                .extracting(PayoutFailure::getCandidateId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(tuple(adjustmentOnly.getId(), PayoutFailureReason.AMOUNT_MISMATCH,
+                        "초과 청구 판정 불가: 원래 후보 없이 조정 후보만 있음"));
+    }
+
     @ParameterizedTest
     @MethodSource("수수료가_0원인_판매")
     void 수수료가_0원인_판매도_통과한다(long saleAmount, long fee) {

@@ -38,6 +38,8 @@ final class PayoutAmountValidator {
     // 255자를 넘을 수 있어(주문상품·충돌이 많을 때) 항상 PayoutFailure.fitDetail을 거침
     private static final String OVERCHARGE_DETAIL =
             "초과 청구: 결제 %d, 후보 합계 %d, 넘친 금액 %d, 넘게 만든 주문상품 %s, 이미 지급 %s, 혼자 넘는 주문상품 %s, 판매자 %d명, %s";
+    // 원래 후보 없이 조정 후보만 있어 초과 청구 합계를 낼 수 없는 주문의 실패 상세 (#552부터 합계가 조정을 빼서 생김)
+    private static final String ADJUSTMENT_ONLY_DETAIL = "초과 청구 판정 불가: 원래 후보 없이 조정 후보만 있음";
     // 배송비 후보는 주문상품이 없어 주문상품 ID 대신 이 이름으로 씀
     private static final String SHIPPING_FEE_LABEL = "배송비";
     // 누적합으로 넘게 만든 후보를 찾지 못했을 때 (예: 근거 조회와 합계 조회의 범위가 어긋남)
@@ -116,11 +118,20 @@ final class PayoutAmountValidator {
             // TODO(#52): 할인 도입 예정. 할인이 생기면 이 검사 기준도 함께 다시 정해야 함 (지금은 정해진 것 없음)
             // 조회 조건상 대상 주문에는 항상 합계·차감액이 있음 (대상 = 스냅샷 후보 중 차감 기록이 있는 것)
             //   차감 기록·정산후보는 INSERT만 하고 지우지 않아서, 대상 조회 뒤에 한 합계·차감액 조회에도 그 주문이 반드시 있음 (격리 수준과 무관)
-            //   단 #552부터 합계는 조정 후보를 빼므로, 원래 후보 없이 조정만 있는 주문이면 합계가 없어 아래에서 NPE → validate 롤백 → Job FAILED
-            //   지금은 조정 API가 막혀 있어(501) 생기지 않음. TODO(#291): 조정 API를 열 때 조정만 있는 주문을 어떻게 검사할지 함께 정함
             //   없는 주문을 건너뛰게 만들지 않는 이유: 건너뛴 주문은 실패 기록이 없어 금액 검사 없이 정산·지급되기 때문
             long deducted = input.deductionsByOrder().get(orderId);
-            long total = input.candidateTotalsByOrder().get(orderId);
+            // 단 #552부터 합계는 조정 후보를 빼므로, 원래 후보 없이 조정만 있는 주문은 합계가 없음
+            //   그대로 꺼내면 NPE → validate 롤백 → 주문 하나 때문에 Job 전체가 FAILED (#557 리뷰)
+            //   합계 0으로 보고 통과시키지 않고 금액 불일치로 빼는 이유: 원래 후보 없는 조정은 정상 경로에서 생기지 않는 상태라,
+            //   검사할 기준이 없는 돈을 내보내는 것보다 빼 두는 편이 안전함. 횟수에 세어 3번이면 멈추고 관리자 목록(#301)으로 감
+            //   지금은 조정 API가 막혀 있어(501) 생기지 않음. TODO(#291): 조정 API를 열 때 조정만 있는 주문을 어떻게 검사할지 정함
+            Long total = input.candidateTotalsByOrder().get(orderId);
+            if (total == null) {
+                for (PayoutCandidateItem candidate : orderTargets) {
+                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.AMOUNT_MISMATCH, ADJUSTMENT_ONLY_DETAIL));
+                }
+                continue;
+            }
             if (isOvercharged(total, deducted)) {
                 // 같은 주문의 초과 청구 후보는 모두 같은 상세 (주문 단위 판정이라)
                 String detail = overchargeDetail(deducted, total,
