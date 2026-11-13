@@ -237,7 +237,7 @@ class DecideRefundServiceTest {
     }
 
     // 요청 때는 출고 전이었어도 승인 사이에 출고될 수 있다. 출고·취소된 상품은 취소로 돌려줄 수 없어 자동 거절한다.
-    // "배송 중"만이 아니라 알려진 비-PREPARING 상태 7개 모두 거절되는지 확인한다
+    // "배송 중"만이 아니라 알려진 비-PREPARING 상태 8개 모두 거절되는지 확인한다
     @ParameterizedTest
     @MethodSource("출고되거나_취소된_주문_상태")
     void 승인_때_출고되거나_취소된_상품이면_사유와_함께_자동_거절한다(String orderItemStatus) {
@@ -271,7 +271,7 @@ class DecideRefundServiceTest {
 
     static Stream<String> 출고되거나_취소된_주문_상태() {
         return Stream.of("SHIPPING", "DELIVERED", "PURCHASE_CONFIRMED", "CANCEL_REQUESTED", "REFUNDED",
-                "PAYMENT_PENDING", "PAYMENT_FAILED");
+                "PAYMENT_PENDING", "PAYMENT_FAILED", "CANCELED");
     }
 
     // 주문 모듈의 버그나 새 상태일 수 있어 거절로 끝내지 않고 500으로 드러낸다. 저장한 것이 없어 요청됨 그대로 남는다

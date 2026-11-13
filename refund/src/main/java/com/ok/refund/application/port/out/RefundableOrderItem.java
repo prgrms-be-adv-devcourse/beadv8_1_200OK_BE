@@ -31,8 +31,11 @@ public record RefundableOrderItem(
     public static final String CANCELLABLE_STATUS = "PREPARING";
 
     // 승인 때 "이미 출고됐거나 취소된" 것으로 알고 있는 상태. PREPARING을 뺀 주문 모듈의 나머지 상태 전부다
+    // CANCELED는 결제 전 취소. 주문 조회 응답의 상태 설명에 있는 값(#533)이라 실제로는 거의 오지 않지만,
+    // 모르는 값으로 500을 내지 않고 거절한다
     private static final Set<String> NO_LONGER_CANCELLABLE_STATUSES = Set.of(
-            "SHIPPING", "DELIVERED", "PURCHASE_CONFIRMED", "CANCEL_REQUESTED", "REFUNDED", "PAYMENT_PENDING", "PAYMENT_FAILED");
+            "SHIPPING", "DELIVERED", "PURCHASE_CONFIRMED", "CANCEL_REQUESTED", "REFUNDED", "PAYMENT_PENDING", "PAYMENT_FAILED",
+            "CANCELED");
 
     public boolean isCancellable() {
         return CANCELLABLE_STATUS.equals(status);
