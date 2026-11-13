@@ -508,6 +508,7 @@ class DecideRefundServiceTest {
         List<Refund> updates = capturedUpdates();
         assertThat(updates).hasSize(2);
         Refund rejected = updates.get(1);
+        assertThat(result).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(updates.getFirst().getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(rejected.getStatus()).isEqualTo(RefundStatus.REJECTED);
