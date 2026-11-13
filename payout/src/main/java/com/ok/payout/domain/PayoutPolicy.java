@@ -18,7 +18,7 @@ public class PayoutPolicy {
     public static final int SETTLEMENT_LOOKBACK_MARGIN_DAYS = 3;
 
     // 한 주문이 성공한 실행에서 실패 기록을 남길 수 있는 최대 횟수 (#549)
-    // 3번까지는 조회 기간 밖이어도 다시 검사하고, 3번 실패하면 멈춤: 고칠 수 없는 오류가 매일 반복 검사되는 것을 막으면서,
+    // 실패가 이 횟수보다 적으면 조회 기간 밖이어도 다시 검사하고, 처음 검사를 포함해 이 횟수만큼 실패하면 멈춤: 고칠 수 없는 오류가 매일 반복 검사되는 것을 막으면서,
     //   일시적인 오류(지갑 차감 기록이 늦게 도착 등)는 몇 번 더 기회를 주려는 것
     public static final int MAX_FAILED_RUNS = 3;
 

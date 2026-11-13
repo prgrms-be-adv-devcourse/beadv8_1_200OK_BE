@@ -1,7 +1,7 @@
 ---
 issue: 549
 module: payout
-summary: 정산 실패 주문을 주문 단위로 성공한 실행에서만 세어 3번까지 기간 밖이어도 다시 검사하고, 3번이면 스냅샷에서 빼고 스냅샷마다 WARN으로 알림
+summary: 정산 실패 주문을 주문 단위로 성공한 실행에서만 세어 3번 미만이면 기간 밖이어도 다시 검사하고, 3번이면 스냅샷에서 빼고 스냅샷마다 WARN으로 알림
 status: 확정
 date: 2026-11-13
 paths: [payout/src/main/java/com/ok/payout/application/service/PayoutService.java, payout/src/main/java/com/ok/payout/adapter/out/persistence/PayoutQuerydslRepository.java, payout/src/main/java/com/ok/payout/application/port/out/PayoutQueryRepository.java, payout/src/main/java/com/ok/payout/domain/PayoutPolicy.java]
