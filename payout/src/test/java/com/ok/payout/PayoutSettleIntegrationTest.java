@@ -1136,15 +1136,15 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 금액_불일치_주문의_원인이_사라지면_다음_배치에서_사람_손_없이_정산된다() {
+    void 금액_불일치_주문은_사람이_데이터를_바로잡으면_실패_기록을_지우지_않아도_다음_배치에서_정산된다() {
         // given: 1차 배치에서 주문 X가 초과 청구로 빠짐 (차감액 9,000 < 후보 9,700)
         long orderX = nextOrderItemId();
         givenDeduction(orderX, 9_000L);
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
         Long firstSnapshotId = settleAll(FROM, TO);
         assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).as("준비: 1차는 정산되지 않음").isEmpty();
-        // 원인이 사라진 상황: 차감액이 맞는 값(10,000)으로 바로잡힘
-        //   차감 기록은 처음 온 값을 유지하므로(#391 충돌 기록) 정상 경로로는 바꿀 수 없어, 운영자가 바로잡은 것으로 보고 SQL로 바꿈
+        // 사람이 데이터를 바로잡은 상황: 차감액을 맞는 값(10,000)으로 고침 (실패 기록은 지우지 않음)
+        //   차감 기록은 처음 온 값을 유지하므로(#391 충돌 기록) 정상 경로로는 바뀌지 않음 → 운영자가 바로잡는 것을 SQL로 흉내 냄
         correctDeductionAmount(orderX, 10_000L);
 
         // when: 2차 배치

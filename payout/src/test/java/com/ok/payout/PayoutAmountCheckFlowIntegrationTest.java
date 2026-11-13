@@ -124,7 +124,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 결제_금액보다_큰_구매확정이_들어온_주문은_잠기지_않고_다음_배치에서_다시_검사되어_또_빠진다() throws Exception {
+    void 결제_금액보다_큰_구매확정이_들어온_주문은_잠기지_않고_3번까지_다시_검사되어_빠지다가_4번째_배치부터_멈춘다() throws Exception {
         // given: 정상 주문(판매자 C, 9,000원 결제·확정)과, 15,000원 결제인데 20,000원으로 구매확정된 주문(판매자 A·B)
         givenPayment(NORMAL_ORDER_ID, 9_000L);
         givenConfirmed(NORMAL_ORDER_ID, 3_000_201L, SELLER_C, 9_000L, 0L);
@@ -135,9 +135,11 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
         awaitCandidates(TAMPERED_ORDER_ID, 4);
         backdateCandidates();
 
-        // when: 1차 배치 → 2차 배치
+        // when: 실제 Job을 4번 실행 (1~3차는 틀린 주문을 검사, 4차는 3번 실패해 멈춘 뒤)
         JobExecution first = payoutJobRunner.runScheduled();
         JobExecution second = payoutJobRunner.runScheduled();
+        JobExecution third = payoutJobRunner.runScheduled();
+        JobExecution fourth = payoutJobRunner.runScheduled();
 
         // then: 1차는 틀린 주문의 후보 4건(두 판매자 모두)만 금액 불일치로 빠지고, 정상 주문은 정산됨
         assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -159,6 +161,21 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
                 .containsOnly(tuple(TAMPERED_ORDER_ID, PayoutFailureReason.AMOUNT_MISMATCH))
                 .hasSize(4);
         assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+
+        // then: 3차도 같은 금액 불일치로 빠짐 (성공한 실행에서 3번째 실패)
+        assertThat(third.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long thirdSnapshotId = snapshotIdOf(third);
+        assertThat(failureRepository.findBySnapshotId(thirdSnapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
+                .containsOnly(tuple(TAMPERED_ORDER_ID, PayoutFailureReason.AMOUNT_MISMATCH))
+                .hasSize(4);
+        assertThat(payoutRepository.findBySnapshotId(thirdSnapshotId)).isEmpty();
+
+        // then: 4차는 3번 실패한 주문이 멈춰(#549) 스냅샷에 들어가지 않음 → 검사도 실패 기록도 더 생기지 않고 사람(#301)에게 넘어감
+        assertThat(fourth.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long fourthSnapshotId = snapshotIdOf(fourth);
+        assertThat(snapshotItemRepository.findBySnapshotId(fourthSnapshotId)).isEmpty();
+        assertThat(failureRepository.findBySnapshotId(fourthSnapshotId)).isEmpty();
     }
 
     // ---------- 도우미 ----------
@@ -187,7 +204,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
 
     // 정산은 생성 15일 뒤가 대상이라 이 클래스 후보의 생성 시각을 16일 전으로 옮김
     // 16일인 이유: 2차 배치의 조회 하한은 "1차(정산을 만든 정기 실행, 오늘) 요청일 − 18일"이라, 더 과거(예: 20일 전)로 옮기면
-    //   잠금과 상관없이 기간 밖이라 빠져서 "잠금 때문에 빠졌다"를 확인할 수 없음
+    //   기간 밖이라 빠져서, 2차 이후 배치가 틀린 주문을 다시 검사하는지(#552) 확인할 수 없음
     // (JPA 저장은 Auditing이 현재 시각으로 채우므로 SQL로 직접 바꿈, 시간대는 Asia/Seoul로 고정되어 그대로 비교됨)
     private void backdateCandidates() {
         LocalDateTime createdAt = LocalDateTime.now().minusDays(16);
