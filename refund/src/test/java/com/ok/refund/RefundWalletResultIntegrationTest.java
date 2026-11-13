@@ -1,6 +1,7 @@
 package com.ok.refund;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.common.exception.RestApiException;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
@@ -9,6 +10,7 @@ import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundFailedStep;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.exception.RefundErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
@@ -20,12 +22,21 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.listener.AbstractMessageListenerContainer;
+import org.springframework.kafka.listener.CommonErrorHandler;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.kafka.listener.MessageListenerContainer;
+import org.springframework.kafka.support.ExceptionMatcher;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,15 +52,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // - 토픽 이름·컨슈머 그룹·컨테이너 팩토리·타입 헤더 없는 JSON 읽기(spring.json.value.default.type) 설정이 실제로 맞물리는지 끝까지 본다
 //   (서비스·리스너 단위 테스트는 이 어노테이션 설정을 거치지 않는다)
 // - 지갑 코드는 쓰지 않고 지갑이 보낼 JSON을 RefundWalletResultSender가 직접 토픽에 넣는다. 리스너는 별도 스레드에서 받으므로 결과는 기다린 뒤 본다
-// 예시: 구매자 1이 판매자 5의 감자(주문 상품 601) 3개를 주문 60으로 샀다. 10,000원씩, 배송비 3,000원을 냈고 1개를 취소해 10,000원을 돌려준다
+// 예시: 구매자 1이 판매자 5의 감자(주문 상품 601) 3개를 주문 6000으로 샀다. 10,000원씩, 배송비 3,000원을 냈고 1개를 취소해 10,000원을 돌려준다
 class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
 
     private static final String BUYER_URL = "/api/v1/refunds";
     private static final String SELLER_URL = "/api/v1/seller/refunds";
     private static final Long BUYER_ID = 1L;
     private static final Long SELLER_ID = 5L;
-    // 다른 환불 통합 테스트(주문 10, 20, 21, 30, 40, 50)와 겹치지 않는 번호
-    private static final Long ORDER_ID = 60L;
+    // 다른 환불 통합 테스트(주문 10, 20, 21, 30, 40, 50)와 겹치지 않는 번호.
+    // Long 캐시(-128~127) 밖이어야 주문 대조를 실수로 != 로 바꿨을 때 실제 경로에서 걸린다(캐시 안 번호는 값이 같으면 같은 객체다)
+    private static final Long ORDER_ID = 6_000L;
     private static final Long ORDER_ITEM_ID = 601L;
     private static final Long PRODUCT_OPTION_ID = 55L;
 
@@ -70,6 +82,8 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     FakeProductStockReleasePort productStockReleasePort;
     @Autowired
     RefundWalletResultSender walletResultSender;
+    @Autowired
+    KafkaListenerEndpointRegistry listenerRegistry;
 
     private MockMvc mockMvc;
 
@@ -169,6 +183,71 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         });
         // 호출 횟수로 확인하는 이유: Fake는 같은 refundId면 첫 값을 유지해서, 결과만 봐서는 한 번만 되돌렸는지 알 수 없다
         assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(1);
+    }
+
+    // 재고 복구 실패 경로를 실제 리스너 스레드로 확인한다. 서비스 단위 테스트는 트랜잭션을 실제로 묶지 않고(NoOpTransactionManager)
+    // 오류 처리기도 거치지 않아, "재고 호출이 트랜잭션 밖이라 PRODUCT 기록이 따로 커밋된다"와 "오류 처리기가 다시 시도해 복구 뒤 완료한다"를 못 본다
+    @Test
+    void 지갑_완료_뒤_재고_복구가_실패하면_PRODUCT_실패를_남기고_다시_시도해_복구되면_완료한다() throws Exception {
+        // given: 상품 서버가 실패하는 동안 지갑 완료 메시지가 온다
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+        productStockReleasePort.fail();
+
+        // when
+        walletResultSender.sendCompleted(refundId);
+
+        // then: 재고 실패가 기록되고 처리 중으로 남는다(다시 시도는 1·2·4초... 간격이라 그 사이에 본다)
+        RefundWalletResultSender.awaitUntil("재고 복구 실패가 기록되지 않았습니다",
+                () -> refundPersistencePort.findById(refundId).orElseThrow().getFailedStep() == RefundFailedStep.PRODUCT);
+        Refund failed = refundPersistencePort.findById(refundId).orElseThrow();
+        assertThat(failed).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(failed.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(failed.getFailureCode()).isEqualTo("PRODUCT_API_FAILED");
+            softly.assertThat(failed.getCompletedAt()).isNull();
+        });
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+
+        // when: 상품 서버가 살아난다. 메시지를 다시 보내지 않아도 환불 오류 처리기가 같은 메시지를 다시 시도한다
+        productStockReleasePort.clear();
+
+        // then
+        walletResultSender.awaitStatus(refundId, RefundStatus.COMPLETED);
+        assertThat(productStockReleasePort.releasedOf(refundId).orElseThrow().productOptionId()).isEqualTo(PRODUCT_OPTION_ID);
+    }
+
+    // 지갑 결과 리스너가 환불 전용 팩토리(오류 처리기)를 실제로 쓰는지 본다. 설정 단위 테스트는 처리기를 따로 만들어 보므로,
+    // 팩토리에 처리기를 붙이지 않거나 리스너가 containerFactory를 빼먹어도(기본 팩토리 = 간격 없이 10번, 값 오류도 다시 시도) 통과한다
+    @Test
+    void 지갑_결과_리스너는_환불_오류_처리기를_쓴다() {
+        // given: 두 토픽을 듣는 컨테이너를 찾는다
+        List<MessageListenerContainer> containers = new ArrayList<>();
+        for (MessageListenerContainer container : listenerRegistry.getAllListenerContainers()) {
+            String[] topics = container.getContainerProperties().getTopics();
+            if (topics == null) {
+                continue;
+            }
+            List<String> topicList = Arrays.asList(topics);
+            if (topicList.contains(RefundWalletResultSender.COMPLETED_TOPIC) || topicList.contains(RefundWalletResultSender.FAILED_TOPIC)) {
+                containers.add(container);
+            }
+        }
+        assertThat(containers).hasSize(2);
+
+        for (MessageListenerContainer container : containers) {
+            // when
+            CommonErrorHandler errorHandler = ((AbstractMessageListenerContainer<?, ?>) container).getCommonErrorHandler();
+
+            // then: 처리기가 있고, 값 오류는 넘기고 일시적 실패는 다시 시도하는 환불 규칙을 쓴다(match가 true = 다시 시도)
+            assertThat(errorHandler).isInstanceOf(DefaultErrorHandler.class);
+            ExceptionMatcher sut = ReflectionTestUtils.invokeMethod(errorHandler, "getExceptionMatcher");
+            assertThat(sut).isNotNull();
+            assertSoftly(softly -> {
+                softly.assertThat(sut.match(new IllegalArgumentException("값이 틀림"))).isFalse();
+                softly.assertThat(sut.match(new RestApiException(RefundErrorCode.PRODUCT_API_FAILED))).isTrue();
+            });
+        }
     }
 
     // 첫 환불이 완료돼 진행 중 칸이 비었으므로 같은 상품(남은 2개 중 1개)을 다시 요청해 승인한다

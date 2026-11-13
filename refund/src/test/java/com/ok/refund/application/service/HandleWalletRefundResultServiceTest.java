@@ -41,7 +41,8 @@ import static org.mockito.Mockito.never;
 class HandleWalletRefundResultServiceTest {
 
     private static final Long REFUND_ID = 7L;
-    private static final Long ORDER_ID = 10L;
+    // Long 캐시(-128~127) 밖의 번호를 쓴다. 캐시 안 번호는 같은 값이면 같은 객체라, 주문 비교를 실수로 != 로 바꿔도 테스트가 통과한다
+    private static final Long ORDER_ID = 1_000L;
     private static final Long BUYER_ID = 1L;
     // 환불 금액: 단가 10,000 x 2개, 배송비 0
     private static final long AMOUNT = 20_000L;
@@ -145,7 +146,7 @@ class HandleWalletRefundResultServiceTest {
 
     @ParameterizedTest
     @MethodSource("어긋난_금액과_주문")
-    void 완료_메시지의_금액이나_주문이_다르면_완료하지_않고_불일치를_기록한다(Long orderId, long amount) {
+    void 완료_메시지의_금액이나_주문이_다르면_완료하지_않고_불일치를_기록한다(long orderId, long amount) {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
@@ -169,7 +170,7 @@ class HandleWalletRefundResultServiceTest {
         return Stream.of(
                 Arguments.of(ORDER_ID, AMOUNT - 1),
                 Arguments.of(ORDER_ID, AMOUNT + 1),
-                Arguments.of(99L, AMOUNT));
+                Arguments.of(1_001L, AMOUNT));
     }
 
     @Test
@@ -267,7 +268,9 @@ class HandleWalletRefundResultServiceTest {
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
 
-        // then
+        // then: 읽기 단계에서 걸러 잠금 구간까지 가지 않는다.
+        // 잠금 조회를 확인하는 이유: 스텁하지 않은 잠금 조회는 빈 값을 돌려줘, 읽기 단계 거르기가 빠져도 update는 안 불려 그것만으로는 못 잡는다
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
         then(refundPersistencePort).should(never()).update(any());
     }
 
@@ -298,7 +301,9 @@ class HandleWalletRefundResultServiceTest {
         then(refundPersistencePort).should(never()).update(any());
     }
 
-    private static WalletRefundCompletedCommand completed(Long orderId, long amount) {
+    // orderId를 long으로 받아 명령을 만들 때 새 Long 객체가 되게 한다. 환불(ORDER_ID 상수 객체)과 값은 같아도 객체가 달라야
+    // 주문 비교가 값(equals)이 아니라 객체(!=)를 보면 테스트가 실패한다(운영에서는 DB와 메시지에서 따로 읽어 늘 다른 객체다)
+    private static WalletRefundCompletedCommand completed(long orderId, long amount) {
         return new WalletRefundCompletedCommand(REFUND_ID, orderId, BUYER_ID, amount);
     }
 

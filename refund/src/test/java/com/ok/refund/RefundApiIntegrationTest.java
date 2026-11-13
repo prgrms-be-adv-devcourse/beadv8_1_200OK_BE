@@ -855,6 +855,35 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
+    // 0원 환불은 지갑을 거치지 않아 승인 요청 안에서 재고 복구까지 간다. 재고가 실패하면 판매자는 503을 받고 환불은 처리 중에 머문다(#414, Swagger 약속)
+    // 판매자 8이 주문 30에 배추(301) 3,000원 + 감자(302) 27,000원 = 30,000원을 팔아 무료배송(기준 30,000원)이었다.
+    // 배추를 취소하면 27,000원이 남아 무료배송이 깨지고 기본 배송비 3,000원을 빼 3,000 - 3,000 = 0원 환불이다
+    @Test
+    void 돌려줄_금액이_0원일_때_재고_복구가_실패하면_503이고_처리_중으로_남는다() throws Exception {
+        // given
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L, List.of(
+                new BundleItem(301L, 3_000L, 1), new BundleItem(302L, 27_000L, 1)));
+        orderQueryPort.put(orderItem(30L, 301L, 8L, 3_000L, 1, bundle));
+        orderQueryPort.put(orderItem(30L, 302L, 8L, 27_000L, 1, bundle));
+        Long refundId = requestedRefundId(30L, 301L);
+        productStockReleasePort.fail();
+
+        // when & then
+        approve(8L, refundId)
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type", endsWith("/refund/product-api-failed")));
+        Refund sut = onlyRefund();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getRefundAmount()).isZero();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(sut.getCompletedAt()).isNull();
+        });
+        // 주문에는 이미 취소를 알렸다(승인 뒤 첫 단계). 재고는 되돌리지 못했다
+        assertThat(orderCancellationPort.reflectedOf(refundId)).isPresent();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+    }
+
     @Test
     void 승인_때_주문에_상품이_없으면_404이고_요청됨으로_남는다() throws Exception {
         // given
@@ -894,8 +923,13 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         BundleShipping otherSellerSameOrder = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
                 List.of(new BundleItem(221L, 10_000L, 1)));
         orderQueryPort.put(orderItem(FREE_ORDER_ID, 221L, OTHER_SELLER_ID, 10_000L, 1, otherSellerSameOrder));
-        approve(FREE_SELLER_ID, requestedRefundId(21L, 211L)).andExpect(status().isOk());
-        approve(OTHER_SELLER_ID, requestedRefundId(FREE_ORDER_ID, 221L)).andExpect(status().isOk());
+        // 다른 주문·다른 판매자 환불은 지갑 완료까지 보내 완료로 만든다. 완료도 같은 묶음일 때만 세는지 보려는 것이다
+        Long otherOrderRefund = requestedRefundId(21L, 211L);
+        approve(FREE_SELLER_ID, otherOrderRefund).andExpect(status().isOk());
+        walletResultSender.completeByWallet(otherOrderRefund);
+        Long otherSellerRefund = requestedRefundId(FREE_ORDER_ID, 221L);
+        approve(OTHER_SELLER_ID, otherSellerRefund).andExpect(status().isOk());
+        walletResultSender.completeByWallet(otherSellerRefund);
         withdraw(BUYER_ID, requestedRefundId(FREE_ORDER_ID, FREE_B_ORDER_ITEM_ID)).andExpect(status().isOk());
         requestedRefundId(FREE_ORDER_ID, FREE_B_ORDER_ITEM_ID);
         Long target = requestedRefundId(FREE_ORDER_ID, FREE_A_ORDER_ITEM_ID);
