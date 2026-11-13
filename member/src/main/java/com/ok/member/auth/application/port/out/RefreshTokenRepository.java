@@ -41,7 +41,7 @@ public interface RefreshTokenRepository {
     <S extends RefreshToken> S save(S refreshToken);
 
     /**
-     * 기준 시각에 이미 만료된 기록을 id 순서로 최대 {@code batchSize}개 지운다.
+     * 기준 시각에 이미 만료된 기록을 만료 일시가 이른 순서로 최대 {@code batchSize}개 지운다.
      * 한 번에 다 지우면 긴 트랜잭션이 잠금과 undo 로그를 오래 쥐므로, 호출하는 쪽이 짧은 트랜잭션으로 나눠 반복한다.
      *
      * @return 지운 행 수. {@code batchSize}보다 작으면 더 지울 행이 없다
