@@ -293,6 +293,29 @@ class CarrierSimulatorLoadTest {
     }
 
     @Test
+    void 연달아_만든_더미도_상태가_바뀌는_순간이_퍼진다() {
+        // given: 흔들림 ±10%. 집화는 기준 4초라 3.6초에서 4.4초 사이에 퍼져야 한다
+        DispatchSettings dispatch = new DispatchSettings(Duration.ofSeconds(1), 100, 10, false);
+        CarrierSimulator simulator = new CarrierSimulator(
+                new SimulatorSettings(1, 24, 0.1, Duration.ofHours(1), dispatch), START);
+        List<ParcelKey> keys = simulator.createDummies(Scenario.NORMAL, CARRIER, 100, null, START);
+
+        // when
+        List<Long> pickupMillis = keys.stream()
+                .map(key -> eventsOf(simulator.track(key, after(10))).get(1).time())
+                .map(time -> Duration.between(START, time).toMillis())
+                .sorted()
+                .toList();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(pickupMillis.getFirst()).isBetween(3600L, 3800L);
+            softly.assertThat(pickupMillis.getLast()).isBetween(4200L, 4400L);
+            softly.assertThat(pickupMillis.stream().distinct().count()).isGreaterThan(90);
+        });
+    }
+
+    @Test
     void 더미_10만_건을_만들고_목록_첫_쪽을_1초_안에_읽는다() {
         // given
         CarrierSimulator simulator = newSimulator();

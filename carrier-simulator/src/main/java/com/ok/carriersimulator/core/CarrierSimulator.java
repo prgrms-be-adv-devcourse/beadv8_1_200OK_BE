@@ -502,13 +502,21 @@ public final class CarrierSimulator {
         return created;
     }
 
-    // 시드와 송장 키로만 정해지므로 같은 송장은 실행할 때마다 같은 배율을 받는다
+    // 시드와 송장 키로만 정해지므로 같은 송장은 실행할 때마다 같은 배율을 받는다.
+    // 연달아 만든 번호는 해시가 1씩만 달라서, 그대로 난수 시드로 쓰면 배율이 거의 같아져 한꺼번에 바뀐다.
+    // 비트를 고르게 섞는 함수(SplitMix64)를 거쳐 번호가 비슷해도 배율이 퍼지게 한다.
+    // record의 hashCode는 계산 방식이 정해져 있지 않아, 값이 명세로 고정된 String.hashCode로 직접 계산한다
     private double factorOf(ParcelKey key) {
         double jitter = settings.jitter();
         if (jitter == 0) {
             return 1;
         }
-        double random = new Random(settings.seed() * 31 + key.hashCode()).nextDouble();
+        long mixed = settings.seed() * 0x9E3779B97F4A7C15L
+                + key.carrierId().hashCode() * 31L + key.trackingNumber().hashCode();
+        mixed = (mixed ^ (mixed >>> 30)) * 0xBF58476D1CE4E5B9L;
+        mixed = (mixed ^ (mixed >>> 27)) * 0x94D049BB133111EBL;
+        mixed ^= mixed >>> 31;
+        double random = (mixed >>> 11) * 0x1.0p-53;
         return 1 - jitter + 2 * jitter * random;
     }
 

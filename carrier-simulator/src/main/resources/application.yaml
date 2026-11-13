@@ -5,6 +5,10 @@ server:
 spring:
   application:
     name: carrier-simulator
+  threads:
+    virtual:
+      # 응답 지연 장애는 요청 스레드를 재운다. 조회가 몰려도 관리 화면이 막히지 않게 요청마다 가상 스레드를 쓴다
+      enabled: true
   graphql:
     http:
       path: /graphql

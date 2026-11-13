@@ -226,6 +226,24 @@ class ParcelControllerTest {
                 .andExpect(flash().attributeExists("error"));
     }
 
+    @ParameterizedTest
+    @MethodSource("한_번만_보이는_내용")
+    void 안내_문구나_만든_번호가_보이는_화면은_새로고침하지_않는다(String name, String value) throws Exception {
+        // when & then: 새로고침하면 한 번만 보이는 내용이 사라져 번호를 복사할 수 없다
+        mockMvc.perform(get("/parcels").param("refresh", "3").flashAttr(name, value).flashAttr("createdHidden", 0))
+                .andExpect(content().string(containsString(value)))
+                .andExpect(content().string(not(containsString("data-refresh"))));
+        mockMvc.perform(get("/parcels").param("refresh", "3"))
+                .andExpect(content().string(containsString("data-refresh=\"3\"")));
+    }
+
+    static Stream<Arguments> 한_번만_보이는_내용() {
+        return Stream.of(
+                Arguments.of("createdNumbers", "901000000001"),
+                Arguments.of("message", "더미 송장 1건을 만들었습니다."),
+                Arguments.of("error", "개수에는 정수를 넣어야 합니다."));
+    }
+
     @Test
     void 안내_문구는_다음_화면에_보인다() throws Exception {
         // when & then

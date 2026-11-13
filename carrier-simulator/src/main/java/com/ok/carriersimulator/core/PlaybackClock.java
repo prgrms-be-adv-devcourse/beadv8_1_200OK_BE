@@ -111,17 +111,26 @@ public final class PlaybackClock {
      */
     private record Segment(Instant realStart, Instant virtualStart, double rate) {
 
+        // 가상 시간은 실제보다 수십만 배 빨리 흘러, 나노초를 long으로 곱하면 몇 시간 만에 넘쳐 시간이 멈춘다.
+        // 그래서 초 단위 실수로 계산하고 초와 나노초로 나눠 더한다
         Instant virtualAt(Instant real) {
-            long realNanos = Math.max(0, Duration.between(realStart, real).toNanos());
-            return virtualStart.plusNanos(Math.round(realNanos * rate));
+            return plusSeconds(virtualStart, Math.max(0, seconds(Duration.between(realStart, real))) * rate);
         }
 
         Instant realAt(Instant virtual) {
             if (rate == 0) {
                 return realStart;
             }
-            long virtualNanos = Duration.between(virtualStart, virtual).toNanos();
-            return realStart.plusNanos(Math.round(virtualNanos / rate));
+            return plusSeconds(realStart, seconds(Duration.between(virtualStart, virtual)) / rate);
+        }
+
+        private static double seconds(Duration duration) {
+            return duration.getSeconds() + duration.getNano() / 1e9;
+        }
+
+        private static Instant plusSeconds(Instant base, double seconds) {
+            long whole = (long) Math.floor(seconds);
+            return base.plusSeconds(whole).plusNanos(Math.round((seconds - whole) * 1e9));
         }
     }
 }

@@ -3,8 +3,27 @@
 <head th:fragment="head(title)">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <!-- 실시간 연결 없이 고른 간격마다 화면 전체를 다시 읽는다 -->
-    <meta http-equiv="refresh" th:if="${refresh > 0}" th:content="${refresh}">
+    <!-- 실시간 연결 없이 고른 간격마다 화면 전체를 다시 읽는다.
+         meta 새로고침은 입력 중인 폼을 지우므로 쓰지 않는다. 무언가 입력했거나 입력 칸에 커서가 있으면 미루고,
+         한 번만 보이는 내용(안내 문구, 만든 번호 목록)이 있는 화면에서는 아예 하지 않는다 -->
+    <script th:if="${refresh > 0 and message == null and error == null and createdNumbers == null}"
+            th:attr="data-refresh=${refresh}">
+        (function () {
+            var seconds = Number(document.currentScript.dataset.refresh);
+            var edited = false;
+            document.addEventListener('input', function () { edited = true; });
+            function typing() {
+                var active = document.activeElement;
+                if (!active) { return false; }
+                return active.tagName === 'TEXTAREA' || active.tagName === 'SELECT'
+                    || (active.tagName === 'INPUT' && active.type !== 'submit' && active.type !== 'hidden');
+            }
+            setTimeout(function reload() {
+                if (edited || typing()) { setTimeout(reload, 1000); return; }
+                location.reload();
+            }, seconds * 1000);
+        })();
+    </script>
     <title th:text="${title} + ' - 가짜 택배사'">가짜 택배사</title>
     <style>
         :root { --bg: #f5f6f8; --panel: #ffffff; --line: #d9dde3; --text: #1f2933; --muted: #6b7785;

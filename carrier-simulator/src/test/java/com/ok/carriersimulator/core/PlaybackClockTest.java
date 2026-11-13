@@ -89,6 +89,25 @@ class PlaybackClockTest {
     }
 
     @Test
+    void 아주_빠르게_오래_재생해도_가상_시간이_멈추지_않는다() {
+        // given: 하루를 0.1초로 재생하면 실제 4시간에 가상 약 394년이 지난다
+        PlaybackClock sut = new PlaybackClock(START, 0.1);
+        Instant fourHoursLater = START.plus(Duration.ofHours(4));
+        Instant expected = START.plusSeconds(4L * 3600 * 864_000);
+
+        // when
+        Instant virtual = sut.virtualNow(fourHoursLater);
+        Instant later = sut.virtualNow(fourHoursLater.plusSeconds(1));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(virtual).isEqualTo(expected);
+            softly.assertThat(later).isEqualTo(expected.plusSeconds(864_000));
+            softly.assertThat(sut.realTimeOf(expected, fourHoursLater.plusSeconds(1))).isEqualTo(fourHoursLater);
+        });
+    }
+
+    @Test
     void 도달하지_않은_가상_시각을_물으면_예외다() {
         // given
         PlaybackClock sut = new PlaybackClock(START, 24);

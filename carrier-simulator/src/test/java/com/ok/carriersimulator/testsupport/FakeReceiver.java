@@ -22,6 +22,7 @@ public class FakeReceiver implements AutoCloseable {
     private final AtomicInteger maxConcurrent = new AtomicInteger();
     private volatile int status = 202;
     private volatile Duration delay = Duration.ZERO;
+    private volatile Duration stall = Duration.ZERO;
 
     public FakeReceiver() {
         try {
@@ -36,7 +37,14 @@ public class FakeReceiver implements AutoCloseable {
             try {
                 bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 Thread.sleep(delay.toMillis());
-                exchange.sendResponseHeaders(status, -1);
+                if (stall.isZero()) {
+                    exchange.sendResponseHeaders(status, -1);
+                } else {
+                    // 헤더는 바로 보내고, 약속한 본문은 보내지 않은 채 연결을 잡아 둔다
+                    exchange.sendResponseHeaders(status, 10);
+                    exchange.getResponseBody().flush();
+                    Thread.sleep(stall.toMillis());
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } finally {
@@ -57,6 +65,13 @@ public class FakeReceiver implements AutoCloseable {
 
     public void delay(Duration delay) {
         this.delay = delay;
+    }
+
+    /**
+     * 응답 헤더만 보내고 본문을 끝내지 않은 채 그 시간 동안 연결을 잡아 둔다.
+     */
+    public void stallBody(Duration stall) {
+        this.stall = stall;
     }
 
     public List<String> bodies() {

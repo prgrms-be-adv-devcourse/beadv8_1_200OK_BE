@@ -50,7 +50,7 @@ class DashboardControllerTest {
                 .andExpect(content().string(containsString("받은 조회 (누적)")))
                 .andExpect(content().string(containsString("<svg")))
                 .andExpect(content().string(containsString("송장 상태 분포")))
-                .andExpect(content().string(not(containsString("http-equiv=\"refresh\""))));
+                .andExpect(content().string(not(containsString("data-refresh"))));
     }
 
     @Test
@@ -86,11 +86,13 @@ class DashboardControllerTest {
 
     @ParameterizedTest
     @MethodSource("새로고침_간격")
-    void 새로고침_간격을_고르면_meta가_들어가고_메뉴_링크가_유지한다(String refresh) throws Exception {
+    void 새로고침_간격을_고르면_새로고침이_들어가고_메뉴_링크가_유지한다(String refresh) throws Exception {
         // when & then
         mockMvc.perform(get("/").param("refresh", refresh))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("http-equiv=\"refresh\" content=\"" + refresh + "\"")))
+                .andExpect(content().string(containsString("data-refresh=\"" + refresh + "\"")))
+                // 입력 중인 폼까지 지우는 meta 새로고침은 쓰지 않는다
+                .andExpect(content().string(not(containsString("http-equiv=\"refresh\""))))
                 .andExpect(content().string(containsString("href=\"/parcels?refresh=" + refresh + "\"")));
     }
 
@@ -105,7 +107,7 @@ class DashboardControllerTest {
         mockMvc.perform(get("/").param("refresh", refresh))
                 .andExpect(status().isOk())
                 .andExpect(model().attribute("refresh", 0))
-                .andExpect(content().string(not(containsString("http-equiv=\"refresh\""))));
+                .andExpect(content().string(not(containsString("data-refresh"))));
     }
 
     static Stream<String> 고를_수_없는_간격() {

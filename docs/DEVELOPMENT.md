@@ -521,6 +521,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 
 - 포트는 `CARRIER_SIMULATOR_PORT`(기본 8090), 여는 주소는 `CARRIER_SIMULATOR_ADDRESS`(기본 `127.0.0.1`)로 바꿉니다. 로그인이 없으므로 밖에서 접속되는 주소로 열지 않습니다.
 - DB, Redis, Kafka를 쓰지 않습니다. 송장, 통계, 보낸 기록은 모두 메모리에 있고 서버를 다시 띄우면 지워집니다.
+- 관리 화면의 폼은 같은 주소에서 보낸 것만 받습니다. 브라우저로 연 다른 웹 페이지가 이 서버로 폼을 보내면 403으로 거절합니다(`CrossSiteGuard`). `curl` 같은 도구와 `/graphql`, `/oauth2/token`은 막지 않습니다.
 - DB 스키마가 없어 `deploy/initdb/modules.txt` 대상에서 빠져 있습니다(루트 `build.gradle.kts`).
 
 delivery를 가짜 택배사에 붙일 때의 환경변수입니다. 아이디와 시크릿은 비어 있지만 않으면 됩니다.

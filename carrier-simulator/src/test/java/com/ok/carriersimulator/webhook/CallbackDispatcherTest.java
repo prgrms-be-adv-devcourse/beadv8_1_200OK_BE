@@ -157,6 +157,25 @@ class CallbackDispatcherTest {
     }
 
     @Test
+    void 받는_쪽이_본문을_끝내지_않아도_시간_초과로_끝나고_다음_알림이_나간다() {
+        // given: 응답 헤더만 보내고 본문을 10초 동안 끝내지 않는 수신기
+        receiver.respondWith(200);
+        receiver.stallBody(Duration.ofSeconds(10));
+        simulator.registerWebhook(SILENT, receiver.url(), expiration(), clock.instant());
+
+        // when
+        sut.tick();
+        boolean idle = sut.awaitIdle(Duration.ofSeconds(4));
+
+        // then
+        List<CallbackRecord> records = simulator.callbackRecords(null, 10);
+        assertSoftly(softly -> {
+            softly.assertThat(idle).isTrue();
+            softly.assertThat(records).extracting(CallbackRecord::failure).containsExactly("시간 초과");
+        });
+    }
+
+    @Test
     void 받는_곳이_죽어_있어도_다른_알림은_나간다() {
         // given: 닫아 버린 서버의 주소와 살아 있는 주소
         FakeReceiver dead = new FakeReceiver();

@@ -303,6 +303,32 @@ class TrackGraphQlTest {
     }
 
     @Test
+    void 응답_지연이_몰려도_관리_화면은_바로_열린다() throws Exception {
+        // given: 응답을 3초 늦추고 조회 250건을 한꺼번에 보낸다
+        String token = client.token();
+        simulator.updateFaults(new FaultSettings(3000, 0, 1, false));
+        try (java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < 250; i++) {
+                executor.submit(() -> client.graphql(TRACK_QUERY, variables(NORMAL), token));
+            }
+            Thread.sleep(700);
+
+            // when: 지연을 끄려고 관리 화면을 연다
+            long startedAt = System.nanoTime();
+            int status = org.springframework.web.client.RestClient.create().get()
+                    .uri(client.baseUrl() + "/settings")
+                    .exchange((request, response) -> response.getStatusCode().value());
+            long elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+
+            // then
+            assertSoftly(softly -> {
+                softly.assertThat(status).isEqualTo(200);
+                softly.assertThat(elapsedMillis).isLessThan(1500);
+            });
+        }
+    }
+
+    @Test
     void 응답_지연을_주면_그만큼_늦게_답한다() {
         // given
         String token = client.token();

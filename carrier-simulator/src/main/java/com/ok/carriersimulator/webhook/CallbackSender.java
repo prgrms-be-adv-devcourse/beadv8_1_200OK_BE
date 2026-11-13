@@ -2,7 +2,6 @@ package com.ok.carriersimulator.webhook;
 
 import com.ok.carriersimulator.core.CallbackAttempt;
 import com.ok.carriersimulator.core.CallbackOutcome;
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -10,6 +9,10 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -33,17 +36,28 @@ public class CallbackSender {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body(attempt), StandardCharsets.UTF_8))
                     .build();
-            HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-            return CallbackOutcome.responded(response.statusCode(), elapsedMillis(startedAt));
-        } catch (HttpTimeoutException e) {
-            return CallbackOutcome.failed("시간 초과", elapsedMillis(startedAt));
-        } catch (IOException e) {
-            return CallbackOutcome.failed("연결 실패", elapsedMillis(startedAt));
+            return await(httpClient.sendAsync(request, HttpResponse.BodyHandlers.discarding()), startedAt);
         } catch (IllegalArgumentException e) {
             return CallbackOutcome.failed("잘못된 주소", elapsedMillis(startedAt));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return CallbackOutcome.failed("중단됨", elapsedMillis(startedAt));
+        }
+    }
+
+    // 요청의 timeout은 응답 헤더가 올 때까지만 잰다. 받는 쪽이 헤더만 보내고 본문을 끝내지 않으면 영영 돌아오지 않아
+    // 전송기 전체가 멈추므로, 한 건 전체에 기한을 따로 건다
+    private CallbackOutcome await(CompletableFuture<HttpResponse<Void>> response, long startedAt)
+            throws InterruptedException {
+        try {
+            int status = response.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS).statusCode();
+            return CallbackOutcome.responded(status, elapsedMillis(startedAt));
+        } catch (TimeoutException e) {
+            response.cancel(true);
+            return CallbackOutcome.failed("시간 초과", elapsedMillis(startedAt));
+        } catch (ExecutionException e) {
+            String failure = e.getCause() instanceof HttpTimeoutException ? "시간 초과" : "연결 실패";
+            return CallbackOutcome.failed(failure, elapsedMillis(startedAt));
         }
     }
 
