@@ -50,7 +50,7 @@ final class PayoutAmountValidator {
     // 판정에 쓰는 값 묶음 (모두 PayoutQueryRepository 조회 결과)
     record Input(
             List<PayoutCandidateItem> targets,                  // 검사 대상: 이번 스냅샷 후보 중 차감 기록이 있고 아직 실패가 아닌 것
-            Map<Long, Long> candidateTotalsByOrder,             // 주문 ID → 그 주문 정산후보 전체 합계 (스냅샷 밖 포함)
+            Map<Long, Long> candidateTotalsByOrder,             // 주문 ID → 그 주문 정산후보 합계 (스냅샷 밖 포함, 조정 후보 제외 #552)
             Map<Long, Long> deductionsByOrder,                  // 주문 ID → 지갑 차감액
             List<PayoutCandidateItem> originalSaleCandidates,   // 대상 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보 (스냅샷 밖 포함)
             // 아래 둘은 초과 청구 근거용 (#391). 초과 청구에 걸린 주문(overchargedOrderIds)만 조회해서 넘김
@@ -151,8 +151,8 @@ final class PayoutAmountValidator {
         return failures;
     }
 
-    // 초과 청구 실패 상세(근거)를 만듦 (#391). 모든 계산은 합계와 같은 범위(그 주문의 정산후보 전체, 조정 포함)로 함
-    //   1단계는 판정 공식(합계 > 차감액)을 바꾸지 않으므로, 근거도 판정과 같은 범위로 봐야 "넘친 금액"과 누적합이 서로 맞음
+    // 초과 청구 실패 상세(근거)를 만듦 (#391). 모든 계산은 합계와 같은 범위(그 주문의 조정 아닌 정산후보 전체, #552부터 조정 제외)로 함
+    //   근거도 판정 공식(합계 > 차감액)과 같은 범위로 봐야 "넘친 금액"과 누적합이 서로 맞음
     private static String overchargeDetail(long deducted, long total, List<OverchargeCandidateRow> orderRows,
                                            List<Long> conflictAmounts) {
         return PayoutFailure.fitDetail(String.format(OVERCHARGE_DETAIL,
