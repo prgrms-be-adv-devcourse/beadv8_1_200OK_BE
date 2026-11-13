@@ -271,6 +271,20 @@ class HandleWalletRefundResultServiceTest {
         then(refundPersistencePort).should(never()).update(any());
     }
 
+    // 완료된 환불에 실패가 오면 중복이 아니라 앞선 완료 결과와 모순이다. ERROR로 남기되 상태는 그대로 둔다
+    @Test
+    void 이미_완료된_환불의_실패_메시지는_기록하지_않고_넘긴다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED, null, null)));
+
+        // when
+        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+
+        // then
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
     @Test
     void 읽은_뒤_잠그기_전에_완료되면_실패를_기록하지_않는다() {
         // given

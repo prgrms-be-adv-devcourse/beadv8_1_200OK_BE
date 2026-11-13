@@ -143,7 +143,7 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getFailureCode()).isEqualTo(reason);
         });
         // 돈이 안 돌아갔으니 재고도 되돌리지 않는다
-        assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isZero();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
     // 같은 완료 메시지가 두 번 오는 것은 Kafka가 최소 한 번 전달을 보장하기 때문에 생긴다(리밸런스·재시도)
@@ -167,6 +167,7 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
             softly.assertThat(sut.getCompletedAt()).isEqualTo(firstDone.getCompletedAt());
         });
+        // 호출 횟수로 확인하는 이유: Fake는 같은 refundId면 첫 값을 유지해서, 결과만 봐서는 한 번만 되돌렸는지 알 수 없다
         assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(1);
     }
 

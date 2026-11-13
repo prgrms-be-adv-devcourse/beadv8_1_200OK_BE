@@ -108,15 +108,21 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
                 refundId, command.orderId(), command.amount(), command.reason());
     }
 
-    // 없는 환불이나 처리 중이 아닌 환불이면 이유를 남기고 false. 이미 완료된 환불은 같은 메시지가 두 번 온 정상이라 INFO,
-    // 그 밖(요청됨·거절·철회, 없는 환불)은 지갑이 돈을 움직인 환불이 이 상태일 수 없어 ERROR로 사람이 확인하게 한다
+    // 없는 환불이나 처리 중이 아닌 환불이면 이유를 남기고 false.
+    // 이미 완료된 환불의 완료 메시지는 같은 메시지가 두 번 온 정상(지갑은 첫 결과만 다시 보낸다)이라 INFO.
+    // 완료된 환불에 실패 메시지가 오면 중복이 아니라 앞선 완료 결과와 모순이므로 ERROR로 사람이 확인하게 한다(상태는 바꾸지 않는다).
+    // 그 밖(요청됨·거절·철회, 없는 환불)도 지갑이 돈을 움직인 환불이 이 상태일 수 없어 ERROR
     private boolean isProcessingOrLog(Refund refund, Long refundId, String kind) {
         if (refund == null) {
             log.error("지갑 반환 {} 메시지의 환불이 없어 넘김. refundId={}", kind, refundId);
             return false;
         }
         if (refund.getStatus() == RefundStatus.COMPLETED) {
-            log.info("이미 완료된 환불의 지갑 반환 {} 메시지라 넘김. refundId={}", kind, refundId);
+            if ("실패".equals(kind)) {
+                log.error("이미 완료된 환불에 지갑 반환 실패 메시지가 와 넘김(앞선 완료 결과와 모순, 확인 필요). refundId={}", refundId);
+            } else {
+                log.info("이미 완료된 환불의 지갑 반환 {} 메시지라 넘김. refundId={}", kind, refundId);
+            }
             return false;
         }
         if (refund.getStatus() != RefundStatus.PROCESSING) {
