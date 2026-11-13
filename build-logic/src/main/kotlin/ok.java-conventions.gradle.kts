@@ -47,6 +47,8 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers-mysql")
     // 통합 테스트용 Kafka 브로커. 정산이 지갑 이벤트를 Kafka로 보내면서(#339) publishStep을 도는 통합 테스트가 브로커를 필요로 한다
     testImplementation("org.testcontainers:testcontainers-kafka")
+    // 통합 테스트용 Redis. 공식 모듈이 아니라 Redis 사가 만든 모듈(com.redis)이고, 버전은 Spring Boot가 관리한다 (#538)
+    testImplementation("com.redis:testcontainers-redis")
 
     // ---------- Test: 구조 검증 / 기타 ----------
     testImplementation(libs.findLibrary("archunit-junit5").get())
