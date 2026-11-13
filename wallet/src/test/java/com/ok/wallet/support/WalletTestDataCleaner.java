@@ -15,6 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 지갑 시험이 끝날 때 잔액과 원장이 맞는지 검사하고 지갑 데이터를 모두 지운다.
  * 시험 작성자가 무엇을 확인했든 같은 기준으로 검사하려고, 잔액을 바꾸는 시험은 정리 단계에서 이 클래스만 쓴다.
  * 통합 시험과 모듈 시험({@code @ApplicationModuleTest})이 함께 쓰도록 스프링 빈이 아니라 {@link JdbcTemplate}을 받는 보통 클래스로 둔다.
+ * 약관 동의 데이터는 잔액과 관계가 없어 다루지 않는다. 약관을 쓰는 시험은 따로 지운다.
  */
 public class WalletTestDataCleaner {
 

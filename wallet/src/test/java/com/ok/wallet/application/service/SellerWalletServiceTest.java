@@ -3,6 +3,7 @@ package com.ok.wallet.application.service;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.adapter.out.persistence.SellerWalletJpaRepository;
 import com.ok.wallet.domain.SellerWallet;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,18 +40,12 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
     // 다른 테스트가 남긴 원장(정산 배치가 발행한 이벤트로 입금된 것 등)이 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
     void setUp() {
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
 
     @AfterEach
     void tearDown() {
-        cleanUp();
-    }
-
-    // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
-    private void cleanUp() {
-        jdbcTemplate.update("DELETE FROM seller_wallet_ledger");
-        sellerWalletRepository.deleteAll();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     // getOrCreate

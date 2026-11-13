@@ -4,6 +4,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
 import com.ok.wallet.application.dto.OrderPaymentResult;
 import com.ok.wallet.domain.BuyerWallet;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,10 +41,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
-        jdbcTemplate.update("DELETE FROM wallet_order_payment");
-        jdbcTemplate.update("DELETE FROM buyer_wallet_ledger");
-        buyerWalletRepository.deleteAll();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     @Test
