@@ -308,8 +308,8 @@ class RefundTest {
 
         // when & then
         assertThatThrownBy(() -> refund.rejectAfterApproval(reason, NOW))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.REJECT_REASON_REQUIRED));
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("승인 뒤 거절 사유는 필수입니다.");
         assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
     }
 

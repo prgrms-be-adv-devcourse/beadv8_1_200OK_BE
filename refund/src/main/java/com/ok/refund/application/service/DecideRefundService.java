@@ -196,11 +196,12 @@ public class DecideRefundService implements DecideRefundUseCase {
     // 사유는 출고 거절과 같은 문구를 쓴다. 가장 흔한 원인이 승인 사이의 출고이고, 구매자에게는 "취소할 수 없다"는 결과면 충분하다.
     // ERROR로 남기는 이유: 환불은 409의 원인을 구분하지 못한다. "이미 출고됨"은 드물게 있는 정상 경쟁이지만,
     // "수량 초과"나 "refundId 충돌"은 환불 쪽 버그다. 정상처럼 보이는 경로라도 사람이 확인하도록 모두 ERROR로 남긴다.
-    // 주문의 설명 문장은 로그에만 남기고 DB에는 저장하지 않는다. 예외를 던지지 않는 경로라 여기서 로그를 남긴다
+    // 주문의 설명 문장은 로그에만 남기고 DB에는 저장하지 않는다. 예외를 던지지 않는 경로라 여기서 로그를 남긴다.
+    // 로그는 거절 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "거절로 끝냄"이 남으면 실제와 어긋나기 때문이다.
+    // 한계: 처리 중 → 거절은 같은 묶음의 배송비 집계를 바꾸는데도 자기 행만 잠근다. 그 사이 같은 묶음의 다른 환불이 이 환불을
+    // 취소된 것으로 보고 승인됐다면 그 환불의 배송비 판단이 틀린 채 남는다(RefundShippingFeePolicy.CANCELLING_STATUSES 주석, TODO(#516))
     private RefundResult rejectAfterOrderRefused(RefundResult approved, String orderDetail) {
-        log.error("주문이 취소 반영을 거절해 환불을 거절로 끝냄. refundId={}, orderItemId={}, orderDetail={}",
-                approved.refundId(), approved.orderItemId(), orderDetail);
-        return transaction.execute(status -> {
+        RefundResult rejected = transaction.execute(status -> {
             Refund refund = refundPersistencePort.findByIdForUpdate(approved.refundId())
                     .orElseThrow(() -> new IllegalStateException(
                             "승인한 환불을 거절로 바꾸려는데 찾을 수 없습니다. refundId=" + approved.refundId()));
@@ -208,6 +209,9 @@ public class DecideRefundService implements DecideRefundUseCase {
             refundPersistencePort.update(refund);
             return RefundResult.from(refund);
         });
+        log.error("주문이 취소 반영을 거절해 환불을 거절로 끝냄. refundId={}, orderItemId={}, orderDetail={}",
+                approved.refundId(), approved.orderItemId(), orderDetail);
+        return rejected;
     }
 
     // 모든 단계가 끝난 환불을 완료로 바꾼다. 자기 행만 잠근다. 처리 중과 완료는 둘 다 배송비 판단에서 "이미 취소된 것"이라

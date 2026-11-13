@@ -6,6 +6,7 @@ import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
@@ -166,6 +167,24 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         assertThat(readMessagesOf(refundId, before)).isEmpty();
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
         assertThat(orderCancellationPort.reflectedOf(refundId)).isEmpty();
+    }
+
+    // 주문에 알리지 못하면(장애) 지갑보다 먼저 멈춰야 한다. 주문이 모르는 취소의 돈이 나가면 배송될 수도 있는 상품값을 돌려주게 된다
+    @Test
+    void 승인_뒤_주문_반영이_실패하면_반환_요청을_보내지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        orderCancellationPort.fail();
+        Map<TopicPartition, Long> before = endOffsets();
+
+        // when
+        approve(refundId)
+                .andExpect(status().isServiceUnavailable());
+
+        // then: 환불은 처리 중에 머물고 지갑 메시지·재고 복구는 없다
+        assertThat(refundJpaRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        assertThat(readMessagesOf(refundId, before)).isEmpty();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
     // ---------- 도우미: 요청·승인 ----------

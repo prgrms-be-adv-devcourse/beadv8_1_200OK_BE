@@ -269,12 +269,15 @@ public class Refund {
      * 이 요청의 배송비 판단을 보지 않게 해야 하기 때문이다(필드 주석 "요청됨·거절·철회에서는 0이다"와 같은 규칙).
      * {@code decidedAt}은 판매자 승인 시각에서 이 거절 시각으로 덮어쓴다. 최종 결정이 거절이기 때문이다.
      *
-     * @throws RestApiException 사유가 비었으면 {@code REJECT_REASON_REQUIRED}, 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalArgumentException 사유가 비었으면 (부르는 쪽 버그)
+     * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
      */
     public void rejectAfterApproval(String reason, LocalDateTime now) {
-        // 기존 reject와 같은 순서다. 사유 검사가 먼저라 끝난 요청이어도 사유가 비면 사유 없음으로 막는다
+        // 기존 reject와 같은 순서다. 사유 검사가 먼저라 끝난 요청이어도 사유가 비면 사유 오류로 막는다.
+        // reject와 달리 표준 예외인 이유: 이 사유는 판매자 입력이 아니라 서비스가 넘기는 상수라, 비었다면 사용자 잘못이 아니라
+        // 부르는 쪽 버그다(exception.md)
         if (reason == null || reason.isBlank()) {
-            throw new RestApiException(RefundErrorCode.REJECT_REASON_REQUIRED);
+            throw new IllegalArgumentException("승인 뒤 거절 사유는 필수입니다.");
         }
         requireStatus(RefundStatus.PROCESSING);
         this.rejectReason = reason;
@@ -298,7 +301,7 @@ public class Refund {
     }
 
     /**
-     * 승인 뒤 단계(지갑 반환 요청, 주문 취소 반영, 재고 복구)를 모두 마치고 환불을 끝낸다. {@code PROCESSING → COMPLETED}
+     * 승인 뒤 단계(주문 취소 반영, 지갑 반환 요청, 재고 복구)를 모두 마치고 환불을 끝낸다. {@code PROCESSING → COMPLETED}
      * 진행 중 칸을 비워 같은 주문 상품의 남은 개수를 다시 요청할 수 있게 한다. 이 환불의 개수와 뺀 배송비는 끝난 뒤에도
      * 같은 묶음의 배송비 판단에 계속 쓰인다({@link RefundShippingFeePolicy#CANCELLING_STATUSES}).
      *
