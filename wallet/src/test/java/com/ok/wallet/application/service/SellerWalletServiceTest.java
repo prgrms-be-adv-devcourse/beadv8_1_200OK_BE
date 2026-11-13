@@ -103,7 +103,7 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
 
     @Test
     void 지갑이_없으면_생성한_뒤_입금한다() {
-        // Given: 판매자 승인 이벤트가 오지 않아 지갑이 없는 상태
+        // Given: 판매자 지갑은 첫 정산금 입금 때 생기므로 아직 지갑이 없는 상태
         Long sellerId = 11L;
 
         // When
