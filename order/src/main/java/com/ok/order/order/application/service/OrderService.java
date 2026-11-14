@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,23 +54,40 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
 
     private static final int AUTO_CONFIRM_DAYS = 3;
 
+    // 결제 요청 전에 멈춘 주문의 정리 기준. 주문 생성은 외부 호출 타임아웃을 합쳐도 몇 초 안에 끝나므로 넉넉히 잡는다(#402)
+    private static final Duration CREATING_TIMEOUT = Duration.ofMinutes(5);
+    // 결제 요청 뒤 결과가 없는 주문의 정리 기준. 지갑 결제는 이벤트를 받는 즉시 끝나므로,
+    // 이만큼 지나면 지갑 처리가 실패해 재시작 재발행만 기다리는 상태로 보고 재고를 먼저 푼다(#402)
+    private static final Duration PAYMENT_TIMEOUT = Duration.ofMinutes(30);
+
     // 주문 저장
     @Transactional
     public Long create(Order order) {
         return orderRepository.save(order).getId();
     }
 
-    // 같은 멱등키로 이미 만든 주문 ID
+    /**
+     * 같은 멱등키로 이미 만든 주문 ID를 조회한다.
+     * 그 주문이 아직 만드는 중(결제 요청 전)이면 409로 알린다. 앞 요청이 곧 재고 선점에 실패해 취소될 수 있어,
+     * 성공으로 돌려주면 클라이언트가 취소될 주문을 성공으로 받는다(#402).
+     *
+     * @throws RestApiException 같은 키의 주문을 아직 만드는 중이면 {@code ORDER_CREATION_IN_PROGRESS}
+     */
     public Optional<Long> findIdByIdempotencyKey(Long buyerId, String idempotencyKey) {
-        return orderRepository.findByBuyerIdAndIdempotencyKey(buyerId, idempotencyKey)
-                .map(Order::getId);
+        Optional<Order> found = orderRepository.findByBuyerIdAndIdempotencyKey(buyerId, idempotencyKey);
+        if (found.isPresent() && found.get().isBeingCreated()) {
+            throw new RestApiException(OrderErrorCode.ORDER_CREATION_IN_PROGRESS);
+        }
+        return found.map(Order::getId);
     }
 
-    // 주문 생성 이벤트 발행
+    // 주문 생성 이벤트 발행(지갑에 결제 요청). 요청 시각을 같은 트랜잭션에 기록해 이벤트 발행 기록과 어긋나지 않게 한다.
+    // 정리 스케줄러의 취소와 같은 잠금으로 줄을 세워, 취소된 주문에 결제를 요청하지 않는다(#402)
     @Transactional
     public void publishCreated(Long orderId) {
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
+        order.markPaymentRequested(LocalDateTime.now(clock));
         orderEventPublisher.publishOrderCreatedEvent(order.getId(), order.getBuyerId(), order.getTotalAmount());
     }
 
@@ -88,6 +106,39 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             log.warn("[ORDER_CANCEL_IGNORED] 결제 대기가 아닌 주문은 취소하지 않습니다. orderId={}, status={}",
                     orderId, order.getStatus());
         }
+    }
+
+    // 결제 대기 정리 대상 주문 ID(#402)
+    public List<Long> findStalePaymentPendingOrderIds() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return orderRepository.findStalePaymentPendingOrderIds(
+                OrderStatus.PAYMENT_PENDING, now.minus(CREATING_TIMEOUT), now.minus(PAYMENT_TIMEOUT));
+    }
+
+    // 결제 대기로 오래 남은 주문 취소(#402). 재고를 풀어야 하면(취소했으면) true
+    @Transactional
+    public boolean cancelStalePaymentPending(Long orderId) {
+        // 결제 완료·실패, 결제 요청과 같은 잠금으로 줄을 세운다. 조회한 뒤 결제 결과가 먼저 커밋됐으면 바뀐 상태를 읽고 넘어간다
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
+        if (found.isEmpty()) {
+            log.warn("[ORDER_STALE_CANCEL_ORDER_NOT_FOUND] 정리할 주문이 없습니다. orderId={}", orderId);
+            return false;
+        }
+        Order order = found.get();
+
+        // 조회와 잠금 사이에 결제를 요청했으면 기준 시각이 다시 시작되므로, 잠근 뒤 최신 값으로 다시 확인한다
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (!order.isStalePaymentPending(now.minus(CREATING_TIMEOUT), now.minus(PAYMENT_TIMEOUT))) {
+            log.info("[ORDER_STALE_CANCEL_SKIPPED] 정리 대상이 아니게 된 주문입니다. orderId={}, status={}",
+                    orderId, order.getStatus());
+            return false;
+        }
+
+        // 결제를 요청한 주문은 지갑이 나중에 결제할 수 있다. 그때 completePayment가 ERROR로 남기므로 여기서는 기록만 구분한다
+        log.warn("[ORDER_STALE_CANCELED] 결제 대기로 오래 남은 주문을 취소합니다. orderId={}, paymentRequestedAt={}",
+                orderId, order.getPaymentRequestedAt());
+        order.cancel();
+        return true;
     }
 
     // 내 주문 목록 (최신순). 취소된 주문은 구매자가 만든 적 없는 결과라 보여 주지 않는다
@@ -133,6 +184,9 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             if (order.isPaymentFailed()) {
                 // 실패 처리 후 완료가 온 경우: 돈은 빠졌는데 주문은 실패 → 환불 확인 필요
                 log.error("[ORDER_PAID_AFTER_FAILED] 결제 실패 주문에 결제 완료가 도착했습니다. 환불 확인이 필요합니다. orderId={}", orderId);
+            } else if (order.isCanceled()) {
+                // 결제 대기 정리(#402)가 취소한 뒤 지갑이 늦게 결제한 경우: 돈은 빠졌는데 주문은 취소 → 환불 확인 필요(#517)
+                log.error("[ORDER_PAID_AFTER_CANCELED] 취소된 주문에 결제 완료가 도착했습니다. 환불 확인이 필요합니다. orderId={}", orderId);
             } else {
                 log.info("[ORDER_PAYMENT_ALREADY_HANDLED] 이미 처리된 주문입니다. orderId={}, status={}", orderId, order.getStatus());
             }
