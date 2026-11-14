@@ -2,6 +2,7 @@ package com.ok.payout.adapter.out.persistence;
 
 import com.ok.payout.PayoutSchema;
 import com.ok.payout.application.port.out.BlockedFailureRow;
+import com.ok.payout.application.port.out.BlockedOrderRow;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
@@ -14,6 +15,7 @@ import com.ok.payout.application.port.out.SellerTotalRow;
 import com.ok.payout.application.port.out.SnapshotItemRow;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutBlockedOrderCause;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
@@ -46,6 +48,8 @@ import java.util.Optional;
 import java.util.Set;
 
 import static com.ok.payout.domain.QPayout.payout;
+import static com.ok.payout.domain.QPayoutBlockedOrder.payoutBlockedOrder;
+import static com.ok.payout.domain.QPayoutBlockedOrderCause.payoutBlockedOrderCause;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
 import static com.ok.payout.domain.QPayoutFailure.payoutFailure;
 import static com.ok.payout.domain.QPayoutFailureResolution.payoutFailureResolution;
@@ -381,6 +385,44 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                     .fetchOne();
             return Objects.requireNonNullElse(count, 0L);
         });
+    }
+
+    // 막힌 주문 목록 (#569): 집계 표만 읽음 (원본 실패 기록을 다시 계산하지 않음, payout/CLAUDE.md 설계 전제)
+    // 정렬은 인덱스 (status, last_failed_at)의 뒷자리를 씀. 상태로 거르지 않아 인덱스로 정렬을 다 하지는 못하지만,
+    //   표는 막힌 주문 수만큼이라 운영 기간과 상관없이 작음
+    @Override
+    public Page<BlockedOrderRow> findBlockedOrders(Pageable pageable) {
+        List<BlockedOrderRow> content = queryFactory
+                .select(Projections.constructor(BlockedOrderRow.class,
+                        payoutBlockedOrder.orderId,
+                        payoutBlockedOrder.status,
+                        payoutBlockedOrder.failedRunCount,
+                        payoutBlockedOrder.lastFailedAt))
+                .from(payoutBlockedOrder)
+                .orderBy(payoutBlockedOrder.lastFailedAt.desc(), payoutBlockedOrder.orderId.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> {
+            Long count = queryFactory.select(payoutBlockedOrder.count()).from(payoutBlockedOrder).fetchOne();
+            return Objects.requireNonNullElse(count, 0L);
+        });
+    }
+
+    // 한 페이지 주문들의 원인을 한 번에 읽음 (주문마다 따로 읽으면 페이지 크기만큼 조회가 나감). 원인 표의 order_id 외래키 인덱스를 씀
+    @Override
+    public List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .selectFrom(payoutBlockedOrderCause)
+                .where(payoutBlockedOrderCause.orderId.in(orderIds))
+                .orderBy(payoutBlockedOrderCause.orderId.asc(), payoutBlockedOrderCause.failedAt.desc(),
+                        payoutBlockedOrderCause.id.asc())
+                .fetch();
     }
 
     // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)

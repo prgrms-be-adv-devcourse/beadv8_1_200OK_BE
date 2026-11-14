@@ -2,6 +2,8 @@ package com.ok.payout.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
@@ -17,6 +19,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.application.port.in.PayoutBlockedOrderUseCase;
 import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import jakarta.validation.Valid;
@@ -45,6 +48,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     private final PayoutJobRunner payoutJobRunner;
     private final PayoutUseCase payoutUseCase;
     private final PayoutFailureResolutionUseCase payoutFailureResolutionUseCase;
+    private final PayoutBlockedOrderUseCase payoutBlockedOrderUseCase;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
     @Override
@@ -159,5 +163,17 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutFailureResolutionUseCase.getResolutionRequests(orderId, request.toQuery())
                         .map(PayoutResolutionRequestResponse::from)));
+    }
+
+    // 막힌 주문 목록 (#569): 잠김·멈춤·해결됨 주문을 원인과 함께. 막힌 주문 집계 표(#582)를 읽기만 함
+    // 경로 /blocked-orders는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음 (/candidates와 같음)
+    // 이름을 /orders/blocked 대신 /blocked-orders로 한 것: api.md "리소스는 복수형 명사" (#571에서 형용사 grouped를 버린 것과 같은 기준)
+    @Override
+    @GetMapping("/blocked-orders")
+    public ResponseEntity<PayoutPageResponse<PayoutBlockedOrderResponse>> getBlockedOrders(
+            @Valid @ModelAttribute PayoutBlockedOrderSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutBlockedOrderUseCase.getBlockedOrders(request.toQuery()).map(PayoutBlockedOrderResponse::from)));
     }
 }
