@@ -28,6 +28,9 @@ public class MemberOutboxRelayFacade implements MemberOutboxRelayUseCase {
     // 이만큼 실패하면(30초 주기로 약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
     static final int ESCALATE_ATTEMPT_COUNT = 10;
 
+    // 실패 원인을 따라가는 최대 단계. 실제 사슬은 3~4단계라 넉넉히 둔다
+    private static final int MAX_CAUSE_DEPTH = 20;
+
     private final MemberOutboxService memberOutboxService;
     private final MemberMessageSender memberMessageSender;
 
@@ -77,10 +80,11 @@ public class MemberOutboxRelayFacade implements MemberOutboxRelayUseCase {
         }
     }
 
-    // 발송기 예외는 회원 ID를 담고, 실제 이유(브로커 거절, 시간 초과)는 원인 사슬 맨 안쪽에 있다. 둘을 함께 남긴다
+    // 발송기 예외는 회원 ID를 담고, 실제 이유(브로커 거절, 시간 초과)는 원인 사슬 맨 안쪽에 있다. 둘을 함께 남긴다.
+    // 원인이 서로를 가리키는 순환이 있으면 끝없이 돌아 발송 스케줄러가 멈추므로, 따라가는 단계 수에 상한을 둔다
     static String failureReason(Throwable e) {
         Throwable root = e;
-        while (root.getCause() != null && root.getCause() != root) {
+        for (int depth = 0; depth < MAX_CAUSE_DEPTH && root.getCause() != null && root.getCause() != root; depth++) {
             root = root.getCause();
         }
         return root == e ? describe(e) : describe(e) + " / " + describe(root);

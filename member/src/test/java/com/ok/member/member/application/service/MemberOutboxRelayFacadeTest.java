@@ -121,6 +121,20 @@ class MemberOutboxRelayFacadeTest {
     }
 
     @Test
+    void 원인이_서로를_가리키는_순환이_있어도_끝나고_실패_원인을_남긴다() {
+        // given: A → B → A 순환. 상한이 없으면 끝나지 않아 발송 스케줄러가 멈춘다
+        RuntimeException first = new IllegalStateException("앞 예외");
+        RuntimeException second = new IllegalArgumentException("뒤 예외", first);
+        first.initCause(second);
+
+        // when
+        String sut = MemberOutboxRelayFacade.failureReason(first);
+
+        // then: 상한에서 멈춘 위치가 순환의 어느 쪽인지는 상한 값에 따라 달라, 바깥 예외가 남는지만 본다
+        assertThat(sut).startsWith("IllegalStateException: 앞 예외");
+    }
+
+    @Test
     void 메시지가_없는_예외는_null_대신_예외_이름만_남긴다() {
         // when
         String sut = MemberOutboxRelayFacade.failureReason(new IllegalStateException("발송 실패", new NullPointerException()));
