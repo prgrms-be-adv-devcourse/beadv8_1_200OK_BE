@@ -36,7 +36,17 @@ public record PayoutBlockedOrderResponse(
         List<String> categories,
 
         @Schema(description = "원인 목록 (같은 기록은 1번만, 실패 시각 최신순). 상세는 내부 검사 내용이라 관리자 화면에만 보여 줌")
-        List<PayoutBlockedOrderCauseResponse> causes
+        List<PayoutBlockedOrderCauseResponse> causes,
+
+        @Schema(description = "막힌 순간의 초과 청구 근거: 그 막힘을 만든 금액 검사 때 계산한 값(실패 상세 글과 같음). "
+                + "원인에 초과 청구가 없거나 계산할 수 없으면 null. 예전 막힘의 값은 해결 기록 조회의 상세 글로 봄. "
+                + "RESOLVED 줄은 해결 뒤 다시 실패했으면 그 실패 때 값으로 바뀌어 있을 수 있음(다음 정산 실행이 끝나면 정리됨)",
+                nullable = true)
+        PayoutOverchargeEvidenceResponse evidenceAtBlock,
+
+        @Schema(description = "지금의 초과 청구 근거: 목록을 볼 때 계산한 값. 막힌 순간 값과 비교해 데이터가 바뀌었는지 봄. "
+                + "원인에 초과 청구가 없거나 계산할 수 없으면 null", nullable = true)
+        PayoutOverchargeEvidenceResponse evidenceNow
 ) {
 
     public static PayoutBlockedOrderResponse from(PayoutBlockedOrderResult result) {
@@ -45,6 +55,8 @@ public record PayoutBlockedOrderResponse(
             causes.add(PayoutBlockedOrderCauseResponse.from(cause));
         }
         return new PayoutBlockedOrderResponse(result.orderId(), result.status(), result.failedRunCount(),
-                result.lastFailedAt(), result.sellerIds(), result.reasons(), result.categories(), causes);
+                result.lastFailedAt(), result.sellerIds(), result.reasons(), result.categories(), causes,
+                PayoutOverchargeEvidenceResponse.from(result.evidenceAtBlock()),
+                PayoutOverchargeEvidenceResponse.from(result.evidenceNow()));
     }
 }

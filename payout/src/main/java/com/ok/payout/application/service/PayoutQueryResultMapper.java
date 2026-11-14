@@ -5,6 +5,7 @@ import com.ok.payout.application.port.in.PayoutBlockedOrderCauseResult;
 import com.ok.payout.application.port.in.PayoutBlockedOrderResult;
 import com.ok.payout.application.port.in.PayoutCandidateResult;
 import com.ok.payout.application.port.in.PayoutItemResult;
+import com.ok.payout.application.port.in.PayoutOverchargeEvidenceResult;
 import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
 import com.ok.payout.application.port.in.PayoutResolutionResult;
 import com.ok.payout.application.port.out.BlockedOrderRow;
@@ -14,6 +15,7 @@ import com.ok.payout.application.port.out.PayoutResolutionRequestRow;
 import com.ok.payout.application.port.out.PayoutResolutionRow;
 import com.ok.payout.domain.PayoutBlockedOrderCause;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -68,7 +70,9 @@ final class PayoutQueryResultMapper {
 
     // 막힌 주문 1줄 + 그 주문의 원인들 (#569). 범주는 DB에 없고 사유가 들고 있어 여기서 꺼냄 (#391)
     // 판매자·사유·범주 목록은 원인에서 모아 중복을 뺌 (판매자는 작은 번호부터, 사유·범주는 원인 순서대로)
-    static PayoutBlockedOrderResult toBlockedOrderResult(BlockedOrderRow row, List<PayoutBlockedOrderCause> causes) {
+    // 근거는 막힌 순간 = 표에 저장한 값(row), 지금 = 서비스가 볼 때 계산한 값(evidenceNow) (#570). 없으면 null
+    static PayoutBlockedOrderResult toBlockedOrderResult(BlockedOrderRow row, List<PayoutBlockedOrderCause> causes,
+                                                         PayoutOverchargeEvidence evidenceNow) {
         Set<Long> sellerIds = new TreeSet<>();
         Set<String> reasons = new LinkedHashSet<>();
         Set<String> categories = new LinkedHashSet<>();
@@ -83,6 +87,16 @@ final class PayoutQueryResultMapper {
         }
         return new PayoutBlockedOrderResult(row.orderId(), row.status().name(), row.failedRunCount(),
                 row.lastFailedAt(), new ArrayList<>(sellerIds), new ArrayList<>(reasons), new ArrayList<>(categories),
-                causeResults);
+                causeResults, toEvidenceResult(row.overchargeEvidence()), toEvidenceResult(evidenceNow));
+    }
+
+    private static PayoutOverchargeEvidenceResult toEvidenceResult(PayoutOverchargeEvidence evidence) {
+        if (evidence == null) {
+            return null;
+        }
+        return new PayoutOverchargeEvidenceResult(evidence.getDeductedAmount(), evidence.getCandidateTotal(),
+                evidence.getOverflowAmount(), evidence.getFirstOverflowItem(), evidence.getSettledAmount(),
+                evidence.settledItemList(), evidence.aloneOverItemList(), evidence.getSellerCount(),
+                evidence.conflictAmountList());
     }
 }

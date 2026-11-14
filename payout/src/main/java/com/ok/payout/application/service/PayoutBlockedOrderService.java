@@ -4,9 +4,12 @@ import com.ok.payout.application.port.in.PayoutBlockedOrderResult;
 import com.ok.payout.application.port.in.PayoutBlockedOrderSearchQuery;
 import com.ok.payout.application.port.in.PayoutBlockedOrderUseCase;
 import com.ok.payout.application.port.out.BlockedOrderRow;
+import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.PayoutBlockedOrderCause;
+import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -82,7 +85,51 @@ public class PayoutBlockedOrderService implements PayoutBlockedOrderUseCase {
         for (PayoutBlockedOrderCause cause : payoutQueryRepository.findBlockedOrderCauses(orderIds)) {
             causesByOrder.computeIfAbsent(cause.getOrderId(), id -> new ArrayList<>()).add(cause);
         }
+        Map<Long, PayoutOverchargeEvidence> evidenceNowByOrder = currentOverchargeEvidence(causesByOrder);
         return page.map(row -> PayoutQueryResultMapper.toBlockedOrderResult(
-                row, causesByOrder.getOrDefault(row.orderId(), List.of())));
+                row, causesByOrder.getOrDefault(row.orderId(), List.of()), evidenceNowByOrder.get(row.orderId())));
+    }
+
+    // "지금" 초과 청구 근거 (#570): 원인에 초과 청구가 있는 주문만, 볼 때의 원본으로 계산 (주문 ID → 근거)
+    // 금액 검사와 같은 계산(PayoutAmountValidator.overchargeEvidence)과 같은 범위(조정 제외 정산후보 전체)를 써서
+    //   "막힌 순간" 값과 나란히 놓으면 무엇이 바뀌었는지 보임
+    // 한 페이지 주문 ID로 묶어 세 번만 조회함 (주문마다 따로 조회하지 않음, payout/CLAUDE.md 설계 전제)
+    // 근거를 계산할 수 없는 주문은 결과에 없음(목록에서 null): 차감 기록이 없거나, 조정만 있어 합계가 없는 주문
+    private Map<Long, PayoutOverchargeEvidence> currentOverchargeEvidence(
+            Map<Long, List<PayoutBlockedOrderCause>> causesByOrder) {
+        List<Long> overchargedOrderIds = new ArrayList<>();
+        for (Map.Entry<Long, List<PayoutBlockedOrderCause>> order : causesByOrder.entrySet()) {
+            for (PayoutBlockedOrderCause cause : order.getValue()) {
+                if (cause.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                    overchargedOrderIds.add(order.getKey());
+                    break;
+                }
+            }
+        }
+        Map<Long, PayoutOverchargeEvidence> evidenceByOrder = new HashMap<>();
+        if (overchargedOrderIds.isEmpty()) {
+            return evidenceByOrder;
+        }
+
+        Map<Long, Long> deductions = payoutQueryRepository.findDeductionAmountsByOrderIds(overchargedOrderIds);
+        Map<Long, List<OverchargeCandidateRow>> rowsByOrder = PayoutAmountValidator.groupRowsByOrder(
+                payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds));
+        Map<Long, List<Long>> conflictAmounts =
+                payoutQueryRepository.findReceivedConflictAmountsByOrder(overchargedOrderIds);
+        for (Long orderId : overchargedOrderIds) {
+            Long deducted = deductions.get(orderId);
+            List<OverchargeCandidateRow> rows = rowsByOrder.get(orderId);
+            if (deducted == null || rows == null) {
+                continue;
+            }
+            // 합계는 근거 줄을 더해 냄: 금액 검사의 합계 조회와 같은 범위(조정 제외)라 따로 조회하지 않음
+            long total = 0L;
+            for (OverchargeCandidateRow row : rows) {
+                total += row.amount();
+            }
+            evidenceByOrder.put(orderId, PayoutAmountValidator.overchargeEvidence(deducted, total, rows,
+                    conflictAmounts.getOrDefault(orderId, List.of())));
+        }
+        return evidenceByOrder;
     }
 }

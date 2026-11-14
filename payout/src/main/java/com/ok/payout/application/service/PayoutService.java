@@ -2,10 +2,12 @@ package com.ok.payout.application.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutBlockedOrder;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
@@ -14,6 +16,7 @@ import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.port.out.PayoutFailureRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
@@ -83,6 +86,8 @@ public class PayoutService implements PayoutUseCase {
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
     private final PayoutFailureRepository payoutFailureRepository;
+    // 금액 검사가 초과 청구 "막힌 순간" 근거를 막힌 주문 집계 표에 예비 줄로 남김 (#570)
+    private final PayoutBlockedOrderRepository payoutBlockedOrderRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
     private final PayoutEventPublisher payoutEventPublisher;
@@ -260,6 +265,7 @@ public class PayoutService implements PayoutUseCase {
         failures.addAll(amountFailures);
 
         payoutFailureRepository.saveAll(failures);
+        recordOverchargeEvidence(amountFailures, totals, deductions, overchargeCandidates, conflictAmounts);
 
         logAmountCheckFailedOrders(snapshotId, amountFailures);
         logOverchargedOrderItems(snapshotId, amountFailures, overchargeCandidates);
@@ -268,6 +274,60 @@ public class PayoutService implements PayoutUseCase {
         log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}, 금액 검사로 제외한 후보 수={}",
                 snapshotId, missing.size(), amountFailures.size());
         return failures.size();
+    }
+
+    // 초과 청구로 실패를 기록한 주문의 근거를 막힌 주문 집계 표에 "막힌 순간" 값으로 남김 (#570)
+    // 여기서 저장하는 이유: 근거 합계에는 스냅샷 밖 대기 중 후보도 들어가, Job 끝 갱신에서 다시 계산하면
+    //   그사이 같은 주문에 들어온 구매확정 때문에 실패 상세 글과 값이 달라질 수 있음. 지금 계산한 값을 그대로 남겨야 상세 글과 같음
+    // 지금은 그 주문이 막힘(3번째 실패)인지 몰라 실패마다 예비(PENDING) 줄로 넣음. Job 끝 갱신이 막힘이면 상태만 바꾸고 아니면 지움
+    // 실패 기록과 같은 트랜잭션: 실패 기록이 롤백되면 근거도 같이 롤백되어 서로 어긋나지 않음
+    // 이번 검사에서 새로 실패한 주문만 다룸 (같은 스냅샷을 다시 검증해 새 실패가 없으면 근거도 그대로)
+    private void recordOverchargeEvidence(List<PayoutFailure> amountFailures, Map<Long, Long> totals,
+                                          Map<Long, Long> deductions, List<OverchargeCandidateRow> overchargeCandidates,
+                                          Map<Long, List<Long>> conflictAmounts) {
+        // 주문 → 그 주문 초과 청구 실패 기록 중 가장 늦은 기록 시각 (예비 줄의 마지막 실패 시각)
+        Map<Long, LocalDateTime> failedAtByOrder = new LinkedHashMap<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (failure.getReason() != PayoutFailureReason.AMOUNT_MISMATCH) {
+                continue;
+            }
+            // 조정만 있는 주문(합계 없음)은 근거를 계산할 수 없어 남기지 않음 (근거 칸은 비어 있음)
+            if (!totals.containsKey(failure.getOrderId())) {
+                continue;
+            }
+            LocalDateTime failedAt = failedAtByOrder.get(failure.getOrderId());
+            if (failedAt == null || failure.getCreatedAt().isAfter(failedAt)) {
+                failedAtByOrder.put(failure.getOrderId(), failure.getCreatedAt());
+            }
+        }
+        if (failedAtByOrder.isEmpty()) {
+            return;
+        }
+
+        Map<Long, List<OverchargeCandidateRow>> rowsByOrder = PayoutAmountValidator.groupRowsByOrder(overchargeCandidates);
+        Map<Long, PayoutOverchargeEvidence> evidenceByOrder = new LinkedHashMap<>();
+        for (Long orderId : failedAtByOrder.keySet()) {
+            evidenceByOrder.put(orderId, PayoutAmountValidator.overchargeEvidence(deductions.get(orderId),
+                    totals.get(orderId), rowsByOrder.getOrDefault(orderId, List.of()),
+                    conflictAmounts.getOrDefault(orderId, List.of())));
+        }
+
+        // 줄이 이미 있으면(해결된 RESOLVED 줄) 새로 넣지 않고 근거만 바꿈: 주문 ID가 기본 키라 새로 넣으면 중복 오류로 금액 검사가 롤백됨
+        //   잠김·멈춤 줄은 스냅샷에서 빠져 금액 검사를 받지 않으므로 여기 오는 줄은 해결됨(또는 갱신이 아직 못 지운 예비) 줄
+        //   이미 있는 줄은 변경 감지(트랜잭션이 끝날 때 바뀐 칸을 UPDATE)로 저장됨
+        Set<Long> existingOrderIds = new HashSet<>();
+        for (PayoutBlockedOrder blockedOrder : payoutBlockedOrderRepository.findAllByOrderIdIn(evidenceByOrder.keySet())) {
+            blockedOrder.recordEvidence(evidenceByOrder.get(blockedOrder.getOrderId()));
+            existingOrderIds.add(blockedOrder.getOrderId());
+        }
+        List<PayoutBlockedOrder> pendingOrders = new ArrayList<>();
+        for (Map.Entry<Long, PayoutOverchargeEvidence> entry : evidenceByOrder.entrySet()) {
+            if (!existingOrderIds.contains(entry.getKey())) {
+                pendingOrders.add(PayoutBlockedOrder.pending(entry.getKey(), failedAtByOrder.get(entry.getKey()),
+                        entry.getValue()));
+            }
+        }
+        payoutBlockedOrderRepository.saveAll(pendingOrders);
     }
 
     // 초과 청구로 실패를 기록한 주문마다 주문상품 전체 목록을 WARN (#391)

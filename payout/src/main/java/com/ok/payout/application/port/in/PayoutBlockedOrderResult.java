@@ -16,6 +16,10 @@ public record PayoutBlockedOrderResult(
         // 원인에 나온 사유·범주 이름 (중복 없음, 원인 순서대로)
         List<String> reasons,
         List<String> categories,
-        List<PayoutBlockedOrderCauseResult> causes
+        List<PayoutBlockedOrderCauseResult> causes,
+        // 초과 청구 근거 (#570). 원인에 초과 청구가 없거나 근거를 계산할 수 없으면 null
+        //   막힌 순간 = 금액 검사 때 저장한 값, 지금 = 목록을 볼 때 계산한 값
+        PayoutOverchargeEvidenceResult evidenceAtBlock,
+        PayoutOverchargeEvidenceResult evidenceNow
 ) {
 }
