@@ -310,6 +310,31 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 같은_구매자에게_반환과_충전과_결제가_동시에_와도_잔액과_원장이_맞는다() throws Exception {
+        // given: 35,000원 결제 뒤 잔액 15,000원
+        paidOrder(BUYER_ID, ORDER_ID, 35_000);
+        List<Callable<Object>> requests = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            long refundId = i;
+            String paymentKey = "pay-mixed-" + i;
+            long orderId = ORDER_ID + i;
+            requests.add(() -> buyerWalletService.refundForOrder(refundId, ORDER_ID, BUYER_ID, 1_000));
+            requests.add(() -> {
+                buyerWalletService.chargeByPayment(BUYER_ID, paymentKey, 1_000);
+                return null;
+            });
+            requests.add(() -> buyerWalletService.payForOrder(BUYER_ID, orderId, 1_000));
+        }
+
+        // when
+        runConcurrently(requests);
+
+        // then: 반환 +5,000, 충전 +5,000, 결제 -5,000. 원장 이어짐과 짝은 정리 단계의 검사가 확인한다
+        assertThat(balanceOf(BUYER_ID)).isEqualTo(20_000);
+        assertThat(countLedgers(BUYER_ID)).isEqualTo(2 + 15);
+    }
+
+    @Test
     void 주문_번호가_이웃한_여러_구매자의_첫_환불이_동시에_와도_교착_없이_모두_돌려준다() throws Exception {
         // given: 구매자마다 주문 하나를 결제함. 반환 기록이 아직 없어 합계 조회가 빈 구간을 보는 경우다
         int buyerCount = 10;
@@ -347,13 +372,13 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
         buyerWalletService.payForOrder(buyerId, orderId, amount);
     }
 
-    private List<OrderRefundResult> runConcurrently(List<Callable<OrderRefundResult>> tasks) throws Exception {
+    private <T> List<T> runConcurrently(List<Callable<T>> tasks) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(tasks.size());
         CountDownLatch ready = new CountDownLatch(tasks.size());
         CountDownLatch start = new CountDownLatch(1);
-        List<Future<OrderRefundResult>> futures = new ArrayList<>();
+        List<Future<T>> futures = new ArrayList<>();
         try {
-            for (Callable<OrderRefundResult> task : tasks) {
+            for (Callable<T> task : tasks) {
                 futures.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();
@@ -362,8 +387,8 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
             }
             ready.await();
             start.countDown();
-            List<OrderRefundResult> results = new ArrayList<>();
-            for (Future<OrderRefundResult> future : futures) {
+            List<T> results = new ArrayList<>();
+            for (Future<T> future : futures) {
                 results.add(future.get(30, TimeUnit.SECONDS));
             }
             return results;
