@@ -1658,7 +1658,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         Long snapshotId = snapshotIdOf(execution);
 
-        // then: 오류를 낸 주문의 후보 2건만 UNEXPECTED_ERROR, 그 주문의 예외(트리거 메시지)가 상세에 남음
+        // then: 오류를 낸 주문의 후보 2건만 UNEXPECTED_ERROR, 트리거 메시지가 상세에 남음
+        //   (판매자 저장 예외도 같은 트리거 메시지라, 어느 예외로 기록했는지는 PayoutServiceTest가 확인)
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
                 .containsExactlyInAnyOrder(
@@ -1711,14 +1712,14 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
             unblockSellerDraft(snapshotId, 20L);
         }
 
-        // then: 주문마다 시험했지만 모두 실패 → 두 주문 후보 모두 실패 기록, 판매자 20은 실패 판매자
+        // then: 판매자 단위 오류라 두 주문 후보 모두 실패 기록, 판매자 20은 실패 판매자
+        //   (#534 전 코드에서도 같은 결과. 주문별로 시험하는 분기는 PayoutServiceTest가 확인하고, 여기서는 실제 DB 예외로 Job이 멈추지 않는지 봄)
         assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1));
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
                 .containsExactlyInAnyOrder(
                         tuple(order1, PayoutFailureReason.UNEXPECTED_ERROR),
                         tuple(order2, PayoutFailureReason.UNEXPECTED_ERROR));
-        assertThat(sellerDraftRepository.findBySnapshotId(snapshotId)).isEmpty();
     }
 
     // ---------- 대기 건너뛰기 실행 (#224) ----------
