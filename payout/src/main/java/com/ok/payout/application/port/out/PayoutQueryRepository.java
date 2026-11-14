@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 정산 조회 전용 저장소 출력 포트. 구현은 {@code adapter.out.persistence}에 있다.
@@ -151,6 +152,25 @@ public interface PayoutQueryRepository {
 
     // 그 주문에 해결되지 않은 잠그는 사유의 실패 기록이 있는지 (#568, 스냅샷의 잠금 조건과 같음)
     boolean isOrderLocked(Long orderId);
+
+    // ---------- 막힌 주문 집계 표 다시 판정 (#582) ----------
+    // 모두 주문 ID 목록이나 실패 기록 ID 범위로 읽어, 운영 시작 이후 실패 기록 전체를 읽지 않음 (payout/CLAUDE.md 설계 전제)
+
+    // 가장 큰 실패 기록 ID (기본 키 끝만 봄). 실패 기록이 없으면 0
+    long findMaxFailureId();
+
+    // 실패 기록 ID가 (afterId, upToId] 범위인 기록의 주문 ID (중복 없음, 기본 키 범위로 찾음)
+    List<Long> findOrderIdsWithFailuresBetween(long afterId, long upToId);
+
+    // 그 주문들 중 잠긴 주문 ID (isOrderLocked·스냅샷 잠금 조건과 같음). orderIds가 비면 조회하지 않고 빈 집합
+    Set<Long> findLockedOrderIds(Collection<Long> orderIds);
+
+    // 그 주문들의 실패 횟수 (countFailedRunsByOrder와 같은 기준, 0번인 주문은 결과에 없음). orderIds가 비면 빈 맵
+    Map<Long, Long> countFailedRunsOfOrders(Collection<Long> orderIds);
+
+    // 그 주문들의 해결 안 된 실패 기록 + 정산후보 종류 (사유·실행 상태·정산 여부로 거르지 않음, #568 해결 대상과 같은 범위)
+    // orderIds가 비면 빈 목록
+    List<BlockedFailureRow> findUnresolvedFailureRowsOfOrders(Collection<Long> orderIds);
 
     // 그 주문의 해결 기록을 실패 기록·정산후보와 함께 페이지 단위로 조회 (#571, 1줄씩 보기)
     // 정렬은 해결 시각 최신순 고정. 해결 요청 1번에 여러 줄이 거의 같은 시각에 생기므로 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함

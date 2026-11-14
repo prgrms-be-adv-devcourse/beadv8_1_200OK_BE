@@ -7,8 +7,10 @@ import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
 import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
 import com.ok.payout.application.port.in.PayoutResolutionResult;
 import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
+import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.domain.PayoutBlockedOrder;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureResolution;
 import com.ok.payout.domain.PayoutPolicy;
@@ -41,6 +43,7 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
 
     private final PayoutQueryRepository payoutQueryRepository;
     private final PayoutFailureResolutionRepository payoutFailureResolutionRepository;
+    private final PayoutBlockedOrderRepository payoutBlockedOrderRepository;
 
     @Override
     @Transactional
@@ -52,7 +55,7 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         // 멈춤 판정은 스냅샷과 같은 세는 SQL에 주문 조건만 더한 조회로 함: 기준이 어긋나지 않으면서 그 주문만 셈
         boolean locked = payoutQueryRepository.isOrderLocked(orderId);
         long failedRuns = payoutQueryRepository.countFailedRunsOfOrder(orderId);
-        if (!locked && failedRuns < PayoutPolicy.MAX_FAILED_RUNS) {
+        if (!locked && !PayoutPolicy.isStopped(failedRuns)) {
             throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
         }
 
@@ -87,6 +90,11 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
             }
             throw e;
         }
+
+        // 막힌 주문 집계 표(#582)의 그 줄을 "해결됨"으로: 다음 정산 Job이 끝나기 전까지 목록에 계속 "잠김"으로 보여
+        //   다른 관리자가 다시 해결하다 409를 받는 혼란을 없앰. 줄을 지우는 일은 다음 Job 끝 다시 판정이 함 (다시 막혔으면 되돌림)
+        //   표에 아직 없으면(갱신 전) 할 일 없음: 다음 갱신이 원본(이미 해결됨)으로 판정해 넣지 않음
+        payoutBlockedOrderRepository.findByOrderId(orderId).ifPresent(PayoutBlockedOrder::markResolved);
 
         PayoutFailureResolution first = saved.get(0);
         // 누가 어떤 주문을 다시 처리했는지는 정산에 영향을 주는 관리자 조치라 INFO로 남김 (메모는 길이를 예측할 수 없어 빼고 해결 기록에만 둠)

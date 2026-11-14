@@ -143,7 +143,7 @@ public class PayoutService implements PayoutUseCase {
         Set<Long> stoppedOrderIds = new HashSet<>();
         List<Long> retryOrderIds = new ArrayList<>();
         for (Map.Entry<Long, Long> entry : failedRunCounts.entrySet()) {
-            if (entry.getValue() >= PayoutPolicy.MAX_FAILED_RUNS) {
+            if (PayoutPolicy.isStopped(entry.getValue())) {
                 stoppedOrderIds.add(entry.getKey());
             } else {
                 retryOrderIds.add(entry.getKey());

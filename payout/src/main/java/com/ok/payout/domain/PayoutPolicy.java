@@ -25,6 +25,12 @@ public class PayoutPolicy {
     private PayoutPolicy() {
     }
 
+    // 실패 횟수로 본 멈춤 판정 (#549). 스냅샷·해결 API·막힌 주문 집계 표(#582)가 함께 씀
+    // 비교를 곳곳에 따로 쓰면 기준을 바꿀 때 한 곳을 빠뜨려 셋이 같은 주문에 다른 답을 낼 수 있어 한곳에 둠
+    public static boolean isStopped(long failedRuns) {
+        return failedRuns >= MAX_FAILED_RUNS;
+    }
+
     // 판매 수수료 계산 (원 미만 버림)
     // multiplyExact: long 범위를 넘으면 잘못된 값 대신 ArithmeticException으로 즉시 실패시킨다.
     // 판매 금액이 약 3경 원을 넘어야 발생하므로 현실적으로 일어나지 않아 별도 상한 검증은 두지 않는다.
