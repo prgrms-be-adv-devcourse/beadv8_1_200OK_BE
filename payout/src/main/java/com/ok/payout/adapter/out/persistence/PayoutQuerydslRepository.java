@@ -161,19 +161,22 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
 
     // 해결 기록이 있는 주문 중, 상한(to) 전 미정산 후보가 남아 있고 잠기지 않은 주문 ID (#568, 중복 없음, 조회 기간 하한 없음)
     // 해결하면 실패 횟수가 0이 되어 #549의 "1~2번 실패한 주문 다시 넣기"에 들지 않으므로, 기간 밖으로 밀린 해결 주문을 따로 고름
-    // 이미 다 정산된 주문은 미정산 조건이 빼므로 해결 기록이 쌓여도 결과는 아직 정산 안 된 주문뿐 (해결 기록 전체를 훑는 비용은 #304에서 봄)
+    // 해결 기록 쪽에서 출발함: 정산후보 표에는 주문 ID만으로 쓰는 인덱스가 없어 후보 쪽에서 출발하면 상한 전 후보를 거의 다 훑음
+    //   해결 기록은 order_id 인덱스로 주문을 고르고, 후보 조회는 UK(order_id, ship_seller_id, adjustment_id)의 앞자리로 찾음
+    //   이미 다 정산된 주문은 미정산 조건이 빼지만 해결 기록 자체는 계속 쌓이므로, 해결 기록이 크게 늘었을 때의 시간은 #304에서 봄
+    // 해결 방법을 거르지 않는 이유: 지금은 REPROCESS(다시 처리)만 있음. "정산 안 함" 같은 방법을 더하면 여기서 REPROCESS만 골라야 함
     // 해결 뒤 다시 3번 실패해 멈춘 주문은 여기서 빼지 않음 → 부르는 쪽(PayoutService.createSnapshot)이 멈춘 주문을 뺌
     @Override
     public List<Long> findResolvedOrderIdsWithUnsettledCandidatesBefore(LocalDateTime to) {
         return queryFactory
-                .select(payoutCandidateItem.orderId)
+                .select(payoutFailureResolution.orderId)
                 .distinct()
-                .from(payoutCandidateItem)
-                .where(unsettledInPeriod(null, to), lockedOrder().not(),
-                        JPAExpressions.selectOne()
-                                .from(payoutFailureResolution)
-                                .where(payoutFailureResolution.orderId.eq(payoutCandidateItem.orderId))
-                                .exists())
+                .from(payoutFailureResolution)
+                .where(JPAExpressions.selectOne()
+                        .from(payoutCandidateItem)
+                        .where(payoutCandidateItem.orderId.eq(payoutFailureResolution.orderId),
+                                unsettledInPeriod(null, to), lockedOrder().not())
+                        .exists())
                 .fetch();
     }
 
@@ -727,7 +730,8 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 실패 기록(payoutFailure)에 해결 기록이 없는지 (#568)
-    // 여러 스냅샷에 걸쳐 실패 기록을 읽는 조건(잠금, 실패 횟수)에만 씀
+    // 여러 스냅샷에 걸쳐 실패 기록을 읽는 조건(잠금 lockedOrder·isOrderLocked, 해결 서비스의 저장 대상)에만 씀
+    //   실패 횟수(countFailedRunsByOrder)는 네이티브 SQL이라 같은 조건(r.failure_id = f.id)을 SQL에 따로 씀
     // 한 스냅샷 안에서 빼는 조건(notFailedInSnapshot, findFailureRows)에는 쓰지 않음:
     //   배치가 도는 중에 해결해도 그 실행에서 이미 실패한 후보는 그 실행의 draft·확정에서 계속 빠져야 함 (해결은 다음 실행부터)
     private BooleanExpression unresolvedFailure() {

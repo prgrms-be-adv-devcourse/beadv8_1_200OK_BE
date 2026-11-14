@@ -53,6 +53,10 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         //   #549 횟수는 사유를 가리지 않고 세므로, 잠그는 사유에만 해결 기록을 달면 횟수가 남아 계속 멈춰 있음
         //   예) 초과 청구 2번 + 결과 검증 불일치 1번 = 3번 → 셋 다 해결해야 0번
         List<PayoutFailure> failures = payoutQueryRepository.findUnresolvedFailuresByOrderId(orderId);
+        // 판정 뒤 다른 요청이 먼저 해결해 비었을 수 있음 (DB 격리 수준이 READ COMMITTED일 때). 같은 뜻이라 409
+        if (failures.isEmpty()) {
+            throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
+        }
         List<PayoutFailureResolution> resolutions = new ArrayList<>();
         for (PayoutFailure failure : failures) {
             resolutions.add(PayoutFailureResolution.of(
@@ -81,15 +85,10 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
                 first.getAdminId(), first.getCreatedAt(), first.getMemo());
     }
 
-    // 예외의 원인 메시지에 해결 기록 유니크 제약 이름이 있는지 (MySQL은 "Duplicate entry ... for key '...uk_payout_failure_resolution_failure_id'")
+    // 가장 깊은 원인(DB 드라이버 예외)의 메시지에 해결 기록 유니크 제약 이름이 있는지
+    // (MySQL은 "Duplicate entry ... for key '...uk_payout_failure_resolution_failure_id'", 통합 테스트에서 실제 메시지로 확인)
     private static boolean isDuplicateResolution(DataIntegrityViolationException e) {
-        Throwable cause = e;
-        while (cause != null) {
-            if (cause.getMessage() != null && cause.getMessage().contains(DUPLICATE_RESOLUTION_CONSTRAINT)) {
-                return true;
-            }
-            cause = cause.getCause();
-        }
-        return false;
+        String message = e.getMostSpecificCause().getMessage();
+        return message != null && message.contains(DUPLICATE_RESOLUTION_CONSTRAINT);
     }
 }
