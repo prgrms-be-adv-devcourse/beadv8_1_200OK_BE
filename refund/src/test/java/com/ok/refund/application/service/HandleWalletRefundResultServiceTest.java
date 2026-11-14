@@ -502,6 +502,22 @@ class HandleWalletRefundResultServiceTest {
     }
 
     @Test
+    void 지갑을_거치지_않은_0원_환불에_지갑_실패_메시지가_와도_기록하지_않는다() {
+        // given: 0원 환불은 지갑 줄 없이 재고 줄만 있다(지갑에 보낸 적이 없다)
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
+                refund(RefundStatus.PROCESSING)));
+        givenSteps(null, step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null));
+
+        // when
+        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+
+        // then: 보낸 적 없는 지갑의 결과라 그 자체가 이상이다. 지갑 줄을 새로 만들지 않고 넘긴다(WARN)
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+    }
+
+    @Test
     void 재고_실패가_기록된_환불에_주문이_다른_실패_메시지가_와도_불일치를_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(

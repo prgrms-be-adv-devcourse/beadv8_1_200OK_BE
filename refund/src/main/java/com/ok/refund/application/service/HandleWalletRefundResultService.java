@@ -220,7 +220,8 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     }
 
     // 지갑 완료가 이미 반영된 환불이다. 완료됐거나, 지갑 완료를 받아 재고 단계가 시작된(재고 줄이 있는) 경우다.
-    // 재고 줄은 지갑 완료를 반영하는 구간에서만 만든다. 어디까지 왔는지는 #545가 어디부터 다시 할지, #546이 무엇을 되돌릴지 정하는 기준이라,
+    // 재고 줄은 지갑 완료를 반영하는 구간과, 지갑을 거치지 않는 0원 승인에서만 만든다. 0원 환불은 지갑에 보낸 적이 없어
+    // 지갑 결과가 오면 그 자체가 이상이라, 여기서 함께 걸러 기록하지 않고 WARN만 남긴다. 어디까지 왔는지는 #545가 어디부터 다시 할지, #546이 무엇을 되돌릴지 정하는 기준이라,
     // 지갑 결과로 지갑 실패를 남기면 돈을 다시 가져오지 않고 주문만 되돌려 구매자가 돈과 상품을 모두 받을 수 있다. 그래서 지갑 결과로는 남기지 않는다
     private static boolean isAfterWalletSuccess(Refund refund, RefundStep productStep) {
         return refund.getStatus() == RefundStatus.COMPLETED || productStep != null;
