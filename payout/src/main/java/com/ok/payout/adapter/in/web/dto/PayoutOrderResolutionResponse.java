@@ -11,6 +11,10 @@ public record PayoutOrderResolutionResponse(
         @Schema(description = "해결한 주문 ID", example = "100")
         Long orderId,
 
+        @Schema(description = "해결 요청 번호 (UUID). 이 요청으로 생긴 해결 기록은 모두 같은 번호이고, 해결 기록 조회에서 이 번호로 묶임",
+                example = "3f2b8c1e-7d4a-4b9e-9c21-5a6d8e0f1b23")
+        String resolutionRequestId,
+
         @Schema(description = "이번에 해결한 실패 기록 수 (해결 기록은 실패 기록마다 1건)", example = "3")
         int resolvedFailureCount,
 
@@ -28,7 +32,8 @@ public record PayoutOrderResolutionResponse(
 ) {
 
     public static PayoutOrderResolutionResponse from(PayoutOrderResolutionResult result) {
-        return new PayoutOrderResolutionResponse(result.orderId(), result.resolvedFailureCount(), result.method(),
+        return new PayoutOrderResolutionResponse(result.orderId(), result.resolutionRequestId(), result.resolvedFailureCount(),
+                result.method(),
                 result.adminId(), result.resolvedAt(), result.memo());
     }
 }

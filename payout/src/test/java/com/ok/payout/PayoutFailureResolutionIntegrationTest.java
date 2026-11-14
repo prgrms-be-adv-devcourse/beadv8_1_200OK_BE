@@ -51,6 +51,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -63,13 +64,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 통합 테스트: 잠기거나 멈춘 주문의 해결 "다시 처리" (#568)
+// 통합 테스트: 잠기거나 멈춘 주문의 해결 "다시 처리" (#568)와 해결 기록 조회 (#571)
 // - 실행(COMPLETED)은 실제 정산 Job(PayoutJobRunner.runScheduled)으로 만든다
 // - 멈춘 주문은 지갑 결제 기록 없는 후보로 실제 Job이 스스로 "결제 기록 없음"으로 실패하게 해서 만든다 (실제 흐름 그대로)
 // - 잠긴 주문·사유가 섞인 이력은 실행을 먼저 만들고, 그 스냅샷에 실패 기록을 SQL로 넣는다 (#549 PayoutFailureRetryIntegrationTest와 같은 방식)
@@ -240,6 +246,10 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
 
         // then: 잠그는 사유만이 아니라 실패 기록 3건 전부 해결 → 잠김도 멈춤도 아니고 다음 스냅샷에 들어감
         assertThat(result.resolvedFailureCount()).isEqualTo(3);
+        // 요청 1번에 생긴 3줄은 모두 같은 요청 번호 (#571 묶음 보기)
+        assertThat(resolutionRepository.findAllByOrderId(order))
+                .extracting(PayoutFailureResolution::getResolutionRequestId)
+                .containsOnly(result.resolutionRequestId());
         assertThat(payoutQueryRepository.isOrderLocked(order)).isFalse();
         assertThat(payoutQueryRepository.countFailedRunsByOrder()).doesNotContainKey(order);
         assertThat(snapshotCandidateIds()).containsExactly(candidate);
@@ -406,7 +416,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         List<PayoutFailure> failures = payoutQueryRepository.findUnresolvedFailuresByOrderId(order);
         resolve(order);
         List<PayoutFailureResolution> duplicate = List.of(
-                PayoutFailureResolution.of(failures.get(0), PayoutResolutionMethod.REPROCESS, ADMIN_ID, MEMO));
+                PayoutFailureResolution.of(failures.get(0), "test-request", PayoutResolutionMethod.REPROCESS, ADMIN_ID, MEMO));
 
         // when & then
         assertThatThrownBy(() -> resolutionRepository.saveAll(duplicate))
@@ -457,6 +467,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isCreated())                                          // 201
                 .andExpect(jsonPath("$.orderId").value(order))
+                .andExpect(jsonPath("$.resolutionRequestId").isNotEmpty())
                 .andExpect(jsonPath("$.resolvedFailureCount").value(1))
                 .andExpect(jsonPath("$.method").value("REPROCESS"))
                 .andExpect(jsonPath("$.adminId").value(ADMIN_ID))
@@ -507,7 +518,205 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.type").value(endsWith(NOTHING_TO_RESOLVE_TYPE)));
     }
 
+    // ---------- 해결 기록 조회 (#571) ----------
+
+    @Test
+    void 해결_기록을_실패_기록마다_1줄씩_최신순으로_정산후보_정보와_함께_준다() throws Exception {
+        // given: 상품 1개(대금·수수료)와 배송비가 있는 주문이 결과 검증 불일치로 잠김 → 실패 기록 3건을 해결
+        Long run = runCompleted();
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        long amountCandidate = insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 10_000L);
+        long feeCandidate = insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_000L);
+        long shippingCandidate = insertCandidateOf(order, PayoutEventType.SALE_SHIPPING_FEE, null, 3_000L);
+        insertFailureOf(run, amountCandidate, order, orderItem, "대금 상세");
+        insertFailureOf(run, feeCandidate, order, orderItem, "수수료 상세");
+        insertFailureOf(run, shippingCandidate, order, null, "배송비 상세");
+        PayoutOrderResolutionResult resolved = resolve(order);
+
+        // when & then: 해결 기록 ID 역순(나중에 저장한 배송비 줄이 먼저), 3줄 모두 같은 요청 번호
+        mockMvc.perform(resolutionsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.content[*].eventType").value(contains("SALE_SHIPPING_FEE", "SALE_FEE", "SALE_AMOUNT")))
+                .andExpect(jsonPath("$.content[*].amount").value(contains(3_000, 1_000, 10_000)))
+                .andExpect(jsonPath("$.content[*].resolutionRequestId").value(everyItem(is(resolved.resolutionRequestId()))))
+                // 배송비 줄의 모든 칸
+                .andExpect(jsonPath("$.content[0].resolutionId").isNumber())
+                .andExpect(jsonPath("$.content[0].failureId").isNumber())
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].orderItemId").value(nullValue()))       // 배송비는 주문상품 ID 없음
+                .andExpect(jsonPath("$.content[0].sellerId").value(SELLER_ID))
+                .andExpect(jsonPath("$.content[0].reason").value("VERIFY_MISMATCH"))
+                .andExpect(jsonPath("$.content[0].category").value("SYSTEM"))
+                .andExpect(jsonPath("$.content[0].detail").value("배송비 상세"))
+                .andExpect(jsonPath("$.content[0].failedAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[0].method").value("REPROCESS"))
+                .andExpect(jsonPath("$.content[0].adminId").value(ADMIN_ID))
+                .andExpect(jsonPath("$.content[0].resolvedAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[0].memo").value(MEMO))
+                // 상품 줄은 주문상품 ID가 있음
+                .andExpect(jsonPath("$.content[2].orderItemId").value(orderItem))
+                .andExpect(jsonPath("$.content[2].detail").value("대금 상세"));
+    }
+
+    @Test
+    void 두_번_해결한_주문은_나중_해결이_먼저_나오고_페이지를_나눌_수_있다() throws Exception {
+        // given: 잠김 → 해결 → 다시 잠김 → 다시 해결 (해결 요청 2번, 줄 2개)
+        List<Long> runs = runCompleted(2);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(runs.get(0), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult first = resolve(order);
+        insertFailure(runs.get(1), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult second = resolve(order);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 한 페이지에 1줄씩, 첫 페이지는 나중 해결
+        mockMvc.perform(resolutionsRequest(order).param("page", "0").param("size", "1").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[0].resolutionRequestId").value(second.resolutionRequestId()));
+        mockMvc.perform(resolutionsRequest(order).param("page", "1").param("size", "1").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].resolutionRequestId").value(first.resolutionRequestId()));
+        assertThat(first.resolutionRequestId()).isNotEqualTo(second.resolutionRequestId());
+    }
+
+    @Test
+    void 해결_기록이_없는_주문은_빈_목록이다() throws Exception {
+        // given: 잠겼지만 아직 해결하지 않은 주문
+        long order = givenLockedOrder();
+
+        // when & then
+        mockMvc.perform(resolutionsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content").isEmpty());
+    }
+
+    @Test
+    void 해결_기록_조회는_토큰이_없으면_401_관리자가_아니면_403이다() throws Exception {
+        // given
+        long order = givenLockedOrder();
+        resolve(order);
+
+        // when & then
+        mockMvc.perform(resolutionsRequest(order))
+                .andExpect(status().isUnauthorized());                                    // 401
+        mockMvc.perform(resolutionsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(7L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());                                       // 403
+    }
+
+    @Test
+    void 해결_기록_조회의_페이지_크기가_범위를_벗어나면_422다() throws Exception {
+        // when & then
+        mockMvc.perform(resolutionsRequest(nextOrderId()).param("size", "101")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isUnprocessableEntity());                             // 422
+    }
+
+    @Test
+    void 묶음_보기는_해결_요청_1번을_1줄로_최신순으로_준다() throws Exception {
+        // given: 첫 해결은 실패 기록 3건(성공한 실행 3번에서 멈춤), 다시 잠긴 뒤 두 번째 해결은 1건
+        List<Long> runs = runCompleted(4);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(runs.get(0), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(runs.get(1), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(runs.get(2), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        PayoutOrderResolutionResult first = resolve(order);
+        insertFailure(runs.get(3), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult second = resolve(order);
+
+        // when & then: 해결 기록은 4줄이지만 요청은 2줄, 나중 요청이 먼저
+        mockMvc.perform(resolutionRequestsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[*].resolutionRequestId")
+                        .value(contains(second.resolutionRequestId(), first.resolutionRequestId())))
+                .andExpect(jsonPath("$.content[*].resolvedFailureCount").value(contains(1, 3)))
+                .andExpect(jsonPath("$.content[1].orderId").value(order))
+                .andExpect(jsonPath("$.content[1].method").value("REPROCESS"))
+                .andExpect(jsonPath("$.content[1].adminId").value(ADMIN_ID))
+                .andExpect(jsonPath("$.content[1].resolvedAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[1].memo").value(MEMO));
+        assertThat(resolutionRepository.findAllByOrderId(order)).hasSize(4);
+    }
+
+    @Test
+    void 묶음_보기도_페이지를_요청_단위로_나눈다() throws Exception {
+        // given: 해결 요청 2번 (첫 요청은 줄 2개)
+        List<Long> runs = runCompleted(3);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(runs.get(0), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        insertFailure(runs.get(1), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult first = resolve(order);
+        insertFailure(runs.get(2), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        resolve(order);
+
+        // when & then: 크기 1이면 요청 수만큼 2쪽, 둘째 쪽은 첫 요청 (줄 수 3이 아니라 요청 수 2로 셈)
+        mockMvc.perform(resolutionRequestsRequest(order).param("page", "1").param("size", "1")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[0].resolutionRequestId").value(first.resolutionRequestId()))
+                .andExpect(jsonPath("$.content[0].resolvedFailureCount").value(2));
+    }
+
+    @Test
+    void 묶음_보기는_해결_기록이_없으면_빈_목록이고_관리자만_볼_수_있다() throws Exception {
+        // given
+        long order = givenLockedOrder();
+
+        // when & then
+        mockMvc.perform(resolutionRequestsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content").isEmpty());
+        mockMvc.perform(resolutionRequestsRequest(order))
+                .andExpect(status().isUnauthorized());                                    // 401
+        mockMvc.perform(resolutionRequestsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(7L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());                                       // 403
+    }
+
     // ---------- 도우미 ----------
+
+    private MockHttpServletRequestBuilder resolutionsRequest(long orderId) {
+        return get("/api/v1/admin/payouts/orders/{orderId}/resolutions", orderId);
+    }
+
+    private MockHttpServletRequestBuilder resolutionRequestsRequest(long orderId) {
+        return get("/api/v1/admin/payouts/orders/{orderId}/resolution-requests", orderId);
+    }
+
+    // 종류·주문상품·금액을 정해 정산후보를 넣음 (배송비는 orderItemId null). 지갑 결제 기록은 넣지 않음: 해결 기록 조회만 보는 테스트용
+    private long insertCandidateOf(long orderId, PayoutEventType eventType, Long orderItemId, long amount) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(30);
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderId, orderItemId, SELLER_ID, amount, createdAt, createdAt);
+        for (PayoutCandidateItem candidate : candidateRepository.findAllByOrderId(orderId)) {
+            if (candidate.getEventType() == eventType && Objects.equals(candidate.getOrderItemId(), orderItemId)) {
+                return candidate.getId();
+            }
+        }
+        throw new IllegalStateException("정산후보가 없습니다. orderId=" + orderId);
+    }
+
+    // 실제 실패 기록처럼 후보의 주문상품 ID를 복사하고 상세를 정해 넣음 (잠그는 사유 VERIFY_MISMATCH)
+    private void insertFailureOf(Long snapshotId, long candidateId, long orderId, Long orderItemId, String detail) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, orderId, orderItemId, SELLER_ID, PayoutFailureReason.VERIFY_MISMATCH.name(),
+                detail, now, now);
+    }
 
     private PayoutOrderResolutionResult resolve(long orderId) {
         return resolutionUseCase.resolveOrder(new PayoutOrderResolveCommand(orderId, ADMIN_ID, MEMO));

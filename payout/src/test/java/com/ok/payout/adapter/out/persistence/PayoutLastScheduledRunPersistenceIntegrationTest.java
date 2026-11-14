@@ -199,6 +199,8 @@ class PayoutLastScheduledRunPersistenceIntegrationTest extends AbstractIntegrati
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
         jdbcTemplate.update("DELETE FROM payout_seller_draft");
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
+        // 해결 기록은 실패 기록을 외래키로 가리켜 먼저 지움 (#568·#571)
+        jdbcTemplate.update("DELETE FROM payout_failure_resolution");
         jdbcTemplate.update("DELETE FROM payout_failure");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");

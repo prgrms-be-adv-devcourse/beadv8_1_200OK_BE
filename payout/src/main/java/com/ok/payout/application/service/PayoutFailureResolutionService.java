@@ -4,6 +4,9 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutOrderResolutionResult;
 import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
+import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
+import com.ok.payout.application.port.in.PayoutResolutionResult;
+import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
 import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.PayoutFailure;
@@ -14,14 +17,17 @@ import com.ok.payout.exception.PayoutErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
-// 잠기거나 멈춘 주문의 해결 (#568)
+// 잠기거나 멈춘 주문의 해결 (#568)과 해결 기록 조회 (#571)
 // 해결 = "다시 검사해도 된다"는 관리자 표시. 돈을 바로 내보내지 않고, 다음 배치가 금액 검사·결과 검증부터 다시 거침
 //   그래서 데이터·코드를 고치지 않고 해결하면 새 실패 기록이 생겨 다시 잠기거나 멈춤 (되돌리기는 두지 않음: 새 실패 기록이 해결을 상쇄)
 @Slf4j
@@ -58,10 +64,13 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         if (failures.isEmpty()) {
             throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
         }
+        // 이 요청으로 만드는 줄은 모두 같은 요청 번호 (#571): 해결 기록 조회에서 요청 1번을 한 줄로 묶어 보여 주려고
+        //   UUID라 DB에 번호를 먼저 받으러 가지 않고(별도 표·시퀀스 없음) 동시에 다른 주문을 해결해도 겹치지 않음
+        String resolutionRequestId = UUID.randomUUID().toString();
         List<PayoutFailureResolution> resolutions = new ArrayList<>();
         for (PayoutFailure failure : failures) {
             resolutions.add(PayoutFailureResolution.of(
-                    failure, PayoutResolutionMethod.REPROCESS, command.adminId(), command.memo()));
+                    failure, resolutionRequestId, PayoutResolutionMethod.REPROCESS, command.adminId(), command.memo()));
         }
 
         // 같은 주문을 동시에 두 번 해결하면 둘 다 위 판정을 통과한 뒤, 두 번째 저장이 실패 기록 ID 유니크에 걸림
@@ -82,8 +91,22 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         PayoutFailureResolution first = saved.get(0);
         // 누가 어떤 주문을 다시 처리했는지는 정산에 영향을 주는 관리자 조치라 INFO로 남김 (메모는 길이를 예측할 수 없어 빼고 해결 기록에만 둠)
         log.info("정산 실패 해결. orderId={}, adminId={}, 해결한 실패 기록 수={}", orderId, command.adminId(), saved.size());
-        return new PayoutOrderResolutionResult(orderId, saved.size(), first.getMethod().name(),
+        return new PayoutOrderResolutionResult(orderId, resolutionRequestId, saved.size(), first.getMethod().name(),
                 first.getAdminId(), first.getCreatedAt(), first.getMemo());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionResult> getResolutions(Long orderId, PayoutResolutionSearchQuery query) {
+        return payoutQueryRepository.findResolutionsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionResult);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionRequestResult> getResolutionRequests(Long orderId, PayoutResolutionSearchQuery query) {
+        return payoutQueryRepository.findResolutionRequestsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionRequestResult);
     }
 
     // 원인 사슬에서 DB 드라이버 예외(SQLException)를 찾아 오류 번호가 중복 키(1062)인지 봄 (통합 테스트에서 실제 MySQL로 확인)
