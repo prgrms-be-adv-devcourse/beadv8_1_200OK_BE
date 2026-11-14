@@ -392,7 +392,7 @@ public class PayoutService implements PayoutUseCase {
             } catch (RuntimeException e) {
                 // 예외를 다시 던지지 않고 기록으로 남기므로 팀 로그 규칙의 "던질 때 로그 금지"에 해당하지 않음
                 // 그대로 묻히지 않게 스택 트레이스까지 WARN으로 남김 (계속 진행하지만 원인 확인이 필요한 이상)
-                log.warn("정산 draft 판매자 처리 실패, 주문별로 다시 시도하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
+                log.warn("정산 draft 판매자 처리 실패, 주문이 여럿이면 주문별로 다시 시도하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
                         snapshotId, sellerId, sellerCandidates.size(), e);
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
                 // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify가 "draft 누락"으로 그 주문들을 잠금 (#290)
