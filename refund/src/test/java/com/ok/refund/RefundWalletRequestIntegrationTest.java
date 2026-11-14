@@ -110,7 +110,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         // when
         approve(refundId)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("COMPLETED")))
+                .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.refundAmount", is(10000)));
 
         // then: 이번 환불의 메시지가 정확히 한 건, 키는 orderId

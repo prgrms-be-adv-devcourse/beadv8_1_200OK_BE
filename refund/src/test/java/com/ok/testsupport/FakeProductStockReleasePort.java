@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 상품 모듈 재고 일부 해제 API(#363) 대신 되돌린 값을 메모리에 남기는 Fake.
@@ -23,7 +24,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public class FakeProductStockReleasePort implements ProductStockReleasePort {
 
     private final Map<Long, StockRelease> released = new ConcurrentHashMap<>();
+    // 호출 횟수. 실제 상품 API처럼 두 번째부터는 다시 풀지 않는 것과 별개로, "서비스가 두 번 불렀는지"를 확인하려고 센다
+    private final Map<Long, AtomicInteger> callCounts = new ConcurrentHashMap<>();
     private volatile boolean failing;
+
+    /** 이 환불로 재고 복구를 부른 횟수(실패한 호출은 세지 않는다). 같은 완료 메시지가 두 번 와도 한 번만 불러야 하는 것을 확인할 때 쓴다 */
+    public int releaseCallCountOf(Long refundId) {
+        AtomicInteger count = callCounts.get(refundId);
+        return count == null ? 0 : count.get();
+    }
 
     /** 실제 어댑터가 상품 서버 꺼짐·타임아웃·오류 응답을 바꾸는 것처럼, 이후 호출이 {@code PRODUCT_API_FAILED}를 던지게 한다 */
     public void fail() {
@@ -32,6 +41,7 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
 
     public void clear() {
         released.clear();
+        callCounts.clear();
         failing = false;
     }
 
@@ -45,6 +55,7 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
         if (failing) {
             throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
         }
+        callCounts.computeIfAbsent(release.refundId(), id -> new AtomicInteger()).incrementAndGet();
         released.putIfAbsent(release.refundId(), release);
     }
 }
