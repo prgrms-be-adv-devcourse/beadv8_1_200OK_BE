@@ -7,11 +7,14 @@ import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +41,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     private final PayoutJobRunner payoutJobRunner;
     private final PayoutUseCase payoutUseCase;
+    private final PayoutFailureResolutionUseCase payoutFailureResolutionUseCase;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
     @Override
@@ -113,5 +117,19 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         payoutUseCase.createAdjustment(memberId, request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    // 잠기거나 멈춘 주문 해결 "다시 처리" (#568). 다음 배치에서 그 주문을 금액 검사·결과 검증부터 다시 거쳐 정산함
+    // 해결 기록이 새로 생기므로 201, 응답은 방금 저장한 해결 기록 (나중에 보는 조회는 #571)
+    // 해결한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받음 (조정 API와 같음)
+    @Override
+    @PostMapping("/orders/{orderId}/resolution")
+    public ResponseEntity<PayoutOrderResolutionResponse> resolveOrder(
+            @CurrentMemberId Long memberId,
+            @PathVariable Long orderId,
+            @Valid @RequestBody PayoutOrderResolveRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(PayoutOrderResolutionResponse.from(
+                payoutFailureResolutionUseCase.resolveOrder(request.toCommand(orderId, memberId))));
     }
 }

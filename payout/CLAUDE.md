@@ -43,7 +43,7 @@
 - `adapter/in/web`은 경로가 `controller`가 아니라 `api.md`가 자동으로 로드되지 않는다. 직접 읽고 따른다.
 - 저장소 포트에 메서드를 더하면 쿼리 애노테이션(`@Query`, `@Modifying`, `@EntityGraph`)은 `adapter/out/persistence`의 `*JpaRepository`에 `@Override`로 다시 선언한다. 포트에는 Spring Data를 두지 않는다.
 - 네이티브 SQL은 되도록 쓰지 않는다. 조회는 Querydsl, 저장은 Spring Data JPA로 한다. JPA로 할 수 없을 때만 쓰고, 그 메서드 주석에 "왜 JPA로 안 되는지"를 적는다. 지금 쓰는 곳은 세 곳이다.
-  - JPA 엔티티가 아닌 Spring Batch 실행 기록(`BATCH_*`)을 읽음: `PayoutQuerydslRepository`의 `findLastCompletedScheduledRequestedAt`(#390), `countFailedRunsByOrder`(#549, 성공한 실행만 걸러 주문별로 세는 일을 DB 안에서 끝내려고. 자바에서 거르면 실패가 쌓일수록 옮기는 줄이 늘어남)
+  - JPA 엔티티가 아닌 Spring Batch 실행 기록(`BATCH_*`)을 읽음: `PayoutQuerydslRepository`의 `findLastCompletedScheduledRequestedAt`(#390), `countFailedRunsByOrder`(#549, 성공한 실행만 걸러 주문별로 세는 일을 DB 안에서 끝내려고. 자바에서 거르면 실패가 쌓일수록 옮기는 줄이 늘어남)와 같은 SQL 앞부분에 주문 조건만 더한 `countFailedRunsOfOrder`(#568, 해결 API의 멈춤 판정)
   - MySQL 전용 "없으면 넣기"(`INSERT ... ON DUPLICATE KEY`): `PayoutCandidateItemJpaRepository`의 `insertShippingFeeIfAbsent`(#309)
   - 이유: SQL 문자열은 표·열 이름을 틀려도 컴파일 때 잡히지 않고, 표 이름 앞 스키마(`PayoutSchema.NAME`)를 빠뜨리면 로컬 테스트는 통과해도 운영에서만 실패한다(`entity.md`). (사용자 결정, 2026-11-13)
 
