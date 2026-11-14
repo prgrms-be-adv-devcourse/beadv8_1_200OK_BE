@@ -2,12 +2,16 @@ package com.ok.refund;
 
 import com.jayway.jsonpath.JsonPath;
 import com.ok.refund.adapter.out.event.RefundTopics;
+import com.ok.refund.adapter.out.persistence.RefundJpaEntity;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
+import com.ok.testsupport.FakeProductStockReleasePort;
 import com.ok.testsupport.TestAccessTokens;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -70,6 +74,10 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     RefundJpaRepository refundJpaRepository;
     @Autowired
     FakeOrderQueryPort orderQueryPort;
+    @Autowired
+    FakeOrderCancellationPort orderCancellationPort;
+    @Autowired
+    FakeProductStockReleasePort productStockReleasePort;
     // yaml(spring.kafka)과 테스트 컨테이너 주소로 자동 설정된 컨슈머 팩토리
     @Autowired
     ConsumerFactory<?, ?> consumerFactory;
@@ -89,6 +97,8 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         refundJpaRepository.deleteAllInBatch();
         // 통합 테스트는 컨텍스트(Fake 빈)를 함께 쓰므로 비우지 않으면 다른 테스트로 값이 넘어간다
         orderQueryPort.clear();
+        orderCancellationPort.clear();
+        productStockReleasePort.clear();
     }
 
     @Test
@@ -138,6 +148,55 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(readMessagesOf(refundId, before)).isEmpty();
+    }
+
+    // 승인 때는 출고 전이었는데 주문에 알리는 사이 출고됐다. 주문을 지갑보다 먼저 부르므로 돈이 나가기 전에 거절로 끝나야 한다
+    @Test
+    void 승인_뒤_주문이_반영을_거절하면_REJECTED로_응답하고_반환_요청을_보내지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        orderCancellationPort.markShipped(ORDER_ITEM_ID);
+        Map<TopicPartition, Long> before = endOffsets();
+
+        // when
+        approve(refundId)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("REJECTED")))
+                .andExpect(jsonPath("$.rejectReason", is("이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.")));
+
+        // then
+        assertThat(readMessagesOf(refundId, before)).isEmpty();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+        assertThat(orderCancellationPort.reflectedOf(refundId)).isEmpty();
+        // then: 저장된 행도 거절로 끝났다. 거절이면 배송비 정산은 0, 같은 상품의 진행 중 칸은 비어 다시 환불을 요청할 수 있다
+        RefundJpaEntity sut = refundJpaRepository.findById(refundId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.REJECTED);
+            softly.assertThat(sut.getRejectReason()).isNotBlank();
+            softly.assertThat(sut.getShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getRemoteAreaFeeAmount()).isZero();
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isZero();
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
+        });
+    }
+
+    // 주문에 알리지 못하면(장애) 지갑보다 먼저 멈춰야 한다. 주문이 모르는 취소의 돈이 나가면 배송될 수도 있는 상품값을 돌려주게 된다
+    @Test
+    void 승인_뒤_주문_반영이_실패하면_반환_요청을_보내지_않는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        orderCancellationPort.fail();
+        Map<TopicPartition, Long> before = endOffsets();
+
+        // when
+        approve(refundId)
+                .andExpect(status().isServiceUnavailable());
+
+        // then: 환불은 처리 중에 머물고 지갑 메시지·재고 복구는 없다
+        assertThat(refundJpaRepository.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        assertThat(readMessagesOf(refundId, before)).isEmpty();
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
     // ---------- 도우미: 요청·승인 ----------
