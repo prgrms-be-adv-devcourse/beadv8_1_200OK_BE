@@ -5,6 +5,8 @@ import com.ok.wallet.domain.WalletMessageFailure;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
+
 /**
  * 출력 포트 {@link WalletMessageFailureRepository}를 {@link WalletMessageFailureJpaRepository}에 넘겨 구현한다.
  */
@@ -15,8 +17,8 @@ public class WalletMessageFailureRepositoryAdapter implements WalletMessageFailu
     private final WalletMessageFailureJpaRepository walletMessageFailureJpaRepository;
 
     @Override
-    public boolean exists(String topic, int kafkaPartition, long kafkaOffset) {
-        return walletMessageFailureJpaRepository.existsByTopicAndKafkaPartitionAndKafkaOffset(
+    public Optional<WalletMessageFailure> find(String topic, int kafkaPartition, long kafkaOffset) {
+        return walletMessageFailureJpaRepository.findByTopicAndKafkaPartitionAndKafkaOffset(
                 topic, kafkaPartition, kafkaOffset);
     }
 

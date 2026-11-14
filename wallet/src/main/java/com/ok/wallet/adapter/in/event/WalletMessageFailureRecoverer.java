@@ -53,8 +53,14 @@ class WalletMessageFailureRecoverer implements ConsumerRecordRecoverer {
         if (value == null) {
             return null;
         }
-        // 읽은 DTO를 다시 JSON으로 쓴다. 받은 바이트와 띄어쓰기·필드 순서는 다를 수 있지만 필드 값은 같아 다시 처리하는 데 충분하다
-        return jsonMapper.writeValueAsString(value);
+        // 읽은 DTO를 다시 JSON으로 쓴다. 받은 바이트와 띄어쓰기·필드 순서는 다를 수 있고, DTO에 없는 필드는 읽을 때 버려져 빠진다.
+        // 지갑이 쓰는 필드 값은 같아 다시 처리하는 데 충분하다
+        try {
+            return jsonMapper.writeValueAsString(value);
+        } catch (RuntimeException e) {
+            // 다시 JSON으로 쓰는 실패는 기다려도 풀리지 않는다. 여기서 예외를 내면 같은 메시지를 계속 다시 받아 파티션이 멈추므로 값의 문자열로 남긴다
+            return String.valueOf(value);
+        }
     }
 
     private static DeserializationException findDeserializationException(Throwable exception) {

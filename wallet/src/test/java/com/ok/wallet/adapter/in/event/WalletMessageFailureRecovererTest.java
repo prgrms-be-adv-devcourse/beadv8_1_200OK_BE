@@ -99,6 +99,28 @@ class WalletMessageFailureRecovererTest {
         assertThat(recordedCommand().failureReason()).isEqualTo("NullPointerException");
     }
 
+    // 접근자가 예외를 던져 JSON으로 다시 쓸 수 없는 값. record의 toString은 접근자를 거치지 않고 필드를 바로 읽는다
+    record UnwritableMessage(Long payoutId) {
+        @Override
+        public Long payoutId() {
+            throw new IllegalStateException("읽을 수 없음");
+        }
+    }
+
+    @Test
+    void 값을_JSON으로_다시_쓸_수_없으면_값의_문자열로_남기고_기록은_계속한다() {
+        // given
+        ConsumerRecord<String, Object> record = new ConsumerRecord<>(TOPIC, 0, 3L, "12", new UnwritableMessage(12L));
+        Exception exception = new ListenerExecutionFailedException("리스너 실패",
+                new IllegalArgumentException("amount 없음"));
+
+        // when
+        recoverer.accept(record, exception);
+
+        // then: 예외로 끝나면 같은 메시지를 계속 다시 받으므로, 기록이 남는지가 핵심이다
+        assertThat(recordedCommand().payload()).isEqualTo("UnwritableMessage[payoutId=12]");
+    }
+
     private MessageFailureCommand recordedCommand() {
         ArgumentCaptor<MessageFailureCommand> captor = ArgumentCaptor.forClass(MessageFailureCommand.class);
         then(messageFailureUseCase).should().record(captor.capture());
