@@ -12,16 +12,11 @@ import java.util.Optional;
 public interface RefreshTokenRepository {
 
     /**
-     * 지금 쓸 수 있는 토큰의 해시로 저장 기록을 조회한다.
-     * 클라이언트가 보낸 원문을 같은 방식으로 해시한 뒤 이 메서드로 찾는다.
-     */
-    Optional<RefreshToken> findByTokenHash(String tokenHash);
-
-    /**
      * 지금 쓸 수 있는 토큰의 해시로 기록의 id만 잠금 없이 조회한다. 재발급에서 {@link #findForUpdateById}로 잠그기 전에 쓴다.
      *
      * <p>엔티티가 아니라 id만 받는 이유: 엔티티를 먼저 읽으면 영속성 컨텍스트에 남아, 뒤의 잠금 조회가 행을 잠그기만 하고
      * 다른 요청이 그사이 바꾼 해시를 다시 읽지 않는다. 행을 지우지 않고 해시를 바꾸는 회전에서는 그러면 같은 토큰이 두 번 쓰인다.
+     * 같은 이유로 해시로 엔티티를 바로 읽는 조회는 포트에 두지 않는다.
      * 구현은 {@code RefreshTokenJpaRepository}가 쿼리를 다시 선언해 만든다.
      */
     Optional<Long> findIdByTokenHash(String tokenHash);

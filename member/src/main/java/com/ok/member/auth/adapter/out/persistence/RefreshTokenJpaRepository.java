@@ -40,6 +40,10 @@ public interface RefreshTokenJpaRepository extends JpaRepository<RefreshToken, L
             + "WHERE expires_at < :now ORDER BY expires_at, id LIMIT :batchSize", nativeQuery = true)
     int deleteExpiredBatch(@Param("now") LocalDateTime now, @Param("batchSize") int batchSize);
 
+    // 테스트에서 저장된 행을 확인할 때만 쓴다. 서비스가 쓰면 재발급의 해시 재비교가 깨질 수 있어 포트에는 두지 않는다
+    // (RefreshTokenRepository.findIdByTokenHash 참고)
+    Optional<RefreshToken> findByTokenHash(String tokenHash);
+
     // JpaRepository와 포트가 같은 메서드를 다른 제네릭 형태로 물려줘 이 타입으로 부르면 모호한 호출이 된다.
     // 여기서 다시 선언해 하나로 합친다. 구현은 그대로 Spring Data 기본 구현이다
     @Override
