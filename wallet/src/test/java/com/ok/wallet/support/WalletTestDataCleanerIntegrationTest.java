@@ -370,8 +370,8 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
     }
 
     private long countWalletRows() {
-        return Stream.of("wallet_order_payment", "wallet_charge", "buyer_wallet_ledger", "seller_wallet_ledger",
-                        "buyer_wallet", "seller_wallet")
+        return Stream.of("wallet_order_refund", "wallet_order_payment", "wallet_charge", "buyer_wallet_ledger",
+                        "seller_wallet_ledger", "buyer_wallet", "seller_wallet")
                 .mapToLong(table -> jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class))
                 .sum();
     }

@@ -23,6 +23,7 @@ public class WalletTestDataCleaner {
 
     // 원장이 지갑을 외래 키로 참조하므로 원장을 먼저 지운다
     private static final List<String> DELETE_SQLS = List.of(
+            "DELETE FROM wallet_order_refund",
             "DELETE FROM wallet_order_payment",
             "DELETE FROM wallet_charge",
             "DELETE FROM buyer_wallet_ledger",
