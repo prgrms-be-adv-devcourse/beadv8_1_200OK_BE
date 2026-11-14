@@ -10,6 +10,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
@@ -145,5 +146,18 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutFailureResolutionUseCase.getResolutions(orderId, request.toQuery()).map(PayoutResolutionResponse::from)));
+    }
+
+    // 해결 기록 조회 (#571, 묶음 보기): 해결 요청 1번 = 1줄. 1줄씩 보기와 같은 주문을 프런트가 골라 볼 수 있게 둘 다 둠
+    // 경로를 /resolutions/grouped 대신 /resolution-requests로 한 것: "해결 요청"이 관리자가 한 번 누른 실제 단위라 리소스(복수형 명사)로 이름 붙임 (api.md)
+    @Override
+    @GetMapping("/orders/{orderId}/resolution-requests")
+    public ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequests(
+            @PathVariable Long orderId,
+            @Valid @ModelAttribute PayoutResolutionSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutFailureResolutionUseCase.getResolutionRequests(orderId, request.toQuery())
+                        .map(PayoutResolutionRequestResponse::from)));
     }
 }

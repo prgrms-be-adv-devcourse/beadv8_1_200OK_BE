@@ -14,4 +14,7 @@ public interface PayoutFailureResolutionUseCase {
     // 그 주문의 해결 기록을 실패 기록 1건 = 1줄로 조회 (#571). 해결 시각 최신순(같으면 해결 기록 ID 역순)
     // 해결 기록이 없는 주문은 빈 페이지 (정산 모듈은 주문 표가 없어 "없는 주문"을 구별할 수 없음)
     Page<PayoutResolutionResult> getResolutions(Long orderId, PayoutResolutionSearchQuery query);
+
+    // 그 주문의 해결 기록을 해결 요청 1번 = 1줄로 묶어 조회 (#571). 해결 시각 최신순, 해결 기록이 없으면 빈 페이지
+    Page<PayoutResolutionRequestResult> getResolutionRequests(Long orderId, PayoutResolutionSearchQuery query);
 }

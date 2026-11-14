@@ -617,10 +617,80 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableEntity());                             // 422
     }
 
+    @Test
+    void 묶음_보기는_해결_요청_1번을_1줄로_최신순으로_준다() throws Exception {
+        // given: 첫 해결은 실패 기록 3건(성공한 실행 3번에서 멈춤), 다시 잠긴 뒤 두 번째 해결은 1건
+        List<Long> runs = runCompleted(4);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(runs.get(0), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(runs.get(1), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(runs.get(2), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        PayoutOrderResolutionResult first = resolve(order);
+        insertFailure(runs.get(3), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult second = resolve(order);
+
+        // when & then: 해결 기록은 4줄이지만 요청은 2줄, 나중 요청이 먼저
+        mockMvc.perform(resolutionRequestsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[*].resolutionRequestId")
+                        .value(contains(second.resolutionRequestId(), first.resolutionRequestId())))
+                .andExpect(jsonPath("$.content[*].resolvedFailureCount").value(contains(1, 3)))
+                .andExpect(jsonPath("$.content[1].orderId").value(order))
+                .andExpect(jsonPath("$.content[1].method").value("REPROCESS"))
+                .andExpect(jsonPath("$.content[1].adminId").value(ADMIN_ID))
+                .andExpect(jsonPath("$.content[1].resolvedAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[1].memo").value(MEMO));
+        assertThat(resolutionRepository.findAllByOrderId(order)).hasSize(4);
+    }
+
+    @Test
+    void 묶음_보기도_페이지를_요청_단위로_나눈다() throws Exception {
+        // given: 해결 요청 2번 (첫 요청은 줄 2개)
+        List<Long> runs = runCompleted(3);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(runs.get(0), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        insertFailure(runs.get(1), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult first = resolve(order);
+        insertFailure(runs.get(2), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        resolve(order);
+
+        // when & then: 크기 1이면 요청 수만큼 2쪽, 둘째 쪽은 첫 요청 (줄 수 3이 아니라 요청 수 2로 셈)
+        mockMvc.perform(resolutionRequestsRequest(order).param("page", "1").param("size", "1")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[0].resolutionRequestId").value(first.resolutionRequestId()))
+                .andExpect(jsonPath("$.content[0].resolvedFailureCount").value(2));
+    }
+
+    @Test
+    void 묶음_보기는_해결_기록이_없으면_빈_목록이고_관리자만_볼_수_있다() throws Exception {
+        // given
+        long order = givenLockedOrder();
+
+        // when & then
+        mockMvc.perform(resolutionRequestsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content").isEmpty());
+        mockMvc.perform(resolutionRequestsRequest(order))
+                .andExpect(status().isUnauthorized());                                    // 401
+        mockMvc.perform(resolutionRequestsRequest(order).header(HttpHeaders.AUTHORIZATION, tokens.bearer(7L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());                                       // 403
+    }
+
     // ---------- 도우미 ----------
 
     private MockHttpServletRequestBuilder resolutionsRequest(long orderId) {
         return get("/api/v1/admin/payouts/orders/{orderId}/resolutions", orderId);
+    }
+
+    private MockHttpServletRequestBuilder resolutionRequestsRequest(long orderId) {
+        return get("/api/v1/admin/payouts/orders/{orderId}/resolution-requests", orderId);
     }
 
     // 종류·주문상품·금액을 정해 정산후보를 넣음 (배송비는 orderItemId null). 지갑 결제 기록은 넣지 않음: 해결 기록 조회만 보는 테스트용

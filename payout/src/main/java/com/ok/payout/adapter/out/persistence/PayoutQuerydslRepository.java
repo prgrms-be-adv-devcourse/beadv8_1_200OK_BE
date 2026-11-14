@@ -7,6 +7,7 @@ import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
 import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
+import com.ok.payout.application.port.out.PayoutResolutionRequestRow;
 import com.ok.payout.application.port.out.PayoutResolutionRow;
 import com.ok.payout.application.port.out.SellerTotalRow;
 import com.ok.payout.application.port.out.SnapshotItemRow;
@@ -258,6 +259,43 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return PageableExecutionUtils.getPage(content, pageable, () -> {
             Long count = queryFactory
                     .select(payoutFailureResolution.count())
+                    .from(payoutFailureResolution)
+                    .where(payoutFailureResolution.orderId.eq(orderId))
+                    .fetchOne();
+            return Objects.requireNonNullElse(count, 0L);
+        });
+    }
+
+    // 해결 요청 묶음 (#571): 요청 번호로 묶음. 같은 요청의 줄은 주문·방법·관리자·메모가 같아 함께 묶어도 줄이 갈라지지 않음
+    //   (MySQL ONLY_FULL_GROUP_BY에서 집계하지 않는 칸은 모두 GROUP BY에 있어야 해서 함께 적음)
+    // 해결 시각은 줄마다 따로 찍혀(마이크로초) 그 요청의 가장 이른 값을 씀. 같으면 id가 큰(나중에 저장한) 요청이 먼저
+    // 개수는 서로 다른 요청 번호 수
+    @Override
+    public Page<PayoutResolutionRequestRow> findResolutionRequestsByOrderId(Long orderId, Pageable pageable) {
+        List<PayoutResolutionRequestRow> content = queryFactory
+                .select(Projections.constructor(PayoutResolutionRequestRow.class,
+                        payoutFailureResolution.resolutionRequestId,
+                        payoutFailureResolution.orderId,
+                        payoutFailureResolution.method,
+                        payoutFailureResolution.adminId,
+                        payoutFailureResolution.createdAt.min(),
+                        payoutFailureResolution.memo,
+                        payoutFailureResolution.count()))
+                .from(payoutFailureResolution)
+                .where(payoutFailureResolution.orderId.eq(orderId))
+                .groupBy(payoutFailureResolution.resolutionRequestId,
+                        payoutFailureResolution.orderId,
+                        payoutFailureResolution.method,
+                        payoutFailureResolution.adminId,
+                        payoutFailureResolution.memo)
+                .orderBy(payoutFailureResolution.createdAt.min().desc(), payoutFailureResolution.id.max().desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> {
+            Long count = queryFactory
+                    .select(payoutFailureResolution.resolutionRequestId.countDistinct())
                     .from(payoutFailureResolution)
                     .where(payoutFailureResolution.orderId.eq(orderId))
                     .fetchOne();

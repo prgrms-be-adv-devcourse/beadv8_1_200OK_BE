@@ -9,6 +9,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
@@ -314,6 +315,37 @@ interface PayoutAdminControllerSpec {
             )
     })
     ResponseEntity<PayoutPageResponse<PayoutResolutionResponse>> getResolutions(
+            @Parameter(description = "주문 ID", example = "100") Long orderId,
+            @ParameterObject PayoutResolutionSearchRequest request
+    );
+
+    @Operation(summary = "해결 기록 조회 (해결 요청 묶음)", description = """
+            관리자 전용입니다. 주문 하나의 해결 기록을 해결 요청 1번 = 1줄로 묶어 해결 시각 최신순으로 조회합니다.
+            줄마다 해결한 관리자·메모·해결 시각과, 그 요청으로 해결한 실패 기록 수를 줍니다.
+            어느 실패 기록을 풀었는지는 GET /api/v1/admin/payouts/orders/{orderId}/resolutions에서 같은 요청 번호의 줄로 봅니다.
+            해결 시각은 그 요청에서 가장 이른 해결 기록의 시각입니다(해결 기록마다 시각이 따로 찍혀 아주 조금씩 다를 수 있습니다).
+            해결 기록이 없는 주문은 빈 목록입니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "주문 ID가 숫자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequests(
             @Parameter(description = "주문 ID", example = "100") Long orderId,
             @ParameterObject PayoutResolutionSearchRequest request
     );

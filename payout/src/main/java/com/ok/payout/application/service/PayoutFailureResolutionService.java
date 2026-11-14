@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutOrderResolutionResult;
 import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
+import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
 import com.ok.payout.application.port.in.PayoutResolutionResult;
 import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
 import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
@@ -99,6 +100,13 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
     public Page<PayoutResolutionResult> getResolutions(Long orderId, PayoutResolutionSearchQuery query) {
         return payoutQueryRepository.findResolutionsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
                 .map(PayoutQueryResultMapper::toResolutionResult);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionRequestResult> getResolutionRequests(Long orderId, PayoutResolutionSearchQuery query) {
+        return payoutQueryRepository.findResolutionRequestsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionRequestResult);
     }
 
     // 원인 사슬에서 DB 드라이버 예외(SQLException)를 찾아 오류 번호가 중복 키(1062)인지 봄 (통합 테스트에서 실제 MySQL로 확인)
