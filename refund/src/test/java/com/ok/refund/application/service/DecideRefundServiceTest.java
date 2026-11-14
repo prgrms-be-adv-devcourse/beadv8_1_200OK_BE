@@ -10,6 +10,7 @@ import com.ok.refund.application.port.out.OrderCancellationResult;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.application.port.out.WalletRefundRequest;
@@ -19,11 +20,15 @@ import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.exception.RefundErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -34,7 +39,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -42,8 +49,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.inOrder;
@@ -73,13 +83,18 @@ class DecideRefundServiceTest {
     OrderCancellationPort orderCancellationPort;
     @Mock
     ProductStockReleasePort productStockReleasePort;
+    @Mock
+    RefundStepPersistencePort refundStepPersistencePort;
 
     DecideRefundService sut;
 
     @BeforeEach
     void setUp() {
+        NoOpTransactionManager transactionManager = new NoOpTransactionManager();
+        // 실패 기록은 RefundStepRunner가 같은 영속 포트로 하므로 진짜 틀을 쓴다(단계 줄이 실제로 "할 차례"로 남는지 보려고)
+        RefundStepRunner refundStepRunner = new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
         sut = new DecideRefundService(orderQueryPort, refundPersistencePort, walletRefundRequestPort, orderCancellationPort,
-                productStockReleasePort, CLOCK, new NoOpTransactionManager());
+                productStockReleasePort, refundStepPersistencePort, refundStepRunner, CLOCK, transactionManager);
     }
 
     // 아래 다섯 테스트는 예전 파사드 테스트에서 옮겼다. 주문 호출 여부와 승인 전 확인 순서를 decide 전체 흐름으로 본다
@@ -520,11 +535,12 @@ class DecideRefundServiceTest {
     }
 
     // 주문이 실패해도 승인은 이미 커밋돼 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 주문은 취소를 모르므로 그대로 올린다.
-    // 실패 기록(ORDER)과 다시 시도는 #516이 맡는다
+    // 실패는 실행 틀이 주문 단계 줄에 기록한다(#574). 그 줄을 보고 다시 시도하는 일은 #576이 맡는다
     @Test
     void 주문_반영이_실패하면_지갑에_반환을_요청하지_않는다() {
         // given
         givenLockedBundle(requested());
+        givenSteps(inProgress(RefundStepType.ORDER));
         RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         willThrow(failure).given(orderCancellationPort).reflectCancellation(any());
 
@@ -537,7 +553,10 @@ class DecideRefundServiceTest {
         // 주문이 취소를 모르는데 돈을 보내거나 재고를 풀면 배송할 수도 있는 상품 값이 나간다. 완료로도 바꾸지 않는다
         then(walletRefundRequestPort).should(never()).requestRefund(any());
         then(productStockReleasePort).should(never()).releaseStock(any());
-        assertThat(capturedUpdates()).hasSize(1);
+        // 환불 저장은 승인 구간(처리 중) 한 번이다. 실행 틀의 실패 기록은 주문 줄에만 남는다(#574). 완료 저장은 없다
+        assertThat(capturedUpdates()).extracting(Refund::getStatus)
+                .containsExactly(RefundStatus.PROCESSING);
+        assertLastStepFailed(RefundStepType.ORDER, "ORDER_API_FAILED");
     }
 
     // 돌려줄 돈이 있으면 지갑 요청까지만 하고 처리 중으로 응답한다(#544). 재고 복구와 완료는 지갑 완료 메시지를 받은 뒤라
@@ -609,12 +628,13 @@ class DecideRefundServiceTest {
 
     // 승인·주문은 이미 끝나 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 재고는 묶인 채라 그대로 올린다.
     // 완료로 바꾸지 않아 처리 중으로 남는다. 돌려줄 돈이 있으면 재고 복구는 지갑 완료 메시지 뒤라 0원 환불만 해당한다.
-    // 실패 기록(PRODUCT)과 다시 시도는 #516이 맡는다
+    // 실패는 실행 틀이 재고 단계 줄에 기록한다(#574). 그 줄을 보고 다시 시도하는 일은 #576이 맡는다
     @Test
     void 돌려줄_금액이_0원일_때_재고_복구가_실패하면_예외를_그대로_올리고_완료로_바꾸지_않는다() {
         // given
         givenZeroAmountRefund();
         givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER), inProgress(RefundStepType.PRODUCT));
         RestApiException failure = new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
         willThrow(failure).given(productStockReleasePort).releaseStock(any());
 
@@ -622,9 +642,10 @@ class DecideRefundServiceTest {
         assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, zeroAmountItem()))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
-        List<Refund> updates = capturedUpdates();
-        assertThat(updates).hasSize(1);
-        assertThat(updates.getFirst().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        // 환불 저장은 승인 구간(처리 중) 한 번이다. 실행 틀의 실패 기록은 재고 줄에만 남는다(#574). 완료로 바꾸는 저장은 없다
+        assertThat(capturedUpdates()).extracting(Refund::getStatus)
+                .containsExactly(RefundStatus.PROCESSING);
+        assertLastStepFailed(RefundStepType.PRODUCT, "PRODUCT_API_FAILED");
     }
 
     // 승인 버튼으로 왔어도 출고된 상품이면 자동 거절로 끝난다. 거절된 환불에 돈이 나가면 안 된다
@@ -684,12 +705,13 @@ class DecideRefundServiceTest {
     }
 
     // 승인은 이미 커밋된 뒤라 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 돈은 나가지 않으므로 그대로 올린다.
-    // 실패 기록(WALLET)과 다시 보내기는 #516이 맡는다
+    // 실패는 실행 틀이 지갑 단계 줄에 기록한다(#574). 그 줄을 보고 다시 보내는 일은 #576이 맡는다
     @Test
     void 지갑_요청이_실패하면_재고를_부르지_않고_처리_중으로_남는다() {
         // given
         givenLockedBundle(requested());
         givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER), inProgress(RefundStepType.WALLET));
         IllegalStateException failure = new IllegalStateException("지갑 반환 요청 발행에 실패했습니다. refundId=" + REFUND_ID);
         willThrow(failure).given(walletRefundRequestPort).requestRefund(any());
 
@@ -701,7 +723,313 @@ class DecideRefundServiceTest {
         // 주문은 이미 취소를 기록했다(같은 refundId로 다시 보내면 주문이 성공으로 답해 #545 다시 시도가 이어 간다). 재고는 부르지 않는다
         then(orderCancellationPort).should().reflectCancellation(any());
         then(productStockReleasePort).should(never()).releaseStock(any());
-        assertThat(capturedUpdates()).hasSize(1);
+        // 환불 저장은 승인 구간(처리 중) 한 번이다. 실행 틀의 실패 기록은 지갑 줄에만 남는다(#574)
+        assertThat(capturedUpdates()).extracting(Refund::getStatus)
+                .containsExactly(RefundStatus.PROCESSING);
+        assertLastStepFailed(RefundStepType.WALLET, "IllegalStateException");
+    }
+
+    // 단계 진행 표(#574, 결정 5). 단계 줄을 언제 어떤 상태로 저장하는지가 요구사항이라(다시 시도·운영 확인의 근거) 넘긴 값을 확인한다
+
+    @Test
+    void 승인하면_같은_구간에서_주문_단계를_시도_중으로_만든다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+
+        // when
+        sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then: 첫 줄은 주문 줄이고, 커밋 뒤 바로 주문을 부르므로 할 차례가 아니라 시도 중이다
+        RefundStep orderStep = capturedSavedSteps().getFirst();
+        assertThat(orderStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(orderStep.getRefundId()).isEqualTo(REFUND_ID);
+            softly.assertThat(orderStep.getType()).isEqualTo(RefundStepType.ORDER);
+            softly.assertThat(orderStep.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(orderStep.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(orderStep.getNextCheckAt()).isEqualTo(NOW.plusMinutes(1));
+        });
+        // 같은 구간: 처리 중 저장 뒤, 주문을 부르기 전에 만든다
+        InOrder order = inOrder(refundPersistencePort, refundStepPersistencePort, orderCancellationPort);
+        then(refundPersistencePort).should(order).update(any());
+        then(refundStepPersistencePort).should(order).saveNew(argThat(step -> step.getType() == RefundStepType.ORDER));
+        then(orderCancellationPort).should(order).reflectCancellation(any());
+    }
+
+    // 자동 거절은 부를 단계가 없어 표에 남기지 않는다(결정 5). 출고 거절과 배송비 모자람은 다른 경로라 둘 다 본다
+    @ParameterizedTest
+    @MethodSource("자동_거절되는_승인")
+    void 자동_거절이면_단계를_만들지_않는다(Refund refund, RefundableOrderItem orderItem) {
+        // given
+        givenLockedBundle(refund);
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, orderItem);
+
+        // then
+        assertThat(result.status()).isEqualTo("REJECTED");
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+    }
+
+    static Stream<Arguments> 자동_거절되는_승인() {
+        return Stream.of(
+                Arguments.of(requested(), potato("SHIPPING", 2)),
+                Arguments.of(Refund.request(10L, 101L, 1, BUYER_ID, SELLER_ID, 55L, "감자", "1kg", 1_000L, null),
+                        cheapItemInFreeBundle()));
+    }
+
+    @Test
+    void 주문이_거절하면_주문_단계는_거절됨이고_환불은_거절된다() {
+        // given
+        givenLockedBundle(requested());
+        givenSteps(inProgress(RefundStepType.ORDER));
+        given(orderCancellationPort.reflectCancellation(any())).willReturn(OrderCancellationResult.rejected("이미 출고된 상품입니다."));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then
+        assertThat(result.status()).isEqualTo("REJECTED");
+        RefundStep orderStep = capturedUpdatedSteps().getFirst();
+        assertThat(orderStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(orderStep.getType()).isEqualTo(RefundStepType.ORDER);
+            softly.assertThat(orderStep.getStatus()).isEqualTo(RefundStepStatus.REFUSED);
+            softly.assertThat(orderStep.getLastReason()).isEqualTo("ORDER_REFUSED");
+            softly.assertThat(orderStep.getNextCheckAt()).isNull();
+        });
+        // 다음 단계는 오지 않으므로 줄을 더 만들지 않는다
+        assertThat(capturedSavedSteps()).extracting(RefundStep::getType).containsExactly(RefundStepType.ORDER);
+    }
+
+    // 실패 기록 틀이 주문 줄을 할 차례로 남긴다. 예외는 그대로 올라가 판매자 응답(503)은 예전과 같다
+    @Test
+    void 주문이_실패하면_주문_단계는_할_차례로_남고_예외가_올라간다() {
+        // given
+        givenLockedBundle(requested());
+        givenSteps(inProgress(RefundStepType.ORDER));
+        RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        willThrow(failure).given(orderCancellationPort).reflectCancellation(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2)))
+                .isSameAs(failure);
+        RefundStep orderStep = capturedUpdatedSteps().getFirst();
+        assertThat(orderStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(orderStep.getType()).isEqualTo(RefundStepType.ORDER);
+            softly.assertThat(orderStep.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(orderStep.getLastReason()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(orderStep.getNextCheckAt()).isEqualTo(NOW.plusMinutes(1));
+        });
+        // 주문이 실패했으니 다음 줄은 만들지 않는다
+        assertThat(capturedSavedSteps()).extracting(RefundStep::getType).containsExactly(RefundStepType.ORDER);
+    }
+
+    // 먼저 기록하고 보내기: 지갑 줄이 커밋된 뒤에 발행해야 발행 실패·서버 중단 때도 "어디까지 왔나"가 남는다. 순서가 요구사항이다
+    @Test
+    void 주문이_성공하면_지갑_단계를_먼저_기록한_뒤_발행한다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER), inProgress(RefundStepType.WALLET));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        InOrder order = inOrder(refundStepPersistencePort, walletRefundRequestPort);
+        then(refundStepPersistencePort).should(order).saveNew(argThat(step -> step.getType() == RefundStepType.WALLET));
+        then(walletRefundRequestPort).should(order).requestRefund(any());
+        RefundStep walletStep = capturedSavedSteps().get(1);
+        assertThat(walletStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(walletStep.getRefundId()).isEqualTo(REFUND_ID);
+            softly.assertThat(walletStep.getType()).isEqualTo(RefundStepType.WALLET);
+            softly.assertThat(walletStep.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+        });
+        // 주문 줄은 성공, 발행 뒤 지갑 줄은 결과 대기(한도 30분)로 바뀐다
+        List<RefundStep> updatedSteps = capturedUpdatedSteps();
+        assertThat(updatedSteps).hasSize(2);
+        assertSoftly(softly -> {
+            softly.assertThat(updatedSteps.get(0).getType()).isEqualTo(RefundStepType.ORDER);
+            softly.assertThat(updatedSteps.get(0).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(updatedSteps.get(1).getType()).isEqualTo(RefundStepType.WALLET);
+            softly.assertThat(updatedSteps.get(1).getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(updatedSteps.get(1).getNextCheckAt()).isEqualTo(NOW.plusMinutes(30));
+        });
+    }
+
+    // 경우 2: 지갑 줄은 발행 전에 기록됐으므로 발행이 실패하면 할 차례로 남는다. 다시 보내기는 #576이 이 줄을 보고 한다
+    @Test
+    void 지갑_발행이_실패하면_지갑_단계는_할_차례로_남는다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER), inProgress(RefundStepType.WALLET));
+        IllegalStateException failure = new IllegalStateException("지갑 반환 요청 발행에 실패했습니다. refundId=" + REFUND_ID);
+        willThrow(failure).given(walletRefundRequestPort).requestRefund(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2)))
+                .isSameAs(failure);
+        List<RefundStep> updatedSteps = capturedUpdatedSteps();
+        assertThat(updatedSteps).hasSize(2);
+        RefundStep walletStep = updatedSteps.get(1);
+        assertSoftly(softly -> {
+            softly.assertThat(updatedSteps.get(0).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(walletStep.getType()).isEqualTo(RefundStepType.WALLET);
+            softly.assertThat(walletStep.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(walletStep.getLastReason()).isEqualTo("IllegalStateException");
+        });
+    }
+
+    // 경우 1: 지갑 결과 메시지가 "결과 대기" 기록보다 먼저 와 줄을 끝냈으면, 늦게 온 결과 대기가 끝난 결과를 덮어쓰면 안 된다
+    @Test
+    void 발행_뒤_지갑_단계가_이미_끝났으면_결과_대기로_바꾸지_않는다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        givenSteps(RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, 1, null, null, NOW));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then: 응답은 예전처럼 처리 중이고, 끝난 지갑 줄은 저장하지 않는다
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        then(refundStepPersistencePort).should(never()).update(any());
+    }
+
+    // 발행은 이미 나가 되돌릴 수 없다. 결과 대기 기록(DB)이 실패해도 판매자에게 오류를 주지 않고 #574 전처럼 처리 중으로 응답한다.
+    // 지갑 줄은 시도 중으로 남아 지갑 결과 메시지로도 끝낼 수 있다(결정 2)
+    @Test
+    void 결과_대기_기록이_실패해도_처리_중으로_응답한다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER), inProgress(RefundStepType.WALLET));
+        // 주문 줄 저장은 성공하고, 결과 대기 구간의 지갑 줄 저장만 DB 오류로 실패한다
+        willAnswer(invocation -> {
+            if (invocation.<RefundStep>getArgument(0).getType() == RefundStepType.WALLET) {
+                throw new IllegalStateException("DB 오류");
+            }
+            return null;
+        }).given(refundStepPersistencePort).update(any());
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should().requestRefund(any());
+        then(productStockReleasePort).should(never()).releaseStock(any());
+    }
+
+    // 주문은 반영됐는데 "주문 성공 + 지갑 줄 기록" 구간이 실패하면 지갑에 보내지 않고 오류가 올라간다.
+    // 이 구간은 한 트랜잭션이라 주문 줄은 "시도 중"(다시 볼 시각이 있는 상태)으로 남고, 다시 집는 일은 #576이 한다
+    @Test
+    void 주문_성공_뒤_기록이_실패하면_지갑에_보내지_않고_오류가_올라간다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER));
+        // 승인 구간의 주문 줄 저장은 성공하고, 주문 성공 구간의 지갑 줄 저장만 DB 오류로 실패한다
+        willAnswer(invocation -> {
+            RefundStep step = invocation.getArgument(0);
+            if (step.getType() == RefundStepType.WALLET) {
+                throw new IllegalStateException("DB 오류");
+            }
+            return step;
+        }).given(refundStepPersistencePort).saveNew(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("DB 오류");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        then(productStockReleasePort).should(never()).releaseStock(any());
+    }
+
+    // 0원은 지갑 줄 없이 재고 줄을 거친다. 재고 줄 성공과 환불 완료는 같은 구간에서 저장한다(결정 5)
+    @Test
+    void 돌려줄_금액이_0원이면_재고_단계를_거쳐_완료한다() {
+        // given
+        givenZeroAmountRefund();
+        givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER), inProgress(RefundStepType.PRODUCT));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, zeroAmountItem());
+
+        // then
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(capturedSavedSteps()).extracting(RefundStep::getType)
+                .containsExactly(RefundStepType.ORDER, RefundStepType.PRODUCT);
+        List<RefundStep> updatedSteps = capturedUpdatedSteps();
+        assertThat(updatedSteps).hasSize(2);
+        assertSoftly(softly -> {
+            softly.assertThat(updatedSteps.get(0).getType()).isEqualTo(RefundStepType.ORDER);
+            softly.assertThat(updatedSteps.get(0).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(updatedSteps.get(1).getType()).isEqualTo(RefundStepType.PRODUCT);
+            softly.assertThat(updatedSteps.get(1).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+        });
+        // 재고 줄 성공은 완료 저장 뒤 같은 구간에서 한다
+        InOrder order = inOrder(productStockReleasePort, refundPersistencePort, refundStepPersistencePort);
+        then(productStockReleasePort).should(order).releaseStock(any());
+        then(refundPersistencePort).should(order).update(argThat(refund -> refund.getStatus() == RefundStatus.COMPLETED));
+        then(refundStepPersistencePort).should(order).update(argThat(step -> step.getType() == RefundStepType.PRODUCT));
+    }
+
+    // 저장소에 있는 단계 줄처럼 종류로 찾아 준다. 주문 성공 구간 등에서 다른 종류를 찾아도 없는 줄로 답한다.
+    // 실제 저장소처럼 찾을 때마다 새 객체를 준다(같은 객체를 주면 앞 구간의 변경이 뒤 구간 판단에 섞인다)
+    private void givenSteps(RefundStep... steps) {
+        Map<RefundStepType, RefundStep> byType = new EnumMap<>(RefundStepType.class);
+        for (RefundStep step : steps) {
+            byType.put(step.getType(), step);
+        }
+        willAnswer(invocation -> {
+            RefundStep found = byType.get(invocation.<RefundStepType>getArgument(1));
+            return Optional.ofNullable(found).map(DecideRefundServiceTest::copyOf);
+        }).given(refundStepPersistencePort).findByRefundIdAndType(eq(REFUND_ID), any());
+    }
+
+    private static RefundStep inProgress(RefundStepType type) {
+        return RefundStep.restore((long) type.ordinal() + 1, REFUND_ID, type, RefundStepStatus.IN_PROGRESS, 1,
+                NOW.plusMinutes(1), null, NOW);
+    }
+
+    private static RefundStep copyOf(RefundStep step) {
+        return RefundStep.restore(step.getId(), step.getRefundId(), step.getType(), step.getStatus(), step.getAttemptCount(),
+                step.getNextCheckAt(), step.getLastReason(), step.getCreatedAt());
+    }
+
+    // saveNew에 넘긴 단계 줄 전부, 부른 순서대로
+    private List<RefundStep> capturedSavedSteps() {
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should(atLeastOnce()).saveNew(captor.capture());
+        return captor.getAllValues();
+    }
+
+    // 실행 틀이 마지막으로 고친 단계 줄이 그 단계이고, 다시 할 차례로 돌아가 이유가 남았는지 본다
+    private void assertLastStepFailed(RefundStepType type, String reason) {
+        List<RefundStep> updatedSteps = capturedUpdatedSteps();
+        RefundStep last = updatedSteps.get(updatedSteps.size() - 1);
+        assertThat(last).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(last.getType()).isEqualTo(type);
+            softly.assertThat(last.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(last.getLastReason()).isEqualTo(reason);
+        });
+    }
+
+    // 단계 줄 update에 넘긴 값 전부, 부른 순서대로
+    private List<RefundStep> capturedUpdatedSteps() {
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should(atLeastOnce()).update(captor.capture());
+        return captor.getAllValues();
     }
 
     // 무료배송(기준 30,000원) 묶음에서 3,000원 상품을 취소하면 27,000원이 남아 무료배송이 깨진다.
@@ -751,7 +1079,7 @@ class DecideRefundServiceTest {
                 refund.getSellerId(), refund.getProductOptionId(), refund.getProductName(), refund.getOptionName(),
                 refund.getUnitPrice(), refund.getItemAmount(), refund.getShippingFeeAmount(), refund.getRemoteAreaFeeAmount(),
                 refund.getDeductedShippingFeeAmount(), refund.getCancelReason(), refund.getStatus(), refund.getRejectReason(),
-                refund.getDecidedAt(), refund.getCompletedAt(), refund.getFailedStep(), refund.getFailureCode(), refund.getActiveOrderItemId(),
+                refund.getDecidedAt(), refund.getCompletedAt(), refund.getActiveOrderItemId(),
                 refund.getCreatedAt());
     }
 

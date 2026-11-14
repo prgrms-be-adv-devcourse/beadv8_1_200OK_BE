@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.ok.refund.adapter.out.event.RefundTopics;
 import com.ok.refund.adapter.out.persistence.RefundJpaEntity;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
@@ -73,6 +74,8 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
+    RefundStepJpaRepository refundStepJpaRepository;
+    @Autowired
     FakeOrderQueryPort orderQueryPort;
     @Autowired
     FakeOrderCancellationPort orderCancellationPort;
@@ -94,6 +97,8 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        // 단계 줄이 환불 행을 외래 키로 가리켜 먼저 지운다(승인 흐름이 단계 줄을 만든다, #574)
+        refundStepJpaRepository.deleteAllInBatch();
         refundJpaRepository.deleteAllInBatch();
         // 통합 테스트는 컨텍스트(Fake 빈)를 함께 쓰므로 비우지 않으면 다른 테스트로 값이 넘어간다
         orderQueryPort.clear();

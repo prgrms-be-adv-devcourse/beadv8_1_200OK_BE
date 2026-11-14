@@ -40,7 +40,7 @@ class RefundWalletKafkaListenerTest {
     private RefundWalletKafkaListener sut;
 
     // 입력 어댑터는 서비스 패키지를 볼 수 없어(ArchitectureTest) 상한을 따로 둔다. 이 테스트가 두 값이 같게 지킨다.
-    // failure_code 칸이 VARCHAR(100)이라, 어느 한쪽만 바뀌면 긴 이유가 DB 저장에서 깨지거나(어댑터 상한이 더 큼) 멀쩡한 이유가 버려진다(더 작음)
+    // 단계 줄의 이유 칸(last_reason)이 VARCHAR(100)이라, 어느 한쪽만 바뀌면 긴 이유가 DB 저장에서 깨지거나(어댑터 상한이 더 큼) 멀쩡한 이유가 버려진다(더 작음)
     @Test
     void 어댑터의_이유_길이_상한은_서비스의_실패_코드_길이_상한과_같다() {
         // when & then

@@ -4,10 +4,14 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.DecideRefundUseCase;
 import com.ok.refund.application.port.in.RefundDecision;
@@ -26,6 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -54,6 +59,10 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
+    RefundStepPersistencePort refundStepPersistencePort;
+    @Autowired
+    RefundStepJpaRepository refundStepJpaRepository;
+    @Autowired
     FakeOrderQueryPort orderQueryPort;
     @Autowired
     FakeProductStockReleasePort productStockReleasePort;
@@ -62,55 +71,63 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        // 단계 줄이 환불 행을 외래키로 참조하므로 먼저 지운다
+        refundStepJpaRepository.deleteAllInBatch();
         refundJpaRepository.deleteAllInBatch();
         orderQueryPort.clear();
         productStockReleasePort.clear();
     }
 
     @Test
-    void 실패하면_DB에_처리_중_그대로_단계와_이유가_저장된다() {
+    void 실패하면_DB의_단계_줄이_할_차례로_돌아가고_이유가_남는다() {
         // given
         Long refundId = processingRefundId();
+        startOnly(refundId, RefundStepType.ORDER);
 
         // when
-        assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundFailedStep.ORDER, () -> {
+        assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundStepType.ORDER, () -> {
             throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         })).isInstanceOfSatisfying(RestApiException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
 
         // then
-        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        RefundStep sut = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
-            softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(sut.getLastReason()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(sut.getNextCheckAt()).isNotNull();
         });
+        // 환불은 처리 중 그대로다. 멈춘 곳은 단계 줄에만 남는다(결정 3)
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        assertThat(refund.getStatus()).isEqualTo(RefundStatus.PROCESSING);
     }
 
     // 칸 길이가 엔티티보다 짧으면 운영에서 기록이 "Data too long"으로 실패하고, 그 실패는 원래 예외에 붙어 응답에 드러나지 않는다.
     // 그래서 모든 단계 이름과 엔티티가 허용하는 가장 긴 이유(100자)가 실제 칸에 들어가는지 본다
     @ParameterizedTest
     @MethodSource("모든_실패_단계")
-    void 모든_단계와_가장_긴_이유가_DB에_저장된다(RefundFailedStep step) {
+    void 모든_단계와_가장_긴_이유가_DB에_저장된다(RefundStepType step) {
         // given
         Long refundId = processingRefundId();
+        startOnly(refundId, step);
         String longestFailureCode = "E".repeat(100);
 
         // when
         refundStepRunner.recordFailure(refundId, step, longestFailureCode);
 
         // then
-        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        RefundStep sut = refundStepPersistencePort.findByRefundIdAndType(refundId, step).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.getFailedStep()).isEqualTo(step);
-            softly.assertThat(sut.getFailureCode()).isEqualTo(longestFailureCode);
+            softly.assertThat(sut.getType()).isEqualTo(step);
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(sut.getLastReason()).isEqualTo(longestFailureCode);
         });
     }
 
-    static Stream<RefundFailedStep> 모든_실패_단계() {
-        return Stream.of(RefundFailedStep.values());
+    static Stream<RefundStepType> 모든_실패_단계() {
+        return Stream.of(RefundStepType.values());
     }
 
     // 바깥 트랜잭션 안에서 부르면 기록이 거기에 합류해 원래 예외로 롤백될 때 함께 사라진다. 다른 모듈을 부르기 전에 막아야 한다
@@ -122,13 +139,24 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
 
         // when & then
         assertThatThrownBy(() -> outer.executeWithoutResult(status ->
-                refundStepRunner.run(1L, RefundFailedStep.ORDER, () -> {
+                refundStepRunner.run(1L, RefundStepType.ORDER, () -> {
                     called.set(true);
                     return null;
                 })))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불 단계 실행은 트랜잭션 밖에서 불러야 합니다. 실패 기록이 바깥 트랜잭션과 함께 롤백됩니다.");
         assertThat(called).isFalse();
+    }
+
+    // 승인 흐름이 남긴 단계 줄(주문 성공, 지갑 결과 대기)은 지우고 그 단계의 "시도 중" 줄 하나로 시작한다.
+    // 실패 기록은 끝나지 않은 줄에만 남고, 서비스가 호출 전에 만들어 두는 줄이 이것이다
+    private void startOnly(Long refundId, RefundStepType step) {
+        refundStepJpaRepository.deleteAllInBatch();
+        // 단계 줄은 환불 행을 잠근 트랜잭션에서만 만들 수 있다
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
+            refundStepPersistencePort.saveNew(RefundStep.start(refundId, step, LocalDateTime.now()));
+        });
     }
 
     // 요청한 뒤 판매자가 승인해 처리 중이 된 환불. 실패 기록은 처리 중에만 남길 수 있다

@@ -2,9 +2,12 @@ package com.ok.refund.adapter.out.persistence;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.exception.RefundErrorCode;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -27,17 +30,21 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * 출력 포트 {@link RefundPersistencePort}를 JPA로 구현한다. 도메인과 {@link RefundJpaEntity}를 {@link RefundMapper}로 바꿔 주고받는다.
+ * 출력 포트 {@link RefundPersistencePort}와 {@link RefundStepPersistencePort}를 JPA로 구현한다. 도메인과 {@link RefundJpaEntity}를 {@link RefundMapper}로 바꿔 주고받는다.
  * 트랜잭션은 따로 열지 않는다. 서비스가 연 트랜잭션 안에서 불려야 잠금과 {@link #update}의 확인이 그 트랜잭션 기준으로 맞는다.
  * DB에 묶인 지식(UNIQUE 제약 이름, SQLState)은 여기서 에러 코드로 바꿔, 서비스가 Spring DAO 예외를 알지 않게 한다.
  *
  * <p>{@code @Repository}가 아니라 {@code @Component}로 둔다. {@code @Repository}를 붙이면 스프링의 예외 변환이
  * {@link #update}가 던지는 {@link IllegalStateException}을 {@code InvalidDataAccessApiUsageException}으로 바꿔 포트의 약속과 달라진다.
  * DB 예외 변환은 안쪽의 {@link RefundJpaRepository} 프록시가 이미 해 주므로 여기서 다시 할 필요가 없다.
+ *
+ * <p>단계 행 포트도 이 클래스가 함께 구현한다(#574 결정 6). 단계 행을 저장할 때 "그 환불 행을 이 트랜잭션에서 잠갔는가"를
+ * 환불 잠금 조회가 적어 두는 트랜잭션별 목록({@code LOCKED_IDS_KEY})으로 확인해야 하는데, 그 목록이 이 클래스 안에 있기 때문이다.
+ * 어댑터를 나누면 목록을 둘이 함께 보도록 꺼내야 해서 잠금 확인이 두 곳으로 흩어진다.
  */
 @Component
 @RequiredArgsConstructor
-public class RefundPersistenceAdapter implements RefundPersistencePort {
+public class RefundPersistenceAdapter implements RefundPersistencePort, RefundStepPersistencePort {
 
     // 마이그레이션의 제약 이름과 같아야 한다. 이 이름으로 "진행 중 요청 중복"과 다른 무결성 오류를 구분한다
     private static final String ACTIVE_ORDER_ITEM_UNIQUE_CONSTRAINT = "uk_refund_active_order_item_id";
@@ -51,6 +58,7 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     private static final Object LOCKED_IDS_KEY = new Object();
 
     private final RefundJpaRepository refundJpaRepository;
+    private final RefundStepJpaRepository refundStepJpaRepository;
     private final EntityManager entityManager;
 
     // saveAndFlush로 INSERT를 바로 보내야 UNIQUE 위반이 이 메서드 안에서 나서 에러 코드로 바꿀 수 있다.
@@ -203,6 +211,56 @@ public class RefundPersistenceAdapter implements RefundPersistencePort {
     @Override
     public List<CancelledQuantity> sumCancelledByOrderItem(Long orderId, Long sellerId, Collection<RefundStatus> statuses) {
         return refundJpaRepository.sumCancelledByOrderItem(orderId, sellerId, statuses);
+    }
+
+    // 단계 행은 따로 잠그지 않고 환불 행 잠금으로 대신한다(결정 4). 그래서 저장 전에 그 환불 행을 이 트랜잭션에서 잠갔는지 본다.
+    // saveAndFlush로 INSERT를 바로 보내 유일 제약(refund_id, step) 위반이 이 자리에서 나게 한다. 같은 단계 행을 두 번 만드는 것은
+    // 부르는 쪽 버그라 에러 코드로 바꾸지 않고 DataIntegrityViolationException 그대로 던진다
+    @Override
+    public RefundStep saveNew(RefundStep step) {
+        requireRefundLockedInThisTransaction(step.getRefundId());
+        RefundStepJpaEntity saved = refundStepJpaRepository.saveAndFlush(RefundStepMapper.toNewEntity(step));
+        return RefundStepMapper.toDomain(saved);
+    }
+
+    // 환불 update와 같은 방식(getReference + isLoaded)으로 이 트랜잭션에서 불러온 단계 행에만 바뀌는 칸을 옮긴다. 실제 UPDATE는 커밋 때 나간다.
+    // 단계 행의 잠금 모드는 보지 않는다. 단계 행은 잠금 조회하지 않고, 환불 행을 먼저 잠근 것으로 한 환불의 일을 한 번에 하나로 만든다.
+    // 환불 잠금을 먼저 보는 이유: 둘 다 어겼을 때 더 근본적인 버그(잠금 없이 고치려 함)를 알리려고
+    @Override
+    public void update(RefundStep step) {
+        if (step.getId() == null) {
+            throw new IllegalStateException("저장하지 않은 단계 행은 update할 수 없습니다. saveNew로 저장해야 합니다.");
+        }
+        requireRefundLockedInThisTransaction(step.getRefundId());
+        RefundStepJpaEntity entity = entityManager.getReference(RefundStepJpaEntity.class, step.getId());
+        if (!entityManager.getEntityManagerFactory().getPersistenceUnitUtil().isLoaded(entity)) {
+            throw new IllegalStateException("이 트랜잭션에서 불러온 단계 행만 update할 수 있습니다. refundStepId=" + step.getId());
+        }
+        RefundStepMapper.applyMutableState(step, entity);
+    }
+
+    @Override
+    public Optional<RefundStep> findByRefundIdAndType(Long refundId, RefundStepType type) {
+        return refundStepJpaRepository.findByRefundIdAndStep(refundId, type).map(RefundStepMapper::toDomain);
+    }
+
+    @Override
+    public List<RefundStep> findAllByRefundId(Long refundId) {
+        return refundStepJpaRepository.findAllByRefundIdOrderByIdAsc(refundId).stream()
+                .map(RefundStepMapper::toDomain)
+                .toList();
+    }
+
+    // findByIdForUpdate가 적어 둔 이 트랜잭션의 잠근 환불 ID 목록으로 확인한다. 같은 목록을 쓰므로 REQUIRES_NEW 안쪽 트랜잭션이 잠근 환불은
+    // 바깥에서 잠근 것으로 보지 않는다(트랜잭션마다 따로 센다). 트랜잭션 밖이면 잠금 자체가 없으므로 막는다
+    @SuppressWarnings("unchecked")
+    private static void requireRefundLockedInThisTransaction(Long refundId) {
+        Set<Long> locked = TransactionSynchronizationManager.isSynchronizationActive()
+                ? (Set<Long>) TransactionSynchronizationManager.getResource(LOCKED_IDS_KEY)
+                : null;
+        if (locked == null || !locked.contains(refundId)) {
+            throw new IllegalStateException("단계 행은 같은 트랜잭션에서 환불을 잠금 조회한 뒤에만 저장할 수 있습니다. refundId=" + refundId);
+        }
     }
 
     // 교착 상태는 SQLState 40001(MySQL 1213), 잠금 대기 시간 초과는 HY000(MySQL 1205)이라 SQLState로 가른다.
