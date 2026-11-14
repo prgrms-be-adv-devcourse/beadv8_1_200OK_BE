@@ -694,6 +694,28 @@ com.ok.member.seller
 
 `member` 하위 도메인은 여기에 `adapter/in/bootstrap`(앱이 시작될 때 설정값으로 최초 관리자 계정을 만드는 설정·실행기)이 더 있습니다. 앱 시작이라는 외부 입력의 진입점이라 컨트롤러처럼 유스케이스만 부릅니다.
 
+회원가입은 Kafka 토픽 `member.member-registered`로도 나갑니다(#560). 키는 `memberId`, 값은 `{"memberId": 1}`입니다.
+
+```
+com.ok.member.member
+├── domain/               MemberOutbox (보낼 메시지 1건의 발송 대기 기록), MemberOutboxStatus, MemberOutboxEventType
+├── application/
+│   ├── port/in/          MemberOutboxRelayUseCase (쌓인 메시지 보내기)
+│   ├── port/out/         MemberOutboxRepository, MemberMessageSender (메시지 브로커로 보냄)
+│   └── service/          MemberOutboxRelayFacade (트랜잭션 없이 보냄), MemberOutboxService (줄 읽기·결과 저장)
+└── adapter/
+    ├── in/scheduler/     MemberOutboxRelayScheduler (30초마다 발송)
+    ├── out/persistence/  MemberOutboxJpaRepository
+    └── out/event/        OutboxMemberEventPublisher (outbox 줄 기록), KafkaMemberMessageSender, MemberTopics, MemberRegisteredMessage, MemberKafkaTopicConfig
+```
+
+- 가입 서비스는 그대로 `MemberEventPublisher`를 부르고, 구현체 `OutboxMemberEventPublisher`가 같은 트랜잭션에서 `member_outbox`에 PENDING 줄을 남깁니다. 그래서 롤백되면 보내지 않고 커밋되면 반드시 한 번은 보냅니다. Spring Modulith의 이벤트 발행 기록(`event_publication`)에 기대지 않는 이유는 팀이 Modulith를 걷어 내기로 해서입니다.
+- `MemberOutboxRelayScheduler`가 30초마다(`member.outbox.relay.cron`, 한 번에 `batch-size` 100줄) PENDING 줄을 쌓인 순서대로 보냅니다. 보내기는 브로커의 저장 확인을 10초까지 기다리고, 그동안 DB 커넥션을 잡지 않도록 `MemberOutboxRelayFacade`는 트랜잭션 없이 돌며 줄마다 결과를 따로 저장합니다.
+- 한 줄이 실패하면 시도 횟수와 원인을 남기고 그 실행은 멈춥니다. 실패는 대개 브로커 장애라 뒤 줄도 실패할 뿐이고, 멈춰야 같은 회원의 뒤 메시지가 앞 메시지보다 먼저 나가지 않습니다. 줄은 PENDING으로 남아 다음 실행에서 다시 나갑니다.
+- 보낸 뒤 "보냄" 기록이 실패하거나 서버가 여러 대면 같은 메시지가 두 번 갈 수 있습니다. 받는 쪽은 중복에 안전해야 합니다. 보낸 줄은 지우지 않습니다(정산 outbox와 같음).
+- 통합 테스트는 `src/test/resources/module-test.yml`에서 스케줄러를 끄고(`cron: "-"`) 발송 유스케이스를 직접 부릅니다.
+- 장바구니가 아직 스프링 이벤트로 받으므로, 장바구니가 Kafka로 옮길 때까지 스프링 이벤트 발행도 그대로 둡니다.
+
 `auth` 하위 도메인은 저장소 말고도 출력 포트가 둘 더 있습니다.
 
 ```

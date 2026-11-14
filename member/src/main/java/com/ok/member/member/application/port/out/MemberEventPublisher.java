@@ -9,7 +9,8 @@ package com.ok.member.member.application.port.out;
 public interface MemberEventPublisher {
 
     /**
-     * 회원가입 완료를 알린다. 다른 모듈은 이 이벤트로 장바구니·구매자 지갑 등을 만든다.
+     * 회원가입 완료를 알린다. 장바구니가 이 알림으로 회원의 장바구니를 만든다.
+     * 가입과 같은 트랜잭션에서 불러야 한다. 구현체가 보낼 기록(outbox)을 그 트랜잭션에 남겨, 롤백되면 보내지 않는다.
      */
     void publishMemberRegistered(Long memberId);
 
