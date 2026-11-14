@@ -1,0 +1,25 @@
+server:
+  port: ${CARRIER_SIMULATOR_PORT:8090}
+  # 로그인이 없는 시험용 도구라 기본으로 이 컴퓨터에서만 접속하게 한다
+  address: ${CARRIER_SIMULATOR_ADDRESS:127.0.0.1}
+spring:
+  application:
+    name: carrier-simulator
+  threads:
+    virtual:
+      # 응답 지연 장애는 요청 스레드를 재운다. 조회가 몰려도 관리 화면이 막히지 않게 요청마다 가상 스레드를 쓴다
+      enabled: true
+  graphql:
+    http:
+      path: /graphql
+simulator:
+  seed: 1
+  # 가상 하루를 실제 몇 초로 재생할지. 10이면 정상 배송(30시간)이 12.5초에 끝난다
+  seconds-per-day: 10
+  jitter: 0.1
+  token-ttl: 1h
+  dispatch:
+    interval: 1s
+    batch-size: 100
+    concurrency: 10
+  ticker-enabled: true

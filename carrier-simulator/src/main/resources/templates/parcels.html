@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{layout :: head('송장')}"></head>
+<body>
+<header th:replace="~{layout :: header}"></header>
+<main>
+    <h1>송장</h1>
+
+    <div class="panel" style="margin-bottom:16px">
+        <h2>시험용 더미 송장 만들기</h2>
+        <form class="row" method="post" action="/parcels/dummies">
+            <input type="hidden" name="refresh" th:value="${refresh}">
+            <label>시나리오
+                <select name="scenario">
+                    <option th:each="scenario : ${scenarios}" th:value="${scenario}"
+                            th:text="${scenario.displayName()} + ' (90' + ${scenario.code()} + '…)'">정상</option>
+                </select>
+            </label>
+            <label>택배사
+                <select name="carrierId">
+                    <option th:each="carrier : ${carriers}" th:value="${carrier}" th:text="${carrier}">kr.cjlogistics</option>
+                </select>
+            </label>
+            <label>개수 <input type="number" name="count" value="10" min="1" max="100000"></label>
+            <label>받는 곳 <input type="text" name="callbackUrl" size="38" placeholder="비우면 알림 없이 송장만 만듦"></label>
+            <button type="submit">만들기</button>
+        </form>
+        <p class="note">번호 앞자리가 시나리오를 정합니다. 받는 곳을 넣으면 48시간짜리 알림 등록까지 한 것으로 보고 그 주소로 알림을 보냅니다.</p>
+        <div th:if="${createdNumbers}">
+            <textarea readonly th:text="${createdNumbers}">901000000001</textarea>
+            <p class="note" th:if="${createdHidden > 0}" th:text="'나머지 ' + ${createdHidden} + '건은 줄였습니다.'">나머지는 줄였습니다.</p>
+        </div>
+    </div>
+
+    <div class="panel">
+        <form class="row" method="get" action="/parcels">
+            <input type="hidden" name="refresh" th:value="${refresh}" th:if="${refresh > 0}">
+            <label>번호 앞자리 <input type="text" name="prefix" th:value="${prefix}" size="14"></label>
+            <label>시나리오
+                <select name="scenario">
+                    <option value="">전체</option>
+                    <option th:each="scenario : ${scenarios}" th:value="${scenario}" th:text="${scenario.displayName()}"
+                            th:selected="${scenario == scenarioFilter}">정상</option>
+                </select>
+            </label>
+            <label>상태
+                <select name="status">
+                    <option value="">전체</option>
+                    <option th:each="status : ${statuses}" th:value="${status}" th:text="${status.displayName()}"
+                            th:selected="${status == statusFilter}">접수</option>
+                </select>
+            </label>
+            <button type="submit" class="ghost">거르기</button>
+            <span class="note" th:text="'모두 ' + ${total} + '건'">모두 0건</span>
+        </form>
+        <div class="scroll">
+            <table>
+                <thead>
+                <tr><th>송장 번호</th><th>택배사</th><th>시나리오</th><th>현재 상태</th><th>처음 조회된 시각</th><th>조회받은 횟수</th><th>마지막 조회</th></tr>
+                </thead>
+                <tbody>
+                <tr th:each="row : ${rows}">
+                    <td class="mono"><a th:href="${row.link}" th:text="${row.trackingNumber}">901000000001</a></td>
+                    <td th:text="${row.carrierId}">kr.cjlogistics</td>
+                    <td th:text="${row.scenario}">정상</td>
+                    <td th:text="${row.status}">접수</td>
+                    <td th:text="${row.firstQueriedAt}">00:00:00</td>
+                    <td th:text="${row.queryCount}">0</td>
+                    <td th:text="${row.lastQueriedAt}">-</td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(rows)}"><td colspan="7" class="note">송장이 없습니다.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="row" style="margin-top:10px">
+            <a th:if="${previousLink}" th:href="${previousLink}">이전</a>
+            <span class="note" th:text="${pageNumber} + ' / ' + ${totalPages} + '쪽'">1 / 1쪽</span>
+            <a th:if="${nextLink}" th:href="${nextLink}">다음</a>
+        </div>
+    </div>
+</main>
+</body>
+</html>

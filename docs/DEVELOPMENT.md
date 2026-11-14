@@ -480,6 +480,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 | `common` | 공통 코드와 전역 설정(`com.ok.common.config`의 `SecurityConfig`, JWT 검증, Flyway 도우미 등). 도메인을 참조하지 않는 코드만 둔다. 앱이 아니라 라이브러리 | - |
 | `media`, `member`, `wallet`, `order`, `product`, `delivery`, `payout`, `refund` | 도메인 모듈. 각자 단독으로 기동하는 앱 클래스(`com.ok.<모듈 이름>Application`)를 가진다 | 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088 (이 순서) |
 | `monolith` | 모든 모듈을 의존하는 통합 앱(`PaldoGotganApplication`). 운영 이미지가 이것이고, 모듈 간 이벤트 연동은 이 앱에서만 동작한다. 여러 모듈을 가로지르는 테스트를 둔다 | 8080 |
+| `carrier-simulator` | Delivery Tracker를 대신하는 시험용 가짜 택배사 서버. 도메인 모듈이 아니고 `monolith`에 넣지 않는다. [가짜 택배사](#가짜-택배사carrier-simulator) 참고 | 8090 |
 
 - 공통 빌드 설정은 `build-logic`(컨벤션 플러그인 `ok.java-conventions`, 도메인 모듈용 `ok.spring-module-conventions`)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다. 컨벤션 플러그인은 플러그인, 툴체인, 테스트 설정 같은 공통 설정만 주고, 의존성은 모듈의 `build.gradle.kts`에 직접 적습니다.
 - 웹, 보안, JPA, Flyway, MySQL, Modulith 같은 스타터는 `common`이 `api`로 열어 둡니다. 도메인 모듈은 `implementation(project(":common"))`에 자기만 쓰는 의존성(예: `media`의 썸네일, `payout`의 배치)을 더합니다.
@@ -508,6 +509,78 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 ```
 
 `notification`/`알림`은 예시 값이고 실제로는 `-PmoduleName=<모듈이름>`(영문 소문자, 이미 있는 이름은 불가) `-PdisplayName=<표시이름>`을 씁니다. 모듈 폴더, `build.gradle.kts`, 기본 패키지(`package-info`), 앱 클래스, 설정(`application-<모듈>.yaml`), `.env.example`, `ArchitectureTest` 틀을 만듭니다. 설정은 `build-logic/templates/application-module.yaml`에서 만들고 포트는 기존 모듈 다음 값을 자동으로 배정합니다(`-Pport=<포트>`로 바꿀 수 있습니다). 이어서 직접 할 일은 실행 끝에 안내됩니다: `settings.gradle.kts`의 `include`에 추가, 운영에 포함하려면 `monolith/build.gradle.kts`에 `implementation(project(":모듈"))` 추가. 스키마를 쓰는 모듈이면 `<모듈>Schema`, `<모듈>FlywayConfig`를 만들고(`media`를 참고), `settings.gradle.kts`에 모듈을 추가한 뒤 `./gradlew generateInitDb`로 스키마 목록(`deploy/initdb/modules.txt`)을 갱신합니다. 이미 만든 로컬 DB 볼륨에는 새 스키마가 없으므로 직접 만들거나 볼륨을 초기화합니다. 목록을 갱신하지 않으면 `./gradlew check`가 실패합니다. 모듈 단독 실행용 DB 계정은 `./infra/mysql/sync-module-users.sh --init`으로 만듭니다.
+
+### 가짜 택배사(carrier-simulator)
+
+실제 택배사와 계약이 없어 실제 송장으로 연동을 확인할 수 없으므로, [Delivery Tracker](https://tracker.delivery/docs/tracking-api)와 같은 형식으로 답하는 시험용 서버를 둡니다(#559). 운영에는 배포하지 않습니다. delivery는 운영과 같은 어댑터(`TrackerCarrierClient`)로 접속 주소만 바꿔 붙습니다.
+
+```bash
+./gradlew :carrier-simulator:bootRun     # http://127.0.0.1:8090 (관리 화면)
+./gradlew :carrier-simulator:test
+```
+
+- 포트는 `CARRIER_SIMULATOR_PORT`(기본 8090), 여는 주소는 `CARRIER_SIMULATOR_ADDRESS`(기본 `127.0.0.1`)로 바꿉니다. 로그인이 없으므로 밖에서 접속되는 주소로 열지 않습니다.
+- DB, Redis, Kafka를 쓰지 않습니다. 송장, 통계, 보낸 기록은 모두 메모리에 있고 서버를 다시 띄우면 지워집니다.
+- 관리 화면의 폼은 같은 주소에서 보낸 것만 받습니다. 브라우저로 연 다른 웹 페이지가 이 서버로 폼을 보내면 403으로 거절합니다(`CrossSiteGuard`). `curl` 같은 도구와 `/graphql`, `/oauth2/token`은 막지 않습니다.
+- DB 스키마가 없어 `deploy/initdb/modules.txt` 대상에서 빠져 있습니다(루트 `build.gradle.kts`).
+
+delivery를 가짜 택배사에 붙일 때의 환경변수입니다. 아이디와 시크릿은 비어 있지만 않으면 됩니다.
+
+```bash
+DELIVERY_CARRIER_TYPE=tracker
+DELIVERY_TRACKER_BASE_URL=http://localhost:8090/graphql
+DELIVERY_TRACKER_AUTH_URL=http://localhost:8090/oauth2/token
+DELIVERY_TRACKER_CLIENT_ID=any
+DELIVERY_TRACKER_CLIENT_SECRET=any
+DELIVERY_TRACKER_POLL_INTERVAL=2s
+```
+
+위 이름은 `:delivery:bootRun`(단독 실행)에서만 먹습니다. `application-delivery.yaml`이 이 이름을 `delivery.carrier.tracker.*`에 연결해 주기 때문입니다. `:monolith:bootRun`에는 그 연결과 기본값(`connect-timeout`, `read-timeout`)이 없어서, 같은 설정을 Spring이 직접 바인딩하는 이름으로 모두 줘야 합니다. 하나라도 빠지면 기동이 실패합니다.
+
+```bash
+DELIVERY_CARRIER_TYPE=tracker
+DELIVERY_CARRIER_TRACKER_BASE_URL=http://localhost:8090/graphql
+DELIVERY_CARRIER_TRACKER_AUTH_URL=http://localhost:8090/oauth2/token
+DELIVERY_CARRIER_TRACKER_CLIENT_ID=any
+DELIVERY_CARRIER_TRACKER_CLIENT_SECRET=any
+DELIVERY_CARRIER_TRACKER_POLL_INTERVAL=2s
+DELIVERY_CARRIER_TRACKER_CONNECT_TIMEOUT=3s
+DELIVERY_CARRIER_TRACKER_READ_TIMEOUT=15s
+```
+
+제공하는 것:
+
+| 경로 | 내용 |
+|---|---|
+| `POST /oauth2/token` | 토큰 발급(client credentials). 수명은 `simulator.token-ttl`(기본 1시간) |
+| `POST /graphql` | `track` 조회와 `registerTrackWebhook` 알림 등록. 오류는 HTTP 200 본문의 `errors[].extensions.code`(`UNAUTHENTICATED`, `NOT_FOUND`, `BAD_REQUEST`, `INTERNAL`). 문법이나 검증이 틀린 요청은 `BAD_REQUEST`, 예상 못 한 예외는 `INTERNAL`이다 |
+| 등록한 `callbackUrl` | 상태가 바뀔 때마다 `{"carrierId", "trackingNumber"}`만 담아 POST. 1초 안에 2XX가 오지 않으면 1초, 2초, 4초…(최대 5분) 간격으로 만료 시각 전까지 다시 보냄. 처음 등록할 때도 한 번 보냄 |
+| `/`, `/parcels`, `/send`, `/settings` | 관리 화면(현황, 송장, 보내기, 실험 설정) |
+
+송장은 스스로 진행합니다. 처음 조회하거나 등록한 순간에 흐름이 시작되고, 가상 시간으로 정한 시나리오를 재생 속도만큼 빨리 감습니다. 기본은 가상 하루를 10초로 재생해 정상 배송(30시간)이 약 12.5초에 끝납니다. 사건의 시각(`time`)은 가상 시각이 아니라 실제로 일어난 시각입니다.
+
+시나리오는 송장 번호 앞자리로 고릅니다. `90` + 시나리오 2자리 + 순번 8자리(12자리)이고, 규칙에 맞지 않는 번호는 정상 시나리오입니다. 같은 번호는 언제나 같은 흐름을 냅니다.
+
+| 앞자리 | 시나리오 | 동작 |
+|---|---|---|
+| `9010` | 정상 | 접수 → 집화(4시간) → 이동 중(10, 20시간) → 배송 출발(26시간) → 배송 완료(30시간) |
+| `9020` | 느린 진행 | 정상의 3배 시간 |
+| `9030` | 이동 멈춤 | 이동 중에서 더 진행하지 않음 |
+| `9040` | 없는 송장 | 언제나 `NOT_FOUND` |
+| `9050` | 늦게 등록 | 6시간 동안 `NOT_FOUND`, 그 뒤 정상 |
+| `9060` | 배송 실패 후 재배송 | 배송 출발 → 배송 실패(`ATTEMPT_FAIL`) → 배송 출발 → 배송 완료 |
+| `9070` | 이력 끼어듦 | 10시간째 사건이 22시간째에야 이력에 추가됨. 마지막 상태는 그대로인데 알림이 감 |
+| `9080` | 사고 | `EXCEPTION`에서 끝남 |
+
+관리 화면에서 하는 일:
+
+- 송장: 시나리오와 개수를 골라 더미 송장을 만듭니다(한 번에 10만 건까지). 받는 곳 주소를 넣으면 48시간짜리 알림 등록까지 한 것으로 보고 알림을 보냅니다. 송장 한 건을 누르면 사건별 "일어난 시각"과 "처음 조회해 간 시각"의 차이(감지 지연)를 봅니다.
+- 보내기: 알림을 몇 초마다 몇 건씩, 동시에 몇 건까지 보낼지 정합니다. 송장 번호와 상태를 지정해 바로 보낼 수 있고, 그렇게 보낸 송장은 시나리오가 더 진행하지 않습니다. 보낸 기록에서 받는 쪽 응답과 걸린 시간을 송장 번호로 찾습니다.
+- 실험 설정: 재생 속도, 일시정지, 하루 건너뛰기, 응답 지연, 오류 응답 비율, 알림 중복과 순서 섞기, 토큰 만료, 통계·송장 지우기.
+
+구조: `core` 패키지가 시나리오, 시간, 송장, 알림 대기 줄, 장애 판단, 통계를 모두 맡는 순수 자바이고(Spring 의존을 `CoreArchitectureTest`가 막습니다) 현재 시각과 시드를 인자로 받습니다. 같은 설정에 같은 순서로 같은 시각을 넣으면 같은 결과가 나옵니다. 바깥(`web`, `webhook`)은 HTTP, 타이머, 화면만 맡습니다. 도메인 모듈이 아니어서 `CONVENTION.md`의 패키지·엔티티·API 규칙은 적용하지 않고, 코드 포맷과 테스트 규칙만 따릅니다.
+
+Delivery Tracker와 다른 점: 호출 제한(초당 10회, 동시 웹훅 1,000개)과 알림 서명을 흉내 내지 않습니다. 모르는 번호를 조회하면 `NOT_FOUND`가 아니라 새 송장으로 받습니다. 응답의 `extensions`에 `classification` 키가 하나 더 들어갑니다.
 
 ### delivery 모듈 구조(헥사고날)
 
