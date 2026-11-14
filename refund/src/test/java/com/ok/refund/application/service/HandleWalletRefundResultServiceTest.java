@@ -43,7 +43,8 @@ class HandleWalletRefundResultServiceTest {
     private static final Long REFUND_ID = 7L;
     // Long 캐시(-128~127) 밖의 번호를 쓴다. 캐시 안 번호는 같은 값이면 같은 객체라, 주문 비교를 실수로 != 로 바꿔도 테스트가 통과한다
     private static final Long ORDER_ID = 1_000L;
-    private static final Long BUYER_ID = 1L;
+    // 주문 번호와 같은 이유로 Long 캐시 밖의 번호를 쓴다(구매자 비교를 실수로 != 로 바꿔도 통과하지 않게)
+    private static final Long BUYER_ID = 2_000L;
     // 환불 금액: 단가 10,000 x 2개, 배송비 0
     private static final long AMOUNT = 20_000L;
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-13T01:00:00Z"), ZoneId.of("Asia/Seoul"));
@@ -145,14 +146,14 @@ class HandleWalletRefundResultServiceTest {
     }
 
     @ParameterizedTest
-    @MethodSource("어긋난_금액과_주문")
-    void 완료_메시지의_금액이나_주문이_다르면_완료하지_않고_불일치를_기록한다(long orderId, long amount) {
+    @MethodSource("어긋난_주문_구매자_금액")
+    void 완료_메시지의_금액이나_주문이나_구매자가_다르면_완료하지_않고_불일치를_기록한다(long orderId, long buyerId, long amount) {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
 
         // when
-        sut.completeAfterWalletRefund(completed(orderId, amount));
+        sut.completeAfterWalletRefund(completed(orderId, buyerId, amount));
 
         // then
         ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
@@ -166,11 +167,12 @@ class HandleWalletRefundResultServiceTest {
         then(productStockReleasePort).should(never()).releaseStock(any());
     }
 
-    static Stream<Arguments> 어긋난_금액과_주문() {
+    static Stream<Arguments> 어긋난_주문_구매자_금액() {
         return Stream.of(
-                Arguments.of(ORDER_ID, AMOUNT - 1),
-                Arguments.of(ORDER_ID, AMOUNT + 1),
-                Arguments.of(1_001L, AMOUNT));
+                Arguments.of(ORDER_ID, BUYER_ID, AMOUNT - 1),
+                Arguments.of(ORDER_ID, BUYER_ID, AMOUNT + 1),
+                Arguments.of(1_001L, BUYER_ID, AMOUNT),
+                Arguments.of(ORDER_ID, 2_001L, AMOUNT));
     }
 
     @Test
@@ -288,14 +290,15 @@ class HandleWalletRefundResultServiceTest {
         then(refundPersistencePort).should(never()).update(any());
     }
 
-    @Test
-    void 실패_메시지의_주문이_환불과_다르면_불일치를_기록한다() {
+    @ParameterizedTest
+    @MethodSource("어긋난_주문_구매자_금액")
+    void 실패_메시지의_금액이나_주문이나_구매자가_환불과_다르면_불일치를_기록한다(long orderId, long buyerId, long amount) {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
 
         // when
-        sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed(orderId, buyerId, amount, "INSUFFICIENT_BALANCE"));
 
         // then: 지갑 사유가 아니라 불일치로 남아야 어느 번호가 틀렸는지 사람이 확인한다
         ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
@@ -398,7 +401,12 @@ class HandleWalletRefundResultServiceTest {
     // orderId를 long으로 받아 명령을 만들 때 새 Long 객체가 되게 한다. 환불(ORDER_ID 상수 객체)과 값은 같아도 객체가 달라야
     // 주문 비교가 값(equals)이 아니라 객체(!=)를 보면 테스트가 실패한다(운영에서는 DB와 메시지에서 따로 읽어 늘 다른 객체다)
     private static WalletRefundCompletedCommand completed(long orderId, long amount) {
-        return new WalletRefundCompletedCommand(REFUND_ID, orderId, BUYER_ID, amount);
+        return completed(orderId, BUYER_ID, amount);
+    }
+
+    // buyerId도 long으로 받아 새 Long 객체가 되게 한다(구매자 비교가 equals인지 보려는 것, 주문과 같은 이유)
+    private static WalletRefundCompletedCommand completed(long orderId, long buyerId, long amount) {
+        return new WalletRefundCompletedCommand(REFUND_ID, orderId, buyerId, amount);
     }
 
     private static WalletRefundFailedCommand failed(String reason) {
@@ -407,7 +415,11 @@ class HandleWalletRefundResultServiceTest {
 
     // long으로 받아 새 Long 객체가 되게 한다(주문 비교가 equals인지 보려는 것, completed와 같은 이유)
     private static WalletRefundFailedCommand failed(long orderId, String reason) {
-        return new WalletRefundFailedCommand(REFUND_ID, orderId, BUYER_ID, AMOUNT, reason);
+        return failed(orderId, BUYER_ID, AMOUNT, reason);
+    }
+
+    private static WalletRefundFailedCommand failed(long orderId, long buyerId, long amount, String reason) {
+        return new WalletRefundFailedCommand(REFUND_ID, orderId, buyerId, amount, reason);
     }
 
     // 저장된 환불을 되살린다. 단가 10,000 x 2개, 배송비 0이라 돌려줄 금액은 20,000원

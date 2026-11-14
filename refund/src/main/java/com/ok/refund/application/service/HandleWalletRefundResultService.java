@@ -30,7 +30,7 @@ import java.util.Optional;
 @Service
 public class HandleWalletRefundResultService implements HandleWalletRefundResultUseCase {
 
-    // 지갑이 알려 준 금액·주문이 환불과 다를 때 failureCode에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
+    // 지갑이 알려 준 금액·주문·구매자가 환불과 다를 때 failureCode에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
     static final String RESULT_MISMATCH = "RESULT_MISMATCH";
 
     // 로그 문구(label)와 분기를 분리하려고 둔 종류. 문구를 고쳐도 분기가 바뀌지 않게 한다
@@ -81,9 +81,10 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
         if (!isProcessingOrLog(refund, refundId, ResultKind.COMPLETED)) {
             return;
         }
-        // 지갑이 돌려준 금액·주문이 환불이 요청한 것과 다르면 완료하지 않는다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다
-        if (refund.getRefundAmount() != command.amount() || !refund.getOrderId().equals(command.orderId())) {
-            recordMismatch(refundId, command.orderId(), command.amount(), refund);
+        // 지갑이 돌려준 금액·주문·구매자가 환불이 요청한 것과 다르면 완료하지 않는다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다
+        // (지갑에 그 반환을 취소해 달라고 보내는 것은 별도 이슈, #544 결정 13)
+        if (!matchesRefund(refund, command.orderId(), command.buyerId(), command.amount())) {
+            recordMismatch(refundId, command.orderId(), command.buyerId(), command.amount(), null, refund);
             return;
         }
         // 재고 복구는 구간 밖. 상품은 같은 refundId면 또 풀지 않아 같은 메시지가 다시 와도 안전하다.
@@ -103,16 +104,17 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
         if (!isProcessingOrLog(refund, refundId, ResultKind.FAILED)) {
             return;
         }
-        // 주문 비교보다 먼저 본다. 주문이 달라 불일치로 기록하는 경우에도 PRODUCT 표시를 덮어쓰면 안 되기 때문이다
+        // 금액·주문·구매자 비교보다 먼저 본다. 달라서 불일치로 기록하는 경우에도 PRODUCT 표시를 덮어쓰면 안 되기 때문이다
         if (isAfterWalletSuccess(refund)) {
             logIgnoredAfterWalletSuccess(refund, "실패");
             return;
         }
-        // 주문이 다르면 환불 번호와 주문 번호 중 어느 쪽이 틀렸는지 알 수 없다. 지갑 결과가 어긋난 것 자체가 문제라
-        // 완료 경로와 같이 불일치로 기록해 사람이 보게 한다(엉뚱한 환불에 표시가 붙을 수 있음은 감수, #544 결정 7).
-        // 주문은 equals로 비교한다. 예외를 던지면 오류 처리기가 같은 메시지를 다시 시도해 줄이 막히므로 던지지 않는다. 금액은 실패 메시지에서 비교하지 않는다
-        if (!refund.getOrderId().equals(command.orderId())) {
-            recordMismatch(refundId, command.orderId(), command.amount(), refund);
+        // 금액·주문·구매자가 다르면 메시지의 어느 값이 틀렸는지 알 수 없다. 지갑 결과가 어긋난 것 자체가 문제라
+        // 완료 경로와 같이 불일치로 기록해 사람이 보게 한다(엉뚱한 환불에 표시가 붙을 수 있음은 감수, #544 결정 7·12).
+        // 실패 메시지의 금액은 환불이 요청한 금액을 그대로 돌려준다고 본다(지갑 제안에 뜻이 없어 둔 가정, 결정 12).
+        // 지갑이 알려 준 이유는 기록 대신 로그에 남는다. 예외를 던지면 오류 처리기가 같은 메시지를 다시 시도해 줄이 막히므로 던지지 않는다
+        if (!matchesRefund(refund, command.orderId(), command.buyerId(), command.amount())) {
+            recordMismatch(refundId, command.orderId(), command.buyerId(), command.amount(), command.reason(), refund);
             return;
         }
         if (isSameFailure(refund, command.reason())) {
@@ -194,9 +196,19 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
                 && reason.equals(refund.getFailureCode());
     }
 
-    // 금액·주문이 다른 완료 메시지와 주문이 다른 실패 메시지를 불일치로 기록한다. 완료도 재고 복구도 하지 않는다.
-    // 두 메시지가 같은 규칙을 따르게 한 곳에서 기록한다(한쪽만 고쳐 동작이 갈라지지 않게)
-    private void recordMismatch(Long refundId, Long messageOrderId, long messageAmount, Refund refund) {
+    // 지갑 결과의 주문·구매자·금액이 모두 환불과 같은지 본다. 완료·실패 메시지가 같은 기준을 쓰게 한 곳에 둔다.
+    // ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
+    private static boolean matchesRefund(Refund refund, Long orderId, Long buyerId, long amount) {
+        return refund.getOrderId().equals(orderId)
+                && refund.getBuyerId().equals(buyerId)
+                && refund.getRefundAmount() == amount;
+    }
+
+    // 금액·주문·구매자가 다른 완료·실패 메시지를 불일치로 기록한다. 완료도 재고 복구도 하지 않는다.
+    // 두 메시지가 같은 규칙을 따르게 한 곳에서 기록한다(한쪽만 고쳐 동작이 갈라지지 않게).
+    // walletReason은 실패 메시지가 알려 준 이유다(완료 메시지면 null). 기록은 불일치로 덮이므로 로그로 남긴다
+    private void recordMismatch(Long refundId, Long messageOrderId, Long messageBuyerId, long messageAmount,
+                                String walletReason, Refund refund) {
         if (isAfterWalletSuccess(refund)) {
             logIgnoredAfterWalletSuccess(refund, "결과 불일치");
             return;
@@ -224,8 +236,10 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
             log.info("지갑 반환 결과 불일치를 기록하려는 사이 환불이 바뀌어 넘김. refundId={}", refundId);
             return;
         }
-        log.warn("지갑 반환 결과가 환불과 달라 불일치로 기록함(처리 중 유지). refundId={}, 환불 orderId={}, 메시지 orderId={}, 환불 금액={}, 메시지 금액={}",
-                refundId, refund.getOrderId(), messageOrderId, refund.getRefundAmount(), messageAmount);
+        log.warn("지갑 반환 결과가 환불과 달라 불일치로 기록함(처리 중 유지). refundId={}, 환불 orderId={}, 메시지 orderId={}, "
+                        + "환불 buyerId={}, 메시지 buyerId={}, 환불 금액={}, 메시지 금액={}, 지갑 이유={}",
+                refundId, refund.getOrderId(), messageOrderId, refund.getBuyerId(), messageBuyerId,
+                refund.getRefundAmount(), messageAmount, walletReason);
     }
 
     // 재고까지 마친 환불을 완료로 바꾼다. 자기 행만 잠그고, 잠근 뒤 상태를 다시 본다(그 사이 같은 메시지가 먼저 완료했을 수 있다).
