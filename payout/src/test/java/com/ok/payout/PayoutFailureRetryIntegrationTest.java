@@ -179,7 +179,7 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 다시_넣을_주문의_후보는_상한_전의_미정산_후보만_잠긴_주문은_빼고_고른다() throws Exception {
-        // given: 상한 이전·이후 후보를 가진 주문 X, 금액 불일치로 잠긴 주문 Y, 넘기지 않을 주문 Z
+        // given: 상한 이전·이후 후보를 가진 주문 X, 결과 검증 불일치로 잠긴 주문 Y, 넘기지 않을 주문 Z
         LocalDateTime to = LocalDateTime.of(2026, 11, 1, 0, 0);
         // 실제 Job은 오래된 후보를 정산해 버리므로, 후보를 넣기 전에 실행부터 함 (실패 기록을 붙일 스냅샷만 필요)
         Long snapshotId = runCompleted();
@@ -191,7 +191,7 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(orderX, to);                              // 상한 정각 → 제외 (<)
         long yBefore = insertCandidate(orderY, to.minusDays(1));
         insertCandidate(orderZ, to.minusDays(1));
-        insertFailure(snapshotId, yBefore, orderY, PayoutFailureReason.AMOUNT_MISMATCH);   // 주문을 잠그는 사유
+        insertFailure(snapshotId, yBefore, orderY, PayoutFailureReason.VERIFY_MISMATCH);   // 주문을 잠그는 사유 (#552부터 금액 불일치는 잠그지 않음)
 
         // when
         List<PayoutCandidateItem> sut = payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(
@@ -205,7 +205,7 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 멈춘_주문_수를_셀_주문_ID는_후보_조회와_같은_조건에서_중복_없이_고른다() throws Exception {
-        // given: 상한 이전 후보 2건인 주문 X, 상한 정각 후보만 있는 주문 W, 금액 불일치로 잠긴 주문 Y, 넘기지 않을 주문 Z
+        // given: 상한 이전 후보 2건인 주문 X, 상한 정각 후보만 있는 주문 W, 결과 검증 불일치로 잠긴 주문 Y, 넘기지 않을 주문 Z
         LocalDateTime to = LocalDateTime.of(2026, 11, 1, 0, 0);
         // 실제 Job은 오래된 후보를 정산해 버리므로, 후보를 넣기 전에 실행부터 함 (실패 기록을 붙일 스냅샷만 필요)
         Long snapshotId = runCompleted();
@@ -218,7 +218,7 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(orderW, to);                              // 상한 정각 → 제외 (<)
         long yBefore = insertCandidate(orderY, to.minusDays(1));
         insertCandidate(orderZ, to.minusDays(1));
-        insertFailure(snapshotId, yBefore, orderY, PayoutFailureReason.AMOUNT_MISMATCH);   // 주문을 잠그는 사유
+        insertFailure(snapshotId, yBefore, orderY, PayoutFailureReason.VERIFY_MISMATCH);   // 주문을 잠그는 사유 (#552부터 금액 불일치는 잠그지 않음)
 
         // when
         List<Long> sut = payoutQueryRepository.findOrderIdsWithUnsettledCandidatesBefore(
@@ -346,6 +346,28 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 초과_청구로_실패한_주문은_잠기지_않고_기간_밖이어도_다시_넣고_3번이면_멈춘다() throws Exception {
+        // given: 조회 기간 밖(30일 전) 후보를 가진 두 주문. 한쪽은 초과 청구 1번, 다른 쪽은 3번 (모두 성공한 실행)
+        Long firstRun = runCompleted();
+        Long secondRun = runCompleted();
+        Long thirdRun = runCompleted();
+        long onceOrder = nextOrderId();
+        long thriceOrder = nextOrderId();
+        long onceCandidate = insertCandidate(onceOrder, LocalDateTime.now().minusDays(30));
+        long thriceCandidate = insertCandidate(thriceOrder, LocalDateTime.now().minusDays(30));
+        insertFailure(firstRun, onceCandidate, onceOrder, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(firstRun, thriceCandidate, thriceOrder, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(secondRun, thriceCandidate, thriceOrder, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(thirdRun, thriceCandidate, thriceOrder, PayoutFailureReason.AMOUNT_MISMATCH);
+
+        // when
+        List<Long> sut = snapshotCandidateIds();
+
+        // then: #552부터 초과 청구는 잠그지 않아 1번이면 다시 넣고(#552 전에는 잠겨 빠졌음), 횟수에는 세어 3번이면 #549대로 멈춤
+        assertThat(sut).containsExactly(onceCandidate);
+    }
+
+    @Test
     void 세번을_못_채우고_조회_기간_밖으로_밀린_실패_주문은_다시_넣는다() throws Exception {
         // given: 실행을 먼저 하고(실제 Job이 오래된 후보를 정산하지 않게), 조회 기간 밖(30일 전) 후보를 둠
         Long runSnapshotId = runCompleted();
@@ -418,11 +440,11 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 잠긴_주문은_실패_횟수가_1번이어도_다시_넣지_않는다() throws Exception {
-        // given: 금액 불일치로 잠긴 주문(1번 실패)의 기간 밖 후보
+        // given: 결과 검증 불일치로 잠긴 주문(1번 실패)의 기간 밖 후보
         Long runSnapshotId = runCompleted();
         long order = nextOrderId();
         long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
-        insertFailure(runSnapshotId, candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
+        insertFailure(runSnapshotId, candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
 
         // when
         List<Long> sut = snapshotCandidateIds();

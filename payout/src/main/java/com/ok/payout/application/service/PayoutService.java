@@ -127,7 +127,7 @@ public class PayoutService implements PayoutUseCase {
     // 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환
     // 헤더와 목록을 한 트랜잭션에서 만들어, 중간에 실패하면 둘 다 남지 않음 (반쪽짜리 스냅샷 방지)
     // 이후 Step은 이 목록만 보고 처리하므로, 배치 도중 새로 생긴 정산후보는 다음 배치로 넘어감
-    // 잠긴 주문(금액 검사 #195, 결과 검증 #290)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
+    // 잠긴 주문(수수료 불일치 #195·#391, 결과 검증 #290)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐 (초과 청구는 #552부터 잠그지 않음)
     // 성공한 실행에서 PayoutPolicy.MAX_FAILED_RUNS번 실패한 주문도 스냅샷에서 뺌(멈춤), 1번 이상 그 미만이면 조회 기간 밖이어도 다시 넣음 (#549)
     //
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
@@ -185,7 +185,7 @@ public class PayoutService implements PayoutUseCase {
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(결과 검증으로 뺀 주문 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
 
-        // 이번 조회 기간에서 잠긴 주문(#195, #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
+        // 이번 조회 기간에서 잠긴 주문(수수료 불일치 #195·#391, 결과 검증 #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
         // (0건이면 매일 같은 로그가 남아 생략)
         // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
         // 멈춘 주문이 있는 날만 WARN: MAX_FAILED_RUNS번 실패해 정산에서 빠진 주문은 사람이 확인해야 하므로 INFO보다 높게 남김 (0건이면 생략)
@@ -213,8 +213,8 @@ public class PayoutService implements PayoutUseCase {
     // 검사 순서: 차감 기록 없음(#194) → 금액 검사(초과 청구 → 수수료, #195). 앞 검사에 걸린 후보는 뒤 검사 대상에서 빠짐 (후보당 실패 1건)
     // 모든 검사 결과를 모아 한 번에 저장: 같은 트랜잭션이라 중간에 실패하면 이번 검증의 기록이 하나도 남지 않음
     //
-    // 금액 검사에 걸린 주문은 잠김(초과 청구 AMOUNT_MISMATCH, 수수료 FEE_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
-    // 잠금은 이후 Step이 실패해 Job이 FAILED로 끝나도 유지됨 (입력 금액에 대한 판정이라 재실행해도 다시 잠김)
+    // 초과 청구에 걸린 주문은 잠그지 않음(#552): 다음 실행에서 다시 검사하고, 횟수에 세어 MAX_FAILED_RUNS번이면 멈춤(#549)
+    //   입력이 그대로면 매번 같은 검사에 걸려 돈이 나가지 않음. 수수료 불일치는 다시 검사해도 풀릴 길이 없어 잠금 유지(사람이 #301에서 풂)
     @Override
     @Transactional
     public int validate(Long snapshotId) {
@@ -252,7 +252,7 @@ public class PayoutService implements PayoutUseCase {
 
         payoutFailureRepository.saveAll(failures);
 
-        logLockedOrders(snapshotId, amountFailures);
+        logAmountCheckFailedOrders(snapshotId, amountFailures);
         logOverchargedOrderItems(snapshotId, amountFailures, overchargeCandidates);
         logFeeMismatches(amountFailures);
         // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
@@ -301,10 +301,11 @@ public class PayoutService implements PayoutUseCase {
         }
     }
 
-    // 주문이 새로 잠길 때마다 WARN: 잠긴 주문은 저절로 풀리지 않아(TODO(#52)) 사람이 원인을 확인해야 함
-    // 판매자 수를 남기는 이유: 한 판매자의 금액이 틀려도 같은 주문의 다른 판매자 후보까지 함께 보류되어, 영향받은 판매자를 바로 알 수 있게
+    // 금액 검사에 걸린 주문마다 WARN (#552 전에는 "정산 주문 잠금"): 이번 실행에서 그 주문이 빠졌고 왜 빠졌는지를 그날 바로 알 수 있게
+    //   문구를 바꾼 이유: #552부터 초과 청구는 잠그지 않고(3번이면 멈춤, #549) 수수료 불일치만 잠가, "잠금"이라고 쓰면 초과 청구에서 틀림
+    // 판매자 수를 남기는 이유: 한 판매자의 금액이 틀려도 같은 주문의 다른 판매자 후보까지 함께 빠져, 영향받은 판매자를 바로 알 수 있게
     // 금액 검사 실패 목록은 주문별로 이어서 들어옴 (PayoutAmountValidator가 주문 단위로 만듦)
-    private void logLockedOrders(Long snapshotId, List<PayoutFailure> amountFailures) {
+    private void logAmountCheckFailedOrders(Long snapshotId, List<PayoutFailure> amountFailures) {
         Map<Long, List<PayoutFailure>> failuresByOrder = new LinkedHashMap<>();
         for (PayoutFailure failure : amountFailures) {
             if (!failuresByOrder.containsKey(failure.getOrderId())) {
@@ -318,15 +319,15 @@ public class PayoutService implements PayoutUseCase {
             String cause = null;
             for (PayoutFailure failure : entry.getValue()) {
                 sellerIds.add(failure.getSellerId());
-                // 사유는 원인 후보(주문을 잠그는 사유: 초과 청구 AMOUNT_MISMATCH, 수수료 FEE_MISMATCH)의 상세로 남김
-                //   (함께 보류된 ORDER_HELD 상세는 원인이 아님)
-                // 사유 이름 대신 locksOrder로 고르는 이유: #391에서 수수료를 FEE_MISMATCH로 나눴을 때 이름으로 고르면 놓쳐 사유=null이 됨
-                //   "이 주문을 잠근 원인"이 곧 잠그는 사유라, 잠그는 사유가 늘어도 여기를 고치지 않게 함
-                if (cause == null && failure.getReason().isLocksOrder()) {
+                // 사유는 원인 후보(초과 청구 AMOUNT_MISMATCH, 수수료 FEE_MISMATCH)의 상세로 남김
+                // 함께 보류된 ORDER_HELD만 빼고 고름: 금액 검사가 만드는 사유 중 원인이 아닌 것은 ORDER_HELD뿐이라,
+                //   원인 사유를 하나씩 이름으로 고르면(#391에서 FEE_MISMATCH를 나눌 때처럼) 새 원인 사유를 놓쳐 사유=null이 됨
+                //   #552 전에는 locksOrder로 골랐으나, 초과 청구가 잠그지 않게 되어 locksOrder로는 초과 청구를 원인으로 고르지 못함
+                if (cause == null && failure.getReason() != PayoutFailureReason.ORDER_HELD) {
                     cause = failure.getDetail();
                 }
             }
-            log.warn("정산 주문 잠금. snapshotId={}, orderId={}, 사유={}, 판매자 수={}, 후보 수={}",
+            log.warn("정산 금액 검사로 주문 제외. snapshotId={}, orderId={}, 사유={}, 판매자 수={}, 후보 수={}",
                     snapshotId, entry.getKey(), cause, sellerIds.size(), entry.getValue().size());
         }
     }

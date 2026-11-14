@@ -16,7 +16,7 @@ import java.util.Optional;
  */
 public interface PayoutQueryRepository {
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
     List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to);
 
     // 스냅샷 대상 조건(기간 안 미정산)에는 맞지만 주문이 잠겨 뺀 후보 수 (스냅샷 생성 로그용)
@@ -65,10 +65,10 @@ public interface PayoutQueryRepository {
     List<PayoutCandidateItem> findCandidatesWithDeduction(Long snapshotId);
 
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
-    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 조정 후보, 스냅샷 이후 새로 들어온 후보까지
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지. 조정 후보는 뺌(#552: −조정이 초과 청구를 가리지 않게)
     //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
     //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
-    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) GROUP BY order_id
+    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) AND adjustment_id = 0 GROUP BY order_id
     Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId);
 
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
@@ -83,7 +83,7 @@ public interface PayoutQueryRepository {
     List<PayoutCandidateItem> findOriginalSaleCandidatesInSnapshot(Long snapshotId);
 
     // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서(created_at, id)로, 이미 정산됐는지와 함께
-    // 범위는 초과 청구 합계(sumCandidateAmountByOrderInSnapshot)와 같음: 그 주문의 후보 전부 (스냅샷 밖·이미 정산·조정 포함)
+    // 범위는 초과 청구 합계(sumCandidateAmountByOrderInSnapshot)와 같음: 그 주문의 조정 아닌 후보 전부 (스냅샷 밖·이미 정산 포함, #552부터 조정 제외)
     //   범위가 다르면 근거의 누적합이 합계와 어긋나 "넘게 만든 주문상품"을 잘못 찾음
     // 이미 정산됨 = payout_item에 그 후보가 있음 (후보 1건 = 정산 항목 최대 1건, UK candidate_id라 조인해도 줄이 늘지 않음)
     // 초과 청구에 걸린 주문만 넘기므로 보통 몇 건뿐임 (빈 목록을 넘기지 않음)

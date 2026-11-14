@@ -154,7 +154,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .fetch();
     }
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
     @Override
     public List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
         return queryFactory
@@ -349,16 +349,21 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
-    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 조정 후보, 스냅샷 이후 새로 들어온 후보까지
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지
     //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
+    // 조정 후보(adjustment_id > 0)는 뺌(#552): 넣으면 −조정이 초과 청구를 가려 틀린 금액이 통과됨
+    //   예) 결제 30,000, 원래 후보 40,000(10,000 초과), −10,000 조정 → 합계 30,000이라 통과됐음. 이제 40,000 > 30,000으로 걸림
+    //   #552 전에는 잠금이 이 위험을 가렸음(잠긴 주문엔 조정이 와도 스냅샷에 안 들어감). 잠금을 없애며 함께 막음
+    //   조정으로 금액 불일치를 바로잡는 흐름은 #291에서 다시 설계 (수수료 검사는 이미 조정을 뺌, findOriginalSaleCandidatesInSnapshot)
     //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
-    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) GROUP BY order_id
+    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) AND adjustment_id = 0 GROUP BY order_id
     @Override
     public Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId) {
         List<Tuple> rows = queryFactory
                 .select(payoutCandidateItem.orderId, payoutCandidateItem.amount.sumLong())
                 .from(payoutCandidateItem)
-                .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)))
+                .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)),
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .groupBy(payoutCandidateItem.orderId)
                 .fetch();
         Map<Long, Long> sums = new HashMap<>();
@@ -407,8 +412,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서로, 이미 정산됐는지와 함께
+    // 조정 후보는 뺌(#552): 판정 합계(sumCandidateAmountByOrderInSnapshot)와 같은 범위여야 근거의 누적합이 합계와 맞음
     //   SQL) SELECT c.*, pi.id FROM payout_candidate_items c LEFT JOIN payout_item pi ON pi.candidate_id = c.id
-    //        WHERE c.order_id IN (...) ORDER BY c.created_at, c.id
+    //        WHERE c.order_id IN (...) AND c.adjustment_id = 0 ORDER BY c.created_at, c.id
     // 정산 여부는 select에 조건식을 두지 않고 payout_item id를 읽어 Java에서 null 여부로 정함 (JPQL select의 조건식 지원에 기대지 않으려고)
     @Override
     public List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds) {
@@ -422,7 +428,8 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutItem.id)
                 .from(payoutCandidateItem)
                 .leftJoin(payoutItem).on(payoutItem.candidateId.eq(payoutCandidateItem.id))
-                .where(payoutCandidateItem.orderId.in(orderIds))
+                .where(payoutCandidateItem.orderId.in(orderIds),
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .orderBy(payoutCandidateItem.createdAt.asc(), payoutCandidateItem.id.asc())
                 .fetch();
         List<OverchargeCandidateRow> result = new ArrayList<>();
@@ -657,9 +664,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
 
     // 후보의 주문이 잠겼는지: 그 주문에 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
     // 스냅샷 번호와 상관없이 주문 단위로 봄 → 잠긴 뒤 새로 들어온 같은 주문의 후보(나중에 구매확정된 상품, 조정 등)도 빠짐
-    // 잠그는 사유: 금액 검사 불일치(validate, #195), 결과 검증 불일치(verify, #290)
+    // 잠그는 사유: 수수료 불일치(validate, #195·#391), 결과 검증 불일치(verify, #290). 초과 청구(#195)는 #552부터 잠그지 않고 다시 검사함
     // 잠금을 남긴 Job이 이후 Step에서 FAILED로 끝나도 실패 기록은 남아 잠금이 유지됨
-    //   (금액 불일치는 입력에 대한 판정이라 재실행해도 다시 잠기고, 결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
+    //   (수수료 불일치는 입력에 대한 판정이라 재실행해도 다시 잠기고, 결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
     //    실패한 Job의 판정을 지울 이유가 없음)
     private BooleanExpression lockedOrder() {
         return JPAExpressions.selectOne()
