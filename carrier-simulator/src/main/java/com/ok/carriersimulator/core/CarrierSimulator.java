@@ -227,8 +227,12 @@ public final class CarrierSimulator {
      */
     public synchronized void completeCallback(CallbackAttempt attempt, CallbackOutcome outcome, Instant now) {
         Parcel parcel = parcels.get(attempt.key());
+        if (parcel == null) {
+            // 보내는 동안 모두 지웠다. 지운 실행의 기록과 숫자가 되살아나지 않게 남기지 않고, 다시 보내지도 않는다
+            return;
+        }
         callbackRecords.addFirst(new CallbackRecord(now.minusMillis(outcome.elapsedMillis()), attempt.key(),
-                parcel == null ? null : parcel.lastStatus(), outcome.responseCode(), outcome.failure(),
+                parcel.lastStatus(), outcome.responseCode(), outcome.failure(),
                 outcome.elapsedMillis(), attempt.attemptNo()));
         if (callbackRecords.size() > MAX_CALLBACK_RECORDS) {
             callbackRecords.removeLast();
@@ -238,7 +242,7 @@ public final class CarrierSimulator {
             return;
         }
         stats.record(Metric.CALLBACK_FAIL, now);
-        if (parcel == null || parcel.registration() == null) {
+        if (parcel.registration() == null) {
             return;
         }
         Instant retryAt = now.plus(retryDelay(attempt.attemptNo()));

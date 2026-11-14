@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -65,8 +66,17 @@ public class CallbackDispatcher implements DisposableBean {
             }
             List<CallbackAttempt> attempts = simulator.pollDueCallbacks(clock.instant());
             inFlight = attempts.size();
-            for (CallbackAttempt attempt : attempts) {
-                executor.submit(() -> deliver(attempt));
+            int submitted = 0;
+            try {
+                for (CallbackAttempt attempt : attempts) {
+                    executor.submit(() -> deliver(attempt));
+                    submitted++;
+                }
+            } catch (RejectedExecutionException e) {
+                // 종료 중이라 맡길 곳이 없다. 맡기지 못한 알림은 결과가 돌아오지 않으므로 보내는 중으로 세지 않는다.
+                // 세어 두면 inFlight가 0이 되지 않아 다음 묶음도, 끝나기를 기다리는 쪽도 영영 풀리지 않는다
+                inFlight -= attempts.size() - submitted;
+                log.warn("종료 중이라 알림 {}건을 보내지 못했습니다.", attempts.size() - submitted);
             }
         } finally {
             lock.unlock();
