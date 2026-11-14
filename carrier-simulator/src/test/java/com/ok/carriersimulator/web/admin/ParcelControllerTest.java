@@ -13,7 +13,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ok.carriersimulator.core.CarrierSimulator;
-import com.ok.carriersimulator.core.FaultSettings;
 import com.ok.carriersimulator.core.ParcelFilter;
 import com.ok.carriersimulator.core.ParcelKey;
 import com.ok.carriersimulator.core.Scenario;
@@ -50,8 +49,6 @@ class ParcelControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
-        simulator.clearAll();
-        simulator.updateFaults(FaultSettings.none());
     }
 
     @Test

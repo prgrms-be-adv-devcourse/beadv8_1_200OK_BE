@@ -15,12 +15,15 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.client.RestClient;
 
 @SimulatorWebTest
 class TrackGraphQlTest {
@@ -66,12 +69,6 @@ class TrackGraphQlTest {
     private CarrierSimulator simulator;
     @Autowired
     private MutableClock clock;
-
-    @BeforeEach
-    void setUp() {
-        simulator.clearAll();
-        simulator.updateFaults(FaultSettings.none());
-    }
 
     private static Map<String, Object> variables(String trackingNumber) {
         return Map.of("carrierId", CARRIER, "trackingNumber", trackingNumber);
@@ -332,27 +329,30 @@ class TrackGraphQlTest {
     }
 
     @Test
-    void 응답_지연이_몰려도_관리_화면은_바로_열린다() throws Exception {
+    void 응답_지연이_몰려도_관리_화면은_지연된_요청이_끝나기_전에_열린다() throws Exception {
         // given: 응답을 3초 늦추고 조회 250건을 한꺼번에 보낸다
         String token = client.token();
         simulator.updateFaults(new FaultSettings(3000, 0, 1, false));
-        try (java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+        AtomicInteger finished = new AtomicInteger();
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < 250; i++) {
-                executor.submit(() -> client.graphql(TRACK_QUERY, variables(NORMAL), token));
+                executor.submit(() -> {
+                    client.graphql(TRACK_QUERY, variables(NORMAL), token);
+                    finished.incrementAndGet();
+                });
             }
             Thread.sleep(700);
 
             // when: 지연을 끄려고 관리 화면을 연다
-            long startedAt = System.nanoTime();
-            int status = org.springframework.web.client.RestClient.create().get()
+            int status = RestClient.create().get()
                     .uri(client.baseUrl() + "/settings")
                     .exchange((request, response) -> response.getStatusCode().value());
-            long elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+            int finishedWhenOpened = finished.get();
 
-            // then
+            // then: 걸린 시간을 재지 않고 순서로 확인한다. 화면이 막혔다면 지연된 요청이 끝난 뒤에야 열린다
             assertSoftly(softly -> {
                 softly.assertThat(status).isEqualTo(200);
-                softly.assertThat(elapsedMillis).isLessThan(1500);
+                softly.assertThat(finishedWhenOpened).isZero();
             });
         }
     }

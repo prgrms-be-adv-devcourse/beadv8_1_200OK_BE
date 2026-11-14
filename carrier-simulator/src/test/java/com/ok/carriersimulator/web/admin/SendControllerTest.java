@@ -16,7 +16,6 @@ import com.ok.carriersimulator.core.CallbackAttempt;
 import com.ok.carriersimulator.core.CallbackOutcome;
 import com.ok.carriersimulator.core.CarrierSimulator;
 import com.ok.carriersimulator.core.DispatchSettings;
-import com.ok.carriersimulator.core.FaultSettings;
 import com.ok.carriersimulator.core.ParcelKey;
 import com.ok.carriersimulator.core.StatusCode;
 import com.ok.carriersimulator.core.TrackResult;
@@ -53,13 +52,9 @@ class SendControllerTest {
 
     private MockMvc mockMvc;
 
-    // 컨텍스트를 다른 테스트와 함께 쓰므로 바꾼 설정을 처음 값으로 돌려놓고 시작한다
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
-        simulator.clearAll();
-        simulator.updateFaults(FaultSettings.none());
-        simulator.updateDispatch(DEFAULT_DISPATCH);
     }
 
     private static MultiValueMap<String, String> manualForm(String numbers, String status, String times, String url) {

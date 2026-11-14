@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ok.carriersimulator.core.CarrierSimulator;
-import com.ok.carriersimulator.core.FaultSettings;
 import com.ok.carriersimulator.core.Scenario;
 import com.ok.carriersimulator.testsupport.MutableClock;
 import com.ok.carriersimulator.testsupport.SimulatorWebTest;
@@ -39,8 +38,6 @@ class CrossSiteGuardTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).addFilters(guard).build();
-        simulator.clearAll();
-        simulator.updateFaults(FaultSettings.none());
         simulator.createDummies(Scenario.NORMAL, "kr.cjlogistics", 2, null, clock.instant());
     }
 

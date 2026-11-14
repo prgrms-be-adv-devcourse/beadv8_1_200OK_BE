@@ -8,7 +8,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ok.carriersimulator.core.CarrierSimulator;
-import com.ok.carriersimulator.core.FaultSettings;
 import com.ok.carriersimulator.core.ParcelKey;
 import com.ok.carriersimulator.testsupport.MutableClock;
 import com.ok.carriersimulator.testsupport.SimulatorWebTest;
@@ -38,8 +37,6 @@ class DashboardControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
-        simulator.clearAll();
-        simulator.updateFaults(FaultSettings.none());
     }
 
     @Test

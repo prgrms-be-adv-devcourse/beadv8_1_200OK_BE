@@ -510,17 +510,22 @@ class CarrierSimulatorTrackTest {
 
     @ParameterizedTest
     @MethodSource("잘못된_쪽_요청")
-    void 쪽_번호나_크기가_범위를_벗어나면_예외다(int page, int size) {
+    void 쪽_번호나_크기가_범위를_벗어나면_예외다(int page, int size, String message) {
         // given
         CarrierSimulator sut = newSimulator(0);
 
         // when & then
         assertThatThrownBy(() -> sut.parcels(ParcelFilter.all(), page, size, START))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
     }
 
     static Stream<Arguments> 잘못된_쪽_요청() {
-        return Stream.of(Arguments.of(-1, 50), Arguments.of(0, 0), Arguments.of(0, 201));
+        String sizeMessage = "쪽 크기는 1 이상 200 이하여야 합니다.";
+        return Stream.of(
+                Arguments.of(-1, 50, "쪽 번호는 0 이상이어야 합니다."),
+                Arguments.of(0, 0, sizeMessage),
+                Arguments.of(0, 201, sizeMessage));
     }
 
     @Test
@@ -571,17 +576,18 @@ class CarrierSimulatorTrackTest {
 
     @ParameterizedTest
     @MethodSource("빈_키_값")
-    void 택배사나_송장_번호가_비면_예외다(String carrierId, String trackingNumber) {
+    void 택배사나_송장_번호가_비면_예외다(String carrierId, String trackingNumber, String message) {
         // when & then
         assertThatThrownBy(() -> new ParcelKey(carrierId, trackingNumber))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
     }
 
     static Stream<Arguments> 빈_키_값() {
         return Stream.of(
-                Arguments.of(null, "901000000001"),
-                Arguments.of(" ", "901000000001"),
-                Arguments.of(CARRIER, null),
-                Arguments.of(CARRIER, ""));
+                Arguments.of(null, "901000000001", "택배사는 필수입니다."),
+                Arguments.of(" ", "901000000001", "택배사는 필수입니다."),
+                Arguments.of(CARRIER, null, "송장 번호는 필수입니다."),
+                Arguments.of(CARRIER, "", "송장 번호는 필수입니다."));
     }
 }

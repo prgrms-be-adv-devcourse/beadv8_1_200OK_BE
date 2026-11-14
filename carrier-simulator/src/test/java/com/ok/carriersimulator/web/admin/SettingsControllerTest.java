@@ -24,7 +24,6 @@ import com.ok.carriersimulator.testsupport.MutableClock;
 import com.ok.carriersimulator.testsupport.SimulatorWebTest;
 import java.time.Duration;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -52,16 +51,6 @@ class SettingsControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
-        simulator.clearAll();
-        simulator.updateFaults(FaultSettings.none());
-    }
-
-    // 재생 속도와 일시정지는 컨텍스트를 함께 쓰는 다른 테스트에 영향을 주므로 처음 값(가상 1시간 = 1초)으로 돌려놓는다
-    @AfterEach
-    void tearDown() {
-        simulator.resume(clock.instant());
-        simulator.changeSpeed(24, clock.instant());
-        simulator.updateFaults(FaultSettings.none());
     }
 
     private StatusCode lastStatus() {
