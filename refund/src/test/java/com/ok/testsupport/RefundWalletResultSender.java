@@ -45,6 +45,18 @@ public class RefundWalletResultSender {
         send(COMPLETED_TOPIC, message(refund, refund.getRefundAmount(), null));
     }
 
+    /** 저장된 환불의 orderId·buyerId에 금액만 바꿔 완료 메시지를 보낸다. 지갑이 다른 금액을 돌려준 경우(불일치)를 만들 때 쓴다. 기다리지 않는다 */
+    public void sendCompleted(Long refundId, long amount) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(COMPLETED_TOPIC, message(refund, amount, null));
+    }
+
+    /** 저장된 환불의 orderId·buyerId에 금액만 바꿔 실패 메시지를 보낸다. 기다리지 않는다 */
+    public void sendFailed(Long refundId, long amount, String reason) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(FAILED_TOPIC, message(refund, amount, reason));
+    }
+
     /** 저장된 환불의 값으로 실패 메시지를 보낸다. 기다리지 않는다 */
     public void sendFailed(Long refundId, String reason) {
         Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
