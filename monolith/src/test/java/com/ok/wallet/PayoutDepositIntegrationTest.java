@@ -150,6 +150,8 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update(q("DELETE FROM payout_system_draft_item"));
         // 정산 실패 기록은 스냅샷·후보를 참조하므로 그 둘보다 먼저 지운다 (정산 #194에서 생긴 테이블)
         // 빠뜨리면 스냅샷 삭제에서 FK 오류로 멈춰 후보가 남고, 뒤에 도는 정산 테스트까지 오염된다
+        // 정산 해결 기록은 실패 기록을 외래키로 가리켜 먼저 지운다 (정산 #568·#571)
+        jdbcTemplate.update(q("DELETE FROM payout_failure_resolution"));
         jdbcTemplate.update(q("DELETE FROM payout_failure"));
         jdbcTemplate.update(q("DELETE FROM payout_snapshot_item"));
         jdbcTemplate.update(q("DELETE FROM payout_snapshot"));
