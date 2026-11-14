@@ -50,6 +50,7 @@ import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -301,6 +302,26 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
             }
         }
         assertThat(draftedOrderIds).containsExactly(otherOrder);
+    }
+
+    @Test
+    void 주문_하나의_실패_횟수는_전체_집계의_그_주문_값과_같다() throws Exception {
+        // given: 해결해서 0번이 된 주문, 결제 기록이 없어 실제 Job에서 2번 실패한 주문, 실패 없는 주문
+        //   잠긴 주문 준비가 실행을 한 번 돌리므로 먼저 함 (뒤에 하면 2번 실패한 주문이 3번째로 실패함)
+        long resolvedOrder = givenLockedOrder();
+        resolve(resolvedOrder);
+        long twiceOrder = nextOrderId();
+        insertCandidateWithoutDeduction(twiceOrder, LocalDateTime.now().minusDays(30));
+        runCompleted(2);
+        long cleanOrder = nextOrderId();
+        insertCandidate(cleanOrder, LocalDateTime.now().minusDays(30));
+
+        // when & then: 해결 API의 멈춤 판정(단건)과 스냅샷의 멈춤 판정(전체)이 같은 기준으로 셈
+        Map<Long, Long> all = payoutQueryRepository.countFailedRunsByOrder();
+        for (long order : List.of(twiceOrder, cleanOrder, resolvedOrder)) {
+            assertThat(payoutQueryRepository.countFailedRunsOfOrder(order)).isEqualTo(all.getOrDefault(order, 0L));
+        }
+        assertThat(payoutQueryRepository.countFailedRunsOfOrder(twiceOrder)).isEqualTo(2L);
     }
 
     // ---------- 해결할 것이 없을 때 ----------

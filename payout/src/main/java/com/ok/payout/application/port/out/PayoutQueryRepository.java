@@ -130,6 +130,9 @@ public interface PayoutQueryRepository {
     // 0번인 주문은 결과에 없음
     Map<Long, Long> countFailedRunsByOrder();
 
+    // 한 주문의 위 실행 수 (#568 해결 API의 멈춤 판정). 세는 기준은 countFailedRunsByOrder와 같고, 실패가 없으면 0
+    long countFailedRunsOfOrder(Long orderId);
+
     // 그 주문들의 미정산 후보 중 createdAt < to인 것 (#549, 조회 기간의 하한 없음, id 오름차순)
     // 잠긴 주문의 후보는 뺌. orderIds가 비면 조회하지 않고 빈 목록
     List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to);

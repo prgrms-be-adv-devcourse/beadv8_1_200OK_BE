@@ -60,6 +60,19 @@ import static com.ok.payout.domain.QPayoutWalletDeductionConflict.payoutWalletDe
 @RequiredArgsConstructor
 public class PayoutQuerydslRepository implements PayoutQueryRepository {
 
+    // 주문별 실패 횟수 SQL의 공통 앞부분 (countFailedRunsByOrder·countFailedRunsOfOrder가 함께 씀, 조건 설명은 countFailedRunsByOrder 주석)
+    // 두 메서드가 같은 문자열을 써야 스냅샷의 멈춤 판정과 해결 API의 멈춤 판정이 어긋나지 않음. 끝은 WHERE 조건 뒤라 "AND ..." 또는 "GROUP BY"를 붙임
+    private static final String FAILED_RUNS_BY_ORDER_SELECT =
+            "SELECT f.order_id, COUNT(DISTINCT f.snapshot_id) "
+                    + "FROM " + PayoutSchema.NAME + ".payout_failure f "
+                    + "JOIN " + PayoutSchema.NAME + ".payout_snapshot s ON s.id = f.snapshot_id "
+                    + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
+                    + "WHERE e.STATUS = 'COMPLETED' "
+                    + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
+                    + "WHERE pi.candidate_id = f.candidate_id) "
+                    + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_failure_resolution r "
+                    + "WHERE r.failure_id = f.id) ";
+
     private final JPAQueryFactory queryFactory;
     private final EntityManager entityManager;
 
@@ -106,17 +119,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 매 실행 실패 기록 전체를 훑어 기록이 쌓일수록 느려지는 것은 알고 둠: 지금 규모에서는 문제없고, 대량에서의 시간은 #304에서 잼
     @Override
     public Map<Long, Long> countFailedRunsByOrder() {
-        List<?> rows = entityManager.createNativeQuery(
-                        "SELECT f.order_id, COUNT(DISTINCT f.snapshot_id) "
-                                + "FROM " + PayoutSchema.NAME + ".payout_failure f "
-                                + "JOIN " + PayoutSchema.NAME + ".payout_snapshot s ON s.id = f.snapshot_id "
-                                + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
-                                + "WHERE e.STATUS = 'COMPLETED' "
-                                + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
-                                + "WHERE pi.candidate_id = f.candidate_id) "
-                                + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_failure_resolution r "
-                                + "WHERE r.failure_id = f.id) "
-                                + "GROUP BY f.order_id")
+        List<?> rows = entityManager.createNativeQuery(FAILED_RUNS_BY_ORDER_SELECT + "GROUP BY f.order_id")
                 .getResultList();
         Map<Long, Long> counts = new HashMap<>();
         for (Object row : rows) {
@@ -124,6 +127,21 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
             counts.put(((Number) columns[0]).longValue(), ((Number) columns[1]).longValue());
         }
         return counts;
+    }
+
+    // 한 주문의 "성공한 실행 중 실패 기록이 남은 실행 수" (#568 해결 API의 멈춤 판정)
+    // 위 countFailedRunsByOrder와 같은 SQL에 주문 조건만 더함: 세는 기준이 스냅샷과 어긋나지 않게 SQL을 공유하고,
+    //   관리자가 주문 하나를 해결할 때마다 전체 주문을 세지 않으려고 (payout_failure의 order_id 인덱스로 그 주문만 봄)
+    @Override
+    public long countFailedRunsOfOrder(Long orderId) {
+        List<?> rows = entityManager.createNativeQuery(
+                        FAILED_RUNS_BY_ORDER_SELECT + "AND f.order_id = :orderId GROUP BY f.order_id")
+                .setParameter("orderId", orderId)
+                .getResultList();
+        if (rows.isEmpty()) {
+            return 0L;
+        }
+        return ((Number) ((Object[]) rows.get(0))[1]).longValue();
     }
 
     // 다시 검사할 주문들의 미정산 후보 (#549): 조회 기간 하한 없이 createdAt < to

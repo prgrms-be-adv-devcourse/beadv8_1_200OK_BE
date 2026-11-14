@@ -21,7 +21,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,7 +50,7 @@ class PayoutFailureResolutionServiceTest {
     void 잠기지도_멈추지도_않은_주문은_409이고_저장하지_않는다() {
         // given: 잠금 없음, 성공한 실행에서 2번 실패(멈춤 기준 3번 미만)
         given(payoutQueryRepository.isOrderLocked(ORDER_ID)).willReturn(false);
-        given(payoutQueryRepository.countFailedRunsByOrder()).willReturn(Map.of(ORDER_ID, 2L));
+        given(payoutQueryRepository.countFailedRunsOfOrder(ORDER_ID)).willReturn(2L);
 
         // when & then
         assertThatThrownBy(() -> sut.resolveOrder(COMMAND))
@@ -68,7 +67,7 @@ class PayoutFailureResolutionServiceTest {
                 failure(12L, PayoutFailureReason.AMOUNT_MISMATCH),
                 failure(13L, PayoutFailureReason.VERIFY_MISMATCH));
         given(payoutQueryRepository.isOrderLocked(ORDER_ID)).willReturn(false);
-        given(payoutQueryRepository.countFailedRunsByOrder()).willReturn(Map.of(ORDER_ID, 3L));
+        given(payoutQueryRepository.countFailedRunsOfOrder(ORDER_ID)).willReturn(3L);
         given(payoutQueryRepository.findUnresolvedFailuresByOrderId(ORDER_ID)).willReturn(failures);
         given(payoutFailureResolutionRepository.saveAll(any())).willAnswer(invocation -> invocation.getArgument(0));
 
@@ -87,7 +86,7 @@ class PayoutFailureResolutionServiceTest {
     void 잠긴_주문은_실패_횟수가_적어도_해결한다() {
         // given: 실패한 실행에서 잠겨 횟수는 0
         given(payoutQueryRepository.isOrderLocked(ORDER_ID)).willReturn(true);
-        given(payoutQueryRepository.countFailedRunsByOrder()).willReturn(Map.of());
+        given(payoutQueryRepository.countFailedRunsOfOrder(ORDER_ID)).willReturn(0L);
         given(payoutQueryRepository.findUnresolvedFailuresByOrderId(ORDER_ID))
                 .willReturn(List.of(failure(21L, PayoutFailureReason.VERIFY_MISMATCH)));
         given(payoutFailureResolutionRepository.saveAll(any())).willAnswer(invocation -> invocation.getArgument(0));
@@ -126,7 +125,7 @@ class PayoutFailureResolutionServiceTest {
 
     private void givenLockedOrderWithOneFailure() {
         given(payoutQueryRepository.isOrderLocked(ORDER_ID)).willReturn(true);
-        given(payoutQueryRepository.countFailedRunsByOrder()).willReturn(Map.of());
+        given(payoutQueryRepository.countFailedRunsOfOrder(ORDER_ID)).willReturn(0L);
         given(payoutQueryRepository.findUnresolvedFailuresByOrderId(ORDER_ID))
                 .willReturn(List.of(failure(21L, PayoutFailureReason.VERIFY_MISMATCH)));
     }
