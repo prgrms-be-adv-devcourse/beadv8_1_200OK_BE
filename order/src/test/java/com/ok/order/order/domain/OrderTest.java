@@ -213,6 +213,91 @@ class OrderTest {
         });
     }
 
+    // ---------- 결제 요청과 결제 대기 정리 (#402) ----------
+
+    private static final LocalDateTime CREATED_AT = LocalDateTime.of(2026, 11, 12, 10, 0);
+
+    // 저장된 것처럼 생성 시각이 있는 결제 대기 주문
+    private Order pendingOrderCreatedAt(LocalDateTime createdAt) {
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        ReflectionTestUtils.setField(order, "createdAt", createdAt);
+        return order;
+    }
+
+    @Test
+    void 결제를_요청하기_전의_결제_대기_주문은_만드는_중이다() {
+        // given
+        Order sut = pendingOrderCreatedAt(CREATED_AT);
+
+        // when & then
+        assertThat(sut.isBeingCreated()).isTrue();
+    }
+
+    @Test
+    void 결제를_요청하면_요청_시각이_남고_더는_만드는_중이_아니다() {
+        // given
+        Order sut = pendingOrderCreatedAt(CREATED_AT);
+        LocalDateTime requestedAt = CREATED_AT.plusSeconds(1);
+
+        // when
+        sut.markPaymentRequested(requestedAt);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getPaymentRequestedAt()).isEqualTo(requestedAt);
+            softly.assertThat(sut.isBeingCreated()).isFalse();
+        });
+    }
+
+    @Test
+    void 결제_대기가_아닌_주문에는_결제를_요청할_수_없다() {
+        // given
+        Order order = pendingOrderCreatedAt(CREATED_AT);
+        order.cancel();
+
+        // when & then
+        assertThatThrownBy(() -> order.markPaymentRequested(CREATED_AT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("결제 대기가 아닌 주문에는 결제를 요청할 수 없습니다. status=CANCELED");
+    }
+
+    @ParameterizedTest
+    @MethodSource("결제_대기_정리_기준")
+    void 결제_요청_전이면_생성_시각을_요청_뒤면_요청_시각을_기준과_비교한다(
+            LocalDateTime paymentRequestedAt, LocalDateTime creatingDeadline, LocalDateTime paymentDeadline, boolean stale) {
+        // given
+        Order sut = pendingOrderCreatedAt(CREATED_AT);
+        if (paymentRequestedAt != null) {
+            sut.markPaymentRequested(paymentRequestedAt);
+        }
+
+        // when & then
+        assertThat(sut.isStalePaymentPending(creatingDeadline, paymentDeadline)).isEqualTo(stale);
+    }
+
+    static Stream<Arguments> 결제_대기_정리_기준() {
+        LocalDateTime requestedAt = CREATED_AT.plusSeconds(1);
+        return Stream.of(
+                // 결제 요청 전: 생성 시각이 기준 이전(같음 포함)이면 정리 대상, 요청 기준은 보지 않는다
+                Arguments.of(null, CREATED_AT, CREATED_AT.minusDays(1), true),
+                Arguments.of(null, CREATED_AT.minusSeconds(1), CREATED_AT.plusDays(1), false),
+                // 결제 요청 뒤: 요청 시각이 기준 이전(같음 포함)이면 정리 대상, 생성 기준은 보지 않는다
+                Arguments.of(requestedAt, CREATED_AT.minusDays(1), requestedAt, true),
+                Arguments.of(requestedAt, CREATED_AT.plusDays(1), requestedAt.minusSeconds(1), false)
+        );
+    }
+
+    @Test
+    void 결제_대기가_아닌_주문은_오래돼도_정리_대상이_아니다() {
+        // given
+        Order sut = pendingOrderCreatedAt(CREATED_AT);
+        sut.markPaymentRequested(CREATED_AT);
+        sut.markPaid();
+
+        // when & then
+        assertThat(sut.isStalePaymentPending(CREATED_AT.plusDays(1), CREATED_AT.plusDays(1))).isFalse();
+    }
+
     // ---------- 배송 상태 반영 ----------
 
     @Test

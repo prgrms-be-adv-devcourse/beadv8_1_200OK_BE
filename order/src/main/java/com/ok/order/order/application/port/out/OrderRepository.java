@@ -55,4 +55,11 @@ public interface OrderRepository {
      * 기준 시각 이전에 배송 완료된 상품이 있는 주문 ID를 조회한다 (자동 구매확정 대상).
      */
     List<Long> findOrderIdsToAutoConfirm(OrderItemStatus status, LocalDateTime deadline);
+
+    /**
+     * 결제 대기로 기준보다 오래 남은 주문 ID를 조회한다 (결제 대기 정리 대상, #402).
+     * 결제 요청 전인 주문은 생성 시각을 {@code creatingDeadline}과, 요청한 주문은 요청 시각을 {@code paymentDeadline}과 비교한다.
+     */
+    List<Long> findStalePaymentPendingOrderIds(OrderStatus status, LocalDateTime creatingDeadline,
+                                               LocalDateTime paymentDeadline);
 }
