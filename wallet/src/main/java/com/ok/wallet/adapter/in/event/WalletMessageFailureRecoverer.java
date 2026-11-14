@@ -33,7 +33,13 @@ class WalletMessageFailureRecoverer implements ConsumerRecordRecoverer {
                 record.offset(),
                 record.key() == null ? null : String.valueOf(record.key()),
                 payloadOf(record, exception),
-                cause.getClass().getSimpleName() + ": " + cause.getMessage()));
+                failureReasonOf(cause)));
+    }
+
+    // 메시지가 없는 예외를 "NullPointerException: null"로 남기면 값이 null이라 실패했다는 뜻으로 잘못 읽히므로 예외 이름만 남긴다
+    private static String failureReasonOf(Throwable cause) {
+        String name = cause.getClass().getSimpleName();
+        return cause.getMessage() == null ? name : name + ": " + cause.getMessage();
     }
 
     private String payloadOf(ConsumerRecord<?, ?> record, Exception exception) {

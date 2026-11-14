@@ -86,6 +86,19 @@ class WalletMessageFailureRecovererTest {
         });
     }
 
+    @Test
+    void 원인_메시지가_없으면_예외_이름만_실패_이유로_남긴다() {
+        // given
+        ConsumerRecord<String, Object> record = new ConsumerRecord<>(TOPIC, 0, 3L, "12", new SampleMessage(12L, 100L));
+        Exception exception = new ListenerExecutionFailedException("리스너 실패", new NullPointerException());
+
+        // when
+        recoverer.accept(record, exception);
+
+        // then
+        assertThat(recordedCommand().failureReason()).isEqualTo("NullPointerException");
+    }
+
     private MessageFailureCommand recordedCommand() {
         ArgumentCaptor<MessageFailureCommand> captor = ArgumentCaptor.forClass(MessageFailureCommand.class);
         then(messageFailureUseCase).should().record(captor.capture());
