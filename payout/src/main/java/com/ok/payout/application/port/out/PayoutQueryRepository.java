@@ -78,6 +78,10 @@ public interface PayoutQueryRepository {
     // 차감 기록은 주문당 1건(UK order_id)이라 주문 ID가 겹치지 않음
     Map<Long, Long> findDeductionAmountByOrderInSnapshot(Long snapshotId);
 
+    // 관리자 목록 "지금" 초과 청구 근거용(#570): 주문들의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
+    // 위 조회는 스냅샷 기준이라 목록 한 페이지의 주문 ID로 따로 읽음 (차감 기록 UK order_id 인덱스). orderIds가 비면 빈 맵
+    Map<Long, Long> findDeductionAmountsByOrderIds(Collection<Long> orderIds);
+
     // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
     // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
     // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
@@ -183,6 +187,7 @@ public interface PayoutQueryRepository {
     Page<PayoutResolutionRequestRow> findResolutionRequestsByOrderId(Long orderId, Pageable pageable);
 
     // 관리자 막힌 주문 목록 (#569): 막힌 주문 집계 표(#582)를 읽기만 함. 판정은 표가 정산 Job 끝에 끝내 둠
+    // 예비(PENDING) 줄은 뺌 (#570): 금액 검사가 근거를 남기려고 넣은 줄이라 아직 막힌 주문이 아님 (개수에서도 뺌)
     // 정렬은 마지막 실패 시각 최신순, 같으면 주문 ID 역순 (한 실행에서 막힌 주문은 시각이 거의 같아 페이지를 넘겨도 순서가 흔들리지 않게)
     Page<BlockedOrderRow> findBlockedOrders(Pageable pageable);
 

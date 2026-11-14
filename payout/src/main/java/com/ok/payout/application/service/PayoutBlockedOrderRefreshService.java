@@ -53,6 +53,7 @@ public class PayoutBlockedOrderRefreshService {
 
     // 주문들을 원본으로 다시 판정: 막혔으면 넣기·고치기(원인은 지우고 다시 넣음), 풀렸으면 지우기
     // RESOLVED(해결됨)였던 줄도 여기서 정리됨: 풀렸으면 지우고, 해결 뒤 다시 막혔으면 LOCKED·STOPPED로 바꿈
+    // 금액 검사가 넣은 PENDING(예비) 줄도 같음 (#570): 막혔으면 LOCKED·STOPPED로 바꾸고, 아직 막힘이 아니면(1·2번째 실패) 지움
     // 판정을 먼저 다 끝내고 저장하는 이유: 판정에서 예외가 난 주문 하나만 건너뛰고 나머지는 저장하려고 (PR #585 리뷰, 사용자 결정)
     //   판정은 DB를 고치지 않는 메모리 계산이라 예외가 나도 트랜잭션이 망가지지 않음. 건너뛴 주문의 줄·원인은 건드리지 않음
     //   저장 중 DB 오류는 트랜잭션이 이미 롤백 표시라 주문 하나만 뺄 수 없어 묶음 전체가 실패함 (반영 표시가 그대로라 다음 갱신이 다시 함)
@@ -115,7 +116,13 @@ public class PayoutBlockedOrderRefreshService {
                         order.lastFailedAt()));
             } else {
                 // 이미 있는 줄은 변경 감지(트랜잭션이 끝날 때 바뀐 칸을 UPDATE)로 고침
+                // 금액 검사가 넣은 예비(PENDING) 줄도 여기서 막힘 상태가 됨. 초과 청구 근거는 금액 검사 때 값이라 그대로 둠 (#570)
                 blockedOrder.change(order.status(), order.failedRunCount(), order.lastFailedAt());
+                // 원인에 초과 청구가 없으면 근거를 비움: 해결 뒤 다른 이유로 다시 막힌 줄에 예전 초과 청구 근거가 남지 않게 (#570)
+                //   지금은 초과 청구가 한번 걸리면 금액을 고치기 전까지 계속 걸려 드묾. 조정(#291)이 열리면 생길 수 있음
+                if (!hasOverchargeCause(order.causes())) {
+                    blockedOrder.clearEvidence();
+                }
             }
             causes.addAll(order.causes());
         }
@@ -194,6 +201,15 @@ public class PayoutBlockedOrderRefreshService {
                     failure.reason(), failure.detail(), failure.sellerId(), failure.failedAt()));
         }
         return causes;
+    }
+
+    private static boolean hasOverchargeCause(List<PayoutBlockedOrderCause> causes) {
+        for (PayoutBlockedOrderCause cause : causes) {
+            if (cause.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isHeld(BlockedFailureRow failure) {

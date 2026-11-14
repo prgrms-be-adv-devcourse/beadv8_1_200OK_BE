@@ -1,6 +1,7 @@
 package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.PayoutBlockedStatus;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 
 import java.time.LocalDateTime;
 
@@ -10,6 +11,7 @@ public record BlockedOrderRow(
         Long orderId,
         PayoutBlockedStatus status,
         Integer failedRunCount,       // Querydsl이 생성자를 타입으로 찾아서 엔티티 필드(int)와 맞는 감싼 타입으로 둠
-        LocalDateTime lastFailedAt
+        LocalDateTime lastFailedAt,
+        PayoutOverchargeEvidence overchargeEvidence   // 초과 청구 "막힌 순간" 근거 (#570). 초과 청구가 원인이 아니면 null
 ) {
 }

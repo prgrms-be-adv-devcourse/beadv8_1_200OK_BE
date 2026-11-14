@@ -16,6 +16,7 @@ import com.ok.payout.application.port.out.SnapshotItemRow;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutBlockedOrderCause;
+import com.ok.payout.domain.PayoutBlockedStatus;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
@@ -397,17 +398,27 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutBlockedOrder.orderId,
                         payoutBlockedOrder.status,
                         payoutBlockedOrder.failedRunCount,
-                        payoutBlockedOrder.lastFailedAt))
+                        payoutBlockedOrder.lastFailedAt,
+                        payoutBlockedOrder.overchargeEvidence))
                 .from(payoutBlockedOrder)
+                .where(notPendingBlockedOrder())
                 .orderBy(payoutBlockedOrder.lastFailedAt.desc(), payoutBlockedOrder.orderId.desc())
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
                 .fetch();
 
         return PageableExecutionUtils.getPage(content, pageable, () -> {
-            Long count = queryFactory.select(payoutBlockedOrder.count()).from(payoutBlockedOrder).fetchOne();
+            Long count = queryFactory.select(payoutBlockedOrder.count())
+                    .from(payoutBlockedOrder)
+                    .where(notPendingBlockedOrder())
+                    .fetchOne();
             return Objects.requireNonNullElse(count, 0L);
         });
+    }
+
+    // 예비(PENDING) 줄은 아직 막힌 주문이 아니라 목록·개수에서 뺌 (#570)
+    private BooleanExpression notPendingBlockedOrder() {
+        return payoutBlockedOrder.status.ne(PayoutBlockedStatus.PENDING);
     }
 
     // 한 페이지 주문들의 원인을 한 번에 읽음 (주문마다 따로 읽으면 페이지 크기만큼 조회가 나감). 원인 표의 order_id 외래키 인덱스를 씀
@@ -654,6 +665,24 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .where(payoutWalletDeduction.orderId.in(orderIdsInSnapshot(snapshotId)))
                 .fetch();
         Map<Long, Long> amounts = new HashMap<>();
+        for (Tuple row : rows) {
+            amounts.put(row.get(0, Long.class), row.get(1, Long.class));
+        }
+        return amounts;
+    }
+
+    @Override
+    public Map<Long, Long> findDeductionAmountsByOrderIds(Collection<Long> orderIds) {
+        Map<Long, Long> amounts = new HashMap<>();
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return amounts;
+        }
+        List<Tuple> rows = queryFactory
+                .select(payoutWalletDeduction.orderId, payoutWalletDeduction.amount)
+                .from(payoutWalletDeduction)
+                .where(payoutWalletDeduction.orderId.in(orderIds))
+                .fetch();
         for (Tuple row : rows) {
             amounts.put(row.get(0, Long.class), row.get(1, Long.class));
         }

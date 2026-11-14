@@ -5,6 +5,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import com.ok.payout.domain.PayoutPolicy;
 
 import java.util.ArrayList;
@@ -134,9 +135,9 @@ final class PayoutAmountValidator {
             }
             if (isOvercharged(total, deducted)) {
                 // 같은 주문의 초과 청구 후보는 모두 같은 상세 (주문 단위 판정이라)
-                String detail = overchargeDetail(deducted, total,
+                String detail = overchargeDetail(overchargeEvidence(deducted, total,
                         overchargeRowsByOrder.getOrDefault(orderId, List.of()),
-                        input.conflictAmountsByOrder().getOrDefault(orderId, List.of()));
+                        input.conflictAmountsByOrder().getOrDefault(orderId, List.of())));
                 for (PayoutCandidateItem candidate : orderTargets) {
                     failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.AMOUNT_MISMATCH, detail));
                 }
@@ -162,19 +163,35 @@ final class PayoutAmountValidator {
         return failures;
     }
 
-    // 초과 청구 실패 상세(근거)를 만듦 (#391). 모든 계산은 합계와 같은 범위(그 주문의 조정 아닌 정산후보 전체, #552부터 조정 제외)로 함
+    // 초과 청구 근거 8개를 값별로 만듦 (#391, #570). 모든 계산은 합계와 같은 범위(그 주문의 조정 아닌 정산후보 전체, #552부터 조정 제외)로 함
     //   근거도 판정 공식(합계 > 차감액)과 같은 범위로 봐야 "넘친 금액"과 누적합이 서로 맞음
-    private static String overchargeDetail(long deducted, long total, List<OverchargeCandidateRow> orderRows,
-                                           List<Long> conflictAmounts) {
-        return PayoutFailure.fitDetail(String.format(OVERCHARGE_DETAIL,
+    // 실패 상세 글(overchargeDetail), 막힌 주문 표의 "막힌 순간" 근거(PayoutService.validate),
+    //   관리자 목록의 "지금" 근거(PayoutBlockedOrderService)가 모두 이 메서드로 만들어 같은 계산을 씀
+    // "지금" 근거는 초과가 풀린 주문에도 부를 수 있음: 그때 넘친 금액은 0이나 음수, 넘게 만든 주문상품은 "판별 불가"
+    static PayoutOverchargeEvidence overchargeEvidence(long deducted, long total, List<OverchargeCandidateRow> orderRows,
+                                                       List<Long> conflictAmounts) {
+        return PayoutOverchargeEvidence.of(
                 deducted,
                 total,
-                total - deducted,
                 firstOverflowLabel(deducted, orderRows),
-                settledSummary(orderRows),
+                settledAmount(orderRows),
+                settledItems(orderRows),
                 aloneOverItems(deducted, orderRows),
                 countSellers(orderRows),
-                conflictSummary(conflictAmounts)));
+                conflictAmounts);
+    }
+
+    // 초과 청구 실패 상세(근거)를 한 줄 글로 만듦 (#391). 글 모양은 #570 전과 같음 (실패 기록은 쌓기만 해서 예전 글과 모양을 맞춤)
+    private static String overchargeDetail(PayoutOverchargeEvidence evidence) {
+        return PayoutFailure.fitDetail(String.format(OVERCHARGE_DETAIL,
+                evidence.getDeductedAmount(),
+                evidence.getCandidateTotal(),
+                evidence.getOverflowAmount(),
+                evidence.getFirstOverflowItem(),
+                settledSummary(evidence),
+                aloneOverSummary(evidence),
+                evidence.getSellerCount(),
+                conflictSummary(evidence.conflictAmountList())));
     }
 
     // 넘게 만든 주문상품: 후보를 생성 순서(createdAt, id)로 더해 갈 때 누적합이 처음 차감액보다 커진 후보의 주문상품 (배송비면 "배송비")
@@ -193,26 +210,50 @@ final class PayoutAmountValidator {
         return UNKNOWN_LABEL;
     }
 
-    // 이미 지급: 이미 정산된(payout_item 있음) 후보의 금액 합과 그 주문상품들. 없으면 "0"
+    // 이미 지급: 이미 정산된(payout_item 있음) 후보의 금액 합과 그 주문상품들
     // 이미 지급한 돈은 이번에 막아도 돌아오지 않으므로, 넘친 금액 중 얼마가 이미 나갔는지 보는 근거
-    private static String settledSummary(List<OverchargeCandidateRow> orderRows) {
+    private static long settledAmount(List<OverchargeCandidateRow> orderRows) {
         long settledAmount = 0L;
-        Set<String> settledItems = new LinkedHashSet<>();
         for (OverchargeCandidateRow row : orderRows) {
             if (row.settled()) {
                 settledAmount += row.amount();
+            }
+        }
+        return settledAmount;
+    }
+
+    // 이미 지급한 주문상품 (중복 없이 생성 순서대로, 배송비는 "배송비")
+    private static List<String> settledItems(List<OverchargeCandidateRow> orderRows) {
+        Set<String> settledItems = new LinkedHashSet<>();
+        for (OverchargeCandidateRow row : orderRows) {
+            if (row.settled()) {
                 settledItems.add(labelOf(row));
             }
         }
+        return new ArrayList<>(settledItems);
+    }
+
+    // 실패 상세 글의 이미 지급 부분. 지급한 주문상품이 없으면 "0"
+    private static String settledSummary(PayoutOverchargeEvidence evidence) {
+        List<String> settledItems = evidence.settledItemList();
         if (settledItems.isEmpty()) {
             return "0";
         }
-        return settledAmount + "(주문상품 " + String.join(", ", settledItems) + ")";
+        return evidence.getSettledAmount() + "(주문상품 " + String.join(", ", settledItems) + ")";
+    }
+
+    // 실패 상세 글의 혼자 넘는 주문상품 부분. 없으면 "없음"
+    private static String aloneOverSummary(PayoutOverchargeEvidence evidence) {
+        List<String> aloneOverItems = evidence.aloneOverItemList();
+        if (aloneOverItems.isEmpty()) {
+            return "없음";
+        }
+        return String.join(", ", aloneOverItems);
     }
 
     // 혼자 넘는 주문상품: 한 주문상품의 후보 합계만으로 차감액보다 큰 것 (있으면 그 주문상품 금액이 틀린 게 확실)
-    // 배송비는 주문상품이 아니라서 뺌. 여러 개면 모두, 없으면 "없음"
-    private static String aloneOverItems(long deducted, List<OverchargeCandidateRow> orderRows) {
+    // 배송비는 주문상품이 아니라서 뺌. 여러 개면 모두
+    private static List<String> aloneOverItems(long deducted, List<OverchargeCandidateRow> orderRows) {
         Map<Long, Long> amountsByItem = new LinkedHashMap<>();
         for (OverchargeCandidateRow row : orderRows) {
             if (row.orderItemId() != null) {
@@ -225,10 +266,7 @@ final class PayoutAmountValidator {
                 overItems.add(String.valueOf(item.getKey()));
             }
         }
-        if (overItems.isEmpty()) {
-            return "없음";
-        }
-        return String.join(", ", overItems);
+        return overItems;
     }
 
     // 그 주문 정산후보 전체의 서로 다른 판매자 수 (이번 스냅샷 후보만이 아님). 판매자가 여럿이면 어느 판매자 금액이 틀렸는지 따로 봐야 함
@@ -258,8 +296,8 @@ final class PayoutAmountValidator {
         return row.orderItemId() == null ? SHIPPING_FEE_LABEL : String.valueOf(row.orderItemId());
     }
 
-    // 근거 조회 결과를 주문별로 묶음 (조회 순서 = 생성 순서를 유지)
-    private static Map<Long, List<OverchargeCandidateRow>> groupRowsByOrder(List<OverchargeCandidateRow> rows) {
+    // 근거 조회 결과를 주문별로 묶음 (조회 순서 = 생성 순서를 유지). 근거를 따로 만드는 곳(#570)도 같은 묶음을 씀
+    static Map<Long, List<OverchargeCandidateRow>> groupRowsByOrder(List<OverchargeCandidateRow> rows) {
         Map<Long, List<OverchargeCandidateRow>> byOrder = new LinkedHashMap<>();
         for (OverchargeCandidateRow row : rows) {
             byOrder.computeIfAbsent(row.orderId(), orderId -> new ArrayList<>()).add(row);

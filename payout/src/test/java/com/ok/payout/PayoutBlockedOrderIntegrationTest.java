@@ -18,6 +18,7 @@ import com.ok.payout.domain.PayoutBlockedStatus;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
@@ -519,7 +520,157 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableEntity());                             // 422
     }
 
+    // ---------- 초과 청구 근거 (#570) ----------
+
+    @Test
+    void 초과_청구로_멈춘_주문은_금액_검사_때_계산한_근거를_막힌_순간_값으로_가진다() throws Exception {
+        // given: 결제 30,000인데 정산후보 35,000 → 실제 Job마다 금액 검사가 초과 청구로 실패
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 35_000L);
+        givenDeduction(order, 30_000L);
+
+        // when & then: 1·2번째 실패의 예비 줄은 Job 끝에 지워져 표에 없음
+        runCompleted();
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+        runCompleted();
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+        runCompleted();
+
+        // then: 3번째 Job이 끝나면 멈춤. 근거는 금액 검사 때 값이고 실패 상세 글과 같은 값
+        PayoutBlockedOrder sut = blockedOrderRepository.findById(order).orElseThrow();
+        assertThat(sut.getStatus()).isEqualTo(PayoutBlockedStatus.STOPPED);
+        assertEvidence(sut.getOverchargeEvidence(), 30_000L, 35_000L, String.valueOf(orderItem));
+        assertThat(payoutQueryRepository.findUnresolvedFailuresByOrderId(order))
+                .extracting(failure -> failure.getDetail())
+                .allSatisfy(detail -> assertThat(detail).isEqualTo(
+                        "초과 청구: 결제 30000, 후보 합계 35000, 넘친 금액 5000, 넘게 만든 주문상품 " + orderItem
+                                + ", 이미 지급 0, 혼자 넘는 주문상품 " + orderItem + ", 판매자 1명, 지갑 금액 충돌 없음"));
+    }
+
+    @Test
+    void 막힌_뒤_같은_주문_상품이_더_구매확정되면_지금_값만_바뀌고_다음_Job이_다시_판정해도_막힌_순간_값은_그대로다() throws Exception {
+        // given: 초과 청구로 멈춘 주문 (결제 30,000, 후보 35,000)
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 35_000L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+
+        // when: 같은 주문의 다른 상품 10,000이 구매확정됨(아직 대기 중) → 다음 Job이 표에 있는 주문을 다시 판정
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, ORDER_ITEM_ID_SEQ.incrementAndGet(), 10_000L,
+                LocalDateTime.now());
+        runCompleted();
+
+        // then: 표의 막힌 순간 값은 그대로(35,000), 목록의 지금 값은 45,000
+        assertEvidence(blockedOrderRepository.findById(order).orElseThrow().getOverchargeEvidence(),
+                30_000L, 35_000L, String.valueOf(orderItem));
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.deductedAmount").value(30_000))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.candidateTotal").value(35_000))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.overflowAmount").value(5_000))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.firstOverflowItem").value(String.valueOf(orderItem)))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.settledAmount").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.settledItems.length()").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.aloneOverItems").value(contains(String.valueOf(orderItem))))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.sellerCount").value(1))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.conflictAmounts.length()").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceNow.deductedAmount").value(30_000))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(45_000))
+                .andExpect(jsonPath("$.content[0].evidenceNow.overflowAmount").value(15_000))
+                .andExpect(jsonPath("$.content[0].evidenceNow.firstOverflowItem").value(String.valueOf(orderItem)));
+    }
+
+    @Test
+    void 예비_줄은_관리자_목록과_개수에_나오지_않는다() throws Exception {
+        // given: 막힌 주문 1개와, 금액 검사가 넣고 아직 Job 끝 판정 전인 예비 줄 1개
+        long locked = givenLockedOrderInTable();
+        long pendingOrder = nextOrderId();
+        blockedOrderRepository.save(PayoutBlockedOrder.pending(pendingOrder, LocalDateTime.now(), evidence(1_000L, 2_000L)));
+
+        // when & then
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) locked)));
+    }
+
+    @Test
+    void 해결된_줄이_있는_주문이_다시_초과_청구에_걸려도_Job이_성공하고_다음_판정에서_지워진다() throws Exception {
+        // given: 초과 청구로 멈춘 뒤 관리자가 해결해 RESOLVED 줄이 남은 주문
+        long order = nextOrderId();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, ORDER_ITEM_ID_SEQ.incrementAndGet(), 35_000L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        resolve(order);
+
+        // when: 다음 Job의 금액 검사가 같은 주문을 또 초과 청구로 실패시킴 (줄이 이미 있어 근거만 바꿈)
+        runCompleted();
+
+        // then: Job은 성공(runCompleted가 확인)하고, 해결 뒤 1번째 실패라 막힘이 아니어서 줄이 지워짐
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+    }
+
+    @Test
+    void 다시_판정한_원인에_초과_청구가_없으면_근거를_비운다() throws Exception {
+        // given: 근거가 남은 줄(예비)인데, 원인은 결과 검증 불일치뿐인 주문
+        Long run = runCompleted();
+        long order = nextOrderId();
+        insertFailure(run, insertCandidate(order), order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+        blockedOrderRepository.save(PayoutBlockedOrder.pending(order, LocalDateTime.now(), evidence(1_000L, 2_000L)));
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 잠김으로 바뀌고 근거는 비어 있음
+        PayoutBlockedOrder sut = blockedOrderRepository.findById(order).orElseThrow();
+        assertThat(sut.getStatus()).isEqualTo(PayoutBlockedStatus.LOCKED);
+        assertThat(sut.getOverchargeEvidence()).isNull();
+    }
+
+    @Test
+    void 초과_청구가_아닌_막힌_주문은_근거가_비어_있다() throws Exception {
+        // given: 결제 기록이 없어 3번 실패해 멈춘 주문 (초과 청구 아님)
+        long order = nextOrderId();
+        insertCandidateWithoutDeduction(order, LocalDateTime.now().minusDays(30));
+        runCompleted(3);
+
+        // when & then
+        assertThat(blockedOrderRepository.findById(order).orElseThrow().getOverchargeEvidence()).isNull();
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock").isEmpty())
+                .andExpect(jsonPath("$.content[0].evidenceNow").isEmpty());
+    }
+
     // ---------- 도우미 ----------
+
+    // 결제 기록 하나만 있고 이미 지급·충돌이 없는 주문의 근거 (넘게 만든 주문상품 = 혼자 넘는 주문상품)
+    private void assertEvidence(PayoutOverchargeEvidence evidence, long deducted, long total, String overflowItem) {
+        assertThat(evidence).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(evidence.getDeductedAmount()).isEqualTo(deducted);
+            softly.assertThat(evidence.getCandidateTotal()).isEqualTo(total);
+            softly.assertThat(evidence.getOverflowAmount()).isEqualTo(total - deducted);
+            softly.assertThat(evidence.getFirstOverflowItem()).isEqualTo(overflowItem);
+            softly.assertThat(evidence.getSettledAmount()).isZero();
+            softly.assertThat(evidence.settledItemList()).isEmpty();
+            softly.assertThat(evidence.aloneOverItemList()).containsExactly(overflowItem);
+            softly.assertThat(evidence.getSellerCount()).isEqualTo(1);
+            softly.assertThat(evidence.conflictAmountList()).isEmpty();
+        });
+    }
+
+    private PayoutOverchargeEvidence evidence(long deducted, long total) {
+        return PayoutOverchargeEvidence.of(deducted, total, "1", 0L, List.of(), List.of("1"), 1, List.of());
+    }
+
+    private void givenDeduction(long orderId, long amount) {
+        walletDeductionRepository.save(PayoutWalletDeduction.create(orderId, 1L, amount, LocalDateTime.now()));
+    }
 
     private MockHttpServletRequestBuilder blockedOrdersRequest() {
         return get("/api/v1/admin/payouts/blocked-orders");
