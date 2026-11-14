@@ -535,6 +535,19 @@ DELIVERY_TRACKER_CLIENT_SECRET=any
 DELIVERY_TRACKER_POLL_INTERVAL=2s
 ```
 
+위 이름은 `:delivery:bootRun`(단독 실행)에서만 먹습니다. `application-delivery.yaml`이 이 이름을 `delivery.carrier.tracker.*`에 연결해 주기 때문입니다. `:monolith:bootRun`에는 그 연결과 기본값(`connect-timeout`, `read-timeout`)이 없어서, 같은 설정을 Spring이 직접 바인딩하는 이름으로 모두 줘야 합니다. 하나라도 빠지면 기동이 실패합니다.
+
+```bash
+DELIVERY_CARRIER_TYPE=tracker
+DELIVERY_CARRIER_TRACKER_BASE_URL=http://localhost:8090/graphql
+DELIVERY_CARRIER_TRACKER_AUTH_URL=http://localhost:8090/oauth2/token
+DELIVERY_CARRIER_TRACKER_CLIENT_ID=any
+DELIVERY_CARRIER_TRACKER_CLIENT_SECRET=any
+DELIVERY_CARRIER_TRACKER_POLL_INTERVAL=2s
+DELIVERY_CARRIER_TRACKER_CONNECT_TIMEOUT=3s
+DELIVERY_CARRIER_TRACKER_READ_TIMEOUT=15s
+```
+
 제공하는 것:
 
 | 경로 | 내용 |
