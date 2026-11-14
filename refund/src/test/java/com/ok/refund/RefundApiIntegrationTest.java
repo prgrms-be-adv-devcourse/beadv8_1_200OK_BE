@@ -929,6 +929,10 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
         // 주문이 취소를 모르면 재고도 되돌리지 않는다(#414, 배송할 수도 있는 상품을 다른 사람이 사지 않게)
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+        // 실패는 주문 줄에 "할 차례"와 이유로 남고(다시 시도 #576이 이 줄을 본다), 다음 단계 줄은 만들지 않는다(#574)
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getLastReason)
+                .containsExactly(tuple(RefundStepType.ORDER, RefundStepStatus.READY, "ORDER_API_FAILED"));
     }
 
     // 0원 환불은 지갑을 거치지 않아 승인 요청 안에서 재고 복구까지 간다. 재고가 실패하면 판매자는 503을 받고 환불은 처리 중에 머문다(#414, Swagger 약속)
@@ -958,6 +962,12 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         // 주문에는 이미 취소를 알렸다(승인 뒤 첫 단계). 재고는 되돌리지 못했다
         assertThat(orderCancellationPort.reflectedOf(refundId)).isPresent();
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+        // 주문 줄은 성공, 재고 줄은 "할 차례"와 이유로 남는다. 0원이라 지갑 줄은 없다(#574)
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getLastReason)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.READY, "PRODUCT_API_FAILED"));
     }
 
     @Test
