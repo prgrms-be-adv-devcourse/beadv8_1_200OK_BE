@@ -13,9 +13,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.function.Supplier;
 
 /**
- * 승인 뒤 다른 모듈 호출(주문·지갑·재고) 한 단계를 실행하고, 실패하면 멈춘 단계와 이유를 환불에 남긴다.
+ * 승인 뒤 다른 모듈 호출 한 단계를 실행하고, 실패하면 멈춘 단계와 이유를 환불에 남긴다.
  * 1단계에는 자동으로 다시 처리하는 방법이 없어, 운영자가 이 기록을 보고 어디부터 다시 할지 판단한다.
- * 지금은 지갑 완료 메시지 뒤의 재고 복구({@link HandleWalletRefundResultService}, #544)가 트랜잭션 구간 밖에서 부른다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
+ * 지금 이 틀로 부르는 단계는 지갑 완료 메시지 뒤의 재고 복구({@link HandleWalletRefundResultService}, #544) 하나로, 트랜잭션 구간 밖에서 부른다.
+ * 승인 요청 안의 주문·재고 호출은 #516 전까지 틀 없이 부르고(refund/CLAUDE.md 5절), 지갑은 Kafka 발행이라 이 틀을 쓰지 않는다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
  */
 @Slf4j
 @Component

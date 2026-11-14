@@ -22,7 +22,7 @@ com.ok.refund
 │   └── service/                유스케이스 구현(*Service)과 실패 기록 틀(RefundStepRunner)만
 └── adapter/
     ├── in/web/                 컨트롤러, *Spec, 요청·응답 DTO(dto/)
-    ├── in/event/               (#413~) 받은 메시지 → 값 검사 → 입력 포트
+    ├── in/event/               (#413~) 받은 메시지 → 값 검사 → 입력 포트. 받기용 Kafka 설정·토픽 상수도 여기(Kafka 타입은 이벤트 어댑터만 쓸 수 있어 config/에 못 둠)
     ├── out/persistence/        JPA 엔티티, Spring Data 저장소, 변환, 영속 포트 구현
     ├── out/order/              주문 모듈 호출 포트 구현
     ├── out/product/            상품 모듈 호출 포트 구현 (재고 복구, #414)
