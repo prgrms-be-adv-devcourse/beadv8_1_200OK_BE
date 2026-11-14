@@ -184,8 +184,7 @@ class RefundStepTest {
         // given
         RefundStep sut = RefundStep.start(10L, RefundStepType.ORDER, NOW);
 
-        // when
-        // then
+        // when & then
         assertThatThrownBy(() -> sut.stop(reason))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("이유는 비어 있을 수 없습니다.");

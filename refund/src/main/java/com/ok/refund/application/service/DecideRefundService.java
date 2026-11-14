@@ -33,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 판매자가 본인 상품의 환불 요청을 승인하거나 거절한다.
@@ -212,7 +213,15 @@ public class DecideRefundService implements DecideRefundUseCase {
                         refundId, result.orderId(), result.buyerId(), result.sellerId(), amount));
                 return null;
             });
-            markWalletAwaitingResult(refundId);
+            // 발행은 이미 끝나 되돌릴 수 없다. 여기서 "결과 대기" 기록이 실패해도(DB 오류 등) 판매자에게 오류를 주지 않고 처리 중으로 응답한다.
+            // 오류를 주면 지갑 요청은 나갔는데 판매자는 실패로 알고, 응답도 #574 전과 달라진다. 잃는 것은 없다: 지갑 줄은 "시도 중"으로 남고,
+            // 지갑 결과 메시지가 와도 시도 중 → 성공·멈춤으로 바뀔 수 있어(결정 2) 흐름이 이어지며, 끝나지 않으면 #576·#577이 그 줄을 본다.
+            // 예외를 삼키는 대신 확인이 필요한 이상이라 WARN으로 남긴다(service.md 로그 표)
+            try {
+                markWalletAwaitingResult(refundId);
+            } catch (RuntimeException e) {
+                log.warn("지갑 발행 뒤 결과 대기 기록 실패. 지갑 단계는 시도 중으로 남음. refundId={}", refundId, e);
+            }
             // 발행이 끝났어도 지갑이 돈을 돌려줬다는 뜻은 아니다(Kafka에 들어갔을 뿐). 재고 복구와 완료는 지갑의 완료 메시지를 받은 뒤
             // HandleWalletRefundResultService가 한다. 그래서 처리 중 그대로 응답한다. 발행이 실패하면 예외가 나 이 줄에 오지 않는다
             return result;
@@ -251,17 +260,22 @@ public class DecideRefundService implements DecideRefundUseCase {
 
     // 지갑 발행이 끝나면 지갑 줄을 "결과 대기"로 바꾼다. 지갑 결과 메시지가 이 구간보다 먼저 와서 줄을 이미 끝냈으면(성공·멈춤)
     // 도메인이 false를 돌려주고 저장하지 않는다. 늦게 온 "결과 대기"가 끝난 결과를 덮어쓰지 않게 하려는 것이다(결정 2).
-    // 이 구간이 실패하면 예외가 올라가 판매자는 오류를 받지만, 발행은 이미 됐고 지갑 줄은 "시도 중"으로 남아 만료 뒤 다시 볼 수 있다
+    // 이 구간이 실패하면 부르는 쪽이 WARN만 남기고 처리 중으로 응답한다. 발행은 이미 됐고 지갑 줄은 "시도 중"으로 남는다
     private void markWalletAwaitingResult(Long refundId) {
         transaction.executeWithoutResult(status -> {
             refundPersistencePort.findByIdForUpdate(refundId)
                     .orElseThrow(() -> new IllegalStateException("지갑 발행을 기록할 환불이 없습니다. refundId=" + refundId));
             LocalDateTime now = LocalDateTime.now(clock);
-            refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).ifPresent(walletStep -> {
-                if (walletStep.awaitResult(now)) {
-                    refundStepPersistencePort.update(walletStep);
-                }
-            });
+            Optional<RefundStep> walletStep = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
+            // 지갑 줄은 앞 구간(recordOrderSucceeded)이 발행 전에 만들어 커밋했으므로 없으면 버그다. 발행은 이미 됐으니
+            // 응답은 바꾸지 않고 확인할 수 있게 WARN만 남긴다
+            if (walletStep.isEmpty()) {
+                log.warn("지갑 발행 뒤 결과 대기로 바꿀 지갑 단계 줄이 없음. refundId={}", refundId);
+                return;
+            }
+            if (walletStep.get().awaitResult(now)) {
+                refundStepPersistencePort.update(walletStep.get());
+            }
         });
     }
 

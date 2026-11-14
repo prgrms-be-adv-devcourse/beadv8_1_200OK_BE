@@ -232,41 +232,28 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     // 오류 처리기도 거치지 않아, "재고 호출이 트랜잭션 밖이라 PRODUCT 기록이 따로 커밋된다"와 "오류 처리기가 다시 시도해 복구 뒤 완료한다"를 못 본다
     @Test
     void 재고_복구가_실패했다가_다시_시도로_복구되면_재고_줄_시도_횟수가_2다() throws Exception {
-        // given: 상품 서버가 실패하는 동안 지갑 완료 메시지가 온다
+        // given: 상품 서버가 첫 호출만 실패한다. 실패를 시간으로 켜고 끄면 다시 시도 간격(1·2·4초...)과 겹쳐
+        // 느린 환경에서 두 번 실패할 수 있어(시도 횟수 3), 실패할 호출 수를 정해 시도 횟수를 정확히 맞춘다
         Long refundId = requestedRefundId();
         approve(refundId).andExpect(status().isOk());
-        productStockReleasePort.fail();
+        productStockReleasePort.failNextCalls(1);
 
-        // when
+        // when: 메시지는 한 번만 보낸다. 환불 오류 처리기가 같은 메시지를 다시 시도한다
         walletResultSender.sendCompleted(refundId);
-
-        // then: 재고 실패가 기록되고 처리 중으로 남는다(다시 시도는 1·2·4초... 간격이라 그 사이에 본다)
-        // 재고 줄은 다시 시도할 때 시도 중으로 바뀌지만 마지막 이유는 그대로라 이유로 기다린다
-        RefundWalletResultSender.awaitUntil("재고 복구 실패가 기록되지 않았습니다",
-                () -> refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.PRODUCT)
-                        .map(step -> "PRODUCT_API_FAILED".equals(step.getLastReason()))
-                        .orElse(false));
-        Refund failed = refundPersistencePort.findById(refundId).orElseThrow();
-        assertThat(failed).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(failed.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(failed.getCompletedAt()).isNull();
-        });
-        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
-
-        // when: 상품 서버가 살아난다. 메시지를 다시 보내지 않아도 환불 오류 처리기가 같은 메시지를 다시 시도한다
-        productStockReleasePort.clear();
 
         // then
         walletResultSender.awaitStatus(refundId, RefundStatus.COMPLETED);
         assertThat(productStockReleasePort.releasedOf(refundId).orElseThrow().productOptionId()).isEqualTo(PRODUCT_OPTION_ID);
-        // then: 재고 줄은 처음 시도 + 다시 시도로 두 번 시작했고 끝내 성공했다
+        assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(1);
+        // then: 재고 줄은 처음 시도 + 다시 시도로 두 번 시작했고 끝내 성공했다. 성공해도 마지막 이유는 지우지 않으므로,
+        // 첫 실패가 호출과 따로 커밋돼 남았는지도 이유로 확인한다
         RefundStep productStep = stepOf(refundId, RefundStepType.PRODUCT);
         Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(productStep).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(productStep.getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
             softly.assertThat(productStep.getAttemptCount()).isEqualTo(2);
+            softly.assertThat(productStep.getLastReason()).isEqualTo("PRODUCT_API_FAILED");
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
         });
     }

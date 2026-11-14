@@ -109,7 +109,8 @@ class RefundStepRunnerTest {
         // when & then
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
             throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
-        })).isInstanceOf(RestApiException.class);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
         ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should().update(captor.capture());
         RefundStep updated = captor.getValue();
@@ -229,7 +230,7 @@ class RefundStepRunnerTest {
         assertSoftly(softly -> {
             softly.assertThat(event.getLevel()).isEqualTo(Level.ERROR);
             softly.assertThat(event.getFormattedMessage()).isEqualTo(
-                    "환불 실패 단계 기록 실패. 멈춘 단계가 환불에 남지 않음. refundId=7, step=ORDER, failureCode=ORDER_API_FAILED");
+                    "환불 실패 단계 기록 실패. 멈춘 단계가 단계 줄에 남지 않음. refundId=7, step=ORDER, failureCode=ORDER_API_FAILED");
         });
     }
 

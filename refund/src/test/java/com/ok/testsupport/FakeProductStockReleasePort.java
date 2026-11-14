@@ -27,6 +27,8 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
     // 호출 횟수. 실제 상품 API처럼 두 번째부터는 다시 풀지 않는 것과 별개로, "서비스가 두 번 불렀는지"를 확인하려고 센다
     private final Map<Long, AtomicInteger> callCounts = new ConcurrentHashMap<>();
     private volatile boolean failing;
+    // 앞으로 실패할 호출 수. 다시 시도 간격(Kafka 오류 처리기)과 상관없이 시도 횟수를 정확히 맞추려고 둔다
+    private final AtomicInteger remainingFailures = new AtomicInteger();
 
     /** 이 환불로 재고 복구를 부른 횟수(실패한 호출은 세지 않는다). 같은 완료 메시지가 두 번 와도 한 번만 불러야 하는 것을 확인할 때 쓴다 */
     public int releaseCallCountOf(Long refundId) {
@@ -39,10 +41,16 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
         failing = true;
     }
 
+    /** 다음 {@code count}번의 호출만 {@code PRODUCT_API_FAILED}를 던지고 그 뒤 호출은 성공하게 한다 */
+    public void failNextCalls(int count) {
+        remainingFailures.set(count);
+    }
+
     public void clear() {
         released.clear();
         callCounts.clear();
         failing = false;
+        remainingFailures.set(0);
     }
 
     /** 이 환불로 되돌린 재고. 되돌리지 않았으면 비어 있다 */
@@ -52,7 +60,7 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
 
     @Override
     public void releaseStock(StockRelease release) {
-        if (failing) {
+        if (failing || remainingFailures.getAndUpdate(left -> left > 0 ? left - 1 : 0) > 0) {
             throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
         }
         callCounts.computeIfAbsent(release.refundId(), id -> new AtomicInteger()).incrementAndGet();
