@@ -6,6 +6,8 @@ import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
@@ -236,5 +238,50 @@ interface PayoutAdminControllerSpec {
     ResponseEntity<Void> createAdjustment(
             @Parameter(hidden = true) Long memberId,
             PayoutAdjustmentCreateRequest request
+    );
+
+    @Operation(summary = "잠기거나 멈춘 주문 해결 (다시 처리)", description = """
+            관리자 전용입니다. 결과 검증 불일치·수수료 불일치로 잠긴 주문이나, 3번 실패해 멈춘 주문을 "다시 처리"로 해결합니다.
+            그 주문의 해결되지 않은 실패 기록 전부에 해결 기록(관리자, 시각, 메모)을 남기고, 다음 배치에서 그 주문을 다시 검사해 정산합니다.
+            조회 기간 밖으로 밀린 주문도 다시 들어갑니다. 돈을 바로 내보내지 않고 금액 검사·결과 검증을 똑같이 거칩니다.
+            데이터나 코드를 고치지 않고 해결하면 다시 검사에서 또 실패해 다시 잠기거나 3번 뒤 다시 멈춥니다. 되돌리기는 없습니다.
+            해결한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받습니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "해결함. 방금 저장한 해결 기록"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "409", description = "해결할 잠금이나 멈춤이 없음 (이미 해결됨, 같은 주문을 동시에 두 번 요청, 잘못된 주문 ID)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class),
+                            examples = @ExampleObject(name = "해결할 것 없음", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/payout/nothing-to-resolve",
+                                      "title": "Nothing to resolve",
+                                      "status": 409,
+                                      "detail": "해결할 잠금이나 멈춤이 없는 주문입니다.",
+                                      "instance": "/api/v1/admin/payouts/orders/100/resolution"
+                                    }
+                                    """))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (메모 공백·255자 초과)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "요청 본문을 읽을 수 없음",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutOrderResolutionResponse> resolveOrder(
+            @Parameter(hidden = true) Long memberId,
+            @Parameter(description = "해결할 주문 ID", example = "100") Long orderId,
+            PayoutOrderResolveRequest request
     );
 }

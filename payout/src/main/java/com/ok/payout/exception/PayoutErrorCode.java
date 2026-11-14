@@ -13,6 +13,9 @@ public enum PayoutErrorCode implements ErrorCode {
     MISSING_ADMIN_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing admin id", "수동 조정에는 관리자 ID가 필수입니다."),
     MISSING_ADJUSTMENT_REASON(HttpStatus.UNPROCESSABLE_ENTITY, "Missing adjustment reason", "수동 조정에는 조정 사유가 필수입니다."),
     ADJUSTMENT_REASON_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Adjustment reason too long", "조정 사유는 255자 이하여야 합니다."),
+    // 해결 메모 검증 (#568). 요청 DTO가 먼저 422로 막고, 엔티티가 저장 전에 한 번 더 막음 (사용자 입력이라 RestApiException, 조정 사유와 같음)
+    MISSING_RESOLUTION_MEMO(HttpStatus.UNPROCESSABLE_ENTITY, "Missing resolution memo", "해결 메모는 필수입니다."),
+    RESOLUTION_MEMO_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Resolution memo too long", "해결 메모는 255자 이하여야 합니다."),
     MISSING_PAYOUT_REQUESTED_AT(HttpStatus.INTERNAL_SERVER_ERROR, "Missing payout requested at", "정산 Job 실행에는 requestedAt 파라미터가 필요합니다."),
     INVALID_PAYOUT_RUN_TYPE(HttpStatus.INTERNAL_SERVER_ERROR, "Invalid payout run type", "정산 Job 실행에는 올바른 runType 파라미터가 필요합니다."),
     MISSING_CANDIDATE_ID(HttpStatus.INTERNAL_SERVER_ERROR, "Missing candidate id", "정산 항목은 저장된 정산후보로만 만들 수 있습니다."),
@@ -35,6 +38,9 @@ public enum PayoutErrorCode implements ErrorCode {
     PAYOUT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "Payout access denied", "정산을 조회할 권한이 없습니다."),
     // 대기 건너뛰기 실행 스위치(payout.skip-wait-run.enabled)가 꺼져 있음 (#485). 요청 자체는 정상이나 현재 서버 설정과 맞지 않아 409
     SKIP_WAIT_RUN_DISABLED(HttpStatus.CONFLICT, "Skip wait run disabled", "정산 대기 건너뛰기 실행이 꺼져 있습니다."),
+    // 해결할 잠금이나 멈춤이 없는 주문 (#568): 이미 해결됨, 같은 주문을 동시에 두 번 해결, 잘못된 주문 ID를 모두 이 코드 하나로 응답
+    //   관리자에게는 모두 "지금 풀 것이 없다"는 뜻이고, 정산은 주문 테이블이 없어 없는 주문을 구별할 수 없어 404 대신 409
+    NOTHING_TO_RESOLVE(HttpStatus.CONFLICT, "Nothing to resolve", "해결할 잠금이나 멈춤이 없는 주문입니다."),
     // 정산 Job이 이미 실행 중이라 다른 실행을 거절함 (동시 실행 방지 잠금, #223)
     PAYOUT_JOB_ALREADY_RUNNING(HttpStatus.CONFLICT, "Payout job already running", "정산이 이미 실행 중입니다."),
     // 형태만 공개하고 실제 동작은 막아 둔 API(1건 수동 실행, 수동 조정)를 표시하는 임시 코드

@@ -13,6 +13,7 @@ import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.QPayoutCandidateItem;
@@ -42,6 +43,7 @@ import java.util.Optional;
 import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
 import static com.ok.payout.domain.QPayoutFailure.payoutFailure;
+import static com.ok.payout.domain.QPayoutFailureResolution.payoutFailureResolution;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
 import static com.ok.payout.domain.QPayoutSellerDraftItem.payoutSellerDraftItem;
@@ -100,6 +102,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // COUNT(DISTINCT snapshot_id)인 이유: 스냅샷 1개 = 실행 1번이라, 한 실행에서 같은 주문의 후보 여러 건이 실패해도 1번으로 세려는 것
     // payout_item이 없는 후보의 실패만 세는 이유: 이미 정산된 후보의 실패는 더 막을 일이 아님 (unsettledInPeriod와 같은 "미정산" 기준)
     // STATUS = 'COMPLETED'만 세는 이유: FAILED로 끝난 실행의 실패 기록은 주문 탓이 아닐 수 있어 횟수에 넣지 않음
+    // 해결 기록이 있는 실패는 세지 않음 (#568): 관리자가 "다시 처리"로 해결하면 횟수가 처음부터 다시 셈 (조건은 unresolvedFailure와 같은 뜻)
     // 매 실행 실패 기록 전체를 훑어 기록이 쌓일수록 느려지는 것은 알고 둠: 지금 규모에서는 문제없고, 대량에서의 시간은 #304에서 잼
     @Override
     public Map<Long, Long> countFailedRunsByOrder() {
@@ -111,6 +114,8 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                                 + "WHERE e.STATUS = 'COMPLETED' "
                                 + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
                                 + "WHERE pi.candidate_id = f.candidate_id) "
+                                + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_failure_resolution r "
+                                + "WHERE r.failure_id = f.id) "
                                 + "GROUP BY f.order_id")
                 .getResultList();
         Map<Long, Long> counts = new HashMap<>();
@@ -152,6 +157,49 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .from(payoutCandidateItem)
                 .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
                 .fetch();
+    }
+
+    // 해결 기록이 있는 주문 중, 상한(to) 전 미정산 후보가 남아 있고 잠기지 않은 주문 ID (#568, 중복 없음, 조회 기간 하한 없음)
+    // 해결하면 실패 횟수가 0이 되어 #549의 "1~2번 실패한 주문 다시 넣기"에 들지 않으므로, 기간 밖으로 밀린 해결 주문을 따로 고름
+    // 이미 다 정산된 주문은 미정산 조건이 빼므로 해결 기록이 쌓여도 결과는 아직 정산 안 된 주문뿐 (해결 기록 전체를 훑는 비용은 #304에서 봄)
+    // 해결 뒤 다시 3번 실패해 멈춘 주문은 여기서 빼지 않음 → 부르는 쪽(PayoutService.createSnapshot)이 멈춘 주문을 뺌
+    @Override
+    public List<Long> findResolvedOrderIdsWithUnsettledCandidatesBefore(LocalDateTime to) {
+        return queryFactory
+                .select(payoutCandidateItem.orderId)
+                .distinct()
+                .from(payoutCandidateItem)
+                .where(unsettledInPeriod(null, to), lockedOrder().not(),
+                        JPAExpressions.selectOne()
+                                .from(payoutFailureResolution)
+                                .where(payoutFailureResolution.orderId.eq(payoutCandidateItem.orderId))
+                                .exists())
+                .fetch();
+    }
+
+    // 그 주문의 해결되지 않은 실패 기록 (#568 해결 서비스의 저장 대상), id 오름차순
+    // 사유·실행 성공 여부·정산 여부로 거르지 않음: #549 횟수는 사유를 가리지 않고 세므로 일부만 해결하면 계속 멈춰 있음
+    // id 오름차순인 이유: 같은 주문을 동시에 두 번 해결할 때 두 요청이 같은 순서로 저장해, 서로를 기다리는 데드락 대신 유니크 위반(409)이 나게 함
+    @Override
+    public List<PayoutFailure> findUnresolvedFailuresByOrderId(Long orderId) {
+        return queryFactory
+                .selectFrom(payoutFailure)
+                .where(payoutFailure.orderId.eq(orderId), unresolvedFailure())
+                .orderBy(payoutFailure.id.asc())
+                .fetch();
+    }
+
+    // 그 주문이 잠겼는지 (#568 해결 서비스의 "해결할 것이 있는지" 판정): lockedOrder와 같은 조건을 주문 ID로 봄
+    @Override
+    public boolean isOrderLocked(Long orderId) {
+        Integer found = queryFactory
+                .selectOne()
+                .from(payoutFailure)
+                .where(payoutFailure.orderId.eq(orderId),
+                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()),
+                        unresolvedFailure())
+                .fetchFirst();
+        return found != null;
     }
 
     // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
@@ -662,7 +710,8 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return condition;
     }
 
-    // 후보의 주문이 잠겼는지: 그 주문에 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
+    // 후보의 주문이 잠겼는지: 그 주문에 해결되지 않은 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
+    // 해결 기록이 있는 실패는 잠그지 않음 (#568): 관리자가 "다시 처리"로 해결하면 다음 스냅샷부터 다시 들어옴
     // 스냅샷 번호와 상관없이 주문 단위로 봄 → 잠긴 뒤 새로 들어온 같은 주문의 후보(나중에 구매확정된 상품, 조정 등)도 빠짐
     // 잠그는 사유: 수수료 불일치(validate, #195·#391), 결과 검증 불일치(verify, #290). 초과 청구(#195)는 #552부터 잠그지 않고 다시 검사함
     // 잠금을 남긴 Job이 이후 Step에서 FAILED로 끝나도 실패 기록은 남아 잠금이 유지됨
@@ -672,8 +721,20 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return JPAExpressions.selectOne()
                 .from(payoutFailure)
                 .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId),
-                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()))
+                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()),
+                        unresolvedFailure())
                 .exists();
+    }
+
+    // 실패 기록(payoutFailure)에 해결 기록이 없는지 (#568)
+    // 여러 스냅샷에 걸쳐 실패 기록을 읽는 조건(잠금, 실패 횟수)에만 씀
+    // 한 스냅샷 안에서 빼는 조건(notFailedInSnapshot, findFailureRows)에는 쓰지 않음:
+    //   배치가 도는 중에 해결해도 그 실행에서 이미 실패한 후보는 그 실행의 draft·확정에서 계속 빠져야 함 (해결은 다음 실행부터)
+    private BooleanExpression unresolvedFailure() {
+        return JPAExpressions.selectOne()
+                .from(payoutFailureResolution)
+                .where(payoutFailureResolution.failureId.eq(payoutFailure.id))
+                .notExists();
     }
 
     // 이번 스냅샷 후보들의 주문 ID (금액 검사 집계 쿼리의 IN 조건)

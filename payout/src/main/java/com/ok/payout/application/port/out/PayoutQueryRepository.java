@@ -2,6 +2,7 @@ package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutFailure;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -136,4 +137,14 @@ public interface PayoutQueryRepository {
     // 조건은 findUnsettledCandidatesOfOrdersBefore와 같고 주문 ID만 돌려줌: 멈춘 주문 수를 셀 때 후보 엔티티를 다 불러오지 않으려는 것
     // 잠긴 주문은 뺌. orderIds가 비면 조회하지 않고 빈 목록
     List<Long> findOrderIdsWithUnsettledCandidatesBefore(Collection<Long> orderIds, LocalDateTime to);
+
+    // 해결 기록이 있는 주문 중 createdAt < to인 미정산 후보가 남고 잠기지 않은 주문 ID (#568, 중복 없음, 조회 기간의 하한 없음)
+    // 해결 뒤 다시 멈춘 주문은 빼지 않음 (부르는 쪽이 실패 횟수로 뺌)
+    List<Long> findResolvedOrderIdsWithUnsettledCandidatesBefore(LocalDateTime to);
+
+    // 그 주문의 해결되지 않은 실패 기록, id 오름차순 (#568). 사유·실행 상태·정산 여부로 거르지 않음
+    List<PayoutFailure> findUnresolvedFailuresByOrderId(Long orderId);
+
+    // 그 주문에 해결되지 않은 잠그는 사유의 실패 기록이 있는지 (#568, 스냅샷의 잠금 조건과 같음)
+    boolean isOrderLocked(Long orderId);
 }
