@@ -105,7 +105,8 @@ class PayoutKafkaListenerIntegrationTest extends AbstractIntegrationTest {
 
         // then: 뒤 메시지가 처리됐으면 잘못된 메시지가 받기를 막지 않은 것이다
         await().atMost(TIMEOUT).untilAsserted(() -> assertThat(sellerBalance(goodSellerId)).isEqualTo(1_000L));
-        assertThat(sellerBalance(badSellerId)).isZero();
+        // 잔액 조회는 지갑이 없어도 0이라, 서비스까지 가지 않아 지갑도 만들어지지 않았는지는 지갑 행으로 따로 본다
+        assertThat(countSellerWallets(badSellerId)).isZero();
         Map<String, Object> sut = jdbcTemplate.queryForMap(
                 "SELECT topic, message_key, payload, failure_reason, status FROM wallet_message_failure");
         assertThat(sut).isNotNull();
@@ -170,6 +171,11 @@ class PayoutKafkaListenerIntegrationTest extends AbstractIntegrationTest {
         List<Long> balances = jdbcTemplate.queryForList(
                 "SELECT balance FROM seller_wallet WHERE member_id = ?", Long.class, sellerId);
         return balances.isEmpty() ? 0L : balances.getFirst();
+    }
+
+    private long countSellerWallets(long sellerId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM seller_wallet WHERE member_id = ?", Long.class, sellerId);
     }
 
     private List<String> sellerLedgerKeys(long sellerId) {
