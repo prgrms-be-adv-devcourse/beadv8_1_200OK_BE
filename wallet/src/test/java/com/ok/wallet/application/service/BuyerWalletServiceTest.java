@@ -73,6 +73,15 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 회원_ID가_없으면_지갑을_만들지_않고_예외가_난다() {
+        // when & then
+        assertThatThrownBy(() -> buyerWalletService.getOrCreate(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("회원 ID는 필수입니다.");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM buyer_wallet", Long.class)).isZero();
+    }
+
+    @Test
     void 동시에_요청해도_지갑은_하나만_생성되고_모두_같은_지갑을_반환한다() throws Exception {
         // Given
         Long memberId = 3L;
