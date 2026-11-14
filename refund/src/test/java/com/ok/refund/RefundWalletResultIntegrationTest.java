@@ -19,6 +19,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderCancellationPort;
 import com.ok.testsupport.FakeOrderQueryPort;
 import com.ok.testsupport.FakeProductStockReleasePort;
+import com.ok.testsupport.FakeWalletRefundRequestPort;
 import com.ok.testsupport.RefundWalletResultSender;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -93,6 +94,9 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     FakeProductStockReleasePort productStockReleasePort;
     @Autowired
     RefundWalletResultSender walletResultSender;
+    // 평소에는 실제 토픽으로 보내고, 경합을 만들 때만 발행 직후 할 일을 끼워 넣는다
+    @Autowired
+    FakeWalletRefundRequestPort walletRefundRequestPort;
     @Autowired
     KafkaListenerEndpointRegistry listenerRegistry;
 
@@ -115,6 +119,7 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         orderQueryPort.clear();
         orderCancellationPort.clear();
         productStockReleasePort.clear();
+        walletRefundRequestPort.clear();
     }
 
     @Test
@@ -258,6 +263,129 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // ---------- 지갑 결과 거르기와 경합 (#591: 지휘자로 옮기기 #592 전에 지금 동작을 고정한다) ----------
+
+    // 지갑이 돌려준 금액이 환불 금액과 다르면 완료하지 않고 지갑 줄을 불일치로 멈춘다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다(#544)
+    @Test
+    void 금액이_다른_완료_메시지는_지갑_줄을_불일치로_멈추고_재고를_되돌리지_않는다() throws Exception {
+        // given: 10,000원을 돌려줘야 하는데 9,000원이 왔다
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+
+        // when
+        walletResultSender.sendCompleted(refundId, 9_000L);
+
+        // then
+        RefundWalletResultSender.awaitUntil("불일치가 기록되지 않았습니다",
+                () -> stepOf(refundId, RefundStepType.WALLET).getStatus() == RefundStepStatus.STOPPED);
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        RefundStep walletStep = stepOf(refundId, RefundStepType.WALLET);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(walletStep.getLastReason()).isEqualTo("RESULT_MISMATCH");
+        });
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+    }
+
+    // 불일치는 메시지 하나가 틀렸다는 표시라, 뒤에 맞는 완료 메시지가 오면 완료로 진행한다.
+    // 지갑 줄은 멈춤과 불일치 이유를 그대로 둔다(끝 상태는 바뀌지 않음, 사람이 볼 흔적, #574 결정 2·9)
+    @Test
+    void 불일치_뒤_맞는_완료_메시지가_오면_완료하고_지갑_줄은_불일치로_남는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+        walletResultSender.sendCompleted(refundId, 9_000L);
+        RefundWalletResultSender.awaitUntil("불일치가 기록되지 않았습니다",
+                () -> stepOf(refundId, RefundStepType.WALLET).getStatus() == RefundStepStatus.STOPPED);
+
+        // when
+        walletResultSender.completeByWallet(refundId);
+
+        // then
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getLastReason)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                        tuple(RefundStepType.WALLET, RefundStepStatus.STOPPED, "RESULT_MISMATCH"),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED, null));
+        assertThat(productStockReleasePort.releasedOf(refundId)).isPresent();
+    }
+
+    // 멈춘 지갑 줄에 다른 이유의 실패가 와도 처음 이유를 둔다. 뒤 메시지로 덮으면 불일치 같은 처음 흔적이 사라진다(#574 결정 9)
+    @Test
+    void 멈춘_지갑_줄에_다른_이유의_실패가_와도_처음_이유를_유지한다() throws Exception {
+        // given: 첫 실패가 기록됐다
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+        walletResultSender.sendFailed(refundId, "FIRST_REASON");
+        RefundWalletResultSender.awaitUntil("첫 실패가 기록되지 않았습니다",
+                () -> "FIRST_REASON".equals(stepOf(refundId, RefundStepType.WALLET).getLastReason()));
+
+        // when
+        walletResultSender.sendFailed(refundId, "SECOND_REASON");
+        awaitFailedMessagesHandled();
+
+        // then
+        RefundStep sut = stepOf(refundId, RefundStepType.WALLET);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(sut.getLastReason()).isEqualTo("FIRST_REASON");
+        });
+    }
+
+    // 재고 줄이 있으면 지갑 완료가 반영됐거나 지갑을 거치지 않는 0원 환불이다. 그런 환불에 온 지갑 실패·불일치는 기록하지 않는다(#574 결정 3).
+    // 판매자 8이 주문 6200에 배추(621) 3,000원 + 감자(622) 27,000원을 팔아 무료배송(기준 30,000원)이었다. 배추를 취소하면 3,000 - 3,000 = 0원이다.
+    // 재고 복구가 실패해 환불은 처리 중이고 재고 줄은 "할 차례"로 남은 상태에서 지갑 실패가 온다
+    @Test
+    void 재고_줄이_있는_0원_환불에_온_지갑_실패는_기록하지_않는다() throws Exception {
+        // given
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L, List.of(
+                new BundleItem(621L, 3_000L, 1), new BundleItem(622L, 27_000L, 1)));
+        orderQueryPort.put(new RefundableOrderItem(6_200L, 621L, BUYER_ID, 8L, 66L, "배추", "1포기", "PREPARING", 3_000L, 1, bundle));
+        orderQueryPort.put(new RefundableOrderItem(6_200L, 622L, BUYER_ID, 8L, 67L, "감자", "1kg", "PREPARING", 27_000L, 1, bundle));
+        Long refundId = requestedRefundId(6_200L, 621L);
+        productStockReleasePort.fail();
+        approve(8L, refundId).andExpect(status().isServiceUnavailable());
+        productStockReleasePort.clear();
+
+        // when: 금액 1원 이상만 받으므로(리스너 값 검사) 1원으로 보낸다. 재고 줄 확인이 금액 비교보다 먼저다
+        walletResultSender.sendFailed(refundId, 1L, "INSUFFICIENT_SELLER_BALANCE");
+        awaitFailedMessagesHandled();
+
+        // then: 지갑 줄은 생기지 않고 재고 줄은 그대로다
+        assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.READY));
+    }
+
+    // 지갑이 아주 빨라 승인 응답이 나가기 전에 지갑 완료가 처리될 수 있다. 응답은 승인 구간의 결과(처리 중)로 지금과 같고,
+    // 요청 스레드가 늦게 "결과 대기"를 써도 먼저 온 지갑 성공을 덮지 않는다(끝 상태는 바뀌지 않음, #574 결정 2)
+    @Test
+    void 승인_응답_전에_지갑_완료가_먼저_처리돼도_처리_중으로_응답하고_지갑_성공을_덮지_않는다() throws Exception {
+        // given: 발행 직후, 승인 요청이 "결과 대기"를 쓰기 전에 지갑 완료를 보내 끝까지 처리되게 한다
+        Long refundId = requestedRefundId();
+        walletRefundRequestPort.afterNextSend(() -> walletResultSender.completeByWallet(refundId));
+
+        // when
+        approve(refundId)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("PROCESSING")));
+
+        // then
+        assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.COMPLETED);
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED));
+    }
+
     // 지갑 결과 리스너가 환불 전용 팩토리(오류 처리기)를 실제로 쓰는지 본다. 설정 단위 테스트는 처리기를 따로 만들어 보므로,
     // 팩토리에 처리기를 붙이지 않거나 리스너가 containerFactory를 빼먹어도(기본 팩토리 = 간격 없이 10번, 값 오류도 다시 시도) 통과한다
     @Test
@@ -313,21 +441,41 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         return second;
     }
 
+    // 무시되는 메시지는 결과가 없어 처리됐는지 바로 볼 수 없다. 테스트 브로커는 토픽 파티션이 하나라 보낸 순서대로 처리되므로,
+    // 같은 실패 토픽으로 다른 환불(판매자 6의 모자 602)의 실패를 뒤이어 보내고 그것이 기록되면 앞 메시지도 처리된 것으로 본다
+    private void awaitFailedMessagesHandled() throws Exception {
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L, List.of(new BundleItem(602L, 5_000L, 1)));
+        orderQueryPort.put(new RefundableOrderItem(ORDER_ID, 602L, BUYER_ID, 6L, 68L, "모자", "검정", "PREPARING", 5_000L, 1, bundle));
+        Long markerRefundId = requestedRefundId(ORDER_ID, 602L);
+        approve(6L, markerRefundId).andExpect(status().isOk());
+        walletResultSender.sendFailed(markerRefundId, "MARKER");
+        RefundWalletResultSender.awaitUntil("뒤에 보낸 실패 메시지가 처리되지 않았습니다",
+                () -> "MARKER".equals(stepOf(markerRefundId, RefundStepType.WALLET).getLastReason()));
+    }
+
     private Long requestedRefundId() throws Exception {
+        return requestedRefundId(ORDER_ID, ORDER_ITEM_ID);
+    }
+
+    private Long requestedRefundId(Long orderId, Long orderItemId) throws Exception {
         String response = mockMvc.perform(post(BUYER_URL)
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"orderId": %d, "orderItemId": %d, "quantity": 1}
-                                """.formatted(ORDER_ID, ORDER_ITEM_ID)))
+                                """.formatted(orderId, orderItemId)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return ((Number) JsonPath.read(response, "$.refundId")).longValue();
     }
 
     private ResultActions approve(Long refundId) throws Exception {
+        return approve(SELLER_ID, refundId);
+    }
+
+    private ResultActions approve(Long sellerId, Long refundId) throws Exception {
         return mockMvc.perform(patch(SELLER_URL + "/" + refundId)
-                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER_ID, "BUYER", "SELLER"))
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(sellerId, "BUYER", "SELLER"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"decision": "APPROVE"}
