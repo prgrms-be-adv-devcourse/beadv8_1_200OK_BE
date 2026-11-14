@@ -928,6 +928,31 @@ class DecideRefundServiceTest {
         then(productStockReleasePort).should(never()).releaseStock(any());
     }
 
+    // 주문은 반영됐는데 "주문 성공 + 지갑 줄 기록" 구간이 실패하면 지갑에 보내지 않고 오류가 올라간다.
+    // 이 구간은 한 트랜잭션이라 주문 줄은 "시도 중"(다시 볼 시각이 있는 상태)으로 남고, 다시 집는 일은 #576이 한다
+    @Test
+    void 주문_성공_뒤_기록이_실패하면_지갑에_보내지_않고_오류가_올라간다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        givenSteps(inProgress(RefundStepType.ORDER));
+        // 승인 구간의 주문 줄 저장은 성공하고, 주문 성공 구간의 지갑 줄 저장만 DB 오류로 실패한다
+        willAnswer(invocation -> {
+            RefundStep step = invocation.getArgument(0);
+            if (step.getType() == RefundStepType.WALLET) {
+                throw new IllegalStateException("DB 오류");
+            }
+            return step;
+        }).given(refundStepPersistencePort).saveNew(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("DB 오류");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        then(productStockReleasePort).should(never()).releaseStock(any());
+    }
+
     // 0원은 지갑 줄 없이 재고 줄을 거친다. 재고 줄 성공과 환불 완료는 같은 구간에서 저장한다(결정 5)
     @Test
     void 돌려줄_금액이_0원이면_재고_단계를_거쳐_완료한다() {
