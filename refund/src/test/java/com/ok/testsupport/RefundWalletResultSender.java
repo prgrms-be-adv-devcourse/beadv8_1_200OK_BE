@@ -45,10 +45,27 @@ public class RefundWalletResultSender {
         send(COMPLETED_TOPIC, message(refund, refund.getRefundAmount(), null));
     }
 
+    /** 저장된 환불의 orderId·buyerId에 금액만 바꿔 완료 메시지를 보낸다. 지갑이 다른 금액을 돌려준 경우(불일치)를 만들 때 쓴다. 기다리지 않는다 */
+    public void sendCompleted(Long refundId, long amount) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(COMPLETED_TOPIC, message(refund, amount, null));
+    }
+
+    /** 저장된 환불의 orderId·buyerId에 금액만 바꿔 실패 메시지를 보낸다. 기다리지 않는다 */
+    public void sendFailed(Long refundId, long amount, String reason) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(FAILED_TOPIC, message(refund, amount, reason));
+    }
+
     /** 저장된 환불의 값으로 실패 메시지를 보낸다. 기다리지 않는다 */
     public void sendFailed(Long refundId, String reason) {
         Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
         send(FAILED_TOPIC, message(refund, refund.getRefundAmount(), reason));
+    }
+
+    /** 테스트 브로커에서 이 토픽의 파티션 수. 보낸 순서대로 처리된다고 가정하는 테스트가 그 가정을 먼저 확인할 때 쓴다 */
+    public int partitionCountOf(String topic) {
+        return kafkaTemplate.partitionsFor(topic).size();
     }
 
     /** 환불이 주어진 상태가 될 때까지 기다린다. 시간 안에 안 되면 마지막 상태와 함께 실패한다 */

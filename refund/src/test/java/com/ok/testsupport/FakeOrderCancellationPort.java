@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 주문 모듈 취소 반영 API(주문 ②, #542) 대신 반영된 값을 메모리에 남기는 Fake.
@@ -28,6 +29,13 @@ public class FakeOrderCancellationPort implements OrderCancellationPort {
     private final Map<Long, OrderCancellation> reflected = new ConcurrentHashMap<>();
     private final Set<Long> shippedOrderItemIds = ConcurrentHashMap.newKeySet();
     private volatile boolean failing;
+    // 다음 반영이 끝난 직후(응답을 돌려주기 전) 한 번 할 일. 주문을 부르는 사이 다른 경로가 환불을 바꾼 경우를 만들 때 쓴다
+    private final AtomicReference<Runnable> afterReflect = new AtomicReference<>();
+
+    /** 다음 취소 반영을 마친 직후, 반영됨으로 답하기 전에 {@code action}을 한 번 실행한다(부른 스레드에서) */
+    public void afterNextReflect(Runnable action) {
+        afterReflect.set(action);
+    }
 
     /** 실제 어댑터가 주문 서버 꺼짐·타임아웃·오류 응답을 바꾸는 것처럼, 이후 호출이 {@code ORDER_API_FAILED}를 던지게 한다 */
     public void fail() {
@@ -43,6 +51,7 @@ public class FakeOrderCancellationPort implements OrderCancellationPort {
         reflected.clear();
         shippedOrderItemIds.clear();
         failing = false;
+        afterReflect.set(null);
     }
 
     /** 이 환불로 주문에 반영된 값. 반영되지 않았으면 비어 있다 */
@@ -68,6 +77,10 @@ public class FakeOrderCancellationPort implements OrderCancellationPort {
         }
         // 동시에 같은 refundId가 두 번 와도 먼저 들어간 값 하나만 남긴다
         reflected.putIfAbsent(cancellation.refundId(), cancellation);
+        Runnable action = afterReflect.getAndSet(null);
+        if (action != null) {
+            action.run();
+        }
         return OrderCancellationResult.reflected();
     }
 }
