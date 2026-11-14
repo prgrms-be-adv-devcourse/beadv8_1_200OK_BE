@@ -48,7 +48,8 @@ public class PayoutFailureResolution extends BaseTime {
     @Column(nullable = false)
     private Long failureId;
 
-    // 주문·주문상품 ID는 실패 기록에서 복사: 잠금 조건·해결된 주문 다시 넣기·해결 기록 조회(#571)를 실패 기록 조인 없이 주문 단위로 하려고
+    // 주문·주문상품 ID는 실패 기록에서 복사: 잠금 조건·해결된 주문 다시 넣기·해결 기록 조회(#571)에서 주문을 실패 기록 조인 없이 이 표의 order_id 인덱스로 고르려고
+    //   (해결 기록 조회는 사유·상세 같은 칸을 보여 주려고 고른 뒤에 실패 기록과 조인함)
     @Column(nullable = false)
     private Long orderId;
 

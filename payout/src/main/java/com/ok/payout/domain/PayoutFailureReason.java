@@ -82,7 +82,7 @@ public enum PayoutFailureReason {
     // 상세에 따로 남길 값이 없을 때 detail에 넣는 기본 문구 (detail은 NULL을 두지 않음)
     private final String defaultDetail;
     // 원인 범주 (#391). locksOrder처럼 DB에 저장하지 않고 이 enum 값으로 정함 → 값을 바꾸면 과거 기록의 범주도 함께 바뀜
-    //   지금은 코드 안에서만 씀(API·로그에 아직 내보내지 않음. 실패 조회 API는 #301·#392)
+    //   API에는 해결 기록 조회(#571)가 이름 문자열로 처음 내보냄. 관리자 목록(#569)·판매자 화면(#392)도 같은 모양을 따름
     private final PayoutFailureCategory category;
 
     // 주문을 잠그는 사유 목록 (스냅샷 생성 시 "잠긴 주문 제외" 조건에 씀)
