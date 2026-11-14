@@ -240,6 +240,10 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
 
         // then: 잠그는 사유만이 아니라 실패 기록 3건 전부 해결 → 잠김도 멈춤도 아니고 다음 스냅샷에 들어감
         assertThat(result.resolvedFailureCount()).isEqualTo(3);
+        // 요청 1번에 생긴 3줄은 모두 같은 요청 번호 (#571 묶음 보기)
+        assertThat(resolutionRepository.findAllByOrderId(order))
+                .extracting(PayoutFailureResolution::getResolutionRequestId)
+                .containsOnly(result.resolutionRequestId());
         assertThat(payoutQueryRepository.isOrderLocked(order)).isFalse();
         assertThat(payoutQueryRepository.countFailedRunsByOrder()).doesNotContainKey(order);
         assertThat(snapshotCandidateIds()).containsExactly(candidate);
@@ -406,7 +410,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         List<PayoutFailure> failures = payoutQueryRepository.findUnresolvedFailuresByOrderId(order);
         resolve(order);
         List<PayoutFailureResolution> duplicate = List.of(
-                PayoutFailureResolution.of(failures.get(0), PayoutResolutionMethod.REPROCESS, ADMIN_ID, MEMO));
+                PayoutFailureResolution.of(failures.get(0), "test-request", PayoutResolutionMethod.REPROCESS, ADMIN_ID, MEMO));
 
         // when & then
         assertThatThrownBy(() -> resolutionRepository.saveAll(duplicate))
@@ -457,6 +461,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isCreated())                                          // 201
                 .andExpect(jsonPath("$.orderId").value(order))
+                .andExpect(jsonPath("$.resolutionRequestId").isNotEmpty())
                 .andExpect(jsonPath("$.resolvedFailureCount").value(1))
                 .andExpect(jsonPath("$.method").value("REPROCESS"))
                 .andExpect(jsonPath("$.adminId").value(ADMIN_ID))

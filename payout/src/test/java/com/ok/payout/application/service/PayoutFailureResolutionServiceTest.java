@@ -80,6 +80,10 @@ class PayoutFailureResolutionServiceTest {
         then(payoutFailureResolutionRepository).should().saveAll(captor.capture());
         assertThat(captor.getValue()).extracting(PayoutFailureResolution::getFailureId).containsExactly(11L, 12L, 13L);
         assertThat(result.resolvedFailureCount()).isEqualTo(3);
+        // 요청 1번에 저장한 줄은 모두 같은 요청 번호이고, 결과도 그 번호를 돌려줌 (#571 묶음 보기)
+        assertThat(result.resolutionRequestId()).isNotBlank();
+        assertThat(captor.getValue()).extracting(PayoutFailureResolution::getResolutionRequestId)
+                .containsOnly(result.resolutionRequestId());
     }
 
     @Test

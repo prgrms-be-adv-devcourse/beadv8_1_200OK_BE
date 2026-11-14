@@ -32,9 +32,17 @@ public class PayoutFailureResolution extends BaseTime {
     // 메모 최대 길이 (DB memo VARCHAR(255)와 맞춤)
     public static final int MAX_MEMO_LENGTH = 255;
 
+    // 해결 요청 번호 길이 (UUID 문자열 36자, DB resolution_request_id VARCHAR(36)과 맞춤)
+    private static final int REQUEST_ID_LENGTH = 36;
+
     @Id
     @GeneratedValue(strategy = IDENTITY)
     private Long id;
+
+    // 해결 요청 번호 (#571): 한 번의 해결 요청(주문 하나)으로 생긴 줄은 모두 같은 값 → 해결 요청 단위로 묶어 볼 때 씀
+    //   created_at은 줄마다 따로 찍혀 같은 요청이어도 다를 수 있어 묶는 데 쓸 수 없음
+    @Column(nullable = false, length = REQUEST_ID_LENGTH)
+    private String resolutionRequestId;
 
     // 실패 기록은 ID 숫자만 둠 (PayoutFailure가 스냅샷·후보를 숫자로 두는 것과 같음). 없는 ID는 DB 외래키가 막음
     @Column(nullable = false)
@@ -59,10 +67,12 @@ public class PayoutFailureResolution extends BaseTime {
     private String memo;
 
     // 메모는 사용자 입력이라 RestApiException(422). 요청 DTO가 먼저 막고 여기는 저장 전에 한 번 더 막음 (조정 사유와 같음, api.md "검증 위치")
-    // 실패 기록 ID·해결 방법·관리자 ID는 서버가 채우는 값(조회한 실패 기록, 상수, 로그인 토큰)이라 표준 예외 (PayoutFailure.of의 상세와 같음)
-    public static PayoutFailureResolution of(PayoutFailure failure, PayoutResolutionMethod method, Long adminId, String memo) {
-        if (failure.getId() == null || method == null || adminId == null) {
-            throw new IllegalArgumentException("해결 기록에는 실패 기록 ID, 해결 방법, 관리자 ID가 필요합니다.");
+    // 실패 기록 ID·해결 요청 번호·해결 방법·관리자 ID는 서버가 채우는 값(조회한 실패 기록, 서비스가 요청마다 만든 UUID, 상수, 로그인 토큰)이라
+    // 표준 예외 (PayoutFailure.of의 상세와 같음)
+    public static PayoutFailureResolution of(PayoutFailure failure, String resolutionRequestId, PayoutResolutionMethod method,
+                                             Long adminId, String memo) {
+        if (failure.getId() == null || resolutionRequestId == null || method == null || adminId == null) {
+            throw new IllegalArgumentException("해결 기록에는 실패 기록 ID, 해결 요청 번호, 해결 방법, 관리자 ID가 필요합니다.");
         }
         if (memo == null || memo.isBlank()) {
             throw new RestApiException(PayoutErrorCode.MISSING_RESOLUTION_MEMO);
@@ -71,6 +81,7 @@ public class PayoutFailureResolution extends BaseTime {
             throw new RestApiException(PayoutErrorCode.RESOLUTION_MEMO_TOO_LONG);
         }
         PayoutFailureResolution resolution = new PayoutFailureResolution();
+        resolution.resolutionRequestId = resolutionRequestId;
         resolution.failureId = failure.getId();
         resolution.orderId = failure.getOrderId();
         resolution.orderItemId = failure.getOrderItemId();

@@ -15,17 +15,20 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class PayoutFailureResolutionTest {
 
+    private static final String REQUEST_ID = "3f2b8c1e-7d4a-4b9e-9c21-5a6d8e0f1b23";
+
     @Test
     void 실패_기록의_주문과_주문상품을_복사해_해결_기록을_만든다() {
         // given
         PayoutFailure failure = savedFailure();
 
         // when
-        PayoutFailureResolution sut = PayoutFailureResolution.of(failure, PayoutResolutionMethod.REPROCESS, 1L, "메모");
+        PayoutFailureResolution sut = PayoutFailureResolution.of(failure, REQUEST_ID, PayoutResolutionMethod.REPROCESS, 1L, "메모");
 
         // then
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
+            softly.assertThat(sut.getResolutionRequestId()).isEqualTo(REQUEST_ID);
             softly.assertThat(sut.getFailureId()).isEqualTo(77L);
             softly.assertThat(sut.getOrderId()).isEqualTo(100L);
             softly.assertThat(sut.getOrderItemId()).isEqualTo(1001L);
@@ -39,7 +42,7 @@ class PayoutFailureResolutionTest {
     @MethodSource("빈_메모")
     void 메모가_비었으면_422_에러다(String memo) {
         // when & then
-        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), PayoutResolutionMethod.REPROCESS, 1L, memo))
+        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), REQUEST_ID, PayoutResolutionMethod.REPROCESS, 1L, memo))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.MISSING_RESOLUTION_MEMO));
     }
@@ -54,7 +57,7 @@ class PayoutFailureResolutionTest {
         String memo = "가".repeat(PayoutFailureResolution.MAX_MEMO_LENGTH + 1);
 
         // when & then
-        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), PayoutResolutionMethod.REPROCESS, 1L, memo))
+        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), REQUEST_ID, PayoutResolutionMethod.REPROCESS, 1L, memo))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.RESOLUTION_MEMO_TOO_LONG));
     }
@@ -62,9 +65,17 @@ class PayoutFailureResolutionTest {
     @Test
     void 관리자_ID가_없으면_만들지_않는다() {
         // when & then
-        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), PayoutResolutionMethod.REPROCESS, null, "메모"))
+        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), REQUEST_ID, PayoutResolutionMethod.REPROCESS, null, "메모"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("해결 기록에는 실패 기록 ID, 해결 방법, 관리자 ID가 필요합니다.");
+                .hasMessage("해결 기록에는 실패 기록 ID, 해결 요청 번호, 해결 방법, 관리자 ID가 필요합니다.");
+    }
+
+    @Test
+    void 해결_요청_번호가_없으면_만들지_않는다() {
+        // when & then
+        assertThatThrownBy(() -> PayoutFailureResolution.of(savedFailure(), null, PayoutResolutionMethod.REPROCESS, 1L, "메모"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("해결 기록에는 실패 기록 ID, 해결 요청 번호, 해결 방법, 관리자 ID가 필요합니다.");
     }
 
     // 저장된 실패 기록처럼 id를 채움 (엔티티에 id를 넣는 생성 경로가 없어 테스트에서만 넣음)

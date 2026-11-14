@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 // 잠기거나 멈춘 주문의 해결 (#568)
 // 해결 = "다시 검사해도 된다"는 관리자 표시. 돈을 바로 내보내지 않고, 다음 배치가 금액 검사·결과 검증부터 다시 거침
@@ -58,10 +59,13 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         if (failures.isEmpty()) {
             throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
         }
+        // 이 요청으로 만드는 줄은 모두 같은 요청 번호 (#571): 해결 기록 조회에서 요청 1번을 한 줄로 묶어 보여 주려고
+        //   UUID라 DB에 번호를 먼저 받으러 가지 않고(별도 표·시퀀스 없음) 동시에 다른 주문을 해결해도 겹치지 않음
+        String resolutionRequestId = UUID.randomUUID().toString();
         List<PayoutFailureResolution> resolutions = new ArrayList<>();
         for (PayoutFailure failure : failures) {
             resolutions.add(PayoutFailureResolution.of(
-                    failure, PayoutResolutionMethod.REPROCESS, command.adminId(), command.memo()));
+                    failure, resolutionRequestId, PayoutResolutionMethod.REPROCESS, command.adminId(), command.memo()));
         }
 
         // 같은 주문을 동시에 두 번 해결하면 둘 다 위 판정을 통과한 뒤, 두 번째 저장이 실패 기록 ID 유니크에 걸림
@@ -82,7 +86,7 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         PayoutFailureResolution first = saved.get(0);
         // 누가 어떤 주문을 다시 처리했는지는 정산에 영향을 주는 관리자 조치라 INFO로 남김 (메모는 길이를 예측할 수 없어 빼고 해결 기록에만 둠)
         log.info("정산 실패 해결. orderId={}, adminId={}, 해결한 실패 기록 수={}", orderId, command.adminId(), saved.size());
-        return new PayoutOrderResolutionResult(orderId, saved.size(), first.getMethod().name(),
+        return new PayoutOrderResolutionResult(orderId, resolutionRequestId, saved.size(), first.getMethod().name(),
                 first.getAdminId(), first.getCreatedAt(), first.getMemo());
     }
 
