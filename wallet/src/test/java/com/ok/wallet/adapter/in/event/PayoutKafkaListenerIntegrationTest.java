@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -120,12 +121,14 @@ class PayoutKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void JSON이_아닌_메시지는_받은_그대로_실패_기록에_남긴_뒤_다음_메시지를_처리한다() {
+    void JSON이_아닌_메시지는_받은_그대로_실패_기록에_남긴_뒤_다음_메시지를_처리한다() throws Exception {
         // given
         long goodSellerId = nextId();
 
         // when: 같은 키(같은 파티션)로 JSON이 아닌 문자열 뒤에 정상 메시지를 보냄
-        stringKafkaTemplate().send(WalletKafkaTopics.SELLER_PAYOUT_CREATED, SAME_KEY, "이건 JSON이 아니다");
+        // 보내는 도구가 달라 순서가 보장되지 않으므로, 앞 메시지가 브로커에 저장된 것을 확인한 뒤 뒤 메시지를 보낸다
+        stringKafkaTemplate().send(WalletKafkaTopics.SELLER_PAYOUT_CREATED, SAME_KEY, "이건 JSON이 아니다")
+                .get(10, TimeUnit.SECONDS);
         sendPayout(SAME_KEY, payoutMessage(nextId(), goodSellerId, 1_000L));
 
         // then

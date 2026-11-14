@@ -116,4 +116,33 @@ SELECT 'BUYER', l.buyer_wallet_id, 'PAYMENT_LEDGER_WITHOUT_RECORD', l.id,
 FROM buyer_wallet_ledger l
 WHERE l.type = 'PAYMENT'
   AND NOT EXISTS (SELECT 1 FROM wallet_order_payment p WHERE CONCAT('PAYMENT:', p.order_id) = l.reference_key)
+UNION ALL
+SELECT 'BUYER', w.id, 'REFUNDED_WITHOUT_LEDGER', NULL,
+       CONCAT('REFUND:', r.refund_id), NULL
+FROM wallet_order_refund r
+LEFT JOIN buyer_wallet w ON w.member_id = r.buyer_id
+WHERE r.status = 'COMPLETED'
+  AND NOT EXISTS (SELECT 1 FROM buyer_wallet_ledger l WHERE l.reference_key = CONCAT('REFUND:', r.refund_id))
+UNION ALL
+SELECT 'BUYER', w.id, 'REFUND_LEDGER_MISMATCH', l.id,
+       CONCAT('member=', r.buyer_id, ', amount=', r.amount),
+       CONCAT('member=', w.member_id, ', amount=', l.amount)
+FROM wallet_order_refund r
+JOIN buyer_wallet_ledger l ON l.reference_key = CONCAT('REFUND:', r.refund_id)
+JOIN buyer_wallet w ON w.id = l.buyer_wallet_id
+WHERE r.status = 'COMPLETED'
+  AND (w.member_id <> r.buyer_id OR l.amount <> r.amount)
+UNION ALL
+SELECT 'BUYER', w.id, 'FAILED_REFUND_WITH_LEDGER', l.id,
+       NULL, l.reference_key
+FROM wallet_order_refund r
+JOIN buyer_wallet_ledger l ON l.reference_key = CONCAT('REFUND:', r.refund_id)
+JOIN buyer_wallet w ON w.id = l.buyer_wallet_id
+WHERE r.status = 'FAILED'
+UNION ALL
+SELECT 'BUYER', l.buyer_wallet_id, 'REFUND_LEDGER_WITHOUT_RECORD', l.id,
+       NULL, l.reference_key
+FROM buyer_wallet_ledger l
+WHERE l.type = 'REFUND'
+  AND NOT EXISTS (SELECT 1 FROM wallet_order_refund r WHERE CONCAT('REFUND:', r.refund_id) = l.reference_key)
 ORDER BY wallet_type, wallet_id, ledger_id;

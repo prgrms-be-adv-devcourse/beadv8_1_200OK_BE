@@ -2,21 +2,28 @@ package com.ok.wallet.application.service;
 
 import com.ok.wallet.application.dto.BuyerBalanceResult;
 import com.ok.wallet.application.dto.OrderPaymentResult;
+import com.ok.wallet.application.dto.OrderRefundResult;
 import com.ok.wallet.application.port.in.BuyerWalletUseCase;
 import com.ok.wallet.application.port.out.BuyerWalletLedgerRepository;
 import com.ok.wallet.application.port.out.BuyerWalletRepository;
 import com.ok.wallet.application.port.out.WalletOrderPaymentRepository;
+import com.ok.wallet.application.port.out.WalletOrderRefundRepository;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.domain.WalletOrderPayment;
 import com.ok.wallet.domain.WalletOrderPaymentStatus;
+import com.ok.wallet.domain.WalletOrderRefund;
+import com.ok.wallet.domain.WalletOrderRefundFailureReason;
+import com.ok.wallet.domain.WalletOrderRefundStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -25,6 +32,7 @@ public class BuyerWalletService implements BuyerWalletUseCase {
     private final BuyerWalletRepository buyerWalletRepository;
     private final BuyerWalletLedgerRepository buyerWalletLedgerRepository;
     private final WalletOrderPaymentRepository walletOrderPaymentRepository;
+    private final WalletOrderRefundRepository walletOrderRefundRepository;
     // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
     // 지갑 생성 시각을 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
     private final Clock clock;
@@ -129,5 +137,71 @@ public class BuyerWalletService implements BuyerWalletUseCase {
         // 키 규칙은 이용 내역 조회와 같은 곳(PaymentReferenceKey)에서 만든다
         buyerWalletLedgerRepository.save(wallet.pay(amount, PaymentReferenceKey.of(orderId)));
         return OrderPaymentResult.PAID;
+    }
+
+    /**
+     * 환불이 승인한 금액을 구매자 지갑에 돌려주고, 지갑의 반환 처리 결과를 기록한다.
+     * 같은 환불이 다시 오면 처음 결과(돌려줌·거절)를 그대로 돌려주고 아무것도 바꾸지 않는다. 금액이 달라도 처음 기록이 기준이다.
+     * 그 주문·구매자의 성공한 결제가 없거나, 같은 주문의 반환 합계가 결제 금액을 넘으면 돌려주지 않고 거절로 기록한다.
+     * 돌려줄 돈이라 보유 한도는 보지 않는다.
+     *
+     * <p>환불 ID·주문 ID·회원 ID는 null이 아니고 금액은 0보다 커야 한다. 호출하는 쪽이 걸러 넘기며, 아니면 IllegalArgumentException을 던진다.
+     *
+     * <p>같은 주문의 환불이 동시에 와도 합계를 넘지 않게, 지갑을 잠근 뒤 반환 합계를 잠금 조회(최신 커밋 기준)로 읽는다.
+     * 일반 조회는 지갑 잠금을 기다리기 전에 잡힌 스냅샷을 봐서 방금 끝난 반환을 빼고 더한다.
+     * READ COMMITTED는 정확성이 아니라 교착을 피하려는 것이다. 기본 격리 수준에서는 반환 기록이 없는 주문을 잠금 조회하면
+     * 빈 구간까지 잠겨, 이웃한 주문의 첫 반환 둘이 서로의 기록 넣기를 막아 교착이 난다. 이미 열린 트랜잭션에 합류해 격리 수준이
+     * 무시되어도 합계는 여전히 맞다(교착이 나면 Kafka가 다시 시도한다).
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderRefundResult refundForOrder(Long refundId, Long orderId, Long memberId, long amount) {
+        // 처리 기록 넣기(INSERT IGNORE)는 NULL·CHECK 위반도 오류 없이 넘기므로 잘못된 값이 기록되지 않게 먼저 막는다
+        if (refundId == null || orderId == null || memberId == null) {
+            throw new IllegalArgumentException("환불 ID, 주문 ID, 회원 ID는 필수입니다. refundId=" + refundId
+                    + ", orderId=" + orderId + ", memberId=" + memberId);
+        }
+        if (amount <= 0) {
+            throw new IllegalArgumentException("반환 금액은 0보다 커야 합니다. amount=" + amount);
+        }
+        // 결제 처리 기록은 한 번 남으면 바뀌지 않아, 거절인지는 지갑을 잠그지 않고 판단해도 같다
+        // 구매자가 다르면 결제가 없는 것과 같이 본다. 다른 사람의 지갑에 돈이 들어가지 않게 한다
+        Optional<WalletOrderPayment> payment = walletOrderPaymentRepository.findByOrderId(orderId)
+                .filter(WalletOrderPayment::isPaid)
+                .filter(paid -> paid.getBuyerId().equals(memberId));
+        if (payment.isEmpty()) {
+            return recordRefund(refundId, orderId, memberId, amount, WalletOrderRefundStatus.FAILED,
+                    WalletOrderRefundFailureReason.PAYMENT_NOT_FOUND);
+        }
+
+        // 지갑을 먼저 잠가 같은 구매자의 반환·충전·결제를 순서대로 처리한다. 한 주문은 구매자가 하나라 같은 주문의 반환도 순서대로 온다
+        BuyerWallet wallet = getOrCreate(memberId);
+        long refunded = walletOrderRefundRepository.sumCompletedAmountForShareByOrderId(orderId);
+        // 합계에 더하면 아주 큰 금액에서 long 범위를 넘을 수 있어 남은 금액과 비교한다
+        if (amount > payment.get().getAmount() - refunded) {
+            return recordRefund(refundId, orderId, memberId, amount, WalletOrderRefundStatus.FAILED,
+                    WalletOrderRefundFailureReason.REFUND_TOTAL_EXCEEDED);
+        }
+        OrderRefundResult result = recordRefund(refundId, orderId, memberId, amount, WalletOrderRefundStatus.COMPLETED, null);
+        if (!result.alreadyProcessed()) {
+            // 원장 근거 키는 마지막 안전장치로 남긴다 (같은 환불이 두 번 기록되려 하면 유니크 제약이 막는다)
+            buyerWalletLedgerRepository.save(wallet.refund(amount, RefundReferenceKey.of(refundId)));
+        }
+        return result;
+    }
+
+    // 처리 기록을 넣어 보고, 이미 있으면 처음 기록을 돌려준다(#360과 같은 방식)
+    private OrderRefundResult recordRefund(Long refundId, Long orderId, Long memberId, long amount,
+                                           WalletOrderRefundStatus status, WalletOrderRefundFailureReason failureReason) {
+        int inserted = walletOrderRefundRepository.insertIfAbsent(refundId, orderId, memberId, amount, status.name(),
+                failureReason == null ? null : failureReason.name(), LocalDateTime.now(clock));
+        if (inserted == 0) {
+            // 넣기를 거쳐 있음이 확인됐으므로 없을 수 없다. 없다면 중복이 아닌 이유(CHECK 위반 등)로 넣기가 무시된 것이라 500으로 드러낸다
+            WalletOrderRefund processed = walletOrderRefundRepository.findForShareByRefundId(refundId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "환불 반환 처리 기록 넣기 결과가 0건인데 기록이 없습니다. 중복이 아닌 이유로 넣기가 무시됐을 수 있습니다. refundId="
+                                    + refundId + ", orderId=" + orderId + ", memberId=" + memberId + ", amount=" + amount));
+            return OrderRefundResult.alreadyProcessed(processed);
+        }
+        return OrderRefundResult.processed(refundId, orderId, memberId, amount, status, failureReason);
     }
 }
