@@ -30,8 +30,8 @@ import static org.mockito.Mockito.never;
 class MemberOutboxRelayFacadeTest {
 
     private static final int BATCH_SIZE = 100;
-    private static final MemberOutboxMessage FIRST = new MemberOutboxMessage(10L, MemberOutboxEventType.MEMBER_REGISTERED, 1L, 0);
-    private static final MemberOutboxMessage SECOND = new MemberOutboxMessage(11L, MemberOutboxEventType.MEMBER_REGISTERED, 2L, 0);
+    private static final MemberOutboxMessage FIRST = new MemberOutboxMessage(10L, MemberOutboxEventType.MEMBER_REGISTERED, 1L, null, 0);
+    private static final MemberOutboxMessage SECOND = new MemberOutboxMessage(11L, MemberOutboxEventType.MEMBER_REGISTERED, 2L, null, 0);
 
     @Mock
     MemberOutboxService memberOutboxService;
@@ -76,6 +76,22 @@ class MemberOutboxRelayFacadeTest {
         then(memberOutboxService).should().markSent(10L);
         then(memberOutboxService).should(never()).markSent(11L);
         then(memberOutboxService).should().recordFailure(eq(11L), anyString());
+    }
+
+    @Test
+    void 출고지_우편번호_줄은_저장한_본문을_판매자_키로_보낸다() {
+        // given
+        MemberOutboxMessage postalCode = new MemberOutboxMessage(
+                12L, MemberOutboxEventType.SELLER_ORIGIN_POSTAL_CODE_CHANGED, 7L, "{\"sellerId\":7}", 0);
+        given(memberOutboxService.findPending(BATCH_SIZE)).willReturn(List.of(postalCode));
+
+        // when
+        int sent = sut.relayPending(BATCH_SIZE);
+
+        // then
+        assertThat(sent).isEqualTo(1);
+        then(memberMessageSender).should().sendSellerOriginPostalCodeChanged(7L, "{\"sellerId\":7}");
+        then(memberOutboxService).should().markSent(12L);
     }
 
     @Test

@@ -19,4 +19,9 @@ class MemberKafkaTopicConfig {
     NewTopic memberRegisteredTopic() {
         return TopicBuilder.name(MemberTopics.MEMBER_REGISTERED).build();
     }
+
+    @Bean
+    NewTopic memberSellerOriginPostalCodeTopic() {
+        return TopicBuilder.name(MemberTopics.SELLER_ORIGIN_POSTAL_CODE).build();
+    }
 }

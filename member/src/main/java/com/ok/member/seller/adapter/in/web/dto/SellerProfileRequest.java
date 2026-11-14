@@ -25,6 +25,11 @@ public record SellerProfileRequest(
                 message = "고객센터 연락처는 054-873-2210, 1588-0000 같은 형식이어야 합니다.")
         String customerServicePhone,
 
+        @Schema(description = "출고지(상품을 보내는 곳) 우편번호 (5자리 숫자). 배송비 계산에 쓰인다", example = "37421")
+        @NotBlank(message = "출고지 우편번호는 필수입니다.")
+        @Pattern(regexp = "\\d{5}", message = "출고지 우편번호는 5자리 숫자여야 합니다.")
+        String originPostalCode,
+
         @Schema(description = "상점 소개 (200자 이하, 선택). 상점과 상품 상세의 생산 정보 아래에 보인다",
                 example = "3대째 사과만 키우는 청송 부남면 과수원입니다.", nullable = true)
         @Size(max = 200, message = "상점 소개는 200자 이하여야 합니다.")
@@ -45,12 +50,13 @@ public record SellerProfileRequest(
         storeName = trim(storeName);
         representativeName = trim(representativeName);
         customerServicePhone = trim(customerServicePhone);
+        originPostalCode = trim(originPostalCode);
         introduction = trimToNull(introduction);
         profileImageUrl = trimToNull(profileImageUrl);
     }
 
     public SellerProfileCommand toCommand() {
-        return new SellerProfileCommand(storeName, representativeName, customerServicePhone,
+        return new SellerProfileCommand(storeName, representativeName, customerServicePhone, originPostalCode,
                 introduction, profileImageUrl);
     }
 

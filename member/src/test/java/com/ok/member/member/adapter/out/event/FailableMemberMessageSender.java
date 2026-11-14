@@ -39,10 +39,20 @@ public class FailableMemberMessageSender implements MemberMessageSender {
 
     @Override
     public void sendMemberRegistered(Long memberId) {
+        throwIfFailureSet();
+        delegate.sendMemberRegistered(memberId);
+    }
+
+    @Override
+    public void sendSellerOriginPostalCodeChanged(Long sellerId, String payload) {
+        throwIfFailureSet();
+        delegate.sendSellerOriginPostalCodeChanged(sellerId, payload);
+    }
+
+    private void throwIfFailureSet() {
         RuntimeException failure = nextFailure.getAndSet(null);
         if (failure != null) {
             throw failure;
         }
-        delegate.sendMemberRegistered(memberId);
     }
 }

@@ -10,6 +10,7 @@ public record SellerProfileCommand(
         String storeName,
         String representativeName,
         String customerServicePhone,
+        String originPostalCode,
         String introduction,
         String profileImageUrl
 ) {

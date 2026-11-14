@@ -25,6 +25,7 @@ interface SellerProfileControllerSpec {
             description = """
                     판매자(SELLER 권한)가 상점 프로필을 등록합니다. 한 회원은 프로필(상점)을 하나만 가질 수 있습니다.
                     프로필 사진은 먼저 POST /api/v1/media/SELLER_PROFILE로 올리고, 응답의 url을 profileImageUrl로 보냅니다.
+                    출고지 우편번호(originPostalCode)는 배송비 계산에 쓰이며, 등록이 끝나면 배송 모듈에 전달됩니다.
                     """
     )
     @ApiResponse(responseCode = "201", description = "등록 성공")
@@ -40,6 +41,8 @@ interface SellerProfileControllerSpec {
             description = """
                     판매자 본인의 상점 프로필 전체를 요청 값으로 바꿉니다.
                     profileImageUrl을 비우거나 null로 보내면 프로필 사진을 지웁니다(화면에서 상호 첫 글자를 보여 줍니다).
+                    출고지 우편번호(originPostalCode)는 필수입니다. 이 항목이 생기기 전에 프로필을 등록했다면 이번 수정에서 채웁니다.
+                    우편번호가 바뀌었을 때만 배송 모듈에 전달됩니다.
                     """
     )
     @ApiResponse(responseCode = "200", description = "수정 성공")

@@ -23,7 +23,7 @@ class SellerProfileTest {
             String storeName, String representativeName, String introduction, String expectedDetail) {
         // when & then
         assertThatThrownBy(() -> SellerProfile.register(
-                1L, storeName, representativeName, "054-873-2210", introduction, null))
+                1L, storeName, representativeName, "054-873-2210", "37421", introduction, null))
                 .isInstanceOfSatisfying(RestApiException.class, e -> assertSoftly(softly -> {
                     softly.assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_SELLER_PROFILE_FIELD);
                     softly.assertThat(e.getMessage()).isEqualTo(expectedDetail);
@@ -45,7 +45,7 @@ class SellerProfileTest {
     @MethodSource("잘못된_고객센터_연락처")
     void 고객센터_연락처_형식이_틀리면_프로필을_만들지_않는다(String phone) {
         // when & then
-        assertThatThrownBy(() -> SellerProfile.register(1L, "청송 햇살농원", "김영수", phone, null, null))
+        assertThatThrownBy(() -> SellerProfile.register(1L, "청송 햇살농원", "김영수", phone, "37421", null, null))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_CUSTOMER_SERVICE_PHONE));
     }
@@ -57,7 +57,7 @@ class SellerProfileTest {
     @Test
     void 상점_소개와_사진은_없어도_프로필을_만든다() {
         // when
-        SellerProfile sut = SellerProfile.register(1L, "청송 햇살농원", "김영수", "1588-0000", null, null);
+        SellerProfile sut = SellerProfile.register(1L, "청송 햇살농원", "김영수", "1588-0000", "37421", null, null);
 
         // then
         assertThat(sut).isNotNull();
@@ -70,7 +70,7 @@ class SellerProfileTest {
     @Test
     void 입력값의_앞뒤_공백을_지우고_공백뿐인_상점_소개는_없는_값으로_둔다() {
         // when: 요청 DTO를 거치지 않아 공백이 그대로 들어왔다
-        SellerProfile sut = SellerProfile.register(1L, " 청송 햇살농원 ", " 김영수 ", " 054-873-2210 ", "   ", null);
+        SellerProfile sut = SellerProfile.register(1L, " 청송 햇살농원 ", " 김영수 ", " 054-873-2210 ", " 37421 ", "   ", null);
 
         // then
         assertSoftly(softly -> {
@@ -85,10 +85,10 @@ class SellerProfileTest {
     void 수정할_값_중_하나라도_틀리면_어떤_값도_바꾸지_않는다() {
         // given
         SellerProfile profile = SellerProfile.register(
-                1L, "청송 햇살농원", "김영수", "054-873-2210", "소개", IMAGE_KEY);
+                1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", "소개", IMAGE_KEY);
 
         // when: 앞쪽 값(상호명)은 맞고 뒤쪽 값(연락처)이 틀렸다
-        assertThatThrownBy(() -> profile.update("청송 사과농원", "이영희", "고객센터", "새 소개", null))
+        assertThatThrownBy(() -> profile.update("청송 사과농원", "이영희", "고객센터", "37421", "새 소개", null))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_CUSTOMER_SERVICE_PHONE));
 
@@ -98,6 +98,36 @@ class SellerProfileTest {
             softly.assertThat(profile.getRepresentativeName()).isEqualTo("김영수");
             softly.assertThat(profile.getIntroduction()).isEqualTo("소개");
             softly.assertThat(profile.getProfileImageKey()).isEqualTo(IMAGE_KEY);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("허용하지_않는_출고지_우편번호")
+    void 출고지_우편번호가_5자리_숫자가_아니면_프로필을_만들지_않는다(String postalCode) {
+        // when & then
+        assertThatThrownBy(() -> SellerProfile.register(1L, "청송 햇살농원", "김영수", "054-873-2210", postalCode, null, null))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_ORIGIN_POSTAL_CODE));
+    }
+
+    static Stream<String> 허용하지_않는_출고지_우편번호() {
+        return Stream.of("3742", "374210", "37-421", "3742a", "", " ", null);
+    }
+
+    @Test
+    void 수정으로_출고지_우편번호가_바뀌었는지_알려_준다() {
+        // given
+        SellerProfile profile = SellerProfile.register(1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+
+        // when
+        boolean unchanged = profile.update("청송 사과농원", "김영수", "054-873-2210", " 37421 ", null, null);
+        boolean changed = profile.update("청송 사과농원", "김영수", "054-873-2210", "06236", null, null);
+
+        // then: 상호명만 바뀐 수정은 출고지 변경이 아니다. 앞뒤 공백은 지운 값으로 비교한다
+        assertSoftly(softly -> {
+            softly.assertThat(unchanged).isFalse();
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(profile.getOriginPostalCode()).isEqualTo("06236");
         });
     }
 

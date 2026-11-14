@@ -13,6 +13,12 @@ public final class MemberTopics {
      */
     public static final String MEMBER_REGISTERED = "member.member-registered";
 
+    /**
+     * 회원 → 배송: 판매자 출고지 우편번호가 바뀜(처음 채워진 경우 포함). 키는 sellerId, 값은 {@link SellerOriginPostalCodeMessage} (#587 메시지 약속).
+     * 키를 판매자로 두어 같은 판매자의 변경이 한 파티션에서 순서대로 간다. delivery는 occurredAt으로 늦게 온 옛 값을 버린다.
+     */
+    public static final String SELLER_ORIGIN_POSTAL_CODE = "member.seller-origin-postal-code";
+
     private MemberTopics() {
     }
 }

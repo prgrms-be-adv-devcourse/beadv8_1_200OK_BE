@@ -32,6 +32,8 @@ public enum SellerErrorCode implements ErrorCode {
             "판매자 프로필 정보가 올바르지 않습니다."),
     INVALID_CUSTOMER_SERVICE_PHONE(HttpStatus.UNPROCESSABLE_CONTENT, "Invalid customer service phone",
             "고객센터 연락처는 054-873-2210, 1588-0000 같은 형식이어야 합니다."),
+    INVALID_ORIGIN_POSTAL_CODE(HttpStatus.UNPROCESSABLE_CONTENT, "Invalid origin postal code",
+            "출고지 우편번호는 5자리 숫자여야 합니다."),
     ;
 
     private final HttpStatus httpStatus;

@@ -56,6 +56,8 @@ public class MemberOutboxRelayFacade implements MemberOutboxRelayUseCase {
     private void send(MemberOutboxMessage message) {
         switch (message.eventType()) {
             case MEMBER_REGISTERED -> memberMessageSender.sendMemberRegistered(message.memberId());
+            case SELLER_ORIGIN_POSTAL_CODE_CHANGED ->
+                    memberMessageSender.sendSellerOriginPostalCodeChanged(message.memberId(), message.payload());
         }
     }
 
