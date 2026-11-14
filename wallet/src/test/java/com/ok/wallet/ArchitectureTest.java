@@ -186,6 +186,12 @@ class ArchitectureTest {
             .because("서비스는 출력 포트로만 발행하고 구현체(adapter.out)가 발행 방식을 맡는다. 발행 방식을 바꿔도 서비스가 바뀌지 않게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
+    static final ArchRule Kafka는_adapter만_사용한다 = noClasses()
+            .that().resideOutsideOfPackage("..adapter..")
+            .should().dependOnClassesThat().resideInAnyPackage("org.springframework.kafka..", "org.apache.kafka..")
+            .because("메시지를 주고받는 기술은 어댑터에 두어, 서비스는 입력·출력 포트만 알고 기술을 바꿔도 바뀌지 않게 한다 (헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    @ArchTest
     static final ArchRule 이벤트_클래스는_adapter만_사용한다 = classes()
             .that().resideInAPackage("com.ok.common.event..")
             // common.event 안에서 서로 참조하는 것(DomainEvent, payload)은 모듈 간 계약 타입 내부의 일이다
