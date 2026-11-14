@@ -59,7 +59,8 @@ public interface ProductStockAllocationRepository extends JpaRepository<ProductS
 		@Param("orderId") Long orderId, @Param("productOptionId") Long productOptionId);
 
 	// ALLOCATED이고 남은 수량이 충분할 때만 줄인다. 0이면 해제 가능 수량 초과(이미 해제한 기록 포함)
-	// 0이 돼도 ALLOCATED로 둔다. allocate()가 RELEASED 기록이 있으면 이미 해제한 주문으로 보기 때문
+	// 0이 돼도 ALLOCATED로 둔다. 일부 해제는 주문 해제가 아니다. allocate()는 헤더가 없던 과거 주문을 막으려고
+	// 배정 기록의 RELEASED도 해제한 주문으로 보므로, RELEASED로 바꾸면 같은 주문의 배정 재요청이 204 대신 409를 받는다
 	@Modifying
 	@Query("""
 		update ProductStockAllocation a
