@@ -1,6 +1,7 @@
 package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutBlockedOrderCause;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
 import org.springframework.data.domain.Page;
@@ -180,4 +181,11 @@ public interface PayoutQueryRepository {
     // 그 주문의 해결 기록을 해결 요청 번호로 묶어 요청 1번 = 1줄로 페이지 단위로 조회 (#571, 묶음 보기)
     // 정렬은 요청의 해결 시각(그 요청에서 가장 이른 줄) 최신순, 같으면 나중에 저장한 요청이 먼저
     Page<PayoutResolutionRequestRow> findResolutionRequestsByOrderId(Long orderId, Pageable pageable);
+
+    // 관리자 막힌 주문 목록 (#569): 막힌 주문 집계 표(#582)를 읽기만 함. 판정은 표가 정산 Job 끝에 끝내 둠
+    // 정렬은 마지막 실패 시각 최신순, 같으면 주문 ID 역순 (한 실행에서 막힌 주문은 시각이 거의 같아 페이지를 넘겨도 순서가 흔들리지 않게)
+    Page<BlockedOrderRow> findBlockedOrders(Pageable pageable);
+
+    // 그 주문들의 원인 (#569, 막힌 주문 표의 하위 표). 주문 ID, 실패 시각 최신순. orderIds가 비면 빈 목록
+    List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds);
 }

@@ -1,18 +1,27 @@
 package com.ok.payout.application.service;
 
+import com.ok.payout.application.port.in.PayoutBlockedOrderResult;
+import com.ok.payout.application.port.in.PayoutBlockedOrderSearchQuery;
 import com.ok.payout.application.port.in.PayoutBlockedOrderUseCase;
+import com.ok.payout.application.port.out.BlockedOrderRow;
 import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.domain.PayoutBlockedOrderCause;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-// 막힌 주문 집계 표(#582) 갱신의 순서를 맡음: 대상 주문 고르기 → 묶음마다 다시 판정 → 반영 표시 올리기
+// 막힌 주문 집계 표(#582) 갱신의 순서(대상 주문 고르기 → 묶음마다 다시 판정 → 반영 표시 올리기)와 관리자 목록 조회(#569)를 맡음
 // 묶음마다 트랜잭션을 따로 두려고 실제 판정·저장은 PayoutBlockedOrderRefreshService에 둠
 //   같은 클래스 안에서 부르면 프록시를 거치지 않아 @Transactional이 무시됨 (PayoutSellerDraftService와 같은 이유)
 // 이 클래스에는 @Transactional을 두지 않음: 막힌 주문이 많을 때 하나의 긴 트랜잭션으로 묶지 않으려고
@@ -57,5 +66,23 @@ public class PayoutBlockedOrderService implements PayoutBlockedOrderUseCase {
 
         log.info("막힌 주문 표 갱신 끝. 다시 판정한 주문 수={}, 반영한 실패 기록 ID={}~{}",
                 orderIds.size(), afterId, upToId);
+    }
+
+    // 관리자 막힌 주문 목록 (#569): 한 페이지의 막힌 주문을 읽고, 그 주문들의 원인을 한 번에 읽어 붙임
+    // 읽기만 하므로 이 메서드에만 읽기 전용 트랜잭션 (클래스에는 두지 않음, 위 주석)
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutBlockedOrderResult> getBlockedOrders(PayoutBlockedOrderSearchQuery query) {
+        Page<BlockedOrderRow> page = payoutQueryRepository.findBlockedOrders(PageRequest.of(query.page(), query.size()));
+        List<Long> orderIds = new ArrayList<>();
+        for (BlockedOrderRow row : page.getContent()) {
+            orderIds.add(row.orderId());
+        }
+        Map<Long, List<PayoutBlockedOrderCause>> causesByOrder = new HashMap<>();
+        for (PayoutBlockedOrderCause cause : payoutQueryRepository.findBlockedOrderCauses(orderIds)) {
+            causesByOrder.computeIfAbsent(cause.getOrderId(), id -> new ArrayList<>()).add(cause);
+        }
+        return page.map(row -> PayoutQueryResultMapper.toBlockedOrderResult(
+                row, causesByOrder.getOrDefault(row.orderId(), List.of())));
     }
 }

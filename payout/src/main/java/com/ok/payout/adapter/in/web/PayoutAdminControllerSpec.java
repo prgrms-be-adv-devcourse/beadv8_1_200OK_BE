@@ -1,6 +1,8 @@
 package com.ok.payout.adapter.in.web;
 
 import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
@@ -348,5 +350,33 @@ interface PayoutAdminControllerSpec {
     ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequests(
             @Parameter(description = "주문 ID", example = "100") Long orderId,
             @ParameterObject PayoutResolutionSearchRequest request
+    );
+
+    @Operation(summary = "막힌 주문 목록 (잠김·멈춤)", description = """
+            관리자 전용입니다. 정산이 막혀 사람이 봐야 하는 주문을 마지막 실패 시각 최신순으로 조회합니다(같은 시각이면 주문 ID 역순).
+            - LOCKED 잠김: 수수료 불일치·결과 검증 불일치. 다시 검사해도 풀리지 않아 관리자가 해결해야 합니다(실패 횟수와 상관없음).
+            - STOPPED 멈춤: 잠기지 않았지만 성공한 정산 실행에서 3번 실패해 자동 재검사가 멈췄습니다.
+            - RESOLVED 해결됨: 관리자가 해결했고, 다음 정산 실행이 끝나면 목록에서 빠집니다(다시 막혔으면 LOCKED·STOPPED로 바뀝니다).
+            목록에 나오는 주문은 해결 API(POST /api/v1/admin/payouts/orders/{orderId}/resolution)가 해결할 것이 있다고 보는 주문과 같습니다.
+            목록은 정산 실행이 끝날 때 갱신되는 막힌 주문 집계 표를 읽습니다. 기간 조건은 없습니다.
+            원인 상세는 내부 검사 내용이라 관리자 화면에만 보여 주고, 화면에 출력할 때 HTML 이스케이프가 필요합니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공 (막힌 주문이 없으면 빈 목록)"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutBlockedOrderResponse>> getBlockedOrders(
+            @ParameterObject PayoutBlockedOrderSearchRequest request
     );
 }
