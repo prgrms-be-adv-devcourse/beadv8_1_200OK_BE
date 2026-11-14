@@ -68,7 +68,7 @@ public class ProductApiClient implements ProductPort {
                 .onStatus(status -> status.value() == 404, (request, response) -> {
                     throw new RestApiException(OrderErrorCode.PRODUCT_OPTION_NOT_FOUND);
                 })
-                // 판매 불가, 재고 부족, 동시 요청, 해제된 주문일 경우 (PROBLEM_BASE_URI로 type 구분)
+                // 판매 불가, 재고 부족, 해제된 주문일 경우 (PROBLEM_BASE_URI로 type 구분)
                 .onStatus(status -> status.value() == 409, (request, response) -> {
                     String body = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
                     if (body.contains("option-not-purchasable")) {

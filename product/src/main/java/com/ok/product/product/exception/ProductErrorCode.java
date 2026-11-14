@@ -24,7 +24,6 @@ public enum ProductErrorCode implements ErrorCode {
 	OPTION_NOT_PURCHASABLE(HttpStatus.CONFLICT, "Option not purchasable", "판매 중인 옵션이 아닙니다."),
 	INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Insufficient stock", "재고가 부족합니다."),
 	ALLOCATION_ALREADY_RELEASED(HttpStatus.CONFLICT, "Allocation already released", "이미 재고를 해제한 주문입니다. 새 주문으로 요청해주세요."),
-	ALLOCATION_IN_PROGRESS(HttpStatus.CONFLICT, "Allocation in progress", "같은 주문의 재고 배정이 처리 중입니다. 잠시 후 다시 요청해주세요."),
 	ALLOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "Allocation not found", "주문에 해당 옵션의 재고 배정 기록이 없습니다."),
 	RELEASE_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Release quantity exceeded", "해제 가능한 수량보다 많이 해제할 수 없습니다."),
 	PARTIAL_RELEASE_MISMATCH(HttpStatus.CONFLICT, "Partial release mismatch", "같은 환불 ID로 다른 내용의 재고 해제를 요청했습니다.");

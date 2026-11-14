@@ -45,6 +45,7 @@ import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductStockAllocation;
 import com.ok.product.product.domain.ProductVisibility;
+import com.ok.product.product.domain.StockAllocationStatus;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.repository.ProductOptionRepository;
 import com.ok.product.product.repository.ProductRepository;
@@ -360,7 +361,7 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 같은_주문으로_동시에_배정하면_한_번만_반영되고_나머지는_204나_409다() throws Exception {
+	void 같은_주문으로_동시에_배정하면_한_번만_반영되고_모두_204다() throws Exception {
 		// given
 		Long optionId = firstOptionId(save(onSale(option(10))));
 		Long orderId = ORDER_IDS.incrementAndGet();
@@ -384,7 +385,8 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		for (Future<Integer> result : results) {
 			statuses.add(result.get());
 		}
-		assertThat(statuses).containsOnly(204, 409).contains(204);
+		// 같은 주문의 배정은 헤더 잠금에서 줄을 서고, 뒤에 온 요청은 앞 요청이 커밋한 배정 기록을 보고 아무것도 하지 않는다
+		assertThat(statuses).containsOnly(204);
 		assertThat(availableStock(optionId)).isEqualTo(8);
 	}
 
@@ -406,9 +408,53 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 배정_기록이_없는_주문을_해제해도_204() throws Exception {
-		release(ORDER_IDS.incrementAndGet())
+	void 배정_기록이_없는_주문을_해제하면_204이고_이후_배정은_거부한다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+
+		// when
+		release(orderId)
 			.andExpect(status().isNoContent());
+
+		// then
+		allocate(orderId, item(optionId, 4))
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.ALLOCATION_ALREADY_RELEASED));
+		assertThat(availableStock(optionId)).isEqualTo(10);
+	}
+
+	@Test
+	void 헤더가_생기기_전에_해제한_주문은_헤더가_없어도_다시_배정을_거부한다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(10))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		// 헤더 테이블 배포 전 기록을 흉내 낸다. 배정 기록만 RELEASED로 남기고 헤더는 만들지 않는다
+		transactionTemplate.executeWithoutResult(status -> allocationRepository.release(
+			allocationRepository.save(ProductStockAllocation.allocate(orderId, optionId, 4)).getId()));
+
+		// when & then
+		allocate(orderId, item(optionId, 4))
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.ALLOCATION_ALREADY_RELEASED));
+		assertThat(availableStock(optionId)).isEqualTo(10);
+	}
+
+	@Test
+	void 재고_부족으로_실패한_주문은_같은_주문으로_다시_배정할_수_있다() throws Exception {
+		// given
+		Long optionId = firstOptionId(save(onSale(option(3))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		allocate(orderId, item(optionId, 5))
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.INSUFFICIENT_STOCK));
+
+		// when
+		allocate(orderId, item(optionId, 2))
+			.andExpect(status().isNoContent());
+
+		// then
+		assertThat(availableStock(optionId)).isEqualTo(1);
 	}
 
 	@Test
@@ -881,6 +927,101 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 		assertThat(release.get().getStatus()).isEqualTo(204);
 		assertThat(availableStock(optionA)).isEqualTo(9);
 		assertThat(availableStock(optionB)).isEqualTo(9);
+	}
+
+	@Test
+	void 배정이_커밋되기_전에_해제가_오면_배정이_남지_않고_이후_배정은_거부한다() throws Exception {
+		// given
+		int totalStock = 10;
+		Long optionId = firstOptionId(save(onSale(option(totalStock))));
+		Long orderId = ORDER_IDS.incrementAndGet();
+		CountDownLatch holdsOption = new CountDownLatch(1);
+		CountDownLatch finish = new CountDownLatch(1);
+		Future<MockHttpServletResponse> allocation;
+		Future<MockHttpServletResponse> release;
+
+		// when
+		try (ExecutorService executor = Executors.newFixedThreadPool(3)) {
+			// 0 배정은 수량을 바꾸지 않고 옵션 행 락만 잡는다. 끝에 롤백해 아무것도 남기지 않는다
+			executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
+				productOptionRepository.allocate(optionId, 0);
+				holdsOption.countDown();
+				await(finish);
+				status.setRollbackOnly();
+			}));
+			await(holdsOption);
+			allocation = executor.submit(() -> allocate(orderId, item(optionId, 4)).andReturn().getResponse());
+			// 배정이 배정 기록을 넣고 옵션 행 락 대기에 들어갈 시간을 준다
+			Thread.sleep(500);
+			release = executor.submit(() -> release(orderId).andReturn().getResponse());
+			// 해제가 헤더 잠금 대기에 들어갈 시간을 준다
+			Thread.sleep(500);
+			// 해제가 진행 중인 배정을 기다리지 않고 끝났다면 늦게 커밋될 배정을 보지 못한 것이다(#531)
+			assertThat(release.isDone()).isFalse();
+			finish.countDown();
+		}
+
+		// then
+		assertThat(allocation.get().getStatus()).isEqualTo(204);
+		assertThat(release.get().getStatus()).isEqualTo(204);
+		assertThat(allocationRepository.existsByOrderIdAndStatus(orderId, StockAllocationStatus.ALLOCATED)).isFalse();
+		assertThat(availableStock(optionId)).isEqualTo(totalStock);
+		allocate(orderId, item(optionId, 4))
+			.andExpect(status().isConflict())
+			.andExpect(problemType(ProductErrorCode.ALLOCATION_ALREADY_RELEASED));
+	}
+
+	@Test
+	void 번호가_붙은_주문들이_배정과_해제를_섞어_동시에_보내도_데드락_없이_재고가_맞는다() throws Exception {
+		// 헤더 행은 주문 ID가 PK라 번호가 붙은 주문끼리 인덱스에서 이웃한다. 맞물릴 기회를 늘리려고 여러 번 반복한다
+		int repetitions = 5;
+		int orders = 10;
+		for (int round = 0; round < repetitions; round++) {
+			// given
+			int totalStock = 100;
+			Product product = save(onSale(List.of(
+				ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, totalStock),
+				ProductOptionSpec.newOption("5kg", 60_000L, 52_000L, totalStock))));
+			Long optionA = product.getOptions().get(0).getId();
+			Long optionB = product.getOptions().get(1).getId();
+			List<Long> orderIds = LongStream.range(0, orders).mapToObj(i -> ORDER_IDS.incrementAndGet()).toList();
+			CountDownLatch start = new CountDownLatch(1);
+			List<Future<MockHttpServletResponse>> results = new ArrayList<>();
+
+			// when
+			// 짝수 번째 주문은 배정과 해제를 함께 보내 순서가 뒤섞이게 하고, 홀수 번째 주문은 배정만 보낸다
+			try (ExecutorService executor = Executors.newFixedThreadPool(orders + orders / 2)) {
+				for (int i = 0; i < orders; i++) {
+					Long orderId = orderIds.get(i);
+					// 옵션 순서를 주문마다 바꿔 보낸다. 서비스가 옵션 ID 오름차순으로 잠그는지도 함께 본다
+					String[] items = i % 2 == 0
+						? new String[] {item(optionA, 1), item(optionB, 1)}
+						: new String[] {item(optionB, 1), item(optionA, 1)};
+					results.add(executor.submit(() -> {
+						start.await();
+						return allocate(orderId, items).andReturn().getResponse();
+					}));
+					if (i % 2 == 0) {
+						results.add(executor.submit(() -> {
+							start.await();
+							return release(orderId).andReturn().getResponse();
+						}));
+					}
+				}
+				start.countDown();
+			}
+
+			// then
+			for (Future<MockHttpServletResponse> result : results) {
+				MockHttpServletResponse response = result.get();
+				if (response.getStatus() != 204) {
+					assertProblem(response, ProductErrorCode.ALLOCATION_ALREADY_RELEASED);
+				}
+			}
+			int allocatedOnly = orders / 2;
+			assertThat(availableStock(optionA)).isEqualTo(totalStock - allocatedOnly);
+			assertThat(availableStock(optionB)).isEqualTo(totalStock - allocatedOnly);
+		}
 	}
 
 	@Test
