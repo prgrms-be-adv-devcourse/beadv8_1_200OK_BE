@@ -14,7 +14,7 @@ import lombok.Getter;
  *   <li>끝 상태(SUCCEEDED, REFUSED, STOPPED)는 다시 바뀌지 않는다(결정 2).
  *       지갑 결과 리스너 스레드에서 성공이 먼저 도착한 뒤, 요청 스레드가 늦게
  *       "결과 대기"를 써도 성공을 덮어쓰지 못하게 하기 위해서다.
- *       단 STOPPED는 이유가 다르면 이유만 바꾼다.</li>
+ *       멈춘 단계는 이유도 그대로 둔다(결과 불일치 표시를 지키려고, 결정 9).</li>
  *   <li>nextCheckAt 의 뜻은 상태마다 다르다(결정 7).
  *       IN_PROGRESS는 시도 중 만료 시각, READY는 다음 시도 시각,
  *       AWAITING_RESULT는 결과를 기다리는 한도 시각이고, 끝 상태는 null이다.</li>
