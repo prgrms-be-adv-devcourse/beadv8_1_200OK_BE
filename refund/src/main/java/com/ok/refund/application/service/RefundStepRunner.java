@@ -2,7 +2,9 @@ package com.ok.refund.application.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -10,13 +12,15 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.function.Supplier;
 
 /**
  * 승인 뒤 다른 모듈 호출 한 단계를 실행하고, 실패하면 멈춘 단계와 이유를 환불에 남긴다.
  * 1단계에는 자동으로 다시 처리하는 방법이 없어, 운영자가 이 기록을 보고 어디부터 다시 할지 판단한다.
- * 지금 이 틀로 부르는 단계는 지갑 완료 메시지 뒤의 재고 복구({@link HandleWalletRefundResultService}, #544) 하나로, 트랜잭션 구간 밖에서 부른다.
- * 승인 요청 안의 주문·재고 호출은 #516 전까지 틀 없이 부르고(refund/CLAUDE.md 5절), 지갑은 Kafka 발행이라 이 틀을 쓰지 않는다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
+ * 이 틀로 부르는 단계는 승인 요청 안의 주문 반영·지갑 발행·0원 재고 복구({@link DecideRefundService}, #574)와
+ * 지갑 완료 메시지 뒤의 재고 복구({@link HandleWalletRefundResultService}, #544)이고, 모두 트랜잭션 구간 밖에서 부른다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
  */
 @Slf4j
 @Component
@@ -27,11 +31,16 @@ public class RefundStepRunner {
     public static final int MAX_FAILURE_CODE_LENGTH = 100;
 
     private final RefundPersistencePort refundPersistencePort;
+    private final RefundStepPersistencePort refundStepPersistencePort;
+    private final Clock clock;
     // 실패 기록 전용 구간. run이 바깥 트랜잭션을 막아 두므로 이 구간은 항상 새로 시작해 호출 실패와 상관없이 커밋된다
     private final TransactionTemplate recordTransaction;
 
-    public RefundStepRunner(RefundPersistencePort refundPersistencePort, PlatformTransactionManager transactionManager) {
+    public RefundStepRunner(RefundPersistencePort refundPersistencePort, RefundStepPersistencePort refundStepPersistencePort,
+                            Clock clock, PlatformTransactionManager transactionManager) {
         this.refundPersistencePort = refundPersistencePort;
+        this.refundStepPersistencePort = refundStepPersistencePort;
+        this.clock = clock;
         this.recordTransaction = new TransactionTemplate(transactionManager);
     }
 
@@ -96,6 +105,14 @@ public class RefundStepRunner {
                     .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
             refund.recordFailure(step, failureCode);
             refundPersistencePort.update(refund);
+
+            // 환불 행의 실패 칸을 지우기 전까지(이 이슈의 뒤 단계) 두 곳에 함께 남긴다. 단계 줄이 없는 호출(이 변경 전에 승인된 환불)은 환불 행에만 남는다
+            // 단계 줄은 환불 행을 위에서 잠근 같은 트랜잭션에서 고친다(잠금 순서: 환불 행 → 단계 줄)
+            refundStepPersistencePort.findByRefundIdAndType(refundId, step).ifPresent(stepRow -> {
+                if (stepRow.failForRetry(failureCode, LocalDateTime.now(clock))) {
+                    refundStepPersistencePort.update(stepRow);
+                }
+            });
         });
     }
 

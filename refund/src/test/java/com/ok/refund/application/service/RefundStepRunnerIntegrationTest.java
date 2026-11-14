@@ -8,6 +8,10 @@ import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.DecideRefundUseCase;
 import com.ok.refund.application.port.in.RefundDecision;
@@ -26,6 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -54,6 +59,10 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
+    RefundStepPersistencePort refundStepPersistencePort;
+    @Autowired
+    RefundStepJpaRepository refundStepJpaRepository;
+    @Autowired
     FakeOrderQueryPort orderQueryPort;
     @Autowired
     FakeProductStockReleasePort productStockReleasePort;
@@ -62,6 +71,8 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        // 단계 줄이 환불 행을 외래키로 참조하므로 먼저 지운다
+        refundStepJpaRepository.deleteAllInBatch();
         refundJpaRepository.deleteAllInBatch();
         orderQueryPort.clear();
         productStockReleasePort.clear();
@@ -86,6 +97,35 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
         });
+    }
+
+    @Test
+    void 실패하면_DB의_단계_줄이_할_차례로_돌아가고_이유가_남는다() {
+        // given
+        Long refundId = processingRefundId();
+        // 승인 흐름이 남긴 단계 줄(주문 성공, 지갑 결과 대기)은 지우고 "주문 시도 중" 줄 하나로 시작한다(#574부터 승인이 줄을 만든다)
+        refundStepJpaRepository.deleteAllInBatch();
+        // 단계 줄은 환불 행을 잠근 트랜잭션에서만 만들 수 있다
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
+            refundStepPersistencePort.saveNew(RefundStep.start(refundId, RefundStepType.ORDER, LocalDateTime.now()));
+        });
+
+        // when
+        assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundStepType.ORDER, () -> {
+            throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        })).isInstanceOf(RestApiException.class);
+
+        // then
+        RefundStep sut = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(sut.getLastReason()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(sut.getNextCheckAt()).isNotNull();
+        });
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        assertThat(refund.getFailureCode()).isEqualTo("ORDER_API_FAILED");
     }
 
     // 칸 길이가 엔티티보다 짧으면 운영에서 기록이 "Data too long"으로 실패하고, 그 실패는 원래 예외에 붙어 응답에 드러나지 않는다.

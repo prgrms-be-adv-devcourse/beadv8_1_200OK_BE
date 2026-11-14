@@ -6,7 +6,10 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
@@ -21,7 +24,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.CannotAcquireLockException;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -40,9 +46,12 @@ class RefundStepRunnerTest {
 
     private static final Long REFUND_ID = 7L;
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 4, 10, 0);
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-04T01:00:00Z"), ZoneId.of("Asia/Seoul"));
 
     @Mock
     RefundPersistencePort refundPersistencePort;
+    @Mock
+    RefundStepPersistencePort refundStepPersistencePort;
 
     RefundStepRunner sut;
 
@@ -52,7 +61,7 @@ class RefundStepRunnerTest {
 
     @BeforeEach
     void setUp() {
-        sut = new RefundStepRunner(refundPersistencePort, new NoOpTransactionManager());
+        sut = new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
     }
 
     @BeforeEach
@@ -87,6 +96,46 @@ class RefundStepRunnerTest {
         assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
+        assertRecorded(RefundStepType.ORDER, "ORDER_API_FAILED");
+    }
+
+    // 단계 줄이 있으면 그 줄을 다시 할 차례로 되돌리고 이유를 남긴다. 환불 행 기록도 그대로 남는다(뒤 단계에서 환불 행 칸을 지울 때까지)
+    @Test
+    void 실패하면_그_단계_줄을_할_차례로_되돌리고_이유를_남긴다() {
+        // given
+        givenProcessingRefund();
+        RefundStep stepRow = RefundStep.start(REFUND_ID, RefundStepType.ORDER, NOW.minusMinutes(5));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER)).willReturn(Optional.of(stepRow));
+
+        // when & then
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+            throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+        })).isInstanceOf(RestApiException.class);
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep updated = captor.getValue();
+        assertThat(updated).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(updated.getLastReason()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(updated.getNextCheckAt()).isEqualTo(LocalDateTime.of(2026, 11, 4, 10, 1));
+        });
+        assertRecorded(RefundStepType.ORDER, "ORDER_API_FAILED");
+    }
+
+    // 단계 줄은 아직 서비스가 만들지 않는다. 줄이 없어도 환불 행 기록은 남고 원래 예외가 그대로 나가야 한다
+    @Test
+    void 단계_줄이_없으면_환불_행에만_남긴다() {
+        // given
+        givenProcessingRefund();
+        RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
+
+        // when & then
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+            throw failure;
+        })).isSameAs(failure)
+                .satisfies(e -> assertThat(e.getSuppressed()).isEmpty());
+        then(refundStepPersistencePort).should(never()).update(any());
         assertRecorded(RefundStepType.ORDER, "ORDER_API_FAILED");
     }
 
