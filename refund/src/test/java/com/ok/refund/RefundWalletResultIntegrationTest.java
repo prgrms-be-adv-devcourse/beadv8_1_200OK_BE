@@ -32,6 +32,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.backoff.BackOff;
+import org.springframework.util.backoff.BackOffExecution;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -247,6 +249,20 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
                 softly.assertThat(sut.match(new IllegalArgumentException("값이 틀림"))).isFalse();
                 softly.assertThat(sut.match(new RestApiException(RefundErrorCode.PRODUCT_API_FAILED))).isTrue();
             });
+
+            // then: 다시 시도 간격도 1·2·4·8·16초 다음에 멈춘다. 분류만 보면 간격 없이 바로 10번 하는 처리기로 바뀌어도 통과해,
+            // 몇 초 끊김에도 지갑 결과를 버리는 문제를 못 잡는다. Spring Kafka가 간격 설정을 꺼내 주지 않아 내부 이름으로 꺼낸다
+            // (라이브러리를 올려 이름이 바뀌면 여기서 실패로 알려 준다)
+            Object failureTracker = ReflectionTestUtils.invokeMethod(errorHandler, "getFailureTracker");
+            assertThat(failureTracker).isNotNull();
+            BackOff backOff = (BackOff) ReflectionTestUtils.getField(failureTracker, "backOff");
+            assertThat(backOff).isNotNull();
+            BackOffExecution execution = backOff.start();
+            List<Long> intervals = new ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                intervals.add(execution.nextBackOff());
+            }
+            assertThat(intervals).containsExactly(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, BackOffExecution.STOP);
         }
     }
 

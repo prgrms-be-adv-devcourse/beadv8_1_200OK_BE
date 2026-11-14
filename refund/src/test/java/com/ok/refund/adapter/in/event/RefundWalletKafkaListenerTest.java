@@ -28,6 +28,11 @@ import static org.mockito.BDDMockito.then;
 @ExtendWith(MockitoExtension.class)
 class RefundWalletKafkaListenerTest {
 
+    // 리스너가 값이 틀린 메시지를 거절할 때 쓰는 이유 문구
+    private static final String EMPTY_IDS = "refundId, orderId, buyerId는 비어 있을 수 없습니다.";
+    private static final String NOT_POSITIVE_AMOUNT = "amount는 1 이상이어야 합니다.";
+    private static final String EMPTY_REASON = "실패 이유가 비어 있습니다.";
+
     @Mock
     private HandleWalletRefundResultUseCase useCase;
 
@@ -99,43 +104,53 @@ class RefundWalletKafkaListenerTest {
 
     @ParameterizedTest
     @MethodSource("잘못된_완료_메시지")
-    void 값이_잘못된_완료_메시지는_입력_포트를_부르지_않고_거절한다(WalletRefundCompletedMessage message) {
+    void 값이_잘못된_완료_메시지는_입력_포트를_부르지_않고_거절한다(WalletRefundCompletedMessage message, String expectedMessage) {
         // when & then
         assertThatThrownBy(() -> sut.onWalletRefundCompleted(message))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(expectedMessage);
         then(useCase).shouldHaveNoInteractions();
     }
 
+    // 문구까지 맞춰 본다. 종류만 보면 검사 하나가 빠져도 다른 이유의 IllegalArgumentException으로 통과한다
     static Stream<Arguments> 잘못된_완료_메시지() {
         return Stream.of(
-                Arguments.of(new WalletRefundCompletedMessage(null, 2L, 3L, 1_000L)),
-                Arguments.of(new WalletRefundCompletedMessage(1L, null, 3L, 1_000L)),
-                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, null, 1_000L)),
-                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, 3L, null)),
-                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, 3L, 0L)),
-                Arguments.of(new WalletRefundCompletedMessage(1L, 2L, 3L, -1L)));
+                invalid(new WalletRefundCompletedMessage(null, 2L, 3L, 1_000L), EMPTY_IDS),
+                invalid(new WalletRefundCompletedMessage(1L, null, 3L, 1_000L), EMPTY_IDS),
+                invalid(new WalletRefundCompletedMessage(1L, 2L, null, 1_000L), EMPTY_IDS),
+                invalid(new WalletRefundCompletedMessage(1L, 2L, 3L, null), NOT_POSITIVE_AMOUNT),
+                invalid(new WalletRefundCompletedMessage(1L, 2L, 3L, 0L), NOT_POSITIVE_AMOUNT),
+                invalid(new WalletRefundCompletedMessage(1L, 2L, 3L, -1L), NOT_POSITIVE_AMOUNT));
     }
 
     @ParameterizedTest
     @MethodSource("잘못된_실패_메시지")
-    void 값이_잘못된_실패_메시지는_입력_포트를_부르지_않고_거절한다(WalletRefundFailedMessage message) {
+    void 값이_잘못된_실패_메시지는_입력_포트를_부르지_않고_거절한다(WalletRefundFailedMessage message, String expectedMessage) {
         // when & then
         assertThatThrownBy(() -> sut.onWalletRefundFailed(message))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(expectedMessage);
         then(useCase).shouldHaveNoInteractions();
     }
 
     static Stream<Arguments> 잘못된_실패_메시지() {
         return Stream.of(
-                Arguments.of(new WalletRefundFailedMessage(null, 2L, 3L, 1_000L, "X")),
-                Arguments.of(new WalletRefundFailedMessage(1L, null, 3L, 1_000L, "X")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, null, 1_000L, "X")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, null, "X")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 0L, "X")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, -1L, "X")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, null)),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "   ")),
-                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "a".repeat(101))));
+                invalid(new WalletRefundFailedMessage(null, 2L, 3L, 1_000L, "X"), EMPTY_IDS),
+                invalid(new WalletRefundFailedMessage(1L, null, 3L, 1_000L, "X"), EMPTY_IDS),
+                invalid(new WalletRefundFailedMessage(1L, 2L, null, 1_000L, "X"), EMPTY_IDS),
+                invalid(new WalletRefundFailedMessage(1L, 2L, 3L, null, "X"), NOT_POSITIVE_AMOUNT),
+                invalid(new WalletRefundFailedMessage(1L, 2L, 3L, 0L, "X"), NOT_POSITIVE_AMOUNT),
+                invalid(new WalletRefundFailedMessage(1L, 2L, 3L, -1L, "X"), NOT_POSITIVE_AMOUNT),
+                invalid(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, null), EMPTY_REASON),
+                invalid(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, ""), EMPTY_REASON),
+                invalid(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "   "), EMPTY_REASON),
+                // 긴 이유는 로그가 길어지지 않게 메시지 대신 길이와 refundId만 남긴다
+                Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "a".repeat(101)),
+                        "[REFUND_WALLET_RESULT_INVALID] 실패 이유가 100자를 넘습니다. length=101, refundId=1"));
+    }
+
+    // 리스너는 거절 문구 끝에 받은 메시지를 그대로 붙인다(넘긴 메시지를 로그에서 찾으려고)
+    private static Arguments invalid(Object message, String reason) {
+        return Arguments.of(message, "[REFUND_WALLET_RESULT_INVALID] " + reason + " message=" + message);
     }
 }

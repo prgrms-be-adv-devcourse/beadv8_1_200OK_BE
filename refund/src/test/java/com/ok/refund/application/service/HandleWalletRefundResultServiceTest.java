@@ -274,7 +274,7 @@ class HandleWalletRefundResultServiceTest {
         then(refundPersistencePort).should(never()).update(any());
     }
 
-    // 완료된 환불에 실패가 오면 중복이 아니라 앞선 완료 결과와 모순이다. ERROR로 남기되 상태는 그대로 둔다
+    // 완료된 환불에 실패가 오면 중복이 아니라 앞선 완료 결과와 모순이다. WARN으로 남기되 상태는 그대로 둔다
     @Test
     void 이미_완료된_환불의_실패_메시지는_기록하지_않고_넘긴다() {
         // given
@@ -289,16 +289,23 @@ class HandleWalletRefundResultServiceTest {
     }
 
     @Test
-    void 실패_메시지의_주문이_환불과_다르면_기록하지_않고_넘긴다() {
+    void 실패_메시지의_주문이_환불과_다르면_불일치를_기록한다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
 
         // when
         sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
 
-        // then
-        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
-        then(refundPersistencePort).should(never()).update(any());
+        // then: 지갑 사유가 아니라 불일치로 남아야 어느 번호가 틀렸는지 사람이 확인한다
+        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
+        then(refundPersistencePort).should().update(saved.capture());
+        assertThat(saved.getValue()).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("RESULT_MISMATCH");
+        });
     }
 
     @Test
@@ -309,6 +316,80 @@ class HandleWalletRefundResultServiceTest {
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+
+        // then
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    // ---- 재고 실패(PRODUCT)가 기록된 환불 ----
+    // PRODUCT는 지갑 완료 뒤에만 남는다. 지갑 결과로 WALLET로 바꾸면 #546이 돈을 다시 가져오지 않고 주문만 되돌린다
+
+    @Test
+    void 재고_실패가_기록된_환불의_실패_메시지는_기록하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
+                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+
+        // when
+        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+
+        // then
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    @Test
+    void 재고_실패가_기록된_환불에_주문이_다른_실패_메시지가_와도_불일치를_기록하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
+                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+
+        // when
+        sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
+
+        // then
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    @Test
+    void 재고_실패가_기록된_환불에_금액이_다른_완료_메시지가_와도_불일치를_기록하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
+                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT - 1));
+
+        // then
+        then(refundPersistencePort).should(never()).findByIdForUpdate(any());
+        then(refundPersistencePort).should(never()).update(any());
+        then(productStockReleasePort).should(never()).releaseStock(any());
+    }
+
+    @Test
+    void 읽은_뒤_잠그기_전에_재고_실패가_기록되면_실패_메시지를_기록하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
+                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+
+        // when
+        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+
+        // then
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    @Test
+    void 읽은_뒤_잠그기_전에_재고_실패가_기록되면_불일치를_기록하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
+                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+
+        // when
+        sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
 
         // then
         then(refundPersistencePort).should(never()).update(any());
