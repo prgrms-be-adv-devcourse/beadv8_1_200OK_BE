@@ -683,31 +683,42 @@ com.ok.member.seller
 ├── exception/            SellerErrorCode
 ├── application/
 │   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
-│   ├── port/out/         출력 포트: 저장소, 이벤트 발행
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행(SellerEventPublisher)
 │   ├── service/          유스케이스 구현 (*Service), 검증기 (*Validator)
 │   └── dto/              *Command, *Query, *Result
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
     ├── out/persistence/  Spring Data JPA 저장소 (*JpaRepository)
-    └── out/event/        스프링 이벤트 발행 구현체
+    └── out/member/       MemberOutboxAdapter (이벤트를 회원 하위 도메인의 outbox에 기록)
 ```
 
 `member` 하위 도메인은 여기에 `adapter/in/bootstrap`(앱이 시작될 때 설정값으로 최초 관리자 계정을 만드는 설정·실행기)이 더 있습니다. 앱 시작이라는 외부 입력의 진입점이라 컨트롤러처럼 유스케이스만 부릅니다.
 
-회원가입은 Kafka 토픽 `member.member-registered`로도 나갑니다(#560). 키는 `memberId`, 값은 `{"memberId": 1}`입니다.
+member가 Kafka로 보내는 메시지는 모두 `member` 하위 도메인의 outbox(`member_outbox`)를 거칩니다.
+
+| 토픽 | 언제 | 키 | 값 |
+|---|---|---|---|
+| `member.member-registered` (#560) | 회원가입이 커밋됨 | `memberId` | `{"memberId": 1}` |
+| `member.seller-origin-postal-code` (#587) | 판매자 프로필 등록, 또는 수정으로 출고지 우편번호가 바뀜 | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
+
+`sellerId`는 판매자인 회원의 ID(`memberId`)와 같은 값입니다. 판매자 승인은 받는 모듈이 없어 보내지 않습니다(#587에서 스프링 이벤트도 지움).
 
 ```
 com.ok.member.member
 ├── domain/               MemberOutbox (보낼 메시지 1건의 발송 대기 기록), MemberOutboxStatus, MemberOutboxEventType
 ├── application/
-│   ├── port/in/          MemberOutboxRelayUseCase (쌓인 메시지 보내기)
-│   ├── port/out/         MemberOutboxRepository, MemberMessageSender (메시지 브로커로 보냄)
-│   └── service/          MemberOutboxRelayFacade (트랜잭션 없이 보냄), MemberOutboxService (줄 읽기·결과 저장)
+│   ├── port/in/          MemberOutboxRelayUseCase (쌓인 메시지 보내기), MemberOutboxRecordUseCase (다른 하위 도메인이 줄을 남김)
+│   ├── port/out/         MemberOutboxRepository, MemberMessageSender (메시지 브로커로 보냄), MemberMessagePayloadWriter (본문 JSON 만들기)
+│   └── service/          MemberOutboxRelayFacade (트랜잭션 없이 보냄), MemberOutboxService (줄 기록·읽기·결과 저장)
 └── adapter/
     ├── in/scheduler/     MemberOutboxRelayScheduler (30초마다 발송)
     ├── out/persistence/  MemberOutboxJpaRepository
-    └── out/event/        OutboxMemberEventPublisher (outbox 줄 기록), KafkaMemberMessageSender, MemberTopics, MemberRegisteredMessage, MemberKafkaTopicConfig
+    └── out/event/        OutboxMemberEventPublisher (회원가입 줄 기록), KafkaMemberMessageSender, MemberMessagePayloadJson,
+                          MemberTopics, MemberRegisteredMessage, SellerOriginPostalCodeMessage, MemberKafkaTopicConfig
 ```
+
+- 판매자 하위 도메인은 outbox를 직접 쓰지 않고, 자기 출력 어댑터(`seller/adapter/out/member/MemberOutboxAdapter`)에서 `MemberOutboxRecordUseCase`를 부릅니다(하위 도메인 간 호출 규칙). 이 유스케이스는 `Propagation.MANDATORY`라 부른 쪽 트랜잭션 없이는 실패합니다. 프로필 저장과 outbox 줄이 반드시 함께 커밋·롤백되게 하려는 것입니다.
+- 회원가입 줄은 본문 없이 회원 ID만 두고, 출고지 우편번호 줄은 기록한 시점의 값을 `payload`(JSON)로 저장합니다. 보낼 때 그 JSON을 메시지 객체로 다시 읽어 Kafka 공통 직렬화로 보내므로, 실제로 나가는 JSON 모양(시각 형식 등)은 다른 모듈의 메시지와 같습니다.
 
 - 가입 서비스는 그대로 `MemberEventPublisher`를 부르고, 구현체 `OutboxMemberEventPublisher`가 같은 트랜잭션에서 `member_outbox`에 PENDING 줄을 남깁니다. 그래서 롤백되면 보내지 않고 커밋되면 반드시 한 번은 보냅니다. Spring Modulith의 이벤트 발행 기록(`event_publication`)에 기대지 않는 이유는 팀이 Modulith를 걷어 내기로 해서입니다.
 - `MemberOutboxRelayScheduler`가 30초마다(`member.outbox.relay.cron`, 한 번에 `batch-size` 100줄) PENDING 줄을 쌓인 순서대로 보냅니다. 보내기는 브로커의 저장 확인을 10초까지 기다리고, 그동안 DB 커넥션을 잡지 않도록 `MemberOutboxRelayFacade`는 트랜잭션 없이 돌며 줄마다 결과를 따로 저장합니다.
