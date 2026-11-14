@@ -52,7 +52,7 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         // 멈춤 판정은 스냅샷과 같은 세는 SQL에 주문 조건만 더한 조회로 함: 기준이 어긋나지 않으면서 그 주문만 셈
         boolean locked = payoutQueryRepository.isOrderLocked(orderId);
         long failedRuns = payoutQueryRepository.countFailedRunsOfOrder(orderId);
-        if (!locked && failedRuns < PayoutPolicy.MAX_FAILED_RUNS) {
+        if (!locked && !PayoutPolicy.isStopped(failedRuns)) {
             throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
         }
 

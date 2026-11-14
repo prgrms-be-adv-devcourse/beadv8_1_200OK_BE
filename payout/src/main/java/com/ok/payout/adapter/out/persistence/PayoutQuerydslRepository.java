@@ -218,9 +218,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         Integer found = queryFactory
                 .selectOne()
                 .from(payoutFailure)
-                .where(payoutFailure.orderId.eq(orderId),
-                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()),
-                        unresolvedFailure())
+                .where(payoutFailure.orderId.eq(orderId), lockingFailure())
                 .fetchFirst();
         return found != null;
     }
@@ -821,10 +819,15 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     private BooleanExpression lockedOrder() {
         return JPAExpressions.selectOne()
                 .from(payoutFailure)
-                .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId),
-                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()),
-                        unresolvedFailure())
+                .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId), lockingFailure())
                 .exists();
+    }
+
+    // 주문을 잠그는 실패 기록인지: 잠그는 사유이고 해결 기록이 없음
+    // 스냅샷(lockedOrder)·해결 API(isOrderLocked)·막힌 주문 집계 표(findLockedOrderIds, #582)가 함께 씀
+    //   셋이 조건을 따로 쓰면 규칙을 바꿀 때 한 곳을 빠뜨려 같은 주문에 다른 답을 낼 수 있어 한곳에 둠 (#568 때 따로 고쳤음)
+    private BooleanExpression lockingFailure() {
+        return payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()).and(unresolvedFailure());
     }
 
     // 실패 기록(payoutFailure)에 해결 기록이 없는지 (#568)
