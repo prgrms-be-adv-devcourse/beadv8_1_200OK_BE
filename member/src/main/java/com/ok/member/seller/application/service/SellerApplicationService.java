@@ -9,7 +9,6 @@ import com.ok.member.seller.application.dto.SellerApplyCommand;
 import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import com.ok.member.seller.application.port.out.SellerApplicationRepository;
-import com.ok.member.seller.application.port.out.SellerEventPublisher;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
@@ -41,7 +40,6 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
 
     private final SellerApplicationRepository sellerApplicationRepository;
     private final SellerApplicationDuplicateValidator duplicateValidator;
-    private final SellerEventPublisher sellerEventPublisher;
     private final Clock clock;
 
     @Override
@@ -107,11 +105,8 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
     @Transactional
     public SellerApplicationAdminResult approve(Long adminId, Long applicationId) {
         SellerApplication application = findApplication(applicationId);
-        LocalDateTime approvedAt = now();
-        application.approve(adminId, approvedAt);
+        application.approve(adminId, now());
         flushDetectingConflict();
-        // 버전 검사를 통과한 승인만 이벤트를 낸다. 이벤트는 커밋 후에 전달되므로, 롤백되면 함께 사라진다
-        sellerEventPublisher.publishSellerApproved(application.getMemberId(), approvedAt);
         return SellerApplicationAdminResult.from(application);
     }
 
