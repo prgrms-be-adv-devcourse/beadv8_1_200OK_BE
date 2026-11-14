@@ -34,6 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
@@ -530,14 +531,16 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 35_000L);
         givenDeduction(order, 30_000L);
 
-        // when & then: 1·2번째 실패의 예비 줄은 Job 끝에 지워져 표에 없음
-        runCompleted();
+        // when: 1·2번째 실패
+        runCompleted(2);
+
+        // then: 예비 줄은 Job 끝에 지워져 표에 없음
         assertThat(blockedOrderRepository.findById(order)).isEmpty();
-        runCompleted();
-        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+
+        // when: 3번째 실패
         runCompleted();
 
-        // then: 3번째 Job이 끝나면 멈춤. 근거는 금액 검사 때 값이고 실패 상세 글과 같은 값
+        // then: 멈춤. 근거는 금액 검사 때 값이고 실패 상세 글과 같은 값
         PayoutBlockedOrder sut = blockedOrderRepository.findById(order).orElseThrow();
         assertThat(sut.getStatus()).isEqualTo(PayoutBlockedStatus.STOPPED);
         assertEvidence(sut.getOverchargeEvidence(), 30_000L, 35_000L, String.valueOf(orderItem));
@@ -580,7 +583,12 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].evidenceNow.deductedAmount").value(30_000))
                 .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(45_000))
                 .andExpect(jsonPath("$.content[0].evidenceNow.overflowAmount").value(15_000))
-                .andExpect(jsonPath("$.content[0].evidenceNow.firstOverflowItem").value(String.valueOf(orderItem)));
+                .andExpect(jsonPath("$.content[0].evidenceNow.firstOverflowItem").value(String.valueOf(orderItem)))
+                .andExpect(jsonPath("$.content[0].evidenceNow.settledAmount").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceNow.settledItems.length()").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceNow.aloneOverItems").value(contains(String.valueOf(orderItem))))
+                .andExpect(jsonPath("$.content[0].evidenceNow.sellerCount").value(1))
+                .andExpect(jsonPath("$.content[0].evidenceNow.conflictAmounts.length()").value(0));
     }
 
     @Test
@@ -590,9 +598,12 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         long pendingOrder = nextOrderId();
         blockedOrderRepository.save(PayoutBlockedOrder.pending(pendingOrder, LocalDateTime.now(), evidence(1_000L, 2_000L)));
 
-        // when & then
-        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
-                .andExpect(status().isOk())
+        // when
+        ResultActions sut = mockMvc.perform(
+                blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")));
+
+        // then
+        sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[*].orderId").value(contains((int) locked)));
     }
@@ -655,11 +666,37 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(order, LocalDateTime.now().minusDays(30));
         runCompleted(3);
 
-        // when & then
+        // when
+        ResultActions sut = mockMvc.perform(
+                blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")));
+
+        // then
         assertThat(blockedOrderRepository.findById(order).orElseThrow().getOverchargeEvidence()).isNull();
-        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
-                .andExpect(status().isOk())
+        sut.andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock").isEmpty())
+                .andExpect(jsonPath("$.content[0].evidenceNow").isEmpty());
+    }
+
+    @Test
+    void 조정_후보만_있어_근거를_계산할_수_없는_주문은_근거가_비어_있다() throws Exception {
+        // given: 결제 기록은 있는데 원래 후보 없이 조정 후보만 있는 주문 → 금액 검사가 "판정 불가" 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        insertAdjustmentCandidate(order, ORDER_ITEM_ID_SEQ.incrementAndGet(), 5_000L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+
+        // when
+        ResultActions sut = mockMvc.perform(
+                blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")));
+
+        // then: 원인은 초과 청구지만 합계가 없어 막힌 순간·지금 근거 모두 없음
+        PayoutBlockedOrder blockedOrder = blockedOrderRepository.findById(order).orElseThrow();
+        assertThat(blockedOrder.getStatus()).isEqualTo(PayoutBlockedStatus.STOPPED);
+        assertThat(blockedOrder.getOverchargeEvidence()).isNull();
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].reasons").value(contains("AMOUNT_MISMATCH")))
                 .andExpect(jsonPath("$.content[0].evidenceAtBlock").isEmpty())
                 .andExpect(jsonPath("$.content[0].evidenceNow").isEmpty());
     }
@@ -684,6 +721,15 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
 
     private PayoutOverchargeEvidence evidence(long deducted, long total) {
         return PayoutOverchargeEvidence.of(deducted, total, "1", 0L, List.of(), List.of("1"), 1, List.of());
+    }
+
+    // 30일 전 관리자 조정 후보 (조정 API가 막혀 있어 SQL로 넣음)
+    private void insertAdjustmentCandidate(long orderId, long orderItemId, long amount) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(30);
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, adjustment_id, "
+                        + "admin_id, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, '테스트 조정', ?, ?)",
+                PayoutEventType.SALE_AMOUNT.name(), orderId, orderItemId, SELLER_ID, amount, ADMIN_ID, createdAt, createdAt);
     }
 
     private void givenDeduction(long orderId, long amount) {

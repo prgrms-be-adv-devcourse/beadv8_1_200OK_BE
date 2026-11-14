@@ -5,7 +5,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
 
-@Schema(description = "초과 청구 근거 8개. 실패 상세 글(원인의 detail)과 같은 값을 칸으로 나눈 것")
+@Schema(description = "초과 청구 근거 8개. 실패 상세 글(원인의 detail)과 같은 값을 칸으로 나눈 것 "
+        + "(\"이미 지급\"은 금액과 주문상품 두 필드라 필드는 9개)")
 public record PayoutOverchargeEvidenceResponse(
 
         @Schema(description = "결제(지갑 차감) 금액 (원)", example = "30000")

@@ -171,6 +171,23 @@ class PayoutAmountValidatorTest {
     }
 
     @Test
+    void 초과가_풀린_지금_값은_넘게_만든_주문상품이_판별_불가다() {
+        // given: 결제 30,000, 정산후보 합계 25,000 (조정 등으로 초과가 풀린 뒤 관리자 목록이 "지금" 값을 계산하는 경우)
+        List<OverchargeCandidateRow> rows = List.of(row(saleAmount(ORDER_ID, 101L, 10L, 25_000L), false));
+
+        // when
+        PayoutOverchargeEvidence sut = PayoutAmountValidator.overchargeEvidence(30_000L, 25_000L, rows, List.of());
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getOverflowAmount()).isEqualTo(-5_000L);
+            softly.assertThat(sut.getFirstOverflowItem()).isEqualTo("판별 불가");
+            softly.assertThat(sut.aloneOverItemList()).isEmpty();
+        });
+    }
+
+    @Test
     void 누적합을_넘게_만든_후보가_배송비면_배송비로_남긴다() {
         // given: 대금 9,700 + 수수료 300 = 10,000까지는 결제 12,000 안, 뒤에 들어온 배송비 3,000이 넘김 (합계 13,000)
         givenNormalOrderItem(ORDER_ID, 1001L, 10L, 9_700L, 300L);
