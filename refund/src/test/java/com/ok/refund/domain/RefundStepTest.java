@@ -126,22 +126,21 @@ class RefundStepTest {
     }
 
     @Test
-    void 멈춘_단계에_다른_이유로_멈추면_이유만_바뀐다() {
+    void 멈춘_단계에_다른_이유로_멈춰도_처음_이유를_지킨다() {
         // given
-        RefundStep sut = stepWith(RefundStepStatus.STOPPED);
+        RefundStep sut = RefundStep.start(1_000L, RefundStepType.WALLET, NOW);
+        sut.stop("RESULT_MISMATCH");
 
         // when
-        boolean changed = sut.stop("다른 이유");
-        boolean sameAgain = sut.stop("다른 이유");
+        boolean changed = sut.stop("INSUFFICIENT_BALANCE");
 
-        // then
+        // then: 처음 멈춘 이유(결과 불일치)가 뒤에 온 보통 실패로 지워지지 않아야 되돌리기가 사람에게 넘긴다
         assertSoftly(softly -> {
-            softly.assertThat(changed).isTrue();
-            softly.assertThat(sameAgain).isFalse();
+            softly.assertThat(changed).isFalse();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
-            softly.assertThat(sut.getLastReason()).isEqualTo("다른 이유");
-            softly.assertThat(sut.isStoppedWith("다른 이유")).isTrue();
-            softly.assertThat(sut.isStoppedWith("처음 이유")).isFalse();
+            softly.assertThat(sut.getLastReason()).isEqualTo("RESULT_MISMATCH");
+            softly.assertThat(sut.isStoppedWith("RESULT_MISMATCH")).isTrue();
+            softly.assertThat(sut.isStoppedWith("INSUFFICIENT_BALANCE")).isFalse();
         });
     }
 

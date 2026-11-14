@@ -123,13 +123,12 @@ public class RefundStep {
         return true;
     }
 
-    /** 자동 처리를 멈춘다. 이미 멈춘 단계는 이유가 다를 때만 이유를 바꾼다. */
+    /** 자동 처리를 멈춘다. 이미 끝난 단계(성공·거절됨·멈춤)는 이유도 바꾸지 않는다. */
     public boolean stop(String reason) {
-        if (status == RefundStepStatus.SUCCEEDED || status == RefundStepStatus.REFUSED) {
-            return false;
-        }
+        // 멈춘 줄도 끝 상태라 이유까지 그대로 둔다. 처음 멈춘 이유를 덮으면 결과 불일치(RESULT_MISMATCH) 표시가
+        // 뒤에 온 보통 실패로 지워져, 되돌리기(#546)가 돈이 나갔는지 모르는 환불을 보통 지갑 실패로 보고 주문을 되돌릴 수 있다
         String normalized = normalizeReason(reason);
-        if (status == RefundStepStatus.STOPPED && normalized.equals(lastReason)) {
+        if (status.isFinished()) {
             return false;
         }
         lastReason = normalized;

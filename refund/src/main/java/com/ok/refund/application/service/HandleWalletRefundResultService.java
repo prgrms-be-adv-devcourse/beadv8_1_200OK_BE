@@ -52,7 +52,9 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     private enum MarkOutcome {
         MARKED,
         CHANGED,
-        AFTER_WALLET_SUCCESS
+        AFTER_WALLET_SUCCESS,
+        // 지갑 줄이 이미 다른 이유로 멈춰 있어 처음 이유를 그대로 둔 경우
+        ALREADY_STOPPED
     }
 
     // 먼저 읽은 값. 거르는 판단에만 쓰고, 기록·완료할 때는 잠근 뒤 다시 읽는다.
@@ -157,10 +159,13 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
                 return MarkOutcome.CHANGED;
             }
             // 환불 행은 바꾸지 않는다(실패는 지갑 줄에만 남는다, 결정 3). 환불 행은 단계 줄을 지키려고 잠근 것이다
-            stopWalletStep(refundId, walletStep, command.reason());
-            return MarkOutcome.MARKED;
+            return stopWalletStep(refundId, walletStep, command.reason()) ? MarkOutcome.MARKED : MarkOutcome.ALREADY_STOPPED;
         });
         if (outcome == MarkOutcome.AFTER_WALLET_SUCCESS) {
+            return;
+        }
+        if (outcome == MarkOutcome.ALREADY_STOPPED) {
+            logKeptFirstStopReason(refundId, command.reason());
             return;
         }
         if (outcome != MarkOutcome.MARKED) {
@@ -237,18 +242,27 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
                 && walletStep.isStoppedWith(reason);
     }
 
-    // 지갑 줄을 멈춤으로 남긴다. 환불 행을 잠근 구간 안에서만 부른다.
+    // 지갑 줄을 멈춤으로 남긴다. 환불 행을 잠근 구간 안에서만 부른다. 바꿨으면 true.
+    // 이미 멈춘 줄이면 처음 이유를 그대로 두고 false다(끝 상태는 바뀌지 않음, 결과 불일치 표시를 지키려고).
     // 줄이 없으면(#574 전에 승인된 환불) 시도 중으로 만든 뒤 바로 멈춰 저장한다. 실패를 남길 곳이 있어야 사람이 찾기 때문이다
-    private void stopWalletStep(Long refundId, Optional<RefundStep> walletStep, String reason) {
+    private boolean stopWalletStep(Long refundId, Optional<RefundStep> walletStep, String reason) {
         if (walletStep.isPresent()) {
             if (walletStep.get().stop(reason)) {
                 refundStepPersistencePort.update(walletStep.get());
+                return true;
             }
-            return;
+            return false;
         }
         RefundStep created = RefundStep.start(refundId, RefundStepType.WALLET, LocalDateTime.now(clock));
         created.stop(reason);
         refundStepPersistencePort.saveNew(created);
+        return true;
+    }
+
+    // 뒤에 온 이유는 기록하지 않지만 사람이 볼 수 있게 WARN으로 남긴다(지갑이 같은 환불에 서로 다른 결과를 보낸 이상)
+    private static void logKeptFirstStopReason(Long refundId, String newReason) {
+        log.warn("지갑 줄이 이미 다른 이유로 멈춰 있어 처음 이유를 그대로 두고 넘김(지갑 결과가 서로 다름, 확인 필요). refundId={}, 새 이유={}",
+                refundId, newReason);
     }
 
     // 지갑 결과의 주문·구매자·금액이 모두 환불과 같은지 본다. 완료·실패 메시지가 같은 기준을 쓰게 한 곳에 둔다.
@@ -283,11 +297,15 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
                 return MarkOutcome.CHANGED;
             }
             // 환불 행은 바꾸지 않는다(불일치는 지갑 줄에만 남는다, 결정 3). 환불 행은 단계 줄을 지키려고 잠근 것이다
-            stopWalletStep(refundId,
+            boolean stopped = stopWalletStep(refundId,
                     refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET), RESULT_MISMATCH);
-            return MarkOutcome.MARKED;
+            return stopped ? MarkOutcome.MARKED : MarkOutcome.ALREADY_STOPPED;
         });
         if (outcome == MarkOutcome.AFTER_WALLET_SUCCESS) {
+            return;
+        }
+        if (outcome == MarkOutcome.ALREADY_STOPPED) {
+            logKeptFirstStopReason(refundId, RESULT_MISMATCH);
             return;
         }
         if (outcome != MarkOutcome.MARKED) {

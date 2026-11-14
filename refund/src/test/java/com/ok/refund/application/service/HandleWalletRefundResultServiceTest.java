@@ -384,27 +384,27 @@ class HandleWalletRefundResultServiceTest {
         then(refundStepPersistencePort).should(never()).update(any());
     }
 
-    @Test
-    void 다른_이유의_실패는_마지막_실패로_덮어쓴다() {
+    @ParameterizedTest
+    @MethodSource("이미_멈춘_이유")
+    void 이미_멈춘_지갑_줄에_다른_이유의_실패가_와도_처음_이유를_지킨다(String firstReason) {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
                 refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
                 refund(RefundStatus.PROCESSING)));
-        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "INSUFFICIENT_BALANCE"), null);
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, firstReason), null);
 
         // when
         sut.recordWalletRefundFailure(failed("WALLET_FROZEN"));
 
-        // then
+        // then: 처음 멈춘 이유가 남아야 한다. 결과 불일치 표시가 보통 실패로 지워지면 되돌리기(#546)가 주문을 되돌릴 수 있다
         then(refundPersistencePort).should(never()).update(any());
-        ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
-        then(refundStepPersistencePort).should().update(updated.capture());
-        assertThat(updated.getValue()).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(updated.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
-            softly.assertThat(updated.getValue().getLastReason()).isEqualTo("WALLET_FROZEN");
-        });
+        then(refundStepPersistencePort).should(never()).update(any());
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
+    static Stream<String> 이미_멈춘_이유() {
+        return Stream.of("INSUFFICIENT_BALANCE", "RESULT_MISMATCH");
     }
 
     @Test
