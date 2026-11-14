@@ -10,7 +10,7 @@ import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
 import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
-import com.ok.payout.domain.PayoutBlockedOrder;
+import com.ok.payout.domain.PayoutBlockedStatus;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureResolution;
 import com.ok.payout.domain.PayoutPolicy;
@@ -94,7 +94,13 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         // 막힌 주문 집계 표(#582)의 그 줄을 "해결됨"으로: 다음 정산 Job이 끝나기 전까지 목록에 계속 "잠김"으로 보여
         //   다른 관리자가 다시 해결하다 409를 받는 혼란을 없앰. 줄을 지우는 일은 다음 Job 끝 다시 판정이 함 (다시 막혔으면 되돌림)
         //   표에 아직 없으면(갱신 전) 할 일 없음: 다음 갱신이 원본(이미 해결됨)으로 판정해 넣지 않음
-        payoutBlockedOrderRepository.findByOrderId(orderId).ifPresent(PayoutBlockedOrder::markResolved);
+        //   예비(PENDING) 줄은 바꾸지 않음 (#570): 아직 목록에 막힘으로 나온 적 없는 줄이라 "해결됨"으로 보이면 안 됨
+        //     (Job 끝 갱신이 실패해 예비 줄이 남은 채 원본으로는 막힌 경우). 다음 갱신이 원본(이미 해결됨)으로 판정해 지움
+        payoutBlockedOrderRepository.findByOrderId(orderId).ifPresent(blockedOrder -> {
+            if (blockedOrder.getStatus() != PayoutBlockedStatus.PENDING) {
+                blockedOrder.markResolved();
+            }
+        });
 
         PayoutFailureResolution first = saved.get(0);
         // 누가 어떤 주문을 다시 처리했는지는 정산에 영향을 주는 관리자 조치라 INFO로 남김 (메모는 길이를 예측할 수 없어 빼고 해결 기록에만 둠)

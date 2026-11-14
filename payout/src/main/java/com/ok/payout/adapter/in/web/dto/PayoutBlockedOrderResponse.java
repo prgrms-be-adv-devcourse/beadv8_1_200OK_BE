@@ -39,7 +39,8 @@ public record PayoutBlockedOrderResponse(
         List<PayoutBlockedOrderCauseResponse> causes,
 
         @Schema(description = "막힌 순간의 초과 청구 근거: 그 막힘을 만든 금액 검사 때 계산한 값(실패 상세 글과 같음). "
-                + "원인에 초과 청구가 없거나 계산할 수 없으면 null. 예전 막힘의 값은 해결 기록 조회의 상세 글로 봄",
+                + "원인에 초과 청구가 없거나 계산할 수 없으면 null. 예전 막힘의 값은 해결 기록 조회의 상세 글로 봄. "
+                + "RESOLVED 줄은 해결 뒤 다시 실패했으면 그 실패 때 값으로 바뀌어 있을 수 있음(다음 정산 실행이 끝나면 정리됨)",
                 nullable = true)
         PayoutOverchargeEvidenceResponse evidenceAtBlock,
 

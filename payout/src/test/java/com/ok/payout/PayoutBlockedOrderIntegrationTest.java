@@ -598,6 +598,24 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 해결_API는_예비_줄을_해결됨으로_바꾸지_않고_다음_갱신이_지운다() throws Exception {
+        // given: 원본으로는 잠긴 주문인데, Job 끝 갱신이 실패해 표에는 예비 줄만 남은 경우
+        Long run = runCompleted();
+        long order = nextOrderId();
+        insertFailure(run, insertCandidate(order), order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+        blockedOrderRepository.save(PayoutBlockedOrder.pending(order, LocalDateTime.now(), evidence(1_000L, 2_000L)));
+
+        // when
+        resolve(order);
+
+        // then: 예비 그대로라 목록에 "해결됨"으로 나오지 않고, 다음 갱신이 원본(해결됨)으로 판정해 지움
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus).isEqualTo(PayoutBlockedStatus.PENDING);
+        blockedOrderUseCase.refresh();
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+    }
+
+    @Test
     void 해결된_줄이_있는_주문이_다시_초과_청구에_걸려도_Job이_성공하고_다음_판정에서_지워진다() throws Exception {
         // given: 초과 청구로 멈춘 뒤 관리자가 해결해 RESOLVED 줄이 남은 주문
         long order = nextOrderId();
