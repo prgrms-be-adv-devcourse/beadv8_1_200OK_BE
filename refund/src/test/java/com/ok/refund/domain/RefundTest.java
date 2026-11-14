@@ -378,81 +378,6 @@ class RefundTest {
     }
 
     @Test
-    void 처리_중이면_멈춘_단계와_실패_이유를_기록하고_상태는_그대로다() {
-        // given
-        Refund sut = requested();
-        sut.approve(NOW, RefundShippingFee.none());
-
-        // when
-        sut.recordFailure(RefundStepType.WALLET, "WALLET_API_FAILED");
-
-        // then
-        assertThat(sut).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(sut.getFailureCode()).isEqualTo("WALLET_API_FAILED");
-            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
-        });
-    }
-
-    @Test
-    void 요청하면_실패_기록은_비어_있다() {
-        // when
-        Refund sut = requested();
-
-        // then
-        assertThat(sut).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(sut.getFailedStep()).isNull();
-            softly.assertThat(sut.getFailureCode()).isNull();
-        });
-    }
-
-    // 실패 기록은 다른 모듈을 부르는 처리 중에만 생긴다. 요청됨·거절·철회에 기록하려는 건 상태가 맞지 않는 요청이다
-    @ParameterizedTest
-    @MethodSource("처리_중이_아닌_요청")
-    void 처리_중이_아니면_실패를_기록하지_않는다(Consumer<Refund> toState) {
-        // given
-        Refund refund = requested();
-        toState.accept(refund);
-
-        // when & then
-        assertThatThrownBy(() -> refund.recordFailure(RefundStepType.WALLET, "WALLET_API_FAILED"))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
-        assertThat(refund.getFailedStep()).isNull();
-    }
-
-    static Stream<Named<Consumer<Refund>>> 처리_중이_아닌_요청() {
-        return Stream.of(
-                Named.of("요청됨", refund -> {
-                }),
-                Named.of("거절", refund -> refund.reject("사유", NOW)),
-                Named.of("철회", refund -> refund.withdraw(NOW)));
-    }
-
-    @ParameterizedTest
-    @MethodSource("비어_있는_실패_정보")
-    void 실패_단계나_이유가_비면_표준_예외로_막는다(RefundStepType step, String failureCode) {
-        // given
-        Refund refund = requested();
-        refund.approve(NOW, RefundShippingFee.none());
-
-        // when & then
-        assertThatThrownBy(() -> refund.recordFailure(step, failureCode))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("실패 단계와 이유는 필수입니다.");
-    }
-
-    static Stream<Arguments> 비어_있는_실패_정보() {
-        return Stream.of(
-                Arguments.of(null, "WALLET_API_FAILED"),
-                Arguments.of(RefundStepType.WALLET, null),
-                Arguments.of(RefundStepType.WALLET, " "));
-    }
-
-    @Test
     void 구매자와_판매자_본인인지_확인한다() {
         // given
         Refund sut = requested();
@@ -489,7 +414,7 @@ class RefundTest {
 
         // when
         Refund sut = Refund.restore(7L, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 3_000L, 2_000L, 1_000L,
-                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, completedAt, RefundStepType.ORDER, "ORDER_API_FAILED",
+                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, completedAt,
                 101L, createdAt);
 
         // then
@@ -514,8 +439,6 @@ class RefundTest {
             softly.assertThat(sut.getRejectReason()).isNull();
             softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
             softly.assertThat(sut.getCompletedAt()).isEqualTo(completedAt);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.ORDER);
-            softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
             softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
             softly.assertThat(sut.getCreatedAt()).isEqualTo(createdAt);
         });
@@ -526,7 +449,7 @@ class RefundTest {
     void ID_없이_복원하면_예외를_던진다() {
         // when & then
         assertThatThrownBy(() -> Refund.restore(null, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 0L, 0L, 0L,
-                null, RefundStatus.REQUESTED, null, null, null, null, null, 101L, null))
+                null, RefundStatus.REQUESTED, null, null, null, 101L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("저장된 환불을 되살리려면 ID와 상태가 필요합니다.");
     }

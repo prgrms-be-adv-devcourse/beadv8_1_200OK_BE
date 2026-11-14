@@ -2,7 +2,6 @@ package com.ok.refund.adapter.out.persistence;
 
 import com.ok.common.jpa.entity.BaseTime;
 import com.ok.refund.RefundSchema;
-import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -89,13 +88,6 @@ public class RefundJpaEntity extends BaseTime {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "failed_step", length = 30)
-    private RefundStepType failedStep;
-
-    @Column(name = "failure_code", length = 100)
-    private String failureCode;
-
     @Column(name = "active_order_item_id")
     private Long activeOrderItemId;
 
@@ -137,9 +129,7 @@ public class RefundJpaEntity extends BaseTime {
             Long activeOrderItemId,
             long shippingFeeAmount,
             long remoteAreaFeeAmount,
-            long deductedShippingFeeAmount,
-            RefundStepType failedStep,
-            String failureCode
+            long deductedShippingFeeAmount
     ) {
         this.status = status;
         this.rejectReason = rejectReason;
@@ -149,7 +139,5 @@ public class RefundJpaEntity extends BaseTime {
         this.shippingFeeAmount = shippingFeeAmount;
         this.remoteAreaFeeAmount = remoteAreaFeeAmount;
         this.deductedShippingFeeAmount = deductedShippingFeeAmount;
-        this.failedStep = failedStep;
-        this.failureCode = failureCode;
     }
 }

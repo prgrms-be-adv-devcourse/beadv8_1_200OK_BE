@@ -24,7 +24,7 @@ public interface RefundPersistencePort {
     Refund saveNew(Refund refund);
 
     /**
-     * 도메인의 바뀌는 칸(상태, 거절 사유, 결정 시각, 진행 중 칸, 배송비 세 칸, 실패 단계·이유)을 저장한다.
+     * 도메인의 바뀌는 칸(상태, 거절 사유, 결정 시각, 진행 중 칸, 배송비 세 칸)을 저장한다.
      * 같은 트랜잭션에서 {@link #findByIdForUpdate}로 잠가 불러온 환불에만 부른다. 실제 UPDATE는 트랜잭션 커밋 때 나간다.
      * 같은 트랜잭션에서 여러 번 불러도 된다. 앞선 변경이 중간 조회의 자동 flush로 먼저 나가도, 그 행의 쓰기 잠금은 커밋까지 이 트랜잭션에 있다.
      *

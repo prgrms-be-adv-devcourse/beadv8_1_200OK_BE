@@ -5,10 +5,14 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.adapter.out.persistence.RefundJpaEntity;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.refund.application.port.out.OrderCancellation;
@@ -41,6 +45,7 @@ import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.is;
@@ -79,6 +84,8 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     // 조회 확인은 출력 포트(도메인)로 한다. 테이블 비우기·행 개수는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
     RefundPersistencePort refundPersistencePort;
+    @Autowired
+    RefundStepPersistencePort refundStepPersistencePort;
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
@@ -468,6 +475,70 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(released.productOptionId()).isEqualTo(55L);
             softly.assertThat(released.quantity()).isEqualTo(1);
         });
+    }
+
+    // 승인 뒤 단계 진행 표(#574): 승인 요청 안에서 주문이 끝나고 지갑 요청을 보냈으니 주문은 성공, 지갑은 결과를 기다린다
+    @Test
+    void 승인하면_주문_성공과_지갑_결과_대기_줄이_남는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(POTATO_ORDER_ITEM_ID);
+
+        // when
+        approve(POTATO_SELLER_ID, refundId).andExpect(status().isOk());
+
+        // then: 재고 줄은 지갑 완료를 받은 뒤에 만든다
+        List<RefundStep> sut = refundStepPersistencePort.findAllByRefundId(refundId);
+        assertThat(sut)
+                .extracting(RefundStep::getType, RefundStep::getStatus)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT));
+    }
+
+    // 0원 환불은 지갑을 거치지 않아 주문 다음 줄이 바로 재고다
+    // 판매자 8이 주문 30에 배추(301) 3,000원 + 감자(302) 27,000원을 팔아 무료배송(기준 30,000원)이었고, 배추를 취소하면 3,000 - 3,000 = 0원 환불이다
+    @Test
+    void 돌려줄_금액이_0원인_승인은_주문과_재고_성공_줄만_남는다() throws Exception {
+        // given
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L, List.of(
+                new BundleItem(301L, 3_000L, 1), new BundleItem(302L, 27_000L, 1)));
+        orderQueryPort.put(orderItem(30L, 301L, 8L, 3_000L, 1, bundle));
+        orderQueryPort.put(orderItem(30L, 302L, 8L, 27_000L, 1, bundle));
+        Long refundId = requestedRefundId(30L, 301L);
+
+        // when
+        approve(8L, refundId).andExpect(status().isOk());
+
+        // then
+        Refund refund = onlyRefund();
+        assertThat(refund).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(refund.getRefundAmount()).isZero();
+            softly.assertThat(refund.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+        });
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED));
+    }
+
+    // 주문이 이미 출고돼 취소를 거절하면(409) 환불도 거절로 끝나고 다음 단계 줄은 만들지 않는다
+    @Test
+    void 주문이_거절하면_주문_거절됨_줄만_남는다() throws Exception {
+        // given
+        Long refundId = requestedRefundId(POTATO_ORDER_ITEM_ID);
+        orderCancellationPort.markShipped(POTATO_ORDER_ITEM_ID);
+
+        // when
+        approve(POTATO_SELLER_ID, refundId)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("REJECTED")));
+
+        // then
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus)
+                .containsExactly(tuple(RefundStepType.ORDER, RefundStepStatus.REFUSED));
     }
 
     // 완료되면 진행 중 칸이 비어 같은 상품의 남은 개수를 다시 요청할 수 있다. 남은 개수는 산 개수에서 완료된 개수를 뺀 것이다(#414)

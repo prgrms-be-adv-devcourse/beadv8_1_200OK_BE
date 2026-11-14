@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class RefundWalletKafkaListener {
 
-    // 환불 실패 이유(failureCode) 컬럼이 VARCHAR(100)이다. 더 긴 값은 저장 때 DB 오류가 나 다시 시도만 반복하므로 입구에서 거절한다
+    // 지갑 단계 줄의 이유(refund_step.last_reason) 컬럼이 VARCHAR(100)이다. 더 긴 값은 저장 때 DB 오류가 나 다시 시도만 반복하므로 입구에서 거절한다
     // (서비스의 RefundStepRunner.MAX_FAILURE_CODE_LENGTH와 같은 값. 입력 어댑터는 서비스를 알 수 없어 따로 둔다)
     static final int MAX_REASON_LENGTH = 100;
 

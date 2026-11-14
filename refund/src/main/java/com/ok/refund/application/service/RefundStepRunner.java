@@ -6,6 +6,8 @@ import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepType;
+import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.exception.RefundErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -17,7 +19,7 @@ import java.time.LocalDateTime;
 import java.util.function.Supplier;
 
 /**
- * 승인 뒤 다른 모듈 호출 한 단계를 실행하고, 실패하면 멈춘 단계와 이유를 환불에 남긴다.
+ * 승인 뒤 다른 모듈 호출 한 단계를 실행하고, 실패하면 그 단계의 진행 줄(refund_step)에 이유를 남긴다(#574).
  * 1단계에는 자동으로 다시 처리하는 방법이 없어, 운영자가 이 기록을 보고 어디부터 다시 할지 판단한다.
  * 이 틀로 부르는 단계는 승인 요청 안의 주문 반영·지갑 발행·0원 재고 복구({@link DecideRefundService}, #574)와
  * 지갑 완료 메시지 뒤의 재고 복구({@link HandleWalletRefundResultService}, #544)이고, 모두 트랜잭션 구간 밖에서 부른다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
@@ -26,7 +28,7 @@ import java.util.function.Supplier;
 @Component
 public class RefundStepRunner {
 
-    // refund.failure_code 칸 길이와 같아야 한다(마이그레이션 V202611051722)
+    // refund_step.last_reason 칸 길이와 같아야 한다(마이그레이션 V202611141555)
     // 입력 어댑터의 같은 값과 일치하는지 테스트(어댑터 쪽)가 보려고 public으로 연다
     public static final int MAX_FAILURE_CODE_LENGTH = 100;
 
@@ -89,13 +91,14 @@ public class RefundStepRunner {
     }
 
     /**
-     * 승인 뒤 다른 모듈 호출이 실패한 단계와 이유를 새 트랜잭션 구간에서 남긴다. 상태는 처리 중 그대로 둔다.
+     * 승인 뒤 다른 모듈 호출이 실패한 단계의 진행 줄에 이유를 새 트랜잭션 구간에서 남긴다. 환불 상태는 처리 중 그대로 둔다.
      * 다른 모듈 호출은 트랜잭션 밖에서 하므로 이 기록은 호출과 따로 저장되고, 호출이 실패해도 기록은 남는다.
+     * 진행 줄은 서비스가 호출 전에 만들어 두므로 여기서 만들지 않는다.
      * 패키지 안에서만 연다: {@link #run} 안에서 쓰고, 칸 길이 같은 저장 조건을 실제 DB로 확인하는 테스트가 직접 부른다.
      *
      * @param failureCode 에러 코드 이름, 없으면 예외 클래스 이름
      * @throws com.ok.common.exception.RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
-     * @throws IllegalStateException                    환불이 없으면 (시스템이 넘긴 ID라 부르는 쪽 버그)
+     * @throws IllegalStateException                    환불이나 그 단계의 진행 줄이 없으면 (부르는 쪽 버그)
      */
     void recordFailure(Long refundId, RefundStepType step, String failureCode) {
         recordTransaction.executeWithoutResult(status -> {
@@ -103,16 +106,19 @@ public class RefundStepRunner {
             // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)
             Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
                     .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
-            refund.recordFailure(step, failureCode);
-            refundPersistencePort.update(refund);
-
-            // 환불 행의 실패 칸을 지우기 전까지(이 이슈의 뒤 단계) 두 곳에 함께 남긴다. 단계 줄이 없는 호출(이 변경 전에 승인된 환불)은 환불 행에만 남는다
-            // 단계 줄은 환불 행을 위에서 잠근 같은 트랜잭션에서 고친다(잠금 순서: 환불 행 → 단계 줄)
-            refundStepPersistencePort.findByRefundIdAndType(refundId, step).ifPresent(stepRow -> {
-                if (stepRow.failForRetry(failureCode, LocalDateTime.now(clock))) {
-                    refundStepPersistencePort.update(stepRow);
-                }
-            });
+            // 환불 행은 고치지 않지만 잠근다. 단계 줄은 따로 잠그지 않고 환불 행 잠금으로 지키기 때문이다(결정 4, 잠금 순서: 환불 행 → 단계 줄).
+            // 처리 중이 아닌 환불(그사이 완료·거절 등)에 실패를 남기면 끝난 환불이 멈춘 것처럼 보이므로 막는다
+            if (refund.getStatus() != RefundStatus.PROCESSING) {
+                throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
+            }
+            // 서비스는 다른 모듈을 부르기 전에 진행 줄을 만들어 커밋한다(결정 5). 없다면 그 순서를 어긴 코드 버그라 표준 예외로 던진다.
+            // 이 예외는 run에서 원래 예외에 붙고 ERROR 로그로 남는다
+            RefundStep stepRow = refundStepPersistencePort.findByRefundIdAndType(refundId, step)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "실패를 기록할 단계 줄이 없습니다. refundId=" + refundId + ", step=" + step));
+            if (stepRow.failForRetry(failureCode, LocalDateTime.now(clock))) {
+                refundStepPersistencePort.update(stepRow);
+            }
         });
     }
 
@@ -123,12 +129,12 @@ public class RefundStepRunner {
         }
         String name = e.getClass().getSimpleName();
         // 만일을 대비한 처리: 그 자리에서 만든 이름 없는 예외(new RuntimeException() { })는 짧은 이름이 빈 값이라,
-        // 그대로 넘기면 Refund.recordFailure가 "이유가 비었다"며 거부해 진짜 실패가 기록되지 않는다. 지금 환불 코드에는 없지만
+        // 그대로 넘기면 RefundStep.failForRetry가 "이유가 비었다"며 거부해 진짜 실패가 기록되지 않는다. 지금 환불 코드에는 없지만
         // 이 틀로 부르는 호출(지금은 HandleWalletRefundResultService의 재고 복구, #544)이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
         if (name.isEmpty()) {
             name = e.getClass().getName();
         }
-        // 패키지까지 붙은 이름은 길 수 있다. 칸(failure_code VARCHAR(100))을 넘으면 저장이 실패해 역시 기록이 사라지므로,
+        // 패키지까지 붙은 이름은 길 수 있다. 칸(last_reason VARCHAR(100))을 넘으면 저장이 실패해 역시 기록이 사라지므로,
         // 어느 클래스인지 알아볼 수 있는 앞부분만 남긴다
         if (name.length() > MAX_FAILURE_CODE_LENGTH) {
             name = name.substring(0, MAX_FAILURE_CODE_LENGTH);

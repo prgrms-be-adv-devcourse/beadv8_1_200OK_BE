@@ -5,10 +5,13 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
 import com.ok.refund.application.port.out.RefundPersistencePort;
+import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
@@ -43,6 +46,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -75,6 +79,8 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     // 확인은 출력 포트(도메인)로 한다. 테이블 비우기는 포트에 없는 테스트 전용 작업이라 JPA 리포지토리로 한다
     @Autowired
     RefundPersistencePort refundPersistencePort;
+    @Autowired
+    RefundStepPersistencePort refundStepPersistencePort;
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
@@ -137,14 +143,43 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getCompletedAt()).isNotNull();
             // 끝났으므로 진행 중 칸을 비운다
             softly.assertThat(sut.getActiveOrderItemId()).isNull();
-            softly.assertThat(sut.getFailedStep()).isNull();
         });
+        // 멈춘 단계 없이 모든 단계(주문·지갑·재고)가 성공으로 끝났다
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED));
         assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(1);
         assertThat(productStockReleasePort.releasedOf(refundId).orElseThrow().productOptionId()).isEqualTo(PRODUCT_OPTION_ID);
     }
 
     @Test
-    void 지갑_실패_메시지를_받으면_처리_중으로_남고_지갑_단계_실패와_이유를_기록한다() throws Exception {
+    void 지갑_완료를_받으면_지갑_성공과_재고_성공_줄이_남고_완료된다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+
+        // when
+        walletResultSender.completeByWallet(refundId);
+
+        // then
+        RefundStep walletStep = stepOf(refundId, RefundStepType.WALLET);
+        RefundStep productStep = stepOf(refundId, RefundStepType.PRODUCT);
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            softly.assertThat(walletStep.getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(productStep.getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(productStep.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(productStep.getLastReason()).isNull();
+        });
+    }
+
+    @Test
+    void 지갑_실패_메시지를_받으면_지갑_줄이_멈춤과_이유를_남긴다() throws Exception {
         // given
         Long refundId = requestedRefundId();
         approve(refundId).andExpect(status().isOk());
@@ -155,13 +190,14 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
 
         // then: 실패 기록이 남을 때까지 기다린다
         RefundWalletResultSender.awaitUntil("실패 이유가 기록되지 않았습니다",
-                () -> reason.equals(refundPersistencePort.findById(refundId).orElseThrow().getFailureCode()));
+                () -> reason.equals(stepOf(refundId, RefundStepType.WALLET).getLastReason()));
         Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        RefundStep walletStep = stepOf(refundId, RefundStepType.WALLET);
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(sut.getFailureCode()).isEqualTo(reason);
+            softly.assertThat(walletStep.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(walletStep.getLastReason()).isEqualTo(reason);
         });
         // 돈이 안 돌아갔으니 재고도 되돌리지 않는다
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
@@ -195,7 +231,7 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     // 재고 복구 실패 경로를 실제 리스너 스레드로 확인한다. 서비스 단위 테스트는 트랜잭션을 실제로 묶지 않고(NoOpTransactionManager)
     // 오류 처리기도 거치지 않아, "재고 호출이 트랜잭션 밖이라 PRODUCT 기록이 따로 커밋된다"와 "오류 처리기가 다시 시도해 복구 뒤 완료한다"를 못 본다
     @Test
-    void 지갑_완료_뒤_재고_복구가_실패하면_PRODUCT_실패를_남기고_다시_시도해_복구되면_완료한다() throws Exception {
+    void 재고_복구가_실패했다가_다시_시도로_복구되면_재고_줄_시도_횟수가_2다() throws Exception {
         // given: 상품 서버가 실패하는 동안 지갑 완료 메시지가 온다
         Long refundId = requestedRefundId();
         approve(refundId).andExpect(status().isOk());
@@ -205,13 +241,15 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         walletResultSender.sendCompleted(refundId);
 
         // then: 재고 실패가 기록되고 처리 중으로 남는다(다시 시도는 1·2·4초... 간격이라 그 사이에 본다)
+        // 재고 줄은 다시 시도할 때 시도 중으로 바뀌지만 마지막 이유는 그대로라 이유로 기다린다
         RefundWalletResultSender.awaitUntil("재고 복구 실패가 기록되지 않았습니다",
-                () -> refundPersistencePort.findById(refundId).orElseThrow().getFailedStep() == RefundStepType.PRODUCT);
+                () -> refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.PRODUCT)
+                        .map(step -> "PRODUCT_API_FAILED".equals(step.getLastReason()))
+                        .orElse(false));
         Refund failed = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(failed).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(failed.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(failed.getFailureCode()).isEqualTo("PRODUCT_API_FAILED");
             softly.assertThat(failed.getCompletedAt()).isNull();
         });
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
@@ -222,6 +260,15 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         // then
         walletResultSender.awaitStatus(refundId, RefundStatus.COMPLETED);
         assertThat(productStockReleasePort.releasedOf(refundId).orElseThrow().productOptionId()).isEqualTo(PRODUCT_OPTION_ID);
+        // then: 재고 줄은 처음 시도 + 다시 시도로 두 번 시작했고 끝내 성공했다
+        RefundStep productStep = stepOf(refundId, RefundStepType.PRODUCT);
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        assertThat(productStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(productStep.getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(productStep.getAttemptCount()).isEqualTo(2);
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+        });
     }
 
     // 지갑 결과 리스너가 환불 전용 팩토리(오류 처리기)를 실제로 쓰는지 본다. 설정 단위 테스트는 처리기를 따로 만들어 보므로,
@@ -298,5 +345,10 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
                 .content("""
                         {"decision": "APPROVE"}
                         """));
+    }
+
+    // 그 단계 줄. 없으면 기록이 안 된 것이라 바로 실패한다
+    private RefundStep stepOf(Long refundId, RefundStepType type) {
+        return refundStepPersistencePort.findByRefundIdAndType(refundId, type).orElseThrow();
     }
 }

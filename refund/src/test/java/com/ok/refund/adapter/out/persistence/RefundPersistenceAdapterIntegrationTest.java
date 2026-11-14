@@ -4,7 +4,6 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
@@ -79,7 +78,6 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
         inTransaction(() -> {
             Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
             locked.approve(NOW, new RefundShippingFee(3_000L, 2_000L, 1_000L, true));
-            locked.recordFailure(RefundStepType.ORDER, "ORDER_API_FAILED");
             refundPersistencePort.update(locked);
             return null;
         });
@@ -93,8 +91,6 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getShippingFeeAmount()).isEqualTo(3_000L);
             softly.assertThat(sut.getRemoteAreaFeeAmount()).isEqualTo(2_000L);
             softly.assertThat(sut.getDeductedShippingFeeAmount()).isEqualTo(1_000L);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.ORDER);
-            softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
             softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(ORDER_ITEM_ID);
         });
     }
@@ -136,7 +132,7 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
             locked.approve(NOW, RefundShippingFee.none());
             refundPersistencePort.update(locked);
             refundPersistencePort.sumCancelledByOrderItem(ORDER_ID, SELLER_ID, List.of(RefundStatus.PROCESSING));
-            locked.recordFailure(RefundStepType.ORDER, "ORDER_API_FAILED");
+            locked.complete(NOW.plusMinutes(1));
             refundPersistencePort.update(locked);
             return null;
         });
@@ -145,9 +141,9 @@ class RefundPersistenceAdapterIntegrationTest extends AbstractIntegrationTest {
         Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.ORDER);
-            softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.COMPLETED);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(NOW.plusMinutes(1));
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
         });
     }
 

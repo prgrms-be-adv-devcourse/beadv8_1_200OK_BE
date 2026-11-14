@@ -55,12 +55,6 @@ public class Refund {
     // 지금은 승인과 같은 요청에서 바로 완료돼 decidedAt과 거의 같지만, 지갑 완료 메시지 뒤로 완료를 옮기면(#516) 달라진다
     private LocalDateTime completedAt;
 
-    // 처리 중에 다른 모듈 호출이 실패했을 때만 값이 있다(#412). 실패가 없는 것이 정상이라 null을 허용한다
-    private RefundStepType failedStep;
-
-    // 멈춘 이유. 에러 코드 이름이나 예외 클래스 이름만 둔다. 내부 메시지는 다른 모듈의 주소·응답 내용이 섞일 수 있어 남기지 않는다
-    private String failureCode;
-
     // 요청됨·처리 중일 때만 값이 있다. DB의 UNIQUE라 한 주문 상품에 진행 중인 요청을 두 건 받지 않는다.
     // 끝 상태(거절·철회)가 되면 비워 같은 상품에 새 요청을 받는다(MySQL UNIQUE는 NULL을 여러 개 허용).
     // DB 제약을 위한 칸이지만 "진행 중인가"라는 도메인 상태라 도메인이 직접 채우고 비운다
@@ -90,8 +84,6 @@ public class Refund {
             String rejectReason,
             LocalDateTime decidedAt,
             LocalDateTime completedAt,
-            RefundStepType failedStep,
-            String failureCode,
             Long activeOrderItemId,
             LocalDateTime createdAt
     ) {
@@ -114,8 +106,6 @@ public class Refund {
         this.rejectReason = rejectReason;
         this.decidedAt = decidedAt;
         this.completedAt = completedAt;
-        this.failedStep = failedStep;
-        this.failureCode = failureCode;
         this.activeOrderItemId = activeOrderItemId;
         this.createdAt = createdAt;
     }
@@ -156,7 +146,7 @@ public class Refund {
         long itemAmount = Math.multiplyExact(unitPrice, quantity);
         // 배송비 세 칸은 승인 때 정하므로 0으로 시작하고, 진행 중 칸은 이 주문 상품으로 채워 UNIQUE가 중복 요청을 막게 한다
         return new Refund(null, orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
-                unitPrice, itemAmount, 0L, 0L, 0L, cancelReason, RefundStatus.REQUESTED, null, null, null, null, null,
+                unitPrice, itemAmount, 0L, 0L, 0L, cancelReason, RefundStatus.REQUESTED, null, null, null,
                 orderItemId, null);
     }
 
@@ -188,8 +178,6 @@ public class Refund {
             String rejectReason,
             LocalDateTime decidedAt,
             LocalDateTime completedAt,
-            RefundStepType failedStep,
-            String failureCode,
             Long activeOrderItemId,
             LocalDateTime createdAt
     ) {
@@ -198,7 +186,7 @@ public class Refund {
         }
         return new Refund(id, orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
                 unitPrice, itemAmount, shippingFeeAmount, remoteAreaFeeAmount, deductedShippingFeeAmount, cancelReason,
-                status, rejectReason, decidedAt, completedAt, failedStep, failureCode, activeOrderItemId, createdAt);
+                status, rejectReason, decidedAt, completedAt, activeOrderItemId, createdAt);
     }
 
     /**
@@ -312,23 +300,6 @@ public class Refund {
         requireStatus(RefundStatus.PROCESSING);
         this.completedAt = now;
         finish(RefundStatus.COMPLETED);
-    }
-
-    /**
-     * 처리 중에 다른 모듈 호출이 실패해 멈춘 단계와 이유를 남긴다. 상태는 처리 중 그대로다.
-     * 같은 환불이 다시 실패하면 마지막 실패로 덮어쓴다. 다시 처리하는 방법은 후속이라 지우는 메서드는 아직 두지 않는다.
-     *
-     * @param failureCode 에러 코드 이름 또는 예외 클래스 이름
-     * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
-     * @throws IllegalArgumentException 단계나 이유가 비었으면 (부르는 쪽 버그)
-     */
-    public void recordFailure(RefundStepType step, String failureCode) {
-        if (step == null || failureCode == null || failureCode.isBlank()) {
-            throw new IllegalArgumentException("실패 단계와 이유는 필수입니다.");
-        }
-        requireStatus(RefundStatus.PROCESSING);
-        this.failedStep = step;
-        this.failureCode = failureCode;
     }
 
     public boolean isOwnedByBuyer(Long memberId) {

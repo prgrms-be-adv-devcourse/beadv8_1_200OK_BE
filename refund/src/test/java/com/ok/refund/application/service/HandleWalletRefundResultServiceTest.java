@@ -78,8 +78,8 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 완료_메시지가_금액과_주문이_같으면_재고를_되돌리고_완료로_바꾼다() {
         // given: 지갑 줄은 결과 대기. 재고 줄은 먼저 읽을 때와 시작 구간에서는 없고, 완료 구간에서는 시작 구간이 만든 줄이 보인다
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null);
         RefundStep startedProductStep = step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null);
         givenSteps(walletStep, null, null, startedProductStep);
@@ -117,8 +117,8 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 단계_줄이_없는_처리_중_환불에_완료가_오면_지갑_줄을_성공으로_만들고_완료한다() {
         // given: #574 전에 승인돼 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
@@ -145,9 +145,9 @@ class HandleWalletRefundResultServiceTest {
     void 불일치_뒤_올바른_완료가_오면_지갑_줄은_멈춤으로_남고_환불은_완료된다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "RESULT_MISMATCH")));
+                refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "RESULT_MISMATCH")));
+                refund(RefundStatus.PROCESSING)));
         RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "RESULT_MISMATCH");
         RefundStep startedProductStep = step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null);
         givenSteps(walletStep, null, null, startedProductStep);
@@ -173,9 +173,9 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패_뒤_같은_완료가_다시_오면_재고_단계를_다시_시작한다() {
         // given: 앞선 완료에서 지갑 줄은 성공, 재고 줄은 상품 호출 실패로 다시 시도 대기
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, 1, null);
         RefundStep productStep = step(RefundStepType.PRODUCT, RefundStepStatus.READY, 1, "PRODUCT_API_FAILED");
         givenSteps(walletStep, productStep);
@@ -208,7 +208,7 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 이미_완료된_환불의_완료_메시지는_넘기고_재고를_다시_부르지_않는다() {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
 
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
@@ -221,8 +221,8 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 읽은_뒤_잠그기_전에_완료되면_완료로_다시_바꾸지_않는다() {
         // given: 먼저 읽은 뒤 같은 메시지가 먼저 완료한 경우
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
 
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
@@ -250,7 +250,7 @@ class HandleWalletRefundResultServiceTest {
     @MethodSource("처리_중이_아닌_상태")
     void 처리_중이_아닌_환불의_완료_메시지는_넘긴다(RefundStatus status) {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(status, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(status)));
 
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
@@ -268,21 +268,14 @@ class HandleWalletRefundResultServiceTest {
     @MethodSource("어긋난_주문_구매자_금액")
     void 완료_메시지의_금액이나_주문이나_구매자가_다르면_완료하지_않고_불일치를_기록한다(long orderId, long buyerId, long amount) {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
         // when
         sut.completeAfterWalletRefund(completed(orderId, buyerId, amount));
 
-        // then: 지갑 줄이 없던 환불이라 멈춤으로 만들어 남긴다
-        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
-        then(refundPersistencePort).should().update(saved.capture());
-        assertThat(saved.getValue()).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("RESULT_MISMATCH");
-        });
+        // then: 지갑 줄이 없던 환불이라 멈춤으로 만들어 남긴다. 환불 행은 처리 중 그대로라 저장하지 않는다
+        then(refundPersistencePort).should(never()).update(any());
         ArgumentCaptor<RefundStep> created = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should().saveNew(created.capture());
         assertThat(created.getValue()).isNotNull();
@@ -305,21 +298,26 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 재고_복구가_실패하면_PRODUCT_실패를_기록하고_예외를_다시_던진다() {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        // 재고 줄은 먼저 읽을 때와 시작 구간에서는 없고, 실패를 기록할 때는 시작 구간이 만든 줄이 보인다
+        RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null);
+        RefundStep startedProductStep = step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null);
+        givenSteps(walletStep, null, null, startedProductStep);
         willThrow(new RestApiException(RefundErrorCode.PRODUCT_API_FAILED)).given(productStockReleasePort).releaseStock(any());
 
         // when & then
         assertThatThrownBy(() -> sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
-        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
-        then(refundPersistencePort).should().update(saved.capture());
-        assertThat(saved.getValue()).isNotNull();
+        // 실패는 재고 줄에만 남고 환불 행은 처리 중 그대로라 저장하지 않는다
+        then(refundPersistencePort).should(never()).update(any());
+        ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should(times(2)).update(updated.capture());
+        assertThat(updated.getAllValues()).containsExactly(walletStep, startedProductStep);
         assertSoftly(softly -> {
-            softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.PRODUCT);
-            softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("PRODUCT_API_FAILED");
+            softly.assertThat(startedProductStep.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(startedProductStep.getLastReason()).isEqualTo("PRODUCT_API_FAILED");
         });
     }
 
@@ -328,23 +326,16 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 실패_메시지는_WALLET_단계와_이유를_기록하고_처리_중으로_둔다() {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null);
         givenSteps(walletStep, null);
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
 
-        // then
-        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
-        then(refundPersistencePort).should().update(saved.capture());
-        assertThat(saved.getValue()).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("INSUFFICIENT_BALANCE");
-        });
+        // then: 실패는 지갑 줄에만 남고 환불 행은 처리 중 그대로라 저장하지 않는다
+        then(refundPersistencePort).should(never()).update(any());
         ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should().update(updated.capture());
         assertThat(updated.getValue()).isNotNull();
@@ -358,8 +349,8 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 단계_줄이_없는_처리_중_환불에_실패가_오면_지갑_줄을_멈춤으로_만든다() {
         // given: #574 전에 승인돼 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -381,7 +372,7 @@ class HandleWalletRefundResultServiceTest {
     void 같은_실패가_이미_기록돼_있으면_넘긴다() {
         // given: 같은 이유로 멈춘 지갑 줄
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "INSUFFICIENT_BALANCE")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "INSUFFICIENT_BALANCE"), null);
 
         // when
@@ -397,18 +388,16 @@ class HandleWalletRefundResultServiceTest {
     void 다른_이유의_실패는_마지막_실패로_덮어쓴다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "INSUFFICIENT_BALANCE")));
+                refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "INSUFFICIENT_BALANCE")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "INSUFFICIENT_BALANCE"), null);
 
         // when
         sut.recordWalletRefundFailure(failed("WALLET_FROZEN"));
 
         // then
-        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
-        then(refundPersistencePort).should().update(saved.capture());
-        assertThat(saved.getValue().getFailureCode()).isEqualTo("WALLET_FROZEN");
+        then(refundPersistencePort).should(never()).update(any());
         ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should().update(updated.capture());
         assertThat(updated.getValue()).isNotNull();
@@ -434,7 +423,7 @@ class HandleWalletRefundResultServiceTest {
     @MethodSource("처리_중이_아닌_상태")
     void 처리_중이_아닌_환불의_실패_메시지는_넘긴다(RefundStatus status) {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(status, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(status)));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -449,7 +438,7 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 이미_완료된_환불의_실패_메시지는_기록하지_않고_넘긴다() {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -463,22 +452,15 @@ class HandleWalletRefundResultServiceTest {
     @MethodSource("어긋난_주문_구매자_금액")
     void 실패_메시지의_금액이나_주문이나_구매자가_환불과_다르면_불일치를_기록한다(long orderId, long buyerId, long amount) {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         givenSteps(step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null), null);
 
         // when
         sut.recordWalletRefundFailure(failed(orderId, buyerId, amount, "INSUFFICIENT_BALANCE"));
 
-        // then: 지갑 사유가 아니라 불일치로 남아야 어느 번호가 틀렸는지 사람이 확인한다
-        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
-        then(refundPersistencePort).should().update(saved.capture());
-        assertThat(saved.getValue()).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("RESULT_MISMATCH");
-        });
+        // then: 지갑 사유가 아니라 불일치로 남아야 어느 번호가 틀렸는지 사람이 확인한다. 환불 행은 저장하지 않는다
+        then(refundPersistencePort).should(never()).update(any());
         ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should().update(updated.capture());
         assertThat(updated.getValue()).isNotNull();
@@ -491,8 +473,8 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 읽은_뒤_잠그기_전에_완료되면_실패를_기록하지_않는다() {
         // given
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
-        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -508,7 +490,7 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패가_기록된_환불의_실패_메시지는_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(succeededWalletStep(), failedProductStep());
 
         // when
@@ -523,7 +505,7 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패가_기록된_환불에_주문이_다른_실패_메시지가_와도_불일치를_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(succeededWalletStep(), failedProductStep());
 
         // when
@@ -538,7 +520,7 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패가_기록된_환불에_금액이_다른_완료_메시지가_와도_불일치를_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(succeededWalletStep(), failedProductStep());
 
         // when
@@ -553,9 +535,9 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 읽은_뒤_잠그기_전에_재고_실패가_기록되면_실패_메시지를_기록하지_않는다() {
         // given: 먼저 읽을 때는 재고 줄이 없고, 잠근 뒤에는 있다
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(succeededWalletStep(), null, failedProductStep());
 
         // when
@@ -570,9 +552,9 @@ class HandleWalletRefundResultServiceTest {
     @Test
     void 읽은_뒤_잠그기_전에_재고_실패가_기록되면_불일치를_기록하지_않는다() {
         // given: 먼저 읽을 때는 재고 줄이 없고, 잠근 뒤에는 있다
-        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING)));
         givenSteps(succeededWalletStep(), null, failedProductStep());
 
         // when
@@ -635,8 +617,8 @@ class HandleWalletRefundResultServiceTest {
     }
 
     // 저장된 환불을 되살린다. 단가 10,000 x 2개, 배송비 0이라 돌려줄 금액은 20,000원
-    private static Refund refund(RefundStatus status, RefundStepType failedStep, String failureCode) {
+    private static Refund refund(RefundStatus status) {
         return Refund.restore(REFUND_ID, ORDER_ID, 101L, 2, BUYER_ID, 5L, 55L, "감자", "1kg", 10_000L, 20_000L,
-                0L, 0L, 0L, null, status, null, null, null, failedStep, failureCode, null, null);
+                0L, 0L, 0L, null, status, null, null, null, null, null);
     }
 }
