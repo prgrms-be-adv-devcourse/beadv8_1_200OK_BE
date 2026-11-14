@@ -159,7 +159,7 @@ Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
 - Kafka 상태는 앱 헬스체크(`/actuator/health`, 관리 포트 18080)에 들어가지 않습니다. 앱은 메시지를 보내거나 받을 때 처음 브로커에 접속하므로, 브로커가 꺼져 있어도 기동은 됩니다.
-- 메시지 키는 문자열, 값은 JSON입니다. 접속 주소와 직렬화·역직렬화 설정은 `common`의 [`common-kafka.yaml`](../common/src/main/resources/common-kafka.yaml) 한 곳에 있고, Kafka를 쓰는 앱(`monolith`, `refund`, `payout`)이 `spring.config.import`로 가져옵니다(#538).
+- 메시지 키는 문자열, 값은 JSON입니다. 접속 주소와 직렬화·역직렬화 설정은 `common`의 [`common-kafka.yaml`](../common/src/main/resources/common-kafka.yaml) 한 곳에 있고, Kafka를 쓰는 앱(`monolith`, `refund`, `payout`, `wallet`)이 `spring.config.import`로 가져옵니다(#538).
   - **JSON 모양:** 날짜·시간은 ISO-8601 문자열(`"2026-10-30T14:00:00"`), 금액은 JSON 숫자이고, 값이 없는 필드도 이름을 남기고 `null`입니다. 보내는 쪽 클래스 이름(타입 헤더)은 싣지 않습니다.
   - **필드가 달라질 때:** 받는 쪽은 모르는 필드가 와도 읽고 빠진 필드는 `null`로 읽습니다. 그래서 보내는 쪽이 필드를 더해도 받는 쪽이 멈추지 않습니다. 필드 이름 변경·삭제나 타입 변경은 받는 쪽이 읽지 못하므로 두 모듈을 함께 바꿉니다.
   - **읽을 타입:** 타입 헤더가 없어 받는 쪽이 리스너(토픽)마다 정합니다(`@KafkaListener`의 `properties = "spring.json.value.default.type=..."`).
@@ -557,7 +557,7 @@ com.ok.wallet
 │   └── dto/              *Command, *Query, *Result, 토스 승인 결과(TossConfirmResult)
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
-    ├── in/event/         이벤트 리스너
+    ├── in/event/         이벤트 리스너(Spring 이벤트, Kafka), 받는 메시지 DTO(dto/), Kafka 수신 설정과 실패 기록 연결
     ├── out/persistence/  저장소 포트 구현(*RepositoryAdapter), Spring Data JPA 저장소, Querydsl 조회
     ├── out/event/        스프링 이벤트 발행 구현체
     └── out/toss/         토스 결제 승인 HTTP 구현, 토스 요청·응답 DTO, 설정
@@ -572,7 +572,7 @@ com.ok.wallet
 - 엔티티를 도메인 모델과 나누지 않습니다. 잔액 변경과 충전 완료는 엔티티 값만 바꾸고 저장은 변경 감지에 맡기므로, 나누면 저장이 빠졌을 때 오류 없이 잔액이 반영되지 않습니다.
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
 - 잠금 조회는 이름에 `ForUpdate`/`ForShare`를 넣고, `*JpaRepository`에만 `@Lock`을 붙입니다(`ForUpdate`는 `PESSIMISTIC_WRITE`, `ForShare`는 `PESSIMISTIC_READ`). 어댑터가 `@Lock`이 붙은 메서드를 직접 부르므로 포트 쪽에서 다시 선언하는 단계가 없습니다.
-- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 더해 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지, JPA 저장소의 포트 상속 금지, 잠금 조회 이름과 `@Lock` 종류가 맞는지, 어댑터의 잠금 조회가 같은 종류의 `@Lock` 메서드만 부르는지 검사).
+- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 더해 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지, JPA 저장소의 포트 상속 금지, 잠금 조회 이름과 `@Lock` 종류가 맞는지, 어댑터의 잠금 조회가 같은 종류의 `@Lock` 메서드만 부르는지, Kafka 타입은 `adapter`에서만 쓰는지 검사).
 
 **지갑 생성**
 
@@ -581,6 +581,15 @@ com.ok.wallet
 - "지갑이 있다"를 가입·판매자 승인의 증거로 쓰지 않습니다. 그런 판단이 필요하면 회원 쪽에 묻습니다.
 - 지갑이 없어도 뜻이 있는 정보(약관 동의처럼)는 지갑 행이 아니라 회원 ID로 따로 저장합니다. 지갑 정지처럼 지갑 자체의 상태를 바꾸는 기능만 `getOrCreate`로 지갑을 가져옵니다. 이렇게 두면 "지갑이 먼저 있어야 하는 기능"이 지갑을 바꾸는 입구 하나로 모입니다.
 - 판매자 지갑 `getOrCreate`는 판매자 승인 여부를 확인하지 않습니다. 지금은 승인된 판매자에게만 오는 정산금 입금에서만 부릅니다. 판매자가 직접 부르는 길(출금 등)을 만들면 승인 확인을 함께 넣습니다.
+
+**Kafka 수신과 실패 기록**
+
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`)입니다(#579). 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
+- 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
+- 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
+- 넘긴 메시지는 건너뛰지 않고 지갑 DB의 `wallet_message_failure`에 원문·가장 안쪽 원인과 함께 대기(`PENDING`)로 남기고 `[WALLET_MESSAGE_FAILED]` ERROR 로그를 한 번 남깁니다. 같은 메시지(토픽·파티션·오프셋)는 한 번만 남습니다. 기록마저 실패하면 오프셋을 옮기지 않아 같은 메시지를 다시 받습니다.
+- 지금은 사람이 기록을 보고 원인을 고친 뒤 처리하고 상태를 `RESOLVED`로 바꿉니다. 자동으로 다시 처리하는 기능은 아직 없습니다.
+- 리스너는 값 검사를 서비스를 부르기 전에 끝냅니다. 받는 메시지의 값이 틀리면 `IllegalArgumentException`을 던집니다(다시 시도하지 않고 기록됨).
 
 **잔액을 바꾸는 테스트**
 
