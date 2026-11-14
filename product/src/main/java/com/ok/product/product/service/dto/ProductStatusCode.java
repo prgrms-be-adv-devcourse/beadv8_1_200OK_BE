@@ -10,10 +10,20 @@ public enum ProductStatusCode {
 	ENDED;
 
 	public ProductStatus toDomain() {
-		return ProductStatus.valueOf(name());
+		return switch (this) {
+			case READY -> ProductStatus.READY;
+			case ON_SALE -> ProductStatus.ON_SALE;
+			case PAUSED -> ProductStatus.PAUSED;
+			case ENDED -> ProductStatus.ENDED;
+		};
 	}
 
 	public static ProductStatusCode from(ProductStatus status) {
-		return valueOf(status.name());
+		return switch (status) {
+			case READY -> READY;
+			case ON_SALE -> ON_SALE;
+			case PAUSED -> PAUSED;
+			case ENDED -> ENDED;
+		};
 	}
 }
