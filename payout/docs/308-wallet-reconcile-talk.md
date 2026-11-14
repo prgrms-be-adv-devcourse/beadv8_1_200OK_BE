@@ -2,8 +2,8 @@
 
 - 작성: 2026-11-12, 정산 담당
 - 상대: 지갑 담당 (`hyunjeong222`)
-- 관련: #308(이 일), #388 M5(상위), #106·#339(이벤트 약속), #309(outbox), #343(지갑 Kafka 수신 전환), #391(실패 범주), #532(지갑 내부 점검), #91
-- 기준 코드: `dev` (cc5da8b1)
+- 관련: #308(이 일), #388 M5(상위), #106·#339(이벤트 약속), #309(outbox), #343(common.event 삭제), #584·#579(지갑 Kafka 수신), #588(정산 Spring 발행 삭제), #391(실패 범주), #532(지갑 내부 점검), #91
+- 기준 코드: `dev` (cc5da8b1). 지갑 입금 경로는 #584(`feature/579`, db055167, 승인·머지 대기) 기준 (2026-11-14 고침)
 
 ## 1. 한 줄 요약
 
@@ -27,15 +27,15 @@
 
 | 사실 | 근거 |
 |---|---|
-| 지갑은 정산 입금을 **Spring 내부 이벤트**로 받는다. 지갑에는 Kafka 리스너가 없다 | `wallet/.../adapter/in/event/PayoutEventListener.java:25-39`, `docs/decisions/payout/309-payout-outbox.md:15` |
+| 지갑은 정산 입금을 **Kafka** `payout.seller-payout-created`로 받는다(컨슈머 그룹 `wallet`). 예전 Spring 리스너(`PayoutEventListener`)는 지워졌다 | #584 `PayoutKafkaListener.java:19-29` |
 | 원장 참조 키는 `"PAYOUT:" + payoutId`이고 표 전체에서 유일하다. 같은 정산이 두 번 입금되는 것은 DB가 막는다 | `SellerWalletService.java:20,64`, `V202610151012__wallet__create_seller_wallet_ledger_table.sql:11` |
 | 같은 정산 이벤트가 다시 오면 지갑은 이미 있는 키를 보고 입금하지 않고 넘어간다 | `SellerWalletService.java:69-71` |
 | 원장 유형은 `PAYOUT` 하나뿐이다. 지금 원장에는 정산 입금만 있다 | `SellerWalletLedgerType.java:4-6` |
 | 원장에는 판매자 회원 ID가 없고 `seller_wallet_id`만 있다. 회원 ID는 `seller_wallet.member_id`에 있다 | 원장 마이그레이션 :1-14, `V202610131100__wallet__create_seller_wallet_table.sql:3,7` |
 | 지갑에는 판매자 원장을 조회하는 기능이 없다. 저장소 포트에는 `save`, `existsBy...`만 있고, 내부 API는 구매자 잔액 조회 하나뿐이다 | `SellerWalletLedgerRepository.java:9-13`, `WalletInternalController.java:17,24` |
-| 지갑이 입금을 건너뛰면(`payoutId`·`payeeId`·`amount`가 비었거나 `amount <= 0`) `[PAYOUT_DEPOSIT_SKIPPED]` ERROR 로그만 남는다. DB에는 흔적이 없다 | `PayoutEventListener.java:29-36, 43-54` |
-| 지갑 처리가 실패하면 다시 처리되는 건 앱 재시작 때뿐이다(운영 설정) | `monolith/src/main/resources/application-prod.yml:22` |
-| 원장 `created_at`은 지갑이 이벤트를 처리한 시각이다. 이벤트 안의 정산 확정 시각(`createdAt`)은 지갑이 쓰지 않는다 | `BaseTime.java:26-28`, `PayoutEventListener.java:38` |
+| 지갑이 입금하지 못한 메시지(값이 비었거나 `amount <= 0`, JSON 오류, 다시 시도해도 실패)는 **지갑 DB** `wallet_message_failure`에 원문과 함께 남고 `[WALLET_MESSAGE_FAILED]` ERROR 로그가 남는다. 정산은 이 표를 볼 수 없다 | #584 `MessageFailureService.java:33-37`, `V202611141711__wallet__create_wallet_message_failure_table.sql` |
+| 일시적 실패는 1·2·4초 간격으로 3번 바로 다시 시도하고, 그래도 안 되면 실패 기록에 남긴다. 값이 틀린 메시지는 다시 시도하지 않고 바로 남긴다. 실패 기록은 자동으로 다시 처리하지 않고 사람이 처리한다 | #584 `WalletKafkaConsumerConfig.java:36-37, 59`, #584 본문 "참고 사항" |
+| 원장 `created_at`은 지갑이 이벤트를 처리한 시각이다. 이벤트 안의 정산 확정 시각(`createdAt`)은 지갑이 쓰지 않는다 | `BaseTime.java:26-28`, #584 `PayoutKafkaListener.java:29` |
 | 정산은 수수료 몫과 0원 이하 판매자 몫을 보내지 않는다 | `PayoutService.java:354` (#106) |
 | 정산 outbox의 "보냄(SENT)"은 Kafka 브로커가 받았다는 뜻일 뿐이다. 지갑 입금과는 관계가 없다 | `PayoutOutboxService.java:26-29`, 위 첫 줄 |
 | 정산 Job은 매일 02:00에 돈다 | `PayoutJobScheduler.java:19` |
@@ -68,8 +68,8 @@
 
 - 대사에서 어긋난 건이 나와도 정산은 멈추지 않는다. 대사는 정산 Job과 따로 돌고, 어긋난 건은 대사 표와 관리자 확인 목록에만 남긴다.
 
-- 매일 12:00에 확인한다. 배포 서버가 켜져 있는 시간(9시~18시) 안이고, 9시 재시작 때 지갑이 실패한 입금을 다시 처리한 뒤라서다.
-- 3번 확인하는 동안 서버 재시작이 최소 2번 지나므로, "확정 후 며칠 기다리기"를 따로 두지 않는다.
+- 매일 12:00에 확인한다. 배포 서버가 켜져 있는 시간(9시~18시) 안이다. 지갑은 일시적 실패를 1·2·4초 간격으로 바로 다시 시도하므로(#584) 12:00이면 정상 입금은 끝나 있다.
+- 3번 확인은 정산이 입금 이벤트를 다시 보낼 기회다. 지갑 실패 기록에 남은 정산도 다시 보내면 입금되고, 같은 `payoutId`라 두 번 들어가지 않는다(#584 코드로 시험해 확인). 그래서 "확정 후 며칠 기다리기"를 따로 두지 않는다.
 - 다시 보내는 입금 이벤트는 같은 `payoutId`라, 이미 입금됐으면 지갑이 넘어간다(위 사실 3번째 줄).
 
 ### 4-2. 정산 → 지갑: 확인 요청 (제안)
@@ -124,9 +124,9 @@
 
 ### 4-4. 지갑에 새로 필요한 것
 
-- Kafka 수신(지갑의 첫 Kafka 리스너)과 발행. 컨슈머 그룹은 지갑 전용으로 둔다(`payout/docs/kafka-switch-team-talk.md` 7-1).
+- 확인 요청 Kafka 수신과 확인 답 발행. 지갑 Kafka 수신 설정(`WalletKafkaConsumerConfig`, 그룹 `wallet`)은 #584로 이미 있으므로 같은 설정을 쓴다.
 - 원장 조회: 여러 키로 원장 행과 지갑 회원 ID를 한 번에 읽는 조회.
-- 이 요청은 입금 경로를 바꾸지 않는다. 다만 지갑에 Kafka 수신 설정을 처음 만드는 일이 #343과 겹치므로 같은 설정을 쓸 수 있다.
+- 이 요청은 입금 경로를 바꾸지 않는다.
 
 ### 4-5. 고르지 않은 방식
 
@@ -146,10 +146,11 @@
 
 ### 안건 2. 입금 이벤트를 다시 보내는 길
 
-- 지금 정산은 확정 때 두 길로 보낸다: Spring 이벤트(지갑이 받아 입금)와 Kafka `payout.seller-payout-created`(지갑이 아직 받지 않음) (`PayoutService.java:356-362`).
-- 정산 제안: 지갑이 #343으로 Kafka 수신을 하고, 다시 보내는 입금 이벤트도 기존 토픽 `payout.seller-payout-created`로 보낸다. 같은 `payoutId`라 이미 입금됐으면 지갑이 넘어간다.
-- 지갑이 Kafka로 받게 되면 정산은 Spring 이벤트 발행을 지운다(`PayoutModuleEventPublisher.java:7`의 `TODO(#343)`). 그 전까지는 같은 정산이 두 길로 오므로 지갑의 중복 방지가 두 길 모두에 걸려야 한다.
-- 정산은 #343을 전제로 진행한다. 대사의 "다시 보내기"는 #343 뒤에야 지갑 입금으로 이어지므로 시점만 맞춘다.
+**#584로 정해짐 (2026-11-14).** 이야기하지 않아도 된다.
+
+- 지갑이 Kafka `payout.seller-payout-created`로 입금 이벤트를 받는다(#584). 다시 보내는 입금 이벤트도 이 토픽으로 보내면 지갑이 입금하고, 같은 `payoutId`면 원장 확인에서 넘어간다.
+- 정산의 Spring 이벤트 발행(`PayoutModuleEventPublisher.java:7`의 `TODO(#343)`)은 #584 머지 뒤 #588에서 지운다.
+- 원래 제안: 지갑이 Kafka로 받고, 다시 보내는 입금 이벤트도 기존 토픽으로 보낸다. #584가 이 제안대로 되었다.
 
 ### 안건 3. 비교 기준
 
@@ -163,8 +164,8 @@
 ### 안건 4. 관리자 확인 목록에 넘어간 건의 처리
 
 - 정산 제안: 관리자 확인 목록에 넘어간 건("입금 없음", "금액 다름")은 대사가 자동으로 고치지 않고 관리자 확인으로 넘긴다.
-- 참고: 지갑 코드 주석은 "이 로그로 찾아 원인을 고친 뒤 수동으로 입금"이라고 한다(`PayoutEventListener.java:31-32`). 관리자가 입금할 때는 같은 키 `PAYOUT:{payoutId}`로 넣어 중복을 막는다.
-- 정할 것: 로그 수준. 지갑은 `ERROR`, 정산은 비슷한 "건너뛰고 계속" 경우를 `WARN`으로 남긴다(#421). 알림 기준을 맞출지.
+- 참고: 지갑은 입금하지 못한 메시지를 실패 기록에 남기고, 자동 재처리 전까지는 "기록을 보고 사람이 처리"한다(#584 본문). 관리자가 입금할 때는 같은 키 `PAYOUT:{payoutId}`로 넣어 중복을 막는다. 정산이 입금 이벤트를 다시 보내도 같은 키로 막힌다(4-1).
+- 정할 것: 로그 수준. 지갑은 `[WALLET_MESSAGE_FAILED]` `ERROR`, 정산은 비슷한 "건너뛰고 계속" 경우를 `WARN`으로 남긴다(#421). 알림 기준을 맞출지.
 
 ### 안건 5. 근거 없는 입금 (찾을 것 3번)
 
