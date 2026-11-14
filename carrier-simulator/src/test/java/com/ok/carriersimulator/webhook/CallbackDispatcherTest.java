@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.carriersimulator.config.SimulatorProperties;
 import com.ok.carriersimulator.core.CallbackAttempt;
 import com.ok.carriersimulator.core.CallbackOutcome;
 import com.ok.carriersimulator.core.CallbackRecord;
@@ -43,6 +44,8 @@ class CallbackDispatcherTest {
     @Autowired
     private CarrierSimulator simulator;
     @Autowired
+    private SimulatorProperties properties;
+    @Autowired
     private MutableClock clock;
 
     private FakeReceiver receiver;
@@ -60,6 +63,20 @@ class CallbackDispatcherTest {
 
     private Instant expiration() {
         return clock.instant().plus(Duration.ofHours(48));
+    }
+
+    @Test
+    void 종료된_뒤에_알림을_꺼내도_끝나기를_기다리는_쪽이_풀린다() throws Exception {
+        // given: 종료된 전송 관리자는 꺼낸 알림을 맡길 곳이 없다
+        CallbackDispatcher stopped = new CallbackDispatcher(simulator, sender, clock, properties);
+        stopped.destroy();
+        simulator.registerWebhook(SILENT, receiver.url(), expiration(), clock.instant());
+
+        // when
+        stopped.tick();
+
+        // then
+        assertThat(stopped.awaitIdle(Duration.ofSeconds(1))).isTrue();
     }
 
     @Test
