@@ -32,12 +32,12 @@ public class FakeRefundStepPersistencePort implements RefundStepPersistencePort 
 
     /** 이 단계의 새 줄 저장이 다음에 한 번 실패하게 한다. 실패하면 그 트랜잭션 구간 전체가 되돌려진다 */
     public void failNextSaveNew(RefundStepType type) {
-        failingSave.set(new FailingSave(type, null));
+        failingSave.set(new FailingSave(SaveKind.NEW, type, null));
     }
 
     /** 이 단계 줄을 이 상태로 고쳐 저장하는 일이 다음에 한 번 실패하게 한다 */
     public void failNextUpdateTo(RefundStepType type, RefundStepStatus status) {
-        failingSave.set(new FailingSave(type, status));
+        failingSave.set(new FailingSave(SaveKind.UPDATE, type, status));
     }
 
     public void clear() {
@@ -46,13 +46,13 @@ public class FakeRefundStepPersistencePort implements RefundStepPersistencePort 
 
     @Override
     public RefundStep saveNew(RefundStep step) {
-        failIfChosen(step, false);
+        failIfChosen(SaveKind.NEW, step);
         return persistenceAdapter.saveNew(step);
     }
 
     @Override
     public void update(RefundStep step) {
-        failIfChosen(step, true);
+        failIfChosen(SaveKind.UPDATE, step);
         persistenceAdapter.update(step);
     }
 
@@ -67,17 +67,23 @@ public class FakeRefundStepPersistencePort implements RefundStepPersistencePort 
     }
 
     // 고른 저장과 맞으면 한 번만 실패시키고 지운다. DB 연결 끊김 같은 일시적 오류를 흉내 내 표준 예외를 던진다
-    private void failIfChosen(RefundStep step, boolean isUpdate) {
+    // 새 줄 저장은 단계만 맞으면, 고쳐 저장은 단계와 바꾼 뒤 상태까지 맞아야 고른 저장이다
+    private void failIfChosen(SaveKind kind, RefundStep step) {
         FailingSave chosen = failingSave.get();
-        if (chosen == null || chosen.type() != step.getType()) {
+        if (chosen == null || chosen.kind() != kind || chosen.type() != step.getType()) {
             return;
         }
-        boolean matches = isUpdate ? chosen.status() == step.getStatus() : chosen.status() == null;
-        if (matches && failingSave.compareAndSet(chosen, null)) {
+        if (kind == SaveKind.UPDATE && chosen.status() != step.getStatus()) {
+            return;
+        }
+        if (failingSave.compareAndSet(chosen, null)) {
             throw new IllegalStateException("단계 줄 저장에 실패했습니다(테스트). step=" + step.getType() + ", status=" + step.getStatus());
         }
     }
 
-    private record FailingSave(RefundStepType type, RefundStepStatus status) {
+    private enum SaveKind { NEW, UPDATE }
+
+    // status는 UPDATE일 때만 쓴다(고쳐 저장한 뒤의 상태)
+    private record FailingSave(SaveKind kind, RefundStepType type, RefundStepStatus status) {
     }
 }

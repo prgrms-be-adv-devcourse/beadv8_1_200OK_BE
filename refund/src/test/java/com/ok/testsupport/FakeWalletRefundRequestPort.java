@@ -28,7 +28,10 @@ public class FakeWalletRefundRequestPort implements WalletRefundRequestPort {
         this.kafkaAdapter = kafkaAdapter;
     }
 
-    /** 실제 어댑터가 브로커 오류·시간 초과를 바꾸는 것처럼, 이후 발행이 보내지 않고 {@link IllegalStateException}을 던지게 한다 */
+    /**
+     * 실제 어댑터가 브로커 오류·시간 초과를 바꾸는 것처럼, 이후 발행이 보내지 않고 {@link IllegalStateException}을 던지게 한다.
+     * 한 번만이 아니라 {@link #clear} 전까지 계속 실패한다(다른 Fake의 {@code fail()}과 같은 뜻). 한 번만 할 일은 {@link #afterNextSend}다.
+     */
     public void fail() {
         failing = true;
     }

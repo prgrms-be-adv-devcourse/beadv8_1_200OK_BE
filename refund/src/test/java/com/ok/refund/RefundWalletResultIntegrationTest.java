@@ -30,6 +30,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.listener.AbstractMessageListenerContainer;
 import org.springframework.kafka.listener.CommonErrorHandler;
+import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.kafka.support.ExceptionMatcher;
@@ -72,6 +73,10 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     private static final Long ORDER_ID = 6_000L;
     private static final Long ORDER_ITEM_ID = 601L;
     private static final Long PRODUCT_OPTION_ID = 55L;
+    // 무시되는 실패 메시지가 처리됐는지 알려고 뒤이어 보내는 다른 환불(마커). 위 감자와 겹치지 않는 판매자 6의 모자다
+    private static final Long MARKER_SELLER_ID = 6L;
+    private static final Long MARKER_ORDER_ITEM_ID = 602L;
+    private static final Long MARKER_PRODUCT_OPTION_ID = 68L;
 
     @Autowired
     WebApplicationContext context;
@@ -444,13 +449,30 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     // 무시되는 메시지는 결과가 없어 처리됐는지 바로 볼 수 없다. 테스트 브로커는 토픽 파티션이 하나라 보낸 순서대로 처리되므로,
     // 같은 실패 토픽으로 다른 환불(판매자 6의 모자 602)의 실패를 뒤이어 보내고 그것이 기록되면 앞 메시지도 처리된 것으로 본다
     private void awaitFailedMessagesHandled() throws Exception {
-        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L, List.of(new BundleItem(602L, 5_000L, 1)));
-        orderQueryPort.put(new RefundableOrderItem(ORDER_ID, 602L, BUYER_ID, 6L, 68L, "모자", "검정", "PREPARING", 5_000L, 1, bundle));
-        Long markerRefundId = requestedRefundId(ORDER_ID, 602L);
-        approve(6L, markerRefundId).andExpect(status().isOk());
+        // 이 기다리기는 "파티션 하나를 리스너 하나가 차례로 처리"일 때만 뜻이 있다. 파티션이나 동시 처리 수가 늘면
+        // 마커가 먼저 처리돼도 앞 메시지가 아직 처리 중일 수 있어, 테스트가 실패하지 않고 의미만 잃으므로 먼저 확인한다
+        assertThat(walletResultSender.partitionCountOf(RefundWalletResultSender.FAILED_TOPIC)).isEqualTo(1);
+        assertThat(failedListenerConcurrency()).isEqualTo(1);
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(MARKER_ORDER_ITEM_ID, 5_000L, 1)));
+        orderQueryPort.put(new RefundableOrderItem(ORDER_ID, MARKER_ORDER_ITEM_ID, BUYER_ID, MARKER_SELLER_ID, MARKER_PRODUCT_OPTION_ID,
+                "모자", "검정", "PREPARING", 5_000L, 1, bundle));
+        Long markerRefundId = requestedRefundId(ORDER_ID, MARKER_ORDER_ITEM_ID);
+        approve(MARKER_SELLER_ID, markerRefundId).andExpect(status().isOk());
         walletResultSender.sendFailed(markerRefundId, "MARKER");
         RefundWalletResultSender.awaitUntil("뒤에 보낸 실패 메시지가 처리되지 않았습니다",
                 () -> "MARKER".equals(stepOf(markerRefundId, RefundStepType.WALLET).getLastReason()));
+    }
+
+    // 실패 토픽을 듣는 리스너 컨테이너의 동시 처리 수
+    private int failedListenerConcurrency() {
+        for (MessageListenerContainer container : listenerRegistry.getAllListenerContainers()) {
+            String[] topics = container.getContainerProperties().getTopics();
+            if (topics != null && Arrays.asList(topics).contains(RefundWalletResultSender.FAILED_TOPIC)) {
+                return ((ConcurrentMessageListenerContainer<?, ?>) container).getConcurrency();
+            }
+        }
+        throw new AssertionError("실패 토픽을 듣는 리스너가 없습니다");
     }
 
     private Long requestedRefundId() throws Exception {

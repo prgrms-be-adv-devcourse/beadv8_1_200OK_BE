@@ -63,6 +63,11 @@ public class RefundWalletResultSender {
         send(FAILED_TOPIC, message(refund, refund.getRefundAmount(), reason));
     }
 
+    /** 테스트 브로커에서 이 토픽의 파티션 수. 보낸 순서대로 처리된다고 가정하는 테스트가 그 가정을 먼저 확인할 때 쓴다 */
+    public int partitionCountOf(String topic) {
+        return kafkaTemplate.partitionsFor(topic).size();
+    }
+
     /** 환불이 주어진 상태가 될 때까지 기다린다. 시간 안에 안 되면 마지막 상태와 함께 실패한다 */
     public void awaitStatus(Long refundId, RefundStatus expected) {
         awaitUntil("환불 " + refundId + "이(가) " + expected + "이(가) 되지 않았습니다",
