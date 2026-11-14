@@ -3,8 +3,10 @@ package com.ok.payout.application.service;
 import com.ok.payout.application.port.in.PayoutAdjustmentResult;
 import com.ok.payout.application.port.in.PayoutCandidateResult;
 import com.ok.payout.application.port.in.PayoutItemResult;
+import com.ok.payout.application.port.in.PayoutResolutionResult;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
+import com.ok.payout.application.port.out.PayoutResolutionRow;
 import com.ok.payout.domain.PayoutCandidateItem;
 
 /**
@@ -36,5 +38,13 @@ final class PayoutQueryResultMapper {
         return new PayoutCandidateResult(row.candidateId(), row.eventType().name(), row.orderId(), row.orderItemId(),
                 row.sellerId(), row.amount(), row.candidateCreatedAt(), row.payoutId() != null, row.payoutId(),
                 adjustment);
+    }
+
+    // 범주는 DB에 없고 사유가 들고 있어 여기서 꺼냄 (#391, PayoutFailureReason.category)
+    static PayoutResolutionResult toResolutionResult(PayoutResolutionRow row) {
+        return new PayoutResolutionResult(row.resolutionId(), row.resolutionRequestId(), row.failureId(), row.orderId(),
+                row.orderItemId(), row.sellerId(), row.eventType().name(), row.amount(), row.reason().name(),
+                row.reason().getCategory().name(), row.detail(), row.failedAt(), row.method().name(), row.adminId(),
+                row.resolvedAt(), row.memo());
     }
 }

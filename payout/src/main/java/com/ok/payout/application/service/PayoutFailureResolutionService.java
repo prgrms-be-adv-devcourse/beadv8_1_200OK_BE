@@ -4,6 +4,8 @@ import com.ok.common.exception.RestApiException;
 import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutOrderResolutionResult;
 import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
+import com.ok.payout.application.port.in.PayoutResolutionResult;
+import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
 import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.PayoutFailure;
@@ -14,6 +16,8 @@ import com.ok.payout.exception.PayoutErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-// 잠기거나 멈춘 주문의 해결 (#568)
+// 잠기거나 멈춘 주문의 해결 (#568)과 해결 기록 조회 (#571)
 // 해결 = "다시 검사해도 된다"는 관리자 표시. 돈을 바로 내보내지 않고, 다음 배치가 금액 검사·결과 검증부터 다시 거침
 //   그래서 데이터·코드를 고치지 않고 해결하면 새 실패 기록이 생겨 다시 잠기거나 멈춤 (되돌리기는 두지 않음: 새 실패 기록이 해결을 상쇄)
 @Slf4j
@@ -88,6 +92,13 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         log.info("정산 실패 해결. orderId={}, adminId={}, 해결한 실패 기록 수={}", orderId, command.adminId(), saved.size());
         return new PayoutOrderResolutionResult(orderId, resolutionRequestId, saved.size(), first.getMethod().name(),
                 first.getAdminId(), first.getCreatedAt(), first.getMemo());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionResult> getResolutions(Long orderId, PayoutResolutionSearchQuery query) {
+        return payoutQueryRepository.findResolutionsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionResult);
     }
 
     // 원인 사슬에서 DB 드라이버 예외(SQLException)를 찾아 오류 번호가 중복 키(1062)인지 봄 (통합 테스트에서 실제 MySQL로 확인)

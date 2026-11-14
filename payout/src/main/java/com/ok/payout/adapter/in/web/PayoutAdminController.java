@@ -10,6 +10,8 @@ import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
@@ -131,5 +133,17 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(PayoutOrderResolutionResponse.from(
                 payoutFailureResolutionUseCase.resolveOrder(request.toCommand(orderId, memberId))));
+    }
+
+    // 해결 기록 조회 (#571, 1줄씩 보기): 실패 기록 1건 = 1줄
+    // 찾는 조건은 주문 ID 하나: 막고 푸는 단위가 주문이라, 주문상품 ID로 찾으면 배송비 줄·주문이 막힌 뒤 들어온 상품이 빈 결과로 보여 오해할 수 있음
+    @Override
+    @GetMapping("/orders/{orderId}/resolutions")
+    public ResponseEntity<PayoutPageResponse<PayoutResolutionResponse>> getResolutions(
+            @PathVariable Long orderId,
+            @Valid @ModelAttribute PayoutResolutionSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutFailureResolutionUseCase.getResolutions(orderId, request.toQuery()).map(PayoutResolutionResponse::from)));
     }
 }

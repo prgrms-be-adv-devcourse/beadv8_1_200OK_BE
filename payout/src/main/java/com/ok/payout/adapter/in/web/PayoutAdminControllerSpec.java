@@ -9,6 +9,8 @@ import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
@@ -283,5 +285,36 @@ interface PayoutAdminControllerSpec {
             @Parameter(hidden = true) Long memberId,
             @Parameter(description = "해결할 주문 ID", example = "100") Long orderId,
             PayoutOrderResolveRequest request
+    );
+
+    @Operation(summary = "해결 기록 조회 (1줄씩)", description = """
+            관리자 전용입니다. 주문 하나의 해결 기록을 해결 시각 최신순으로 조회합니다(같은 시각이면 해결 기록 ID 역순).
+            해결은 주문 단위로 요청하지만 기록은 해결한 실패 기록마다 1줄이라, 해결 1번에 여러 줄이 같은 요청 번호·관리자·메모로 나옵니다.
+            줄마다 그 실패 기록의 사유·범주·상세·실패 시각과, 실패한 정산후보의 종류·금액을 함께 줍니다.
+            해결 요청 1번을 1줄로 보려면 GET /api/v1/admin/payouts/orders/{orderId}/resolution-requests를 씁니다.
+            해결 기록이 없는 주문은 빈 목록입니다(정산은 주문 정보를 갖고 있지 않아 없는 주문인지 구별하지 않습니다).
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "주문 ID가 숫자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutResolutionResponse>> getResolutions(
+            @Parameter(description = "주문 ID", example = "100") Long orderId,
+            @ParameterObject PayoutResolutionSearchRequest request
     );
 }

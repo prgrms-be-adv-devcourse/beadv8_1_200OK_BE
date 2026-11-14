@@ -151,4 +151,9 @@ public interface PayoutQueryRepository {
 
     // 그 주문에 해결되지 않은 잠그는 사유의 실패 기록이 있는지 (#568, 스냅샷의 잠금 조건과 같음)
     boolean isOrderLocked(Long orderId);
+
+    // 그 주문의 해결 기록을 실패 기록·정산후보와 함께 페이지 단위로 조회 (#571, 1줄씩 보기)
+    // 정렬은 해결 시각 최신순 고정. 해결 요청 1번에 여러 줄이 거의 같은 시각에 생기므로 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    // 실패 기록 ID는 해결 기록에서 유니크, 정산후보 ID는 실패 기록에서 하나라 조인해도 줄이 늘지 않음
+    Page<PayoutResolutionRow> findResolutionsByOrderId(Long orderId, Pageable pageable);
 }
