@@ -38,7 +38,7 @@ public class PayoutJobConfig {
     //   validate : 지갑 차감 기록이 없거나 금액이 맞지 않는 주문의 후보를 실패로 기록 (이번 정산에서 빠짐, Job은 계속 진행)
     //              초과 청구 주문은 다음 배치에서 다시 검사하고 3번이면 멈춤(#549·#552), 수수료 불일치 주문은 잠겨 다음 배치부터 snapshot에서 빠짐
     //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
-    //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 그 판매자만 실패로 기록하고 계속 진행 (#90)
+    //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 주문별로 다시 저장해 보고 실패한 주문만 기록하고 계속 진행 (#90, #534)
     //              단 전원 실패(성공 0명)면 여기서 멈춤 (지킬 정산이 없는 공통 오류를 FAILED로 드러냄)
     //   verify   : 스냅샷과 임시 정산을 후보 단위로 비교, 어긋난 후보의 주문만 실패로 기록하고 잠금 (#290)
     //              단 코드 자체가 망가진 경우(판매자 합계 불일치 등)와 정산할 것이 0건 남은 경우는 여기서 멈춤
@@ -110,7 +110,8 @@ public class PayoutJobConfig {
 
     // tasklet 1회 호출 = 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 1회차. 부하를 고려해 판매자 단위로 끊어 반복 처리
     // 트랜잭션: tasklet 트랜잭션 1개는 조회만 하고, 저장은 판매자마다 별도 트랜잭션에서 커밋 (PayoutService.draft 참고, #90)
-    //   한 판매자 예외는 그 판매자만 롤백하고 UNEXPECTED_ERROR로 기록, Job은 계속 진행
+    //   한 판매자 예외는 그 판매자만 롤백하고, 주문별로 다시 저장해 본 뒤 실패한 주문만 UNEXPECTED_ERROR로 기록, Job은 계속 진행 (#534)
+    //     통과한 주문을 모아 저장하다 실패하면 통과했던 주문도 기록 (주문이 1개면 다시 시도 없이 그 판매자 후보 전체를 기록)
     //   단 전원 실패(성공 0명)면 마지막 회차에서 Step을 실패시켜 Job FAILED (failIfEverySellerFailed)
     //   실패 기록 저장마저 실패하는 등 그 밖의 예외는 그 회차가 실패하고 Job은 FAILED로 멈춤
     //   (이미 커밋된 판매자 draft는 같은 회차·이전 회차 모두 남지만 payout은 만들어지지 않음. 재실행은 새 스냅샷으로 처음부터)
@@ -134,8 +135,9 @@ public class PayoutJobConfig {
                 return RepeatStatus.FINISHED;
             }
             // 배치 실행 기록(BATCH_STEP_EXECUTION)에 판매자 수를 남김
-            //   WRITE_COUNT      = draft에 성공한 판매자 수
-            //   WRITE_SKIP_COUNT = 저장 중 예외로 건너뛰고 UNEXPECTED_ERROR로 기록한 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            //   WRITE_COUNT      = draft에 성공한 판매자 수 (주문별 다시 시도로 일부 주문만 저장된 판매자 포함, #534)
+            //   WRITE_SKIP_COUNT = 저장된 주문이 하나도 없어 후보 전부를 UNEXPECTED_ERROR로 기록한 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            //     일부 주문만 실패한 판매자는 여기 잡히지 않음 → 그 주문은 payout_failure와 "정산 draft 주문 처리 실패" WARN 로그로 확인
             //   filter count가 아니라 write skip count에 두는 이유: filter는 "처리기가 일부러 걸러낸 것", skip은 "예외로 쓰지 못하고 건너뛴 것"이라 뒤쪽이 맞음
             contribution.incrementWriteCount(result.draftedSellerCount());
             contribution.incrementWriteSkipCount(result.failedSellerCount());

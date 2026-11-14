@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +42,26 @@ public class PayoutSellerDraftService {
     // 정산후보 하나는 판매자 몫·시스템 몫 중 한 곳에만 들어감 (isSystemShare 기준)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void saveDraft(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
+        save(snapshotId, sellerId, candidates);
+    }
+
+    // 판매자 저장(saveDraft)이 실패했을 때, 주문 하나의 후보가 저장되는지만 시험함 (#534)
+    // saveDraft와 똑같이 저장하고 DB에 실제로 보내(flush) 오류가 나는지 본 뒤, 일부러 롤백해 아무것도 남기지 않음
+    //   주문마다 진짜로 저장하지 않는 이유: 판매자 draft는 스냅샷당 판매자 1건(UK snapshot_id, seller_id)이고
+    //   @Immutable이라 합계를 나중에 고칠 수 없음 → 통과한 주문을 모아 saveDraft로 한 번에 저장함 (PayoutService.retryByOrder)
+    // 오류가 나면 예외가 그대로 나가고 이 트랜잭션은 롤백됨
+    // setRollbackOnly: 예외 없이 이 트랜잭션을 롤백으로 끝내라는 표시. REQUIRES_NEW로 새로 시작한 트랜잭션이라
+    //   끝날 때 조용히 롤백되고(UnexpectedRollbackException 없음) 바깥 트랜잭션에는 영향이 없음
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void trySaveDraft(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
+        save(snapshotId, sellerId, candidates);
+        // 롤백으로 끝나는 트랜잭션은 커밋 때 flush하지 않음. 지금은 ID를 IDENTITY로 만들어 저장하는 순간 INSERT가 나가므로 없어도 오류가 드러나지만,
+        //   쓰기를 모아 보내는 방식(배치 INSERT 등)으로 바뀌어도 시험이 DB 오류를 놓치지 않게 직접 보냄
+        payoutSellerDraftRepository.flush();
+        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+    }
+
+    private void save(Long snapshotId, Long sellerId, List<PayoutCandidateItem> candidates) {
         List<PayoutCandidateItem> sellerShare = new ArrayList<>();
         List<PayoutSystemDraftItem> systemItems = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
@@ -60,7 +81,7 @@ public class PayoutSellerDraftService {
         }
     }
 
-    // saveDraft가 실패한 판매자의 후보 전체를 UNEXPECTED_ERROR로 기록
+    // 저장에 실패한 후보를 UNEXPECTED_ERROR로 기록 (판매자 후보 전체, 또는 주문별 다시 시도에서 실패한 주문의 후보, #534)
     // saveDraft와 다른 트랜잭션이어야 함: 실패한 saveDraft 트랜잭션은 이미 롤백돼 그 안에서는 저장할 수 없음
     // 기록된 후보는 이번 스냅샷의 draft 대상에서 빠져(PayoutQueryRepository 조건 ④) 같은 판매자를 다시 잡지 않음
     @Transactional(propagation = Propagation.REQUIRES_NEW)

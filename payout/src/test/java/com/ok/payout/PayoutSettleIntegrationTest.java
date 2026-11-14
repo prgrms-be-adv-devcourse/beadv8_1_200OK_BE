@@ -29,10 +29,12 @@ import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionConflictJpaRep
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.payout.adapter.in.batch.PayoutJobScheduler;
 import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutDraftResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -55,6 +57,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -88,6 +94,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private static final LocalDateTime FROM = LocalDateTime.of(2026, 9, 21, 0, 0);
     private static final LocalDateTime TO = LocalDateTime.of(2026, 9, 25, 0, 0);
     private static final int LIMIT = PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE;
+
+    // 주문 하나만 draft 저장 오류를 내는 테스트용 트리거 이름과 오류 메시지 (#534)
+    private static final String BLOCK_ORDER_TRIGGER = "test_block_order_seller_draft_item";
+    private static final String BLOCK_ORDER_MESSAGE = "테스트: 이 주문의 draft 항목 저장을 막음";
 
     // 실패 사유 이름 변경(ORDER_LOCKED → ORDER_HELD, #391) 마이그레이션. 옛 이름 행을 넣고 다시 실행해 결과를 확인함
     private static final String ORDER_HELD_RENAME_MIGRATION =
@@ -143,6 +153,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    // 이 테스트가 주문 저장을 막는 트리거를 만들었는지 (#534, unblockOrderDraftItem 참고)
+    private boolean orderDraftItemBlocked;
 
     // 이전 테스트가 중간에 실패해 남긴 데이터가 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
@@ -1618,6 +1631,97 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactlyInAnyOrder(tuple(20L, 19_400L), tuple(null, 600L));
     }
 
+    // ---------- draftStep 판매자 저장 실패 뒤 주문별 다시 시도 (#534) ----------
+
+    @Test
+    void 판매자의_한_주문이_저장_오류를_내도_같은_판매자의_다른_주문은_그날_정산된다() throws Exception {
+        // given: 판매자 20의 주문 2개 (각 대금·수수료). 20일 전에 생겨 대기 기간이 지남
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long brokenOrder = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, brokenOrder, 20L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, brokenOrder, 20L, 300L, createdAt);
+        long normalOrder = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, normalOrder, 20L, 19_400L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, normalOrder, 20L, 600L, createdAt);
+        // brokenOrder의 판매자 몫 항목을 저장할 때만 DB 오류가 나게 함
+        blockOrderDraftItem(brokenOrder);
+
+        // when: 실제 Job 실행 (판매자 저장 실패 → 주문별 시험 저장 → 통과한 주문만 저장)
+        JobExecution execution;
+        try {
+            execution = payoutJobRunner.runScheduled();
+        } finally {
+            unblockOrderDraftItem();
+        }
+
+        // then: Job은 끝까지 성공 (판매자 20은 주문 하나라도 저장됐으므로 실패 판매자가 아님)
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long snapshotId = snapshotIdOf(execution);
+
+        // then: 오류를 낸 주문의 후보 2건만 UNEXPECTED_ERROR, 트리거 메시지가 상세에 남음
+        //   (판매자 저장 예외도 같은 트리거 메시지라, 어느 예외로 기록했는지는 PayoutServiceTest가 확인)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(brokenOrder, PayoutFailureReason.UNEXPECTED_ERROR),
+                        tuple(brokenOrder, PayoutFailureReason.UNEXPECTED_ERROR));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .allSatisfy(failure -> assertThat(failure.getDetail())
+                        .startsWith("draft 처리 중 예외: ")
+                        .contains(BLOCK_ORDER_MESSAGE));
+
+        // then: 정상 주문만 정산. 오류 주문의 수수료(300)는 시스템 몫에 들어가지 않음
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(20L, 19_400L), tuple(null, 600L));
+
+        // then: 시험 저장은 모두 롤백됨 → 판매자 draft는 1건, 항목은 정상 주문 것만 (시험 저장이 남았다면 결과 검증이 Job을 멈춤)
+        assertThat(sellerDraftRepository.findBySnapshotId(snapshotId))
+                .singleElement()
+                .satisfies(draft -> assertThat(draft.getItems())
+                        .extracting(PayoutSellerDraftItem::getOrderId)
+                        .containsOnly(normalOrder));
+        assertThat(systemDraftItemRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutSystemDraftItem::getOrderId)
+                .containsOnly(normalOrder);
+
+        // then: 오류가 사라진 다음 실행에서 실패했던 주문만 정산됨 (하루 늦어질 뿐 빠지지 않음, 정상 주문은 두 번 정산되지 않음)
+        JobExecution next = payoutJobRunner.runScheduled();
+        assertThat(next.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(next)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(20L, 9_700L), tuple(null, 300L));
+    }
+
+    @Test
+    void 판매자_단위_오류면_모든_주문이_실패로_남는다() {
+        // given: 판매자 20의 주문 2개. 판매자 draft 자체가 막혀(UK 위반) 어느 주문으로 시험해도 실패함
+        long order1 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, order1, 20L, 9_700L, TO.minusDays(2));
+        long order2 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, order2, 20L, 19_400L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(snapshotId);
+        blockSellerDraft(snapshotId, 20L);
+
+        // when
+        PayoutDraftResult drafted;
+        try {
+            drafted = payoutService.draft(snapshotId, LIMIT);
+        } finally {
+            unblockSellerDraft(snapshotId, 20L);
+        }
+
+        // then: 판매자 단위 오류라 두 주문 후보 모두 실패 기록, 판매자 20은 실패 판매자
+        //   (#534 전 코드에서도 같은 결과. 주문별로 시험하는 분기는 PayoutServiceTest가 확인하고, 여기서는 실제 DB 예외로 Job이 멈추지 않는지 봄)
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(order1, PayoutFailureReason.UNEXPECTED_ERROR),
+                        tuple(order2, PayoutFailureReason.UNEXPECTED_ERROR));
+    }
+
     // ---------- 대기 건너뛰기 실행 (#224) ----------
 
     @Test
@@ -1857,6 +1961,42 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 snapshotId, sellerId, now, now);
     }
 
+    // 주문 하나만 저장 오류를 내는 상황 재현 (#534): 그 주문의 판매자 몫 항목을 넣을 때 DB가 오류를 냄 (MySQL 트리거)
+    // 미리 행을 넣어 UK로 막는 방법은 쓸 수 없음: 이미 draft 항목이 있는 후보는 draft 대상 조회에서 빠져 오류가 나지 않음
+    // 트리거는 테이블에 남으므로 반드시 unblockOrderDraftItem으로 지움 (cleanUp에서도 지움)
+    private void blockOrderDraftItem(long orderId) {
+        unblockOrderDraftItem();
+        orderDraftItemBlocked = true;
+        executeAsRoot(
+                "CREATE TRIGGER " + BLOCK_ORDER_TRIGGER + " BEFORE INSERT ON payout_seller_draft_item FOR EACH ROW " +
+                        "BEGIN IF NEW.order_id = " + orderId + " THEN " +
+                        "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '" + BLOCK_ORDER_MESSAGE + "'; END IF; END");
+    }
+
+    // 트리거를 만든 테스트에서만 root로 접속해 지움: 모든 테스트가 root로 접속하면 root 접속 문제 하나로 이 클래스 테스트가 전부 깨짐
+    private void unblockOrderDraftItem() {
+        if (!orderDraftItemBlocked) {
+            return;
+        }
+        executeAsRoot("DROP TRIGGER IF EXISTS " + BLOCK_ORDER_TRIGGER);
+        orderDraftItemBlocked = false;
+    }
+
+    // 트리거는 root로 만듦: 테스트 MySQL은 바이너리 로그가 켜져 있어, 앱 계정(SUPER 권한 없음)으로는 트리거를 만들 수 없음
+    //   공통 테스트 컨테이너 설정(common TestcontainersConfiguration)을 바꾸지 않으려고 이 테스트 안에서만 root로 따로 연결함
+    //   root 비밀번호: Testcontainers MySQL은 root 비밀번호를 앱 계정 비밀번호와 같게 둠
+    private void executeAsRoot(String sql) {
+        try {
+            HikariDataSource dataSource = jdbcTemplate.getDataSource().unwrap(HikariDataSource.class);
+            try (Connection connection = DriverManager.getConnection(dataSource.getJdbcUrl(), "root", dataSource.getPassword());
+                 Statement statement = connection.createStatement()) {
+                statement.execute(sql);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("테스트 트리거 SQL 실행 실패: " + sql, e);
+        }
+    }
+
     // 오류가 사라진 상황 재현: 막아 둔 빈 draft를 지움
     // 실제 오류 상황(롤백되어 아무것도 안 남음)과 같은 상태로 되돌려, 이후 검증·확정이 실제와 같은 데이터를 보게 함
     private void unblockSellerDraft(Long snapshotId, Long sellerId) {
@@ -1975,6 +2115,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 정산·draft·스냅샷은 전부, 정산 후보는 이 클래스 번호대만 지움 (FK 때문에 자식 테이블 먼저)
     // (리포지토리에는 삭제 기능이 없으므로 테스트 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
+        unblockOrderDraftItem();
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");
