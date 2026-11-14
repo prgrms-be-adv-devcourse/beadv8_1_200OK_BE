@@ -240,6 +240,37 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .extracting(PayoutBlockedOrderCause::getDetail).containsExactly("[원인] 또 다름");
     }
 
+    // ---------- 다시 돌려도 같은 결과 ----------
+
+    @Test
+    void 반영_표시를_올리기_전에_멈춰_같은_범위를_다시_판정해도_표와_원인이_같다() throws Exception {
+        // given: 잠긴 주문과 멈춘 주문을 한 번 갱신해 둠
+        List<Long> runs = runCompleted(3);
+        long locked = givenOrderWithFailures(List.of(runs.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        long stopped = givenOrderWithFailures(runs, PayoutFailureReason.AMOUNT_MISMATCH);
+        blockedOrderUseCase.refresh();
+        List<PayoutBlockedOrder> before = blockedOrderRepository.findAllById(List.of(locked, stopped));
+        List<PayoutBlockedOrderCause> causesBefore = causesOf(locked, stopped);
+
+        // when: 앞 묶음은 커밋됐지만 반영 표시를 올리기 전에 실패한 상황 → 다음 갱신이 같은 범위를 처음부터 다시 판정
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = 0");
+        blockedOrderUseCase.refresh();
+
+        // then: 줄은 그대로, 원인은 지우고 다시 넣어 줄 수가 늘지 않음
+        assertThat(blockedOrderRepository.findAllById(List.of(locked, stopped)))
+                .extracting(PayoutBlockedOrder::getOrderId, PayoutBlockedOrder::getStatus,
+                        PayoutBlockedOrder::getFailedRunCount, PayoutBlockedOrder::getLastFailedAt)
+                .containsExactlyInAnyOrderElementsOf(before.stream()
+                        .map(b -> tuple(b.getOrderId(), b.getStatus(), b.getFailedRunCount(), b.getLastFailedAt()))
+                        .toList());
+        assertThat(causesOf(locked, stopped))
+                .extracting(PayoutBlockedOrderCause::getOrderId, PayoutBlockedOrderCause::getReason,
+                        PayoutBlockedOrderCause::getDetail)
+                .containsExactlyInAnyOrderElementsOf(causesBefore.stream()
+                        .map(c -> tuple(c.getOrderId(), c.getReason(), c.getDetail()))
+                        .toList());
+    }
+
     // ---------- 원인 ----------
 
     @Test
@@ -377,6 +408,14 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
             insertFailure(snapshotId, candidate, order, null, reason, "테스트");
         }
         return order;
+    }
+
+    private List<PayoutBlockedOrderCause> causesOf(long... orderIds) {
+        List<PayoutBlockedOrderCause> causes = new ArrayList<>();
+        for (long orderId : orderIds) {
+            causes.addAll(causeRepository.findAllByOrderId(orderId));
+        }
+        return causes;
     }
 
     private void resolve(long orderId) {
