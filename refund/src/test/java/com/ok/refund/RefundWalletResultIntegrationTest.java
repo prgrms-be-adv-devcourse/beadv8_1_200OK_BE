@@ -8,7 +8,7 @@ import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -155,7 +155,7 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(sut.getFailureCode()).isEqualTo(reason);
         });
         // 돈이 안 돌아갔으니 재고도 되돌리지 않는다
@@ -201,7 +201,7 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
 
         // then: 재고 실패가 기록되고 처리 중으로 남는다(다시 시도는 1·2·4초... 간격이라 그 사이에 본다)
         RefundWalletResultSender.awaitUntil("재고 복구 실패가 기록되지 않았습니다",
-                () -> refundPersistencePort.findById(refundId).orElseThrow().getFailedStep() == RefundFailedStep.PRODUCT);
+                () -> refundPersistencePort.findById(refundId).orElseThrow().getFailedStep() == RefundStepType.PRODUCT);
         Refund failed = refundPersistencePort.findById(refundId).orElseThrow();
         assertThat(failed).isNotNull();
         assertSoftly(softly -> {

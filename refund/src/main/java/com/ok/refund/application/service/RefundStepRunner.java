@@ -3,7 +3,7 @@ package com.ok.refund.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -44,7 +44,7 @@ public class RefundStepRunner {
      * @param call 다른 모듈 호출. 돌려줄 값이 없으면 {@code null}을 돌려준다
      * @throws IllegalStateException 이미 열린 트랜잭션 안에서 부르면 (부르는 쪽 버그). 호출 전에 막는다
      */
-    public <T> T run(Long refundId, RefundFailedStep step, Supplier<T> call) {
+    public <T> T run(Long refundId, RefundStepType step, Supplier<T> call) {
         requireNoTransaction();
         try {
             return call.get();
@@ -68,7 +68,7 @@ public class RefundStepRunner {
     // 대신 기록이 없으면 처리 중인 건과 멈춘 건이 구분되지 않아 운영자가 놓치므로, 기록 실패는 원래 예외에 붙이고 ERROR로 남긴다.
     // 원래 예외가 RestApiException(*_API_FAILED 등)이면 ApiControllerAdvice가 응답만 만들고 로그를 남기지 않아, 이 로그가 기록 실패의 유일한 흔적이다.
     // 원래 예외가 그 밖의 예외면 advice가 suppressed까지 함께 남겨 기록 실패가 두 번 찍히지만, 드문 경우라 놓치지 않는 쪽을 택한다
-    private void recordFailureKeepingCause(Long refundId, RefundFailedStep step, RuntimeException cause) {
+    private void recordFailureKeepingCause(Long refundId, RefundStepType step, RuntimeException cause) {
         String failureCode = failureCodeOf(cause);
         try {
             recordFailure(refundId, step, failureCode);
@@ -88,7 +88,7 @@ public class RefundStepRunner {
      * @throws com.ok.common.exception.RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
      * @throws IllegalStateException                    환불이 없으면 (시스템이 넘긴 ID라 부르는 쪽 버그)
      */
-    void recordFailure(Long refundId, RefundFailedStep step, String failureCode) {
+    void recordFailure(Long refundId, RefundStepType step, String failureCode) {
         recordTransaction.executeWithoutResult(status -> {
             // 같은 환불을 동시에 결정·기록하는 다른 트랜잭션과 섞이지 않게 다른 결정처럼 잠근 뒤 고친다.
             // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)

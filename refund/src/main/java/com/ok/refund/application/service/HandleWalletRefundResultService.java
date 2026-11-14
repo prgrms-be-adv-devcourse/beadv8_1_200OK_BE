@@ -7,7 +7,7 @@ import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -89,7 +89,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
         }
         // 재고 복구는 구간 밖. 상품은 같은 refundId면 또 풀지 않아 같은 메시지가 다시 와도 안전하다.
         // 실패하면 틀이 PRODUCT 실패를 기록하고 예외를 다시 던진다. 오류 처리기가 다시 시도한다
-        refundStepRunner.run(refundId, RefundFailedStep.PRODUCT, () -> {
+        refundStepRunner.run(refundId, RefundStepType.PRODUCT, () -> {
             productStockReleasePort.releaseStock(new StockRelease(
                     refundId, refund.getOrderId(), refund.getProductOptionId(), refund.getQuantity()));
             return null;
@@ -135,7 +135,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
             if (locked.get().getStatus() != RefundStatus.PROCESSING || isSameFailure(locked.get(), command.reason())) {
                 return MarkOutcome.CHANGED;
             }
-            locked.get().recordFailure(RefundFailedStep.WALLET, command.reason());
+            locked.get().recordFailure(RefundStepType.WALLET, command.reason());
             refundPersistencePort.update(locked.get());
             return MarkOutcome.MARKED;
         });
@@ -180,7 +180,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     // 실패 단계는 #545가 어디부터 다시 할지, #546이 무엇을 되돌릴지 정하는 기준이라, 지갑 결과로 PRODUCT를 WALLET로 바꾸면
     // 돈을 다시 가져오지 않고 주문만 되돌려 구매자가 돈과 상품을 모두 받을 수 있다. 그래서 지갑 결과로는 덮어쓰지 않는다
     private static boolean isAfterWalletSuccess(Refund refund) {
-        return refund.getStatus() == RefundStatus.COMPLETED || refund.getFailedStep() == RefundFailedStep.PRODUCT;
+        return refund.getStatus() == RefundStatus.COMPLETED || refund.getFailedStep() == RefundStepType.PRODUCT;
     }
 
     // 앞선 지갑 완료와 모순된 결과라 사람이 확인해야 해 WARN으로 남긴다(읽을 때 완료였던 환불에 실패 메시지가 온 경우와 같은 취급).
@@ -192,7 +192,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
 
     private static boolean isSameFailure(Refund refund, String reason) {
         return refund.getStatus() == RefundStatus.PROCESSING
-                && refund.getFailedStep() == RefundFailedStep.WALLET
+                && refund.getFailedStep() == RefundStepType.WALLET
                 && reason.equals(refund.getFailureCode());
     }
 
@@ -225,7 +225,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
             if (locked.get().getStatus() != RefundStatus.PROCESSING) {
                 return MarkOutcome.CHANGED;
             }
-            locked.get().recordFailure(RefundFailedStep.WALLET, RESULT_MISMATCH);
+            locked.get().recordFailure(RefundStepType.WALLET, RESULT_MISMATCH);
             refundPersistencePort.update(locked.get());
             return MarkOutcome.MARKED;
         });

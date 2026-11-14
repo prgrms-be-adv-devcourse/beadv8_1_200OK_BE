@@ -7,7 +7,7 @@ import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import org.junit.jupiter.api.BeforeEach;
@@ -161,7 +161,7 @@ class HandleWalletRefundResultServiceTest {
         assertThat(saved.getValue()).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("RESULT_MISMATCH");
         });
         then(productStockReleasePort).should(never()).releaseStock(any());
@@ -191,7 +191,7 @@ class HandleWalletRefundResultServiceTest {
         assertThat(saved.getValue()).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundFailedStep.PRODUCT);
+            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.PRODUCT);
             softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("PRODUCT_API_FAILED");
         });
     }
@@ -213,7 +213,7 @@ class HandleWalletRefundResultServiceTest {
         assertThat(saved.getValue()).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("INSUFFICIENT_BALANCE");
         });
     }
@@ -222,7 +222,7 @@ class HandleWalletRefundResultServiceTest {
     void 같은_실패가_이미_기록돼_있으면_넘긴다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.WALLET, "INSUFFICIENT_BALANCE")));
+                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "INSUFFICIENT_BALANCE")));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -236,9 +236,9 @@ class HandleWalletRefundResultServiceTest {
     void 다른_이유의_실패는_마지막_실패로_덮어쓴다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.WALLET, "INSUFFICIENT_BALANCE")));
+                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "INSUFFICIENT_BALANCE")));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.WALLET, "INSUFFICIENT_BALANCE")));
+                refund(RefundStatus.PROCESSING, RefundStepType.WALLET, "INSUFFICIENT_BALANCE")));
 
         // when
         sut.recordWalletRefundFailure(failed("WALLET_FROZEN"));
@@ -306,7 +306,7 @@ class HandleWalletRefundResultServiceTest {
         assertThat(saved.getValue()).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(saved.getValue().getFailedStep()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(saved.getValue().getFailureCode()).isEqualTo("RESULT_MISMATCH");
         });
     }
@@ -331,7 +331,7 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패가_기록된_환불의_실패_메시지는_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -345,7 +345,7 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패가_기록된_환불에_주문이_다른_실패_메시지가_와도_불일치를_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
 
         // when
         sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
@@ -359,7 +359,7 @@ class HandleWalletRefundResultServiceTest {
     void 재고_실패가_기록된_환불에_금액이_다른_완료_메시지가_와도_불일치를_기록하지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
 
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT - 1));
@@ -375,7 +375,7 @@ class HandleWalletRefundResultServiceTest {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
 
         // when
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
@@ -389,7 +389,7 @@ class HandleWalletRefundResultServiceTest {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING, null, null)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(
-                refund(RefundStatus.PROCESSING, RefundFailedStep.PRODUCT, "PRODUCT_API_FAILED")));
+                refund(RefundStatus.PROCESSING, RefundStepType.PRODUCT, "PRODUCT_API_FAILED")));
 
         // when
         sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
@@ -423,7 +423,7 @@ class HandleWalletRefundResultServiceTest {
     }
 
     // 저장된 환불을 되살린다. 단가 10,000 x 2개, 배송비 0이라 돌려줄 금액은 20,000원
-    private static Refund refund(RefundStatus status, RefundFailedStep failedStep, String failureCode) {
+    private static Refund refund(RefundStatus status, RefundStepType failedStep, String failureCode) {
         return Refund.restore(REFUND_ID, ORDER_ID, 101L, 2, BUYER_ID, 5L, 55L, "감자", "1kg", 10_000L, 20_000L,
                 0L, 0L, 0L, null, status, null, null, null, failedStep, failureCode, null, null);
     }

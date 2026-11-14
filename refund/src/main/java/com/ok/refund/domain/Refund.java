@@ -56,7 +56,7 @@ public class Refund {
     private LocalDateTime completedAt;
 
     // 처리 중에 다른 모듈 호출이 실패했을 때만 값이 있다(#412). 실패가 없는 것이 정상이라 null을 허용한다
-    private RefundFailedStep failedStep;
+    private RefundStepType failedStep;
 
     // 멈춘 이유. 에러 코드 이름이나 예외 클래스 이름만 둔다. 내부 메시지는 다른 모듈의 주소·응답 내용이 섞일 수 있어 남기지 않는다
     private String failureCode;
@@ -90,7 +90,7 @@ public class Refund {
             String rejectReason,
             LocalDateTime decidedAt,
             LocalDateTime completedAt,
-            RefundFailedStep failedStep,
+            RefundStepType failedStep,
             String failureCode,
             Long activeOrderItemId,
             LocalDateTime createdAt
@@ -188,7 +188,7 @@ public class Refund {
             String rejectReason,
             LocalDateTime decidedAt,
             LocalDateTime completedAt,
-            RefundFailedStep failedStep,
+            RefundStepType failedStep,
             String failureCode,
             Long activeOrderItemId,
             LocalDateTime createdAt
@@ -322,7 +322,7 @@ public class Refund {
      * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
      * @throws IllegalArgumentException 단계나 이유가 비었으면 (부르는 쪽 버그)
      */
-    public void recordFailure(RefundFailedStep step, String failureCode) {
+    public void recordFailure(RefundStepType step, String failureCode) {
         if (step == null || failureCode == null || failureCode.isBlank()) {
             throw new IllegalArgumentException("실패 단계와 이유는 필수입니다.");
         }

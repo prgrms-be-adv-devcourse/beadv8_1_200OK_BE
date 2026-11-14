@@ -7,7 +7,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
@@ -70,7 +70,7 @@ class RefundStepRunnerTest {
     @Test
     void 성공하면_결과를_돌려주고_기록하지_않는다() {
         // when
-        String result = sut.run(REFUND_ID, RefundFailedStep.WALLET, () -> "OK");
+        String result = sut.run(REFUND_ID, RefundStepType.WALLET, () -> "OK");
 
         // then
         assertThat(result).isEqualTo("OK");
@@ -84,10 +84,10 @@ class RefundStepRunnerTest {
         givenProcessingRefund();
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
-        assertRecorded(RefundFailedStep.ORDER, "ORDER_API_FAILED");
+        assertRecorded(RefundStepType.ORDER, "ORDER_API_FAILED");
     }
 
     // 예외 메시지에는 다른 모듈의 응답 내용이 들어갈 수 있어 메시지가 아니라 클래스 이름만 남는지 본다
@@ -98,10 +98,10 @@ class RefundStepRunnerTest {
         givenProcessingRefund();
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.PRODUCT, () -> {
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw failure;
         })).isSameAs(failure);
-        assertRecorded(RefundFailedStep.PRODUCT, "IllegalStateException");
+        assertRecorded(RefundStepType.PRODUCT, "IllegalStateException");
     }
 
     // 만일을 대비한 경우: 그 자리에서 만든 이름 없는 예외는 짧은 이름이 빈 값이라, 그대로 넘기면 기록이 거부돼 실패가 남지 않는다
@@ -113,10 +113,10 @@ class RefundStepRunnerTest {
         givenProcessingRefund();
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
-        assertRecorded(RefundFailedStep.ORDER, failure.getClass().getName());
+        assertRecorded(RefundStepType.ORDER, failure.getClass().getName());
     }
 
     // 칸(failure_code)이 100자라 넘는 이름을 그대로 넘기면 저장이 실패해 기록이 사라진다. 앞 100자만 남는지 본다
@@ -128,11 +128,11 @@ class RefundStepRunnerTest {
         givenProcessingRefund();
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.PRODUCT, () -> {
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw failure;
         })).isSameAs(failure);
         assertThat(name.length()).isGreaterThan(RefundStepRunner.MAX_FAILURE_CODE_LENGTH);
-        assertRecorded(RefundFailedStep.PRODUCT, name.substring(0, RefundStepRunner.MAX_FAILURE_CODE_LENGTH));
+        assertRecorded(RefundStepType.PRODUCT, name.substring(0, RefundStepRunner.MAX_FAILURE_CODE_LENGTH));
     }
 
     private static class 이름이_아주_긴_예외_클래스는_실패_이유_칸의_길이를_넘을_수_있어서_앞부분만_남기는지_확인하려고_일부러_길게_지은_테스트_전용_예외_클래스_이름입니다_조금_더_길게_백자를_넘기도록
@@ -148,7 +148,7 @@ class RefundStepRunnerTest {
         willThrow(recordError).given(refundPersistencePort).findByIdForUpdate(REFUND_ID);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.WALLET, () -> {
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.WALLET, () -> {
             throw failure;
         })).isSameAs(failure)
                 .satisfies(e -> assertThat(e.getSuppressed()).containsExactly(recordError));
@@ -164,7 +164,7 @@ class RefundStepRunnerTest {
                 .given(refundPersistencePort).findByIdForUpdate(REFUND_ID);
 
         // when
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundFailedStep.ORDER, () -> {
+        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
 
@@ -187,13 +187,13 @@ class RefundStepRunnerTest {
         givenProcessingRefund();
 
         // when
-        sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED");
+        sut.recordFailure(REFUND_ID, RefundStepType.ORDER, "ORDER_API_FAILED");
 
         // then: 명시적 저장(#481). update에 넘긴 값이 저장될 값이라 그 값을 본다
         Refund updated = capturedUpdate();
         assertSoftly(softly -> {
             softly.assertThat(updated.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(updated.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(updated.getFailedStep()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(updated.getFailureCode()).isEqualTo("ORDER_API_FAILED");
         });
     }
@@ -205,7 +205,7 @@ class RefundStepRunnerTest {
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.empty());
 
         // when & then
-        assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundFailedStep.ORDER, "ORDER_API_FAILED"))
+        assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundStepType.ORDER, "ORDER_API_FAILED"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("실패를 기록할 환불이 없습니다. refundId=7");
     }
@@ -218,7 +218,7 @@ class RefundStepRunnerTest {
     }
 
     // 기록한 단계와 이유는 update에 넘긴 환불에 담긴다
-    private void assertRecorded(RefundFailedStep step, String failureCode) {
+    private void assertRecorded(RefundStepType step, String failureCode) {
         Refund updated = capturedUpdate();
         assertSoftly(softly -> {
             softly.assertThat(updated.getFailedStep()).isEqualTo(step);

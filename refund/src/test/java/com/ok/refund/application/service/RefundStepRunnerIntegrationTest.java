@@ -4,7 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
-import com.ok.refund.domain.RefundFailedStep;
+import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
@@ -73,7 +73,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         Long refundId = processingRefundId();
 
         // when
-        assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundFailedStep.ORDER, () -> {
+        assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundStepType.ORDER, () -> {
             throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         })).isInstanceOfSatisfying(RestApiException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
@@ -83,7 +83,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
         });
     }
@@ -92,7 +92,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
     // 그래서 모든 단계 이름과 엔티티가 허용하는 가장 긴 이유(100자)가 실제 칸에 들어가는지 본다
     @ParameterizedTest
     @MethodSource("모든_실패_단계")
-    void 모든_단계와_가장_긴_이유가_DB에_저장된다(RefundFailedStep step) {
+    void 모든_단계와_가장_긴_이유가_DB에_저장된다(RefundStepType step) {
         // given
         Long refundId = processingRefundId();
         String longestFailureCode = "E".repeat(100);
@@ -109,8 +109,8 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
-    static Stream<RefundFailedStep> 모든_실패_단계() {
-        return Stream.of(RefundFailedStep.values());
+    static Stream<RefundStepType> 모든_실패_단계() {
+        return Stream.of(RefundStepType.values());
     }
 
     // 바깥 트랜잭션 안에서 부르면 기록이 거기에 합류해 원래 예외로 롤백될 때 함께 사라진다. 다른 모듈을 부르기 전에 막아야 한다
@@ -122,7 +122,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
 
         // when & then
         assertThatThrownBy(() -> outer.executeWithoutResult(status ->
-                refundStepRunner.run(1L, RefundFailedStep.ORDER, () -> {
+                refundStepRunner.run(1L, RefundStepType.ORDER, () -> {
                     called.set(true);
                     return null;
                 })))

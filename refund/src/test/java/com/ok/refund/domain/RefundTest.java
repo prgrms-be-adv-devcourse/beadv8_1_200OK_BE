@@ -384,12 +384,12 @@ class RefundTest {
         sut.approve(NOW, RefundShippingFee.none());
 
         // when
-        sut.recordFailure(RefundFailedStep.WALLET, "WALLET_API_FAILED");
+        sut.recordFailure(RefundStepType.WALLET, "WALLET_API_FAILED");
 
         // then
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.WALLET);
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(sut.getFailureCode()).isEqualTo("WALLET_API_FAILED");
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
@@ -418,7 +418,7 @@ class RefundTest {
         toState.accept(refund);
 
         // when & then
-        assertThatThrownBy(() -> refund.recordFailure(RefundFailedStep.WALLET, "WALLET_API_FAILED"))
+        assertThatThrownBy(() -> refund.recordFailure(RefundStepType.WALLET, "WALLET_API_FAILED"))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
         assertThat(refund.getFailedStep()).isNull();
@@ -434,7 +434,7 @@ class RefundTest {
 
     @ParameterizedTest
     @MethodSource("비어_있는_실패_정보")
-    void 실패_단계나_이유가_비면_표준_예외로_막는다(RefundFailedStep step, String failureCode) {
+    void 실패_단계나_이유가_비면_표준_예외로_막는다(RefundStepType step, String failureCode) {
         // given
         Refund refund = requested();
         refund.approve(NOW, RefundShippingFee.none());
@@ -448,8 +448,8 @@ class RefundTest {
     static Stream<Arguments> 비어_있는_실패_정보() {
         return Stream.of(
                 Arguments.of(null, "WALLET_API_FAILED"),
-                Arguments.of(RefundFailedStep.WALLET, null),
-                Arguments.of(RefundFailedStep.WALLET, " "));
+                Arguments.of(RefundStepType.WALLET, null),
+                Arguments.of(RefundStepType.WALLET, " "));
     }
 
     @Test
@@ -489,7 +489,7 @@ class RefundTest {
 
         // when
         Refund sut = Refund.restore(7L, 10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, 20_000L, 3_000L, 2_000L, 1_000L,
-                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, completedAt, RefundFailedStep.ORDER, "ORDER_API_FAILED",
+                "옵션을 잘못 골랐습니다.", RefundStatus.PROCESSING, null, NOW, completedAt, RefundStepType.ORDER, "ORDER_API_FAILED",
                 101L, createdAt);
 
         // then
@@ -514,7 +514,7 @@ class RefundTest {
             softly.assertThat(sut.getRejectReason()).isNull();
             softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
             softly.assertThat(sut.getCompletedAt()).isEqualTo(completedAt);
-            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundFailedStep.ORDER);
+            softly.assertThat(sut.getFailedStep()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(sut.getFailureCode()).isEqualTo("ORDER_API_FAILED");
             softly.assertThat(sut.getActiveOrderItemId()).isEqualTo(101L);
             softly.assertThat(sut.getCreatedAt()).isEqualTo(createdAt);
