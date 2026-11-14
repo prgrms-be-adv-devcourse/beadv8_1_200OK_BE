@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.client.RestClient;
@@ -288,6 +289,31 @@ class TrackGraphQlTest {
             softly.assertThat(sut.<Boolean>read("$.data.registerTrackWebhook")).isTrue();
             softly.assertThat(detail.registration()).isNull();
         });
+    }
+
+    @ParameterizedTest
+    @MethodSource("형식이_틀린_요청")
+    void 형식이_틀린_요청에는_BAD_REQUEST가_온다(String query, String classification) {
+        // given
+        String token = client.token();
+
+        // when
+        HttpResult sut = client.graphql(query, Map.of(), token);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.status()).isEqualTo(200);
+            softly.assertThat(sut.<String>read("$.errors[0].extensions.code")).isEqualTo("BAD_REQUEST");
+            softly.assertThat(sut.<String>read("$.errors[0].extensions.classification")).isEqualTo(classification);
+        });
+    }
+
+    static Stream<Arguments> 형식이_틀린_요청() {
+        return Stream.of(
+                Arguments.of("query { track(carrierId: \"kr.cjlogistics\", trackingNumber: \"901000000001\") { nope } }",
+                        "ValidationError"),
+                Arguments.of("query { track(carrierId: \"kr.cjlogistics\") { trackingNumber } }", "ValidationError"),
+                Arguments.of("query { track(carrierId: ", "InvalidSyntax"));
     }
 
     @ParameterizedTest

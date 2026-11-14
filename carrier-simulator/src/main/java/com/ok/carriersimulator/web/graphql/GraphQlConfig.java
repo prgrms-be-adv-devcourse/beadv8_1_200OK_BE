@@ -17,8 +17,11 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.graphql.execution.DataFetcherExceptionResolverAdapter;
@@ -53,6 +56,43 @@ class GraphQlConfig {
                     builder.graphQLContext(Map.of(AUTHORIZATION_CONTEXT_KEY, header == null ? "" : header)).build());
             return chain.next(request);
         };
+    }
+
+    // 형식이 틀린 요청(문법, 검증)과 예상 못 한 예외의 오류에도 Delivery Tracker의 ErrorCode처럼 extensions.code를 붙인다.
+    // 검증 오류는 데이터를 가져오기 전에 실패해 예외 처리기를 거치지 않으므로 응답을 마지막에 손본다.
+    // 실제 Delivery Tracker가 이런 경우에 어떤 코드를 주는지는 확인하지 못해, 코드의 뜻에 맞춰 정했다
+    @Bean
+    WebGraphQlInterceptor errorCodeInterceptor() {
+        return (request, chain) -> chain.next(request).map(response -> {
+            List<GraphQLError> original = response.getExecutionResult().getErrors();
+            if (original.isEmpty()) {
+                return response;
+            }
+            List<GraphQLError> errors = original.stream().map(GraphQlConfig::withCode).toList();
+            return response.transform(builder -> builder.errors(errors));
+        });
+    }
+
+    // 요청이 잘못돼서 생기는 오류의 분류. 그 밖의 오류는 서버 쪽 문제다
+    private static final Set<String> CLIENT_ERROR_CLASSIFICATIONS = Set.of("ValidationError", "InvalidSyntax", "BAD_REQUEST");
+
+    static GraphQLError withCode(GraphQLError error) {
+        Map<String, Object> extensions = error.getExtensions();
+        if (extensions != null && extensions.containsKey("code")) {
+            return error;
+        }
+        SimulatorGraphQlException.Code code = CLIENT_ERROR_CLASSIFICATIONS.contains(String.valueOf(error.getErrorType()))
+                ? SimulatorGraphQlException.Code.BAD_REQUEST
+                : SimulatorGraphQlException.Code.INTERNAL;
+        Map<String, Object> merged = new LinkedHashMap<>(extensions == null ? Map.of() : extensions);
+        merged.put("code", code.name());
+        return GraphqlErrorBuilder.newError()
+                .message(error.getMessage())
+                .locations(error.getLocations())
+                .path(error.getPath())
+                .errorType(error.getErrorType())
+                .extensions(merged)
+                .build();
     }
 
     @Bean

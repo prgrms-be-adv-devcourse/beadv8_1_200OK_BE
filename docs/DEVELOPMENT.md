@@ -540,7 +540,7 @@ DELIVERY_TRACKER_POLL_INTERVAL=2s
 | 경로 | 내용 |
 |---|---|
 | `POST /oauth2/token` | 토큰 발급(client credentials). 수명은 `simulator.token-ttl`(기본 1시간) |
-| `POST /graphql` | `track` 조회와 `registerTrackWebhook` 알림 등록. 오류는 HTTP 200 본문의 `errors[].extensions.code`(`UNAUTHENTICATED`, `NOT_FOUND`, `BAD_REQUEST`, `INTERNAL`) |
+| `POST /graphql` | `track` 조회와 `registerTrackWebhook` 알림 등록. 오류는 HTTP 200 본문의 `errors[].extensions.code`(`UNAUTHENTICATED`, `NOT_FOUND`, `BAD_REQUEST`, `INTERNAL`). 문법이나 검증이 틀린 요청은 `BAD_REQUEST`, 예상 못 한 예외는 `INTERNAL`이다 |
 | 등록한 `callbackUrl` | 상태가 바뀔 때마다 `{"carrierId", "trackingNumber"}`만 담아 POST. 1초 안에 2XX가 오지 않으면 1초, 2초, 4초…(최대 5분) 간격으로 만료 시각 전까지 다시 보냄. 처음 등록할 때도 한 번 보냄 |
 | `/`, `/parcels`, `/send`, `/settings` | 관리 화면(현황, 송장, 보내기, 실험 설정) |
 
