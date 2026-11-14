@@ -22,6 +22,7 @@ import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +30,12 @@ import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -41,8 +47,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 통합 테스트: 막힌 주문 집계 표 (#582)
+// 통합 테스트: 막힌 주문 집계 표 (#582)와 관리자 막힌 주문 목록 API (#569)
 // - 실행(COMPLETED)은 실제 정산 Job(PayoutJobRunner.runScheduled)으로 만든다. Job이 끝날 때 리스너가 표를 갱신한다
 // - 멈춘 주문은 지갑 결제 기록 없는 후보로 실제 Job이 스스로 "결제 기록 없음"으로 실패하게 해서 만든다 (실제 흐름 그대로)
 // - 잠긴 주문·사유가 섞인 이력은 실행을 먼저 만들고, 그 스냅샷에 실패 기록을 SQL로 넣은 뒤 갱신(입력 포트)을 직접 부른다
@@ -97,9 +109,18 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private WebApplicationContext context;
+
+    @Autowired
+    private TestAccessTokens tokens;
+
+    private MockMvc mockMvc;
+
     @BeforeEach
     void setUp() {
         cleanUp();
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
     @AfterEach
@@ -389,7 +410,129 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         }
     }
 
+    // ---------- 관리자 목록 API (#569) ----------
+
+    @Test
+    void 관리자_목록은_막힌_주문을_상태와_원인과_함께_보여_준다() throws Exception {
+        // given: 상품 1개(대금·수수료)가 수수료 불일치로 잠기고, 배송비는 함께 보류된 주문
+        Long run = runCompleted();
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        long amount = insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 10_000L);
+        long fee = insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        long shipping = insertCandidateOf(order, PayoutEventType.SALE_SHIPPING_FEE, null, 3_000L);
+        insertFailure(run, amount, order, orderItem, PayoutFailureReason.FEE_MISMATCH, "수수료 불일치 대금");
+        insertFailure(run, fee, order, orderItem, PayoutFailureReason.FEE_MISMATCH, "수수료 불일치 수수료");
+        insertFailure(run, shipping, order, null, PayoutFailureReason.ORDER_HELD, "같은 주문의 수수료 불일치로 보류");
+        blockedOrderUseCase.refresh();
+
+        // when & then: 한 줄, 함께 보류(배송비)는 원인에서 빠짐
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].status").value("LOCKED"))
+                .andExpect(jsonPath("$.content[0].failedRunCount").value(1))
+                .andExpect(jsonPath("$.content[0].lastFailedAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[0].sellerIds").value(contains((int) SELLER_ID)))
+                .andExpect(jsonPath("$.content[0].reasons").value(contains("FEE_MISMATCH")))
+                .andExpect(jsonPath("$.content[0].categories").value(contains("SYSTEM")))
+                .andExpect(jsonPath("$.content[0].causes.length()").value(2))
+                .andExpect(jsonPath("$.content[0].causes[*].eventType").value(containsInAnyOrder("SALE_AMOUNT", "SALE_FEE")))
+                .andExpect(jsonPath("$.content[0].causes[0].orderItemId").value(orderItem))
+                .andExpect(jsonPath("$.content[0].causes[0].reason").value("FEE_MISMATCH"))
+                .andExpect(jsonPath("$.content[0].causes[0].category").value("SYSTEM"))
+                .andExpect(jsonPath("$.content[0].causes[0].detail").isNotEmpty())
+                .andExpect(jsonPath("$.content[0].causes[0].sellerId").value(SELLER_ID))
+                .andExpect(jsonPath("$.content[0].causes[0].failedAt").isNotEmpty());
+    }
+
+    @Test
+    void 관리자_목록은_잠김이면서_멈춘_주문을_LOCKED_한_줄로_보여_주고_1에서_2번_실패는_빼고_해결은_RESOLVED로_보여_준다() throws Exception {
+        // given
+        List<Long> runs = runCompleted(3);
+        long lockedAndStopped = givenOrderWithFailures(runs, PayoutFailureReason.FEE_MISMATCH);
+        long retrying = givenOrderWithFailures(runs.subList(0, 2), PayoutFailureReason.AMOUNT_MISMATCH);
+        long resolved = givenOrderWithFailures(List.of(runs.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        blockedOrderUseCase.refresh();
+        resolve(resolved);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 해결한 주문은 다음 갱신 전까지 RESOLVED로 보임
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].orderId").value(containsInAnyOrder((int) lockedAndStopped, (int) resolved)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + lockedAndStopped + ")].status").value(contains("LOCKED")))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + lockedAndStopped + ")].failedRunCount").value(contains(3)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + resolved + ")].status").value(contains("RESOLVED")))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + retrying + ")]").isEmpty());
+
+        // then: 다음 갱신 뒤에는 해결한 주문이 빠짐
+        blockedOrderUseCase.refresh();
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) lockedAndStopped)));
+    }
+
+    @Test
+    void 관리자_목록은_마지막_실패_시각_최신순이고_같으면_주문_ID_역순이며_페이지로_나눈다() throws Exception {
+        // given: 주문 셋. 하나는 이른 시각, 둘은 같은 늦은 시각
+        Long run = runCompleted();
+        LocalDateTime early = LocalDateTime.of(2026, 11, 10, 10, 0);
+        LocalDateTime late = LocalDateTime.of(2026, 11, 12, 10, 0);
+        long earlyOrder = nextOrderId();
+        insertFailureAt(run, insertCandidate(earlyOrder), earlyOrder, PayoutFailureReason.VERIFY_MISMATCH, early);
+        long lateSmall = nextOrderId();
+        insertFailureAt(run, insertCandidate(lateSmall), lateSmall, PayoutFailureReason.VERIFY_MISMATCH, late);
+        long lateBig = nextOrderId();
+        insertFailureAt(run, insertCandidate(lateBig), lateBig, PayoutFailureReason.VERIFY_MISMATCH, late);
+        blockedOrderUseCase.refresh();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 늦은 시각(주문 ID 큰 것 → 작은 것) → 이른 시각, 크기 2면 2쪽
+        mockMvc.perform(blockedOrdersRequest().param("page", "0").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) lateBig, (int) lateSmall)));
+        mockMvc.perform(blockedOrdersRequest().param("page", "1").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) earlyOrder)));
+    }
+
+    @Test
+    void 관리자_목록은_막힌_주문이_없으면_빈_목록이다() throws Exception {
+        // when & then
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())                                               // 정산 상세(/{payoutId})로 잘못 들어가면 400
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content").isEmpty());
+    }
+
+    @Test
+    void 관리자_목록은_토큰이_없으면_401_관리자가_아니면_403_페이지_크기가_범위를_벗어나면_422다() throws Exception {
+        // when & then
+        mockMvc.perform(blockedOrdersRequest())
+                .andExpect(status().isUnauthorized());                                    // 401
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(7L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());                                       // 403
+        mockMvc.perform(blockedOrdersRequest().param("size", "101")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isUnprocessableEntity());                             // 422
+    }
+
     // ---------- 도우미 ----------
+
+    private MockHttpServletRequestBuilder blockedOrdersRequest() {
+        return get("/api/v1/admin/payouts/blocked-orders");
+    }
+
+    // 실패 시각을 정해 넣음 (정렬 확인용)
+    private void insertFailureAt(Long snapshotId, long candidateId, long orderId, PayoutFailureReason reason,
+                                 LocalDateTime failedAt) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, orderId, SELLER_ID, reason.name(), "[원인] 정렬 확인", failedAt, failedAt);
+    }
 
     private long givenLockedOrderInTable() throws Exception {
         Long run = runCompleted();
