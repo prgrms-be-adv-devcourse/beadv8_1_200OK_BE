@@ -17,4 +17,8 @@ public interface WalletOrderPaymentRepository {
     // 이미 있는 처리 기록을 최신 커밋 데이터로 읽는다. 일반 조회는 스냅샷 때문에 다른 트랜잭션이 방금 넣은 기록을 못 볼 수 있다.
     // 기록이 있을 때(insertIfAbsent가 0)만 부르므로 그 행만 잠긴다. 없는 행을 잠그면 빈 구간까지 잠겨 다른 주문의 기록 넣기를 막는다
     Optional<WalletOrderPayment> findForShareByOrderId(Long orderId);
+
+    // 잠그지 않고 읽는다. 처리 기록은 바뀌지 않아 환불 반환처럼 결제가 끝난 뒤에 읽을 때는 최신 값과 같다.
+    // 기록이 없을 수도 있는 조회라 잠금 조회를 쓰면 빈 구간까지 잠긴다
+    Optional<WalletOrderPayment> findByOrderId(Long orderId);
 }

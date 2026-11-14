@@ -72,9 +72,9 @@ public class BuyerWallet extends BaseTime {
     }
 
     /**
-     * 결제했던 금액을 지갑으로 되돌리고 환불 원장을 반환한다. 세미에서는 배송 전 취소 시 호출된다.
-     * 돌려줄 금액이 맞는지는 호출하는 쪽에서 확인한다.
-     * referenceKey는 "REFUND:{취소 건 ID 또는 주문 상품 ID}" 형식이며, 모든 지갑을 통틀어 한 번만 쓰여야 한다.
+     * 결제했던 금액을 지갑으로 되돌리고 환불 원장을 반환한다. 환불 모듈이 승인한 반환 요청을 처리할 때 호출된다.
+     * 돌려줄 금액이 맞는지는 호출하는 쪽에서 확인한다. 돌려줄 돈이라 보유 한도는 보지 않는다.
+     * referenceKey는 "REFUND:{환불 ID}" 형식이며, 모든 지갑을 통틀어 한 번만 쓰여야 한다.
      */
     public BuyerWalletLedger refund(long amount, String referenceKey) {
         return increase(BuyerWalletLedgerType.REFUND, amount, referenceKey);

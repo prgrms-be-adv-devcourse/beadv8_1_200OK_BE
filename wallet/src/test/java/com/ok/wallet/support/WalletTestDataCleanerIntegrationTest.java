@@ -48,7 +48,9 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
         insertOrderPayment(101L, 1L, 50_000, "FAILED");
         insertCharge(1L, 5_000, "FAILED", "pay-2");
         insertCharge(1L, 5_000, "IN_PROGRESS", null);
-        insertLedger(WalletKind.BUYER, buyerWalletId, "REFUND", 1_000, 8_000);
+        insertOrderRefund(1L, 100L, 1L, 1_000, "COMPLETED");
+        insertLedger(WalletKind.BUYER, buyerWalletId, "REFUND", 1_000, 8_000, "REFUND:1");
+        insertOrderRefund(2L, 100L, 1L, 5_000, "FAILED");
         long sellerWalletId = insertWallet(WalletKind.SELLER, 2L, 7_000);
         insertLedger(WalletKind.SELLER, sellerWalletId, "PAYOUT", 5_000, 5_000);
         insertLedger(WalletKind.SELLER, sellerWalletId, "PAYOUT", 2_000, 7_000);
@@ -308,6 +310,70 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 원장이_없는_반환_완료_기록을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertOrderRefund(7L, 100L, 1L, 3_000, "COMPLETED");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("wallet_id"), row -> row.get("check_item"), row -> row.get("expected"))
+                .containsExactly(tuple(walletId, "REFUNDED_WITHOUT_LEDGER", "REFUND:7"));
+    }
+
+    @Test
+    void 반환_기록과_원장의_금액이_다르면_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
+        insertOrderRefund(7L, 100L, 1L, 3_000, "COMPLETED");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "REFUND", 5_000, 5_000, "REFUND:7");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactly(tuple("REFUND_LEDGER_MISMATCH", ledgerId,
+                        "member=1, amount=3000", "member=1, amount=5000"));
+    }
+
+    @Test
+    void 원장이_있는_반환_거절_기록을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 3_000);
+        insertOrderRefund(7L, 100L, 1L, 3_000, "FAILED");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("FAILED_REFUND_WITH_LEDGER", ledgerId));
+    }
+
+    @Test
+    void 반환_처리_기록이_없는_반환_원장을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 3_000);
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("REFUND_LEDGER_WITHOUT_RECORD", ledgerId));
+    }
+
+    @Test
     void 어긋남이_있으면_데이터를_모두_지운_뒤_실패한다() {
         // given
         long walletId = insertWallet(WalletKind.BUYER, 1L, 6_000);
@@ -367,6 +433,13 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 INSERT INTO wallet_order_payment (order_id, buyer_id, amount, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, NOW(6), NOW(6))
                 """, orderId, buyerId, amount, status);
+    }
+
+    private void insertOrderRefund(long refundId, long orderId, long buyerId, long amount, String status) {
+        jdbcTemplate.update("""
+                INSERT INTO wallet_order_refund (refund_id, order_id, buyer_id, amount, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, NOW(6), NOW(6))
+                """, refundId, orderId, buyerId, amount, status);
     }
 
     private long countWalletRows() {
