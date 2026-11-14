@@ -19,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.sql.SQLIntegrityConstraintViolationException;
 import java.util.List;
 import java.util.Map;
 
@@ -102,8 +103,8 @@ class PayoutFailureResolutionServiceTest {
     void 해결_기록_유니크_위반은_409로_바꾼다() {
         // given: 같은 주문을 동시에 해결해 두 번째 저장이 유니크에 걸린 상황
         givenLockedOrderWithOneFailure();
-        given(payoutFailureResolutionRepository.saveAll(any())).willThrow(new DataIntegrityViolationException(
-                "Duplicate entry '21' for key 'payout_failure_resolution.uk_payout_failure_resolution_failure_id'"));
+        given(payoutFailureResolutionRepository.saveAll(any())).willThrow(new DataIntegrityViolationException("중복",
+                new SQLIntegrityConstraintViolationException("Duplicate entry", "23000", 1062)));
 
         // when & then
         assertThatThrownBy(() -> sut.resolveOrder(COMMAND))
@@ -115,8 +116,8 @@ class PayoutFailureResolutionServiceTest {
     void 유니크_위반이_아닌_DB_오류는_409로_가리지_않고_그대로_던진다() {
         // given: 코드 버그로 다른 제약에 걸린 상황 (예: 없는 실패 기록 ID)
         givenLockedOrderWithOneFailure();
-        DataIntegrityViolationException other = new DataIntegrityViolationException(
-                "Cannot add or update a child row: a foreign key constraint fails (fk_payout_failure_resolution_failure_id)");
+        DataIntegrityViolationException other = new DataIntegrityViolationException("외래키",
+                new SQLIntegrityConstraintViolationException("Cannot add or update a child row", "23000", 1452));
         given(payoutFailureResolutionRepository.saveAll(any())).willThrow(other);
 
         // when & then

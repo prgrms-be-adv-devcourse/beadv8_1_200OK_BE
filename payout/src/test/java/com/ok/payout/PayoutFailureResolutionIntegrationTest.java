@@ -46,6 +46,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -377,8 +378,8 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 이미_해결된_실패_기록을_다시_저장하면_DB가_유니크_제약_이름과_함께_거절한다() throws Exception {
-        // given: 해결 서비스가 409로 바꾸는 근거(예외 메시지 속 제약 이름)가 실제 MySQL에서 나오는지 확인하려는 것
+    void 이미_해결된_실패_기록을_다시_저장하면_DB가_중복_키_오류_번호로_거절한다() throws Exception {
+        // given: 해결 서비스가 409로 바꾸는 근거(DB 드라이버 예외의 오류 번호 1062)가 실제 MySQL에서 나오는지 확인하려는 것
         //   동시 요청 테스트는 두 요청이 겹치는 순간을 매번 만들 수 없어, 유니크 경로를 여기서 직접 확인함
         long order = givenLockedOrder();
         List<PayoutFailure> failures = payoutQueryRepository.findUnresolvedFailuresByOrderId(order);
@@ -389,7 +390,9 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         // when & then
         assertThatThrownBy(() -> resolutionRepository.saveAll(duplicate))
                 .isInstanceOf(DataIntegrityViolationException.class)
-                .hasStackTraceContaining("uk_payout_failure_resolution_failure_id");
+                .hasRootCauseInstanceOf(SQLException.class)
+                .rootCause()
+                .satisfies(cause -> assertThat(((SQLException) cause).getErrorCode()).isEqualTo(1062));
     }
 
     // ---------- 해결 기록 ----------

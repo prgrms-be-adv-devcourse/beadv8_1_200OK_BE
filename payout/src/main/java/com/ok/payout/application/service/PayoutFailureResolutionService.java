@@ -17,6 +17,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,8 +29,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PayoutFailureResolutionService implements PayoutFailureResolutionUseCase {
 
-    // 해결 기록 유니크 제약 이름 (마이그레이션 V202611141413와 같아야 함)
-    private static final String DUPLICATE_RESOLUTION_CONSTRAINT = "uk_payout_failure_resolution_failure_id";
+    // MySQL 오류 번호 1062(ER_DUP_ENTRY, 중복 키). 해결 기록 표에서 중복으로 막히는 제약은 실패 기록 ID 유니크 하나뿐이라(기본 키는 자동 증가),
+    // 이 번호면 "같은 실패 기록을 이미 해결함"이라는 뜻. 오류 메시지 글자는 DB 버전·언어 설정에 따라 바뀔 수 있어 번호로 봄
+    private static final int MYSQL_DUPLICATE_KEY_ERROR = 1062;
 
     private final PayoutQueryRepository payoutQueryRepository;
     private final PayoutFailureResolutionRepository payoutFailureResolutionRepository;
@@ -71,7 +73,7 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         try {
             saved = payoutFailureResolutionRepository.saveAll(resolutions);
         } catch (DataIntegrityViolationException e) {
-            // 해결 기록 유니크 위반일 때만 409: FK·NOT NULL·길이 위반 같은 코드 버그까지 "해결할 것 없음"으로 가리지 않으려고
+            // 중복 키(유니크 위반)일 때만 409: FK(1452)·NOT NULL·길이 위반 같은 코드 버그까지 "해결할 것 없음"으로 가리지 않으려고
             if (isDuplicateResolution(e)) {
                 throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
             }
@@ -85,10 +87,15 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
                 first.getAdminId(), first.getCreatedAt(), first.getMemo());
     }
 
-    // 가장 깊은 원인(DB 드라이버 예외)의 메시지에 해결 기록 유니크 제약 이름이 있는지
-    // (MySQL은 "Duplicate entry ... for key '...uk_payout_failure_resolution_failure_id'", 통합 테스트에서 실제 메시지로 확인)
+    // 원인 사슬에서 DB 드라이버 예외(SQLException)를 찾아 오류 번호가 중복 키(1062)인지 봄 (통합 테스트에서 실제 MySQL로 확인)
     private static boolean isDuplicateResolution(DataIntegrityViolationException e) {
-        String message = e.getMostSpecificCause().getMessage();
-        return message != null && message.contains(DUPLICATE_RESOLUTION_CONSTRAINT);
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof SQLException sqlException) {
+                return sqlException.getErrorCode() == MYSQL_DUPLICATE_KEY_ERROR;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 }
