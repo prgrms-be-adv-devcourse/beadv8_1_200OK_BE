@@ -11,6 +11,7 @@ import com.ok.member.auth.application.port.out.MemberCredentialReader;
 import com.ok.member.auth.application.port.out.SellerApprovalReader;
 import com.ok.member.auth.domain.AccessToken;
 import com.ok.member.auth.domain.IssuedRefreshToken;
+import com.ok.member.auth.domain.RotatedRefreshToken;
 import com.ok.member.auth.exception.AuthErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -175,17 +176,15 @@ class AuthServiceTest {
     }
 
     @Test
-    void 재발급하면_토큰을_사용_처리하고_회원의_현재_권한으로_새_토큰을_발급한다() {
+    void 재발급하면_토큰을_회전하고_회원의_현재_권한으로_새_토큰을_발급한다() {
         // given
-        given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
-        given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
-
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
+        given(refreshTokenService.rotate("old-refresh-token"))
+                .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", refreshExpiresAt)));
+        given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
                 .willReturn(new AccessToken("new-access-token", accessExpiresAt));
-        given(refreshTokenService.issue(MEMBER_ID))
-                .willReturn(new IssuedRefreshToken("new-refresh-token", refreshExpiresAt));
 
         // when
         TokenResult sut = authService.reissue(new TokenReissueCommand("old-refresh-token"));
@@ -198,18 +197,19 @@ class AuthServiceTest {
             softly.assertThat(sut.refreshToken()).isEqualTo("new-refresh-token");
             softly.assertThat(sut.refreshTokenExpiresAt()).isEqualTo(refreshExpiresAt);
         });
+        // 재발급은 같은 세션을 회전한다. 새 세션을 만들지 않는다
+        then(refreshTokenService).should(never()).issue(any());
     }
 
     @Test
     void 재발급할_때_판매자_승인_여부를_다시_조회해_승인됐으면_판매자_권한을_함께_준다() {
         // given: 승인 전에 로그인해 BUYER 토큰만 가진 회원이 승인 뒤 재발급한다
-        given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
+        given(refreshTokenService.rotate("old-refresh-token"))
+                .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14)))));
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalReader.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
-        given(refreshTokenService.issue(MEMBER_ID))
-                .willReturn(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14))));
 
         // when
         TokenResult sut = authService.reissue(new TokenReissueCommand("old-refresh-token"));
@@ -218,17 +218,19 @@ class AuthServiceTest {
         assertThat(sut.accessToken()).isEqualTo("seller-access-token");
     }
 
+    // 회전은 이미 끝났지만 예외로 트랜잭션이 취소되어 되돌려진다(통합 테스트에서 확인). 여기서는 토큰이 나가지 않는지 본다
     @Test
     void 재발급할_때_회원이_없으면_INVALID_REFRESH_TOKEN이_발생하고_새_토큰을_발급하지_않는다() {
         // given
-        given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
+        given(refreshTokenService.rotate("old-refresh-token"))
+                .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14)))));
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
-        then(refreshTokenService).should(never()).issue(any());
+        then(accessTokenIssuer).should(never()).issue(any(), any());
     }
 
     @ParameterizedTest
@@ -236,14 +238,15 @@ class AuthServiceTest {
     void 재발급할_수_없는_상태의_회원은_예외가_발생하고_새_토큰을_발급하지_않는다(
             AuthAccount account, AuthErrorCode expected) {
         // given
-        given(refreshTokenService.consume("old-refresh-token")).willReturn(MEMBER_ID);
+        given(refreshTokenService.rotate("old-refresh-token"))
+                .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14)))));
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(account));
 
         // when & then
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(expected));
-        then(refreshTokenService).should(never()).issue(any());
+        then(accessTokenIssuer).should(never()).issue(any(), any());
     }
 
     static Stream<Arguments> 재발급할_수_없는_회원_상태() {
@@ -252,6 +255,10 @@ class AuthServiceTest {
                 Arguments.of(WITHDRAWN, AuthErrorCode.INVALID_REFRESH_TOKEN),
                 Arguments.of(SUSPENDED, AuthErrorCode.MEMBER_SUSPENDED)
         );
+    }
+
+    private static RotatedRefreshToken rotated(IssuedRefreshToken issued) {
+        return new RotatedRefreshToken(MEMBER_ID, issued);
     }
 
 }
