@@ -7,6 +7,7 @@ public enum Metric {
     TRACK_OK,
     TRACK_NOT_FOUND,
     TRACK_ERROR,
+    REGISTER_ERROR,
     UNAUTHENTICATED,
     REGISTER,
     CALLBACK_OK,

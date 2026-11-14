@@ -340,6 +340,26 @@ class CarrierSimulatorTrackTest {
     }
 
     @Test
+    void 처음_조회된_시각은_첫_조회의_시각이고_조회한_적이_없으면_비어_있다() {
+        // given
+        CarrierSimulator simulator = newSimulator(0);
+        ParcelKey notQueried = simulator.createDummies(Scenario.SLOW, CARRIER, 1, null, START).getFirst();
+        simulator.track(NORMAL, after(3));
+
+        // when
+        simulator.track(NORMAL, after(9));
+        ParcelView queried = simulator.parcel(NORMAL, after(9)).orElseThrow().summary();
+        ParcelView sut = simulator.parcel(notQueried, after(9)).orElseThrow().summary();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(queried.firstQueriedAt()).isEqualTo(after(3));
+            softly.assertThat(queried.lastQueriedAt()).isEqualTo(after(9));
+            softly.assertThat(sut.firstQueriedAt()).isNull();
+        });
+    }
+
+    @Test
     void 조회한_적이_없으면_감지_지연이_없다() {
         // given
         CarrierSimulator simulator = newSimulator(0);
@@ -364,7 +384,7 @@ class CarrierSimulatorTrackTest {
 
         // when & then
         for (int i = 0; i < 20; i++) {
-            Admission admission = sut.admit(token, START);
+            Admission admission = sut.admit(token, Operation.TRACK, START);
             assertThat(admission).isEqualTo(new Admission(250, Admission.Rejection.INTERNAL));
         }
         assertThat(sut.stats(START).total(Metric.TRACK_ERROR)).isEqualTo(20);
@@ -378,8 +398,29 @@ class CarrierSimulatorTrackTest {
 
         // when & then
         for (int i = 0; i < 20; i++) {
-            assertThat(sut.admit(token, START).rejected()).isFalse();
+            assertThat(sut.admit(token, Operation.TRACK, START).rejected()).isFalse();
         }
+    }
+
+    @Test
+    void 등록_요청에_일부러_낸_오류는_조회_오류가_아니라_등록_오류로_센다() {
+        // given
+        CarrierSimulator sut = newSimulator(0);
+        String token = sut.issueToken(START);
+        sut.updateFaults(new FaultSettings(0, 100, 1, false));
+
+        // when
+        for (int i = 0; i < 5; i++) {
+            sut.admit(token, Operation.REGISTER, START);
+        }
+        sut.admit(token, Operation.TRACK, START);
+
+        // then
+        StatsSnapshot stats = sut.stats(START);
+        assertSoftly(softly -> {
+            softly.assertThat(stats.total(Metric.REGISTER_ERROR)).isEqualTo(5);
+            softly.assertThat(stats.total(Metric.TRACK_ERROR)).isEqualTo(1);
+        });
     }
 
     @ParameterizedTest
@@ -389,7 +430,7 @@ class CarrierSimulatorTrackTest {
         CarrierSimulator sut = newSimulator(0);
 
         // when
-        Admission admission = sut.admit(token, START);
+        Admission admission = sut.admit(token, Operation.TRACK, START);
 
         // then
         assertSoftly(softly -> {
@@ -407,7 +448,7 @@ class CarrierSimulatorTrackTest {
         // given
         CarrierSimulator sut = newSimulator(0);
         String token = sut.issueToken(START);
-        boolean admittedBefore = !sut.admit(token, START).rejected();
+        boolean admittedBefore = !sut.admit(token, Operation.TRACK, START).rejected();
 
         // when
         sut.expireTokens();
@@ -415,7 +456,7 @@ class CarrierSimulatorTrackTest {
         // then
         assertSoftly(softly -> {
             softly.assertThat(admittedBefore).isTrue();
-            softly.assertThat(sut.admit(token, START).rejection()).isEqualTo(Admission.Rejection.UNAUTHENTICATED);
+            softly.assertThat(sut.admit(token, Operation.TRACK, START).rejection()).isEqualTo(Admission.Rejection.UNAUTHENTICATED);
         });
     }
 

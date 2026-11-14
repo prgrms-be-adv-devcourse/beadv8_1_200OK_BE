@@ -56,7 +56,7 @@
         <div class="scroll">
             <table>
                 <thead>
-                <tr><th>송장 번호</th><th>택배사</th><th>시나리오</th><th>현재 상태</th><th>생긴 시각</th><th>조회받은 횟수</th><th>마지막 조회</th></tr>
+                <tr><th>송장 번호</th><th>택배사</th><th>시나리오</th><th>현재 상태</th><th>처음 조회된 시각</th><th>조회받은 횟수</th><th>마지막 조회</th></tr>
                 </thead>
                 <tbody>
                 <tr th:each="row : ${rows}">
@@ -64,7 +64,7 @@
                     <td th:text="${row.carrierId}">kr.cjlogistics</td>
                     <td th:text="${row.scenario}">정상</td>
                     <td th:text="${row.status}">접수</td>
-                    <td th:text="${row.startedAt}">00:00:00</td>
+                    <td th:text="${row.firstQueriedAt}">00:00:00</td>
                     <td th:text="${row.queryCount}">0</td>
                     <td th:text="${row.lastQueriedAt}">-</td>
                 </tr>

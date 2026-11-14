@@ -4,7 +4,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -14,11 +13,10 @@ final class Parcel {
 
     private final ParcelKey key;
     private final Scenario scenario;
-    private final Instant createdAt;
     private final Instant virtualStart;
     // 송장마다 구간 길이를 조금씩 다르게 하는 배율. 더미 송장이 한꺼번에 같은 순간에 바뀌지 않게 한다
     private final double factor;
-    // 이력에 나타나는 순서로 정렬한 단계. 이력 끼어듦 시나리오는 일어난 순서와 나타나는 순서가 다르다
+    // 이력에 나타나는 순서로 정렬한 단계. 시나리오가 한 번만 만들어 둔 목록을 송장이 함께 쓴다
     private final List<Scenario.Step> stepsByVisibility;
     // 언제나 사건 시각 순이다. 시각이 같으면 나타난 순서를 지킨다
     private final List<Entry> entries = new ArrayList<>();
@@ -30,17 +28,15 @@ final class Parcel {
     private boolean manual;
     private WebhookRegistration registration;
     private long queryCount;
+    private Instant firstQueriedAt;
     private Instant lastQueriedAt;
 
-    Parcel(ParcelKey key, Scenario scenario, Instant createdAt, Instant virtualStart, double factor) {
+    Parcel(ParcelKey key, Scenario scenario, Instant virtualStart, double factor) {
         this.key = key;
         this.scenario = scenario;
-        this.createdAt = createdAt;
         this.virtualStart = virtualStart;
         this.factor = factor;
-        this.stepsByVisibility = scenario.steps().stream()
-                .sorted(Comparator.comparing(Scenario.Step::visibleAt))
-                .toList();
+        this.stepsByVisibility = scenario.stepsByVisibility();
     }
 
     /**
@@ -109,6 +105,9 @@ final class Parcel {
 
     void queried(Instant now) {
         queryCount++;
+        if (firstQueriedAt == null) {
+            firstQueriedAt = now;
+        }
         lastQueriedAt = now;
     }
 
@@ -121,7 +120,7 @@ final class Parcel {
     }
 
     ParcelView view() {
-        return new ParcelView(key, scenario, manual, lastStatus(), createdAt, queryCount, lastQueriedAt);
+        return new ParcelView(key, scenario, manual, lastStatus(), firstQueriedAt, queryCount, lastQueriedAt);
     }
 
     ParcelKey key() {
@@ -130,10 +129,6 @@ final class Parcel {
 
     Scenario scenario() {
         return scenario;
-    }
-
-    int entryCount() {
-        return entries.size();
     }
 
     WebhookRegistration registration() {

@@ -45,6 +45,13 @@ class TrackGraphQlTest {
               }
             }
             """;
+    private static final String EVENTS_AFTER_QUERY = """
+            query Track($carrierId: ID!, $trackingNumber: String!, $after: String) {
+              track(carrierId: $carrierId, trackingNumber: $trackingNumber) {
+                events(after: $after) { edges { cursor } }
+              }
+            }
+            """;
     private static final String REGISTER_MUTATION = """
             mutation Register($input: RegisterTrackWebhookInput!) {
               registerTrackWebhook(input: $input)
@@ -284,6 +291,28 @@ class TrackGraphQlTest {
             softly.assertThat(sut.<Boolean>read("$.data.registerTrackWebhook")).isTrue();
             softly.assertThat(detail.registration()).isNull();
         });
+    }
+
+    @ParameterizedTest
+    @MethodSource("내보낸_적_없는_cursor")
+    void 내보낸_적_없는_cursor를_주면_BAD_REQUEST가_온다(String cursor) {
+        // given
+        String token = client.token();
+        Map<String, Object> variables = Map.of("carrierId", CARRIER, "trackingNumber", NORMAL, "after", cursor);
+
+        // when
+        HttpResult sut = client.graphql(EVENTS_AFTER_QUERY, variables, token);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.status()).isEqualTo(200);
+            softly.assertThat(sut.<String>read("$.errors[0].extensions.code")).isEqualTo("BAD_REQUEST");
+            softly.assertThat(sut.<String>read("$.errors[0].message")).isEqualTo("알 수 없는 cursor입니다.");
+        });
+    }
+
+    static Stream<String> 내보낸_적_없는_cursor() {
+        return Stream.of("-5", "2147483647", "9999999999");
     }
 
     @Test

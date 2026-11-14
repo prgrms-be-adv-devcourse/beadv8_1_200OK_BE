@@ -207,7 +207,8 @@ public final class CarrierSimulator {
             Parcel parcel = parcels.get(attempt.key());
             // 등록이 만료됐거나 송장을 지웠으면 보내지 않는다
             if (parcel != null && parcel.hasActiveRegistration(now)) {
-                due.add(attempt);
+                // 알림을 줄에 넣은 뒤 등록의 주소가 바뀌었을 수 있다. 재전송도 마찬가지라서 보내는 때의 주소로 보낸다
+                due.add(attempt.toCallbackUrl(parcel.registration().callbackUrl()));
             }
         }
         if (due.isEmpty()) {
@@ -293,9 +294,10 @@ public final class CarrierSimulator {
     /**
      * GraphQL 요청을 받아들일지 정한다. 토큰 확인과 장애 주입(지연, 오류 비율)을 여기서 한다.
      *
-     * @param token Authorization 헤더에서 Bearer를 뗀 값. 없으면 null
+     * @param token     Authorization 헤더에서 Bearer를 뗀 값. 없으면 null
+     * @param operation 요청의 종류. 일부러 낸 오류를 조회 오류와 등록 오류로 나눠 세는 데 쓴다
      */
-    public synchronized Admission admit(String token, Instant now) {
+    public synchronized Admission admit(String token, Operation operation, Instant now) {
         long delay = faults.responseDelayMillis();
         if (!tokens.isValid(token, now)) {
             stats.record(Metric.UNAUTHENTICATED, now);
@@ -303,7 +305,7 @@ public final class CarrierSimulator {
         }
         // 비율이 0이면 난수를 쓰지 않는다. 장애를 끈 동안의 요청 수가 뒤의 장애 순서를 바꾸지 않게 한다
         if (faults.errorPercent() > 0 && faultRandom.nextInt(100) < faults.errorPercent()) {
-            stats.record(Metric.TRACK_ERROR, now);
+            stats.record(operation == Operation.TRACK ? Metric.TRACK_ERROR : Metric.REGISTER_ERROR, now);
             return new Admission(delay, Admission.Rejection.INTERNAL);
         }
         return new Admission(delay, Admission.Rejection.NONE);
@@ -496,7 +498,7 @@ public final class CarrierSimulator {
         if (existing != null) {
             return existing;
         }
-        Parcel created = new Parcel(key, Scenario.of(key.trackingNumber()), now, playback.virtualNow(now), factorOf(key));
+        Parcel created = new Parcel(key, Scenario.of(key.trackingNumber()), playback.virtualNow(now), factorOf(key));
         parcels.put(key, created);
         parcelOrder.add(created);
         return created;

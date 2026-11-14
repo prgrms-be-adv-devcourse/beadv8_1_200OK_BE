@@ -122,7 +122,7 @@ class ParcelController {
         return new ParcelRow(view.key().carrierId(), view.key().trackingNumber(),
                 "/parcels/" + encodePath(view.key().carrierId()) + "/" + encodePath(view.key().trackingNumber()),
                 view.scenario().displayName() + (view.manual() ? " (수동)" : ""), status,
-                AdminSupport.time(view.startedAt()), view.queryCount(), AdminSupport.time(view.lastQueriedAt()));
+                AdminSupport.time(view.firstQueriedAt()), view.queryCount(), AdminSupport.time(view.lastQueriedAt()));
     }
 
     private static EventRow eventRow(ParcelDetail.EventTrace trace) {
@@ -157,7 +157,7 @@ class ParcelController {
     }
 
     record ParcelRow(String carrierId, String trackingNumber, String link, String scenario, String status,
-                     String startedAt, long queryCount, String lastQueriedAt) {
+                     String firstQueriedAt, long queryCount, String lastQueriedAt) {
     }
 
     record EventRow(String status, String location, String description, String occurredAt, String firstFetchedAt,

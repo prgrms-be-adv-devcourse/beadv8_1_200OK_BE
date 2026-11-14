@@ -20,6 +20,7 @@ class CarrierSimulatorCallbackTest {
     private static final Instant START = Instant.parse("2026-11-14T00:00:00Z");
     private static final String CARRIER = "kr.cjlogistics";
     private static final String URL = "http://localhost:8080/carrier-callback";
+    private static final String OTHER_URL = "http://localhost:9090/other-callback";
     private static final ParcelKey NORMAL = new ParcelKey(CARRIER, "901000000001");
     // 사건이 하나도 없는 송장. 등록 알림 말고는 알림이 생기지 않아 재전송만 따로 볼 수 있다
     private static final ParcelKey SILENT = new ParcelKey(CARRIER, "904000000001");
@@ -245,6 +246,41 @@ class CarrierSimulatorCallbackTest {
             softly.assertThat(List.of(second.attemptNo(), third.attemptNo(), fourth.attemptNo())).containsExactly(2, 3, 4);
             softly.assertThat(fourth.key()).isEqualTo(SILENT);
             softly.assertThat(fourth.callbackUrl()).isEqualTo(URL);
+        });
+    }
+
+    @Test
+    void 알림을_줄에_넣은_뒤_주소를_바꿔_다시_등록하면_바뀐_주소로_나간다() {
+        // given: 보내기를 멈춰 둔 동안 등록 알림이 줄에 있다
+        CarrierSimulator simulator = newSimulator();
+        simulator.updateDispatch(new DispatchSettings(Duration.ofSeconds(1), 100, 10, true));
+        simulator.registerWebhook(NORMAL, URL, FAR, START);
+
+        // when
+        simulator.registerWebhook(NORMAL, OTHER_URL, FAR, after(1));
+        simulator.updateDispatch(new DispatchSettings(Duration.ofSeconds(1), 100, 10, false));
+        List<CallbackAttempt> sut = simulator.pollDueCallbacks(after(1));
+
+        // then
+        assertThat(sut).extracting(CallbackAttempt::callbackUrl).containsExactly(OTHER_URL);
+    }
+
+    @Test
+    void 실패한_알림의_재전송은_그_사이_바뀐_주소로_나간다() {
+        // given
+        CarrierSimulator simulator = newSimulator();
+        simulator.registerWebhook(SILENT, URL, FAR, START);
+        CallbackAttempt first = simulator.pollDueCallbacks(START).getFirst();
+        simulator.completeCallback(first, failure(), START);
+
+        // when
+        simulator.registerWebhook(SILENT, OTHER_URL, FAR, START.plusMillis(500));
+        CallbackAttempt sut = simulator.pollDueCallbacks(after(1)).getFirst();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.callbackUrl()).isEqualTo(OTHER_URL);
+            softly.assertThat(sut.attemptNo()).isEqualTo(2);
         });
     }
 

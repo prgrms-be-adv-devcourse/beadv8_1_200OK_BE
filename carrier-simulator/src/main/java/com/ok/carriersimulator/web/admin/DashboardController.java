@@ -41,7 +41,9 @@ class DashboardController {
         model.addAttribute("totalQueries", QUERY_METRICS.stream().mapToLong(stats::total).sum());
         model.addAttribute("queriesPerSecond", String.format(Locale.ROOT, "%.1f", lastFullQueries / 10.0));
         model.addAttribute("parcelCount", stats.parcelCount());
-        model.addAttribute("errorResponses", stats.total(Metric.TRACK_ERROR) + stats.total(Metric.UNAUTHENTICATED));
+        // 조회 수와 그래프에는 조회 오류만 들어가고, 돌려준 오류 응답에는 등록 오류와 인증 실패까지 모두 센다
+        model.addAttribute("errorResponses", stats.total(Metric.TRACK_ERROR) + stats.total(Metric.REGISTER_ERROR)
+                + stats.total(Metric.UNAUTHENTICATED));
         model.addAttribute("registerCount", stats.total(Metric.REGISTER));
         model.addAttribute("pendingCallbacks", stats.pendingCallbacks());
         model.addAttribute("secondsPerDay", String.format(Locale.ROOT, "%.1f", simulator.secondsPerDay()));

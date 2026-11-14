@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -78,9 +79,24 @@ class ScenarioTest {
 
         // then
         assertSoftly(softly -> {
-            softly.assertThat(sut.notFoundFor()).isEqualTo(Duration.ofHours(6));
             softly.assertThat(sut.steps().getFirst().occursAt()).isEqualTo(Duration.ofHours(6));
             softly.assertThat(sut.steps().getLast().occursAt()).isEqualTo(Duration.ofHours(36));
+        });
+    }
+
+    @Test
+    void 이력에_나타나는_순서의_단계_목록은_시나리오마다_하나를_함께_쓴다() {
+        // when
+        List<Scenario.Step> sut = Scenario.LATE_INSERT.stepsByVisibility();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isSameAs(Scenario.LATE_INSERT.stepsByVisibility());
+            softly.assertThat(sut).extracting(Scenario.Step::visibleAt).isSorted();
+            // 10시간째 사건은 22시간째에 나타나므로 20시간째 사건 뒤에 온다
+            softly.assertThat(sut).extracting(Scenario.Step::occursAt).containsExactly(
+                    Duration.ofHours(0), Duration.ofHours(4), Duration.ofHours(20), Duration.ofHours(10),
+                    Duration.ofHours(26), Duration.ofHours(30));
         });
     }
 }

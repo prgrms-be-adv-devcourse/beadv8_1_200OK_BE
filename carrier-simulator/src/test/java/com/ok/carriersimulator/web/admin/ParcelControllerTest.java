@@ -1,6 +1,7 @@
 package com.ok.carriersimulator.web.admin;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -19,6 +20,8 @@ import com.ok.carriersimulator.core.Scenario;
 import com.ok.carriersimulator.testsupport.MutableClock;
 import com.ok.carriersimulator.testsupport.SimulatorWebTest;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -89,6 +92,30 @@ class ParcelControllerTest {
         mockMvc.perform(post("/parcels/dummies")
                         .param("scenario", "NORMAL").param("carrierId", CARRIER).param("count", "1200"))
                 .andExpect(flash().attribute("createdHidden", 200));
+    }
+
+    @Test
+    void 목록에는_처음_조회된_시각이_나오고_조회한_적이_없으면_빈_표시다() throws Exception {
+        // given
+        simulator.createDummies(Scenario.NORMAL, CARRIER, 1, null, clock.instant());
+        Instant firstQueriedAt = clock.instant();
+        simulator.track(new ParcelKey(CARRIER, "902000000001"), firstQueriedAt);
+        clock.advance(Duration.ofSeconds(10));
+        simulator.track(new ParcelKey(CARRIER, "902000000001"), clock.instant());
+
+        // when
+        Object rows = mockMvc.perform(get("/parcels")).andExpect(status().isOk())
+                .andReturn().getModelAndView().getModel().get("rows");
+
+        // then
+        @SuppressWarnings("unchecked")
+        List<ParcelController.ParcelRow> sut = (List<ParcelController.ParcelRow>) rows;
+        assertSoftly(softly -> {
+            softly.assertThat(sut).hasSize(2);
+            softly.assertThat(sut.get(0).firstQueriedAt()).isEqualTo("-");
+            softly.assertThat(sut.get(1).firstQueriedAt()).isEqualTo(AdminSupport.time(firstQueriedAt));
+            softly.assertThat(sut.get(1).lastQueriedAt()).isEqualTo(AdminSupport.time(clock.instant()));
+        });
     }
 
     @Test

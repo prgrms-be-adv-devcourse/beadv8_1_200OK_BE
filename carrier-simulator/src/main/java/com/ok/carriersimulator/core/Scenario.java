@@ -2,6 +2,7 @@ package com.ok.carriersimulator.core;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -11,15 +12,15 @@ import java.util.regex.Pattern;
  * 송장 번호 앞자리로 고르므로 같은 번호는 언제나 같은 각본을 탄다.
  */
 public enum Scenario {
-    NORMAL("10", "정상", Duration.ZERO, false, normalSteps(1, 0)),
-    SLOW("20", "느린 진행", Duration.ZERO, false, normalSteps(3, 0)),
-    STUCK("30", "이동 멈춤", Duration.ZERO, false, List.of(
+    NORMAL("10", "정상", normalSteps(1, 0)),
+    SLOW("20", "느린 진행", normalSteps(3, 0)),
+    STUCK("30", "이동 멈춤", List.of(
             step(0, StatusCode.INFORMATION_RECEIVED, null, "보내는 분이 접수했습니다"),
             step(4, StatusCode.AT_PICKUP, "산지 집화점", "집화했습니다"),
             step(10, StatusCode.IN_TRANSIT, "옥천HUB", "간선 상차했습니다"))),
-    NOT_FOUND("40", "없는 송장", Duration.ZERO, true, List.of()),
-    LATE_REGISTER("50", "늦게 등록", Duration.ofHours(6), false, normalSteps(1, 6)),
-    REDELIVERY("60", "배송 실패 후 재배송", Duration.ZERO, false, List.of(
+    NOT_FOUND("40", "없는 송장", List.of()),
+    LATE_REGISTER("50", "늦게 등록", normalSteps(1, 6)),
+    REDELIVERY("60", "배송 실패 후 재배송", List.of(
             step(0, StatusCode.INFORMATION_RECEIVED, null, "보내는 분이 접수했습니다"),
             step(4, StatusCode.AT_PICKUP, "산지 집화점", "집화했습니다"),
             step(10, StatusCode.IN_TRANSIT, "옥천HUB", "간선 상차했습니다"),
@@ -29,14 +30,14 @@ public enum Scenario {
             step(50, StatusCode.OUT_FOR_DELIVERY, "배송지 대리점", "다시 배송을 출발했습니다"),
             step(54, StatusCode.DELIVERED, "배송지 대리점", "배송을 완료했습니다"))),
     // 10시간째 사건이 22시간째에야 이력에 나타난다. 마지막 상태는 그대로인데 이력이 바뀌는 경우를 만든다
-    LATE_INSERT("70", "이력 끼어듦", Duration.ZERO, false, List.of(
+    LATE_INSERT("70", "이력 끼어듦", List.of(
             step(0, StatusCode.INFORMATION_RECEIVED, null, "보내는 분이 접수했습니다"),
             step(4, StatusCode.AT_PICKUP, "산지 집화점", "집화했습니다"),
             new Step(Duration.ofHours(10), Duration.ofHours(22), StatusCode.IN_TRANSIT, "옥천HUB", "간선 상차했습니다"),
             step(20, StatusCode.IN_TRANSIT, "배송지 대리점", "간선 하차했습니다"),
             step(26, StatusCode.OUT_FOR_DELIVERY, "배송지 대리점", "배송을 출발했습니다"),
             step(30, StatusCode.DELIVERED, "배송지 대리점", "배송을 완료했습니다"))),
-    EXCEPTION("80", "사고", Duration.ZERO, false, List.of(
+    EXCEPTION("80", "사고", List.of(
             step(0, StatusCode.INFORMATION_RECEIVED, null, "보내는 분이 접수했습니다"),
             step(4, StatusCode.AT_PICKUP, "산지 집화점", "집화했습니다"),
             step(10, StatusCode.IN_TRANSIT, "옥천HUB", "간선 상차했습니다"),
@@ -47,16 +48,18 @@ public enum Scenario {
 
     private final String code;
     private final String displayName;
-    private final Duration notFoundFor;
-    private final boolean alwaysNotFound;
     private final List<Step> steps;
+    // 이력에 나타나는 순서로 정렬한 단계. 시나리오마다 한 번만 만들어 송장들이 함께 쓴다.
+    // 이력 끼어듦 시나리오는 일어난 순서와 나타나는 순서가 다르다
+    private final List<Step> stepsByVisibility;
 
-    Scenario(String code, String displayName, Duration notFoundFor, boolean alwaysNotFound, List<Step> steps) {
+    Scenario(String code, String displayName, List<Step> steps) {
         this.code = code;
         this.displayName = displayName;
-        this.notFoundFor = notFoundFor;
-        this.alwaysNotFound = alwaysNotFound;
         this.steps = steps;
+        this.stepsByVisibility = steps.stream()
+                .sorted(Comparator.comparing(Step::visibleAt))
+                .toList();
     }
 
     /**
@@ -101,18 +104,8 @@ public enum Scenario {
         return steps;
     }
 
-    /**
-     * 언제 조회해도 없는 송장인지.
-     */
-    public boolean alwaysNotFound() {
-        return alwaysNotFound;
-    }
-
-    /**
-     * 시작한 뒤 이 가상 시간 동안은 없는 송장으로 답한다.
-     */
-    public Duration notFoundFor() {
-        return notFoundFor;
+    List<Step> stepsByVisibility() {
+        return stepsByVisibility;
     }
 
     private static List<Step> normalSteps(int slowdown, int shiftHours) {

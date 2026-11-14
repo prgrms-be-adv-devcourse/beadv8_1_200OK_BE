@@ -15,6 +15,7 @@ import com.ok.carriersimulator.core.Admission;
 import com.ok.carriersimulator.core.CarrierSimulator;
 import com.ok.carriersimulator.core.FaultSettings;
 import com.ok.carriersimulator.core.Metric;
+import com.ok.carriersimulator.core.Operation;
 import com.ok.carriersimulator.core.ParcelKey;
 import com.ok.carriersimulator.core.Scenario;
 import com.ok.carriersimulator.core.StatusCode;
@@ -171,7 +172,7 @@ class SettingsControllerTest {
         mockMvc.perform(post("/settings/expire-tokens")).andExpect(flash().attributeExists("message"));
 
         // then
-        assertThat(simulator.admit(token, clock.instant()).rejection()).isEqualTo(Admission.Rejection.UNAUTHENTICATED);
+        assertThat(simulator.admit(token, Operation.TRACK, clock.instant()).rejection()).isEqualTo(Admission.Rejection.UNAUTHENTICATED);
     }
 
     @Test

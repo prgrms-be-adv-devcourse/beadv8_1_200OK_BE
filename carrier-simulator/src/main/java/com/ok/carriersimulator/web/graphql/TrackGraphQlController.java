@@ -2,6 +2,7 @@ package com.ok.carriersimulator.web.graphql;
 
 import com.ok.carriersimulator.core.Admission;
 import com.ok.carriersimulator.core.CarrierSimulator;
+import com.ok.carriersimulator.core.Operation;
 import com.ok.carriersimulator.core.ParcelKey;
 import com.ok.carriersimulator.core.StatusCode;
 import com.ok.carriersimulator.core.TrackResult;
@@ -38,7 +39,7 @@ class TrackGraphQlController {
     @QueryMapping
     TrackInfoView track(@Argument String carrierId, @Argument String trackingNumber,
                         @ContextValue(name = GraphQlConfig.AUTHORIZATION_CONTEXT_KEY, required = false) String authorization) {
-        admit(authorization);
+        admit(authorization, Operation.TRACK);
         ParcelKey key = keyOf(carrierId, trackingNumber);
         TrackResult result = simulator.track(key, clock.instant());
         if (!(result instanceof TrackResult.Found found)) {
@@ -50,7 +51,7 @@ class TrackGraphQlController {
     @MutationMapping
     Boolean registerTrackWebhook(@Argument RegisterInput input,
                                  @ContextValue(name = GraphQlConfig.AUTHORIZATION_CONTEXT_KEY, required = false) String authorization) {
-        admit(authorization);
+        admit(authorization, Operation.REGISTER);
         ParcelKey key = keyOf(input.carrierId(), input.trackingNumber());
         String callbackUrl = input.callbackUrl();
         if (callbackUrl == null || !(callbackUrl.startsWith("http://") || callbackUrl.startsWith("https://"))) {
@@ -92,11 +93,11 @@ class TrackGraphQlController {
     }
 
     // 지연과 거절을 core가 정한다. 거절이어도 지연은 지킨다
-    private void admit(String authorization) {
+    private void admit(String authorization, Operation operation) {
         String token = authorization != null && authorization.startsWith(BEARER)
                 ? authorization.substring(BEARER.length()).strip()
                 : null;
-        Admission admission = simulator.admit(token, clock.instant());
+        Admission admission = simulator.admit(token, operation, clock.instant());
         if (admission.delayMillis() > 0) {
             try {
                 Thread.sleep(admission.delayMillis());
@@ -120,12 +121,18 @@ class TrackGraphQlController {
         return new ParcelKey(carrierId, trackingNumber);
     }
 
+    // 이 서버가 내보내는 cursor는 0부터 이어지는 순번이다. 그 밖의 값은 내보낸 적 없는 cursor다.
+    // 가장 큰 정수도 막는다. 거기에 1을 더하면 넘쳐서 음수가 되기 때문이다
     private static int cursorIndex(String cursor) {
         try {
-            return Integer.parseInt(cursor);
+            int index = Integer.parseInt(cursor);
+            if (index >= 0 && index < Integer.MAX_VALUE) {
+                return index;
+            }
         } catch (NumberFormatException e) {
-            throw new SimulatorGraphQlException(Code.BAD_REQUEST, "알 수 없는 cursor입니다.");
+            // 아래에서 같은 오류로 답한다
         }
+        throw new SimulatorGraphQlException(Code.BAD_REQUEST, "알 수 없는 cursor입니다.");
     }
 
     record RegisterInput(String carrierId, String trackingNumber, String callbackUrl, OffsetDateTime expirationTime) {
