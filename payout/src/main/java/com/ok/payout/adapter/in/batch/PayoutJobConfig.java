@@ -46,12 +46,15 @@ public class PayoutJobConfig {
     //   publish  : outbox에 남은 판매자 몫 정산을 Kafka로 발송 (지갑 Spring 이벤트는 commit에서 발행). Kafka 발송 실패로는 Step을 실패시키지 않음
     // 앞 Step이 실패하면 Job이 FAILED로 멈추고 뒤 Step은 실행되지 않음
     // 실패한 Job은 재시작하지 않고 새 스냅샷으로 처음부터 재실행 (PayoutJobRunner 주석 참고)
+    // Job이 끝나면(성공·실패 모두) 막힌 주문 집계 표를 갱신함 (#582, PayoutBlockedOrderRefreshListener)
     @Bean
     public Job payoutJob(JobRepository jobRepository,
                          Step payoutSnapshotStep, Step payoutValidateStep, Step payoutDraftStep,
-                         Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep) {
+                         Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep,
+                         PayoutBlockedOrderRefreshListener payoutBlockedOrderRefreshListener) {
         return new JobBuilder("payoutJob", jobRepository)
                 .validator(new PayoutJobParametersValidator())
+                .listener(payoutBlockedOrderRefreshListener)
                 .start(payoutSnapshotStep)
                 .next(payoutValidateStep)
                 .next(payoutDraftStep)

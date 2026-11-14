@@ -22,7 +22,7 @@ public interface PayoutBlockedOrderCauseJpaRepository
 
     // 한 문장으로 지움 (파생 delete는 줄마다 조회 뒤 하나씩 지움)
     @Override
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("delete from PayoutBlockedOrderCause c where c.orderId in :orderIds")
     void deleteAllByOrderIdIn(@Param("orderIds") Collection<Long> orderIds);
 

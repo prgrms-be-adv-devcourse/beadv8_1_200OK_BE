@@ -31,7 +31,9 @@ final class PayoutDraftValidator {
     // 원인 후보의 상세. 함께 보류된 후보와 구분되게 접두어를 고정함 (사유는 둘 다 VERIFY_MISMATCH라 상세로만 구분됨)
     static final String CAUSE_PREFIX = "[원인] ";
     // 같은 주문이라 함께 빠진 후보의 상세 (이 후보 자체에는 문제가 없음)
-    static final String HELD_DETAIL = "[함께 보류] 같은 주문의 결과 검증 불일치 (원인 후보 %s)";
+    // 접두어는 막힌 주문 집계 표(#582)가 원인이 아닌 기록을 거를 때도 씀 (PayoutBlockedOrderRefreshService)
+    static final String HELD_PREFIX = "[함께 보류]";
+    static final String HELD_DETAIL = HELD_PREFIX + " 같은 주문의 결과 검증 불일치 (원인 후보 %s)";
 
     // 판정에 쓰는 값 묶음 (모두 이번 스냅샷의 PayoutQueryRepository 조회 결과)
     record Input(

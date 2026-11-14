@@ -26,7 +26,7 @@ public interface PayoutBlockedOrderJpaRepository
 
     // 한 문장으로 지움 (파생 delete는 줄마다 조회 뒤 하나씩 지워 막힌 주문 수만큼 문장이 나감)
     @Override
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("delete from PayoutBlockedOrder b where b.orderId in :orderIds")
     void deleteAllByOrderIdIn(@Param("orderIds") Collection<Long> orderIds);
 }

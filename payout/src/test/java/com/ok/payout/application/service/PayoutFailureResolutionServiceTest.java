@@ -3,6 +3,7 @@ package com.ok.payout.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.application.port.in.PayoutOrderResolutionResult;
 import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
+import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.PayoutCandidateItem;
@@ -42,6 +43,9 @@ class PayoutFailureResolutionServiceTest {
 
     @Mock
     private PayoutFailureResolutionRepository payoutFailureResolutionRepository;
+
+    @Mock
+    private PayoutBlockedOrderRepository payoutBlockedOrderRepository;
 
     @InjectMocks
     private PayoutFailureResolutionService sut;

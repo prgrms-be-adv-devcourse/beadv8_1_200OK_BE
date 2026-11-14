@@ -1,6 +1,7 @@
 package com.ok.payout.adapter.out.persistence;
 
 import com.ok.payout.PayoutSchema;
+import com.ok.payout.application.port.out.BlockedFailureRow;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
@@ -37,10 +38,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
@@ -221,6 +224,85 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .where(payoutFailure.orderId.eq(orderId), lockingFailure())
                 .fetchFirst();
         return found != null;
+    }
+
+    // ---------- 막힌 주문 집계 표 다시 판정 (#582) ----------
+
+    // 기본 키 끝만 읽음 (MAX(id)는 인덱스 끝 한 칸)
+    @Override
+    public long findMaxFailureId() {
+        Long maxId = queryFactory.select(payoutFailure.id.max()).from(payoutFailure).fetchOne();
+        return Objects.requireNonNullElse(maxId, 0L);
+    }
+
+    // 기본 키 범위로 새로 생긴 실패 기록만 읽음: 반영 표시 뒤의 기록만 보려는 것 (운영 시작 이후 전체를 읽지 않음)
+    @Override
+    public List<Long> findOrderIdsWithFailuresBetween(long afterId, long upToId) {
+        return queryFactory
+                .select(payoutFailure.orderId)
+                .distinct()
+                .from(payoutFailure)
+                .where(payoutFailure.id.gt(afterId), payoutFailure.id.loe(upToId))
+                .fetch();
+    }
+
+    // isOrderLocked를 주문 여럿으로 한 번에 봄 (같은 조건 lockingFailure, payout_failure의 order_id 인덱스)
+    @Override
+    public Set<Long> findLockedOrderIds(Collection<Long> orderIds) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new HashSet<>();
+        }
+        return new HashSet<>(queryFactory
+                .select(payoutFailure.orderId)
+                .distinct()
+                .from(payoutFailure)
+                .where(payoutFailure.orderId.in(orderIds), lockingFailure())
+                .fetch());
+    }
+
+    // countFailedRunsOfOrder를 주문 여럿으로 한 번에 셈: 같은 SQL 앞부분(FAILED_RUNS_BY_ORDER_SELECT)에 주문 목록 조건만 더함
+    // 네이티브 SQL인 이유는 countFailedRunsByOrder와 같음 (Spring Batch 실행 기록 BATCH_JOB_EXECUTION을 함께 읽음)
+    // 주문을 하나씩 세면 막힌 주문 수만큼 SQL이 나가서 한 번에 셈 (부르는 쪽이 주문 목록을 묶음 크기로 나눠 보냄)
+    @Override
+    public Map<Long, Long> countFailedRunsOfOrders(Collection<Long> orderIds) {
+        Map<Long, Long> counts = new HashMap<>();
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return counts;
+        }
+        List<?> rows = entityManager.createNativeQuery(
+                        FAILED_RUNS_BY_ORDER_SELECT + "AND f.order_id IN (:orderIds) GROUP BY f.order_id")
+                .setParameter("orderIds", orderIds)
+                .getResultList();
+        for (Object row : rows) {
+            Object[] columns = (Object[]) row;
+            counts.put(((Number) columns[0]).longValue(), ((Number) columns[1]).longValue());
+        }
+        return counts;
+    }
+
+    // 종류는 실패 기록에 없어 정산후보와 조인 (실패 기록이 정산후보 ID를 숫자로만 들고 있어 on 조건, FK가 있어 짝이 없는 줄은 없음)
+    @Override
+    public List<BlockedFailureRow> findUnresolvedFailureRowsOfOrders(Collection<Long> orderIds) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .select(Projections.constructor(BlockedFailureRow.class,
+                        payoutFailure.orderId,
+                        payoutFailure.orderItemId,
+                        payoutFailure.sellerId,
+                        payoutCandidateItem.eventType,
+                        payoutFailure.reason,
+                        payoutFailure.detail,
+                        payoutFailure.createdAt))
+                .from(payoutFailure)
+                .join(payoutCandidateItem).on(payoutCandidateItem.id.eq(payoutFailure.candidateId))
+                .where(payoutFailure.orderId.in(orderIds), unresolvedFailure())
+                .orderBy(payoutFailure.id.asc())
+                .fetch();
     }
 
     // 해결 기록 1줄씩 (#571): 사유·상세·판매자·실패 시각은 실패 기록에, 종류·금액은 정산후보에만 있어 둘 다 조인
