@@ -21,6 +21,8 @@ import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutFailureResolution;
 import com.ok.payout.domain.PayoutResolutionMethod;
+import com.ok.payout.domain.PayoutSellerDraft;
+import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutWalletDeduction;
@@ -152,10 +154,14 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 결과_검증_불일치로_잠긴_주문을_해결하면_다음_실행에서_정산된다() throws Exception {
         // given: 20일 전 후보(대기 지남)가 결과 검증 불일치로 잠김
+        //   첫 실행이 기준 정산을 만들어 조회 하한(약 18일 전)이 생기게 함 → 20일 전 후보는 기간 밖
+        givenBaselineSettlement();
         Long firstRun = runCompleted();
         long order = nextOrderId();
-        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(20));
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long candidate = insertCandidate(order, createdAt);
         insertFailure(firstRun, candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        assertThat(payoutService.settlementFrom()).isAfter(createdAt);
         // 잠긴 동안의 실행에서는 정산되지 않음
         assertThat(payoutRepository.findBySnapshotId(runCompleted())).isEmpty();
 
@@ -172,9 +178,13 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 세번_실패해_멈춘_주문을_데이터를_고치고_해결하면_조회_기간_밖이어도_다음_실행에서_정산된다() throws Exception {
         // given: 30일 전 후보에 지갑 결제 기록이 없어 실제 Job 3번에서 "결제 기록 없음"으로 실패해 멈춤
+        //   첫 실행이 기준 정산을 만들어 조회 하한(약 18일 전)이 생김 → 2번째부터는 기간 밖이라 #549 다시 넣기로만 들어감
+        givenBaselineSettlement();
         long order = nextOrderId();
-        long candidate = insertCandidateWithoutDeduction(order, LocalDateTime.now().minusDays(30));
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(30);
+        long candidate = insertCandidateWithoutDeduction(order, createdAt);
         runCompleted(3);
+        assertThat(payoutService.settlementFrom()).isAfter(createdAt);
         assertThat(payoutQueryRepository.countFailedRunsByOrder()).containsEntry(order, 3L);
         assertThat(snapshotCandidateIds()).doesNotContain(candidate);
 
@@ -219,6 +229,10 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         insertFailure(runs.get(1), candidate, order, PayoutFailureReason.AMOUNT_MISMATCH);
         insertFailure(runs.get(2), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
 
+        // 해결 서비스가 저장할 실패 기록은 id 오름차순 (동시 해결 때 데드락 대신 유니크 위반이 나게)
+        assertThat(payoutQueryRepository.findUnresolvedFailuresByOrderId(order))
+                .extracting(PayoutFailure::getId).isSorted().hasSize(3);
+
         // when
         PayoutOrderResolutionResult result = resolve(order);
 
@@ -255,6 +269,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
         insertFailure(run, candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
         resolve(order);
+        assertThat(snapshotCandidateIds()).contains(candidate);
         jdbcTemplate.update("UPDATE payout_candidate_items SET created_at = ? WHERE id = ?",
                 LocalDateTime.now().plusDays(5), candidate);
 
@@ -264,19 +279,27 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 배치가_도는_중에_해결해도_그_실행에서_실패한_후보는_draft에_들어가지_않는다() throws Exception {
-        // given: 스냅샷에 들어간 후보가 그 스냅샷의 금액 검사에서 수수료 불일치로 실패한 상태
+        // given: 같은 스냅샷에 두 주문. 한 주문의 후보가 그 스냅샷의 금액 검사에서 수수료 불일치로 실패한 상태
         long order = nextOrderId();
         long candidate = insertCandidate(order, LocalDateTime.now());
+        long otherOrder = nextOrderId();
+        long otherCandidate = insertCandidate(otherOrder, LocalDateTime.now());
         Long snapshotId = createSnapshotNow();
-        assertThat(candidateIdsOf(snapshotId)).containsExactly(candidate);
+        assertThat(candidateIdsOf(snapshotId)).containsExactlyInAnyOrder(candidate, otherCandidate);
         insertFailure(snapshotId, candidate, order, PayoutFailureReason.FEE_MISMATCH);
 
         // when: 같은 실행의 draft 전에 관리자가 해결
         resolve(order);
         payoutService.draft(snapshotId, 100);
 
-        // then: 한 실행 안의 제외는 해결과 무관 → 그 실행에서는 정산되지 않음 (다음 실행부터 다시 검사)
-        assertThat(sellerDraftRepository.findBySnapshotId(snapshotId)).isEmpty();
+        // then: 한 실행 안의 제외는 해결과 무관 → 그 실행의 draft에는 실패 없는 다른 주문만 들어감 (해결한 주문은 다음 실행부터 다시 검사)
+        List<Long> draftedOrderIds = new ArrayList<>();
+        for (PayoutSellerDraft draft : sellerDraftRepository.findBySnapshotId(snapshotId)) {
+            for (PayoutSellerDraftItem item : draft.getItems()) {
+                draftedOrderIds.add(item.getOrderId());
+            }
+        }
+        assertThat(draftedOrderIds).containsExactly(otherOrder);
     }
 
     // ---------- 해결할 것이 없을 때 ----------
@@ -335,13 +358,17 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
             }
         };
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        List<Future<Object>> futures = List.of(executor.submit(request), executor.submit(request));
-        start.countDown();
         List<Object> outcomes = new ArrayList<>();
-        for (Future<Object> future : futures) {
-            outcomes.add(future.get(60, TimeUnit.SECONDS));
+        try {
+            List<Future<Object>> futures = List.of(executor.submit(request), executor.submit(request));
+            start.countDown();
+            for (Future<Object> future : futures) {
+                outcomes.add(future.get(60, TimeUnit.SECONDS));
+            }
+        } finally {
+            // 시간 초과로 끝나도 스레드가 늦게 저장해 다음 테스트 정리를 깨지 않게 멈춤
+            executor.shutdownNow();
         }
-        executor.shutdown();
 
         // then: 하나는 해결(3건), 하나는 409. 해결 기록은 실패 기록마다 1건만 (500이나 중복 없음)
         assertThat(outcomes).filteredOn(PayoutOrderResolutionResult.class::isInstance).hasSize(1);
@@ -466,6 +493,12 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         return post("/api/v1/admin/payouts/orders/{orderId}/resolution", orderId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
+    }
+
+    // 다른 주문 하나를 대기(15일)가 지난 정상 후보로 둬, 다음 실행이 정산을 만들게 함
+    // 조회 하한은 "정산을 만든 마지막 정기 실행" 기준이라, 정산이 없으면 하한이 없어 오래된 후보도 기간 안으로 들어옴 (#390)
+    private void givenBaselineSettlement() {
+        insertCandidate(nextOrderId(), LocalDateTime.now().minusDays(16));
     }
 
     // 결과 검증 불일치 실패 1건으로 잠긴 주문 (실행을 먼저 만들어 실제 Job이 그 후보를 정산하지 않게 함)

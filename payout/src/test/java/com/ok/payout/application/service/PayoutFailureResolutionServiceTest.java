@@ -60,7 +60,7 @@ class PayoutFailureResolutionServiceTest {
     }
 
     @Test
-    void 멈춘_주문은_해결되지_않은_실패_기록_전부를_순서대로_해결한다() {
+    void 멈춘_주문은_해결되지_않은_실패_기록_전부를_조회한_순서_그대로_저장한다() {
         // given: 3번 실패해 멈춤, 해결 안 된 실패 기록 3건(잠그는 사유와 아닌 사유 섞임)
         List<PayoutFailure> failures = List.of(
                 failure(11L, PayoutFailureReason.AMOUNT_MISMATCH),
@@ -74,7 +74,7 @@ class PayoutFailureResolutionServiceTest {
         // when
         PayoutOrderResolutionResult result = sut.resolveOrder(COMMAND);
 
-        // then: 사유를 가리지 않고 3건 모두, 실패 기록 ID 순서로 저장
+        // then: 사유를 가리지 않고 3건 모두, 조회 결과 순서 그대로 저장 (id 오름차순 정렬은 조회가 맡고 통합 테스트가 확인)
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<PayoutFailureResolution>> captor = ArgumentCaptor.forClass(List.class);
         then(payoutFailureResolutionRepository).should().saveAll(captor.capture());
