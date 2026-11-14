@@ -31,7 +31,7 @@ public class OutboxMemberEventPublisher implements MemberEventPublisher {
         // 이벤트를 먼저 만들어 값 검사(회원 ID 필수)를 통과한 뒤에만 outbox 줄을 남긴다
         MemberRegisteredEvent event = new MemberRegisteredEvent(memberId);
         memberOutboxRepository.save(MemberOutbox.memberRegistered(memberId));
-        // TODO(#560): 장바구니가 Kafka(member.member-registered)로 받게 되면 스프링 이벤트 발행과 common의 MemberRegisteredEvent를 지운다.
+        // TODO(#601): 장바구니가 Kafka(member.member-registered)로 받게 되면 스프링 이벤트 발행과 common의 MemberRegisteredEvent를 지운다.
         //  클래스를 먼저 지우면 장바구니 리스너가 컴파일되지 않는다. 장바구니 전환 이슈가 생기면 번호를 바꾼다
         publish(event);
     }
