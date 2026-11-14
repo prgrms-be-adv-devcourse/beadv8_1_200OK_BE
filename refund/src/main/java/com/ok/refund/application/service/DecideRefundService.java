@@ -289,7 +289,7 @@ public class DecideRefundService implements DecideRefundUseCase {
     // 주문의 설명 문장은 로그에만 남기고 DB에는 저장하지 않는다. 예외를 던지지 않는 경로라 여기서 로그를 남긴다.
     // 로그는 거절 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "거절로 끝냄"이 남으면 실제와 어긋나기 때문이다.
     // 한계: 처리 중 → 거절은 같은 묶음의 배송비 집계를 바꾸는데도 자기 행만 잠근다. 그 사이 같은 묶음의 다른 환불이 이 환불을
-    // 취소된 것으로 보고 승인됐다면 그 환불의 배송비 판단이 틀린 채 남는다(RefundShippingFeePolicy.CANCELLING_STATUSES 주석, TODO(#516))
+    // 취소된 것으로 보고 승인됐다면 그 환불의 배송비 판단이 틀린 채 남는다(RefundShippingFeePolicy.CANCELLING_STATUSES 주석, TODO(#546))
     private RefundResult rejectAfterOrderRefused(RefundResult approved, String orderDetail) {
         RefundResult rejected = transaction.execute(status -> {
             Refund refund = refundPersistencePort.findByIdForUpdate(approved.refundId())
