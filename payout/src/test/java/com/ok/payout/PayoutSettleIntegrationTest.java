@@ -861,6 +861,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(failureRepository.findBySnapshotId(snapshotId)).hasSize(1);
     }
 
+    // 실패가 1번뿐이라 다음 실행에서 다시 검사됨. 성공한 실행에서 3번 실패한 주문은 멈춰 다시 검사하지 않음 (#549, PayoutFailureRetryIntegrationTest)
     @Test
     void 차감_기록이_없어_빠진_후보는_다음_배치_전에_차감_기록이_들어오면_그때_정산된다() throws Exception {
         // given: 차감 기록이 없는 주문 B (판매자 20)

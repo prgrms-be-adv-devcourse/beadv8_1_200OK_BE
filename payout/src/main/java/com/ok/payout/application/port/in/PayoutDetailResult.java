@@ -17,6 +17,7 @@ public record PayoutDetailResult(
         // 정산 확정 시각 (payout.created_at)
         LocalDateTime createdAt,
         // 정산 대상 기간 시작 (스냅샷 period_from, 포함). 정산 이력이 없던 첫 실행이면 null
+        // 실패가 3번 안 된 주문의 후보는 기간 밖이어도 다시 넣어 정산하므로, 항목 중 일부는 이 시작보다 앞설 수 있음 (#549)
         LocalDateTime periodFrom,
         // 정산 대상 기간 끝 (스냅샷 period_to, 미포함)
         LocalDateTime periodTo,
