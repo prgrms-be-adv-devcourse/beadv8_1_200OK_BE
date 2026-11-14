@@ -43,7 +43,7 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
         // 해결할 것이 있는지: 스냅샷이 그 주문을 빼는 두 조건(잠김, 멈춤)과 같은 기준으로 봄
         //   잠김 = 해결 안 된 수수료 불일치·결과 검증 불일치 실패가 있음, 멈춤 = 성공한 실행에서 해결 안 된 실패가 MAX_FAILED_RUNS번 이상
         //   1~2번 실패한 주문은 다음 실행에서 저절로 다시 검사되므로 해결 대상이 아님
-        // 멈춤 판정은 스냅샷과 같은 세는 SQL에 주문 조건만 더한 조회로 함: 기준이 어긋나지 않으면서 그 주문만 셈 (봇 리뷰)
+        // 멈춤 판정은 스냅샷과 같은 세는 SQL에 주문 조건만 더한 조회로 함: 기준이 어긋나지 않으면서 그 주문만 셈
         boolean locked = payoutQueryRepository.isOrderLocked(orderId);
         long failedRuns = payoutQueryRepository.countFailedRunsOfOrder(orderId);
         if (!locked && failedRuns < PayoutPolicy.MAX_FAILED_RUNS) {
