@@ -346,6 +346,7 @@ public class PayoutService implements PayoutUseCase {
     // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 일부 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
     //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
     //   일부 주문만 실패한 판매자는 실패 수에 들어가지 않음(#534): 그 주문은 WARN 로그와 payout_failure로만 확인
+    // TODO(#302): 일부 주문만 실패한 날도 실행 기록·알림으로 드러나게 실패 주문 수를 남김 (지금은 로그를 직접 봐야 알 수 있음)
     //   전원 실패(성공 0명)면 draft Step이 끝날 때 Job을 FAILED로 만듦 (PayoutJobConfig.failIfEverySellerFailed)
     //
     // 이 메서드에서 쓰는 것이 없음: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 이 메서드 자체는 조회만 함
