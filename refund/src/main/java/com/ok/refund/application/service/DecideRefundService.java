@@ -61,7 +61,7 @@ public class DecideRefundService implements DecideRefundUseCase {
     private final OrderCancellationPort orderCancellationPort;
     private final ProductStockReleasePort productStockReleasePort;
     private final RefundStepPersistencePort refundStepPersistencePort;
-    // 승인 뒤 다른 모듈 호출을 실패 기록과 함께 부르는 틀(#574). 실패하면 환불 행과 단계 줄에 남기고 같은 예외를 올린다
+    // 승인 뒤 다른 모듈 호출을 실패 기록과 함께 부르는 틀(#574). 실패하면 단계 줄에만 남기고(환불 행은 잠그기만 한다) 같은 예외를 올린다
     private final RefundStepRunner refundStepRunner;
     private final Clock clock;
     // 승인 전 확인 조회용. 잠그지 않고 읽기만 한다
@@ -184,6 +184,8 @@ public class DecideRefundService implements DecideRefundUseCase {
     // 다시 시도(#545)가 지갑 요청부터 이어 갈 수 있다.
     // 승인 요청 안의 단계(주문·지갑·0원 재고)도 실패 기록 틀(RefundStepRunner)로 부른다(#574). 실패하면 그 단계 줄이 "할 차례"와 이유로 남고,
     // 예외는 그대로 올라가 판매자 응답은 예전과 같다(500·503, 다시 승인하면 409). 지갑 완료 뒤의 재고 복구는 HandleWalletRefundResultService가 틀로 부른다(#544)
+    // 예전과 다른 응답이 하나 있다. 주문 반영 뒤 단계 표를 고치는 구간(recordOrderSucceeded)이 실패하면 주문은 반영됐는데 500으로 응답하고,
+    // 주문 줄은 "시도 중"으로 남는다. 반대로 지갑 발행 뒤 "결과 대기"로 바꾸는 구간(markWalletAwaitingResult)이 실패해도 WARN만 남기고 처리 중으로 응답한다
     // 지갑 줄은 발행하기 전에 다른 구간에서 먼저 기록해 커밋한다(먼저 기록하고 보내기). 발행이 실패해도 주문만 취소된 채 흔적 없이 남지 않고
     // "WALLET: 할 차례"가 남는다(#574). 그 줄을 보고 다시 보내는 일은 #576이 맡는다
     private RefundResult continueAfterApproval(RefundResult result) {

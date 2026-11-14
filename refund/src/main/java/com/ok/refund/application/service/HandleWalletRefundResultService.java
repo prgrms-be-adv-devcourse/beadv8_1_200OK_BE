@@ -168,7 +168,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
             return;
         }
         // 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "기록함"이 남으면 실제와 어긋난다
-        log.warn("지갑 반환 실패를 환불에 기록함(처리 중 유지). refundId={}, orderId={}, amount={}, reason={}",
+        log.warn("지갑 반환 실패를 지갑 단계 줄에 기록함(환불은 처리 중 유지). refundId={}, orderId={}, amount={}, reason={}",
                 refundId, command.orderId(), command.amount(), command.reason());
     }
 

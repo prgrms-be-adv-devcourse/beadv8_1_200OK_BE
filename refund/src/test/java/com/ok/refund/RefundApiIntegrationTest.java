@@ -916,7 +916,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
         assertThat(orderCancellationPort.reflectedOf(refundId)).isEmpty();
     }
 
-    // 승인은 커밋된 뒤라 되돌리지 않는다. 주문에 알리지 못하면 판매자는 503을 받고 환불은 처리 중에 머문다(#516에서 다시 시도)
+    // 승인은 커밋된 뒤라 되돌리지 않는다. 주문에 알리지 못하면 판매자는 503을 받고 환불은 처리 중에 머문다(다시 시도는 #576)
     @Test
     void 승인_뒤_주문_취소_반영이_실패하면_503이고_처리_중으로_남는다() throws Exception {
         // given
