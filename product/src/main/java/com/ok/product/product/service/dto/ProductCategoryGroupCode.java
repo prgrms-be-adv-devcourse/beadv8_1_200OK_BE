@@ -7,10 +7,14 @@ public enum ProductCategoryGroupCode {
 	AGRICULTURE;
 
 	public ProductCategoryGroup toDomain() {
-		return ProductCategoryGroup.valueOf(name());
+		return switch (this) {
+			case AGRICULTURE -> ProductCategoryGroup.AGRICULTURE;
+		};
 	}
 
 	public static ProductCategoryGroupCode from(ProductCategoryGroup group) {
-		return valueOf(group.name());
+		return switch (group) {
+			case AGRICULTURE -> AGRICULTURE;
+		};
 	}
 }
