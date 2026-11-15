@@ -624,10 +624,6 @@ public class PayoutService implements PayoutUseCase {
     @Override
     public PayoutPublishResult publishPending() {
         List<PayoutOutboxRow> rows = payoutOutboxRepository.findPendingRows();
-        // 짧은 간격 재발송은 하루 288번(5분마다) 돌고 대부분 보낼 줄이 없음. 그때마다 "보낸 수=0" 로그가 쌓이지 않게 로그 없이 끝냄
-        if (rows.isEmpty()) {
-            return new PayoutPublishResult(0, 0, 0);
-        }
         int sent = 0;
         int failed = 0;
         int consecutiveFailures = 0;

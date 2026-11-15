@@ -33,6 +33,6 @@ public class PayoutOutboxResendScheduler {
             // 정산 Job 발행 단계나 다른 서버의 재발송이 지금 보내는 중이라 정상. 남은 줄은 그쪽이 보내거나 다음 실행이 보냄
             log.info("다른 곳이 정산 outbox를 보내는 중이라 이번 재발송을 건너뜀");
         }
-        // 보낸 결과 로그는 publishPending이 남김 (보낼 줄이 없으면 남기지 않음)
+        // 보낸 결과 로그는 publishPending이 남김. 0건이어도 남겨 재발송이 5분마다 돌고 있다는 흔적을 둠 (하루 최대 288줄)
     }
 }
