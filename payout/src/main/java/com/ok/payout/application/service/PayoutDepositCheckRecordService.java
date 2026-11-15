@@ -152,6 +152,8 @@ public class PayoutDepositCheckRecordService {
 
     // 같은 정산이 두 번 가도 지갑은 payoutId로 한 번만 입금함(#584). 그래서 이미 보낸 줄을 다시 보내도 됨
     // 아직 못 보낸 줄(이미 PENDING)도 되돌리면 그대로 PENDING이라 따로 거르지 않음
+    // 재발송과 겹쳐도 되돌림이 덮어써지지 않음(@Version 없이 둠): 재발송은 PENDING 줄만 읽어 보내고, 보내는 동안 그 줄을 SENT로 바꾸는 곳은 없음(같은 잠금)
+    //   그래서 그 사이의 되돌림은 바뀌는 값이 없고(UPDATE 안 나감), 재발송의 메시지는 이 답 뒤에 나감. PR #631 리뷰에서 실행으로 확인
     private void markOutboxPendingAgain(Long checkId, List<Long> payoutIds) {
         if (payoutIds.isEmpty()) {
             return;
