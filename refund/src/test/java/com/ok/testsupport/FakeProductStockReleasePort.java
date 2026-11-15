@@ -27,6 +27,8 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
     // 호출 횟수. 실제 상품 API처럼 두 번째부터는 다시 풀지 않는 것과 별개로, "서비스가 두 번 불렀는지"를 확인하려고 센다
     private final Map<Long, AtomicInteger> callCounts = new ConcurrentHashMap<>();
     private volatile boolean failing;
+    // 상품이 다시 해도 같은 이유(재고 기록 없음 등)로 거절하는 경우. 실제 어댑터가 404·409·422를 바꾸는 코드를 던진다(#576)
+    private volatile boolean refusing;
     // 앞으로 실패할 호출 수. 다시 시도 간격(Kafka 오류 처리기)과 상관없이 시도 횟수를 정확히 맞추려고 둔다
     private final AtomicInteger remainingFailures = new AtomicInteger();
 
@@ -41,6 +43,11 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
         failing = true;
     }
 
+    /** 실제 어댑터가 상품의 404·409·422를 바꾸는 것처럼, 이후 호출이 {@code PRODUCT_RELEASE_REFUSED}를 던지게 한다 */
+    public void refuse() {
+        refusing = true;
+    }
+
     /** 다음 {@code count}번의 호출만 {@code PRODUCT_API_FAILED}를 던지고 그 뒤 호출은 성공하게 한다 */
     public void failNextCalls(int count) {
         remainingFailures.set(count);
@@ -50,6 +57,7 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
         released.clear();
         callCounts.clear();
         failing = false;
+        refusing = false;
         remainingFailures.set(0);
     }
 
@@ -60,6 +68,9 @@ public class FakeProductStockReleasePort implements ProductStockReleasePort {
 
     @Override
     public void releaseStock(StockRelease release) {
+        if (refusing) {
+            throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
+        }
         if (failing || remainingFailures.getAndUpdate(left -> left > 0 ? left - 1 : 0) > 0) {
             throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
         }
