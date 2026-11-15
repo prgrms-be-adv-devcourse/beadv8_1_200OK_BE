@@ -57,6 +57,60 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         refundJpaRepository.deleteAllInBatch();
     }
 
+    // 알람(#576)이 다시 볼 환불만 고르는지 본다: 할 차례·시도 중이면서 다시 볼 시각이 지난 줄. 결과 대기(#577)·끝 상태·아직 이른 줄은 빼고,
+    // 한 환불에 해당 줄이 둘이어도 한 번만, 가장 오래 기다린 순으로 돌려준다
+    @Test
+    void 다시_볼_시각이_지난_할_차례와_시도_중_줄이_있는_환불만_오래_기다린_순으로_고른다() {
+        // given
+        Long waitedLong = newRefundWith(801L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                step(RefundStepType.WALLET, RefundStepStatus.READY, NOW.minusMinutes(5)),
+                step(RefundStepType.PRODUCT, RefundStepStatus.READY, NOW.minusMinutes(3)));
+        Long expiredInProgress = newRefundWith(802L, step(RefundStepType.ORDER, RefundStepStatus.IN_PROGRESS, NOW.minusMinutes(1)));
+        Long dueExactlyNow = newRefundWith(803L, step(RefundStepType.ORDER, RefundStepStatus.READY, NOW));
+        newRefundWith(804L, step(RefundStepType.ORDER, RefundStepStatus.READY, NOW.plusSeconds(1)));
+        newRefundWith(805L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, NOW.minusMinutes(30)));
+        newRefundWith(806L, step(RefundStepType.ORDER, RefundStepStatus.STOPPED, null));
+
+        // when
+        List<Long> sut = refundStepPersistencePort.findRefundIdsDueForResume(NOW, 10);
+
+        // then
+        assertThat(sut).containsExactly(waitedLong, expiredInProgress, dueExactlyNow);
+    }
+
+    @Test
+    void 다시_볼_환불은_정한_개수까지만_고른다() {
+        // given
+        Long first = newRefundWith(811L, step(RefundStepType.ORDER, RefundStepStatus.READY, NOW.minusMinutes(2)));
+        newRefundWith(812L, step(RefundStepType.ORDER, RefundStepStatus.READY, NOW.minusMinutes(1)));
+
+        // when
+        List<Long> sut = refundStepPersistencePort.findRefundIdsDueForResume(NOW, 1);
+
+        // then
+        assertThat(sut).containsExactly(first);
+    }
+
+    // 주문·주문 상품·옵션 번호를 모두 바꿔 서로 겹치지 않는 환불을 하나 더 만들고 주어진 단계 줄을 붙인다
+    private Long newRefundWith(Long orderItemId, RefundStep... steps) {
+        return inTransaction(() -> {
+            Long id = refundPersistencePort.saveNew(
+                    Refund.request(orderItemId, orderItemId, 1, 1L, 7L, orderItemId, "상품", "옵션", 10_000L, null)).getId();
+            refundPersistencePort.findByIdForUpdate(id);
+            for (RefundStep step : steps) {
+                refundStepPersistencePort.saveNew(RefundStep.restore(null, id, step.getType(), step.getStatus(),
+                        step.getAttemptCount(), step.getNextCheckAt(), step.getLastReason(), NOW));
+            }
+            return id;
+        });
+    }
+
+    private static RefundStep step(RefundStepType type, RefundStepStatus status, LocalDateTime nextCheckAt) {
+        String reason = status == RefundStepStatus.STOPPED ? "멈춤" : null;
+        return RefundStep.restore(null, null, type, status, 1, nextCheckAt, reason, NOW);
+    }
+
     @Test
     void 단계_줄을_저장하고_다시_읽는다() {
         // given

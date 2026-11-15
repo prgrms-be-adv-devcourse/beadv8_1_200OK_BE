@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,6 +65,11 @@ public class FakeRefundStepPersistencePort implements RefundStepPersistencePort 
     @Override
     public List<RefundStep> findAllByRefundId(Long refundId) {
         return persistenceAdapter.findAllByRefundId(refundId);
+    }
+
+    @Override
+    public List<Long> findRefundIdsDueForResume(LocalDateTime now, int limit) {
+        return persistenceAdapter.findRefundIdsDueForResume(now, limit);
     }
 
     // 고른 저장과 맞으면 한 번만 실패시키고 지운다. DB 연결 끊김 같은 일시적 오류를 흉내 내 표준 예외를 던진다
