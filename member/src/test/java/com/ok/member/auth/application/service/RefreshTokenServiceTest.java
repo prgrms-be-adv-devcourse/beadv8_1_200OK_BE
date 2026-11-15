@@ -206,6 +206,33 @@ class RefreshTokenServiceTest {
         assertThat(expired.getTokenHash()).isEqualTo(TokenHasher.sha256Hex("raw-token"));
     }
 
+    @Test
+    void 폐기하면_현재_시각에_만료되지_않은_기록을_해시로_찾아_기본_키로_지운다() {
+        // given
+        // 만료 여부는 서비스의 Clock 기준 시각으로 조회 조건에 넣는다 (나노초까지 그대로)
+        given(refreshTokenRepository.findUnexpiredIdByTokenHash(TokenHasher.sha256Hex("raw-token"), NOW))
+                .willReturn(Optional.of(10L));
+
+        // when
+        refreshTokenService.revoke("raw-token");
+
+        // then
+        then(refreshTokenRepository).should().deleteDirectlyById(10L);
+    }
+
+    @Test
+    void 만료되지_않은_기록이_없는_토큰을_폐기하면_예외_없이_아무것도_지우지_않는다() {
+        // given
+        // 처음부터 없던 토큰, 이미 로그아웃한 토큰, 이미 회전된 토큰, 만료된 토큰이 모두 이 경로다
+        given(refreshTokenRepository.findUnexpiredIdByTokenHash(any(), any())).willReturn(Optional.empty());
+
+        // when
+        refreshTokenService.revoke("unknown-token");
+
+        // then
+        then(refreshTokenRepository).should(never()).deleteDirectlyById(any());
+    }
+
     // 저장된 토큰 기록을 흉내 낸다. 기본 키로 잠그므로 id를 넣어 둔다
     private RefreshToken storedToken(Long id, LocalDateTime expiresAt) {
         RefreshToken token = RefreshToken.create(1L, TokenHasher.sha256Hex("raw-token"), expiresAt);

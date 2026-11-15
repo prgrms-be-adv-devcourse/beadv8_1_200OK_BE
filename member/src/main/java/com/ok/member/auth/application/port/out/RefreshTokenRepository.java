@@ -22,6 +22,13 @@ public interface RefreshTokenRepository {
     Optional<Long> findIdByTokenHash(String tokenHash);
 
     /**
+     * 기준 시각에 만료되지 않은 기록의 id만 해시로 잠금 없이 조회한다. 로그아웃에서 {@link #deleteDirectlyById}로 지우기 전에 쓴다.
+     * 만료 일시와 같은 순간부터 만료로 본다({@code RefreshToken.isExpired}와 같은 기준).
+     * 엔티티가 아니라 id만 받는 이유는 {@link #findIdByTokenHash}와 같다.
+     */
+    Optional<Long> findUnexpiredIdByTokenHash(String tokenHash, LocalDateTime now);
+
+    /**
      * 기본 키로 저장 기록을 조회하면서 쓰기 잠금을 건다. 재발급에서 한 토큰이 한 번만 쓰이도록 할 때 사용한다.
      * 포트는 JPA를 몰라 잠금을 선언하지 못하므로, 잠금은 구현({@code RefreshTokenJpaRepository})이 다시 선언해 건다.
      *
@@ -34,6 +41,17 @@ public interface RefreshTokenRepository {
     Optional<RefreshToken> findForUpdateById(Long id);
 
     <S extends RefreshToken> S save(S refreshToken);
+
+    /**
+     * 기본 키로 기록을 엔티티를 읽지 않고 바로 지운다. 로그아웃에서 {@link #findUnexpiredIdByTokenHash}로 찾은 id로 지울 때 쓴다.
+     *
+     * <p>해시가 아니라 기본 키로 지우는 이유는 {@link #findForUpdateById}와 같다. 없는 해시로 지우면 인덱스 구간이 잠긴다.
+     * 같은 행을 재발급이 잠그고 있으면 그 트랜잭션이 끝날 때까지 기다렸다가, 해시가 바뀌었어도 행을 지운다.
+     * Spring Data 기본 {@code deleteById}는 엔티티를 먼저 읽고 지우며 반환형도 달라 이름을 다르게 둔다.
+     *
+     * @return 지운 행 수. 이미 지워졌으면 0
+     */
+    int deleteDirectlyById(Long id);
 
     /**
      * 기준 시각에 이미 만료된 기록을 만료 일시가 이른 순서로 최대 {@code batchSize}개 지운다.
