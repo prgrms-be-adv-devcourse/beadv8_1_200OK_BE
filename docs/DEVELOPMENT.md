@@ -807,6 +807,32 @@ com.ok.order
 - 토픽 이름과 컨슈머 그룹(`payout`)은 `PayoutTopics`에 있습니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
 - 대사는 매일 `payout.deposit-check.cron`(기본 `0 0 12 * * *`, Asia/Seoul)에 돕니다. 메시지 모양은 PR #548 문서 4절과 지갑 #613의 합의를 따릅니다.
 
+### product 모듈 구조(헥사고날)
+
+`product`는 하위 도메인 `product`(상품·재고), `review`(리뷰·리뷰 분석)로 나뉩니다. `product` 하위 도메인은 member·order와 같은 헥사고날 구조이고, `review`는 아직 레이어 구조입니다(옮기는 중).
+
+```
+com.ok.product.product
+├── domain/, exception/
+├── application/
+│   ├── port/in/          BuyerProductUseCase, SellerProductUseCase, ProductOptionInfoUseCase(주문용),
+│   │                     StockAllocationUseCase(재고 배정·해제), StockPartialReleaseUseCase(환불용 일부 해제)
+│   ├── port/out/         ProductRepository, ProductOptionRepository, ProductQueryRepository,
+│   │                     ProductStockAllocationRepository, ProductStockAllocationHeaderRepository, ProductStockPartialReleaseRepository
+│   ├── service/          ProductService, ProductStockService(트랜잭션), ProductStockPartialReleaseFacade(트랜잭션 밖 재확인)
+│   └── dto/              *Command, *Query, *Result, *Code
+└── adapter/
+    ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
+    └── out/persistence/  *JpaRepository, ProductQuerydslRepository
+```
+
+- 유스케이스는 부르는 쪽(구매자, 판매자, 주문, 재고 배정, 환불) 기준으로 묶었습니다. 컨트롤러는 유스케이스만 압니다.
+- 재고 일부 해제는 `ProductStockPartialReleaseFacade`가 유스케이스를 구현합니다. 겹친 환불 요청이 롤백되면 새 트랜잭션에서 이력을 다시 확인해야 해서, `ProductStockService`의 `partialRelease`·`isPartiallyReleased`는 유스케이스에 넣지 않았습니다.
+- 저장소 포트와 `*JpaRepository`의 관계, 통합 테스트가 `*JpaRepository`를 주입받는 것은 member와 같습니다. `@Query`·`@Modifying`·`@Lock`은 `*JpaRepository`에서 `@Override`로 다시 선언합니다.
+- `ProductStockAllocationHeaderJpaRepository`는 `JpaRepository`를 상속하지 않습니다(`Repository`만). 상속하면 생기는 `findById`·`save`가 헤더 upsert보다 먼저 불려 스냅샷이 일찍 잡히는 일을 막기 위해서입니다.
+- 잠금 조회 규칙은 이름(`ForUpdate`)으로 찾고 `@Lock`이나 네이티브 쿼리의 `FOR UPDATE`를 확인합니다. `findForUpdateByIdAndDeletedAtIsNull`은 수정용 조회라 비관적 잠금 대신 `OPTIMISTIC_FORCE_INCREMENT`를 기대합니다.
+- `review`는 옮길 때까지 product의 엔티티·저장소 포트·에러 코드·`ProductPageResponse`를 직접 씁니다. `ArchitectureTest`는 이 의존만 예외로 두고, review에는 레이어 규칙을 그대로 겁니다.
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.
