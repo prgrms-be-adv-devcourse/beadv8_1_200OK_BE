@@ -93,8 +93,19 @@ class DecideRefundServiceTest {
         NoOpTransactionManager transactionManager = new NoOpTransactionManager();
         // 실패 기록은 RefundStepRunner가 같은 영속 포트로 하므로 진짜 틀을 쓴다(단계 줄이 실제로 "할 차례"로 남는지 보려고)
         RefundStepRunner refundStepRunner = new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
-        sut = new DecideRefundService(orderQueryPort, refundPersistencePort, walletRefundRequestPort, orderCancellationPort,
-                productStockReleasePort, refundStepPersistencePort, refundStepRunner, CLOCK, transactionManager);
+        // 승인 뒤 단계는 지휘자가 맡는다(#575). 지휘자도 같은 가짜 포트로 만든 진짜 객체를 쓴다. 옮기기 전과 같은 기대값으로
+        // 승인 → 주문 → 지갑·재고 호출을 한 흐름으로 확인해, 옮겨도 동작이 같다는 근거로 삼는다(#592)
+        RefundSagaService refundSagaService = new RefundSagaService(orderCancellationPort, walletRefundRequestPort,
+                productStockReleasePort, refundPersistencePort, refundStepPersistencePort, refundStepRunner, CLOCK, transactionManager);
+        sut = new DecideRefundService(orderQueryPort, refundPersistencePort, refundStepPersistencePort, refundSagaService,
+                CLOCK, transactionManager);
+    }
+
+    // 자동 거절(승인 서비스)과 주문 거절(지휘자)은 구매자에게 같은 이유로 보여야 한다. 서비스끼리 참조하지 않는 규칙이라 상수를 따로 둬서 여기서 지킨다
+    @Test
+    void 승인_서비스와_지휘자의_출고_거절_사유는_같다() {
+        // when & then
+        assertThat(RefundSagaService.SHIPPED_REJECT_REASON).isEqualTo(DecideRefundService.SHIPPED_REJECT_REASON);
     }
 
     // 아래 다섯 테스트는 예전 파사드 테스트에서 옮겼다. 주문 호출 여부와 승인 전 확인 순서를 decide 전체 흐름으로 본다

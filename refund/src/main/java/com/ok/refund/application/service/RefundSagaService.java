@@ -1,16 +1,22 @@
 package com.ok.refund.application.service;
 
-import com.ok.refund.application.port.in.HandleWalletRefundResultUseCase;
+import com.ok.refund.application.port.in.RefundResult;
+import com.ok.refund.application.port.in.RefundSagaUseCase;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
+import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.refund.application.port.out.OrderCancellationPort;
+import com.ok.refund.application.port.out.OrderCancellationResult;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.StockRelease;
+import com.ok.refund.application.port.out.WalletRefundRequest;
+import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepType;
-import com.ok.refund.domain.RefundStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -21,18 +27,26 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * 지갑의 예치금 반환 결과(완료·실패)를 환불에 반영한다.
- * 완료는 읽어서 거르기(읽기 구간) → 자기 행을 잠그고 지갑 줄 성공·재고 줄 시작(구간) → 재고 복구(구간 밖, {@link RefundStepRunner})
- * → 자기 행을 잠그고 재고 줄 성공과 완료(구간)로 나뉜다.
- * 실패는 읽어서 거르기 → 자기 행을 잠그고 지갑 줄을 멈춤으로 기록(구간)이다. 거르는 판단은 단계 진행 표를 본다(#574).
+ * 승인 뒤 단계를 한 곳에서 진행하는 지휘자다(#575). 다음 단계를 정하고 주문·지갑·재고 포트를 부르는 곳은 이 클래스뿐이다.
+ * 입구는 셋이다. 승인 서비스가 승인 구간을 커밋한 뒤 부르는 시작({@link #startAfterApproval}), 지갑 결과 메시지를 받는 완료·실패.
+ * 시작: 주문 취소 반영(#513) → 지갑 반환 요청(#512)까지 하고, 돌려줄 돈이 있으면 지갑 요청을 보낸 데서 멈춘다. 0원이면 지갑을 거치지 않아
+ * 같은 요청 안에서 재고 복구 → 완료(#414)까지 간다. 주문이 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고 거절로 끝낸다(#543).
+ * 지갑 완료: 읽어서 거르기(읽기 구간) → 자기 행을 잠그고 지갑 줄 성공·재고 줄 시작(구간) → 재고 복구(구간 밖, {@link RefundStepRunner})
+ * → 자기 행을 잠그고 재고 줄 성공과 완료(구간)로 나뉜다(#544).
+ * 지갑 실패: 읽어서 거르기 → 자기 행을 잠그고 지갑 줄을 멈춤으로 기록(구간)이다. 거르는 판단은 단계 진행 표를 본다(#574).
  * 걸러 넘기는 경우는 예외를 던지지 않는다. 던지면 메시지 오류 처리기가 같은 메시지를 다시 시도해 줄만 막힌다.
- * 잠그지 않고 먼저 읽는 이유: 재고 복구(상품 HTTP) 동안 행 잠금을 쥐지 않으려는 것이고,
+ * 지갑 결과를 잠그지 않고 먼저 읽는 이유: 재고 복구(상품 HTTP) 동안 행 잠금을 쥐지 않으려는 것이고,
  * 읽은 뒤 잠그기 전에 상태가 바뀔 수 있어 잠근 뒤 상태를 다시 확인한다.
  */
 @Slf4j
 @Service
-public class HandleWalletRefundResultService implements HandleWalletRefundResultUseCase {
+public class RefundSagaService implements RefundSagaUseCase {
 
+    // 승인 때 자동 거절과 같은 문구. 주문이 반영을 거절했을 때도 구매자에게 같은 이유로 보이게 한다.
+    // 승인 서비스의 같은 이름 상수와 같아야 한다. 서비스끼리는 참조하지 않는 규칙이라(ArchitectureTest) 따로 두고, 같은지는 테스트가 본다
+    static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
+    // 주문이 취소 반영을 거절(409)했을 때 주문 줄에 남기는 이유. 운영자가 표에서 거절 원인을 구분하는 값이다
+    static final String ORDER_REFUSED_REASON = "ORDER_REFUSED";
     // 지갑이 알려 준 금액·주문·구매자가 환불과 다를 때 지갑 줄의 이유에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
     static final String RESULT_MISMATCH = "RESULT_MISMATCH";
 
@@ -62,29 +76,98 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
     private record Snapshot(Refund refund, RefundStep productStep, RefundStep walletStep) {
     }
 
+    private final OrderCancellationPort orderCancellationPort;
+    private final WalletRefundRequestPort walletRefundRequestPort;
+    private final ProductStockReleasePort productStockReleasePort;
     private final RefundPersistencePort refundPersistencePort;
     private final RefundStepPersistencePort refundStepPersistencePort;
-    private final ProductStockReleasePort productStockReleasePort;
+    // 다른 모듈 호출을 실패 기록과 함께 부르는 틀(#574). 실패하면 단계 줄에만 남기고(환불 행은 잠그기만 한다) 같은 예외를 올린다
     private final RefundStepRunner refundStepRunner;
     private final Clock clock;
-    // 거르기 위한 읽기용. 잠그지 않는다
+    // 지갑 결과를 거르기 위한 읽기용. 잠그지 않는다
     private final TransactionTemplate readOnlyTransaction;
     // 자기 행을 잠그고 바꾸는 구간
     private final TransactionTemplate transaction;
 
-    public HandleWalletRefundResultService(RefundPersistencePort refundPersistencePort,
-                                           RefundStepPersistencePort refundStepPersistencePort,
-                                           ProductStockReleasePort productStockReleasePort,
-                                           RefundStepRunner refundStepRunner, Clock clock,
-                                           PlatformTransactionManager transactionManager) {
+    public RefundSagaService(OrderCancellationPort orderCancellationPort, WalletRefundRequestPort walletRefundRequestPort,
+                             ProductStockReleasePort productStockReleasePort, RefundPersistencePort refundPersistencePort,
+                             RefundStepPersistencePort refundStepPersistencePort, RefundStepRunner refundStepRunner,
+                             Clock clock, PlatformTransactionManager transactionManager) {
+        this.orderCancellationPort = orderCancellationPort;
+        this.walletRefundRequestPort = walletRefundRequestPort;
+        this.productStockReleasePort = productStockReleasePort;
         this.refundPersistencePort = refundPersistencePort;
         this.refundStepPersistencePort = refundStepPersistencePort;
-        this.productStockReleasePort = productStockReleasePort;
         this.refundStepRunner = refundStepRunner;
         this.clock = clock;
         this.readOnlyTransaction = new TransactionTemplate(transactionManager);
         this.readOnlyTransaction.setReadOnly(true);
         this.transaction = new TransactionTemplate(transactionManager);
+    }
+
+    // 승인 커밋 뒤의 단계를 차례로 부른다: 주문 취소 반영(#513) → 지갑 반환 요청(#512). 돌려줄 돈이 있으면 여기서 멈추고 처리 중으로 응답한다(#544).
+    // 재고 복구와 완료는 지갑 완료 메시지를 받은 뒤 completeAfterWalletRefund가 한다. 0원만 지갑을 거치지 않아 재고 복구 → 완료(#414)까지 간다.
+    // 승인 버튼으로 왔어도 자동 거절(출고됨, 배송비 모자람)로 끝났을 수 있다. 처리 중이 된 환불만 다음 단계로 간다.
+    // 이 확인이 없으면 거절된 환불의 상품 금액이 지갑으로 나가고 주문에도 취소가 반영된다.
+    // 주문을 지갑보다 먼저 부르는 이유: 승인 사이에 출고된 상품은 주문이 반영을 거절한다. 지갑을 먼저 부르면 이미 나간 반환 요청을
+    // 되돌릴 수 없어, 돈은 나갔는데 상품은 배송되는 일이 생긴다. 주문이 거절하면 지갑·재고를 부르지 않고 거절로 끝낸다.
+    // 지갑 발행이 실패하면 주문은 이미 취소를 기록한 상태다. 나중에 같은 refundId로 다시 보내면 주문이 성공으로 답하므로(멱등)
+    // 다시 시도(#545)가 지갑 요청부터 이어 갈 수 있다.
+    // 승인 요청 안의 단계(주문·지갑·0원 재고)도 실패 기록 틀(RefundStepRunner)로 부른다(#574). 실패하면 그 단계 줄이 "할 차례"와 이유로 남고,
+    // 예외는 그대로 올라가 판매자 응답은 예전과 같다(500·503, 다시 승인하면 409)
+    // 예전과 다른 응답이 하나 있다. 주문 반영 뒤 단계 표를 고치는 구간(recordOrderSucceeded)이 실패하면 주문은 반영됐는데 500으로 응답하고,
+    // 주문 줄은 "시도 중"으로 남는다. 반대로 지갑 발행 뒤 "결과 대기"로 바꾸는 구간(markWalletAwaitingResult)이 실패해도 WARN만 남기고 처리 중으로 응답한다
+    // 지갑 줄은 발행하기 전에 다른 구간에서 먼저 기록해 커밋한다(먼저 기록하고 보내기). 발행이 실패해도 주문만 취소된 채 흔적 없이 남지 않고
+    // "WALLET: 할 차례"가 남는다(#574). 그 줄을 보고 다시 보내는 일은 #576이 맡는다
+    @Override
+    public RefundResult startAfterApproval(RefundResult approved) {
+        if (!RefundStatus.PROCESSING.name().equals(approved.status())) {
+            return approved;
+        }
+        Long refundId = approved.refundId();
+        OrderCancellationResult orderResult = refundStepRunner.run(refundId, RefundStepType.ORDER,
+                () -> orderCancellationPort.reflectCancellation(new OrderCancellation(
+                        refundId, approved.orderItemId(), approved.quantity(), approved.deductedShippingFeeAmount())));
+        if (orderResult.rejected()) {
+            return rejectAfterOrderRefused(approved, orderResult.orderDetail());
+        }
+        // 음수는 여기 오지 않는다. 도메인 승인(Refund.approve)이 커밋 전에 막아 요청됨으로 남긴다
+        long amount = approved.refundAmount();
+        RefundStepType nextStep = amount > 0 ? RefundStepType.WALLET : RefundStepType.PRODUCT;
+        RefundResult current = recordOrderSucceeded(refundId, nextStep);
+        // 주문 호출 사이에 환불이 처리 중에서 벗어났으면(다른 경로가 먼저 끝냄) 다음 단계를 부르지 않는다.
+        // 처리 중이 아닌 환불에 돈을 보내거나 재고를 풀면 끝난 환불이 다시 움직인다. 예외 없이 지금 상태로 돌려주므로 확인용 WARN을 남긴다
+        if (!RefundStatus.PROCESSING.name().equals(current.status())) {
+            log.warn("주문 반영 뒤 환불이 처리 중이 아니라 다음 단계를 부르지 않음. refundId={}, status={}", refundId, current.status());
+            return current;
+        }
+        if (amount > 0) {
+            refundStepRunner.run(refundId, RefundStepType.WALLET, () -> {
+                walletRefundRequestPort.requestRefund(new WalletRefundRequest(
+                        refundId, approved.orderId(), approved.buyerId(), approved.sellerId(), amount));
+                return null;
+            });
+            // 발행은 이미 끝나 되돌릴 수 없다. 여기서 "결과 대기" 기록이 실패해도(DB 오류 등) 판매자에게 오류를 주지 않고 처리 중으로 응답한다.
+            // 오류를 주면 지갑 요청은 나갔는데 판매자는 실패로 알고, 응답도 #574 전과 달라진다. 잃는 것은 없다: 지갑 줄은 "시도 중"으로 남고,
+            // 지갑 결과 메시지가 와도 시도 중 → 성공·멈춤으로 바뀔 수 있어(결정 2) 흐름이 이어지며, 끝나지 않으면 #576·#577이 그 줄을 본다.
+            // 예외를 삼키는 대신 확인이 필요한 이상이라 WARN으로 남긴다(service.md 로그 표)
+            try {
+                markWalletAwaitingResult(refundId);
+            } catch (RuntimeException e) {
+                log.warn("지갑 발행 뒤 결과 대기 기록 실패. 지갑 단계는 시도 중으로 남음. refundId={}", refundId, e);
+            }
+            // 발행이 끝났어도 지갑이 돈을 돌려줬다는 뜻은 아니다(Kafka에 들어갔을 뿐). 재고 복구와 완료는 지갑의 완료 메시지를 받은 뒤
+            // completeAfterWalletRefund가 한다. 그래서 처리 중 그대로 응답한다. 발행이 실패하면 예외가 나 이 줄에 오지 않는다
+            return approved;
+        }
+        // 0원은 돌려줄 돈이 없어 지갑을 거치지 않으니 기다릴 메시지도 없다. 예: 취소 금액이 뺄 기본 배송비와 같을 때.
+        // 그래서 이 요청 안에서 재고 복구 → 완료까지 간다
+        refundStepRunner.run(refundId, RefundStepType.PRODUCT, () -> {
+            productStockReleasePort.releaseStock(new StockRelease(
+                    refundId, approved.orderId(), approved.productOptionId(), approved.quantity()));
+            return null;
+        });
+        return completeInApprovalRequest(refundId);
     }
 
     @Override
@@ -112,7 +195,7 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
                     refundId, refund.getOrderId(), refund.getProductOptionId(), refund.getQuantity()));
             return null;
         });
-        complete(refundId);
+        completeAfterWalletStock(refundId);
     }
 
     @Override
@@ -175,6 +258,101 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
         // 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "기록함"이 남으면 실제와 어긋난다
         log.warn("지갑 반환 실패를 지갑 단계 줄에 기록함(환불은 처리 중 유지). refundId={}, orderId={}, amount={}, reason={}",
                 refundId, command.orderId(), command.amount(), command.reason());
+    }
+
+    // 주문이 반영한 뒤 주문 줄을 성공으로 바꾸고 다음 단계 줄(돈이 있으면 지갑, 0원이면 재고)을 "시도 중"으로 만든다(결정 5).
+    // 다음 단계를 부르기 전에 이 구간을 커밋한다. 지갑 발행이 실패하거나 서버가 그 사이 죽어도 "어디까지 왔나"가 표에 남는다.
+    // 단계 줄은 환불 행을 먼저 잠근 같은 구간에서만 고친다(결정 4, 잠금 순서 환불 행 → 단계 줄)
+    private RefundResult recordOrderSucceeded(Long refundId, RefundStepType nextStep) {
+        return transaction.execute(status -> {
+            Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
+                    .orElseThrow(() -> new IllegalStateException("주문 반영을 기록할 환불이 없습니다. refundId=" + refundId));
+            if (refund.getStatus() != RefundStatus.PROCESSING) {
+                return RefundResult.from(refund);
+            }
+            LocalDateTime now = LocalDateTime.now(clock);
+            // 이 변경 전에 승인된 환불은 주문 줄이 없다. 없으면 건너뛰고 다음 줄만 만든다
+            refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER).ifPresent(orderStep -> {
+                if (orderStep.succeed()) {
+                    refundStepPersistencePort.update(orderStep);
+                }
+            });
+            refundStepPersistencePort.saveNew(RefundStep.start(refundId, nextStep, now));
+            return RefundResult.from(refund);
+        });
+    }
+
+    // 지갑 발행이 끝나면 지갑 줄을 "결과 대기"로 바꾼다. 지갑 결과 메시지가 이 구간보다 먼저 와서 줄을 이미 끝냈으면(성공·멈춤)
+    // 도메인이 false를 돌려주고 저장하지 않는다. 늦게 온 "결과 대기"가 끝난 결과를 덮어쓰지 않게 하려는 것이다(결정 2).
+    // 이 구간이 실패하면 부르는 쪽이 WARN만 남기고 처리 중으로 응답한다. 발행은 이미 됐고 지갑 줄은 "시도 중"으로 남는다
+    private void markWalletAwaitingResult(Long refundId) {
+        transaction.executeWithoutResult(status -> {
+            refundPersistencePort.findByIdForUpdate(refundId)
+                    .orElseThrow(() -> new IllegalStateException("지갑 발행을 기록할 환불이 없습니다. refundId=" + refundId));
+            LocalDateTime now = LocalDateTime.now(clock);
+            Optional<RefundStep> walletStep = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
+            // 지갑 줄은 앞 구간(recordOrderSucceeded)이 발행 전에 만들어 커밋했으므로 없으면 버그다. 발행은 이미 됐으니
+            // 응답은 바꾸지 않고 확인할 수 있게 WARN만 남긴다
+            if (walletStep.isEmpty()) {
+                log.warn("지갑 발행 뒤 결과 대기로 바꿀 지갑 단계 줄이 없음. refundId={}", refundId);
+                return;
+            }
+            if (walletStep.get().awaitResult(now)) {
+                refundStepPersistencePort.update(walletStep.get());
+            }
+        });
+    }
+
+    // 주문이 취소 반영을 거절하면(409) 처리 중이던 환불을 거절로 끝낸다. 자기 행만 잠그는 새 구간이다(완료와 같은 이유).
+    // 사유는 출고 거절과 같은 문구를 쓴다. 가장 흔한 원인이 승인 사이의 출고이고, 구매자에게는 "취소할 수 없다"는 결과면 충분하다.
+    // WARN으로 남기는 이유: 환불은 409의 원인을 구분하지 못한다. "이미 출고됨"은 드물게 있는 정상 경쟁이지만,
+    // "수량 초과"나 "refundId 충돌"은 환불 쪽 버그다. 정상처럼 보이는 경로라도 사람이 확인하도록 모두 WARN으로 남긴다.
+    // 예외 없이 넘기는 확인 필요한 이상이라 ERROR(처리되지 못한 예외)가 아니라 WARN이다(service.md 로그 표, #544에서 지갑 결과 로그와 맞춤).
+    // 주문의 설명 문장은 로그에만 남기고 DB에는 저장하지 않는다. 예외를 던지지 않는 경로라 여기서 로그를 남긴다.
+    // 로그는 거절 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "거절로 끝냄"이 남으면 실제와 어긋나기 때문이다.
+    // 한계: 처리 중 → 거절은 같은 묶음의 배송비 집계를 바꾸는데도 자기 행만 잠근다. 그 사이 같은 묶음의 다른 환불이 이 환불을
+    // 취소된 것으로 보고 승인됐다면 그 환불의 배송비 판단이 틀린 채 남는다(RefundShippingFeePolicy.CANCELLING_STATUSES 주석, TODO(#546))
+    private RefundResult rejectAfterOrderRefused(RefundResult approved, String orderDetail) {
+        RefundResult rejected = transaction.execute(status -> {
+            Refund refund = refundPersistencePort.findByIdForUpdate(approved.refundId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "승인한 환불을 거절로 바꾸려는데 찾을 수 없습니다. refundId=" + approved.refundId()));
+            refund.rejectAfterApproval(SHIPPED_REJECT_REASON, LocalDateTime.now(clock));
+            refundPersistencePort.update(refund);
+            // 환불 거절과 주문 줄 "거절됨"을 같은 구간에서 함께 저장한다(결정 5). 따로 저장하면 하나만 남아 표와 환불이 어긋날 수 있다.
+            // 이 변경 전에 승인된 환불은 주문 줄이 없다. 남길 줄이 없을 뿐 환불 거절은 그대로 해야 하므로 조용히 건너뛴다
+            refundStepPersistencePort.findByRefundIdAndType(approved.refundId(), RefundStepType.ORDER).ifPresent(orderStep -> {
+                if (orderStep.refuse(ORDER_REFUSED_REASON)) {
+                    refundStepPersistencePort.update(orderStep);
+                }
+            });
+            return RefundResult.from(refund);
+        });
+        log.warn("주문이 취소 반영을 거절해 환불을 거절로 끝냄. refundId={}, orderItemId={}, orderDetail={}",
+                approved.refundId(), approved.orderItemId(), orderDetail);
+        return rejected;
+    }
+
+    // 0원 환불이 승인 요청 안에서 재고 복구까지 마친 뒤 완료로 바꾼다. 자기 행만 잠근다. 처리 중과 완료는 둘 다 배송비 판단에서 "이미 취소된 것"이라
+    // (RefundShippingFeePolicy.CANCELLING_STATUSES) 바꿔도 같은 묶음의 집계가 변하지 않아 묶음 전체를 잠글 필요가 없다.
+    // 같은 묶음의 다른 승인이 이 행을 먼저 잠갔으면 그 승인이 커밋할 때까지 기다린다.
+    // 이 행을 잠그는 첫 조회라 승인 구간에서 읽은 옛 값을 쓰지 않는다(새 트랜잭션).
+    // 지갑 완료 뒤의 완료(completeAfterWalletStock)와 달리 처리 중이 아니면 도메인이 예외를 던진다. 옮기기 전 동작 그대로이고,
+    // 두 경우를 맞추는 일은 #616에서 한다
+    private RefundResult completeInApprovalRequest(Long refundId) {
+        return transaction.execute(status -> {
+            Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
+                    .orElseThrow(() -> new IllegalStateException("승인한 환불을 완료하려는데 찾을 수 없습니다. refundId=" + refundId));
+            refund.complete(LocalDateTime.now(clock));
+            refundPersistencePort.update(refund);
+            // 재고 줄 성공과 환불 완료를 같은 구간에서 함께 저장한다(결정 5). 이 변경 전에 승인된 환불은 재고 줄이 없어 건너뛴다
+            refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.PRODUCT).ifPresent(productStep -> {
+                if (productStep.succeed()) {
+                    refundStepPersistencePort.update(productStep);
+                }
+            });
+            return RefundResult.from(refund);
+        });
     }
 
     // 없는 환불이나 처리 중이 아닌 환불이면 이유를 남기고 false.
@@ -352,9 +530,9 @@ public class HandleWalletRefundResultService implements HandleWalletRefundResult
         }));
     }
 
-    // 재고까지 마친 환불을 완료로 바꾼다. 자기 행만 잠그고, 잠근 뒤 상태를 다시 본다(그 사이 같은 메시지가 먼저 완료했을 수 있다).
-    // DecideRefundService의 같은 이름 메서드와 같은 구조를 일부러 다시 쓴다. 서비스 패키지에 공용 도우미를 두지 않는 모듈 규칙이다(3절)
-    private void complete(Long refundId) {
+    // 지갑 완료 뒤 재고까지 마친 환불을 완료로 바꾼다. 자기 행만 잠그고, 잠근 뒤 상태를 다시 본다(그 사이 같은 메시지가 먼저 완료했을 수 있다).
+    // 승인 요청 안의 완료(completeInApprovalRequest)와 달리 처리 중이 아니면 예외 없이 넘긴다. 메시지가 두 번 올 수 있어서다
+    private void completeAfterWalletStock(Long refundId) {
         boolean completed = Boolean.TRUE.equals(transaction.execute(status -> {
             Optional<Refund> locked = refundPersistencePort.findByIdForUpdate(refundId);
             if (locked.isEmpty() || locked.get().getStatus() != RefundStatus.PROCESSING) {

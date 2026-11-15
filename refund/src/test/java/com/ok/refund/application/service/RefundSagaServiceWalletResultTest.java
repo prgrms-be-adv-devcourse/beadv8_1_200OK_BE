@@ -3,9 +3,11 @@ package com.ok.refund.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
+import com.ok.refund.application.port.out.OrderCancellationPort;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
+import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStep;
@@ -42,9 +44,10 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
+// 지휘자(RefundSagaService)의 지갑 결과 입구를 본다. 승인 뒤 시작 입구는 DecideRefundServiceTest가 승인 흐름과 함께 본다.
 // 재고 복구 실패 기록은 RefundStepRunner가 같은 영속 포트로 하므로 진짜 틀을 쓴다(PRODUCT 단계가 실제로 기록되는지 보려고)
 @ExtendWith(MockitoExtension.class)
-class HandleWalletRefundResultServiceTest {
+class RefundSagaServiceWalletResultTest {
 
     private static final Long REFUND_ID = 7L;
     // Long 캐시(-128~127) 밖의 번호를 쓴다. 캐시 안 번호는 같은 값이면 같은 객체라, 주문 비교를 실수로 != 로 바꿔도 테스트가 통과한다
@@ -63,13 +66,19 @@ class HandleWalletRefundResultServiceTest {
     // 단계 줄을 스텁하지 않은 테스트의 환불은 단계 줄이 없다(#574 전에 승인된 환불, 비어 있는 Optional을 돌려주는 기본 동작)
     @Mock
     RefundStepPersistencePort refundStepPersistencePort;
+    // 지갑 결과 입구는 주문·지갑을 부르지 않는다. 지휘자 생성에만 필요하다
+    @Mock
+    OrderCancellationPort orderCancellationPort;
+    @Mock
+    WalletRefundRequestPort walletRefundRequestPort;
 
-    HandleWalletRefundResultService sut;
+    RefundSagaService sut;
 
     @BeforeEach
     void setUp() {
         NoOpTransactionManager transactionManager = new NoOpTransactionManager();
-        sut = new HandleWalletRefundResultService(refundPersistencePort, refundStepPersistencePort, productStockReleasePort,
+        sut = new RefundSagaService(orderCancellationPort, walletRefundRequestPort, productStockReleasePort,
+                refundPersistencePort, refundStepPersistencePort,
                 new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager), CLOCK, transactionManager);
     }
 

@@ -283,7 +283,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     // 완료로 바꿀 때는 자기 행만 잠근다(#414). 처리 중과 완료를 둘 다 "이미 취소된 것"으로 세서, 바꾸는 중에 같은 묶음의 다른 승인이 와도
     // 그 승인의 판단이 달라지지 않는다는 전제다. 여기서는 완료 트랜잭션이 감자 행을 잠근 채 커밋하지 않은 동안 배추를 승인해, 배추가 잠금에서
-    // 기다렸다가 완료된 감자를 취소된 것으로 세는지 본다. 완료 트랜잭션은 DecideRefundService.complete와 같은 일(잠금 조회 → complete → update)을
+    // 기다렸다가 완료된 감자를 취소된 것으로 세는지 본다. 완료 트랜잭션은 RefundSagaService.completeInApprovalRequest와 같은 일(잠금 조회 → complete → update)을
     // 직접 한다. 서비스 안의 완료 구간을 원하는 때에 멈출 방법이 없어서다
     @Test
     void 감자를_완료로_바꾸는_동안_배추를_승인해도_기다렸다가_완료된_감자를_세어_배송비를_돌려준다() throws Exception {

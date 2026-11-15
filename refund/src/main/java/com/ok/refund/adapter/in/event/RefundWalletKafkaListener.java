@@ -2,14 +2,14 @@ package com.ok.refund.adapter.in.event;
 
 import com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage;
 import com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage;
-import com.ok.refund.application.port.in.HandleWalletRefundResultUseCase;
+import com.ok.refund.application.port.in.RefundSagaUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
  * 지갑이 보내는 예치금 반환 결과(완료·실패)를 Kafka로 받아 입력 포트에 넘기는 입구다.
- * 여기서는 값이 형식에 맞는지만 보고, 환불 상태·금액 대조 같은 업무 판단은 서비스가 한다.
+ * 여기서는 값이 형식에 맞는지만 보고, 환불 상태·금액 대조 같은 업무 판단은 승인 뒤 단계 지휘자가 한다(#575).
  */
 @Component
 @RequiredArgsConstructor
@@ -20,7 +20,7 @@ public class RefundWalletKafkaListener {
     // (서비스의 RefundStepRunner.MAX_FAILURE_CODE_LENGTH와 같은 값. 입력 어댑터는 서비스를 알 수 없어 따로 둔다)
     static final int MAX_REASON_LENGTH = 100;
 
-    private final HandleWalletRefundResultUseCase handleWalletRefundResultUseCase;
+    private final RefundSagaUseCase refundSagaUseCase;
 
     // 메시지에 보내는 쪽 클래스 이름(타입 헤더)이 없어서 리스너마다 읽을 타입을 정한다
     // 값이 틀린 메시지는 IllegalArgumentException을 던진다. 환불 오류 처리기(RefundKafkaConsumerConfig)는 이 예외를
@@ -33,7 +33,7 @@ public class RefundWalletKafkaListener {
     void onWalletRefundCompleted(WalletRefundCompletedMessage message) {
         requireIds(message.refundId(), message.orderId(), message.buyerId(), message.amount(), message);
         // DB·상품 HTTP 오류 같은 일시적 실패는 예외를 그대로 전파해 오류 처리기가 간격을 늘려 다시 시도하게 한다
-        handleWalletRefundResultUseCase.completeAfterWalletRefund(message.toCommand());
+        refundSagaUseCase.completeAfterWalletRefund(message.toCommand());
     }
 
     @KafkaListener(
@@ -51,7 +51,7 @@ public class RefundWalletKafkaListener {
             throw new IllegalArgumentException("[REFUND_WALLET_RESULT_INVALID] 실패 이유가 " + MAX_REASON_LENGTH
                     + "자를 넘습니다. length=" + reason.length() + ", refundId=" + message.refundId());
         }
-        handleWalletRefundResultUseCase.recordWalletRefundFailure(message.toCommand());
+        refundSagaUseCase.recordWalletRefundFailure(message.toCommand());
     }
 
     private void requireIds(Long refundId, Long orderId, Long buyerId, Long amount, Object message) {

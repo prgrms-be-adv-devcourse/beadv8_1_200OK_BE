@@ -561,7 +561,7 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
 
     // 처리 중은 아직 끝나지 않아 같은 상품에 두 번째 요청을 받지 않는다. 승인 뒤 지갑 완료를 기다리는 환불로 확인한다.
     // 예전에는 재고 복구를 실패시켜 완료 전에 멈췄지만, 재고 복구는 이제 지갑 완료 메시지를 받은 뒤라(#544) 승인 응답에서 실패하지 않는다
-    // (재고 복구 실패는 HandleWalletRefundResultService 단위 테스트가 맡는다)
+    // (재고 복구 실패는 RefundSagaServiceWalletResultTest 단위 테스트가 맡는다)
     @Test
     void 승인_뒤_지갑_완료를_기다리는_처리_중이면_같은_상품의_새_요청을_막는다() throws Exception {
         // given

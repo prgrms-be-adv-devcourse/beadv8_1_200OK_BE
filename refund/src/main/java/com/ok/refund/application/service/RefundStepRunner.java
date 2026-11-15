@@ -21,8 +21,8 @@ import java.util.function.Supplier;
 /**
  * 승인 뒤 다른 모듈 호출 한 단계를 실행하고, 실패하면 그 단계의 진행 줄(refund_step)에 이유를 남긴다(#574).
  * 1단계에는 자동으로 다시 처리하는 방법이 없어, 운영자가 이 기록을 보고 어디부터 다시 할지 판단한다.
- * 이 틀로 부르는 단계는 승인 요청 안의 주문 반영·지갑 발행·0원 재고 복구({@link DecideRefundService}, #574)와
- * 지갑 완료 메시지 뒤의 재고 복구({@link HandleWalletRefundResultService}, #544)이고, 모두 트랜잭션 구간 밖에서 부른다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
+ * 이 틀로 부르는 단계는 지휘자({@link RefundSagaService}, #575)가 부르는 승인 요청 안의 주문 반영·지갑 발행·0원 재고 복구(#574)와
+ * 지갑 완료 메시지 뒤의 재고 복구(#544)이고, 모두 트랜잭션 구간 밖에서 부른다. 기록은 이 클래스가 여는 새 트랜잭션 구간으로 따로 저장된다.
  */
 @Slf4j
 @Component
@@ -130,7 +130,7 @@ public class RefundStepRunner {
         String name = e.getClass().getSimpleName();
         // 만일을 대비한 처리: 그 자리에서 만든 이름 없는 예외(new RuntimeException() { })는 짧은 이름이 빈 값이라,
         // 그대로 넘기면 RefundStep.failForRetry가 "이유가 비었다"며 거부해 진짜 실패가 기록되지 않는다. 지금 환불 코드에는 없지만
-        // 이 틀로 부르는 호출(지금은 DecideRefundService의 주문 반영·지갑 발행·0원 재고 복구와 HandleWalletRefundResultService의 재고 복구)이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
+        // 이 틀로 부르는 호출(지금은 RefundSagaService의 주문 반영·지갑 발행·재고 복구)이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
         if (name.isEmpty()) {
             name = e.getClass().getName();
         }

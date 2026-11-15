@@ -2,7 +2,7 @@ package com.ok.refund.adapter.in.event;
 
 import com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage;
 import com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage;
-import com.ok.refund.application.port.in.HandleWalletRefundResultUseCase;
+import com.ok.refund.application.port.in.RefundSagaUseCase;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
 import com.ok.refund.application.service.RefundStepRunner;
@@ -34,7 +34,7 @@ class RefundWalletKafkaListenerTest {
     private static final String EMPTY_REASON = "실패 이유가 비어 있습니다.";
 
     @Mock
-    private HandleWalletRefundResultUseCase useCase;
+    private RefundSagaUseCase useCase;
 
     @InjectMocks
     private RefundWalletKafkaListener sut;
