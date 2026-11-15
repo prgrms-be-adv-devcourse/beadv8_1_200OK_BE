@@ -70,6 +70,16 @@ public class DeliveryKafkaConsumerConfig {
         return TopicBuilder.name(DeliveryInboundTopics.ORDER_PAID_DLT).build();
     }
 
+    @Bean
+    NewTopic deliverySellerOriginPostalCodeTopic() {
+        return TopicBuilder.name(DeliveryInboundTopics.SELLER_ORIGIN_POSTAL_CODE).build();
+    }
+
+    @Bean
+    NewTopic deliverySellerOriginPostalCodeDltTopic() {
+        return TopicBuilder.name(DeliveryInboundTopics.SELLER_ORIGIN_POSTAL_CODE_DLT).build();
+    }
+
     // 테스트에서 규칙을 Kafka 없이 확인할 수 있게 빈 메서드와 나눠 둔다
     static DefaultErrorHandler deliveryErrorHandler(ConsumerAwareRecordRecoverer recoverer, BackOff backOff) {
         DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);

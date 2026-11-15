@@ -632,11 +632,13 @@ com.ok.delivery
 | 방향 | 토픽 | 키 | 값 | 실패 |
 |---|---|---|---|---|
 | 주문 → 배송 | `order.order-paid` | `orderId` | `orderId`, `buyerId`, `paidAt`, `shippingAddress`, `sellerOrders[]`(`items[]`) | 1·2·4초 재시도 뒤 `order.order-paid.delivery.DLT` |
+| 회원 → 배송 | `member.seller-origin-postal-code` | `sellerId` | `sellerId`, `postalCode`, `occurredAt` | 1·2·4초 재시도 뒤 `member.seller-origin-postal-code.delivery.DLT` |
 | 배송 → 주문 | `delivery.shipment-dispatched` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `carrier`, `trackingNumber`, `shippedAt` | outbox에 남아 다음 발송 때 다시 보냄 |
 | 배송 → 주문 | `delivery.shipment-delivered` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `deliveredAt` | outbox에 남아 다음 발송 때 다시 보냄 |
 
 - **보내기:** 출고·배송 완료와 같은 트랜잭션에서 `OutboxDeliveryEventPublisher`가 메시지 본문(JSON)을 `delivery_outbox`에 남기고, `DeliveryOutboxRelayScheduler`가 30초마다(`delivery.outbox.relay.cron`, `-`면 꺼짐) 쌓인 순서대로 보냅니다. 롤백되면 줄이 없어 나가지 않습니다. 한 줄이 실패하면 그 실행을 멈추고(같은 주문의 배송 완료가 배송 시작보다 먼저 나가지 않게) 10번을 넘게 실패하면 ERROR 로그를 남깁니다(회원 outbox와 같은 정책).
 - **받기:** `DeliveryOrderPaidKafkaListener`(그룹 `delivery`, 전용 `deliveryKafkaListenerContainerFactory`)가 받아 값을 검사한 뒤 `ShipmentUseCase.create`를 부릅니다. 같은 주문이 다시 와도 주문 ID로 한 번만 만듭니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 재시도 없이 DLT로 옮기고 ERROR 로그를 남깁니다. DLT에는 받은 값이 그대로(읽지 못한 메시지는 원본 바이트로) 남습니다.
+- **판매자 출고지 우편번호(#558):** `SellerOriginPostalCodeKafkaListener`가 받아 판매자당 한 행인 `seller_origin_postal_code`에 덮어씁니다. 원본은 회원이고, 판매자 배송 설정(`seller_shipping_profile`)과 소유자가 달라 테이블을 나눴습니다. 반영한 메시지의 `occurredAt`을 `source_occurred_at`에 함께 저장해, 그보다 오래된 메시지는 버리고 같은 시각의 메시지(중복 수신)는 같은 값으로 다시 덮어씁니다. `occurredAt`은 한국 시간에 시간대 표기가 없고 마이크로초까지 옵니다. 우편번호가 숫자 5자리가 아니거나 `sellerId`·`occurredAt`이 빠진 메시지는 결제 완료와 같이 재시도 없이 DLT로 옮깁니다. 아직 배송비·도착 예정일 계산에는 쓰지 않습니다. 계산에 쓰게 되면 행이 없는 판매자(이 기능 전에 승인돼 아직 메시지가 오지 않은 판매자)는 배송 설정처럼 기본값으로 다룹니다.
 - **택배사 추적 요청:** 출고 트랜잭션에서 배송 안 이벤트(`application/dto/CarrierTrackingRequestedEvent`)를 내고, `CarrierEventListener`가 커밋 뒤에 받아 요청합니다. 같은 서버 안의 일이라 Kafka를 거치지 않습니다.
 - **이중 경로(#603 머지 전까지):** 주문이 아직 Spring 이벤트로 주고받으므로 `OrderPaidEventListener`(Spring 이벤트 수신)와 `common.event`의 `ShipmentDispatchedEvent`·`ShipmentDeliveredEvent` 발행을 Kafka와 함께 둡니다. 주문이 Kafka로 바뀌면 둘을 지웁니다(`TODO(#603)`).
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
