@@ -256,7 +256,7 @@ public class RefundPersistenceAdapter implements RefundPersistencePort, RefundSt
     // 결과 대기(AWAITING_RESULT)는 시간이 지나도 이 알람으로 다시 보내지 않는다(시간 초과는 #577)
     @Override
     public List<Long> findRefundIdsDueForResume(LocalDateTime now, int limit) {
-        return refundStepJpaRepository.findRefundIdsDue(
+        return refundStepJpaRepository.findRefundIdsDue(RefundStatus.PROCESSING,
                 List.of(RefundStepStatus.READY, RefundStepStatus.IN_PROGRESS), now, PageRequest.of(0, limit));
     }
 

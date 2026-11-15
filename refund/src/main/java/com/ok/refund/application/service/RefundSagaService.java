@@ -59,6 +59,8 @@ public class RefundSagaService implements RefundSagaUseCase {
     static final String ORDER_REFUSED_REASON = "ORDER_REFUSED";
     // 지갑이 알려 준 금액·주문·구매자가 환불과 다를 때 지갑 줄의 이유에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
     static final String RESULT_MISMATCH = "RESULT_MISMATCH";
+    // 앞 단계가 멈춰 다시 진행할 수 없는 환불에서, 남은 할 차례·만료된 시도 중 줄을 멈출 때 남기는 이유(PR #628 검수)
+    static final String BLOCKED_BY_STOPPED_STEP = "BLOCKED_BY_STOPPED_STEP";
     // 다시 해도 결과가 같은 다른 모듈 실패(#576). 이 실패는 다시 시도하지 않고 단계를 바로 멈춘다.
     // 상품이 해제할 수 없다고 답한 경우(해제 가능 수량 초과, 같은 refundId인데 내용이 다름, 재고 기록 없음)다.
     // 주문 409는 예외가 아니라 거절 결과로 오고, 지갑 발행 실패는 Kafka 쪽 일시 실패라 여기 넣지 않는다
@@ -275,10 +277,32 @@ public class RefundSagaService implements RefundSagaUseCase {
             case STOP -> {
                 log.warn("다시 진행할 수 없는 환불이라 넘김(멈춘 단계, 단계 줄 없음 또는 처리 중 아님, 확인 필요). refundId={}, status={}",
                         refundId, refund.getStatus());
+                stopBlockedSteps(refundId);
                 yield RefundResult.from(refund);
             }
             case REJECT -> throw new IllegalStateException("단계 줄로는 거절을 정하지 않습니다. refundId=" + refundId);
         };
+    }
+
+    // 다시 진행할 수 없다고 판단한 처리 중 환불(예: 주문 줄은 멈췄는데 재고 줄이 할 차례)에서, 알람이 다시 집을 줄(할 차례, 만료된 시도 중)을
+    // 멈춤으로 바꾼다(PR #628 검수). 그대로 두면 그 줄의 시각이 바뀌지 않아 알람 매 회차 맨 앞에 다시 뽑히고, 쌓이면 다른 환불을 밀어낸다.
+    // 멈춤으로 바꾸면 사람이 볼 환불로 드러난다. 만료되지 않은 시도 중 줄은 누군가 하는 중이라 건드리지 않는다.
+    // 잠근 뒤 처리 중이 아니면 쓰지 않는다(#616 결정 15). 끝난 환불은 알람이 고르지도 않는다
+    private void stopBlockedSteps(Long refundId) {
+        transaction.executeWithoutResult(status -> {
+            Optional<Refund> locked = refundPersistencePort.findByIdForUpdate(refundId);
+            if (locked.isEmpty() || locked.get().getStatus() != RefundStatus.PROCESSING) {
+                return;
+            }
+            LocalDateTime now = LocalDateTime.now(clock);
+            for (RefundStep step : refundStepPersistencePort.findAllByRefundId(refundId)) {
+                boolean blocked = step.getStatus() == RefundStepStatus.READY || step.isExpired(now);
+                if (blocked && step.stop(BLOCKED_BY_STOPPED_STEP)) {
+                    refundStepPersistencePort.update(step);
+                    log.warn("다시 진행할 수 없는 환불의 남은 단계를 멈춤(확인 필요). refundId={}, step={}", refundId, step.getType());
+                }
+            }
+        });
     }
 
     // 다시 부를 단계 줄을 잠근 구간에서 준비한 뒤, 부를 차례면 실행한다. 준비하는 사이 다른 경로가 먼저 시작했거나(시도 중·결과 대기)

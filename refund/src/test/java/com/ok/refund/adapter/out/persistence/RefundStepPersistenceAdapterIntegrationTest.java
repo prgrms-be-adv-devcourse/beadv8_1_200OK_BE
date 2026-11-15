@@ -3,6 +3,7 @@ package com.ok.refund.adapter.out.persistence;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
@@ -71,6 +72,8 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         newRefundWith(805L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
                 step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, NOW.minusMinutes(30)));
         newRefundWith(806L, step(RefundStepType.ORDER, RefundStepStatus.STOPPED, null));
+        // 처리 중이 아닌 환불(요청됨)은 줄이 할 차례·시각 지남이어도 고르지 않는다. 다시 진행할 일이 없고 줄에 쓰지도 않아 매 회차 다시 뽑힌다
+        newRefundWith(807L, false, step(RefundStepType.ORDER, RefundStepStatus.READY, NOW.minusMinutes(10)));
 
         // when
         List<Long> sut = refundStepPersistencePort.findRefundIdsDueForResume(NOW, 10);
@@ -92,11 +95,18 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         assertThat(sut).containsExactly(first);
     }
 
-    // 주문·주문 상품·옵션 번호를 모두 바꿔 서로 겹치지 않는 환불을 하나 더 만들고 주어진 단계 줄을 붙인다
+    // 주문·주문 상품·옵션 번호를 모두 바꿔 서로 겹치지 않는 처리 중 환불을 하나 더 만들고 주어진 단계 줄을 붙인다
     private Long newRefundWith(Long orderItemId, RefundStep... steps) {
+        return newRefundWith(orderItemId, true, steps);
+    }
+
+    private Long newRefundWith(Long orderItemId, boolean processing, RefundStep... steps) {
         return inTransaction(() -> {
-            Long id = refundPersistencePort.saveNew(
-                    Refund.request(orderItemId, orderItemId, 1, 1L, 7L, orderItemId, "상품", "옵션", 10_000L, null)).getId();
+            Refund refund = Refund.request(orderItemId, orderItemId, 1, 1L, 7L, orderItemId, "상품", "옵션", 10_000L, null);
+            if (processing) {
+                refund.approve(NOW, RefundShippingFee.none());
+            }
+            Long id = refundPersistencePort.saveNew(refund).getId();
             refundPersistencePort.findByIdForUpdate(id);
             for (RefundStep step : steps) {
                 refundStepPersistencePort.saveNew(RefundStep.restore(null, id, step.getType(), step.getStatus(),

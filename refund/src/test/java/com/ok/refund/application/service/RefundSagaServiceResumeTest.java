@@ -151,6 +151,54 @@ class RefundSagaServiceResumeTest {
         then(refundStepPersistencePort).should(never()).update(any());
     }
 
+    // 주문 줄은 멈췄는데(만료가 반복돼 횟수를 다 씀) 늦게 깨어난 서버가 주문 성공을 보고 지갑·재고로 진행해, 재고 줄이 할 차례로 남았다.
+    // 계획은 주문 줄에서 멈춤을 정한다. 재고 줄을 그대로 두면 시각이 바뀌지 않아 알람 매 회차 맨 앞에 다시 뽑히므로 멈춤으로 바꾼다(PR #628 검수)
+    @Test
+    void 다시_진행할_수_없는_환불의_남은_할_차례_줄은_멈춤으로_바꾼다() {
+        // given
+        RefundStep product = step(RefundStepType.PRODUCT, RefundStepStatus.READY);
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(
+                step(RefundStepType.ORDER, RefundStepStatus.STOPPED),
+                step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED),
+                product));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+
+        // when
+        RefundResult sut = saga.resume(REFUND_ID);
+
+        // then
+        assertThat(sut.status()).isEqualTo("PROCESSING");
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep stopped = captor.getValue();
+        assertThat(stopped).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(stopped.getType()).isEqualTo(RefundStepType.PRODUCT);
+            softly.assertThat(stopped.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(stopped.getLastReason()).isEqualTo(RefundSagaService.BLOCKED_BY_STOPPED_STEP);
+        });
+    }
+
+    // 잠근 뒤 처리 중이 아니면 줄에 쓰지 않는다(#616 결정 15)
+    @Test
+    void 다시_진행할_수_없는데_잠근_뒤_처리_중이_아니면_줄을_바꾸지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(
+                step(RefundStepType.ORDER, RefundStepStatus.STOPPED),
+                step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED),
+                step(RefundStepType.PRODUCT, RefundStepStatus.READY)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
+
+        // when
+        saga.resume(REFUND_ID);
+
+        // then
+        then(refundStepPersistencePort).should(never()).update(any());
+    }
+
     private static Refund refund(RefundStatus status) {
         return Refund.restore(REFUND_ID, 1_000L, 101L, 2, 2_000L, 5L, 55L, "감자", "1kg", 10_000L, 20_000L,
                 0L, 0L, 0L, null, status, null, null, null, null, null);
