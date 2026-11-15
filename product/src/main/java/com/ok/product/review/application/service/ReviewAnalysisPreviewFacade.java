@@ -27,6 +27,7 @@ import com.ok.product.review.application.dto.ReviewKeywordPreviewResult;
 import com.ok.product.review.application.dto.ReviewSentimentAnalysis;
 import com.ok.product.review.application.dto.ReviewSentimentInput;
 import com.ok.product.review.application.dto.ReviewSentimentPreviewResult;
+import com.ok.product.review.application.port.in.ReviewAnalysisPreviewUseCase;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,19 +40,14 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ReviewAnalysisPreviewFacade {
+public class ReviewAnalysisPreviewFacade implements ReviewAnalysisPreviewUseCase {
 
 	private final ProductReviewService productReviewService;
 	private final ReviewKeywordAnalyzer reviewKeywordAnalyzer;
 	private final ReviewSentimentAnalyzer reviewSentimentAnalyzer;
 	private final ReviewKeywordList keywordList;
 
-	/**
-	 * 상품 분류에 묻는 키워드마다 "말함" 확률과 표현했는지 판정을 돌려준다. 내용 없는 본문은 분석기를 부르지 않는다.
-	 *
-	 * @throws RestApiException 상품이 없거나 삭제됐으면 {@code PRODUCT_NOT_FOUND}, 옵션이 그 상품의 것이 아니면 {@code INVALID_REVIEW_OPTION},
-	 *                          분석기가 인증을 거절하면 {@code REVIEW_ANALYZER_UNAVAILABLE}, 그 밖에 분석하지 못하면 {@code REVIEW_ANALYSIS_FAILED}
-	 */
+	@Override
 	public ReviewKeywordPreviewResult analyzeKeywords(ReviewAnalysisPreviewQuery query) {
 		ReviewAnalysisSubjectResult subject = productReviewService.getAnalysisSubject(query.productId(), query.optionId());
 		if (!ProductReview.isAnalyzableContent(query.content())) {
@@ -75,12 +71,7 @@ public class ReviewAnalysisPreviewFacade {
 		return new ReviewKeywordPreviewResult(true, analysis.keywordVersion(), analysis.model(), keywords);
 	}
 
-	/**
-	 * 전체 감성과 여섯 분석 항목의 감성을 돌려준다. 내용 없는 본문은 분석기를 부르지 않는다.
-	 *
-	 * @throws RestApiException 상품이 없거나 삭제됐으면 {@code PRODUCT_NOT_FOUND}, 옵션이 그 상품의 것이 아니면 {@code INVALID_REVIEW_OPTION},
-	 *                          분석기가 인증을 거절하면 {@code REVIEW_ANALYZER_UNAVAILABLE}, 그 밖에 분석하지 못하면 {@code REVIEW_ANALYSIS_FAILED}
-	 */
+	@Override
 	public ReviewSentimentPreviewResult analyzeSentiment(ReviewAnalysisPreviewQuery query) {
 		ReviewAnalysisSubjectResult subject = productReviewService.getAnalysisSubject(query.productId(), query.optionId());
 		if (!ProductReview.isAnalyzableContent(query.content())) {

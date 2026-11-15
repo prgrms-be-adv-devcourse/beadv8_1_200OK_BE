@@ -8,13 +8,13 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -29,21 +29,19 @@ import org.springframework.data.domain.Pageable;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.ok.product.product.application.dto.ProductCategoryCode;
+import com.ok.product.product.application.dto.ReviewedProductResult;
+import com.ok.product.product.application.port.in.ReviewedProductUseCase;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
-import com.ok.product.product.domain.Product;
-import com.ok.product.product.domain.ProductOption;
-import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.application.port.out.ProductOptionRepository;
-import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ProductReviewMediaSpec;
 import com.ok.product.review.domain.ProductReviewMediaType;
 import com.ok.product.review.exception.ProductReviewErrorCode;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewKeywordRepository;
+import com.ok.product.review.application.port.out.ProductReviewRepository;
+import com.ok.product.review.application.port.out.ReviewAnalysisRequestRepository;
+import com.ok.product.review.application.port.out.ReviewKeywordRepository;
 import com.ok.product.review.application.dto.ProductReviewCreateCommand;
 import com.ok.product.review.application.dto.ProductReviewResult;
 import com.ok.product.review.application.dto.ProductReviewUpdateCommand;
@@ -65,10 +63,7 @@ class ProductReviewServiceTest {
 	ProductReviewRepository productReviewRepository;
 
 	@Mock
-	ProductRepository productRepository;
-
-	@Mock
-	ProductOptionRepository productOptionRepository;
+	ReviewedProductUseCase reviewedProductUseCase;
 
 	@Mock
 	ReviewAnalysisRequestRepository analysisRequestRepository;
@@ -85,7 +80,7 @@ class ProductReviewServiceTest {
 	void setUp() {
 		MediaUrlResolver mediaUrlResolver = new MediaUrlResolver("bucket", "ap-northeast-2");
 		Clock clock = Clock.fixed(Instant.parse("2026-10-16T00:00:00Z"), ZoneOffset.UTC);
-		sut = new ProductReviewService(productReviewRepository, productRepository, productOptionRepository,
+		sut = new ProductReviewService(productReviewRepository, reviewedProductUseCase,
 			analysisRequestRepository, reviewKeywordRepository, keywordList, new ProductReviewMediaValidator(mediaUrlResolver), mediaUrlResolver, clock);
 	}
 
@@ -104,7 +99,7 @@ class ProductReviewServiceTest {
 
 		// then
 		assertThat(reviewId).isEqualTo(REVIEW_ID);
-		then(productRepository).should().addReviewStats(PRODUCT_ID, 1, 4);
+		then(reviewedProductUseCase).should().addReviewStats(PRODUCT_ID, 1, 4);
 	}
 
 	@Test
@@ -133,13 +128,14 @@ class ProductReviewServiceTest {
 	@Test
 	void 삭제된_상품에는_작성할_수_없다() {
 		// given
-		given(productRepository.findByIdAndDeletedAtIsNull(PRODUCT_ID)).willReturn(Optional.empty());
+		given(reviewedProductUseCase.getActiveProduct(PRODUCT_ID))
+			.willThrow(new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
 
 		// when & then
 		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4)))
 			.isInstanceOfSatisfying(RestApiException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND));
-		then(productRepository).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
+		then(reviewedProductUseCase).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
 	}
 
 	@Test
@@ -152,7 +148,7 @@ class ProductReviewServiceTest {
 		assertThatThrownBy(() -> sut.create(MEMBER_ID, PRODUCT_ID, purchase(), createCommand(4)))
 			.isInstanceOfSatisfying(RestApiException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(ProductReviewErrorCode.DUPLICATE_REVIEW));
-		then(productRepository).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
+		then(reviewedProductUseCase).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
 	}
 
 	@Test
@@ -176,7 +172,7 @@ class ProductReviewServiceTest {
 		sut.update(MEMBER_ID, REVIEW_ID, new ProductReviewUpdateCommand(5, "더 좋아요", List.of()));
 
 		// then
-		then(productRepository).should().addReviewStats(PRODUCT_ID, 0, 2);
+		then(reviewedProductUseCase).should().addReviewStats(PRODUCT_ID, 0, 2);
 	}
 
 	@Test
@@ -200,7 +196,7 @@ class ProductReviewServiceTest {
 
 		// then
 		assertThat(review.isDeleted()).isTrue();
-		then(productRepository).should().addReviewStats(PRODUCT_ID, -1, -4);
+		then(reviewedProductUseCase).should().addReviewStats(PRODUCT_ID, -1, -4);
 	}
 
 	@Test
@@ -213,7 +209,7 @@ class ProductReviewServiceTest {
 		assertThatThrownBy(() -> sut.delete(MEMBER_ID, REVIEW_ID))
 			.isInstanceOfSatisfying(RestApiException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(ProductReviewErrorCode.REVIEW_NOT_FOUND));
-		then(productRepository).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
+		then(reviewedProductUseCase).should(never()).addReviewStats(anyLong(), anyInt(), anyInt());
 	}
 
 	@Test
@@ -230,8 +226,8 @@ class ProductReviewServiceTest {
 	@Test
 	void 숨긴_상품의_리뷰_목록은_조회할_수_없다() {
 		// given
-		given(productRepository.findByIdAndVisibilityAndDeletedAtIsNull(PRODUCT_ID, ProductVisibility.VISIBLE))
-			.willReturn(Optional.empty());
+		given(reviewedProductUseCase.getVisibleProductCategory(PRODUCT_ID))
+			.willThrow(new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
 
 		// when & then
 		assertThatThrownBy(() -> sut.getProductReviews(PRODUCT_ID, PageRequest.of(0, 10)))
@@ -245,12 +241,9 @@ class ProductReviewServiceTest {
 		Pageable pageable = PageRequest.of(0, 10);
 		ProductReview review = review(MEMBER_ID, 5, List.of(
 			new ProductReviewMediaSpec("product_review/a.jpg", ProductReviewMediaType.IMAGE)));
-		ProductOption option = mock(ProductOption.class);
-		given(option.getId()).willReturn(OPTION_ID);
-		given(option.getName()).willReturn("1kg");
 		given(productReviewRepository.findByMemberIdAndDeletedAtIsNullOrderByIdDesc(MEMBER_ID, pageable))
 			.willReturn(new PageImpl<>(List.of(review), pageable, 1));
-		given(productOptionRepository.findAllById(List.of(OPTION_ID))).willReturn(List.of(option));
+		given(reviewedProductUseCase.findOptionNames(List.of(OPTION_ID))).willReturn(Map.of(OPTION_ID, "1kg"));
 
 		// when
 		ProductReviewResult result = sut.getMyReviews(MEMBER_ID, pageable).getContent().getFirst();
@@ -266,7 +259,8 @@ class ProductReviewServiceTest {
 	}
 
 	private void givenProduct() {
-		given(productRepository.findByIdAndDeletedAtIsNull(PRODUCT_ID)).willReturn(Optional.of(mock(Product.class)));
+		given(reviewedProductUseCase.getActiveProduct(PRODUCT_ID))
+			.willReturn(new ReviewedProductResult("청송 꿀사과", ProductCategoryCode.FRUIT));
 	}
 
 	private ReviewablePurchase purchase() {

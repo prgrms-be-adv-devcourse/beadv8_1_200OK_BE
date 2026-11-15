@@ -40,7 +40,7 @@ class OrderApiClientTraceTest {
     @Test
     void 추적_범위_안의_호출은_추적_헤더를_보낸다() {
         // given
-        OrderApiClient sut = new OrderApiClient("http://127.0.0.1:" + server.getAddress().getPort());
+        OrderApiHttpClient sut = new OrderApiHttpClient("http://127.0.0.1:" + server.getAddress().getPort());
 
         // when
         try (TraceContext.Scope ignored = TraceContext.open("111")) {

@@ -16,7 +16,7 @@ import java.util.Set;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
-import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.review.domain.ReviewKeywordAspect;
 import com.ok.product.review.application.dto.ReviewKeywordAnalysis;
 
@@ -79,7 +79,7 @@ public class ReviewKeywordList {
 	}
 
 	// 하위 분류에 묻는 키워드를 파일에 적힌 순서로 돌려준다
-	public List<Keyword> keywordsFor(ProductCategory category) {
+	public List<Keyword> keywordsFor(ProductCategoryCode category) {
 		return keywords.values().stream()
 			.filter(keyword -> keyword.appliesTo(category))
 			.toList();
@@ -95,9 +95,9 @@ public class ReviewKeywordList {
 	 * @param guide      분석기 질문에 붙이는 판정 기준
 	 * @param categories 이 키워드를 묻는 하위 분류. 파일의 {@code ALL}은 모든 분류로 펼친다
 	 */
-	public record Keyword(String id, String phrase, ReviewKeywordAspect aspect, String guide, Set<ProductCategory> categories) {
+	public record Keyword(String id, String phrase, ReviewKeywordAspect aspect, String guide, Set<ProductCategoryCode> categories) {
 
-		public boolean appliesTo(ProductCategory category) {
+		public boolean appliesTo(ProductCategoryCode category) {
 			return categories.contains(category);
 		}
 	}
@@ -132,14 +132,14 @@ public class ReviewKeywordList {
 				"키워드 목록의 aspect가 코드의 분석 항목에 없습니다. id=" + id + ", aspect=" + aspect));
 	}
 
-	private static Set<ProductCategory> toCategories(String id, JsonNode categories) {
-		Set<ProductCategory> result = EnumSet.noneOf(ProductCategory.class);
+	private static Set<ProductCategoryCode> toCategories(String id, JsonNode categories) {
+		Set<ProductCategoryCode> result = EnumSet.noneOf(ProductCategoryCode.class);
 		for (JsonNode node : categories.values()) {
 			String name = node.asString();
 			if (ALL_CATEGORIES.equals(name)) {
-				result.addAll(EnumSet.allOf(ProductCategory.class));
+				result.addAll(EnumSet.allOf(ProductCategoryCode.class));
 			} else {
-				result.add(Arrays.stream(ProductCategory.values())
+				result.add(Arrays.stream(ProductCategoryCode.values())
 					.filter(category -> category.name().equals(name))
 					.findFirst()
 					.orElseThrow(() -> new IllegalStateException(
@@ -158,7 +158,7 @@ public class ReviewKeywordList {
 			throw new IllegalStateException(
 				"키워드 목록과 코드의 선택지가 다릅니다. list=" + choiceValues + ", code=" + CHOICE_VALUES);
 		}
-		for (ProductCategory category : ProductCategory.values()) {
+		for (ProductCategoryCode category : ProductCategoryCode.values()) {
 			int count = keywordsFor(category).size();
 			if (count > MAX_KEYWORDS_PER_CATEGORY) {
 				throw new IllegalStateException("하위 분류에 묻는 키워드가 " + MAX_KEYWORDS_PER_CATEGORY

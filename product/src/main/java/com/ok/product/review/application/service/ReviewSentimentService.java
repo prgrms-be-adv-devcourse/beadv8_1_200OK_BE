@@ -16,11 +16,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.product.product.domain.Product;
-import com.ok.product.product.domain.ProductOption;
-import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.application.port.out.ProductOptionRepository;
-import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ReviewAnalysisRequest;
 import com.ok.product.review.domain.ReviewAnalysisStatus;
@@ -28,17 +23,19 @@ import com.ok.product.review.domain.ReviewAnalysisType;
 import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.ReviewSentiment;
 import com.ok.product.review.domain.Sentiment;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
+import com.ok.product.review.application.port.out.ProductReviewRepository;
+import com.ok.product.review.application.port.out.ReviewAnalysisRequestRepository;
 import com.ok.product.review.application.dto.ReviewAspectSentimentCount;
 import com.ok.product.review.application.dto.ReviewSentimentCount;
-import com.ok.product.review.adapter.out.persistence.ReviewSentimentRepository;
+import com.ok.product.review.application.port.out.ReviewSentimentRepository;
 import com.ok.product.review.application.dto.AspectSentimentSummaryResult;
 import com.ok.product.review.application.dto.ReviewSentimentAnalysis;
 import com.ok.product.review.application.dto.ReviewSentimentInput;
 import com.ok.product.review.application.dto.ReviewSentimentSummaryResult;
 import com.ok.product.review.application.dto.ReviewSentimentTarget;
 import com.ok.product.review.application.dto.SentimentCountsResult;
+import com.ok.product.review.application.port.in.ReviewSentimentSummaryUseCase;
+import com.ok.product.product.application.port.in.ReviewedProductUseCase;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,13 +48,12 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ReviewSentimentService {
+public class ReviewSentimentService implements ReviewSentimentSummaryUseCase {
 
 	private final ReviewAnalysisRequestRepository analysisRequestRepository;
 	private final ReviewSentimentRepository reviewSentimentRepository;
 	private final ProductReviewRepository productReviewRepository;
-	private final ProductRepository productRepository;
-	private final ProductOptionRepository productOptionRepository;
+	private final ReviewedProductUseCase reviewedProductUseCase;
 	private final Clock clock;
 
 	/**
@@ -91,12 +87,11 @@ public class ReviewSentimentService {
 		}
 
 		// 리뷰마다 상품·옵션을 조회하지 않도록 이름을 한 번에 가져온다
-		Map<Long, String> productNames = productRepository.findAllById(
-				reviews.values().stream().map(ProductReview::getProductId).distinct().toList()).stream()
-			.collect(Collectors.toMap(Product::getId, Product::getName));
-		Map<Long, String> optionNames = productOptionRepository.findAllById(
-				reviews.values().stream().map(ProductReview::getProductOptionId).distinct().toList()).stream()
-			.collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
+		Map<Long, String> productNames = reviewedProductUseCase.findProducts(
+				reviews.values().stream().map(ProductReview::getProductId).distinct().toList()).entrySet().stream()
+			.collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().name()));
+		Map<Long, String> optionNames = reviewedProductUseCase.findOptionNames(
+				reviews.values().stream().map(ProductReview::getProductOptionId).distinct().toList());
 
 		return analyzable.stream()
 			.map(request -> {
@@ -158,17 +153,10 @@ public class ReviewSentimentService {
 		}
 	}
 
-	/**
-	 * 판매자 상품의 분석 완료 리뷰를 전체 감성과 분석 항목별로 센다.
-	 * 분석을 기다리거나 최종 실패한 리뷰는 결과가 없어 분모와 분자 어디에도 들지 않는다.
-	 *
-	 * @throws RestApiException {@code PRODUCT_NOT_FOUND} 상품이 없거나 삭제됐거나 내 상품이 아니면
-	 */
+	@Override
 	public ReviewSentimentSummaryResult getSummary(Long sellerId, Long productId) {
 		// 판매자 상품 상세(403)와 달리 다른 판매자의 상품도 없는 상품과 같은 404로 응답한다 (#386)
-		productRepository.findByIdAndDeletedAtIsNull(productId)
-			.filter(product -> product.isOwnedBy(sellerId))
-			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		reviewedProductUseCase.checkSellerProduct(sellerId, productId);
 
 		Map<Sentiment, Long> overallCounts = reviewSentimentRepository.countOverallByProductId(productId).stream()
 			.collect(Collectors.toMap(ReviewSentimentCount::sentiment, ReviewSentimentCount::count));

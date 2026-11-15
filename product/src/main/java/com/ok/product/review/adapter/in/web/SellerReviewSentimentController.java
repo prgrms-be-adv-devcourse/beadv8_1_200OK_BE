@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.product.review.adapter.in.web.dto.ReviewSentimentSummaryResponse;
-import com.ok.product.review.application.service.ReviewSentimentService;
+import com.ok.product.review.application.port.in.ReviewSentimentSummaryUseCase;
 
 import lombok.RequiredArgsConstructor;
 
@@ -19,7 +19,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SellerReviewSentimentController implements SellerReviewSentimentControllerSpec {
 
-	private final ReviewSentimentService reviewSentimentService;
+	private final ReviewSentimentSummaryUseCase reviewSentimentSummaryUseCase;
 
 	@Override
 	@GetMapping("/{productId}/review-sentiments")
@@ -27,6 +27,6 @@ public class SellerReviewSentimentController implements SellerReviewSentimentCon
 		@CurrentMemberId Long memberId,
 		@PathVariable Long productId
 	) {
-		return ResponseEntity.ok(ReviewSentimentSummaryResponse.from(reviewSentimentService.getSummary(memberId, productId)));
+		return ResponseEntity.ok(ReviewSentimentSummaryResponse.from(reviewSentimentSummaryUseCase.getSummary(memberId, productId)));
 	}
 }

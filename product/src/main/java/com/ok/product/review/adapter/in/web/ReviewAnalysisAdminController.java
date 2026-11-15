@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ok.product.review.adapter.in.web.dto.ReviewAnalysisPreviewRequest;
 import com.ok.product.review.adapter.in.web.dto.ReviewKeywordPreviewResponse;
 import com.ok.product.review.adapter.in.web.dto.ReviewSentimentPreviewResponse;
-import com.ok.product.review.application.service.ReviewAnalysisPreviewFacade;
+import com.ok.product.review.application.port.in.ReviewAnalysisPreviewUseCase;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,17 +21,17 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ReviewAnalysisAdminController implements ReviewAnalysisAdminControllerSpec {
 
-	private final ReviewAnalysisPreviewFacade reviewAnalysisPreviewFacade;
+	private final ReviewAnalysisPreviewUseCase reviewAnalysisPreviewUseCase;
 
 	@Override
 	@PostMapping("/keywords")
 	public ResponseEntity<ReviewKeywordPreviewResponse> analyzeKeywords(@Valid @RequestBody ReviewAnalysisPreviewRequest request) {
-		return ResponseEntity.ok(ReviewKeywordPreviewResponse.from(reviewAnalysisPreviewFacade.analyzeKeywords(request.toQuery())));
+		return ResponseEntity.ok(ReviewKeywordPreviewResponse.from(reviewAnalysisPreviewUseCase.analyzeKeywords(request.toQuery())));
 	}
 
 	@Override
 	@PostMapping("/sentiment")
 	public ResponseEntity<ReviewSentimentPreviewResponse> analyzeSentiment(@Valid @RequestBody ReviewAnalysisPreviewRequest request) {
-		return ResponseEntity.ok(ReviewSentimentPreviewResponse.from(reviewAnalysisPreviewFacade.analyzeSentiment(request.toQuery())));
+		return ResponseEntity.ok(ReviewSentimentPreviewResponse.from(reviewAnalysisPreviewUseCase.analyzeSentiment(request.toQuery())));
 	}
 }

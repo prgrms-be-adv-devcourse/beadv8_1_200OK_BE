@@ -37,7 +37,7 @@ import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
-import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;
 import com.ok.product.review.application.service.ReviewKeywordList;
@@ -72,10 +72,10 @@ class JevReviewKeywordAnalyzerTest {
 	@Test
 	void 상품명과_본문만_보내고_리뷰_ID는_보내지_않는다() {
 		// given
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(new ReviewKeywordInput(987654L, "청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
+		analyzer.analyze(new ReviewKeywordInput(987654L, "청송 꿀사과", "아삭하고 달아요", ProductCategoryCode.FRUIT));
 
 		// then
 		String body = sentBodies.getFirst();
@@ -89,10 +89,10 @@ class JevReviewKeywordAnalyzerTest {
 	@MethodSource("빈_상품명")
 	void 상품명이_없으면_상품_줄_없이_보낸다(String productName) {
 		// given
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(new ReviewKeywordInput(1L, productName, "아삭하고 달아요", ProductCategory.FRUIT));
+		analyzer.analyze(new ReviewKeywordInput(1L, productName, "아삭하고 달아요", ProductCategoryCode.FRUIT));
 
 		// then
 		assertThat(json(sentBodies.getFirst()).path("state").asString()).isEqualTo("본문: 아삭하고 달아요");
@@ -109,10 +109,10 @@ class JevReviewKeywordAnalyzerTest {
 			.andExpect(method(HttpMethod.POST))
 			.andExpect(header("Authorization", "Bearer " + API_KEY))
 			.andExpect(this::capture)
-			.andRespond(withSuccess(validResponse(ProductCategory.FRUIT), MediaType.APPLICATION_JSON));
+			.andRespond(withSuccess(validResponse(ProductCategoryCode.FRUIT), MediaType.APPLICATION_JSON));
 
 		// when
-		analyzer.analyze(input(1L, ProductCategory.FRUIT));
+		analyzer.analyze(input(1L, ProductCategoryCode.FRUIT));
 
 		// then
 		assertThat(json(sentBodies.getFirst()).path("model").asString()).isEqualTo(MODEL);
@@ -121,7 +121,7 @@ class JevReviewKeywordAnalyzerTest {
 
 	@ParameterizedTest
 	@MethodSource("분류별_묻는_키워드와_묻지_않는_키워드")
-	void 상품_분류에_묻는_키워드만_목록_순서대로_질문으로_보낸다(ProductCategory category, String askedId, String notAskedId) {
+	void 상품_분류에_묻는_키워드만_목록_순서대로_질문으로_보낸다(ProductCategoryCode category, String askedId, String notAskedId) {
 		// given
 		expectSuccess(category);
 
@@ -138,8 +138,8 @@ class JevReviewKeywordAnalyzerTest {
 
 	static Stream<Arguments> 분류별_묻는_키워드와_묻지_않는_키워드() {
 		return Stream.of(
-			Arguments.of(ProductCategory.FRUIT, "F02", "P01"),
-			Arguments.of(ProductCategory.GRAIN, "C04", "F02"));
+			Arguments.of(ProductCategoryCode.FRUIT, "F02", "P01"),
+			Arguments.of(ProductCategoryCode.GRAIN, "C04", "F02"));
 	}
 
 	@Test
@@ -153,10 +153,10 @@ class JevReviewKeywordAnalyzerTest {
 			+ "\n이 리뷰는 \"" + keyword.path("phrase").asString() + "\"라고 말하나?\n판정 기준: " + keyword.path("guide").asString();
 		Map<String, String> expectedCriteria = keywordsFile.path("choices").values().stream()
 			.collect(Collectors.toMap(choice -> choice.path("value").asString(), choice -> choice.path("description").asString()));
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(input(1L, ProductCategory.FRUIT));
+		analyzer.analyze(input(1L, ProductCategoryCode.FRUIT));
 
 		// then
 		JsonNode question = json(sentBodies.getFirst()).path("questions").path("F02");
@@ -172,12 +172,12 @@ class JevReviewKeywordAnalyzerTest {
 	@Test
 	void 같은_리뷰_ID는_늘_같은_선택지_순서를_받는다() {
 		// given
-		expectSuccess(ProductCategory.FRUIT);
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(input(42L, ProductCategory.FRUIT));
-		analyzer.analyze(input(42L, ProductCategory.FRUIT));
+		analyzer.analyze(input(42L, ProductCategoryCode.FRUIT));
+		analyzer.analyze(input(42L, ProductCategoryCode.FRUIT));
 
 		// then
 		assertThat(choiceOrders(sentBodies.get(1))).isEqualTo(choiceOrders(sentBodies.get(0)));
@@ -186,12 +186,12 @@ class JevReviewKeywordAnalyzerTest {
 	@Test
 	void 다른_리뷰_ID는_선택지를_다른_순서로_섞어_받는다() {
 		// given
-		expectSuccess(ProductCategory.FRUIT);
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(input(1L, ProductCategory.FRUIT));
-		analyzer.analyze(input(2L, ProductCategory.FRUIT));
+		analyzer.analyze(input(1L, ProductCategoryCode.FRUIT));
+		analyzer.analyze(input(2L, ProductCategoryCode.FRUIT));
 
 		// then
 		Map<String, List<String>> first = choiceOrders(sentBodies.get(0));
@@ -208,12 +208,12 @@ class JevReviewKeywordAnalyzerTest {
 	@Test
 	void 본문_해시를_시드로_쓰면_같은_본문은_늘_같은_선택지_순서를_받는다() {
 		// given
-		expectSuccess(ProductCategory.FRUIT);
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
-		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategoryCode.FRUIT));
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategoryCode.FRUIT));
 
 		// then
 		assertThat(choiceOrders(sentBodies.get(1))).isEqualTo(choiceOrders(sentBodies.get(0)));
@@ -222,12 +222,12 @@ class JevReviewKeywordAnalyzerTest {
 	@Test
 	void 본문_해시를_시드로_쓰면_다른_본문은_선택지를_다른_순서로_섞어_받는다() {
 		// given
-		expectSuccess(ProductCategory.FRUIT);
-		expectSuccess(ProductCategory.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
+		expectSuccess(ProductCategoryCode.FRUIT);
 
 		// when
-		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
-		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "달고 향긋해요", ProductCategory.FRUIT));
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "아삭하고 달아요", ProductCategoryCode.FRUIT));
+		analyzer.analyze(ReviewKeywordInput.seededByContent("청송 꿀사과", "달고 향긋해요", ProductCategoryCode.FRUIT));
 
 		// then
 		assertThat(choiceOrders(sentBodies.get(1))).isNotEqualTo(choiceOrders(sentBodies.get(0)));
@@ -238,7 +238,7 @@ class JevReviewKeywordAnalyzerTest {
 	@Test
 	void 키워드마다_말함_확률을_꺼내_목록_버전과_모델을_함께_돌려준다() {
 		// given
-		Map<String, String> answers = validAnswers(ProductCategory.FRUIT);
+		Map<String, String> answers = validAnswers(ProductCategoryCode.FRUIT);
 		answers.put("F02", answer(0.97));
 		answers.put("C22", answer(0.42));
 		// 묻지 않은 답이 더 와도 무시한다
@@ -246,12 +246,12 @@ class JevReviewKeywordAnalyzerTest {
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withSuccess(response(answers), MediaType.APPLICATION_JSON));
 
 		// when
-		ReviewKeywordAnalysis sut = analyzer.analyze(input(1L, ProductCategory.FRUIT));
+		ReviewKeywordAnalysis sut = analyzer.analyze(input(1L, ProductCategoryCode.FRUIT));
 
 		// then
 		assertThat(sut).isNotNull();
 		assertSoftly(softly -> {
-			softly.assertThat(sut.probabilities().keySet()).containsExactlyInAnyOrderElementsOf(keywordIdsInFile(ProductCategory.FRUIT));
+			softly.assertThat(sut.probabilities().keySet()).containsExactlyInAnyOrderElementsOf(keywordIdsInFile(ProductCategoryCode.FRUIT));
 			softly.assertThat(sut.probabilities()).containsEntry("F02", 0.97).containsEntry("C22", 0.42).containsEntry("C01", 0.03);
 			softly.assertThat(sut.keywordVersion()).isEqualTo(keywordsFile().path("version").asString());
 			softly.assertThat(sut.model()).isEqualTo(MODEL);
@@ -267,22 +267,22 @@ class JevReviewKeywordAnalyzerTest {
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
 		// when & then
-		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategory.FRUIT)))
+		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategoryCode.FRUIT)))
 			.isInstanceOfSatisfying(ReviewAnalysisFailedException.class, e -> assertThat(e.isRetryable()).isFalse());
 	}
 
 	static Stream<String> 해석할_수_없는_응답() {
-		Map<String, String> missingAnswer = validAnswers(ProductCategory.FRUIT);
+		Map<String, String> missingAnswer = validAnswers(ProductCategoryCode.FRUIT);
 		missingAnswer.remove("F02");
-		Map<String, String> missingProbabilities = validAnswers(ProductCategory.FRUIT);
+		Map<String, String> missingProbabilities = validAnswers(ProductCategoryCode.FRUIT);
 		missingProbabilities.put("F02", """
 			{"type":"choice","choice":"mentioned","confidence":0.97}""");
-		Map<String, String> missingMentioned = validAnswers(ProductCategory.FRUIT);
+		Map<String, String> missingMentioned = validAnswers(ProductCategoryCode.FRUIT);
 		missingMentioned.put("F02", """
 			{"type":"choice","choice":"not_mentioned","confidence":0.97,"probabilities":{"not_mentioned":0.97}}""");
-		Map<String, String> aboveOne = validAnswers(ProductCategory.FRUIT);
+		Map<String, String> aboveOne = validAnswers(ProductCategoryCode.FRUIT);
 		aboveOne.put("F02", answer(1.2));
-		Map<String, String> belowZero = validAnswers(ProductCategory.FRUIT);
+		Map<String, String> belowZero = validAnswers(ProductCategoryCode.FRUIT);
 		belowZero.put("F02", answer(-0.1));
 		return Stream.of(
 			"{not json",
@@ -302,7 +302,7 @@ class JevReviewKeywordAnalyzerTest {
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withStatus(status));
 
 		// when & then
-		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategory.FRUIT)))
+		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategoryCode.FRUIT)))
 			.isInstanceOfSatisfying(ReviewAnalysisFailedException.class, e -> assertThat(e.isRetryable()).isTrue());
 	}
 
@@ -317,7 +317,7 @@ class JevReviewKeywordAnalyzerTest {
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withException(error));
 
 		// when & then
-		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategory.FRUIT)))
+		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategoryCode.FRUIT)))
 			.isInstanceOfSatisfying(ReviewAnalysisFailedException.class, e -> assertThat(e.isRetryable()).isTrue());
 	}
 
@@ -332,7 +332,7 @@ class JevReviewKeywordAnalyzerTest {
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withStatus(status));
 
 		// when & then
-		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategory.FRUIT)))
+		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategoryCode.FRUIT)))
 			.isInstanceOfSatisfying(ReviewAnalysisFailedException.class, e -> assertThat(e.isRetryable()).isFalse());
 	}
 
@@ -347,7 +347,7 @@ class JevReviewKeywordAnalyzerTest {
 		server.expect(requestTo(ANALYZE_URL)).andRespond(withStatus(status));
 
 		// when & then
-		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategory.FRUIT)))
+		assertThatThrownBy(() -> analyzer.analyze(input(1L, ProductCategoryCode.FRUIT)))
 			.isInstanceOf(ReviewAnalyzerUnavailableException.class)
 			.hasMessage("Jev가 인증을 거절했습니다. status=" + status.value());
 	}
@@ -356,7 +356,7 @@ class JevReviewKeywordAnalyzerTest {
 		return Stream.of(HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN);
 	}
 
-	private void expectSuccess(ProductCategory category) {
+	private void expectSuccess(ProductCategoryCode category) {
 		server.expect(requestTo(ANALYZE_URL))
 			.andExpect(this::capture)
 			.andRespond(withSuccess(validResponse(category), MediaType.APPLICATION_JSON));
@@ -366,15 +366,15 @@ class JevReviewKeywordAnalyzerTest {
 		sentBodies.add(((MockClientHttpRequest) request).getBodyAsString(StandardCharsets.UTF_8));
 	}
 
-	private static ReviewKeywordInput input(Long reviewId, ProductCategory category) {
+	private static ReviewKeywordInput input(Long reviewId, ProductCategoryCode category) {
 		return new ReviewKeywordInput(reviewId, "청송 꿀사과", "아삭하고 달아요", category);
 	}
 
-	private static String validResponse(ProductCategory category) {
+	private static String validResponse(ProductCategoryCode category) {
 		return response(validAnswers(category));
 	}
 
-	private static Map<String, String> validAnswers(ProductCategory category) {
+	private static Map<String, String> validAnswers(ProductCategoryCode category) {
 		Map<String, String> answers = new LinkedHashMap<>();
 		keywordIdsInFile(category).forEach(id -> answers.put(id, answer(0.03)));
 		return answers;
@@ -398,7 +398,7 @@ class JevReviewKeywordAnalyzerTest {
 	}
 
 	// 분석기가 묻는 키워드를 목록 클래스를 거치지 않고 파일에서 바로 고른다
-	private static List<String> keywordIdsInFile(ProductCategory category) {
+	private static List<String> keywordIdsInFile(ProductCategoryCode category) {
 		return keywordsFile().path("keywords").values().stream()
 			.filter(keyword -> keyword.path("categories").values().stream()
 				.map(JsonNode::asString)

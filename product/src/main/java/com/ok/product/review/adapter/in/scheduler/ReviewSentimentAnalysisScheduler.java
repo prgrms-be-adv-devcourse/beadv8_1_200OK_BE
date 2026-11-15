@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
-import com.ok.product.review.application.service.ReviewSentimentAnalysisFacade;
+import com.ok.product.review.application.port.in.ReviewSentimentAnalysisUseCase;
 
 /**
  * 5초마다 리뷰 감성 분석 대기 요청을 처리한다.
@@ -18,11 +18,11 @@ import com.ok.product.review.application.service.ReviewSentimentAnalysisFacade;
 @RequiredArgsConstructor
 public class ReviewSentimentAnalysisScheduler {
 
-	private final ReviewSentimentAnalysisFacade reviewSentimentAnalysisFacade;
+	private final ReviewSentimentAnalysisUseCase reviewSentimentAnalysisUseCase;
 
 	// 분석이 길어져도 밀린 실행을 몰아서 하지 않도록 이전 실행이 끝난 때부터 5초를 센다
 	@Scheduled(fixedDelay = 5, timeUnit = TimeUnit.SECONDS)
 	public void run() {
-		reviewSentimentAnalysisFacade.analyzePending();
+		reviewSentimentAnalysisUseCase.analyzePending();
 	}
 }

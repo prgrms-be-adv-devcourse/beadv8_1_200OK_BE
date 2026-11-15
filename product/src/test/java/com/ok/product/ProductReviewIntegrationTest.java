@@ -43,8 +43,8 @@ import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.product.review.domain.ProductReview;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
+import com.ok.product.review.adapter.out.persistence.ProductReviewJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestJpaRepository;
 import com.ok.product.review.application.dto.ReviewablePurchase;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderApiClient;
@@ -68,10 +68,10 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductReviewRepository productReviewRepository;
+	ProductReviewJpaRepository productReviewRepository;
 
 	@Autowired
-	ReviewAnalysisRequestRepository analysisRequestRepository;
+	ReviewAnalysisRequestJpaRepository analysisRequestRepository;
 
 	@Autowired
 	TransactionTemplate transactionTemplate;

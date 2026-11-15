@@ -12,6 +12,7 @@ import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;
 import com.ok.product.review.application.port.out.ReviewKeywordAnalyzer;
 import com.ok.product.review.application.dto.ReviewKeywordAnalysis;
 import com.ok.product.review.application.dto.ReviewKeywordTarget;
+import com.ok.product.review.application.port.in.ReviewKeywordAnalysisUseCase;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ReviewKeywordAnalysisFacade {
+public class ReviewKeywordAnalysisFacade implements ReviewKeywordAnalysisUseCase {
 
 	private static final int BATCH_SIZE = 20;
 	// 임대 시간(10분)보다 짧게 잡아, 키를 고치면 꺼내 둔 요청의 임대가 끝나기 전에 작업자가 다시 돈다
@@ -39,10 +40,7 @@ public class ReviewKeywordAnalysisFacade {
 	// 앱 인스턴스마다 따로 쉰다. 여러 대면 각 대가 처음 거절을 받을 때 스스로 멈춘다
 	private volatile LocalDateTime pausedUntil;
 
-	/**
-	 * 다음 시도 시각이 지난 대기 요청을 최대 20건 분석한다. 스케줄러와 통합 테스트가 이 메서드를 부른다.
-	 * 분석기를 쓸 수 없어 쉬는 중이면 아무것도 꺼내지 않는다.
-	 */
+	@Override
 	public void analyzePending() {
 		LocalDateTime until = pausedUntil;
 		if (until != null && LocalDateTime.now(clock).isBefore(until)) {

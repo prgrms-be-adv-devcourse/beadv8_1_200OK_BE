@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.ok.product.review.adapter.in.web.dto.ProductReviewKeywordsResponse;
-import com.ok.product.review.application.service.ReviewKeywordService;
+import com.ok.product.review.application.port.in.ProductReviewKeywordUseCase;
 
 import lombok.RequiredArgsConstructor;
 
@@ -16,11 +16,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductReviewKeywordController implements ProductReviewKeywordControllerSpec {
 
-	private final ReviewKeywordService reviewKeywordService;
+	private final ProductReviewKeywordUseCase productReviewKeywordUseCase;
 
 	@Override
 	@GetMapping("/{productId}/review-keywords")
 	public ResponseEntity<ProductReviewKeywordsResponse> getKeywords(@PathVariable Long productId) {
-		return ResponseEntity.ok(ProductReviewKeywordsResponse.from(reviewKeywordService.getKeywords(productId)));
+		return ResponseEntity.ok(ProductReviewKeywordsResponse.from(productReviewKeywordUseCase.getKeywords(productId)));
 	}
 }

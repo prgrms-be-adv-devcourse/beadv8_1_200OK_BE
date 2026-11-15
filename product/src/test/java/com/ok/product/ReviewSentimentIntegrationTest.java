@@ -56,9 +56,9 @@ import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.ReviewAspectSentiment;
 import com.ok.product.review.domain.ReviewSentiment;
 import com.ok.product.review.domain.Sentiment;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewSentimentRepository;
+import com.ok.product.review.adapter.out.persistence.ProductReviewJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewSentimentJpaRepository;
 import com.ok.product.review.application.service.ProductReviewService;
 import com.ok.product.review.application.service.ReviewSentimentAnalysisFacade;
 import com.ok.product.review.application.service.ReviewSentimentService;
@@ -92,13 +92,13 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductReviewRepository productReviewRepository;
+	ProductReviewJpaRepository productReviewRepository;
 
 	@Autowired
-	ReviewAnalysisRequestRepository analysisRequestRepository;
+	ReviewAnalysisRequestJpaRepository analysisRequestRepository;
 
 	@Autowired
-	ReviewSentimentRepository reviewSentimentRepository;
+	ReviewSentimentJpaRepository reviewSentimentRepository;
 
 	@Autowired
 	ProductReviewService productReviewService;

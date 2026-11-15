@@ -23,7 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;
 import com.ok.product.review.application.port.out.ReviewKeywordAnalyzer;
@@ -114,7 +114,7 @@ class ReviewKeywordAnalysisFacadeTest {
 
 	private static ReviewKeywordTarget target(Long requestId) {
 		return new ReviewKeywordTarget(requestId, requestId * 10, LocalDateTime.of(2026, 11, 1, 0, 0),
-			new ReviewKeywordInput(requestId * 10, "청송 꿀사과", "아삭하고 달아요", ProductCategory.FRUIT));
+			new ReviewKeywordInput(requestId * 10, "청송 꿀사과", "아삭하고 달아요", ProductCategoryCode.FRUIT));
 	}
 
 	private static ReviewAnalyzerUnavailableException unavailable() {

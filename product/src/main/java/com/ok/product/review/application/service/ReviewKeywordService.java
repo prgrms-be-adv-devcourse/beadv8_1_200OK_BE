@@ -16,24 +16,23 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.product.product.domain.Product;
-import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ReviewAnalysisRequest;
 import com.ok.product.review.domain.ReviewAnalysisStatus;
 import com.ok.product.review.domain.ReviewAnalysisType;
 import com.ok.product.review.domain.ReviewKeyword;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
-import com.ok.product.review.application.dto.ReviewKeywordCount;
-import com.ok.product.review.adapter.out.persistence.ReviewKeywordRepository;
+import com.ok.product.review.application.port.out.ProductReviewRepository;
+import com.ok.product.review.application.port.out.ReviewAnalysisRequestRepository;
+import com.ok.product.review.application.port.out.ReviewKeywordRepository;
 import com.ok.product.review.application.dto.ProductReviewKeywordsResult;
 import com.ok.product.review.application.dto.ReviewKeywordAnalysis;
 import com.ok.product.review.application.dto.ReviewKeywordCountResult;
 import com.ok.product.review.application.dto.ReviewKeywordInput;
 import com.ok.product.review.application.dto.ReviewKeywordTarget;
+import com.ok.product.review.application.port.in.ProductReviewKeywordUseCase;
+import com.ok.product.product.application.dto.ProductCategoryCode;
+import com.ok.product.product.application.dto.ReviewedProductResult;
+import com.ok.product.product.application.port.in.ReviewedProductUseCase;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,7 +46,7 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ReviewKeywordService {
+public class ReviewKeywordService implements ProductReviewKeywordUseCase {
 
 	// 분석 완료 리뷰가 이보다 적으면 몇 명의 말이 칩이 되어 대표성이 없다
 	private static final int MIN_ANALYZED_REVIEWS = 10;
@@ -58,7 +57,7 @@ public class ReviewKeywordService {
 	private final ReviewAnalysisRequestRepository analysisRequestRepository;
 	private final ReviewKeywordRepository reviewKeywordRepository;
 	private final ProductReviewRepository productReviewRepository;
-	private final ProductRepository productRepository;
+	private final ReviewedProductUseCase reviewedProductUseCase;
 	private final ReviewKeywordList keywordList;
 	private final Clock clock;
 
@@ -77,9 +76,8 @@ public class ReviewKeywordService {
 				requests.stream().map(ReviewAnalysisRequest::getReviewId).toList()).stream()
 			.collect(Collectors.toMap(ProductReview::getId, Function.identity()));
 		// 리뷰마다 상품을 조회하지 않도록 한 번에 가져온다
-		Map<Long, Product> products = productRepository.findAllById(
-				reviews.values().stream().map(ProductReview::getProductId).distinct().toList()).stream()
-			.collect(Collectors.toMap(Product::getId, Function.identity()));
+		Map<Long, ReviewedProductResult> products = reviewedProductUseCase.findProducts(
+				reviews.values().stream().map(ProductReview::getProductId).distinct().toList());
 
 		List<ReviewKeywordTarget> targets = new ArrayList<>();
 		for (ReviewAnalysisRequest request : requests) {
@@ -87,7 +85,7 @@ public class ReviewKeywordService {
 			// 리뷰를 삭제할 때는 요청을 건드리지 않으므로 여기서 끝낸다.
 			// 운영 DB에서 외래키 검사를 끄고 리뷰나 상품 행을 직접 지우면 행이 없다. 상품이 없으면 물을 키워드를 정할 분류도 없다.
 			// 그대로 두면 이 요청이 매번 맨 앞에서 꺼내져 다른 요청까지 막힌다
-			Product product = review == null ? null : products.get(review.getProductId());
+			ReviewedProductResult product = review == null ? null : products.get(review.getProductId());
 			if (review == null || review.isDeleted() || product == null) {
 				request.cancel();
 			} else if (!review.hasAnalyzableContent()) {
@@ -96,7 +94,7 @@ public class ReviewKeywordService {
 				request.claim(now);
 				// 상품의 현재 분류로 묻는다. 분류가 바뀌어도 이미 분석한 리뷰는 다시 묻지 않는다(#422)
 				ReviewKeywordInput input = new ReviewKeywordInput(
-					review.getId(), product.getName(), review.getContent(), product.getCategory());
+					review.getId(), product.name(), review.getContent(), product.category());
 				targets.add(new ReviewKeywordTarget(request.getId(), review.getId(), review.getUpdatedAt(), input));
 			}
 		}
@@ -154,17 +152,10 @@ public class ReviewKeywordService {
 		}
 	}
 
-	/**
-	 * 구매자에게 보이는 상품의 리뷰 키워드를 집계한다.
-	 * 분석 완료 리뷰가 10개 이상일 때만 리뷰 3개 이상이 표현한 키워드를 많은 순으로 최대 10개 고르고, 못 미치면 키워드는 비운다.
-	 * 현재 목록에 있고 상품의 현재 분류에 묻는 키워드만 센다. 문구를 고치거나 키워드를 빼면 이미 분석한 리뷰에도 바로 반영된다.
-	 *
-	 * @throws RestApiException {@code PRODUCT_NOT_FOUND} 상품이 없거나 숨겨졌거나 삭제됐으면
-	 */
+	@Override
 	public ProductReviewKeywordsResult getKeywords(Long productId) {
 		// 숨긴 상품의 리뷰 내용이 상품 상세보다 먼저 새어 나가지 않게 리뷰 목록과 같은 조건으로 막는다
-		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
-			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		ProductCategoryCode category = reviewedProductUseCase.getVisibleProductCategory(productId);
 
 		long analyzedReviewCount = reviewKeywordRepository.countAnalyzedByProductId(productId);
 		if (analyzedReviewCount < MIN_ANALYZED_REVIEWS) {
@@ -173,7 +164,7 @@ public class ReviewKeywordService {
 		List<ReviewKeywordCountResult> keywords = reviewKeywordRepository.countExpressedByProductId(productId).stream()
 			.filter(count -> count.count() >= MIN_EXPRESSED_REVIEWS)
 			.flatMap(count -> keywordList.find(count.keywordId())
-				.filter(keyword -> keyword.appliesTo(product.getCategory()))
+				.filter(keyword -> keyword.appliesTo(category))
 				.map(keyword -> new ReviewKeywordCountResult(
 					keyword.id(), keyword.phrase(), keyword.aspect().name(), count.count()))
 				.stream())

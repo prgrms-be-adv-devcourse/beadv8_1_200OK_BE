@@ -18,13 +18,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
+import com.ok.product.review.adapter.in.web.dto.ProductPageResponse;
 import com.ok.product.review.adapter.in.web.dto.ProductReviewCreateRequest;
 import com.ok.product.review.adapter.in.web.dto.ProductReviewCreateResponse;
 import com.ok.product.review.adapter.in.web.dto.ProductReviewResponse;
 import com.ok.product.review.adapter.in.web.dto.ProductReviewUpdateRequest;
-import com.ok.product.review.application.service.ProductReviewFacade;
-import com.ok.product.review.application.service.ProductReviewService;
+import com.ok.product.review.application.port.in.ProductReviewCreateUseCase;
+import com.ok.product.review.application.port.in.ProductReviewUseCase;
 import com.ok.product.review.application.dto.ProductReviewResult;
 
 import lombok.RequiredArgsConstructor;
@@ -34,8 +34,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductReviewController implements ProductReviewControllerSpec {
 
-	private final ProductReviewFacade productReviewFacade;
-	private final ProductReviewService productReviewService;
+	private final ProductReviewCreateUseCase productReviewCreateUseCase;
+	private final ProductReviewUseCase productReviewUseCase;
 
 	@Override
 	@PostMapping("/products/{productId}/reviews")
@@ -44,7 +44,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@PathVariable Long productId,
 		@RequestBody ProductReviewCreateRequest request
 	) {
-		Long reviewId = productReviewFacade.create(memberId, productId, request.toCommand());
+		Long reviewId = productReviewCreateUseCase.create(memberId, productId, request.toCommand());
 		return ResponseEntity.status(HttpStatus.CREATED).body(new ProductReviewCreateResponse(reviewId));
 	}
 
@@ -55,7 +55,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@PathVariable Long reviewId,
 		@RequestBody ProductReviewUpdateRequest request
 	) {
-		productReviewService.update(memberId, reviewId, request.toCommand());
+		productReviewUseCase.update(memberId, reviewId, request.toCommand());
 		return ResponseEntity.noContent().build();
 	}
 
@@ -65,7 +65,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@CurrentMemberId Long memberId,
 		@PathVariable Long reviewId
 	) {
-		productReviewService.delete(memberId, reviewId);
+		productReviewUseCase.delete(memberId, reviewId);
 		return ResponseEntity.noContent().build();
 	}
 
@@ -80,8 +80,8 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		PageRequest pageable = PageRequest.of(page, size);
 		// 칩 선택을 해제한 화면이 빈 keyword를 보내도 전체 목록이 나오게 빈 값은 필터 없음으로 본다
 		Page<ProductReviewResult> reviews = StringUtils.hasText(keyword)
-			? productReviewService.getProductReviewsByKeyword(productId, keyword.strip(), pageable)
-			: productReviewService.getProductReviews(productId, pageable);
+			? productReviewUseCase.getProductReviewsByKeyword(productId, keyword.strip(), pageable)
+			: productReviewUseCase.getProductReviews(productId, pageable);
 		return ResponseEntity.ok(ProductPageResponse.from(reviews.map(ProductReviewResponse::from)));
 	}
 
@@ -91,7 +91,7 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@CurrentMemberId Long memberId,
 		@PathVariable Long productId
 	) {
-		return ResponseEntity.ok(productReviewService.getMyReviewsOfProduct(memberId, productId).stream()
+		return ResponseEntity.ok(productReviewUseCase.getMyReviewsOfProduct(memberId, productId).stream()
 			.map(ProductReviewResponse::from)
 			.toList());
 	}
@@ -104,6 +104,6 @@ public class ProductReviewController implements ProductReviewControllerSpec {
 		@RequestParam(defaultValue = "20") int size
 	) {
 		return ResponseEntity.ok(ProductPageResponse.from(
-			productReviewService.getMyReviews(memberId, PageRequest.of(page, size)).map(ProductReviewResponse::from)));
+			productReviewUseCase.getMyReviews(memberId, PageRequest.of(page, size)).map(ProductReviewResponse::from)));
 	}
 }

@@ -52,10 +52,10 @@ import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.ReviewExpressedKeyword;
 import com.ok.product.review.domain.ReviewKeyword;
 import com.ok.product.review.domain.Sentiment;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewKeywordRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewSentimentRepository;
+import com.ok.product.review.adapter.out.persistence.ProductReviewJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewKeywordJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewSentimentJpaRepository;
 import com.ok.product.review.application.service.ReviewKeywordAnalysisFacade;
 import com.ok.product.review.application.service.ReviewKeywordService;
 import com.ok.product.review.application.service.ReviewSentimentAnalysisFacade;
@@ -89,16 +89,16 @@ class ReviewKeywordIntegrationTest extends AbstractIntegrationTest {
 	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductReviewRepository productReviewRepository;
+	ProductReviewJpaRepository productReviewRepository;
 
 	@Autowired
-	ReviewAnalysisRequestRepository analysisRequestRepository;
+	ReviewAnalysisRequestJpaRepository analysisRequestRepository;
 
 	@Autowired
-	ReviewKeywordRepository reviewKeywordRepository;
+	ReviewKeywordJpaRepository reviewKeywordRepository;
 
 	@Autowired
-	ReviewSentimentRepository reviewSentimentRepository;
+	ReviewSentimentJpaRepository reviewSentimentRepository;
 
 	@Autowired
 	ReviewKeywordAnalysisFacade reviewKeywordAnalysisFacade;

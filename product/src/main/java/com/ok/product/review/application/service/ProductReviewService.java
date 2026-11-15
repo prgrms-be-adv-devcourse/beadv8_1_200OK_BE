@@ -4,7 +4,6 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -14,37 +13,34 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
-import com.ok.product.product.domain.Product;
-import com.ok.product.product.domain.ProductOption;
-import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.application.port.out.ProductOptionRepository;
-import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ProductReviewMedia;
 import com.ok.product.review.domain.ProductReviewMediaSpec;
 import com.ok.product.review.domain.ReviewAnalysisRequest;
 import com.ok.product.review.domain.ReviewAnalysisType;
 import com.ok.product.review.exception.ProductReviewErrorCode;
-import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
-import com.ok.product.review.adapter.out.persistence.ReviewKeywordRepository;
+import com.ok.product.review.application.port.out.ProductReviewRepository;
+import com.ok.product.review.application.port.out.ReviewAnalysisRequestRepository;
+import com.ok.product.review.application.port.out.ReviewKeywordRepository;
 import com.ok.product.review.application.dto.ProductReviewCreateCommand;
 import com.ok.product.review.application.dto.ProductReviewMediaResult;
 import com.ok.product.review.application.dto.ProductReviewResult;
 import com.ok.product.review.application.dto.ProductReviewUpdateCommand;
 import com.ok.product.review.application.dto.ReviewAnalysisSubjectResult;
 import com.ok.product.review.application.dto.ReviewablePurchase;
+import com.ok.product.review.application.port.in.ProductReviewUseCase;
+import com.ok.product.product.application.dto.ProductCategoryCode;
+import com.ok.product.product.application.dto.ReviewedProductResult;
+import com.ok.product.product.application.port.in.ReviewedProductUseCase;
 import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ProductReviewService {
+public class ProductReviewService implements ProductReviewUseCase {
 
 	private final ProductReviewRepository productReviewRepository;
-	private final ProductRepository productRepository;
-	private final ProductOptionRepository productOptionRepository;
+	private final ReviewedProductUseCase reviewedProductUseCase;
 	private final ReviewAnalysisRequestRepository analysisRequestRepository;
 	private final ReviewKeywordRepository reviewKeywordRepository;
 	private final ReviewKeywordList keywordList;
@@ -59,9 +55,7 @@ public class ProductReviewService {
 	@Transactional
 	public Long create(Long memberId, Long productId, ReviewablePurchase purchase, ProductReviewCreateCommand command) {
 		// 구매 후 상품이 숨겨질 수 있어 노출 여부는 보지 않는다
-		productRepository.findByIdAndDeletedAtIsNull(productId).orElseThrow(
-				() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND)
-		);
+		reviewedProductUseCase.getActiveProduct(productId);
 		// 옵션이 이 상품의 것인지는 보지 않는다. 옵션 ID가 사용자 입력이 아니라 주문 기록에서 온 값이기 때문이다
 		validateNotReviewed(purchase.orderId(), productId);
 
@@ -72,7 +66,7 @@ public class ProductReviewService {
 		// 집계를 INSERT보다 먼저 더해 상품 행에 배타 락을 먼저 잡는다.
 		// INSERT를 먼저 하면 FK 때문에 상품 행에 공유 락이 걸리고, 같은 상품에 동시에 쓰면 서로 배타 락을 기다리다 데드락이 난다.
 		// 저장이 실패하면 트랜잭션이 롤백되어 더한 집계도 되돌아간다
-		productRepository.addReviewStats(productId, 1, command.rating());
+		reviewedProductUseCase.addReviewStats(productId, 1, command.rating());
 		Long reviewId = saveReview(review);
 		// 리뷰와 같은 트랜잭션에 남겨, 저장된 리뷰는 모두 분석되고 롤백된 리뷰의 요청은 남지 않게 한다
 		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
@@ -81,11 +75,8 @@ public class ProductReviewService {
 		return reviewId;
 	}
 
-	/**
-	 * 내 리뷰를 수정한다. 별점이나 본문이 바뀌면 같은 트랜잭션에서 모든 분석 종류의 요청을 처음 대기로 되돌린다.
-	 * 첨부만 바꾸면 리뷰 행이 바뀌지 않아 수정 시각이 그대로이고 기존 분석 결과도 유효하므로 다시 분석하지 않는다.
-	 */
 	@Transactional
+	@Override
 	public void update(Long memberId, Long reviewId, ProductReviewUpdateCommand command) {
 		ProductReview review = findOwnedReview(memberId, reviewId);
 		int previousRating = review.getRating();
@@ -100,43 +91,41 @@ public class ProductReviewService {
 
 	// 내 리뷰를 삭제하고 상품의 리뷰 집계에서 뺀다
 	@Transactional
+	@Override
 	public void delete(Long memberId, Long reviewId) {
 		// 리뷰 행을 잠그고 삭제한 리뷰는 조회하지 않아, 동시에 두 번 지워도 집계가 두 번 빠지지 않는다
 		ProductReview review = findOwnedReview(memberId, reviewId);
 		review.delete(now());
-		productRepository.addReviewStats(review.getProductId(), -1, -review.getRating());
+		reviewedProductUseCase.addReviewStats(review.getProductId(), -1, -review.getRating());
 	}
 
 	// 구매자에게 보이는 상품의 리뷰를 최신순으로 조회한다
+	@Override
 	public Page<ProductReviewResult> getProductReviews(Long productId, Pageable pageable) {
-		findVisibleProduct(productId);
+		// 숨긴 상품의 리뷰가 상품 상세보다 먼저 새어 나가지 않게 상세와 같은 조건으로 막는다
+		reviewedProductUseCase.getVisibleProductCategory(productId);
 		return toResults(productReviewRepository.findByProductIdAndDeletedAtIsNullOrderByIdDesc(productId, pageable));
 	}
 
-	/**
-	 * 구매자에게 보이는 상품의 리뷰 중 키워드를 표현한 분석 완료 리뷰를 최신순으로 조회한다.
-	 * 키워드 집계와 같은 조건으로 걸러 칩의 리뷰 수와 결과 수가 같다. 리뷰 수가 적어 칩에 뜨지 않는 키워드도 거른다.
-	 * 상품의 현재 분류에 묻지 않는 키워드는 집계에서 세지 않으므로 빈 페이지를 돌려준다.
-	 *
-	 * @throws RestApiException 상품이 없거나 숨겨졌거나 삭제됐으면 {@code PRODUCT_NOT_FOUND},
-	 *                          키워드가 현재 목록에 없으면 {@code REVIEW_KEYWORD_NOT_FOUND}
-	 */
+	@Override
 	public Page<ProductReviewResult> getProductReviewsByKeyword(Long productId, String keywordId, Pageable pageable) {
-		Product product = findVisibleProduct(productId);
+		ProductCategoryCode category = reviewedProductUseCase.getVisibleProductCategory(productId);
 		ReviewKeywordList.Keyword keyword = keywordList.find(keywordId)
 			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.REVIEW_KEYWORD_NOT_FOUND));
-		if (!keyword.appliesTo(product.getCategory())) {
+		if (!keyword.appliesTo(category)) {
 			return Page.empty(pageable);
 		}
 		return toResults(reviewKeywordRepository.findAnalyzedByProductIdAndKeywordId(productId, keywordId, pageable));
 	}
 
 	// 내가 쓴 리뷰를 최신순으로 조회한다. 상품이 숨겨지거나 지워져도 내 리뷰는 보여 준다
+	@Override
 	public Page<ProductReviewResult> getMyReviews(Long memberId, Pageable pageable) {
 		return toResults(productReviewRepository.findByMemberIdAndDeletedAtIsNullOrderByIdDesc(memberId, pageable));
 	}
 
 	// 상품 상세 상단에 띄울 이 상품의 내 리뷰. 재구매하면 여러 건이다
+	@Override
 	public List<ProductReviewResult> getMyReviewsOfProduct(Long memberId, Long productId) {
 		List<ProductReview> reviews =
 			productReviewRepository.findByProductIdAndMemberIdAndDeletedAtIsNullOrderByIdDesc(productId, memberId);
@@ -153,18 +142,10 @@ public class ProductReviewService {
 	 * @throws RestApiException 상품이 없거나 삭제됐으면 {@code PRODUCT_NOT_FOUND}, 옵션이 그 상품의 것이 아니면 {@code INVALID_REVIEW_OPTION}
 	 */
 	public ReviewAnalysisSubjectResult getAnalysisSubject(Long productId, Long optionId) {
-		Product product = productRepository.findByIdAndDeletedAtIsNull(productId)
-			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
-		ProductOption option = productOptionRepository.findById(optionId)
-			.filter(found -> found.getProduct().getId().equals(productId))
+		ReviewedProductResult product = reviewedProductUseCase.getActiveProduct(productId);
+		String optionName = reviewedProductUseCase.findOptionName(productId, optionId)
 			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.INVALID_REVIEW_OPTION));
-		return new ReviewAnalysisSubjectResult(product.getName(), option.getName(), product.getCategory());
-	}
-
-	// 숨긴 상품의 리뷰가 상품 상세보다 먼저 새어 나가지 않게 상세와 같은 조건으로 막는다
-	private Product findVisibleProduct(Long productId) {
-		return productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
-			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
+		return new ReviewAnalysisSubjectResult(product.name(), optionName, product.category());
 	}
 
 	// 삭제한 리뷰도 포함해서 본다. 지우고 다시 써서 같은 주문으로 리뷰를 여러 번 남기지 못하게 한다
@@ -198,7 +179,7 @@ public class ProductReviewService {
 		if (previousRating == newRating) {
 			return;
 		}
-		productRepository.addReviewStats(productId, 0, (newRating - previousRating));
+		reviewedProductUseCase.addReviewStats(productId, 0, (newRating - previousRating));
 	}
 
 	// 수정·삭제 전에 리뷰를 가져오고 내 리뷰인지 확인한다
@@ -228,8 +209,7 @@ public class ProductReviewService {
 			.map(ProductReview::getProductOptionId)
 			.distinct()
 			.toList();
-		return productOptionRepository.findAllById(optionIds).stream()
-			.collect(Collectors.toMap(ProductOption::getId, ProductOption::getName));
+		return reviewedProductUseCase.findOptionNames(optionIds);
 	}
 
 	private ProductReviewResult toResult(ProductReview review, Map<Long, String> optionNames) {

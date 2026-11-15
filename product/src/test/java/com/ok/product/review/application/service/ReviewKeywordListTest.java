@@ -16,7 +16,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.core.io.ClassPathResource;
 
-import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.review.domain.ReviewKeywordAspect;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -51,8 +51,8 @@ class ReviewKeywordListTest {
 		ReviewKeywordList list = new ReviewKeywordList();
 
 		// when
-		List<String> fruit = list.keywordsFor(ProductCategory.FRUIT).stream().map(ReviewKeywordList.Keyword::id).toList();
-		List<String> grain = list.keywordsFor(ProductCategory.GRAIN).stream().map(ReviewKeywordList.Keyword::id).toList();
+		List<String> fruit = list.keywordsFor(ProductCategoryCode.FRUIT).stream().map(ReviewKeywordList.Keyword::id).toList();
+		List<String> grain = list.keywordsFor(ProductCategoryCode.GRAIN).stream().map(ReviewKeywordList.Keyword::id).toList();
 
 		// then
 		assertSoftly(softly -> {

@@ -65,10 +65,11 @@ class ArchitectureTest {
             .map(Subdomain::all)
             .toArray(String[]::new);
 
-    // 이름에 ForUpdate가 있지만 비관적 잠금이 아닌 조회. 이름을 바꾸지 않고 기대 잠금만 따로 둔다
+    // 이름에 ForUpdate가 있지만 비관적 잠금이 아닌 조회. 이름을 바꾸지 않고 기대 잠금만 따로 둔다.
+    // 다른 저장소에 같은 이름의 비관적 잠금 조회가 있어 "포트 이름.메서드 이름"으로 찾는다
     private static final Map<String, LockModeType> LOCK_MODE_BY_METHOD = Map.of(
             // 수정용 조회. 비관적 잠금 대신 커밋 때 version을 올려 동시 수정을 감지한다
-            "findForUpdateByIdAndDeletedAtIsNull", LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+            "ProductRepository.findForUpdateByIdAndDeletedAtIsNull", LockModeType.OPTIMISTIC_FORCE_INCREMENT);
 
     // 헥사고날 구조 (member ArchitectureTest와 같은 규칙을 하위 도메인 범위로 검사한다)
 
@@ -102,7 +103,7 @@ class ArchitectureTest {
                     .should().onlyHaveDependentClassesThat().resideInAnyPackage(subdomain.all(), LAYERED_REVIEW))
             .and(classes()
                     .that().resideInAnyPackage(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
-                    .should().onlyHaveDependentClassesThat().resideInAnyPackage(subdomain.all(), ANY_SUBDOMAIN_ADAPTER_OUT, MODULE_ROOT))
+                    .should().onlyHaveDependentClassesThat().resideInAnyPackage(subdomain.all(), ANY_SUBDOMAIN_ADAPTER_OUT, MODULE_ROOT, LAYERED_REVIEW))
             .because("다른 하위 도메인은 자기 출력 어댑터(adapter.out)에서 유스케이스로만 부른다. 하위 도메인 사이 의존을 어댑터 한 곳에 모아 "
                     + "상대 유스케이스나 DTO가 바뀌어도 서비스가 바뀌지 않게 한다. 레이어 구조로 남은 review는 옮길 때까지 예외다 (product 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
@@ -117,7 +118,8 @@ class ArchitectureTest {
                 @Override
                 public void check(JavaMethod portMethod, ConditionEvents events) {
                     boolean forUpdate = portMethod.getName().contains("ForUpdate");
-                    LockModeType expected = LOCK_MODE_BY_METHOD.getOrDefault(portMethod.getName(),
+                    LockModeType expected = LOCK_MODE_BY_METHOD.getOrDefault(
+                            portMethod.getOwner().getSimpleName() + "." + portMethod.getName(),
                             forUpdate ? LockModeType.PESSIMISTIC_WRITE : LockModeType.PESSIMISTIC_READ);
                     String nativeLock = forUpdate ? "FOR UPDATE" : "FOR SHARE";
                     List<JavaClass> jpaRepositories = portMethod.getOwner().getAllSubclasses().stream()

@@ -3,10 +3,11 @@ package com.ok.product.review.application.service;
 import org.springframework.stereotype.Component;
 
 import com.ok.common.exception.RestApiException;
-import com.ok.product.review.adapter.out.order.OrderApiClient;
+import com.ok.product.review.application.port.out.OrderApiClient;
 import com.ok.product.review.exception.ProductReviewErrorCode;
 import com.ok.product.review.application.dto.ProductReviewCreateCommand;
 import com.ok.product.review.application.dto.ReviewablePurchase;
+import com.ok.product.review.application.port.in.ProductReviewCreateUseCase;
 
 import lombok.RequiredArgsConstructor;
 
@@ -16,17 +17,12 @@ import lombok.RequiredArgsConstructor;
  */
 @Component
 @RequiredArgsConstructor
-public class ProductReviewFacade {
+public class ProductReviewFacade implements ProductReviewCreateUseCase {
 
 	private final OrderApiClient orderApiClient;
 	private final ProductReviewService productReviewService;
 
-	/**
-	 * 본인이 구매확정한 주문 상품인지 확인한 뒤 리뷰를 작성한다.
-	 *
-	 * @throws RestApiException {@code PURCHASE_NOT_REVIEWABLE} 본인 주문이 아니거나, 이 상품의 주문 상품이 아니거나, 구매확정 전이면
-	 * @throws RestApiException {@code ORDER_API_FAILED} 주문 모듈이 응답하지 않거나 오류를 돌려주면
-	 */
+	@Override
 	public Long create(Long memberId, Long productId, ProductReviewCreateCommand command) {
 		ReviewablePurchase purchase = findReviewablePurchase(memberId, productId, command.orderItemId());
 		return productReviewService.create(memberId, productId, purchase, command);

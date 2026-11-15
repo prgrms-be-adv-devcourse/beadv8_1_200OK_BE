@@ -1,6 +1,6 @@
 package com.ok.product.review.application.dto;
 
-import com.ok.product.product.domain.ProductCategory;
+import com.ok.product.product.application.dto.ProductCategoryCode;
 
 /**
  * 키워드 분석기에 넘기는 리뷰 본문 하나다.
@@ -13,13 +13,13 @@ public record ReviewKeywordInput(
 	long choiceSeed,
 	String productName,
 	String content,
-	ProductCategory category
+	ProductCategoryCode category
 ) {
 
 	/**
 	 * 리뷰 ID가 없는 본문(관리자 분석 테스트)의 입력을 만든다. 본문 해시를 시드로 써서 같은 본문은 같은 선택지 순서를 받는다.
 	 */
-	public static ReviewKeywordInput seededByContent(String productName, String content, ProductCategory category) {
+	public static ReviewKeywordInput seededByContent(String productName, String content, ProductCategoryCode category) {
 		// String.hashCode는 명세로 정해진 값이라 재시작하거나 서버가 달라도 같은 본문은 같은 시드다
 		return new ReviewKeywordInput(content.hashCode(), productName, content, category);
 	}
