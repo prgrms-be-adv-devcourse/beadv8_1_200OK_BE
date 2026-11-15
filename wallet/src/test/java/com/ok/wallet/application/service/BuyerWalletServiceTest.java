@@ -4,6 +4,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
 import com.ok.wallet.application.dto.OrderPaymentResult;
 import com.ok.wallet.domain.BuyerWallet;
+import com.ok.wallet.domain.WalletOrderPaymentStatus;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -264,7 +265,9 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_001L, 3_000);
 
         // Then
-        assertThat(result).isEqualTo(OrderPaymentResult.PAID);
+        assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.PAID);
+        assertThat(result.alreadyProcessed()).isFalse();
+        assertThat(result.processedAt()).isNotNull();
         assertThat(balanceOf(memberId)).isEqualTo(7_000);
         assertThat(latestReferenceKey(memberId)).isEqualTo("PAYMENT:1001");
         assertThat(latestBalanceAfter(memberId)).isEqualTo(7_000);
@@ -280,7 +283,8 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_002L, 20_000);
 
         // Then: 예외가 아니라 결과로 돌려줘야 같은 트랜잭션에서 실패 이벤트를 발행할 수 있다
-        assertThat(result).isEqualTo(OrderPaymentResult.INSUFFICIENT_BALANCE);
+        assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.FAILED);
+        assertThat(result.alreadyProcessed()).isFalse();
         assertThat(balanceOf(memberId)).isEqualTo(10_000);
         assertThat(countLedgers(memberId)).isEqualTo(1); // 충전 원장만
     }
@@ -294,7 +298,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_003L, 3_000);
 
         // Then
-        assertThat(result).isEqualTo(OrderPaymentResult.INSUFFICIENT_BALANCE);
+        assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.FAILED);
         assertThat(countBuyerWallets(memberId)).isEqualTo(1);
         assertThat(balanceOf(memberId)).isZero();
     }
@@ -304,15 +308,34 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Given
         Long memberId = 33L;
         buyerWalletService.chargeByPayment(memberId, "pay-33", 10_000);
-        buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
+        OrderPaymentResult first = buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
 
         // When: 주문 생성 이벤트가 재발행됨
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
 
         // Then
-        assertThat(result).isEqualTo(OrderPaymentResult.ALREADY_PAID);
+        assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.PAID);
+        assertThat(result.alreadyProcessed()).isTrue();
+        assertThat(result.processedAt()).isEqualTo(first.processedAt());
         assertThat(balanceOf(memberId)).isEqualTo(7_000);
         assertThat(countLedgers(memberId)).isEqualTo(2); // 충전 1 + 결제 1
+    }
+
+    @Test
+    void 같은_주문이_다른_값으로_다시_와도_처음_기록의_구매자와_금액을_돌려준다() {
+        // Given
+        Long memberId = 38L;
+        buyerWalletService.chargeByPayment(memberId, "pay-38", 10_000);
+        buyerWalletService.payForOrder(memberId, 1_008L, 3_000);
+
+        // When: 같은 주문이 다른 구매자·금액으로 다시 옴
+        OrderPaymentResult result = buyerWalletService.payForOrder(39L, 1_008L, 5_000);
+
+        // Then: 다시 보내는 결과가 처음 결과와 같아야 주문·정산이 어긋나지 않는다
+        assertThat(result.buyerId()).isEqualTo(memberId);
+        assertThat(result.amount()).isEqualTo(3_000);
+        assertThat(result.alreadyProcessed()).isTrue();
+        assertThat(balanceOf(memberId)).isEqualTo(7_000);
     }
 
     @Test
@@ -343,7 +366,8 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             }
 
             // Then: 지갑을 잠그고 확인하므로 한 요청만 차감하고 나머지는 이미 결제됨을 받는다
-            assertThat(outcomes).containsOnlyOnce(OrderPaymentResult.PAID);
+            assertThat(outcomes).filteredOn(outcome -> !outcome.alreadyProcessed()).hasSize(1);
+            assertThat(outcomes).allMatch(OrderPaymentResult::paid);
             assertThat(balanceOf(memberId)).isEqualTo(7_000);
             assertThat(countLedgers(memberId)).isEqualTo(2);
         } finally {
@@ -382,8 +406,8 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             }
 
             // Then: 예외 없이 한 요청만 차감하고 나머지는 이미 결제됨을 받는다
-            assertThat(outcomes).containsOnlyOnce(OrderPaymentResult.PAID);
-            assertThat(outcomes).filteredOn(outcome -> outcome == OrderPaymentResult.ALREADY_PAID).hasSize(threadCount - 1);
+            assertThat(outcomes).filteredOn(outcome -> !outcome.alreadyProcessed()).hasSize(1);
+            assertThat(outcomes).allMatch(OrderPaymentResult::paid);
             assertThat(balanceOf(memberId)).isEqualTo(7_000);
             assertThat(countLedgers(memberId)).isEqualTo(2);
         } finally {
@@ -447,8 +471,8 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             }
 
             // then: 새 주문은 모두 차감되고 재전달은 이미 결제됨을 받는다
-            assertThat(outcomes).filteredOn(outcome -> outcome == OrderPaymentResult.PAID).hasSize(memberCount * 2);
-            assertThat(outcomes).filteredOn(outcome -> outcome == OrderPaymentResult.ALREADY_PAID).hasSize(memberCount * 2);
+            assertThat(outcomes).allMatch(OrderPaymentResult::paid);
+            assertThat(outcomes).filteredOn(OrderPaymentResult::alreadyProcessed).hasSize(memberCount * 2);
             // 회원마다 3,000원(기존) + 1,000원 × 2건(다른 빈 구간의 새 주문)이 빠진다
             assertThat(memberIds).allSatisfy(memberId -> {
                 assertThat(balanceOf(memberId)).isEqualTo(5_000);
@@ -517,7 +541,8 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
 
         // Then: 주문은 이미 실패로 처리됐으므로 돈이 빠지면 안 된다
-        assertThat(result).isEqualTo(OrderPaymentResult.ALREADY_FAILED);
+        assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.FAILED);
+        assertThat(result.alreadyProcessed()).isTrue();
         assertThat(balanceOf(memberId)).isEqualTo(10_000);
     }
 

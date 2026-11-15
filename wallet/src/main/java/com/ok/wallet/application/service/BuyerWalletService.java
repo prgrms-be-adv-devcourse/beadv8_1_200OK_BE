@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 @Service
@@ -118,8 +119,10 @@ public class BuyerWalletService implements BuyerWalletUseCase {
         BuyerWallet wallet = getOrCreate(memberId);
         boolean enoughBalance = wallet.hasEnoughBalance(amount);
         WalletOrderPaymentStatus status = enoughBalance ? WalletOrderPaymentStatus.PAID : WalletOrderPaymentStatus.FAILED;
+        // DB는 마이크로초까지 저장한다. 자르지 않으면 처음 결과와 기록에서 다시 읽은 결과의 시각이 달라진다
+        LocalDateTime processedAt = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
         int inserted = walletOrderPaymentRepository.insertIfAbsent(
-                orderId, memberId, amount, status.name(), LocalDateTime.now(clock));
+                orderId, memberId, amount, status.name(), processedAt);
         if (inserted == 0) {
             // 이미 처리된 주문이다. 기록은 넣기를 거쳐 있음이 확인됐으므로 없을 수 없다. 없다면 코드·DB의 이상이라 500으로 드러낸다
             // IGNORE는 중복이 아닌 오류(CHECK 위반 등)로 넣기를 건너뛰어도 0을 돌려주므로, 원인을 좁힐 수 있게 그 가능성을 메시지에 남긴다
@@ -127,16 +130,17 @@ public class BuyerWalletService implements BuyerWalletUseCase {
                     .orElseThrow(() -> new IllegalStateException(
                             "주문 결제 처리 기록 넣기 결과가 0건인데 기록이 없습니다. 중복이 아닌 이유로 넣기가 무시됐을 수 있습니다. orderId="
                                     + orderId + ", memberId=" + memberId + ", amount=" + amount));
-            return processed.isPaid() ? OrderPaymentResult.ALREADY_PAID : OrderPaymentResult.ALREADY_FAILED;
+            return OrderPaymentResult.alreadyProcessed(processed);
         }
 
+        OrderPaymentResult result = OrderPaymentResult.processed(orderId, memberId, amount, status, processedAt);
         if (!enoughBalance) {
-            return OrderPaymentResult.INSUFFICIENT_BALANCE;
+            return result;
         }
         // 원장 근거 키는 마지막 안전장치로 남긴다 (같은 주문이 두 번 기록되려 하면 유니크 제약이 막는다)
         // 키 규칙은 이용 내역 조회와 같은 곳(PaymentReferenceKey)에서 만든다
         buyerWalletLedgerRepository.save(wallet.pay(amount, PaymentReferenceKey.of(orderId)));
-        return OrderPaymentResult.PAID;
+        return result;
     }
 
     /**

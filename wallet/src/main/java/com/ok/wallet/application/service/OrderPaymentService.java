@@ -10,9 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
-import java.time.LocalDateTime;
-
 /**
  * 주문 결제를 처리한다. 예치금을 차감하고 결과를 주문에 이벤트로 알린다.
  * 결과 이벤트는 차감과 같은 트랜잭션에서 발행해, 차감이 커밋될 때만 완료 이벤트가 나가게 한다.
@@ -24,7 +21,6 @@ import java.time.LocalDateTime;
 public class OrderPaymentService implements OrderPaymentUseCase {
     private final BuyerWalletService buyerWalletService;
     private final WalletEventPublisher walletEventPublisher;
-    private final Clock clock;
 
     // 같은 주문의 동시 요청은 payForOrder가 처리 기록 넣기로 걸러내므로 격리 수준에 기대지 않는다(#360).
     @Override
@@ -49,15 +45,19 @@ public class OrderPaymentService implements OrderPaymentUseCase {
 
         OrderPaymentResult result = buyerWalletService.payForOrder(
                 command.buyerId(), command.orderId(), command.amount());
-        switch (result) {
-            case PAID -> walletEventPublisher.publishOrderPaymentCompleted(
-                    command.orderId(), command.buyerId(), command.amount(), LocalDateTime.now(clock));
-            case INSUFFICIENT_BALANCE -> walletEventPublisher.publishOrderPaymentFailed(
-                    command.orderId(), command.buyerId(), OrderPaymentFailureReason.INSUFFICIENT_BALANCE);
-            // 처음 처리할 때 결과 이벤트를 보냈으므로 다시 보내지 않는다
-            case ALREADY_PAID, ALREADY_FAILED -> log.info(
-                    "이미 처리된 주문이라 결과 이벤트를 다시 보내지 않습니다. orderId={}, result={}",
-                    command.orderId(), result);
+        // 처음 처리할 때 결과 이벤트를 보냈으므로 다시 보내지 않는다
+        if (result.alreadyProcessed()) {
+            log.info("이미 처리된 주문이라 결과 이벤트를 다시 보내지 않습니다. orderId={}, status={}",
+                    result.orderId(), result.status());
+            return;
         }
+        if (result.paid()) {
+            walletEventPublisher.publishOrderPaymentCompleted(
+                    result.orderId(), result.buyerId(), result.amount(), result.processedAt());
+            return;
+        }
+        // 처리 기록에 남는 실패는 잔액 부족뿐이다. 금액이 틀린 요청은 위에서 기록 없이 끝낸다
+        walletEventPublisher.publishOrderPaymentFailed(
+                result.orderId(), result.buyerId(), OrderPaymentFailureReason.INSUFFICIENT_BALANCE);
     }
 }
