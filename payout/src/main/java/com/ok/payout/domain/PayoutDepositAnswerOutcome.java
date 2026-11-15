@@ -6,7 +6,7 @@ public enum PayoutDepositAnswerOutcome {
     IGNORED,
     // 같은 판매자·금액으로 입금됨
     MATCHED,
-    // "없음"이고 아직 물을 횟수가 남음. 입금 메시지를 다시 보냄
+    // "없음"이고 아직 물을 횟수가 남음. outbox 줄을 다시 보낼 것(PENDING)으로 되돌려 짧은 간격 재발송이 입금 메시지를 다시 보냄 (#620)
     NOT_FOUND_RETRY,
     // 관리자 확인 필요가 됨
     NEEDS_REVIEW,
