@@ -40,7 +40,7 @@ class KafkaWalletRefundResultPublisherTest {
 
     @BeforeEach
     void setUp() {
-        sut = new KafkaWalletRefundResultPublisher(kafkaTemplate, SHORT_TIMEOUT);
+        sut = new KafkaWalletRefundResultPublisher(new WalletKafkaSender(kafkaTemplate, SHORT_TIMEOUT));
     }
 
     // 중단 테스트가 남긴 중단 표시가 다른 테스트로 넘어가지 않게 지운다
