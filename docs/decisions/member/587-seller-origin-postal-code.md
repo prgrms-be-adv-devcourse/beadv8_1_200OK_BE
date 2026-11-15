@@ -1,7 +1,7 @@
 ---
 issue: 587
 module: member
-summary: 판매자 출고지 우편번호를 프로필에 두고 바뀔 때만 delivery에 Kafka로 보내며, 별도 outbox를 만들지 않고 #560의 회원 outbox에 본문 칸을 더해 판매자 하위 도메인이 유스케이스로 기록하게 함. 판매자 승인 스프링 이벤트는 지움
+summary: 판매자 출고지 우편번호를 신청 때 받아 승인 때 보내고 이후 변경은 프로필에서 바뀔 때만 delivery에 Kafka로 보내며, 별도 outbox를 만들지 않고 #560의 회원 outbox에 본문 칸을 더해 판매자 하위 도메인이 유스케이스로 기록하게 함. 판매자 승인 스프링 이벤트는 지움
 status: 확정
 date: 2026-11-15
 paths: [member/src/main/java/com/ok/member/seller/domain/SellerProfile.java, member/src/main/java/com/ok/member/seller/application/service/SellerProfileService.java, member/src/main/java/com/ok/member/seller/adapter/out/member/MemberOutboxAdapter.java, member/src/main/java/com/ok/member/member/application/service/MemberOutboxService.java, member/src/main/java/com/ok/member/member/adapter/out/event/MemberMessagePayloadJson.java, member/src/main/java/com/ok/member/member/adapter/out/event/KafkaMemberMessageSender.java]
@@ -20,8 +20,9 @@ delivery가 배송비 계산에 쓸 판매자 출고지 사본을 갖도록(#558
 
 | 결정 | 선택 | 이유 |
 |---|---|---|
-| 필수 여부 | 등록·수정 요청 모두 필수, 컬럼은 NULL 허용 | 프로필 수정이 전체 덮어쓰기라 화면이 매번 모든 값을 보낸다. 컬럼 전에 만든 프로필은 값이 없어, 다음 수정 때 채우고 그때 처음 보낸다(일괄 발행 불필요) |
-| 발행 조건 | 우편번호가 바뀔 때만(처음 채워질 때 포함). 등록은 항상 | delivery가 `occurredAt` 기준으로 덮어써 결과는 같고, 상호명만 고친 수정까지 보내면 메시지만 는다. 바뀌었는지는 `SellerProfile.update`가 돌려준다 |
+| 처음 받는 시점 | 판매자 신청 때 필수로 받아 승인 때 보냄. 이후 변경은 프로필 (사용자 결정) | 상품 등록은 SELLER 권한만 확인해(`ProductController`) 프로필을 등록하기 전에도 팔 수 있다. 프로필 때만 받으면 승인부터 프로필 등록까지 delivery가 출고지를 모른다. 신청서 값은 처음 값 기록이고 고치지 않는다(상호명을 신청서·프로필에 따로 두는 것과 같은 구조). delivery의 처음 요청(신청 때 받아 승인 때 발행)과도 같다 |
+| 필수 여부 | 신청·프로필 등록·수정 요청 모두 필수, 두 컬럼은 NULL 허용 | 프로필 수정이 전체 덮어쓰기라 화면이 매번 모든 값을 보낸다. 컬럼 전에 만든 프로필은 값이 없어, 다음 수정 때 채우고 그때 처음 보낸다(일괄 발행 불필요) |
+| 발행 조건 | 승인 때 신청서 값(값이 없는 예전 신청은 보내지 않음), 프로필 등록은 항상, 프로필 수정은 우편번호가 바뀔 때만 | delivery가 `occurredAt` 기준으로 덮어써 결과는 같고, 상호명만 고친 수정까지 보내면 메시지만 는다. 바뀌었는지는 `SellerProfile.update`가 돌려준다 |
 | `sellerId` | 회원 ID 그대로 | 판매자는 회원이 승인받은 역할이라 회원 하나에 판매자 하나다. member 프로필이 `member_id`로 판매자를 찾고, delivery·product도 로그인 회원 ID를 `sellerId`로 쓴다(코드로 확인). 상점 여러 개, 직원 계정, 상점 양도가 생기면 별도 ID를 다시 본다 |
 | `occurredAt` | `LocalDateTime`(한국 시간, 시간대 표기 없음), 마이크로초로 자름 | #560 메시지에는 시각이 없어 정산 → 지갑 메시지(`createdAt`)와 모양을 맞췄다. DB `DATETIME(6)`과 정밀도가 같아야 delivery가 저장한 시각과 비교할 때 나노초 차이로 같은 변경을 더 새것으로 보지 않는다 |
 | 형식 오류 응답 | 422 (`INVALID_ORIGIN_POSTAL_CODE`, 요청 검증은 `validation-failed`) | 이슈에는 400이었으나 요청 값 검증 실패는 422가 팀 규칙이다(`api.md`) |
@@ -33,6 +34,8 @@ delivery가 배송비 계산에 쓸 판매자 출고지 사본을 갖도록(#558
 
 ## 버린 대안
 
+- **상품 등록 때 출고지 등록 여부 확인:** 프로필 없이는 상품을 못 올리게 막으면 빈틈이 없지만, product가 member에 물어봐야 해서 분리를 앞두고 product → member 동기 호출이 새로 생긴다. member가 느리거나 죽으면 상품 등록도 실패하고, 이미 올린 상품의 빈틈은 그대로다.
+- **프로필 등록·수정 때만 보내기(처음 구현):** 승인부터 프로필 등록까지 출고지가 비어, 그동안 올린 상품의 배송비를 출고지 없이 계산하게 된다.
 - **outbox를 별도 하위 도메인으로 떼기:** 표·발송 작업·Kafka 발송기를 `outbox` 하위 도메인으로 옮기고 토픽·키·본문을 일반화하는 안. 이름은 더 맞지만 방금 머지한 #560 코드를 통째로 옮겨 PR이 커진다. member 밖에서도 outbox가 필요해지면 그때 뗀다.
 - **판매자 하위 도메인에 outbox를 하나 더:** 표·발송 작업·테스트가 두 벌이 되고 메시지 종류가 늘 때마다 또 는다.
 - **본문 없이 보낼 때 프로필을 다시 읽기:** 저장 칸이 필요 없고 늘 최신 값이 나가지만, 회원 하위 도메인의 발송 작업이 판매자 데이터를 읽어야 해 하위 도메인 의존이 반대로 생긴다.
@@ -42,6 +45,8 @@ delivery가 배송비 계산에 쓸 판매자 출고지 사본을 갖도록(#558
 
 ## 건드릴 때 주의
 
+- 이 작업 전에 승인된 판매자는 신청서와 프로필 모두 우편번호가 비어 있어, 다음 프로필 수정 때까지 delivery에 출고지가 없다. delivery는 배송 설정이 없는 판매자에게 기본값을 쓰는 방식(`SellerShippingSettingService`)으로 출고지가 없는 경우도 다뤄야 한다.
+- 승인 때 발행은 낙관적 락 검사(flush)를 통과한 뒤에 한다. 순서를 바꾸면 다른 관리자가 먼저 처리해 409가 나는 승인도 줄을 남기려 하다 같은 트랜잭션에서 롤백된다(결과는 같지만 불필요한 작업).
 - `MemberOutboxRecordUseCase`는 반드시 프로필 저장 트랜잭션 안에서 불러야 한다. 서비스 메서드의 `@Transactional`을 빼면 `IllegalTransactionStateException`이 난다.
 - 메시지 필드를 바꾸면 이미 쌓인 PENDING 줄의 본문이 옛 모양이다. 보낼 때 메시지 클래스로 다시 읽으므로 필드 이름을 바꾸거나 지우면 그 줄이 읽기 실패로 막히고, 실패 시 멈춤 정책 때문에 뒤 줄도 모두 기다린다. 필드를 바꾸기 전에 PENDING 줄이 0건인지 확인한다.
 - 본문은 `VARCHAR(1000)`이고 넘치면 기록 단계에서 예외가 난다(잘라 저장하면 깨진 JSON이 나가서).

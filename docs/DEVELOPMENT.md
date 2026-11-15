@@ -699,9 +699,9 @@ member가 Kafka로 보내는 메시지는 모두 `member` 하위 도메인의 ou
 | 토픽 | 언제 | 키 | 값 |
 |---|---|---|---|
 | `member.member-registered` (#560) | 회원가입이 커밋됨 | `memberId` | `{"memberId": 1}` |
-| `member.seller-origin-postal-code` (#587) | 판매자 프로필 등록, 또는 수정으로 출고지 우편번호가 바뀜 | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
+| `member.seller-origin-postal-code` (#587) | 판매자 승인(신청서의 처음 값), 판매자 프로필 등록, 수정으로 출고지 우편번호가 바뀜 | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
 
-`sellerId`는 판매자인 회원의 ID(`memberId`)와 같은 값입니다. 판매자 승인은 받는 모듈이 없어 보내지 않습니다(#587에서 스프링 이벤트도 지움).
+`sellerId`는 판매자인 회원의 ID(`memberId`)와 같은 값입니다. 출고지 우편번호는 판매자 신청 때 필수로 받아 승인 때 보내고(상품 등록은 SELLER 권한만 보므로 프로필 등록 전에도 판매할 수 있어서), 이후 변경은 프로필에서 합니다. "판매자가 승인됐다"는 사실 자체를 알리는 메시지는 받는 모듈이 없어 보내지 않습니다(#587에서 스프링 이벤트도 지움).
 
 ```
 com.ok.member.member
