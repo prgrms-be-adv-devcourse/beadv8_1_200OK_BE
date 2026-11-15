@@ -3,9 +3,11 @@ package com.ok.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -239,6 +241,22 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(status().isConflict());
 		allocate(ORDER_IDS.incrementAndGet(), item(noStock, 1))
 			.andExpect(status().isConflict());
+	}
+
+	// order의 ProductApiClient가 409 본문에 이 글자가 있는지로 원인을 나눈다. enum에서 계산하지 않고 글자 그대로 고정한다
+	@Test
+	void 배정_409_본문에는_order가_구분하는_slug가_들어_있다() throws Exception {
+		// given
+		Long paused = firstOptionId(save(withStatus(ProductStatus.PAUSED)));
+		Long noStock = firstOptionId(save(onSale(option(0))));
+
+		// when & then
+		allocate(ORDER_IDS.incrementAndGet(), item(paused, 1))
+			.andExpect(status().isConflict())
+			.andExpect(content().string(containsString("option-not-purchasable")));
+		allocate(ORDER_IDS.incrementAndGet(), item(noStock, 1))
+			.andExpect(status().isConflict())
+			.andExpect(content().string(containsString("insufficient-stock")));
 	}
 
 	@Test
