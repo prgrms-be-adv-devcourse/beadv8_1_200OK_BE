@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
 import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
+import com.ok.refund.application.port.in.RefundSagaUseCase;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
@@ -99,6 +100,9 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
     FakeProductStockReleasePort productStockReleasePort;
     @Autowired
     RefundWalletResultSender walletResultSender;
+    // 알람이 다음 회차에 부르는 입구. 알람은 테스트 프로필에서 뜨지 않아 직접 부른다
+    @Autowired
+    RefundSagaUseCase refundSagaUseCase;
     // 평소에는 실제 토픽으로 보내고, 경합을 만들 때만 발행 직후 할 일을 끼워 넣는다
     @Autowired
     FakeWalletRefundRequestPort walletRefundRequestPort;
@@ -238,21 +242,26 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(1);
     }
 
-    // 재고 복구 실패 경로를 실제 리스너 스레드로 확인한다. 서비스 단위 테스트는 트랜잭션을 실제로 묶지 않고(NoOpTransactionManager)
-    // 오류 처리기도 거치지 않아, "재고 호출이 트랜잭션 밖이라 PRODUCT 기록이 따로 커밋된다"와 "오류 처리기가 다시 시도해 복구 뒤 완료한다"를 못 본다
+    // 재고 복구 실패 경로를 실제 리스너 스레드로 확인한다. 서비스 단위 테스트는 트랜잭션을 실제로 묶지 않아(NoOpTransactionManager)
+    // "재고 호출이 트랜잭션 밖이라 PRODUCT 기록이 따로 커밋된다"를 못 본다. 다시 시도는 Kafka 오류 처리기가 아니라 알람이 맡으므로(#576)
+    // 리스너는 실패를 기록만 하고 끝내고, 알람이 부르는 입구(resume)로 이어 가면 완료된다
     @Test
-    void 재고_복구가_실패했다가_다시_시도로_복구되면_재고_줄_시도_횟수가_2다() throws Exception {
-        // given: 상품 서버가 첫 호출만 실패한다. 실패를 시간으로 켜고 끄면 다시 시도 간격(1·2·4초...)과 겹쳐
-        // 느린 환경에서 두 번 실패할 수 있어(시도 횟수 3), 실패할 호출 수를 정해 시도 횟수를 정확히 맞춘다
+    void 재고_복구가_실패하면_기록만_하고_알람의_다시_진행으로_복구되면_시도_횟수가_2다() throws Exception {
+        // given: 상품 서버가 첫 호출만 실패한다
         Long refundId = requestedRefundId();
         approve(refundId).andExpect(status().isOk());
         productStockReleasePort.failNextCalls(1);
 
-        // when: 메시지는 한 번만 보낸다. 환불 오류 처리기가 같은 메시지를 다시 시도한다
+        // when: 메시지는 한 번만 보낸다. 리스너는 재고 실패를 기록하고 끝낸다
         walletResultSender.sendCompleted(refundId);
+        RefundWalletResultSender.awaitUntil("재고 실패가 기록되지 않았습니다", () -> refundStepPersistencePort
+                .findByRefundIdAndType(refundId, RefundStepType.PRODUCT)
+                .map(product -> product.getStatus() == RefundStepStatus.READY)
+                .orElse(false));
+        // 알람이 다음 회차에 부르는 입구로 이어 간다
+        refundSagaUseCase.resume(refundId);
 
         // then
-        walletResultSender.awaitStatus(refundId, RefundStatus.COMPLETED);
         assertThat(productStockReleasePort.releasedOf(refundId).orElseThrow().productOptionId()).isEqualTo(PRODUCT_OPTION_ID);
         assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(1);
         // then: 재고 줄은 처음 시도 + 다시 시도로 두 번 시작했고 끝내 성공했다. 성공해도 마지막 이유는 지우지 않으므로,

@@ -352,8 +352,9 @@ class RefundSagaServiceWalletResultTest {
                 Arguments.of(ORDER_ID, 2_001L, AMOUNT));
     }
 
+    // 다시 시도는 알람이 맡으므로 예외를 올리지 않는다(#576). 올리면 Kafka 오류 처리기가 다시 시도하며 시도 횟수를 다 써 버린다
     @Test
-    void 재고_복구가_실패하면_PRODUCT_실패를_기록하고_예외를_다시_던진다() {
+    void 재고_복구가_실패하면_PRODUCT_실패를_기록하고_예외를_올리지_않는다() {
         // given
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
@@ -363,11 +364,10 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(walletStep, null, null, startedProductStep);
         willThrow(new RestApiException(RefundErrorCode.PRODUCT_API_FAILED)).given(productStockReleasePort).releaseStock(any());
 
-        // when & then
-        assertThatThrownBy(() -> sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT)))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
-        // 실패는 재고 줄에만 남고 환불 행은 처리 중 그대로라 저장하지 않는다
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
+
+        // then: 실패는 재고 줄에만 남고 환불 행은 처리 중 그대로라 저장하지 않는다
         then(refundPersistencePort).should(never()).update(any());
         ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should(times(2)).update(updated.capture());

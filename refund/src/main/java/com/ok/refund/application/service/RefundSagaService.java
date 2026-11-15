@@ -310,7 +310,7 @@ public class RefundSagaService implements RefundSagaUseCase {
         Snapshot snapshot = readSnapshot(refundId);
         // 받을지는 정책이 정한다(#616). 금액·주문·구매자가 다르면 완료하지 않고 불일치로 남긴다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다
         // (지갑에 그 반환을 다시 가져와 달라고 보내는 것은 #572). 실패·불일치와 달리 "재고 줄 있음"은 거르지 않는다(정책 설명 참고).
-        // 재고가 실패해 "할 차례"로 남은 환불에 같은 완료 메시지가 다시 오면(오류 처리기의 다시 시도) 재고를 다시 시도해야 하기 때문이다
+        // 재고가 실패해 "할 차례"로 남은 환불에 같은 완료 메시지가 다시 오면(지갑이 다시 보냄) 재고를 다시 시도해야 하기 때문이다
         WalletResultPolicy.Verdict verdict = WalletResultPolicy.judge(WalletResultPolicy.Kind.COMPLETED, snapshot.refund(),
                 snapshot.walletStep(), snapshot.productStep(), command.orderId(), command.buyerId(), command.amount(), null);
         if (verdict.decision() == WalletResultPolicy.Decision.SKIP) {
@@ -331,8 +331,20 @@ public class RefundSagaService implements RefundSagaUseCase {
             return;
         }
         // 재고 복구는 구간 밖. 상품은 같은 refundId면 또 풀지 않아 같은 메시지가 다시 와도 안전하다.
-        // 실패하면 틀이 재고 실패를 기록(재고 줄은 다시 시도 대기)하고 예외를 다시 던진다. 오류 처리기가 다시 시도한다
-        releaseProduct(refundId, refund);
+        // 실패하면 틀(runStep)이 재고 줄에 실패를 기록하고(다음 시도 시각, 또는 다시 해도 같은 실패면 멈춤) 예외를 올린다.
+        // 여기서 예외를 삼키고 메시지 처리를 끝낸다(#576). 다시 시도는 알람 한 곳이 맡는다. 던지면 Kafka 오류 처리기가 31초 동안 5번
+        // 다시 시도하며 그때마다 재고 줄 시도 횟수가 올라, 알람이 손대기 전에 횟수를 다 써 멈춘다. 그동안 같은 파티션의 뒤 메시지도 기다린다.
+        // 기록마저 실패해 재고 줄이 시도 중으로 남아도, 만료(2분) 뒤 알람이 다시 집는다
+        try {
+            releaseProduct(refundId, refund);
+        } catch (RestApiException e) {
+            log.warn("지갑 완료 뒤 재고 복구가 실패해 알람의 다시 시도로 넘김. refundId={}, errorCode={}", refundId, e.getErrorCode().name());
+            return;
+        } catch (RuntimeException e) {
+            // 다른 모듈 응답이 아닌 예외는 코드 버그일 수 있어 ERROR로 남긴다. 다시 시도는 위와 같이 알람이 한다
+            log.error("지갑 완료 뒤 재고 복구 중 예상하지 못한 오류. 알람의 다시 시도로 넘김. refundId={}", refundId, e);
+            return;
+        }
         Closing closing = completeWithProductStep(refundId);
         // 그사이 같은 메시지가 먼저 완료한 경우는 정상 중복이라 INFO다
         if (!closing.changed()) {
