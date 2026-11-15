@@ -198,37 +198,124 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 지갑이_없다고_답하면_입금_메시지를_다시_보내고_같은_답이_두_번_와도_한_번만_센다() throws Exception {
+        // given: 판매자 10·20의 정산 2건을 한 묶음으로 물음
+        Map<Long, Long> payoutIdBySeller = settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L));
+        Long payoutA = payoutIdBySeller.get(10L);
+        Long payoutB = payoutIdBySeller.get(20L);
+        payoutDepositCheckUseCase.runCheck();
+        Long checkId = checkOf(payoutA).getLastCheckId();
+        Map<TopicPartition, Long> before = endOffsets(PayoutTopics.SELLER_PAYOUT_CREATED);
+
+        // when: 정산 A의 같은 "없음" 답이 두 번 온 뒤, 표시용으로 정산 B의 "일치" 답이 옴
+        sendAnswer(checkId, payoutA, false, null, null, null);
+        sendAnswer(checkId, payoutA, false, null, null, null);
+        sendAnswer(checkId, payoutB, true, 20L, 5_000L, "2026-11-15T02:05:00");
+
+        // then: B가 처리될 때까지 기다린 뒤 A를 확인함
+        // 같은 키(checkId)라 같은 파티션에서 보낸 순서대로 처리되므로, B가 처리됐으면 A의 두 번째 답도 이미 처리된 것이다
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutB).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
+        PayoutDepositCheck sut = checkOf(payoutA);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getNotFoundCount()).isEqualTo(1);
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
+        });
+
+        // then: A의 입금 메시지(같은 payoutId)가 다시 나감
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED, String.valueOf(payoutA), before)).isNotNull());
+    }
+
+    @Test
+    void 이전_질문의_답이_늦게_오면_버리고_최근_질문의_답만_반영한다() throws Exception {
+        // given: 어제 질문(첫 번째 대사)과 오늘 질문(두 번째 대사)
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        Long yesterdayCheckId = checkOf(payoutId).getLastCheckId();
+        payoutDepositCheckUseCase.runCheck();
+        Long todayCheckId = checkOf(payoutId).getLastCheckId();
+        assertThat(todayCheckId).isNotEqualTo(yesterdayCheckId);
+
+        // when: 어제 질문의 "있음, 같은 값"이 늦게 오고, 이어서 오늘 질문의 "없음"이 옴
+        sendAnswer(yesterdayCheckId, payoutId, true, 10L, 9_700L, "2026-11-15T02:05:00");
+        sendAnswer(todayCheckId, payoutId, false, null, null, null);
+
+        // then: 오늘 답만 반영돼 없음 1번, 대기 유지 (어제 답이 반영됐다면 일치로 끝났어야 함)
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutId).getNotFoundCount()).isEqualTo(1));
+        PayoutDepositCheck sut = checkOf(payoutId);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(2);
+        });
+    }
+
+    @Test
+    void 세_번_물어도_답이_한_번도_없으면_다음_대사에서_지갑_답_없음으로_닫는다() throws Exception {
+        // given: 세 번 물었는데 지갑이 한 번도 답하지 않음
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        assertThat(checkOf(payoutId).getAttemptCount()).isEqualTo(PayoutDepositCheck.MAX_ATTEMPTS);
+
+        // when: 네 번째 대사
+        PayoutDepositCheckRunResult result = payoutDepositCheckUseCase.runCheck();
+
+        // then: 묻지 않고 닫음
+        assertThat(result.closedCount()).isEqualTo(1);
+        assertThat(result.askedCount()).isZero();
+        PayoutDepositCheck sut = checkOf(payoutId);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.NEEDS_REVIEW);
+            softly.assertThat(sut.getMismatchReason()).isEqualTo(PayoutDepositMismatchReason.NO_RESPONSE);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(PayoutDepositCheck.MAX_ATTEMPTS);
+        });
+    }
+
+    @Test
+    void 묶음_번호가_없는_답은_버리고_다음_답을_처리한다() throws Exception {
         // given
         Long payoutId = settleOnePayout(10L, 9_700L);
         payoutDepositCheckUseCase.runCheck();
         Long checkId = checkOf(payoutId).getLastCheckId();
-        Map<TopicPartition, Long> before = endOffsets(PayoutTopics.SELLER_PAYOUT_CREATED);
 
-        // when: 같은 "없음" 답이 두 번 옴
-        sendAnswer(checkId, payoutId, false, null, null, null);
-        sendAnswer(checkId, payoutId, false, null, null, null);
+        // when: 묶음 번호가 빠진 답, 이어서 정상 답
+        Map<String, Object> broken = Map.of("items", List.of(Map.of("payoutId", payoutId, "found", false)));
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYOUT_DEPOSIT_CHECKED, "broken", broken);
+        sendAnswer(checkId, payoutId, true, 10L, 9_700L, "2026-11-15T02:05:00");
 
-        // then: 없음은 한 번만 세고 대기로 남음
+        // then: 틀린 답은 다시 시도하지 않고 넘어가 정상 답이 반영됨 (틀린 답이 반영됐다면 없음 1번이 남음)
         await().atMost(TIMEOUT).untilAsserted(() ->
-                assertThat(checkOf(payoutId).getNotFoundCount()).isEqualTo(1));
-        assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
-
-        // then: 입금 메시지(같은 payoutId)가 다시 나감
-        await().atMost(TIMEOUT).untilAsserted(() ->
-                assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED, String.valueOf(payoutId), before)).isNotNull());
+                assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
+        assertThat(checkOf(payoutId).getNotFoundCount()).isZero();
     }
 
     // ---------- 도우미 ----------
 
     // 정산 1건을 확정하고 그 정산 ID를 돌려줌 (지갑 입금 메시지도 이때 나감)
     private Long settleOnePayout(Long sellerId, Long amount) throws Exception {
-        long orderId = nextOrderId();
-        insertCandidate(PayoutEventType.SALE_AMOUNT, orderId, sellerId, amount, LocalDateTime.now().minusDays(20));
+        return settlePayouts(Map.of(sellerId, amount)).get(sellerId);
+    }
+
+    // 판매자마다 정산 1건씩 한 번의 Job으로 확정하고 판매자 → 정산 ID를 돌려줌
+    private Map<Long, Long> settlePayouts(Map<Long, Long> amountBySeller) throws Exception {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        for (Map.Entry<Long, Long> entry : amountBySeller.entrySet()) {
+            insertCandidate(PayoutEventType.SALE_AMOUNT, nextOrderId(), entry.getKey(), entry.getValue(), createdAt);
+        }
         JobExecution execution = payoutJobRunner.runScheduled();
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         List<PayoutDepositCheck> checks = depositCheckRepository.findAll();
-        assertThat(checks).hasSize(1);
-        return checks.get(0).getPayoutId();
+        assertThat(checks).hasSize(amountBySeller.size());
+        Map<Long, Long> payoutIdBySeller = new HashMap<>();
+        for (PayoutDepositCheck check : checks) {
+            payoutIdBySeller.put(check.getPayeeId(), check.getPayoutId());
+        }
+        return payoutIdBySeller;
     }
 
     private PayoutDepositCheck checkOf(Long payoutId) {

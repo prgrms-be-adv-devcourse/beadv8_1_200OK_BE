@@ -7,10 +7,12 @@ import com.ok.payout.application.port.out.PayoutEventPublisher;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * 정산·지갑 대사 유스케이스 구현 (#619, 상위 #308). 지갑과의 약속은 PR #548 문서 4절과 #308 11/15 댓글이다.
@@ -28,14 +30,15 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
     @Override
     public PayoutDepositCheckRunResult runCheck() {
         // 묻기 전에 먼저 닫음: 3번째 질문에도 하루를 기다려 준 뒤라, 그 답이 끝내 오지 않은 줄만 닫힘
-        int closed = payoutDepositCheckRecordService.closeExhausted();
+        int closed = retryOnceOnConflict(payoutDepositCheckRecordService::closeExhausted);
 
         int asked = 0;
         int batches = 0;
         boolean stopped = false;
         Long afterCheckRowId = 0L;
         while (true) {
-            Optional<PayoutDepositCheckPlan> next = payoutDepositCheckRecordService.prepareNextBatch(afterCheckRowId);
+            Long after = afterCheckRowId;
+            Optional<PayoutDepositCheckPlan> next = retryOnceOnConflict(() -> payoutDepositCheckRecordService.prepareNextBatch(after));
             if (next.isEmpty()) {
                 break;
             }
@@ -69,6 +72,18 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
                 // 못 보내도 다음 날 대사가 다시 "없음"을 받고 또 보냄. 답 처리는 이미 커밋돼 되돌리지 않음
                 log.warn("대사에서 입금 메시지를 다시 보내지 못함. 다음 대사에서 다시 보냄. payoutId={}", created.payoutId(), e);
             }
+        }
+    }
+
+    // 같은 순간 지갑 답이 같은 줄을 먼저 고쳐 저장이 거절되면(낙관적 잠금, PayoutDepositCheck.version) 그 단계를 한 번 더 함
+    // 단계 전체가 한 트랜잭션이라 거절되면 묶음 번호·물음까지 모두 롤백되고, 다시 하면 지갑 답이 반영된 값을 새로 읽음
+    // 두 번째도 거절되면 예외를 그대로 올려 이번 대사를 멈춤. 남은 줄은 다음 날 다시 물음
+    private static <T> T retryOnceOnConflict(Supplier<T> step) {
+        try {
+            return step.get();
+        } catch (OptimisticLockingFailureException e) {
+            log.info("대사 줄을 지갑 답 처리가 먼저 고쳐 이 단계를 한 번 더 함", e);
+            return step.get();
         }
     }
 

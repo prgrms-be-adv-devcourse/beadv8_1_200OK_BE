@@ -29,6 +29,7 @@ CREATE TABLE payout_deposit_check (
     wallet_payee_id BIGINT NULL COMMENT '지갑이 답한 판매자 회원 ID (member 모듈). "있음" 답을 받았을 때만',
     wallet_amount BIGINT NULL COMMENT '지갑이 답한 입금 금액(원). "있음" 답을 받았을 때만',
     wallet_deposited_at DATETIME(6) NULL COMMENT '지갑이 입금한 시각. "있음" 답을 받았을 때만',
+    version BIGINT NOT NULL DEFAULT 0 COMMENT '낙관적 잠금 버전. 매일 대사와 지갑 답이 같은 줄을 동시에 고쳐 한쪽 결과가 덮이지 않게 함',
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     PRIMARY KEY (id),

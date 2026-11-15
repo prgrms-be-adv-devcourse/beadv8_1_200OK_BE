@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -82,6 +83,13 @@ public class PayoutDepositCheck extends BaseTime {
 
     private LocalDateTime walletDepositedAt;
 
+    // 낙관적 잠금(@Version: 저장할 때 읽은 뒤 누가 먼저 고쳤으면 저장을 거절함)
+    // 매일 대사(닫기·묻기)와 지갑 답 처리가 같은 줄을 동시에 고칠 수 있음. JPA는 행 전체를 UPDATE해서, 잠금이 없으면 나중에 커밋한 쪽이 앞의 결과를 통째로 덮음
+    //   예: 늦게 온 3번째 답이 "판매자 다름"인데 같은 순간 대사가 "지갑 답 없음"으로 닫으면 판정과 지갑 값이 사라짐
+    // 거절되면 지갑 답 쪽은 Kafka 오류 처리기가 다시 시도하고, 대사 쪽은 서비스가 그 단계를 한 번 더 함(PayoutDepositCheckService)
+    @Version
+    private long version;
+
     public static PayoutDepositCheck waiting(Long payoutId, Long payeeId, Long amount) {
         PayoutDepositCheck check = new PayoutDepositCheck();
         check.payoutId = Objects.requireNonNull(payoutId, "payoutId");
@@ -97,6 +105,10 @@ public class PayoutDepositCheck extends BaseTime {
     public void recordAsked(Long checkId, LocalDateTime askedAt) {
         if (status != PayoutDepositCheckStatus.WAITING) {
             throw new IllegalStateException("확인 대기가 아닌 대사 줄에는 묻지 않습니다. payoutId=" + payoutId + ", status=" + status);
+        }
+        // 지금 흐름에서는 대사가 묻기 전에 3번 다 물은 줄을 먼저 닫아 여기 오지 않음. 순서가 바뀌는 코드 실수를 막으려고 둠
+        if (attemptCount >= MAX_ATTEMPTS) {
+            throw new IllegalStateException("이미 " + MAX_ATTEMPTS + "번 물은 대사 줄입니다. payoutId=" + payoutId);
         }
         attemptCount++;
         lastCheckId = Objects.requireNonNull(checkId, "checkId");

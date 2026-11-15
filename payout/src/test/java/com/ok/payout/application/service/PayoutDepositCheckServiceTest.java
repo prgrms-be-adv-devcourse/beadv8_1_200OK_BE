@@ -10,6 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.OptimisticLockingFailureException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -88,6 +89,21 @@ class PayoutDepositCheckServiceTest {
 
         // then
         assertThat(result.stoppedBySendFailure()).isTrue();
+    }
+
+    @Test
+    void 지갑_답이_같은_줄을_먼저_고쳐_저장이_거절되면_그_단계를_한_번_더_한다() {
+        // given: 닫기 첫 시도는 낙관적 잠금으로 거절, 두 번째는 1줄 닫음
+        given(payoutDepositCheckRecordService.closeExhausted())
+                .willThrow(new OptimisticLockingFailureException("다른 트랜잭션이 먼저 고침"))
+                .willReturn(1);
+        given(payoutDepositCheckRecordService.prepareNextBatch(0L)).willReturn(Optional.empty());
+
+        // when
+        PayoutDepositCheckRunResult result = sut.runCheck();
+
+        // then
+        assertThat(result.closedCount()).isEqualTo(1);
     }
 
     @Test
