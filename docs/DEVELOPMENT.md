@@ -98,6 +98,23 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 - 로컬 compose의 MySQL 서비스에 슬로우 쿼리 설정이 생겨서, 이 변경을 받은 뒤 처음 `docker compose up -d`를 하면 mysql 컨테이너가 한 번 다시 만들어집니다(`data/mysql`은 그대로).
 - Grafana·Prometheus 데이터는 이름 있는 볼륨이라 `docker compose --profile monitoring down -v`를 하면 지워집니다(Kafka 볼륨도 함께 지워지니 주의).
 
+### JPA 지표 (#509)
+
+앱이 `/actuator/prometheus`로 JPA 지표를 함께 내놓습니다(대시보드 패널은 이후 PR에서 추가).
+
+| 지표 | 의미 |
+|---|---|
+| `jpa_queries_per_request` (`_count` `_sum` `_max` `_bucket`) | HTTP 요청 하나가 Hibernate로 실행한 SQL 문 수. `method`, `uri`(템플릿) 태그로 엔드포인트별 분포 |
+| `jpa_optimistic_lock_failures_total` | `@Version` 낙관적 락 충돌 횟수. `entity` 태그(`Product` 등) |
+| `hibernate_*` (`statements`, `transactions`, `query_executions_max` 등) | Hibernate 통계(`hibernate.generate_statistics`). 앱 전체 합계. 카운터에는 Prometheus가 `_total`을 붙임 |
+
+- 엔드포인트별 평균 쿼리 수: `sum by (method, uri) (rate(jpa_queries_per_request_sum[5m])) / sum by (method, uri) (rate(jpa_queries_per_request_count[5m]))`
+- 엔드포인트별 p95: `histogram_quantile(0.95, sum by (le, method, uri) (rate(jpa_queries_per_request_bucket[5m])))`. 버킷 경계는 1·3·5·10·20·50·100입니다.
+- N+1 의심: 같은 엔드포인트에서 목록 건수나 데이터가 늘수록 요청당 쿼리 수가 따라 늘면 의심합니다. 시작값으로 p95가 20을 넘는 엔드포인트를 먼저 봅니다. 서비스의 평소 값에 맞춰 조정합니다.
+- 쿼리 수는 Hibernate가 준비한 SQL 문 수입니다. 네이티브 쿼리(`nativeQuery = true`, `createNativeQuery`)와 벌크 UPDATE·DELETE도 센다는 것을 통합 테스트로 확인했습니다. JDBC 배치로 나가는 INSERT·UPDATE는 한 번으로 세고, Hibernate를 거치지 않는 JDBC 호출은 세지 않습니다(애플리케이션 코드에는 `JdbcTemplate` 사용이 없습니다). 컨트롤러에 매핑되지 않은 요청(404 등)과 스케줄러·비동기 리스너에서 실행한 쿼리는 기록하지 않습니다.
+- `hibernate_optimistic_failures`는 이 프로젝트의 충돌에서 오르지 않아(통합 테스트로 확인) 쓰지 않고, 항상 0으로 나옵니다. 충돌 횟수는 `jpa_optimistic_lock_failures_total`을 봅니다.
+- 낙관적 락 충돌의 행 id는 태그로 달지 않습니다(값이 끝없이 늘어 시계열이 폭증).
+
 ### 로컬 Kafka 지표 확인 (#396)
 
 `monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
