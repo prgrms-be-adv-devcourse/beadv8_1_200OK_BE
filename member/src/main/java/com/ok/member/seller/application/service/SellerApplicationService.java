@@ -9,6 +9,7 @@ import com.ok.member.seller.application.dto.SellerApplyCommand;
 import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.member.seller.application.port.in.SellerApprovalCheckUseCase;
 import com.ok.member.seller.application.port.out.SellerApplicationRepository;
+import com.ok.member.seller.application.port.out.SellerEventPublisher;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
@@ -40,6 +41,7 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
 
     private final SellerApplicationRepository sellerApplicationRepository;
     private final SellerApplicationDuplicateValidator duplicateValidator;
+    private final SellerEventPublisher sellerEventPublisher;
     private final Clock clock;
 
     @Override
@@ -53,6 +55,7 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
                 command.representativeName(),
                 command.businessNumber(),
                 command.mailOrderNumber(),
+                command.originPostalCode(),
                 now()
         );
 
@@ -105,8 +108,10 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
     @Transactional
     public SellerApplicationAdminResult approve(Long adminId, Long applicationId) {
         SellerApplication application = findApplication(applicationId);
-        application.approve(adminId, now());
+        LocalDateTime approvedAt = now();
+        application.approve(adminId, approvedAt);
         flushDetectingConflict();
+        publishOriginPostalCode(application, approvedAt);
         return SellerApplicationAdminResult.from(application);
     }
 
@@ -123,6 +128,18 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
      * 현재 시각을 DB 정밀도(DATETIME(6), 마이크로초)로 잘라 반환한다.
      * 시계가 나노초까지 주면 응답과 이벤트에 담은 값이 나중에 DB에서 읽은 값과 달라지므로, 처음부터 저장될 값으로 맞춘다.
      */
+    // 판매자가 되는 순간 delivery가 출고지를 갖도록 신청서의 처음 값을 보낸다(#587). 상품 등록은 SELLER 권한만 보므로
+    // 프로필을 등록하기 전에도 팔 수 있어서다. 이후 변경은 프로필이 보낸다.
+    // 버전 검사(flush)를 통과한 승인만 보낸다. 같은 트랜잭션에 outbox 줄로 남아 롤백되면 함께 사라진다.
+    // 이 항목이 생기기 전 신청은 값이 없어 보내지 않는다(delivery는 출고지가 없는 판매자에게 기본값을 쓴다)
+    private void publishOriginPostalCode(SellerApplication application, LocalDateTime approvedAt) {
+        if (application.getOriginPostalCode() == null) {
+            return;
+        }
+        sellerEventPublisher.publishOriginPostalCodeChanged(
+                application.getMemberId(), application.getOriginPostalCode(), approvedAt);
+    }
+
     private LocalDateTime now() {
         return LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
     }

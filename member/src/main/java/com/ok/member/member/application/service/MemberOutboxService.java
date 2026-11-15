@@ -31,7 +31,7 @@ public class MemberOutboxService implements MemberOutboxRecordUseCase {
     // 보낸 시각 기준 (전역 ClockConfig)
     private final Clock clock;
 
-    // MANDATORY: 호출한 쪽(판매자 프로필 저장)의 트랜잭션에 합류하고, 트랜잭션이 없으면 예외를 낸다.
+    // MANDATORY: 호출한 쪽(판매자 승인·프로필 저장)의 트랜잭션에 합류하고, 트랜잭션이 없으면 예외를 낸다.
     // 따로 커밋되면 롤백된 프로필 변경이 나가거나, 커밋된 변경이 안 나갈 수 있어서 같은 트랜잭션을 강제한다
     @Override
     @Transactional(propagation = Propagation.MANDATORY)

@@ -36,9 +36,6 @@ public class SellerProfile extends BaseTime {
     private static final Pattern CUSTOMER_SERVICE_PHONE =
             Pattern.compile("0\\d{1,2}-\\d{3,4}-\\d{4}|1\\d{3}-\\d{4}");
 
-    // 국가기본구역 우편번호(5자리 숫자). 요청 DTO와 같은 규칙이다
-    private static final Pattern ORIGIN_POSTAL_CODE = Pattern.compile("\\d{5}");
-
     @Id
     @GeneratedValue(strategy = IDENTITY)
     private Long id;
@@ -57,7 +54,7 @@ public class SellerProfile extends BaseTime {
 
     // 출고지(상품을 보내는 곳)의 우편번호. delivery가 배송비 계산용 사본을 갖도록 바뀔 때마다 Kafka로 보낸다(#587).
     // 이 컬럼 전에 만든 프로필은 값이 없다(null). 등록·수정 때는 필수라 다음 수정 때 채워진다
-    @Column(name = "origin_postal_code", length = 5)
+    @Column(name = "origin_postal_code", length = OriginPostalCode.LENGTH)
     private String originPostalCode;
 
     @Column(name = "introduction", length = INTRODUCTION_MAX_LENGTH)
@@ -118,7 +115,7 @@ public class SellerProfile extends BaseTime {
         String validRepresentativeName = requireText(representativeName, NAME_MAX_LENGTH,
                 "대표자명은 필수입니다.", "대표자명은 50자 이하여야 합니다.");
         String validPhone = requireCustomerServicePhone(customerServicePhone);
-        String validPostalCode = requireOriginPostalCode(originPostalCode);
+        String validPostalCode = OriginPostalCode.require(originPostalCode);
         String validIntroduction = requireIntroductionLength(introduction);
         String validImageKey = requireImageKeyLength(profileImageKey);
 
@@ -149,14 +146,6 @@ public class SellerProfile extends BaseTime {
         String stripped = phone == null ? null : phone.strip();
         if (stripped == null || !CUSTOMER_SERVICE_PHONE.matcher(stripped).matches()) {
             throw new RestApiException(SellerErrorCode.INVALID_CUSTOMER_SERVICE_PHONE);
-        }
-        return stripped;
-    }
-
-    private static String requireOriginPostalCode(String postalCode) {
-        String stripped = postalCode == null ? null : postalCode.strip();
-        if (stripped == null || !ORIGIN_POSTAL_CODE.matcher(stripped).matches()) {
-            throw new RestApiException(SellerErrorCode.INVALID_ORIGIN_POSTAL_CODE);
         }
         return stripped;
     }

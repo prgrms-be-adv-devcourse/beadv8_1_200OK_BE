@@ -12,9 +12,12 @@ import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberOutbox;
 import com.ok.member.member.domain.MemberOutboxEventType;
 import com.ok.member.member.domain.MemberOutboxStatus;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.adapter.out.persistence.SellerProfileJpaRepository;
 import com.ok.member.seller.application.dto.SellerProfileCommand;
+import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.member.seller.application.port.in.SellerProfileUseCase;
+import com.ok.member.seller.domain.SellerApplication;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +51,12 @@ class SellerOriginPostalCodeKafkaIntegrationTest extends AbstractIntegrationTest
 
     @Autowired
     SellerProfileUseCase sellerProfileUseCase;
+
+    @Autowired
+    SellerApplicationUseCase sellerApplicationUseCase;
+
+    @Autowired
+    SellerApplicationJpaRepository sellerApplicationRepository;
 
     @Autowired
     MemberOutboxRelayUseCase memberOutboxRelayUseCase;
@@ -119,6 +128,31 @@ class SellerOriginPostalCodeKafkaIntegrationTest extends AbstractIntegrationTest
             softly.assertThatCode(() -> LocalDateTime.parse(sut.get("occurredAt").asString())).doesNotThrowAnyException();
         });
         assertThat(memberOutboxRepository.findAll().getFirst().getStatus()).isEqualTo(MemberOutboxStatus.SENT);
+    }
+
+    @Test
+    void 판매자_신청을_승인하면_신청서의_우편번호를_승인_시각으로_보낸다() {
+        // given: 심사 중인 신청. 승인한 관리자도 회원이라 외래키 때문에 먼저 만든다
+        Long adminId = memberRepository.saveAndFlush(Member.createUser("admin01", "{bcrypt}encoded",
+                "admin01@example.com", "관리자", "admin01", AT)).getId();
+        SellerApplication application = SellerApplication.apply(sellerId, "청송 햇살농원", "김영수",
+                "512-81-04273", "제2026-경북청송-0031호", "37421", AT);
+        application.startReview(AT);
+        Long applicationId = sellerApplicationRepository.saveAndFlush(application).getId();
+
+        // when: 프로필을 등록하기 전에도 판매할 수 있어, 승인 때 delivery가 출고지를 갖게 한다
+        sellerApplicationUseCase.approve(adminId, applicationId);
+        memberOutboxRelayUseCase.relayPending(BATCH_SIZE);
+
+        // then
+        LocalDateTime approvedAt = sellerApplicationRepository.findById(applicationId).orElseThrow().getApprovedAt();
+        List<String> values = reader.readValuesFor(sellerId, READ_DURATION);
+        assertThat(values).hasSize(1);
+        JsonNode sut = jsonMapper.readTree(values.getFirst());
+        assertSoftly(softly -> {
+            softly.assertThat(sut.get("postalCode").asString()).isEqualTo("37421");
+            softly.assertThat(LocalDateTime.parse(sut.get("occurredAt").asString())).isEqualTo(approvedAt);
+        });
     }
 
     @Test
@@ -227,6 +261,7 @@ class SellerOriginPostalCodeKafkaIntegrationTest extends AbstractIntegrationTest
     private void cleanUp() {
         memberOutboxRepository.deleteAllInBatch();
         sellerProfileRepository.deleteAllInBatch();
+        sellerApplicationRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();
     }
 }

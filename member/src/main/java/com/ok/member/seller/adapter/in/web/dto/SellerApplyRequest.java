@@ -28,7 +28,13 @@ public record SellerApplyRequest(
         @Schema(description = "통신판매업 신고번호 (50자 이하, 앞뒤 공백 제거)", example = "제2026-경북청송-0031호")
         @NotBlank(message = "통신판매업 신고번호는 필수입니다.")
         @Size(max = 50, message = "통신판매업 신고번호는 50자 이하여야 합니다.")
-        String mailOrderNumber
+        String mailOrderNumber,
+
+        @Schema(description = "출고지(상품을 보내는 곳) 우편번호 (5자리 숫자). 승인되면 배송비 계산을 위해 배송 모듈에 전달되고, 이후에는 판매자 프로필에서 바꾼다",
+                example = "37421")
+        @NotBlank(message = "출고지 우편번호는 필수입니다.")
+        @Pattern(regexp = "\\d{5}", message = "출고지 우편번호는 5자리 숫자여야 합니다.")
+        String originPostalCode
 ) {
 
     /**
@@ -53,10 +59,11 @@ public record SellerApplyRequest(
         representativeName = trim(representativeName);
         businessNumber = normalizeBusinessNumber(businessNumber);
         mailOrderNumber = trim(mailOrderNumber);
+        originPostalCode = trim(originPostalCode);
     }
 
     public SellerApplyCommand toCommand() {
-        return new SellerApplyCommand(storeName, representativeName, businessNumber, mailOrderNumber);
+        return new SellerApplyCommand(storeName, representativeName, businessNumber, mailOrderNumber, originPostalCode);
     }
 
     private static String trim(String value) {

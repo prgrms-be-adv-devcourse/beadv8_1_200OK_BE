@@ -184,7 +184,7 @@ class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
     // 상태를 하나 추가하면 default가 없는 이 switch가 컴파일되지 않아, 권한 테스트에 새 상태를 넣도록 강제한다
     private SellerApplication saveApplicationIn(SellerApplicationStatus status) {
         SellerApplication application = SellerApplication.apply(memberId, "청송 햇살농원", "김영수",
-                "512-81-04273", "제2026-경북청송-0031호", APPLIED_AT);
+                "512-81-04273", "제2026-경북청송-0031호", "37421", APPLIED_AT);
         switch (status) {
             case PENDING -> {
                 // 신청하면 심사 대기 상태라 바꿀 것이 없다
