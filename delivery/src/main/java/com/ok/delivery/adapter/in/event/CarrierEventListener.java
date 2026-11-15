@@ -1,6 +1,6 @@
 package com.ok.delivery.adapter.in.event;
 
-import com.ok.common.event.ShipmentDispatchedEvent;
+import com.ok.delivery.application.dto.CarrierTrackingRequestedEvent;
 import com.ok.delivery.application.port.in.CarrierTrackingUseCase;
 import com.ok.delivery.application.port.in.ShipmentUseCase;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +22,7 @@ public class CarrierEventListener {
 
     // 출고가 커밋된 뒤에 요청한다. 출고가 롤백되면 이 이벤트도 전달되지 않는다
     @ApplicationModuleListener
-    void on(ShipmentDispatchedEvent event) {
+    void on(CarrierTrackingRequestedEvent event) {
         carrierTrackingUseCase.requestTracking(event.shipmentId(), event.carrier(), event.trackingNumber());
     }
 

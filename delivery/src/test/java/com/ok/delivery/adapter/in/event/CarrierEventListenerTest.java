@@ -1,6 +1,6 @@
 package com.ok.delivery.adapter.in.event;
 
-import com.ok.common.event.ShipmentDispatchedEvent;
+import com.ok.delivery.application.dto.CarrierTrackingRequestedEvent;
 import com.ok.delivery.application.port.in.CarrierTrackingUseCase;
 import com.ok.delivery.application.port.in.ShipmentUseCase;
 import org.junit.jupiter.api.Test;
@@ -8,8 +8,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.time.LocalDateTime;
 
 import static org.mockito.BDDMockito.then;
 
@@ -28,8 +26,7 @@ class CarrierEventListenerTest {
     @Test
     void 출고_이벤트를_받으면_택배사에_송장_추적을_요청한다() {
         // given
-        ShipmentDispatchedEvent event = new ShipmentDispatchedEvent(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890",
-                LocalDateTime.of(2026, 10, 21, 10, 0));
+        CarrierTrackingRequestedEvent event = new CarrierTrackingRequestedEvent(1L, "CJ_LOGISTICS", "1234567890");
 
         // when
         sut.on(event);
