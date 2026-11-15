@@ -50,6 +50,7 @@ interface SellerProfileControllerSpec {
     @ApiResponse(responseCode = "401", description = "로그인 필요")
     @ApiResponse(responseCode = "403", description = "판매자 권한(SELLER)이 없음. 승인 직후라면 토큰을 재발급받고 다시 시도")
     @ApiResponse(responseCode = "404", description = "프로필을 아직 등록하지 않음 (등록 API를 사용)")
+    @ApiResponse(responseCode = "409", description = "다른 화면(탭)에서 프로필을 먼저 수정함. 다시 조회한 뒤 저장")
     @ApiResponse(responseCode = "422", description = "요청 값 검증 실패, 또는 판매자 프로필용으로 업로드한 사진 주소가 아님")
     ResponseEntity<SellerProfileResponse> update(Long memberId, SellerProfileRequest request);
 

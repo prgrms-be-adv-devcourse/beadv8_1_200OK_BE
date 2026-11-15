@@ -9,6 +9,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -63,6 +64,12 @@ public class SellerProfile extends BaseTime {
     // URL이 아니라 object key를 저장해, 버킷 주소나 CDN이 바뀌어도 데이터를 고치지 않게 한다 (상품 이미지와 같은 방식)
     @Column(name = "profile_image_key", length = PROFILE_IMAGE_KEY_MAX_LENGTH)
     private String profileImageKey;
+
+    // 수정은 모든 칸을 덮어써서, 판매자가 두 탭에서 동시에 저장하면 나중 요청이 먼저 바꾼 출고지를 되돌리고
+    // 바뀌지 않았다고 보아 메시지도 남기지 않는다(delivery 사본과 어긋남). 나중에 커밋하는 쪽을 낙관적 락 예외로 실패시킨다
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 
     private SellerProfile(Long memberId, String storeName, String representativeName, String customerServicePhone,
                           String originPostalCode, String introduction, String profileImageKey) {

@@ -15,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.Clock;
@@ -29,6 +30,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
@@ -184,6 +186,22 @@ class SellerProfileServiceTest {
             softly.assertThat(profile.getProfileImageKey()).isNull();
             softly.assertThat(result.profileImageUrl()).isNull();
         });
+    }
+
+    @Test
+    void 다른_탭이_먼저_수정해_버전이_맞지_않으면_409로_막고_출고지_메시지를_남기지_않는다() {
+        // given: 출고지를 바꾸는 수정인데, 다른 탭이 먼저 커밋해 버전 검사에서 걸린다
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+        willThrow(new ObjectOptimisticLockingFailureException(SellerProfile.class, 1L))
+                .given(sellerProfileRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.update(MEMBER_ID, command(null, "06236")))
+                .isInstanceOfSatisfying(RestApiException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(SellerErrorCode.SELLER_PROFILE_CONCURRENT_MODIFICATION));
+        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test

@@ -11,6 +11,7 @@ import com.ok.member.seller.domain.SellerProfile;
 import com.ok.member.seller.exception.SellerErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -73,6 +74,7 @@ public class SellerProfileService implements SellerProfileUseCase {
                 command.introduction(),
                 imageUrlValidator.toObjectKey(command.profileImageUrl())
         );
+        flushDetectingConflict();
         // 상호명·소개만 고친 수정은 delivery가 알 필요가 없어 보내지 않는다. 메시지 수를 줄이려는 것이고,
         // delivery는 발생 시각 기준으로 덮어써서 같은 값을 다시 받아도 결과는 같다
         if (originPostalCodeChanged) {
@@ -91,6 +93,19 @@ public class SellerProfileService implements SellerProfileUseCase {
     private SellerProfile findProfile(Long memberId) {
         return sellerProfileRepository.findByMemberId(memberId)
                 .orElseThrow(() -> new RestApiException(SellerErrorCode.SELLER_PROFILE_NOT_FOUND));
+    }
+
+    /**
+     * 변경을 바로 DB에 반영해 낙관적 락(@Version) 검사를 이 메서드 안에서 하게 한다.
+     * 두 탭이 같은 프로필을 읽고 저장하면 나중 요청이 먼저 바꾼 출고지를 되돌리면서도 "바뀌지 않음"으로 보아 메시지를 남기지 않아,
+     * member와 delivery의 출고지가 어긋난다. 버전으로 나중 쪽을 409로 막고, 검사를 통과한 수정만 메시지를 남긴다.
+     */
+    private void flushDetectingConflict() {
+        try {
+            sellerProfileRepository.flush();
+        } catch (OptimisticLockingFailureException e) {
+            throw new RestApiException(SellerErrorCode.SELLER_PROFILE_CONCURRENT_MODIFICATION);
+        }
     }
 
     /**

@@ -15,4 +15,7 @@ public interface SellerProfileRepository {
 
     <S extends SellerProfile> S saveAndFlush(S profile);
 
+    // 낙관적 락(@Version) 충돌을 커밋 전에 드러내 에러 코드로 바꾸고, 충돌이 없을 때만 출고지 메시지를 남기려고 쓴다
+    void flush();
+
 }

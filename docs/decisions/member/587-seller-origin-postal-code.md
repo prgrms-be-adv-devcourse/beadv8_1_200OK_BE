@@ -28,6 +28,7 @@ delivery가 배송비 계산에 쓸 판매자 출고지 사본을 갖도록(#558
 | 형식 오류 응답 | 422 (`INVALID_ORIGIN_POSTAL_CODE`, 요청 검증은 `validation-failed`) | 이슈에는 400이었으나 요청 값 검증 실패는 422가 팀 규칙이다(`api.md`) |
 | outbox | #560의 `member_outbox`를 그대로 쓰고 본문 칸(`payload`)만 더함 (사용자 결정) | 우편번호는 바뀌는 값이라 기록한 시점의 값을 저장해야 한다. 판매자 ID가 회원 ID라 `member_id` 외래키와 30초 발송 작업·실패 시 멈춤 정책이 그대로 맞는다 |
 | 판매자가 줄을 남기는 길 | seller의 출력 어댑터(`MemberOutboxAdapter`)가 member의 `MemberOutboxRecordUseCase`를 부름 | outbox가 `member` 하위 도메인에 있고, ArchitectureTest는 하위 도메인끼리 출력 어댑터에서 상대 유스케이스로만 부르게 한다(`MemberAuthAdapter`와 같은 길). 판매자 서비스는 `SellerEventPublisher`만 안다 |
+| 프로필 동시 수정 | `SellerProfile`에 `@Version`을 두고 수정 때 flush로 검사해 나중 커밋을 409(`SELLER_PROFILE_CONCURRENT_MODIFICATION`)로 거부, 검사를 통과한 뒤에 outbox 기록 (멘토링 피드백) | delivery는 `occurredAt`이 늦은 메시지로만 덮어써, member에서 같은 판매자의 변경이 차례로 커밋될 때만 결과가 맞다. 수정은 모든 칸을 덮어써서, 두 탭에서 한쪽은 출고지를, 다른 쪽은 상호명만 고쳐 동시에 저장하면 나중 요청이 출고지를 되돌리면서 "바뀌지 않음"으로 보아 메시지를 남기지 않는다. 그러면 판매자가 출고지를 다시 바꿀 때까지 두 모듈 값이 다르다. 판매자 신청과 같은 방식(`flushDetectingConflict`)이다 |
 | 같은 트랜잭션 보장 | 기록 유스케이스를 `Propagation.MANDATORY`로 | 따로 커밋되면 롤백된 프로필 변경이 나가거나 커밋된 변경이 안 나간다. 트랜잭션 없이 부르면 예외가 나게 해 실수를 막는다 |
 | 본문 만들기·읽기 | `adapter/out/event`의 `MemberMessagePayloadJson`이 메시지 클래스로 쓰고 읽음(포트 `MemberMessagePayloadWriter`) | 메시지 모양은 받는 쪽과의 약속이라 메시지 클래스가 있는 어댑터에 둔다. 보낼 때는 JSON 문자열이 아니라 메시지 객체를 보낸다. 문자열이면 Kafka 공통 직렬화가 따옴표로 한 번 더 감싸고, 객체로 보내야 시각 모양이 다른 모듈 메시지와 같아진다 |
 | 판매자 승인 이벤트 | 스프링 발행·포트 메서드·common 클래스·테스트를 지움 (사용자 결정, 지갑 담당과 합의) | 받는 모듈이 없고, 분리 뒤에는 스프링 이벤트가 member 앱 밖으로 나가지 않으며, 팀이 스프링 이벤트를 모두 걷어 내기로 했다. 필요해지면 지갑 출금 작업 때 메시지 약속을 정해 outbox로 보낸다 |
@@ -48,6 +49,7 @@ delivery가 배송비 계산에 쓸 판매자 출고지 사본을 갖도록(#558
 
 - 이 작업 전에 승인된 판매자는 신청서와 프로필 모두 우편번호가 비어 있어, 다음 프로필 수정 때까지 delivery에 출고지가 없다. delivery는 배송 설정이 없는 판매자에게 기본값을 쓰는 방식(`SellerShippingSettingService`)으로 출고지가 없는 경우도 다뤄야 한다.
 - 승인 때 발행은 낙관적 락 검사(flush)를 통과한 뒤에 한다. 순서를 바꾸면 다른 관리자가 먼저 처리해 409가 나는 승인도 줄을 남기려 하다 같은 트랜잭션에서 롤백된다(결과는 같지만 불필요한 작업).
+- 프로필 수정에서 outbox 기록은 버전 검사(flush) 뒤에 한다. `SellerProfile`의 `@Version`을 빼거나 수정을 부분 수정으로 바꾸면 위 동시 수정 문제를 다시 본다.
 - `MemberOutboxRecordUseCase`는 반드시 프로필 저장 트랜잭션 안에서 불러야 한다. 서비스 메서드의 `@Transactional`을 빼면 `IllegalTransactionStateException`이 난다.
 - 메시지 필드를 바꾸면 이미 쌓인 PENDING 줄의 본문이 옛 모양이다. 보낼 때 메시지 클래스로 다시 읽으므로 필드 이름을 바꾸거나 지우면 그 줄이 읽기 실패로 막히고, 실패 시 멈춤 정책 때문에 뒤 줄도 모두 기다린다. 필드를 바꾸기 전에 PENDING 줄이 0건인지 확인한다.
 - 본문은 `VARCHAR(1000)`이고 넘치면 기록 단계에서 예외가 난다(잘라 저장하면 깨진 JSON이 나가서).

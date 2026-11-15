@@ -18,6 +18,8 @@ import com.ok.member.seller.application.dto.SellerProfileCommand;
 import com.ok.member.seller.application.port.in.SellerApplicationUseCase;
 import com.ok.member.seller.application.port.in.SellerProfileUseCase;
 import com.ok.member.seller.domain.SellerApplication;
+import com.ok.member.seller.exception.SellerErrorCode;
+import com.ok.common.exception.RestApiException;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +29,7 @@ import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -171,6 +174,34 @@ class SellerOriginPostalCodeKafkaIntegrationTest extends AbstractIntegrationTest
         assertSoftly(softly -> {
             softly.assertThat(sut.get(0)).contains("\"postalCode\":\"37421\"");
             softly.assertThat(sut.get(1)).contains("\"postalCode\":\"06236\"");
+        });
+    }
+
+    @Test
+    void 두_탭에서_동시에_수정하면_나중_쪽을_409로_막아_member와_delivery의_출고지가_어긋나지_않는다() {
+        // given: 탭 B가 출고지 37421인 프로필을 먼저 읽어 둔다
+        sellerProfileUseCase.register(sellerId, command("37421"));
+        memberOutboxRepository.deleteAllInBatch();
+        TransactionTemplate tabB = new TransactionTemplate(transactionManager);
+        TransactionTemplate tabA = new TransactionTemplate(transactionManager);
+        tabA.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        // when & then: B가 저장하기 전에 탭 A가 출고지를 06236으로 바꿔 커밋하고, B는 상호명만 고쳐 저장한다
+        assertThatThrownBy(() -> tabB.executeWithoutResult(status -> {
+            sellerProfileRepository.findByMemberId(sellerId).orElseThrow();
+            tabA.executeWithoutResult(inner -> sellerProfileUseCase.update(sellerId, command("06236")));
+            sellerProfileUseCase.update(sellerId, new SellerProfileCommand(
+                    "청송 햇살농원 본점", "김영수", "054-873-2210", "37421", null, null));
+        })).isInstanceOfSatisfying(RestApiException.class, e -> assertThat(e.getErrorCode())
+                .isEqualTo(SellerErrorCode.SELLER_PROFILE_CONCURRENT_MODIFICATION));
+
+        // then: member에는 A의 06236이 남고, outbox에도 A의 06236 메시지 하나만 있다
+        List<MemberOutbox> outbox = memberOutboxRepository.findAll();
+        assertThat(outbox).hasSize(1);
+        assertSoftly(softly -> {
+            softly.assertThat(sellerProfileRepository.findByMemberId(sellerId).orElseThrow().getOriginPostalCode())
+                    .isEqualTo("06236");
+            softly.assertThat(outbox.getFirst().getPayload()).contains("\"postalCode\":\"06236\"");
         });
     }
 
