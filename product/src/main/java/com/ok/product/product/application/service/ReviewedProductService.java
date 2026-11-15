@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.ok.common.exception.RestApiException;
@@ -68,8 +69,9 @@ public class ReviewedProductService implements ReviewedProductUseCase {
 			.map(ProductOption::getName);
 	}
 
+	// 리뷰 저장과 같은 트랜잭션에서만 집계를 바꾼다. 트랜잭션 없이 불리면 집계만 따로 커밋되므로 새로 열지 않고 실패시킨다
 	@Override
-	@Transactional
+	@Transactional(propagation = Propagation.MANDATORY)
 	public void addReviewStats(Long productId, int countDelta, int ratingDelta) {
 		productRepository.addReviewStats(productId, countDelta, ratingDelta);
 	}

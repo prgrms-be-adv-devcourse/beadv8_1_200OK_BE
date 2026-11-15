@@ -1,6 +1,7 @@
 package com.ok.product;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.endsWith;
@@ -32,6 +33,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -42,6 +44,7 @@ import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.application.port.in.ReviewedProductUseCase;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.adapter.out.persistence.ProductReviewJpaRepository;
 import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestJpaRepository;
@@ -78,6 +81,9 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	FakeOrderApiClient orderApiClient;
+
+	@Autowired
+	ReviewedProductUseCase reviewedProductUseCase;
 
 	private MockMvc mockMvc;
 	private Long productId;
@@ -156,6 +162,14 @@ class ProductReviewIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(jsonPath("$.averageRating").value(0.0));
 		// 집계는 bulk UPDATE라 판매자의 상품 수정과 충돌하지 않도록 version을 올리지 않는다
 		assertThat(productRepository.findById(productId).orElseThrow().getVersion()).isEqualTo(version);
+	}
+
+	@Test
+	void 리뷰_트랜잭션_밖에서는_리뷰_집계를_바꿀_수_없다() {
+		// when & then
+		assertThatThrownBy(() -> reviewedProductUseCase.addReviewStats(productId, 1, 9))
+			.isInstanceOf(IllegalTransactionStateException.class);
+		assertThat(productRepository.findById(productId).orElseThrow().getReviewCount()).isZero();
 	}
 
 	@Test

@@ -53,6 +53,7 @@ public interface ReviewedProductUseCase {
 	/**
 	 * 리뷰 수와 별점 합계를 DB에서 더한다. 상품 행에 배타 락을 잡는다.
 	 * 영속성 컨텍스트를 거치지 않으므로 같은 트랜잭션에서 읽어 둔 상품의 집계 값은 갱신 전 값이다.
+	 * 리뷰를 저장하는 트랜잭션 안에서만 부른다. 트랜잭션 없이 부르면 {@code IllegalTransactionStateException}이 난다.
 	 */
 	void addReviewStats(Long productId, int countDelta, int ratingDelta);
 
