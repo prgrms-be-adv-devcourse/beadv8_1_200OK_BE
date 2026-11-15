@@ -29,9 +29,8 @@ import java.time.Duration;
 public class RefundResumeScheduler {
 
     static final String LOCK_NAME = "refundResume";
-    // 이 시간이 지나면 잠근 서버가 죽었다고 보고 다른 서버가 잡을 수 있다. 한 회차는 보통 몇 초다.
-    // 다만 Kafka가 죽으면 지갑 발행 한 번이 약 70초 막혀, 묶음 50건이면 한 회차가 이 시간을 넘길 수 있다. 그러면 다른 서버도 함께 돌지만
-    // 같은 단계는 두 번 불리지 않는다(위 이유). 서로 환불 행 잠금을 기다리는 헛일만 생긴다.
+    // 이 시간이 지나면 잠근 서버가 죽었다고 보고 다른 서버가 잡을 수 있다. 한 회차는 보통 몇 초이고, Kafka가 죽어도 회차 시간 한도
+    // (ResumeDueRefundsService.TIME_BUDGET 30초) 덕분에 최대 약 100초라 이 시간 안에 끝난다. 넘더라도 같은 단계는 두 번 불리지 않는다(위 이유).
     // 더 길게 잡으면 잠근 서버가 죽었을 때 알람이 그만큼 오래 멈춘다
     private static final Duration LOCK_AT_MOST_FOR = Duration.ofMinutes(5);
     // 회차가 금방 끝나도 이만큼은 잠금을 쥔다. 서버마다 시계가 조금 달라 같은 회차를 바로 이어 도는 것을 막는다
@@ -57,7 +56,8 @@ public class RefundResumeScheduler {
     // TODO(#577): 간격을 설정 파일로 뺄지 정한다. 지금은 단계 줄의 다시 시도 간격(1분)과 맞춘 상수다
     @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
     public void run() {
-        // ShedLock이 만료 판단에 쓰는 시계와 같은 기준을 쓰려고 ShedLock 시계로 잠금 시작 시각을 잡는다
+        // 잠금 만료(lock_until)는 usingDbTime이라 DB 시각으로 계산된다. 여기 넘기는 시작 시각은 잠금 설정 객체를 만들 때만 쓰여
+        // 어느 시계여도 동작은 같다. 다른 ShedLock 사용처와 맞추려고 ShedLock 시계를 쓴다
         LockConfiguration lock = new LockConfiguration(ClockProvider.now(), LOCK_NAME, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR);
         Runnable task = this::resumeDue;
         lockingTaskExecutor.executeWithLock(task, lock);
