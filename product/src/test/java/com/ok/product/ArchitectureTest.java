@@ -13,11 +13,13 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -41,6 +43,7 @@ import jakarta.persistence.Table;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -49,13 +52,9 @@ class ArchitectureTest {
 
     // product 모듈의 하위 도메인. 아래 헥사고날 규칙을 하위 도메인마다 검사한다.
     // 새 하위 도메인을 만들면 여기에 더한다. 빠뜨리면 하위_도메인_목록_밖에_클래스를_두지_않는다 규칙이 실패한다
-    private static final List<Subdomain> SUBDOMAINS = List.of(new Subdomain("product"));
+    private static final List<Subdomain> SUBDOMAINS = List.of(new Subdomain("product"), new Subdomain("review"));
 
-    // review는 아직 레이어 구조다. 헥사고날로 옮기면 SUBDOMAINS로 옮기고 이 상수와 레이어 규칙을 지운다.
-    // 그때까지 review는 product의 엔티티·저장소 포트·에러 코드·응답 DTO를 직접 쓴다
-    private static final String LAYERED_REVIEW = "com.ok.product.review..";
-
-    // 다른 하위 도메인을 부를 수 있는 위치. 하위 도메인 사이 호출을 출력 어댑터에만 두어 의존이 한 곳에서 보이게 한다
+    // 출력 어댑터. 이벤트 발행 도구를 쓸 수 있는 유일한 위치다
     private static final String ANY_SUBDOMAIN_ADAPTER_OUT = "com.ok.product.*.adapter.out..";
     // 모듈 최상위 패키지(하위 패키지 제외). 다른 모듈에 공개하는 클래스를 두는 곳이다(CLAUDE.md 모듈 경계)
     private static final String MODULE_ROOT = "com.ok.product";
@@ -65,11 +64,23 @@ class ArchitectureTest {
             .map(Subdomain::all)
             .toArray(String[]::new);
 
-    // 이름에 ForUpdate가 있지만 비관적 잠금이 아닌 조회. 이름을 바꾸지 않고 기대 잠금만 따로 둔다.
-    // 다른 저장소에 같은 이름의 비관적 잠금 조회가 있어 "포트 이름.메서드 이름"으로 찾는다
+    // 이름 규칙(ForUpdate, ForShare)과 잠금이 어긋나는 조회. 이름을 바꾸지 않고 기대 잠금을 따로 둔다.
+    // 다른 저장소에 같은 이름의 조회가 있을 수 있어 "포트 이름.메서드 이름"으로 찾는다
     private static final Map<String, LockModeType> LOCK_MODE_BY_METHOD = Map.of(
             // 수정용 조회. 비관적 잠금 대신 커밋 때 version을 올려 동시 수정을 감지한다
-            "ProductRepository.findForUpdateByIdAndDeletedAtIsNull", LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+            "ProductRepository.findForUpdateByIdAndDeletedAtIsNull", LockModeType.OPTIMISTIC_FORCE_INCREMENT,
+            // 작업자가 분석 요청을 꺼내는 조회. 이름에 ForUpdate가 없지만 SKIP LOCKED로 잠가 꺼낸다
+            "ReviewAnalysisRequestRepository.findByAnalysisTypeAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc",
+            LockModeType.PESSIMISTIC_WRITE);
+
+    // 다른 작업자가 꺼내는 중인 행을 기다리지 않고 건너뛰는(SKIP LOCKED) 조회. 잠금과 함께 lock.timeout=-2 힌트도 다시 선언해야 한다
+    private static final Set<String> SKIP_LOCKED_METHODS = Set.of(
+            "ReviewAnalysisRequestRepository.findByAnalysisTypeAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc");
+
+    private static final DescribedPredicate<JavaMethod> 잠금_조회 = DescribedPredicate.describe(
+            "lock queries (name contains ForUpdate/ForShare or listed in LOCK_MODE_BY_METHOD)",
+            method -> method.getName().matches(".*For(Update|Share).*")
+                    || LOCK_MODE_BY_METHOD.containsKey(method.getOwner().getSimpleName() + "." + method.getName()));
 
     // 헥사고날 구조 (member ArchitectureTest와 같은 규칙을 하위 도메인 범위로 검사한다)
 
@@ -77,7 +88,7 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule 하위_도메인_목록_밖에_클래스를_두지_않는다 = classes()
             .that().resideInAPackage("com.ok.product..")
-            .should().resideInAnyPackage(concat(SUBDOMAIN_PACKAGES, MODULE_ROOT, MODULE_CONFIG, LAYERED_REVIEW))
+            .should().resideInAnyPackage(concat(SUBDOMAIN_PACKAGES, MODULE_ROOT, MODULE_CONFIG))
             .because("새 하위 도메인을 SUBDOMAINS에 더하지 않으면 헥사고날 규칙이 아무것도 검사하지 않은 채 통과한다. "
                     + "모듈 최상위는 다른 모듈에 공개하는 클래스, config는 모듈 전용 설정 자리다 (product 헥사고날 구조, docs/DEVELOPMENT.md)");
 
@@ -94,18 +105,15 @@ class ArchitectureTest {
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "AdapterOut")
             .because("진입점(in)과 외부 연결(out)이 서비스를 거쳐서만 만나야 연동 방식을 바꿔도 비즈니스 코드가 바뀌지 않는다 (product 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
+    // order의 장바구니처럼 같은 프로세스 안의 호출이라 다른 하위 도메인의 유스케이스와 dto를 바로 쓴다. 출력 어댑터를 두면 변환만 늘어난다
     @ArchTest
-    static final ArchRule 다른_하위_도메인은_adapter_out에서_유스케이스_포트와_dto만_쓴다 = eachSubdomain(subdomain -> CompositeArchRule
-            .of(classes()
-                    .that().resideInAPackage(subdomain.all())
-                    .and().resideOutsideOfPackages(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
-                    // onlyBeAccessed는 호출·필드 접근만 보므로, 타입 선언이나 클래스 참조까지 잡도록 의존 전체를 본다
-                    .should().onlyHaveDependentClassesThat().resideInAnyPackage(subdomain.all(), LAYERED_REVIEW))
-            .and(classes()
-                    .that().resideInAnyPackage(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
-                    .should().onlyHaveDependentClassesThat().resideInAnyPackage(subdomain.all(), ANY_SUBDOMAIN_ADAPTER_OUT, MODULE_ROOT, LAYERED_REVIEW))
-            .because("다른 하위 도메인은 자기 출력 어댑터(adapter.out)에서 유스케이스로만 부른다. 하위 도메인 사이 의존을 어댑터 한 곳에 모아 "
-                    + "상대 유스케이스나 DTO가 바뀌어도 서비스가 바뀌지 않게 한다. 레이어 구조로 남은 review는 옮길 때까지 예외다 (product 헥사고날 구조, docs/DEVELOPMENT.md)"));
+    static final ArchRule 다른_하위_도메인은_유스케이스_포트와_dto만_쓴다 = eachSubdomain(subdomain -> classes()
+            .that().resideInAPackage(subdomain.all())
+            .and().resideOutsideOfPackages(subdomain.pkg("application.port.in"), subdomain.pkg("application.dto"))
+            // onlyBeAccessed는 호출·필드 접근만 보므로, 타입 선언이나 클래스 참조까지 잡도록 의존 전체를 본다
+            .should().onlyHaveDependentClassesThat().resideInAPackage(subdomain.all())
+            .because("다른 하위 도메인은 유스케이스와 dto로만 쓴다. 엔티티, 저장소 포트, 에러 코드, 웹 DTO를 쓰면 "
+                    + "한 하위 도메인의 내부 변경이 다른 하위 도메인까지 번진다 (product 헥사고날 구조, docs/DEVELOPMENT.md)"));
 
     // 포트는 JPA를 몰라 잠금을 붙일 수 없다. *JpaRepository에서 다시 선언하지 않으면 Spring Data가 이름만 보고
     // 잠금 없는 조회를 만들어 오류 없이 돈다. 잠금 조회는 이름(ForUpdate, ForShare)으로 찾고, 이름과 잠금 종류가 맞는지도 본다.
@@ -113,13 +121,14 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule 잠금_조회는_JPA_저장소에_잠금과_함께_다시_선언한다 = methods()
             .that().areDeclaredInClassesThat().resideInAPackage("com.ok.product.*.application.port.out..")
-            .and().haveNameMatching(".*For(Update|Share).*")
+            .and(잠금_조회)
             .should(new ArchCondition<JavaMethod>("be redeclared in a *JpaRepository with a lock matching its name") {
                 @Override
                 public void check(JavaMethod portMethod, ConditionEvents events) {
                     boolean forUpdate = portMethod.getName().contains("ForUpdate");
-                    LockModeType expected = LOCK_MODE_BY_METHOD.getOrDefault(
-                            portMethod.getOwner().getSimpleName() + "." + portMethod.getName(),
+                    String key = portMethod.getOwner().getSimpleName() + "." + portMethod.getName();
+                    boolean skipLocked = SKIP_LOCKED_METHODS.contains(key);
+                    LockModeType expected = LOCK_MODE_BY_METHOD.getOrDefault(key,
                             forUpdate ? LockModeType.PESSIMISTIC_WRITE : LockModeType.PESSIMISTIC_READ);
                     String nativeLock = forUpdate ? "FOR UPDATE" : "FOR SHARE";
                     List<JavaClass> jpaRepositories = portMethod.getOwner().getAllSubclasses().stream()
@@ -132,6 +141,10 @@ class ArchitectureTest {
                             .allMatch(repository -> repository.getMethods().stream()
                                     .anyMatch(method -> method.getName().equals(portMethod.getName())
                                             && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
+                                            && (!skipLocked || method.tryGetAnnotationOfType(QueryHints.class)
+                                                    .map(hints -> Arrays.stream(hints.value()).anyMatch(hint ->
+                                                            "jakarta.persistence.lock.timeout".equals(hint.name()) && "-2".equals(hint.value())))
+                                                    .orElse(false))
                                             && (method.tryGetAnnotationOfType(Lock.class)
                                                     .map(lock -> lock.value() == expected)
                                                     .orElse(false)
@@ -140,10 +153,12 @@ class ArchitectureTest {
                                                     .orElse(false))));
                     events.add(new SimpleConditionEvent(portMethod, ok,
                             portMethod.getFullName() + (ok ? " is" : " is not")
-                                    + " redeclared in a *JpaRepository with @Lock(" + expected + ") or a native " + nativeLock));
+                                    + " redeclared in a *JpaRepository with @Lock(" + expected + ") or a native " + nativeLock
+                                    + (skipLocked ? " and the SKIP LOCKED hint (lock.timeout=-2)" : "")));
                 }
             })
-            .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 드러난다. 재고 배정·해제가 같은 행을 동시에 바꿔 재고가 샌다. 빌드에서 바로 실패하게 한다 (product 헥사고날 구조, docs/DEVELOPMENT.md)");
+            .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 드러난다. 재고가 새거나 리뷰 집계가 두 번 바뀌거나 작업자 둘이 같은 분석 요청을 꺼낸다. "
+                    + "빌드에서 바로 실패하게 한다 (product 헥사고날 구조, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule 입력_어댑터는_유스케이스_포트와_dto만_안다 = eachSubdomain(subdomain -> noClasses()
@@ -250,37 +265,6 @@ class ArchitectureTest {
 
     }
 
-    // 레이어 구조로 남은 review (헥사고날로 옮기면 이 절을 지운다)
-
-    @ArchTest
-    static final ArchRule review는_컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = layeredArchitecture()
-            .consideringOnlyDependenciesInLayers()
-            .layer("Controller").definedBy("com.ok.product.review.adapter.in.web..")
-            .layer("Service").definedBy("com.ok.product.review.application.service..")
-            .layer("Repository").definedBy("com.ok.product.review.adapter.out.persistence..")
-            .layer("Domain").definedBy("com.ok.product.review.domain..")
-            .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
-            .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
-            .whereLayer("Repository").mayOnlyBeAccessedByLayers("Service")
-            .whereLayer("Domain").mayOnlyBeAccessedByLayers("Service", "Repository")
-            .because("레이어가 한 방향으로만 의존해야 한 레이어의 변경이 다른 레이어로 번지지 않는다. 엔티티는 서비스 밖으로 내보내지 않는다 (컨벤션 2.1, 2.3)");
-
-    @ArchTest
-    static final ArchRule review의_RestController는_controller_패키지에_있다 = classes()
-            .that().areAnnotatedWith(RestController.class)
-            .and().resideInAPackage(LAYERED_REVIEW)
-            .should().haveSimpleNameEndingWith("Controller")
-            .andShould().resideInAPackage("com.ok.product.review.adapter.in.web..")
-            .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
-
-    @ArchTest
-    static final ArchRule review의_리포지토리는_repository_패키지에_있다 = classes()
-            .that().areAssignableTo(org.springframework.data.repository.Repository.class)
-            .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .and().resideInAPackage(LAYERED_REVIEW)
-            .should().resideInAPackage("com.ok.product.review.adapter.out.persistence..")
-            .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
-
     // 모듈 전체
 
     @ArchTest
@@ -296,8 +280,7 @@ class ArchitectureTest {
     static final ArchRule Service는_Service로_끝나고_application_service_패키지에_있다 = classes()
             .that().areAnnotatedWith(Service.class)
             .should().haveSimpleNameEndingWith("Service")
-            // review는 헥사고날로 옮길 때까지 service 패키지에 둔다
-            .andShould().resideInAnyPackage("com.ok.product.*.application.service..", "com.ok.product.review.application.service..")
+            .andShould().resideInAPackage("com.ok.product.*.application.service..")
             .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2, product 헥사고날 구조)");
 
     @ArchTest
