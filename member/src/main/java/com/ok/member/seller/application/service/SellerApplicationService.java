@@ -124,10 +124,6 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
         return SellerApplicationAdminResult.from(application);
     }
 
-    /**
-     * 현재 시각을 DB 정밀도(DATETIME(6), 마이크로초)로 잘라 반환한다.
-     * 시계가 나노초까지 주면 응답과 이벤트에 담은 값이 나중에 DB에서 읽은 값과 달라지므로, 처음부터 저장될 값으로 맞춘다.
-     */
     // 판매자가 되는 순간 delivery가 출고지를 갖도록 신청서의 처음 값을 보낸다(#587). 상품 등록은 SELLER 권한만 보므로
     // 프로필을 등록하기 전에도 팔 수 있어서다. 이후 변경은 프로필이 보낸다.
     // 버전 검사(flush)를 통과한 승인만 보낸다. 같은 트랜잭션에 outbox 줄로 남아 롤백되면 함께 사라진다.
@@ -140,6 +136,10 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
                 application.getMemberId(), application.getOriginPostalCode(), approvedAt);
     }
 
+    /**
+     * 현재 시각을 DB 정밀도(DATETIME(6), 마이크로초)로 잘라 반환한다.
+     * 시계가 나노초까지 주면 응답과 이벤트에 담은 값이 나중에 DB에서 읽은 값과 달라지므로, 처음부터 저장될 값으로 맞춘다.
+     */
     private LocalDateTime now() {
         return LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
     }
