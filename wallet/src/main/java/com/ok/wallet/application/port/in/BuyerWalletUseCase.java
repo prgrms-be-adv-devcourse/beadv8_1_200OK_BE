@@ -3,15 +3,9 @@ package com.ok.wallet.application.port.in;
 import com.ok.wallet.application.dto.BuyerBalanceResult;
 
 /**
- * 구매자 지갑 생성과 잔액 조회 유스케이스.
+ * 구매자 지갑 잔액 조회 유스케이스.
  */
 public interface BuyerWalletUseCase {
-
-    /**
-     * 구매자 지갑이 없으면 만든다. 이미 있으면 그대로 둔다.
-     * 회원가입 리스너처럼 지갑이 있는지만 보장하면 되는 곳에서 쓰며, 같은 회원으로 여러 번 불러도 지갑은 하나만 생긴다.
-     */
-    void createIfAbsent(Long memberId);
 
     /**
      * 현재 잔액을 잠그지 않고 조회한다. 지갑이 아직 없으면 0으로 본다.

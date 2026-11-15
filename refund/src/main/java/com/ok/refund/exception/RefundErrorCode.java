@@ -30,7 +30,9 @@ public enum RefundErrorCode implements ErrorCode {
     ORDER_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Order API failed", "주문 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."),
 
     // 상품 모듈 호출 (승인 뒤 재고 되돌리기, #414)
-    PRODUCT_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Product API failed", "상품 재고를 되돌리지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    PRODUCT_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Product API failed", "상품 재고를 되돌리지 못했습니다. 잠시 후 다시 시도해 주세요."),
+    // 상품이 다시 해도 결과가 같은 이유(배정 기록 없음, 해제 가능 수량 초과, 같은 환불 다른 내용)로 해제를 거절함. 다시 시도하지 않고 단계를 멈춘다(#576)
+    PRODUCT_RELEASE_REFUSED(HttpStatus.CONFLICT, "Product release refused", "상품 재고를 되돌릴 수 없는 상태입니다. 관리자에게 문의해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String title;

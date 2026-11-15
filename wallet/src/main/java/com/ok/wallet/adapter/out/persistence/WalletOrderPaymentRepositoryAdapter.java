@@ -26,4 +26,9 @@ public class WalletOrderPaymentRepositoryAdapter implements WalletOrderPaymentRe
     public Optional<WalletOrderPayment> findForShareByOrderId(Long orderId) {
         return walletOrderPaymentJpaRepository.findForShareByOrderId(orderId);
     }
+
+    @Override
+    public Optional<WalletOrderPayment> findByOrderId(Long orderId) {
+        return walletOrderPaymentJpaRepository.findByOrderId(orderId);
+    }
 }

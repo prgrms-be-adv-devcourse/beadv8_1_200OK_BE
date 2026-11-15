@@ -6,7 +6,8 @@ package com.ok.payout.application.port.in;
 public record PayoutDraftResult(
         // 이번 회차에 뽑은 판매자 수 (실패 포함). 0이면 남은 판매자가 없음 → tasklet 종료
         int sellerCount,
-        // 그중 저장에 실패해 UNEXPECTED_ERROR로 기록한 판매자 수
+        // 그중 저장된 주문이 하나도 없어 후보 전부를 UNEXPECTED_ERROR로 기록한 판매자 수
+        // 주문별 다시 시도(#534)로 일부 주문이라도 저장된 판매자는 성공으로 셈: 그날 정산이 나가므로 "전원 실패"(Job FAILED)로 보지 않음
         int failedSellerCount
 ) {
     // 성공한 판매자 수 (배치 write count)

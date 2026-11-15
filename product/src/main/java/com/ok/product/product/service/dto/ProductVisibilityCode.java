@@ -8,10 +8,16 @@ public enum ProductVisibilityCode {
 	HIDDEN;
 
 	public ProductVisibility toDomain() {
-		return ProductVisibility.valueOf(name());
+		return switch (this) {
+			case VISIBLE -> ProductVisibility.VISIBLE;
+			case HIDDEN -> ProductVisibility.HIDDEN;
+		};
 	}
 
 	public static ProductVisibilityCode from(ProductVisibility visibility) {
-		return valueOf(visibility.name());
+		return switch (visibility) {
+			case VISIBLE -> VISIBLE;
+			case HIDDEN -> HIDDEN;
+		};
 	}
 }

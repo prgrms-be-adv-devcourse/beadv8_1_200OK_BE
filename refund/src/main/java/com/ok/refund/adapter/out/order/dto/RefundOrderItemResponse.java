@@ -3,7 +3,7 @@ package com.ok.refund.adapter.out.order.dto;
 import java.util.List;
 
 /**
- * 주문 모듈 {@code GET /internal/v1/orders/{orderId}/items/{orderItemId}} 응답 (요청서 기준 가정).
+ * 주문 모듈 {@code GET /internal/v1/orders/{orderId}/items/{orderItemId}} 응답. #533으로 머지된 실제 응답과 같은 칸임을 확인했다.
  * 요청서의 {@code refundedQuantity}는 받지 않는다. 주문은 처리 중인 환불을 몰라 환불이 직접 집계한다(#410 설계 8장).
  * 주문 모듈과의 약속: {@code quantity}(와 {@code sellerGroup.items[].quantity})는 산 개수이고, 환불이 끝나도 줄이지 않는다.
  * 취소된 개수는 취소 수량 반영(요청서 ②) 때 주문의 {@code refundedQuantity}에만 더한다.

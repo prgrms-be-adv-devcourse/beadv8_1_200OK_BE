@@ -69,14 +69,21 @@ delivery:
     # mock: 일정 시간 뒤 배송 완료를 알리는 가짜 택배사(기본). tracker: Delivery Tracker로 실제 배송 상태를 조회한다
     type: ${DELIVERY_CARRIER_TYPE:mock}
     tracker:
-      base-url: https://apis.tracker.delivery/graphql
-      auth-url: https://auth.tracker.delivery/oauth2/token
+      # 기본은 실제 서비스다. 시험할 때는 가짜 택배사(carrier-simulator) 주소로 바꿔 같은 어댑터로 붙는다 (#559)
+      base-url: ${DELIVERY_TRACKER_BASE_URL:https://apis.tracker.delivery/graphql}
+      auth-url: ${DELIVERY_TRACKER_AUTH_URL:https://auth.tracker.delivery/oauth2/token}
       client-id: ${DELIVERY_TRACKER_CLIENT_ID:}
       client-secret: ${DELIVERY_TRACKER_CLIENT_SECRET:}
       # 무료 플랜은 웹훅이 없어 조회로 확인한다. 호출 제한이 확인되기 전까지 넉넉하게 둔다
       poll-interval: ${DELIVERY_TRACKER_POLL_INTERVAL:5m}
       connect-timeout: 3s
       read-timeout: 15s
+  outbox:
+    # 배송 outbox에 쌓인 메시지를 Kafka로 보내는 주기와 한 번에 보낼 줄 수(DeliveryOutboxRelayScheduler, #644).
+    # 값을 빼면 스케줄러의 기본값(30초마다, 100줄)을 쓴다. cron을 "-"로 두면 보내지 않는다
+    relay:
+      cron: "*/30 * * * * *"
+      batch-size: 100
   # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
   default-shipping:
     base-shipping-fee: 3000

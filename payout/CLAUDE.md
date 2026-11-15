@@ -1,3 +1,13 @@
+# 정산 모듈 규칙
+
+## 설계 전제: 규모
+
+정산은 **하루 최소 10만 명이 이용하는 사이트**라고 가정하고 설계한다. (사용자 결정, 2026-11-14)
+
+- 기능을 정할 때 "지금 데이터가 적어서 괜찮다"로 판단하지 않는다. 위 규모에서 데이터가 쌓였을 때도 버티는지 본다.
+- 실행할 때마다 운영 시작 이후 쌓인 기록 전체를 읽는 방식은 새로 만들지 않는다. 새로 생긴 것만 읽거나(예: 반영한 마지막 ID 뒤만), 인덱스로 필요한 범위만 읽는다. 예) 막힌 주문 집계 표(#582)는 Job마다 전체를 다시 계산하지 않고 바뀐 주문만 고친다.
+- 이미 있는 전체 조회(예: 스냅샷의 `countFailedRunsByOrder`)는 #304(대량 처리·성능 점검)에서 다룬다.
+
 # 정산 패키지 구조 (헥사고날)
 
 정산(`payout`) 모듈의 클래스를 만들거나 옮길 때 따르는 규칙이다. `structure.md`의 레이어 패키지(`controller`, `service`, `repository`, `event`)와 발행 인터페이스 위치 규칙 대신 이 파일을 따른다. 역할별 접미사와 모듈 간 규칙은 `structure.md` 그대로다.
@@ -15,7 +25,7 @@
 | `adapter/in/web` | 컨트롤러, `*Spec`, 요청·응답 DTO(`dto/`) |
 | `adapter/in/event` | Spring·Kafka 리스너, Kafka 메시지 DTO(`dto/`) |
 | `adapter/in/batch` | 정산 Job 설정, 시작기(`PayoutJobRunner`), 스케줄러 |
-| `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회, JPA 엔티티가 아닌 표(Spring Batch 실행 기록)를 읽는 네이티브 SQL(`EntityManager`, 표 이름에 `PayoutSchema.NAME`) |
+| `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회, JPA로 할 수 없는 곳의 네이티브 SQL(아래 "주의") |
 | `adapter/out/event` | 이벤트 발행 구현체 |
 | `config`, `exception` | 모듈 전용 설정, `PayoutErrorCode` |
 
@@ -33,7 +43,7 @@
 - 배치를 뺀 입구(web, event)는 배치 중 `PayoutJobRunner`만 쓴다. 배치는 `domain` 중 `PayoutPolicy`와 `domain/type`만 쓴다.
 - `domain/type`에는 enum만 두고, 정산의 다른 패키지와 JPA·Spring을 모른다. 웹·이벤트 입구는 `domain/type`도 쓰지 않는다(`api.md`: 컨트롤러는 domain 타입을 쓰지 않음).
 - `com.ok` 중 `payout`과 `common`만 안다.
-- `common.event`의 이벤트 클래스는 `adapter/in/event`, `adapter/out/event`에서만 쓴다.
+- `common.event`의 이벤트 클래스는 `adapter/in/event`에서만 쓴다. 보내는 쪽은 지갑 Spring 이벤트 발행을 지워(#588) Kafka 메시지 DTO만 쓴다.
 - 발행 도구(`ApplicationEventPublisher`, `KafkaOperations`)는 `adapter/out/event`에서만 쓴다.
 
 **이유**: 입구와 외부 연결이 서비스를 거쳐서만 만나야 연동 방식(Spring 이벤트 → Kafka, 모듈 분리)을 바꿔도 서비스가 바뀌지 않는다. 이 규칙은 정산 `ArchitectureTest`가 검사한다.
@@ -42,12 +52,24 @@
 
 - `adapter/in/web`은 경로가 `controller`가 아니라 `api.md`가 자동으로 로드되지 않는다. 직접 읽고 따른다.
 - 저장소 포트에 메서드를 더하면 쿼리 애노테이션(`@Query`, `@Modifying`, `@EntityGraph`)은 `adapter/out/persistence`의 `*JpaRepository`에 `@Override`로 다시 선언한다. 포트에는 Spring Data를 두지 않는다.
+- 네이티브 SQL은 되도록 쓰지 않는다. 조회는 Querydsl, 저장은 Spring Data JPA로 한다. JPA로 할 수 없을 때만 쓰고, 그 메서드 주석에 "왜 JPA로 안 되는지"를 적는다. 지금 쓰는 곳은 아래와 같다.
+  - JPA 엔티티가 아닌 Spring Batch 실행 기록(`BATCH_*`)을 읽음: `PayoutQuerydslRepository`의 `findLastCompletedScheduledRequestedAt`(#390), `countFailedRunsByOrder`(#549, 성공한 실행만 걸러 주문별로 세는 일을 DB 안에서 끝내려고. 자바에서 거르면 실패가 쌓일수록 옮기는 줄이 늘어남)와 같은 SQL 앞부분에 주문 조건만 더한 `countFailedRunsOfOrder`(#568, 해결 API의 멈춤 판정)·`countFailedRunsOfOrders`(#582, 막힌 주문 집계 표의 멈춤 판정을 주문 목록으로 한 번에)
+  - MySQL 전용 "없으면 넣기"(`INSERT ... ON DUPLICATE KEY`): `PayoutCandidateItemJpaRepository`의 `insertShippingFeeIfAbsent`(#309)
+  - 이유: SQL 문자열은 표·열 이름을 틀려도 컴파일 때 잡히지 않고, 표 이름 앞 스키마(`PayoutSchema.NAME`)를 빠뜨리면 로컬 테스트는 통과해도 운영에서만 실패한다(`entity.md`). (사용자 결정, 2026-11-13)
+- 정산 기록 표(스냅샷, 실패 기록, 해결 기록, 정산 등)는 쌓기만 하고 고치거나 지우지 않는다(`@Immutable`). 수정을 허용하는 표는 아래뿐이다.
+  - `payout_outbox`: 발송 상태를 바꿈 (#309)
+  - 대사 표 `payout_deposit_check`: 정산마다 한 줄을 두고 확인 상태·시도 횟수·지갑이 답한 값을 고쳐 가며 씀 (#619). 돈의 원본(정산 장부·지갑 원장)이 아니라 "지갑 확인이 어디까지 갔는지"를 담는 진행 상태 표라 outbox와 성격이 같다. 확인할 때마다 새 줄을 쌓으면 "지금 확인 대기인 정산"을 고를 때 정산마다 마지막 줄을 찾아야 해서 조회가 복잡해지고 줄이 빠르게 쌓인다. (사용자 결정, 2026-11-15)
+  - 막힌 주문 집계 표 묶음 `payout_blocked_order`, `payout_blocked_order_cause`, `payout_blocked_order_refresh`: 수정·삭제 허용 (#582). 원본 기록에서 계산한 조회용 사본(읽기 모델)이라 틀리면 원본에서 다시 계산해 바로잡을 수 있다. 스냅샷은 이 표가 아니라 원본으로 판정하므로, 표가 낡아도 돈이 잘못 나가지 않는다. (사용자 결정, 2026-11-14)
+    - 이 표를 쓰는 곳은 Job 끝 갱신과 금액 검사 두 곳이다 (#570). 금액 검사는 초과 청구 주문을 근거와 함께 예비(`PENDING`) 줄로 넣고, Job 끝 갱신이 막힘이면 상태를 바꾸고 아니면 지운다.
+    - 초과 청구 근거 칸(`evidence_*`)은 예외로 원본에서 다시 만들 수 없다(금액 검사 때 값, 합계에 Job 중에도 늘 수 있는 대기 중 후보가 들어감). 그래서 Job 끝 다시 판정·범위 바로잡기(#583)는 근거 칸을 다시 계산해 덮지 않는다.
+    - 이 표를 읽는 곳(관리자 목록, 해결 API, #392 판매자 화면 등)은 `PENDING` 줄을 거른다. 아직 막힌 주문이 아니다.
 
 ## 팀 규칙과 다르게 쓰는 것
 
-정산 모듈에서는 아래 두 가지를 팀 규칙(`.claude/rules/`)과 다르게 쓴다. 나머지는 팀 규칙 그대로다.
+정산 모듈에서는 아래 세 가지를 팀 규칙(`.claude/rules/`)과 다르게 쓴다. 나머지는 팀 규칙 그대로다.
 
 | 팀 규칙 | 정산에서 | 이유 |
 |---|---|---|
 | `service.md` 로그: `ERROR`는 처리되지 못한 예외(서버 오류)에만 쓴다 | 정산 코드·정책이 틀렸다는 **시스템 문제 알림**은 처리를 계속하더라도 `ERROR`로 남긴다. 메시지는 `[정산-시스템문제]`로 시작한다(예: `[정산-시스템문제] 수수료 불일치 orderItemId={}`) | 사람이 고쳐야 할 일은 코드 수정뿐이라 개발자가 바로 알아야 한다. 이 모양의 `ERROR`를 슬랙 알림(#302)에 연결한다 (#391) |
+| `service.md` 로그: `ERROR`는 처리되지 못한 예외(서버 오류)에만 쓴다 | 대사에서 **관리자 확인 필요**가 된 정산(지갑 입금 없음·지갑 답 없음·판매자 다름·금액 다름)은 대사를 계속하더라도 `ERROR`로 남긴다. 메시지는 `[정산-대사불일치]`로 시작한다(예: `[정산-대사불일치] 관리자 확인 필요. payoutId={}, reason={}`) | 판매자에게 돈이 들어가지 않았거나 다른 금액·다른 사람에게 들어간 건이라 사람이 꼭 봐야 하고, 대사는 자동으로 고치지 않는다. 예외: 3번째 질문의 답을 못 받고 시간이 다 되어 닫힌 줄(입금 없음·지갑 답 없음)은 늦게 온 "있음" 답으로 다시 판정한다(같으면 일치, 다르면 이유를 판매자 다름·금액 다름으로 바꿈). 지갑 원장 입금 줄은 고쳐지지 않아 늦은 "있음"도 사실이기 때문이다. 일치로 바뀌면 같은 태그로 `WARN`을 남겨, `ERROR`를 보고 찾는 사람이 함께 보게 한다. 지갑도 입금 실패 기록을 같은 이유로 `ERROR`로 남긴다 (#308 11/15 댓글 안건 4, #619) |
 | `testing.md` 파라미터화: 입력값은 `@MethodSource`로 제공한다 | enum의 **모든 값**을 하나씩 확인하는 테스트는 `@EnumSource`를 쓴다 | 값이 늘어나도 테스트가 저절로 따라간다. `@MethodSource`로 목록을 손으로 적으면 새 값을 빠뜨릴 수 있다 (#391) |

@@ -2,7 +2,7 @@ package com.ok.refund.application.port.out;
 
 /**
  * 주문 모듈을 부른다. 서비스는 이 인터페이스만 알고, HTTP로 부르는 방법은 구현체({@code adapter.out.order} 패키지)가 맡는다.
- * 주문 팀 API가 아직 없어 경로와 응답 모양은 요청서 기준 가정이다.
+ * 경로와 응답 칸은 #533으로 머지된 주문 실제 API와 같음을 확인했다.
  */
 public interface OrderQueryPort {
 

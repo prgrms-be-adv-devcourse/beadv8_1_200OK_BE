@@ -2,6 +2,7 @@ package com.ok.payout.application.port.out;
 
 import com.ok.payout.domain.Payout;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -20,6 +21,9 @@ public interface PayoutRepository {
 
     // 정산 상세: 판매자 정산과 같은 스냅샷의 시스템 몫 정산(수수료 묶음). commitStep이 스냅샷당 최대 1건만 만듦
     Optional<Payout> findBySnapshotIdAndSystemTrue(Long snapshotId);
+
+    // 대사에서 지갑이 "없음"으로 답한 정산의 입금 메시지를 다시 만들 때 (#619)
+    List<Payout> findAllByIdIn(Collection<Long> ids);
 
     // 이번 스냅샷에서 확정된 판매자 몫 정산만 (지금은 통합 테스트 검증에서만 씀)
     List<Payout> findBySnapshotIdAndSystemFalse(Long snapshotId);

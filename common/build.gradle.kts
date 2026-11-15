@@ -11,6 +11,7 @@ dependencies {
     api("org.springframework.boot:spring-boot-starter-security")
     api("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
     api("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("org.hibernate.orm:hibernate-micrometer") // Hibernate 통계를 Micrometer 지표로 노출(hibernate.* 지표). Boot가 이 클래스가 있을 때만 자동으로 바인딩한다 (#509)
     api("org.springframework.boot:spring-boot-starter-flyway")
     api("org.flywaydb:flyway-mysql")
     api(libs.querydsl.jpa)

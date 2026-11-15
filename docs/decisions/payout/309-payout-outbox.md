@@ -46,3 +46,7 @@ related: [339, 343, 304, 390, 223, 388]
 - 발송 중 스레드가 중단되면 그 줄만 실패로 적고 멈추며, (미확인) Spring Batch가 Step 커밋 뒤 중단 표시를 보고 STOPPED로 기록한다. STOPPED 실행도 #390 하한 기준에서 빠진다(전에는 FAILED로 빠졌다).
 - 조회 정렬(`attemptCount, id`)을 바꾸면 인덱스 `(status, attempt_count, id)`도 함께 바꾼다.
 - 테스트에서 `payout`을 지울 때는 FK 때문에 `payout_outbox`를 먼저 지운다.
+
+## 후속 (2026-11-15)
+
+- 결정표 "보내는 곳"의 "별도 스케줄러가 필요 없다"는 #584(지갑 Kafka 수신)로 전제가 사라졌다. 지갑이 Kafka 메시지로만 입금해 못 보낸 줄의 입금이 다음 정산 Job까지 늦어지기 때문이다. #620에서 5분 재발송과 발행 단계 공용 잠금을 더했다(`docs/decisions/payout/620-payout-outbox-resend.md`).

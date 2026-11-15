@@ -7,12 +7,15 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,16 +68,38 @@ class RefundProductHttpAdapterTest {
         });
     }
 
-    // 409(해제 가능 수량 초과, 같은 refundId인데 내용이 다름)도 일시적 실패와 같은 코드다. 구분은 #516
-    @Test
-    void 재고_복구가_오류_상태를_받으면_PRODUCT_API_FAILED() {
+    // 상품 API 문서가 4xx(404·409·422)를 "다시 해도 결과가 같음"으로 정해, 다시 시도하지 않을 코드로 바꾼다(#576)
+    @ParameterizedTest
+    @MethodSource("다시_해도_같은_상태")
+    void 다시_해도_같은_거절이면_PRODUCT_RELEASE_REFUSED(int errorStatus) {
         // given
-        status.set(409);
+        status.set(errorStatus);
+
+        // when & then
+        assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_RELEASE_REFUSED));
+    }
+
+    static Stream<Integer> 다시_해도_같은_상태() {
+        return Stream.of(404, 409, 422);
+    }
+
+    // 서버 오류, 문서에 없는 4xx(설정 문제로 막힘·요청 과다 등)는 고치면 풀리거나 잠깐의 실패일 수 있어 다시 시도할 코드 그대로 둔다
+    @ParameterizedTest
+    @MethodSource("다시_시도할_상태")
+    void 서버_오류나_문서에_없는_4xx면_PRODUCT_API_FAILED(int errorStatus) {
+        // given
+        status.set(errorStatus);
 
         // when & then
         assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
+    }
+
+    static Stream<Integer> 다시_시도할_상태() {
+        return Stream.of(500, 503, 401, 403, 408, 429);
     }
 
     @Test

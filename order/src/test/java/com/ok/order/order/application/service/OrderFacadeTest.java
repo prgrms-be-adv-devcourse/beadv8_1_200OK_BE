@@ -457,4 +457,45 @@ class OrderFacadeTest {
         // then
         then(productPort).should(never()).releaseStock(anyLong());
     }
+
+    // ---------- 결제 대기 정리 (#402) ----------
+
+    @Test
+    void 결제_대기로_오래_남은_주문을_취소하면_재고를_해제한다() {
+        // given
+        given(orderService.cancelStalePaymentPending(10L)).willReturn(true);
+
+        // when
+        boolean canceled = sut.cancelStalePaymentPendingOrder(10L);
+
+        // then
+        assertThat(canceled).isTrue();
+        then(productPort).should().releaseStock(10L);
+    }
+
+    @Test
+    void 정리_대상이_아니게_된_주문은_재고를_해제하지_않는다() {
+        // given: 조회 뒤 결제 결과가 먼저 도착해 취소하지 않음
+        given(orderService.cancelStalePaymentPending(10L)).willReturn(false);
+
+        // when
+        boolean canceled = sut.cancelStalePaymentPendingOrder(10L);
+
+        // then
+        assertThat(canceled).isFalse();
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    @Test
+    void 정리한_주문의_재고_해제가_실패해도_취소는_유지되고_예외를_던지지_않는다() {
+        // given
+        given(orderService.cancelStalePaymentPending(10L)).willReturn(true);
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when
+        boolean canceled = sut.cancelStalePaymentPendingOrder(10L);
+
+        // then
+        assertThat(canceled).isTrue();
+    }
 }

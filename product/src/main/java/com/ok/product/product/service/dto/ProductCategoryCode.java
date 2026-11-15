@@ -14,10 +14,28 @@ public enum ProductCategoryCode {
 	PROCESSED_AGRI;
 
 	public ProductCategory toDomain() {
-		return ProductCategory.valueOf(name());
+		return switch (this) {
+			case GRAIN -> ProductCategory.GRAIN;
+			case VEGETABLE -> ProductCategory.VEGETABLE;
+			case FRUIT -> ProductCategory.FRUIT;
+			case ROOT_CROP -> ProductCategory.ROOT_CROP;
+			case MUSHROOM -> ProductCategory.MUSHROOM;
+			case NUT -> ProductCategory.NUT;
+			case WILD_GREENS -> ProductCategory.WILD_GREENS;
+			case PROCESSED_AGRI -> ProductCategory.PROCESSED_AGRI;
+		};
 	}
 
 	public static ProductCategoryCode from(ProductCategory category) {
-		return valueOf(category.name());
+		return switch (category) {
+			case GRAIN -> GRAIN;
+			case VEGETABLE -> VEGETABLE;
+			case FRUIT -> FRUIT;
+			case ROOT_CROP -> ROOT_CROP;
+			case MUSHROOM -> MUSHROOM;
+			case NUT -> NUT;
+			case WILD_GREENS -> WILD_GREENS;
+			case PROCESSED_AGRI -> PROCESSED_AGRI;
+		};
 	}
 }

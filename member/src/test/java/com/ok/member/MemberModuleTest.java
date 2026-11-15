@@ -7,6 +7,7 @@ import com.ok.common.event.SellerApprovedEvent;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.member.auth.adapter.in.web.JwksController;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
+import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
 import com.ok.member.member.application.dto.SignupCommand;
 import com.ok.member.member.application.port.in.MemberSignupUseCase;
 import com.ok.member.member.domain.Member;
@@ -35,7 +36,11 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 운영 ClockConfig(com.ok.common.config)는 다른 모듈이라 모듈 테스트에서 걸러지므로, 테스트용 복사본 TestClockConfiguration을 불러온다.
 // (#93에서 Clock 빈을 member → config로 옮기면서 생긴 처리, 자세한 이유는 TestClockConfiguration 참고)
 @Import({TestcontainersConfiguration.class, JpaConfig.class, TestClockConfiguration.class})
-@TestPropertySource(properties = "app.problem.base-uri=https://api.example.com/problems")
+// 모듈 테스트는 Kafka 컨테이너를 켜지 않으므로 outbox 발송 스케줄러(#560)를 끈다. 켜 두면 가입 뒤 없는 브로커를 기다리며 스레드를 붙잡는다
+@TestPropertySource(properties = {
+        "app.problem.base-uri=https://api.example.com/problems",
+        "member.outbox.relay.cron=-"
+})
 public class MemberModuleTest {
 
     @Autowired
@@ -43,6 +48,9 @@ public class MemberModuleTest {
 
     @Autowired
     MemberJpaRepository memberRepository;
+
+    @Autowired
+    MemberOutboxJpaRepository memberOutboxRepository;
 
     @Autowired
     SellerApplicationUseCase sellerApplicationUseCase;
@@ -67,9 +75,10 @@ public class MemberModuleTest {
     @MockitoBean
     JwksController jwksController;
 
-    // 판매자 신청이 member를 외래키로 참조하므로 신청을 먼저 지운다
+    // 판매자 신청과 가입 때 남는 outbox 줄(#560)이 member를 외래키로 참조하므로 먼저 지운다
     @AfterEach
     void tearDown() {
+        memberOutboxRepository.deleteAll();
         sellerApplicationRepository.deleteAll();
         memberRepository.deleteAll();
     }

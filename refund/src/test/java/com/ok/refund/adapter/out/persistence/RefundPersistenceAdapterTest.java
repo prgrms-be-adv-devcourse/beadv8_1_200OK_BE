@@ -27,13 +27,15 @@ class RefundPersistenceAdapterTest {
     @Mock
     RefundJpaRepository refundJpaRepository;
     @Mock
+    RefundStepJpaRepository refundStepJpaRepository;
+    @Mock
     EntityManager entityManager;
 
     RefundPersistenceAdapter sut;
 
     @BeforeEach
     void setUp() {
-        sut = new RefundPersistenceAdapter(refundJpaRepository, entityManager);
+        sut = new RefundPersistenceAdapter(refundJpaRepository, refundStepJpaRepository, entityManager);
     }
 
     @Test

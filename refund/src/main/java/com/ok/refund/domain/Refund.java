@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
 @Getter
 public class Refund {
 
+    /** 출고됐거나 취소된 상품이라 취소할 수 없을 때 구매자에게 보이는 거절 사유. 승인 때 자동 거절과 승인 뒤 주문 거절이 같은 문구를 쓴다 */
+    public static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
+
     // 저장 전(request로 막 만든 것)에는 null이다. 저장소가 저장한 뒤 restore로 채운 새 객체를 돌려준다(setter를 두지 않으려고)
     private final Long id;
     private final Long orderId;
@@ -55,12 +58,6 @@ public class Refund {
     // 지금은 승인과 같은 요청에서 바로 완료돼 decidedAt과 거의 같지만, 지갑 완료 메시지 뒤로 완료를 옮기면(#516) 달라진다
     private LocalDateTime completedAt;
 
-    // 처리 중에 다른 모듈 호출이 실패했을 때만 값이 있다(#412). 실패가 없는 것이 정상이라 null을 허용한다
-    private RefundFailedStep failedStep;
-
-    // 멈춘 이유. 에러 코드 이름이나 예외 클래스 이름만 둔다. 내부 메시지는 다른 모듈의 주소·응답 내용이 섞일 수 있어 남기지 않는다
-    private String failureCode;
-
     // 요청됨·처리 중일 때만 값이 있다. DB의 UNIQUE라 한 주문 상품에 진행 중인 요청을 두 건 받지 않는다.
     // 끝 상태(거절·철회)가 되면 비워 같은 상품에 새 요청을 받는다(MySQL UNIQUE는 NULL을 여러 개 허용).
     // DB 제약을 위한 칸이지만 "진행 중인가"라는 도메인 상태라 도메인이 직접 채우고 비운다
@@ -90,8 +87,6 @@ public class Refund {
             String rejectReason,
             LocalDateTime decidedAt,
             LocalDateTime completedAt,
-            RefundFailedStep failedStep,
-            String failureCode,
             Long activeOrderItemId,
             LocalDateTime createdAt
     ) {
@@ -114,8 +109,6 @@ public class Refund {
         this.rejectReason = rejectReason;
         this.decidedAt = decidedAt;
         this.completedAt = completedAt;
-        this.failedStep = failedStep;
-        this.failureCode = failureCode;
         this.activeOrderItemId = activeOrderItemId;
         this.createdAt = createdAt;
     }
@@ -156,7 +149,7 @@ public class Refund {
         long itemAmount = Math.multiplyExact(unitPrice, quantity);
         // 배송비 세 칸은 승인 때 정하므로 0으로 시작하고, 진행 중 칸은 이 주문 상품으로 채워 UNIQUE가 중복 요청을 막게 한다
         return new Refund(null, orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
-                unitPrice, itemAmount, 0L, 0L, 0L, cancelReason, RefundStatus.REQUESTED, null, null, null, null, null,
+                unitPrice, itemAmount, 0L, 0L, 0L, cancelReason, RefundStatus.REQUESTED, null, null, null,
                 orderItemId, null);
     }
 
@@ -188,8 +181,6 @@ public class Refund {
             String rejectReason,
             LocalDateTime decidedAt,
             LocalDateTime completedAt,
-            RefundFailedStep failedStep,
-            String failureCode,
             Long activeOrderItemId,
             LocalDateTime createdAt
     ) {
@@ -198,7 +189,7 @@ public class Refund {
         }
         return new Refund(id, orderId, orderItemId, quantity, buyerId, sellerId, productOptionId, productName, optionName,
                 unitPrice, itemAmount, shippingFeeAmount, remoteAreaFeeAmount, deductedShippingFeeAmount, cancelReason,
-                status, rejectReason, decidedAt, completedAt, failedStep, failureCode, activeOrderItemId, createdAt);
+                status, rejectReason, decidedAt, completedAt, activeOrderItemId, createdAt);
     }
 
     /**
@@ -263,6 +254,32 @@ public class Refund {
     }
 
     /**
+     * 승인한 뒤 주문이 취소 반영을 거절해 환불을 거절로 끝낸다. {@code PROCESSING → REJECTED}
+     * 주문이 거절했다는 것은 돈·재고가 아직 움직이지 않았다는 뜻이라 되돌릴 것이 없다. 그래서 거절로 끝내 같은 상품에 새 요청을 받는다.
+     * 승인 때 정한 배송비 세 칸은 0으로 되돌린다. 거절된 환불에는 돌려줄 배송비가 없고, 같은 묶음의 다른 요청이
+     * 이 요청의 배송비 판단을 보지 않게 해야 하기 때문이다(필드 주석 "요청됨·거절·철회에서는 0이다"와 같은 규칙).
+     * {@code decidedAt}은 판매자 승인 시각에서 이 거절 시각으로 덮어쓴다. 최종 결정이 거절이기 때문이다.
+     *
+     * @throws IllegalArgumentException 사유가 비었으면 (부르는 쪽 버그)
+     * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void rejectAfterApproval(String reason, LocalDateTime now) {
+        // 기존 reject와 같은 순서다. 사유 검사가 먼저라 끝난 요청이어도 사유가 비면 사유 오류로 막는다.
+        // reject와 달리 표준 예외인 이유: 이 사유는 판매자 입력이 아니라 서비스가 넘기는 상수라, 비었다면 사용자 잘못이 아니라
+        // 부르는 쪽 버그다(exception.md)
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("승인 뒤 거절 사유는 필수입니다.");
+        }
+        requireStatus(RefundStatus.PROCESSING);
+        this.rejectReason = reason;
+        this.decidedAt = now;
+        this.shippingFeeAmount = 0L;
+        this.remoteAreaFeeAmount = 0L;
+        this.deductedShippingFeeAmount = 0L;
+        finish(RefundStatus.REJECTED);
+    }
+
+    /**
      * 구매자가 승인 전에 요청을 거둔다. {@code REQUESTED → WITHDRAWN}
      * 승인한 뒤에는 배송·돈 처리가 이어지므로 철회를 받지 않는다.
      *
@@ -275,7 +292,7 @@ public class Refund {
     }
 
     /**
-     * 승인 뒤 단계(지갑 반환 요청, 주문 취소 반영, 재고 복구)를 모두 마치고 환불을 끝낸다. {@code PROCESSING → COMPLETED}
+     * 승인 뒤 단계(주문 취소 반영, 지갑 반환 요청, 재고 복구)를 모두 마치고 환불을 끝낸다. {@code PROCESSING → COMPLETED}
      * 진행 중 칸을 비워 같은 주문 상품의 남은 개수를 다시 요청할 수 있게 한다. 이 환불의 개수와 뺀 배송비는 끝난 뒤에도
      * 같은 묶음의 배송비 판단에 계속 쓰인다({@link RefundShippingFeePolicy#CANCELLING_STATUSES}).
      *
@@ -286,23 +303,6 @@ public class Refund {
         requireStatus(RefundStatus.PROCESSING);
         this.completedAt = now;
         finish(RefundStatus.COMPLETED);
-    }
-
-    /**
-     * 처리 중에 다른 모듈 호출이 실패해 멈춘 단계와 이유를 남긴다. 상태는 처리 중 그대로다.
-     * 같은 환불이 다시 실패하면 마지막 실패로 덮어쓴다. 다시 처리하는 방법은 후속이라 지우는 메서드는 아직 두지 않는다.
-     *
-     * @param failureCode 에러 코드 이름 또는 예외 클래스 이름
-     * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
-     * @throws IllegalArgumentException 단계나 이유가 비었으면 (부르는 쪽 버그)
-     */
-    public void recordFailure(RefundFailedStep step, String failureCode) {
-        if (step == null || failureCode == null || failureCode.isBlank()) {
-            throw new IllegalArgumentException("실패 단계와 이유는 필수입니다.");
-        }
-        requireStatus(RefundStatus.PROCESSING);
-        this.failedStep = step;
-        this.failureCode = failureCode;
     }
 
     public boolean isOwnedByBuyer(Long memberId) {

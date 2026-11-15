@@ -7,6 +7,7 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.adapter.out.persistence.RefundJpaRepository;
+import com.ok.refund.adapter.out.persistence.RefundStepJpaRepository;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
@@ -17,6 +18,7 @@ import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
 import com.ok.testsupport.FakeProductStockReleasePort;
+import com.ok.testsupport.RefundWalletResultSender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.RepeatedTest;
@@ -78,6 +80,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     RefundJpaRepository refundJpaRepository;
     @Autowired
+    RefundStepJpaRepository refundStepJpaRepository;
+    @Autowired
     PlatformTransactionManager transactionManager;
     @Autowired
     ApplicationContext applicationContext;
@@ -85,9 +89,14 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
     FakeOrderQueryPort orderQueryPort;
     @Autowired
     FakeProductStockReleasePort productStockReleasePort;
+    // 지갑 대신 완료 메시지를 실제 Kafka로 보낸다(#544)
+    @Autowired
+    RefundWalletResultSender walletResultSender;
 
     @AfterEach
     void tearDown() {
+        // 단계 줄이 환불 행을 외래 키로 가리켜 먼저 지운다(승인 흐름이 단계 줄을 만든다, #574)
+        refundStepJpaRepository.deleteAllInBatch();
         refundJpaRepository.deleteAllInBatch();
         orderQueryPort.clear();
         productStockReleasePort.clear();
@@ -274,7 +283,7 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
 
     // 완료로 바꿀 때는 자기 행만 잠근다(#414). 처리 중과 완료를 둘 다 "이미 취소된 것"으로 세서, 바꾸는 중에 같은 묶음의 다른 승인이 와도
     // 그 승인의 판단이 달라지지 않는다는 전제다. 여기서는 완료 트랜잭션이 감자 행을 잠근 채 커밋하지 않은 동안 배추를 승인해, 배추가 잠금에서
-    // 기다렸다가 완료된 감자를 취소된 것으로 세는지 본다. 완료 트랜잭션은 DecideRefundService.complete와 같은 일(잠금 조회 → complete → update)을
+    // 기다렸다가 완료된 감자를 취소된 것으로 세는지 본다. 완료 트랜잭션은 RefundSagaService.completeInApprovalRequest와 같은 일(잠금 조회 → complete → update)을
     // 직접 한다. 서비스 안의 완료 구간을 원하는 때에 멈출 방법이 없어서다
     @Test
     void 감자를_완료로_바꾸는_동안_배추를_승인해도_기다렸다가_완료된_감자를_세어_배송비를_돌려준다() throws Exception {
@@ -310,6 +319,8 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
             holding.get(30, TimeUnit.SECONDS);
             assertThat(approvingCabbage.get(30, TimeUnit.SECONDS)).isEqualTo(SUCCESS);
         }
+        // 배추 승인은 처리 중으로 끝난다. 지갑이 반환을 마쳤다는 메시지가 와야 완료된다
+        walletResultSender.completeByWallet(cabbage);
         Refund savedPotato = refundPersistencePort.findById(potato).orElseThrow();
         Refund savedCabbage = refundPersistencePort.findById(cabbage).orElseThrow();
         assertThat(savedCabbage).isNotNull();
@@ -369,12 +380,10 @@ class RefundConcurrencyIntegrationTest extends AbstractIntegrationTest {
         decideRefundService.decide(new RefundDecisionCommand(refundId, SELLER_ID, RefundDecision.APPROVE, null));
     }
 
-    // 승인 뒤 재고 복구를 실패시켜 처리 중에 멈춘 환불을 만든다(#414). 완료된 행은 끝난 상태라 잠금 대상이 아니어서,
-    // "처리 중 행은 잠근다"를 보려면 완료 전에 멈춘 행이 필요하다
+    // 승인해서 처리 중에 멈춘 환불을 만든다. 돌려줄 돈이 있으면 승인은 지갑 요청까지만 하고, 완료는 지갑 완료 메시지가 와야 한다(#544).
+    // 완료된 행은 끝난 상태라 잠금 대상이 아니어서, "처리 중 행은 잠근다"를 보려면 완료 전에 멈춘 행이 필요하다
     private void approveAndStopBeforeCompletion(Long refundId) {
-        productStockReleasePort.fail();
-        assertThatThrownBy(() -> approve(refundId)).isInstanceOf(RestApiException.class);
-        productStockReleasePort.clear();
+        approve(refundId);
     }
 
     private static RefundableOrderItem orderItem(Long orderItemId, long unitPrice, BundleShipping bundle) {

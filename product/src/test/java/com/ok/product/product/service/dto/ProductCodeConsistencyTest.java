@@ -10,39 +10,52 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.Arrays;
-import java.util.List;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * API용 *Code enum과 도메인 enum의 상수가 같은지 확인한다.
- * *Code enum은 컨트롤러가 도메인 enum을 알지 않도록 두고, 서비스 계층에서 도메인 enum과 바꾼다.
- * 두 enum은 상수 이름으로 서로 바꾸므로(valueOf), 한쪽에만 상수를 추가하면 그 값이 오갈 때 실행 중에 예외가 난다.
+ * API용 *Code enum과 도메인 enum이 같은 이름의 상수끼리 오가는지 확인한다.
+ * 빠진 case는 switch 식이 컴파일 단계에서 잡지만, 다른 상수에 잘못 연결한 case(예: PAUSED -> ENDED)는 잡지 못한다.
  */
 class ProductCodeConsistencyTest {
 
-	@ParameterizedTest(name = "{0}")
-	@MethodSource("코드와_도메인_enum")
-	void 코드_enum과_도메인_enum의_상수_이름이_같다(Class<? extends Enum<?>> codeType, Class<? extends Enum<?>> domainType) {
-		// when
-		List<String> sut = constantNames(codeType);
-
+	@ParameterizedTest(name = "{0} -> {1}")
+	@MethodSource("코드에서_도메인으로")
+	void 코드_enum은_같은_이름의_도메인_상수로_바뀐다(Enum<?> code, Enum<?> sut) {
 		// then
-		assertThat(sut).containsExactlyInAnyOrderElementsOf(constantNames(domainType));
+		assertThat(sut.name()).isEqualTo(code.name());
 	}
 
-	static Stream<Arguments> 코드와_도메인_enum() {
+	static Stream<Arguments> 코드에서_도메인으로() {
 		return Stream.of(
-			Arguments.of(ProductCategoryCode.class, ProductCategory.class),
-			Arguments.of(ProductCategoryGroupCode.class, ProductCategoryGroup.class),
-			Arguments.of(ProductRegionCode.class, ProductRegion.class),
-			Arguments.of(ProductStatusCode.class, ProductStatus.class),
-			Arguments.of(ProductVisibilityCode.class, ProductVisibility.class)
-		);
+			mappings(ProductCategoryCode.values(), ProductCategoryCode::toDomain),
+			mappings(ProductCategoryGroupCode.values(), ProductCategoryGroupCode::toDomain),
+			mappings(ProductRegionCode.values(), ProductRegionCode::toDomain),
+			mappings(ProductStatusCode.values(), ProductStatusCode::toDomain),
+			mappings(ProductVisibilityCode.values(), ProductVisibilityCode::toDomain)
+		).flatMap(Function.identity());
 	}
 
-	private static List<String> constantNames(Class<? extends Enum<?>> type) {
-		return Arrays.stream(type.getEnumConstants()).map(Enum::name).toList();
+	@ParameterizedTest(name = "{0} -> {1}")
+	@MethodSource("도메인에서_코드로")
+	void 도메인_enum은_같은_이름의_코드_상수로_바뀐다(Enum<?> domain, Enum<?> sut) {
+		// then
+		assertThat(sut.name()).isEqualTo(domain.name());
+	}
+
+	static Stream<Arguments> 도메인에서_코드로() {
+		return Stream.of(
+			mappings(ProductCategory.values(), ProductCategoryCode::from),
+			mappings(ProductCategoryGroup.values(), ProductCategoryGroupCode::from),
+			mappings(ProductRegion.values(), ProductRegionCode::from),
+			mappings(ProductStatus.values(), ProductStatusCode::from),
+			mappings(ProductVisibility.values(), ProductVisibilityCode::from)
+		).flatMap(Function.identity());
+	}
+
+	private static <T extends Enum<T>> Stream<Arguments> mappings(T[] values, Function<T, ? extends Enum<?>> convert) {
+		return Arrays.stream(values).map(value -> Arguments.of(value, convert.apply(value)));
 	}
 }

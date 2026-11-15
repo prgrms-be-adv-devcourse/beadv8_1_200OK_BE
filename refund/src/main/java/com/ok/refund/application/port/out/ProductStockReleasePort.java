@@ -10,7 +10,8 @@ public interface ProductStockReleasePort {
     /**
      * 재고 일부 해제를 한 번 요청한다. 같은 refundId로 같은 내용을 다시 보내면 상품은 또 풀지 않고 성공으로 답한다.
      *
-     * @throws com.ok.common.exception.RestApiException 상품 모듈이 응답하지 않거나 오류 상태를 돌려주면 {@code PRODUCT_API_FAILED}
+     * @throws com.ok.common.exception.RestApiException 상품이 다시 해도 결과가 같은 이유로 거절하면 {@code PRODUCT_RELEASE_REFUSED}(다시 시도하지 않음),
+     *                                                   응답하지 않거나 서버 오류면 {@code PRODUCT_API_FAILED}(다시 시도함)
      */
     void releaseStock(StockRelease release);
 }

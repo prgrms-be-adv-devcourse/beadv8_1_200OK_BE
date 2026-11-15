@@ -27,4 +27,6 @@ public interface WalletOrderPaymentJpaRepository extends Repository<WalletOrderP
 
     @Lock(LockModeType.PESSIMISTIC_READ)
     Optional<WalletOrderPayment> findForShareByOrderId(Long orderId);
+
+    Optional<WalletOrderPayment> findByOrderId(Long orderId);
 }

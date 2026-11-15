@@ -65,7 +65,7 @@ set -a; source .env; set +a     # 루트 .env의 값을 셸 환경변수로 내�
 
 - 단독 기동은 member, wallet, delivery, payout, refund에서 확인했습니다. media, order, product는 아직 확인하지 못했습니다(#288).
 - 단독 실행은 모듈 이름 프로파일이 자동으로 켜지고, 접속 DB·포트 같은 설정은 모듈의 `src/main/resources/application-<모듈>.yaml`에 있습니다. DB 접속은 `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`로 바꿀 수 있습니다(`DB_URL`은 읽지 않습니다).
-- **다른 모듈이 같이 떠 있지 않으므로 모듈 간 이벤트 연동(예: 회원 가입 → 지갑 생성)은 동작하지 않습니다.** 이 연동은 `monolith`에서만 됩니다.
+- **다른 모듈이 같이 떠 있지 않으므로 모듈 간 이벤트 연동(예: 회원 가입 → 장바구니 생성)은 동작하지 않습니다.** 이 연동은 `monolith`에서만 됩니다.
 - 헬스 체크는 `http://localhost:<포트>/actuator/health`입니다. 단독 실행에서는 Swagger UI가 인증을 요구합니다.
 
 ### 이미 쓰던 로컬 DB가 있는 경우

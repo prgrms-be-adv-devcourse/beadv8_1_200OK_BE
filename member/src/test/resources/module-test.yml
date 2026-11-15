@@ -1,0 +1,7 @@
+# member 통합 테스트 전용 설정. common의 application-test.yml이 읽는다 (#485)
+member:
+  outbox:
+    relay:
+      # outbox 발송 스케줄러를 끈다. 30초마다 돌면 테스트가 직접 보내는 중에 같은 줄을 함께 보내 메시지 건수가 흔들린다.
+      # 발송은 테스트가 MemberOutboxRelayUseCase를 직접 불러 확인한다
+      cron: "-"

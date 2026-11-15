@@ -23,7 +23,7 @@ import static org.mockito.BDDMockito.given;
 
 // 어댑터의 실패 경로를 본다. 성공 경로(실제 Kafka에 나간 JSON)는 RefundWalletRequestIntegrationTest가 본다.
 // 실제 브로커로는 거절·시간 초과·중단을 만들기 어려워 KafkaTemplate을 Mockito로 대신한다.
-// 실패 기록(WALLET)이 아직 없어(#516) 예외 메시지의 refundId가 유일한 흔적이라, 경로마다 메시지와 원인을 확인한다
+// 예외 메시지의 refundId는 오류 로그에서 어느 환불인지 찾는 단서라(지갑 줄의 실패 이유는 에러 이름만 남는다, #574), 경로마다 메시지와 원인을 확인한다
 @ExtendWith(MockitoExtension.class)
 class RefundWalletKafkaAdapterTest {
 

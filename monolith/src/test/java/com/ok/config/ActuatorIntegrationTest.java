@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -128,6 +129,29 @@ class ActuatorIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(sut).doesNotContain("no-such-path");
+    }
+
+    // 요청당 SQL 수 지표(#509)가 실제 서버의 관리 포트로 나가는지 본다. 관리 포트의 actuator 요청은 컨트롤러가 아니라 세지 않아야 한다
+    @Test
+    void 요청당_쿼리_수_지표는_템플릿_uri로_노출되고_actuator_요청은_기록하지_않는다() throws Exception {
+        // given
+        get(serverPort, "/api/v1/products/987654321");
+        get(managementPort, "/actuator/health");
+        get(serverPort, "/no-such-path/abc-1", tokens.bearer(1L, "ADMIN"));
+
+        // when: 지표는 응답을 보낸 뒤 기록되므로 라벨이 나타날 때까지 기다린다
+        String sut = awaitPrometheusContaining("jpa_queries_per_request_count{");
+
+        // then
+        List<String> queryCountLines = sut.lines().filter(line -> line.startsWith("jpa_queries_per_request_")).toList();
+        assertThat(queryCountLines)
+                .anyMatch(line -> line.contains("uri=\"/api/v1/products/{productId}\""))
+                // 인증된 요청이 없는 경로를 부르면 정적 리소스 핸들러가 받아 uri가 /** 하나로 묶인다(요청 경로가 태그가 되지 않는다)
+                .anyMatch(line -> line.contains("uri=\"/**\""))
+                .noneMatch(line -> line.contains("/actuator"))
+                .noneMatch(line -> line.contains("987654321"))
+                .noneMatch(line -> line.contains("no-such-path"));
+        assertThat(sut).contains("hibernate_statements_total");
     }
 
     private String awaitPrometheusContaining(String label) {

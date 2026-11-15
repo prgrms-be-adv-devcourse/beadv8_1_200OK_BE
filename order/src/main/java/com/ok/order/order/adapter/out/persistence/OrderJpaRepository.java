@@ -4,6 +4,7 @@ import com.ok.order.order.application.port.out.OrderRepository;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
+import com.ok.order.order.domain.OrderStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -68,5 +69,18 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     List<Long> findOrderIdsToAutoConfirm(
             @Param("status") OrderItemStatus status,
             @Param("deadline") LocalDateTime deadline
+    );
+
+    @Override
+    @Query("""
+            select o.id from Order o
+            where o.status = :status
+              and ((o.paymentRequestedAt is null and o.createdAt <= :creatingDeadline)
+                or o.paymentRequestedAt <= :paymentDeadline)
+            """)
+    List<Long> findStalePaymentPendingOrderIds(
+            @Param("status") OrderStatus status,
+            @Param("creatingDeadline") LocalDateTime creatingDeadline,
+            @Param("paymentDeadline") LocalDateTime paymentDeadline
     );
 }

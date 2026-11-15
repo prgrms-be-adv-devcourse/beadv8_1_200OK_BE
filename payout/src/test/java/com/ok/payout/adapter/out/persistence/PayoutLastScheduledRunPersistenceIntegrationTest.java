@@ -193,12 +193,15 @@ class PayoutLastScheduledRunPersistenceIntegrationTest extends AbstractIntegrati
 
     // 외래키 순서대로 지운다 (정산 → 스냅샷 → 배치 메타). 배치 메타는 이 테스트 번호대만 지움
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
         jdbcTemplate.update("DELETE FROM payout_seller_draft");
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
+        // 해결 기록은 실패 기록을 외래키로 가리켜 먼저 지움 (#568·#571)
+        jdbcTemplate.update("DELETE FROM payout_failure_resolution");
         jdbcTemplate.update("DELETE FROM payout_failure");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");

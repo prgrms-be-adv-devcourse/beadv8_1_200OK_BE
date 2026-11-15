@@ -50,7 +50,7 @@ class RefundableOrderItemTest {
 
     static Stream<String> 출고되거나_취소된_상태() {
         return Stream.of("SHIPPING", "DELIVERED", "PURCHASE_CONFIRMED", "CANCEL_REQUESTED", "REFUNDED",
-                "PAYMENT_PENDING", "PAYMENT_FAILED");
+                "PAYMENT_PENDING", "PAYMENT_FAILED", "CANCELED");
     }
 
     // PREPARING은 취소할 수 있는 상태이고, null·모르는 값은 거절 대상이 아니라 오류로 드러내야 해서 모두 false다

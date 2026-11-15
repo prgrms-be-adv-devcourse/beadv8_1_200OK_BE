@@ -7,6 +7,7 @@ import com.ok.order.order.application.dto.CheckoutResult;
 import com.ok.order.order.application.dto.CreateOrderCommand;
 import com.ok.order.order.application.dto.ProductOption;
 import com.ok.order.order.application.dto.StockItem;
+import com.ok.order.order.application.port.in.CancelStalePaymentPendingOrderUseCase;
 import com.ok.order.order.application.port.in.CreateOrderUseCase;
 import com.ok.order.order.application.port.in.FailPaymentUseCase;
 import com.ok.order.order.application.port.in.GetCheckoutUseCase;
@@ -32,7 +33,8 @@ import java.util.Optional;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, FailPaymentUseCase {
+public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, FailPaymentUseCase,
+        CancelStalePaymentPendingOrderUseCase {
 
     private final GetSelectedCartItemsUseCase getSelectedCartItems;
     private final OrderService orderService;
@@ -91,8 +93,9 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
                 throw e;
             }
             // 같은 키의 요청이 거의 동시에 와서 위 조회를 둘 다 통과한 경우, 유니크 제약이 나중 요청을 막는다.
-            // 재고 선점과 이벤트 발행은 먼저 저장한 요청이 하므로 여기서는 그 주문만 돌려준다.
-            // 먼저 저장된 주문이 재고 선점 실패로 그 사이 취소됐으면 키를 비워 둔 상태라 다시 시도하도록 알린다
+            // 재고 선점과 이벤트 발행은 먼저 저장한 요청이 하므로 여기서는 그 주문을 돌려준다.
+            // 먼저 저장된 주문을 아직 만드는 중이면 처리 중(409)으로, 그 사이 재고 선점 실패로 취소됐으면
+            // 키를 비워 둔 상태라 다시 시도하도록 알린다(#402)
             Long savedOrderId = orderService.findIdByIdempotencyKey(command.memberId(), command.idempotencyKey())
                     .orElseThrow(() -> new RestApiException(OrderErrorCode.IDEMPOTENCY_KEY_CONFLICT));
             log.info("같은 멱등키의 동시 요청, 먼저 저장된 주문 반환. orderId={}", savedOrderId);
@@ -219,5 +222,26 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         if (shouldReleaseStock) {
             productPort.releaseStock(orderId);
         }
+    }
+
+    @Override
+    public List<Long> findStalePaymentPendingOrderIds() {
+        return orderService.findStalePaymentPendingOrderIds();
+    }
+
+    // 결제 대기 정리: 주문 취소를 커밋한 뒤 재고를 푼다(#402).
+    // 재고 해제를 먼저 하면, 취소가 결제 완료에 밀려 실패했을 때 결제된 주문의 재고가 풀린다
+    @Override
+    public boolean cancelStalePaymentPendingOrder(Long orderId) {
+        if (!orderService.cancelStalePaymentPending(orderId)) {
+            return false;
+        }
+        try {
+            productPort.releaseStock(orderId);
+        } catch (RuntimeException e) {
+            // 주문은 이미 취소로 남아 다음 실행 대상이 아니다. 어떤 주문의 재고인지 로그로 추적한다
+            log.warn("[ORDER_STALE_STOCK_RELEASE_FAILED] 정리한 주문의 재고 해제에 실패했습니다. orderId={}", orderId, e);
+        }
+        return true;
     }
 }

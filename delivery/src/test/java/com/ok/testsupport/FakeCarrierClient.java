@@ -3,8 +3,11 @@ package com.ok.testsupport;
 import com.ok.delivery.application.port.out.CarrierClient;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
- * 통합 테스트에서 택배사 연동을 대신한다. 추적 요청을 받아도 아무 일도 하지 않아 배송 완료를 알리지 않는다.
+ * 통합 테스트에서 택배사 연동을 대신한다. 추적 요청을 받은 shipment만 기억하고 배송 완료는 알리지 않는다.
  *
  * <p>운영의 Mock 택배사({@code MockCarrierClient})는 test 프로필에서 등록되지 않는다.
  * 시간이 지나 shipment를 배송 완료로 바꾸면 통합 테스트 결과가 흔들리기 때문이다.
@@ -15,7 +18,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class FakeCarrierClient implements CarrierClient {
 
+    // 추적 요청은 커밋 뒤 다른 스레드에서 오므로 동시에 읽고 써도 되는 집합에 둔다
+    private final Set<Long> requestedShipmentIds = ConcurrentHashMap.newKeySet();
+
     @Override
     public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
+        requestedShipmentIds.add(shipmentId);
+    }
+
+    /**
+     * 이 shipment의 추적 요청을 받았는지 알려 준다. 컨텍스트를 함께 쓰는 다른 테스트와 섞이지 않게 shipment로 골라 본다.
+     */
+    public boolean isRequested(Long shipmentId) {
+        return requestedShipmentIds.contains(shipmentId);
     }
 }

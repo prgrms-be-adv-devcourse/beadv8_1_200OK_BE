@@ -87,7 +87,7 @@ class OrderServiceTest {
     @Test
     void 주문_생성_이벤트에는_주문_ID_구매자_결제_총액을_담는다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.of(savedOrder(10L)));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(savedOrder(10L)));
 
         // when
         sut.publishCreated(10L);
@@ -97,9 +97,171 @@ class OrderServiceTest {
     }
 
     @Test
+    void 주문_생성_이벤트를_발행하면_결제_요청_시각을_남긴다() {
+        // given
+        Order order = savedOrder(10L);
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.publishCreated(10L);
+
+        // then
+        assertThat(order.getPaymentRequestedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void 정리로_취소된_주문에는_결제를_요청하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.cancel();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishCreated(10L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("결제 대기가 아닌 주문에는 결제를 요청할 수 없습니다. status=CANCELED");
+        then(orderEventPublisher).should(never()).publishOrderCreatedEvent(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void 같은_멱등키의_주문이_결제를_요청했으면_그_주문_ID를_돌려준다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentRequested(NOW);
+        given(orderRepository.findByBuyerIdAndIdempotencyKey(1L, "key")).willReturn(Optional.of(order));
+
+        // when
+        Optional<Long> orderId = sut.findIdByIdempotencyKey(1L, "key");
+
+        // then
+        assertThat(orderId).contains(10L);
+    }
+
+    @Test
+    void 같은_멱등키의_주문을_아직_만드는_중이면_처리_중으로_거절한다() {
+        // given
+        given(orderRepository.findByBuyerIdAndIdempotencyKey(1L, "key")).willReturn(Optional.of(savedOrder(10L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.findIdByIdempotencyKey(1L, "key"))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_CREATION_IN_PROGRESS));
+    }
+
+    @Test
+    void 결제_대기_정리_대상은_결제_요청_전은_5분_요청_뒤는_30분_전을_기준으로_찾는다() {
+        // when
+        sut.findStalePaymentPendingOrderIds();
+
+        // then
+        then(orderRepository).should().findStalePaymentPendingOrderIds(
+                OrderStatus.PAYMENT_PENDING, NOW.minusMinutes(5), NOW.minusMinutes(30));
+    }
+
+    @Test
+    void 결제_요청_전에_멈춘_주문은_5분이_지나면_취소하고_재고를_풀어야_한다() {
+        // given
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(5));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        });
+    }
+
+    @Test
+    void 결제를_요청하고_30분이_지나도_결과가_없으면_취소하고_재고를_풀어야_한다() {
+        // given
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(30));
+        order.markPaymentRequested(NOW.minusMinutes(30));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        });
+    }
+
+    @Test
+    void 조회_뒤_결제를_요청해_기준이_다시_시작된_주문은_취소하지_않는다() {
+        // given: 생성은 5분 전이지만 방금 결제를 요청했다
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(5));
+        order.markPaymentRequested(NOW);
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        });
+    }
+
+    @Test
+    void 조회_뒤_결제_결과가_먼저_왔으면_정리하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusHours(1));
+        order.markPaymentRequested(NOW.minusHours(1));
+        order.markPaid();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+        });
+    }
+
+    @Test
+    void 정리할_주문이_없으면_예외_없이_재고를_풀지_않는다() {
+        // given
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertThat(shouldReleaseStock).isFalse();
+    }
+
+    @Test
+    void 정리로_취소된_주문에_결제_완료가_늦게_와도_상태를_바꾸지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.cancel();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        then(removeOrderedCartItems).should(never()).removeOrderItems(anyLong(), anyList());
+        then(orderEventPublisher).should(never()).publishOrderPaidEvent(any());
+    }
+
+    @Test
     void 없는_주문은_생성_이벤트를_발행할_수_없다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> sut.publishCreated(10L))

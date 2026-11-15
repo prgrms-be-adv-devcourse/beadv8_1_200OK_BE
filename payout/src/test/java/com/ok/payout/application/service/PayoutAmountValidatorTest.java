@@ -5,6 +5,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -140,6 +141,50 @@ class PayoutAmountValidatorTest {
                 .containsExactly(tuple(PayoutFailureReason.AMOUNT_MISMATCH,
                         "초과 청구: 결제 30000, 후보 합계 45000, 넘친 금액 15000, 넘게 만든 주문상품 102, "
                                 + "이미 지급 30000(주문상품 101), 혼자 넘는 주문상품 없음, 판매자 1명, 지갑 금액 충돌 없음"));
+    }
+
+    @Test
+    void 값별_근거는_실패_상세_글과_같은_값이다() {
+        // given: 위와 같은 주문 (결제 30,000, 101 30,000 지급됨, 102 15,000) + 지갑 금액 충돌 20,000·25,000
+        PayoutCandidateItem paid = saleAmount(ORDER_ID, 101L, 10L, 30_000L);
+        PayoutCandidateItem current = saleAmount(ORDER_ID, 102L, 11L, 15_000L);
+        List<OverchargeCandidateRow> rows = List.of(row(paid, true), row(current, false));
+
+        // when
+        PayoutOverchargeEvidence sut = PayoutAmountValidator.overchargeEvidence(30_000L, 45_000L, rows,
+                List.of(20_000L, 25_000L));
+
+        // then: 상세 글 "넘친 금액 15000, 넘게 만든 주문상품 102, 이미 지급 30000(주문상품 101), 혼자 넘는 주문상품 없음, 판매자 2명,
+        //   지갑 금액 충돌 있음(받은 금액 20000, 25000)"과 같은 값
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getDeductedAmount()).isEqualTo(30_000L);
+            softly.assertThat(sut.getCandidateTotal()).isEqualTo(45_000L);
+            softly.assertThat(sut.getOverflowAmount()).isEqualTo(15_000L);
+            softly.assertThat(sut.getFirstOverflowItem()).isEqualTo("102");
+            softly.assertThat(sut.getSettledAmount()).isEqualTo(30_000L);
+            softly.assertThat(sut.settledItemList()).containsExactly("101");
+            softly.assertThat(sut.aloneOverItemList()).isEmpty();
+            softly.assertThat(sut.getSellerCount()).isEqualTo(2);
+            softly.assertThat(sut.conflictAmountList()).containsExactly(20_000L, 25_000L);
+        });
+    }
+
+    @Test
+    void 초과가_풀린_지금_값은_넘게_만든_주문상품이_판별_불가다() {
+        // given: 결제 30,000, 정산후보 합계 25,000 (조정 등으로 초과가 풀린 뒤 관리자 목록이 "지금" 값을 계산하는 경우)
+        List<OverchargeCandidateRow> rows = List.of(row(saleAmount(ORDER_ID, 101L, 10L, 25_000L), false));
+
+        // when
+        PayoutOverchargeEvidence sut = PayoutAmountValidator.overchargeEvidence(30_000L, 25_000L, rows, List.of());
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getOverflowAmount()).isEqualTo(-5_000L);
+            softly.assertThat(sut.getFirstOverflowItem()).isEqualTo("판별 불가");
+            softly.assertThat(sut.aloneOverItemList()).isEmpty();
+        });
     }
 
     @Test
@@ -323,6 +368,23 @@ class PayoutAmountValidatorTest {
 
         // then
         assertThat(sut).isEmpty();
+    }
+
+    @Test
+    void 원래_후보_없이_조정만_있는_주문은_예외_없이_금액_불일치로_뺀다() {
+        // given: 주문에 조정 후보만 있고 차감 기록은 있음. 합계는 조정을 빼서(#552) 이 주문의 키가 없음
+        PayoutCandidateItem adjustmentOnly = adjustment(ORDER_ID, 1001L, 10L, 5_000L);
+        targets.add(adjustmentOnly);
+        deductions.put(ORDER_ID, 10_000L);
+
+        // when: 합계를 그대로 꺼내면 NPE로 validate가 롤백되어 Job 전체가 실패했음
+        List<PayoutFailure> sut = validate();
+
+        // then: 검사할 기준이 없어 내보내지 않고 금액 불일치로 뺌
+        assertThat(sut)
+                .extracting(PayoutFailure::getCandidateId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(tuple(adjustmentOnly.getId(), PayoutFailureReason.AMOUNT_MISMATCH,
+                        "초과 청구 판정 불가: 원래 후보 없이 조정 후보만 있음"));
     }
 
     @ParameterizedTest

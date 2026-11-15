@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  *
  * <p>서비스가 넘긴 값으로 모듈 간 이벤트({@link DomainEvent})를 만들어 발행한다.
  * 발행은 호출한 서비스의 트랜잭션 안에서 일어나고, 구독하는 모듈은 커밋 후에 처리한다({@code @ApplicationModuleListener}).
- * 회원의 {@code SpringMemberEventPublisher}와 빈 이름이 겹치지 않도록 하위 도메인 이름을 붙인다.
+ * 회원의 {@code OutboxMemberEventPublisher}와 빈 이름이 겹치지 않도록 하위 도메인 이름을 붙인다.
  */
 @Component
 @RequiredArgsConstructor

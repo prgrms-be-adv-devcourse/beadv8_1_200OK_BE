@@ -37,6 +37,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -127,6 +128,56 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 재발급하면_세션의_행을_새로_만들지_않고_같은_행의_토큰을_회전한다() throws Exception {
+        // given
+        Member member = saveMember(MemberStatus.ACTIVE);
+        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        Long sessionId = refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
+                .map(RefreshToken::getId)
+                .orElseThrow();
+
+        // when
+        String body = performReissue(refreshToken).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String newRefreshToken = JsonPath.read(body, "$.refreshToken");
+        String newerRefreshToken = JsonPath.read(performReissue(newRefreshToken).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(), "$.refreshToken");
+
+        // then
+        // 두 번 재발급해도 이 회원의 행은 로그인 때 만든 하나뿐이고, 행에는 마지막 토큰의 해시만 남는다
+        List<RefreshToken> rows = refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getMemberId().equals(member.getId()))
+                .toList();
+        assertThat(rows).hasSize(1);
+        RefreshToken sut = rows.getFirst();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getId()).isEqualTo(sessionId);
+            softly.assertThat(sut.getTokenHash()).isEqualTo(TokenHasher.sha256Hex(newerRefreshToken));
+            softly.assertThat(sut.getRotatedAt()).isNotNull();
+            softly.assertThat(refreshTokenRepository.findIdByTokenHash(TokenHasher.sha256Hex(newRefreshToken)))
+                    .isEmpty();
+        });
+    }
+
+    @Test
+    void 회전된_토큰으로_다시_재발급하면_401을_반환하고_세션의_토큰은_그대로다() throws Exception {
+        // given
+        Member member = saveMember(MemberStatus.ACTIVE);
+        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String newRefreshToken = JsonPath.read(performReissue(refreshToken).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(), "$.refreshToken");
+
+        // when
+        ResultActions result = performReissue(refreshToken);
+
+        // then
+        result.andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.type", endsWith("/auth/invalid-refresh-token")));
+        // 재사용 탐지는 아직 없으므로 지금 토큰은 계속 쓸 수 있다
+        assertThat(refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(newRefreshToken))).isPresent();
+    }
+
+    @Test
     void 사용한_Refresh_Token으로_다시_재발급하면_401을_반환한다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
@@ -182,8 +233,10 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
         // then
         result.andExpect(status().is(expectedStatus))
                 .andExpect(jsonPath("$.type", endsWith(expectedType)));
-        // 실패하면 트랜잭션이 취소되어 토큰 삭제도 되돌려진다
-        assertThat(refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))).isPresent();
+        // 실패하면 트랜잭션이 취소되어 토큰 회전도 되돌려진다
+        RefreshToken sut = refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken)).orElse(null);
+        assertThat(sut).isNotNull();
+        assertThat(sut.getRotatedAt()).isNull();
     }
 
     static Stream<Arguments> 재발급할_수_없는_회원_상태() {
@@ -217,22 +270,22 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
         int requestCount = 2;
         CountDownLatch ready = new CountDownLatch(requestCount);
         CountDownLatch start = new CountDownLatch(1);
-        Callable<Boolean> reissue = () -> {
+        // 성공하면 새 Refresh Token, 실패하면 null
+        Callable<String> reissue = () -> {
             ready.countDown();
             start.await();
             try {
-                authService.reissue(new TokenReissueCommand(refreshToken));
-                return true;
+                return authService.reissue(new TokenReissueCommand(refreshToken)).refreshToken();
             } catch (RestApiException e) {
                 assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN);
-                return false;
+                return null;
             }
         };
 
         // when
-        List<Boolean> sut;
+        List<String> sut;
         try (ExecutorService executor = Executors.newFixedThreadPool(requestCount)) {
-            List<Future<Boolean>> futures = Stream.generate(() -> executor.submit(reissue))
+            List<Future<String>> futures = Stream.generate(() -> executor.submit(reissue))
                     .limit(requestCount)
                     .toList();
             ready.await();
@@ -241,7 +294,15 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
         }
 
         // then
-        assertThat(sut).containsExactlyInAnyOrder(true, false);
+        List<String> issued = sut.stream().filter(Objects::nonNull).toList();
+        assertThat(issued).hasSize(1);
+        // 행을 지우지 않고 회전하므로, 진 쪽이 회전된 행을 다시 회전하지 않았는지 세션 행의 해시가 이긴 쪽의 새 토큰인 것으로 확인한다
+        List<RefreshToken> sessions = refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getMemberId().equals(member.getId()))
+                .toList();
+        assertThat(sessions).singleElement()
+                .extracting(RefreshToken::getTokenHash)
+                .isEqualTo(TokenHasher.sha256Hex(issued.getFirst()));
     }
 
     private Member saveMember(MemberStatus status) {
@@ -263,7 +324,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
         return jsonMapper.writeValueAsString(Map.of("refreshToken", refreshToken));
     }
 
-    private static Boolean get(Future<Boolean> future) {
+    private static <T> T get(Future<T> future) {
         try {
             return future.get();
         } catch (Exception e) {

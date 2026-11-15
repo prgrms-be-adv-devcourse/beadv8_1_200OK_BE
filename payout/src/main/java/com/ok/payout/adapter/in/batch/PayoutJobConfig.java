@@ -7,6 +7,7 @@ import com.ok.payout.application.port.in.PayoutDraftResult;
 import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
@@ -23,7 +24,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
+@Slf4j
 @Configuration
 @RequiredArgsConstructor
 public class PayoutJobConfig {
@@ -32,13 +35,14 @@ public class PayoutJobConfig {
     public static final String SNAPSHOT_ID_KEY = "snapshotId";
 
     private final PayoutUseCase payoutUseCase;
+    private final PayoutOutboxSendLock payoutOutboxSendLock;
 
     // 정산 배치 (Write-Audit-Publish): 스냅샷 → 입력 검증 → 임시 정산 → 검증 → 확정 → 발행
     //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션, 잠긴 주문의 후보 제외)
     //   validate : 지갑 차감 기록이 없거나 금액이 맞지 않는 주문의 후보를 실패로 기록 (이번 정산에서 빠짐, Job은 계속 진행)
-    //              금액이 맞지 않는 주문은 잠겨 다음 배치부터 snapshot에서 빠짐
+    //              초과 청구 주문은 다음 배치에서 다시 검사하고 3번이면 멈춤(#549·#552), 수수료 불일치 주문은 잠겨 다음 배치부터 snapshot에서 빠짐
     //   draft    : 판매자 N명 단위 회차 반복으로 임시 정산 생성 (실패로 기록된 후보 제외)
-    //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 그 판매자만 실패로 기록하고 계속 진행 (#90)
+    //              판매자마다 트랜잭션을 따로 둬서, 한 판매자에서 예외가 나면 주문별로 다시 저장해 보고 실패한 주문만 기록하고 계속 진행 (#90, #534)
     //              단 전원 실패(성공 0명)면 여기서 멈춤 (지킬 정산이 없는 공통 오류를 FAILED로 드러냄)
     //   verify   : 스냅샷과 임시 정산을 후보 단위로 비교, 어긋난 후보의 주문만 실패로 기록하고 잠금 (#290)
     //              단 코드 자체가 망가진 경우(판매자 합계 불일치 등)와 정산할 것이 0건 남은 경우는 여기서 멈춤
@@ -46,12 +50,15 @@ public class PayoutJobConfig {
     //   publish  : outbox에 남은 판매자 몫 정산을 Kafka로 발송 (지갑 Spring 이벤트는 commit에서 발행). Kafka 발송 실패로는 Step을 실패시키지 않음
     // 앞 Step이 실패하면 Job이 FAILED로 멈추고 뒤 Step은 실행되지 않음
     // 실패한 Job은 재시작하지 않고 새 스냅샷으로 처음부터 재실행 (PayoutJobRunner 주석 참고)
+    // Job이 끝나면(성공·실패 모두) 막힌 주문 집계 표를 갱신함 (#582, PayoutBlockedOrderRefreshListener)
     @Bean
     public Job payoutJob(JobRepository jobRepository,
                          Step payoutSnapshotStep, Step payoutValidateStep, Step payoutDraftStep,
-                         Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep) {
+                         Step payoutVerifyStep, Step payoutCommitStep, Step payoutPublishStep,
+                         PayoutBlockedOrderRefreshListener payoutBlockedOrderRefreshListener) {
         return new JobBuilder("payoutJob", jobRepository)
                 .validator(new PayoutJobParametersValidator())
+                .listener(payoutBlockedOrderRefreshListener)
                 .start(payoutSnapshotStep)
                 .next(payoutValidateStep)
                 .next(payoutDraftStep)
@@ -110,7 +117,8 @@ public class PayoutJobConfig {
 
     // tasklet 1회 호출 = 판매자 N명(PAYOUT_BATCH_PAYEE_SIZE) 1회차. 부하를 고려해 판매자 단위로 끊어 반복 처리
     // 트랜잭션: tasklet 트랜잭션 1개는 조회만 하고, 저장은 판매자마다 별도 트랜잭션에서 커밋 (PayoutService.draft 참고, #90)
-    //   한 판매자 예외는 그 판매자만 롤백하고 UNEXPECTED_ERROR로 기록, Job은 계속 진행
+    //   한 판매자 예외는 그 판매자만 롤백하고, 주문별로 다시 저장해 본 뒤 실패한 주문만 UNEXPECTED_ERROR로 기록, Job은 계속 진행 (#534)
+    //     통과한 주문을 모아 저장하다 실패하면 통과했던 주문도 기록 (주문이 1개면 다시 시도 없이 그 판매자 후보 전체를 기록)
     //   단 전원 실패(성공 0명)면 마지막 회차에서 Step을 실패시켜 Job FAILED (failIfEverySellerFailed)
     //   실패 기록 저장마저 실패하는 등 그 밖의 예외는 그 회차가 실패하고 Job은 FAILED로 멈춤
     //   (이미 커밋된 판매자 draft는 같은 회차·이전 회차 모두 남지만 payout은 만들어지지 않음. 재실행은 새 스냅샷으로 처음부터)
@@ -134,8 +142,9 @@ public class PayoutJobConfig {
                 return RepeatStatus.FINISHED;
             }
             // 배치 실행 기록(BATCH_STEP_EXECUTION)에 판매자 수를 남김
-            //   WRITE_COUNT      = draft에 성공한 판매자 수
-            //   WRITE_SKIP_COUNT = 저장 중 예외로 건너뛰고 UNEXPECTED_ERROR로 기록한 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            //   WRITE_COUNT      = draft에 성공한 판매자 수 (주문별 다시 시도로 일부 주문만 저장된 판매자 포함, #534)
+            //   WRITE_SKIP_COUNT = 저장된 주문이 하나도 없어 후보 전부를 UNEXPECTED_ERROR로 기록한 판매자 수 (#90, Job은 COMPLETED여도 여기서 실패를 확인)
+            //     일부 주문만 실패한 판매자는 여기 잡히지 않음 → 그 주문은 payout_failure와 "정산 draft 주문 처리 실패" WARN 로그로 확인
             //   filter count가 아니라 write skip count에 두는 이유: filter는 "처리기가 일부러 걸러낸 것", skip은 "예외로 쓰지 못하고 건너뛴 것"이라 뒤쪽이 맞음
             contribution.incrementWriteCount(result.draftedSellerCount());
             contribution.incrementWriteSkipCount(result.failedSellerCount());
@@ -203,6 +212,11 @@ public class PayoutJobConfig {
     }
 
     // 발송 실패로 Step을 실패시키지 않음 (WRITE_COUNT = 보낸 수, WRITE_SKIP_COUNT = 실패 수)
+    // 짧은 간격 재발송과 같은 잠금(PayoutOutboxSendLock)을 잡고 보냄 (#620). 못 잡으면 재발송이 지금 PENDING 줄을 보내는 중이라
+    // 기다리지 않고 0건으로 끝냄. Step·Job은 실패하지 않음
+    //   재발송이 이번 commit보다 먼저 목록을 읽었다면 이번 Job이 만든 줄은 그 목록에 없음. 이 줄들은 다음 재발송(최대 5분 + 실행 시간 뒤)이 보냄
+    // 잠금 표(shedlock)를 다루다 DB 오류가 나도 Job을 실패시키지 않음: 정산은 이미 확정됐고 줄은 PENDING이라 다음 재발송이 보냄
+    //   publishPending이 예외를 밖으로 내지 않는 것과 같은 이유 (PayoutService.publishPending 주석)
     @Bean
     public Step payoutPublishStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                   Tasklet payoutPublishTasklet) {
@@ -214,7 +228,18 @@ public class PayoutJobConfig {
     @Bean
     public Tasklet payoutPublishTasklet() {
         return (contribution, chunkContext) -> {
-            PayoutPublishResult result = payoutUseCase.publishPending();
+            Optional<PayoutPublishResult> locked;
+            try {
+                locked = payoutOutboxSendLock.publishPending();
+            } catch (RuntimeException e) {
+                log.warn("정산 outbox 발송 잠금을 다루지 못해 발행 단계는 보내지 않고 넘어감. 남은 줄은 짧은 간격 재발송이 보냄", e);
+                return RepeatStatus.FINISHED;
+            }
+            if (locked.isEmpty()) {
+                log.info("짧은 간격 재발송이 정산 outbox를 보내는 중이라 발행 단계는 보내지 않고 넘어감");
+                return RepeatStatus.FINISHED;
+            }
+            PayoutPublishResult result = locked.get();
             contribution.incrementWriteCount(result.sent());
             contribution.incrementWriteSkipCount(result.failed());
             return RepeatStatus.FINISHED;

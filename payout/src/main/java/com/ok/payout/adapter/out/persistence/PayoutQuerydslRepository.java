@@ -1,18 +1,25 @@
 package com.ok.payout.adapter.out.persistence;
 
 import com.ok.payout.PayoutSchema;
+import com.ok.payout.application.port.out.BlockedFailureRow;
+import com.ok.payout.application.port.out.BlockedOrderRow;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
 import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
+import com.ok.payout.application.port.out.PayoutResolutionRequestRow;
+import com.ok.payout.application.port.out.PayoutResolutionRow;
 import com.ok.payout.application.port.out.SellerTotalRow;
 import com.ok.payout.application.port.out.SnapshotItemRow;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutBlockedOrderCause;
+import com.ok.payout.domain.PayoutBlockedStatus;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.QPayoutCandidateItem;
@@ -34,14 +41,19 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import static com.ok.payout.domain.QPayout.payout;
+import static com.ok.payout.domain.QPayoutBlockedOrder.payoutBlockedOrder;
+import static com.ok.payout.domain.QPayoutBlockedOrderCause.payoutBlockedOrderCause;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
 import static com.ok.payout.domain.QPayoutFailure.payoutFailure;
+import static com.ok.payout.domain.QPayoutFailureResolution.payoutFailureResolution;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
 import static com.ok.payout.domain.QPayoutSellerDraftItem.payoutSellerDraftItem;
@@ -52,11 +64,24 @@ import static com.ok.payout.domain.QPayoutWalletDeductionConflict.payoutWalletDe
 
 /**
  * 정산 조회 전용 저장소 출력 포트({@link PayoutQueryRepository})의 QueryDSL 구현.
- * 마지막 정기 실행 요청일(#390)만은 Spring Batch 메타 테이블을 함께 읽어야 해서 EntityManager로 네이티브 SQL 1개를 직접 실행한다.
+ * 마지막 정기 실행 요청일(#390)과 주문별 실패 실행 수(#549)는 Spring Batch 메타 테이블을 함께 읽어야 해서 EntityManager로 네이티브 SQL을 직접 실행한다.
  */
 @Repository
 @RequiredArgsConstructor
 public class PayoutQuerydslRepository implements PayoutQueryRepository {
+
+    // 주문별 실패 횟수 SQL의 공통 앞부분 (countFailedRunsByOrder·countFailedRunsOfOrder가 함께 씀, 조건 설명은 countFailedRunsByOrder 주석)
+    // 두 메서드가 같은 문자열을 써야 스냅샷의 멈춤 판정과 해결 API의 멈춤 판정이 어긋나지 않음. 끝은 WHERE 조건 뒤라 "AND ..." 또는 "GROUP BY"를 붙임
+    private static final String FAILED_RUNS_BY_ORDER_SELECT =
+            "SELECT f.order_id, COUNT(DISTINCT f.snapshot_id) "
+                    + "FROM " + PayoutSchema.NAME + ".payout_failure f "
+                    + "JOIN " + PayoutSchema.NAME + ".payout_snapshot s ON s.id = f.snapshot_id "
+                    + "JOIN " + PayoutSchema.NAME + ".BATCH_JOB_EXECUTION e ON e.JOB_EXECUTION_ID = s.job_execution_id "
+                    + "WHERE e.STATUS = 'COMPLETED' "
+                    + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_item pi "
+                    + "WHERE pi.candidate_id = f.candidate_id) "
+                    + "AND NOT EXISTS (SELECT 1 FROM " + PayoutSchema.NAME + ".payout_failure_resolution r "
+                    + "WHERE r.failure_id = f.id) ";
 
     private final JPAQueryFactory queryFactory;
     private final EntityManager entityManager;
@@ -95,7 +120,323 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return Optional.of(LocalDateTime.parse((String) rows.get(0)));
     }
 
-    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195)
+    // 주문별로 "성공한 실행 중 실패 기록이 남은 실행 수" (#549)
+    // 네이티브 SQL인 이유와 스키마 이름을 붙이는 이유는 findLastCompletedScheduledRequestedAt과 같음 (Spring Batch 메타 테이블을 함께 읽음)
+    // COUNT(DISTINCT snapshot_id)인 이유: 스냅샷 1개 = 실행 1번이라, 한 실행에서 같은 주문의 후보 여러 건이 실패해도 1번으로 세려는 것
+    // payout_item이 없는 후보의 실패만 세는 이유: 이미 정산된 후보의 실패는 더 막을 일이 아님 (unsettledInPeriod와 같은 "미정산" 기준)
+    // STATUS = 'COMPLETED'만 세는 이유: FAILED로 끝난 실행의 실패 기록은 주문 탓이 아닐 수 있어 횟수에 넣지 않음
+    // 해결 기록이 있는 실패는 세지 않음 (#568): 관리자가 "다시 처리"로 해결하면 횟수가 처음부터 다시 셈 (조건은 unresolvedFailure와 같은 뜻)
+    // 매 실행 실패 기록 전체를 훑어 기록이 쌓일수록 느려지는 것은 알고 둠: 지금 규모에서는 문제없고, 대량에서의 시간은 #304에서 잼
+    @Override
+    public Map<Long, Long> countFailedRunsByOrder() {
+        List<?> rows = entityManager.createNativeQuery(FAILED_RUNS_BY_ORDER_SELECT + "GROUP BY f.order_id")
+                .getResultList();
+        Map<Long, Long> counts = new HashMap<>();
+        for (Object row : rows) {
+            Object[] columns = (Object[]) row;
+            counts.put(((Number) columns[0]).longValue(), ((Number) columns[1]).longValue());
+        }
+        return counts;
+    }
+
+    // 한 주문의 "성공한 실행 중 실패 기록이 남은 실행 수" (#568 해결 API의 멈춤 판정)
+    // 위 countFailedRunsByOrder와 같은 SQL에 주문 조건만 더함: 세는 기준이 스냅샷과 어긋나지 않게 SQL을 공유하고,
+    //   관리자가 주문 하나를 해결할 때마다 전체 주문을 세지 않으려고 (payout_failure의 order_id 인덱스로 그 주문만 봄)
+    @Override
+    public long countFailedRunsOfOrder(Long orderId) {
+        List<?> rows = entityManager.createNativeQuery(
+                        FAILED_RUNS_BY_ORDER_SELECT + "AND f.order_id = :orderId GROUP BY f.order_id")
+                .setParameter("orderId", orderId)
+                .getResultList();
+        if (rows.isEmpty()) {
+            return 0L;
+        }
+        return ((Number) ((Object[]) rows.get(0))[1]).longValue();
+    }
+
+    // 다시 검사할 주문들의 미정산 후보 (#549): 조회 기간 하한 없이 createdAt < to
+    // 하한이 없는 이유: 실패한 주문의 후보는 이전 실행의 조회 기간 안에 있었어도 기간 하한이 올라가 지금은 기간 밖이라, 하한을 두면 다시 못 잡음
+    // unsettledInPeriod(null, to)를 그대로 써 미정산·상한 기준을 스냅샷 대상 조회와 같게 하고, 잠긴 주문은 같은 방식으로 뺌
+    // IN 목록을 나눠 보내지 않음: 1~2번 실패한 주문만 들어와 지금 규모에서는 짧음. 잠긴 주문도 목록에 남아 길어질 수 있어 대량에서는 #304에서 봄
+    @Override
+    public List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // 멈춘 주문 수 세기용 (#549): 위 조회와 같은 조건에서 주문 ID만 중복 없이 뽑음 (후보 엔티티를 불러오지 않음)
+    // 조건을 위 조회와 따로 쓰면 둘이 어긋나 "다시 넣는 대상"과 "세는 대상"이 달라지므로 같은 조건 메서드를 그대로 씀
+    @Override
+    public List<Long> findOrderIdsWithUnsettledCandidatesBefore(Collection<Long> orderIds, LocalDateTime to) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .select(payoutCandidateItem.orderId)
+                .distinct()
+                .from(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
+                .fetch();
+    }
+
+    // 해결 기록이 있는 주문 중, 상한(to) 전 미정산 후보가 남아 있고 잠기지 않은 주문 ID (#568, 중복 없음, 조회 기간 하한 없음)
+    // 해결하면 실패 횟수가 0이 되어 #549의 "1~2번 실패한 주문 다시 넣기"에 들지 않으므로, 기간 밖으로 밀린 해결 주문을 따로 고름
+    // 해결 기록 쪽에서 출발함: 정산후보 표에는 주문 ID만으로 쓰는 인덱스가 없어 후보 쪽에서 출발하면 상한 전 후보를 거의 다 훑음
+    //   해결 기록은 order_id 인덱스로 주문을 고르고, 후보 조회는 UK(order_id, ship_seller_id, adjustment_id)의 앞자리로 찾음
+    //   이미 다 정산된 주문은 미정산 조건이 빼지만 해결 기록 자체는 계속 쌓이므로, 해결 기록이 크게 늘었을 때의 시간은 #304에서 봄
+    // 해결 방법을 거르지 않는 이유: 지금은 REPROCESS(다시 처리)만 있음. "정산 안 함" 같은 방법을 더하면 여기서 REPROCESS만 골라야 함
+    // 해결 뒤 다시 3번 실패해 멈춘 주문은 여기서 빼지 않음 → 부르는 쪽(PayoutService.createSnapshot)이 멈춘 주문을 뺌
+    @Override
+    public List<Long> findResolvedOrderIdsWithUnsettledCandidatesBefore(LocalDateTime to) {
+        return queryFactory
+                .select(payoutFailureResolution.orderId)
+                .distinct()
+                .from(payoutFailureResolution)
+                .where(JPAExpressions.selectOne()
+                        .from(payoutCandidateItem)
+                        .where(payoutCandidateItem.orderId.eq(payoutFailureResolution.orderId),
+                                unsettledInPeriod(null, to), lockedOrder().not())
+                        .exists())
+                .fetch();
+    }
+
+    // 그 주문의 해결되지 않은 실패 기록 (#568 해결 서비스의 저장 대상), id 오름차순
+    // 사유·실행 성공 여부·정산 여부로 거르지 않음: #549 횟수는 사유를 가리지 않고 세므로 일부만 해결하면 계속 멈춰 있음
+    // id 오름차순인 이유: 같은 주문을 동시에 두 번 해결할 때 두 요청이 같은 순서로 저장해, 서로를 기다리는 데드락 대신 유니크 위반(409)이 나게 함
+    @Override
+    public List<PayoutFailure> findUnresolvedFailuresByOrderId(Long orderId) {
+        return queryFactory
+                .selectFrom(payoutFailure)
+                .where(payoutFailure.orderId.eq(orderId), unresolvedFailure())
+                .orderBy(payoutFailure.id.asc())
+                .fetch();
+    }
+
+    // 그 주문이 잠겼는지 (#568 해결 서비스의 "해결할 것이 있는지" 판정): lockedOrder와 같은 조건을 주문 ID로 봄
+    @Override
+    public boolean isOrderLocked(Long orderId) {
+        Integer found = queryFactory
+                .selectOne()
+                .from(payoutFailure)
+                .where(payoutFailure.orderId.eq(orderId), lockingFailure())
+                .fetchFirst();
+        return found != null;
+    }
+
+    // ---------- 막힌 주문 집계 표 다시 판정 (#582) ----------
+
+    // 기본 키 끝만 읽음 (MAX(id)는 인덱스 끝 한 칸)
+    @Override
+    public long findMaxFailureId() {
+        Long maxId = queryFactory.select(payoutFailure.id.max()).from(payoutFailure).fetchOne();
+        return Objects.requireNonNullElse(maxId, 0L);
+    }
+
+    // 기본 키 범위로 새로 생긴 실패 기록만 읽음: 반영 표시 뒤의 기록만 보려는 것 (운영 시작 이후 전체를 읽지 않음)
+    @Override
+    public List<Long> findOrderIdsWithFailuresBetween(long afterId, long upToId) {
+        return queryFactory
+                .select(payoutFailure.orderId)
+                .distinct()
+                .from(payoutFailure)
+                .where(payoutFailure.id.gt(afterId), payoutFailure.id.loe(upToId))
+                .fetch();
+    }
+
+    // isOrderLocked를 주문 여럿으로 한 번에 봄 (같은 조건 lockingFailure, payout_failure의 order_id 인덱스)
+    @Override
+    public Set<Long> findLockedOrderIds(Collection<Long> orderIds) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new HashSet<>();
+        }
+        return new HashSet<>(queryFactory
+                .select(payoutFailure.orderId)
+                .distinct()
+                .from(payoutFailure)
+                .where(payoutFailure.orderId.in(orderIds), lockingFailure())
+                .fetch());
+    }
+
+    // countFailedRunsOfOrder를 주문 여럿으로 한 번에 셈: 같은 SQL 앞부분(FAILED_RUNS_BY_ORDER_SELECT)에 주문 목록 조건만 더함
+    // 네이티브 SQL인 이유는 countFailedRunsByOrder와 같음 (Spring Batch 실행 기록 BATCH_JOB_EXECUTION을 함께 읽음)
+    // 주문을 하나씩 세면 막힌 주문 수만큼 SQL이 나가서 한 번에 셈 (부르는 쪽이 주문 목록을 묶음 크기로 나눠 보냄)
+    @Override
+    public Map<Long, Long> countFailedRunsOfOrders(Collection<Long> orderIds) {
+        Map<Long, Long> counts = new HashMap<>();
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return counts;
+        }
+        List<?> rows = entityManager.createNativeQuery(
+                        FAILED_RUNS_BY_ORDER_SELECT + "AND f.order_id IN (:orderIds) GROUP BY f.order_id")
+                .setParameter("orderIds", orderIds)
+                .getResultList();
+        for (Object row : rows) {
+            Object[] columns = (Object[]) row;
+            counts.put(((Number) columns[0]).longValue(), ((Number) columns[1]).longValue());
+        }
+        return counts;
+    }
+
+    // 종류는 실패 기록에 없어 정산후보와 조인 (실패 기록이 정산후보 ID를 숫자로만 들고 있어 on 조건, FK가 있어 짝이 없는 줄은 없음)
+    @Override
+    public List<BlockedFailureRow> findUnresolvedFailureRowsOfOrders(Collection<Long> orderIds) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .select(Projections.constructor(BlockedFailureRow.class,
+                        payoutFailure.orderId,
+                        payoutFailure.orderItemId,
+                        payoutFailure.sellerId,
+                        payoutCandidateItem.eventType,
+                        payoutFailure.reason,
+                        payoutFailure.detail,
+                        payoutFailure.createdAt))
+                .from(payoutFailure)
+                .join(payoutCandidateItem).on(payoutCandidateItem.id.eq(payoutFailure.candidateId))
+                .where(payoutFailure.orderId.in(orderIds), unresolvedFailure())
+                .orderBy(payoutFailure.id.asc())
+                .fetch();
+    }
+
+    // 해결 기록 1줄씩 (#571): 사유·상세·판매자·실패 시각은 실패 기록에, 종류·금액은 정산후보에만 있어 둘 다 조인
+    //   해결 기록·실패 기록은 서로를 객체 연관 없이 ID 숫자로만 들고 있어 on 조건으로 조인 (둘 다 FK가 있어 짝이 없는 줄은 없음)
+    // 개수는 조인 없이 해결 기록 표만 셈: 조인해도 줄이 늘지 않으므로 같은 값 (searchCandidates와 같은 방식)
+    @Override
+    public Page<PayoutResolutionRow> findResolutionsByOrderId(Long orderId, Pageable pageable) {
+        List<PayoutResolutionRow> content = queryFactory
+                .select(Projections.constructor(PayoutResolutionRow.class,
+                        payoutFailureResolution.id,
+                        payoutFailureResolution.resolutionRequestId,
+                        payoutFailureResolution.failureId,
+                        payoutFailureResolution.orderId,
+                        payoutFailureResolution.orderItemId,
+                        payoutFailure.sellerId,
+                        payoutCandidateItem.eventType,
+                        payoutCandidateItem.amount,
+                        payoutFailure.reason,
+                        payoutFailure.detail,
+                        payoutFailure.createdAt,
+                        payoutFailureResolution.method,
+                        payoutFailureResolution.adminId,
+                        payoutFailureResolution.createdAt,
+                        payoutFailureResolution.memo))
+                .from(payoutFailureResolution)
+                .join(payoutFailure).on(payoutFailure.id.eq(payoutFailureResolution.failureId))
+                .join(payoutCandidateItem).on(payoutCandidateItem.id.eq(payoutFailure.candidateId))
+                .where(payoutFailureResolution.orderId.eq(orderId))
+                .orderBy(payoutFailureResolution.createdAt.desc(), payoutFailureResolution.id.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> {
+            Long count = queryFactory
+                    .select(payoutFailureResolution.count())
+                    .from(payoutFailureResolution)
+                    .where(payoutFailureResolution.orderId.eq(orderId))
+                    .fetchOne();
+            return Objects.requireNonNullElse(count, 0L);
+        });
+    }
+
+    // 해결 요청 묶음 (#571): 요청 번호로 묶음. 같은 요청의 줄은 주문·방법·관리자·메모가 같아 함께 묶어도 줄이 갈라지지 않음
+    //   (MySQL ONLY_FULL_GROUP_BY에서 집계하지 않는 칸은 모두 GROUP BY에 있어야 해서 함께 적음)
+    // 해결 시각은 줄마다 따로 찍혀(마이크로초) 그 요청의 가장 이른 값을 씀. 같으면 id가 큰(나중에 저장한) 요청이 먼저
+    // 개수는 서로 다른 요청 번호 수
+    @Override
+    public Page<PayoutResolutionRequestRow> findResolutionRequestsByOrderId(Long orderId, Pageable pageable) {
+        List<PayoutResolutionRequestRow> content = queryFactory
+                .select(Projections.constructor(PayoutResolutionRequestRow.class,
+                        payoutFailureResolution.resolutionRequestId,
+                        payoutFailureResolution.orderId,
+                        payoutFailureResolution.method,
+                        payoutFailureResolution.adminId,
+                        payoutFailureResolution.createdAt.min(),
+                        payoutFailureResolution.memo,
+                        payoutFailureResolution.count()))
+                .from(payoutFailureResolution)
+                .where(payoutFailureResolution.orderId.eq(orderId))
+                .groupBy(payoutFailureResolution.resolutionRequestId,
+                        payoutFailureResolution.orderId,
+                        payoutFailureResolution.method,
+                        payoutFailureResolution.adminId,
+                        payoutFailureResolution.memo)
+                .orderBy(payoutFailureResolution.createdAt.min().desc(), payoutFailureResolution.id.max().desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> {
+            Long count = queryFactory
+                    .select(payoutFailureResolution.resolutionRequestId.countDistinct())
+                    .from(payoutFailureResolution)
+                    .where(payoutFailureResolution.orderId.eq(orderId))
+                    .fetchOne();
+            return Objects.requireNonNullElse(count, 0L);
+        });
+    }
+
+    // 막힌 주문 목록 (#569): 집계 표만 읽음 (원본 실패 기록을 다시 계산하지 않음, payout/CLAUDE.md 설계 전제)
+    // 정렬은 인덱스 (status, last_failed_at)의 뒷자리를 씀. 상태로 거르지 않아 인덱스로 정렬을 다 하지는 못하지만,
+    //   표는 막힌 주문 수만큼이라 운영 기간과 상관없이 작음
+    @Override
+    public Page<BlockedOrderRow> findBlockedOrders(Pageable pageable) {
+        List<BlockedOrderRow> content = queryFactory
+                .select(Projections.constructor(BlockedOrderRow.class,
+                        payoutBlockedOrder.orderId,
+                        payoutBlockedOrder.status,
+                        payoutBlockedOrder.failedRunCount,
+                        payoutBlockedOrder.lastFailedAt,
+                        payoutBlockedOrder.overchargeEvidence))
+                .from(payoutBlockedOrder)
+                .where(notPendingBlockedOrder())
+                .orderBy(payoutBlockedOrder.lastFailedAt.desc(), payoutBlockedOrder.orderId.desc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> {
+            Long count = queryFactory.select(payoutBlockedOrder.count())
+                    .from(payoutBlockedOrder)
+                    .where(notPendingBlockedOrder())
+                    .fetchOne();
+            return Objects.requireNonNullElse(count, 0L);
+        });
+    }
+
+    // 예비(PENDING) 줄은 아직 막힌 주문이 아니라 목록·개수에서 뺌 (#570)
+    private BooleanExpression notPendingBlockedOrder() {
+        return payoutBlockedOrder.status.ne(PayoutBlockedStatus.PENDING);
+    }
+
+    // 한 페이지 주문들의 원인을 한 번에 읽음 (주문마다 따로 읽으면 페이지 크기만큼 조회가 나감). 원인 표의 order_id 외래키 인덱스를 씀
+    @Override
+    public List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds) {
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return queryFactory
+                .selectFrom(payoutBlockedOrderCause)
+                .where(payoutBlockedOrderCause.orderId.in(orderIds))
+                .orderBy(payoutBlockedOrderCause.orderId.asc(), payoutBlockedOrderCause.failedAt.desc(),
+                        payoutBlockedOrderCause.id.asc())
+                .fetch();
+    }
+
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
     @Override
     public List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to) {
         return queryFactory
@@ -290,16 +631,21 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
-    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 조정 후보, 스냅샷 이후 새로 들어온 후보까지
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지
     //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
+    // 조정 후보(adjustment_id > 0)는 뺌(#552): 넣으면 −조정이 초과 청구를 가려 틀린 금액이 통과됨
+    //   예) 결제 30,000, 원래 후보 40,000(10,000 초과), −10,000 조정 → 합계 30,000이라 통과됐음. 이제 40,000 > 30,000으로 걸림
+    //   #552 전에는 잠금이 이 위험을 가렸음(잠긴 주문엔 조정이 와도 스냅샷에 안 들어감). 잠금을 없애며 함께 막음
+    //   조정으로 금액 불일치를 바로잡는 흐름은 #291에서 다시 설계 (수수료 검사는 이미 조정을 뺌, findOriginalSaleCandidatesInSnapshot)
     //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
-    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) GROUP BY order_id
+    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) AND adjustment_id = 0 GROUP BY order_id
     @Override
     public Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId) {
         List<Tuple> rows = queryFactory
                 .select(payoutCandidateItem.orderId, payoutCandidateItem.amount.sumLong())
                 .from(payoutCandidateItem)
-                .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)))
+                .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)),
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .groupBy(payoutCandidateItem.orderId)
                 .fetch();
         Map<Long, Long> sums = new HashMap<>();
@@ -319,6 +665,24 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .where(payoutWalletDeduction.orderId.in(orderIdsInSnapshot(snapshotId)))
                 .fetch();
         Map<Long, Long> amounts = new HashMap<>();
+        for (Tuple row : rows) {
+            amounts.put(row.get(0, Long.class), row.get(1, Long.class));
+        }
+        return amounts;
+    }
+
+    @Override
+    public Map<Long, Long> findDeductionAmountsByOrderIds(Collection<Long> orderIds) {
+        Map<Long, Long> amounts = new HashMap<>();
+        // 빈 IN 목록은 DB마다 동작이 달라 질의하지 않음
+        if (orderIds.isEmpty()) {
+            return amounts;
+        }
+        List<Tuple> rows = queryFactory
+                .select(payoutWalletDeduction.orderId, payoutWalletDeduction.amount)
+                .from(payoutWalletDeduction)
+                .where(payoutWalletDeduction.orderId.in(orderIds))
+                .fetch();
         for (Tuple row : rows) {
             amounts.put(row.get(0, Long.class), row.get(1, Long.class));
         }
@@ -348,8 +712,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서로, 이미 정산됐는지와 함께
+    // 조정 후보는 뺌(#552): 판정 합계(sumCandidateAmountByOrderInSnapshot)와 같은 범위여야 근거의 누적합이 합계와 맞음
     //   SQL) SELECT c.*, pi.id FROM payout_candidate_items c LEFT JOIN payout_item pi ON pi.candidate_id = c.id
-    //        WHERE c.order_id IN (...) ORDER BY c.created_at, c.id
+    //        WHERE c.order_id IN (...) AND c.adjustment_id = 0 ORDER BY c.created_at, c.id
     // 정산 여부는 select에 조건식을 두지 않고 payout_item id를 읽어 Java에서 null 여부로 정함 (JPQL select의 조건식 지원에 기대지 않으려고)
     @Override
     public List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds) {
@@ -363,7 +728,8 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutItem.id)
                 .from(payoutCandidateItem)
                 .leftJoin(payoutItem).on(payoutItem.candidateId.eq(payoutCandidateItem.id))
-                .where(payoutCandidateItem.orderId.in(orderIds))
+                .where(payoutCandidateItem.orderId.in(orderIds),
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .orderBy(payoutCandidateItem.createdAt.asc(), payoutCandidateItem.id.asc())
                 .fetch();
         List<OverchargeCandidateRow> result = new ArrayList<>();
@@ -596,18 +962,37 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return condition;
     }
 
-    // 후보의 주문이 잠겼는지: 그 주문에 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
+    // 후보의 주문이 잠겼는지: 그 주문에 해결되지 않은 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김
+    // 해결 기록이 있는 실패는 잠그지 않음 (#568): 관리자가 "다시 처리"로 해결하면 다음 스냅샷부터 다시 들어옴
     // 스냅샷 번호와 상관없이 주문 단위로 봄 → 잠긴 뒤 새로 들어온 같은 주문의 후보(나중에 구매확정된 상품, 조정 등)도 빠짐
-    // 잠그는 사유: 금액 검사 불일치(validate, #195), 결과 검증 불일치(verify, #290)
+    // 잠그는 사유: 수수료 불일치(validate, #195·#391), 결과 검증 불일치(verify, #290). 초과 청구(#195)는 #552부터 잠그지 않고 다시 검사함
     // 잠금을 남긴 Job이 이후 Step에서 FAILED로 끝나도 실패 기록은 남아 잠금이 유지됨
-    //   (금액 불일치는 입력에 대한 판정이라 재실행해도 다시 잠기고, 결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
+    //   (수수료 불일치는 입력에 대한 판정이라 재실행해도 다시 잠기고, 결과 검증 불일치는 관리자 확인 전까지 막아 두려는 것이라
     //    실패한 Job의 판정을 지울 이유가 없음)
     private BooleanExpression lockedOrder() {
         return JPAExpressions.selectOne()
                 .from(payoutFailure)
-                .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId),
-                        payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()))
+                .where(payoutFailure.orderId.eq(payoutCandidateItem.orderId), lockingFailure())
                 .exists();
+    }
+
+    // 주문을 잠그는 실패 기록인지: 잠그는 사유이고 해결 기록이 없음
+    // 스냅샷(lockedOrder)·해결 API(isOrderLocked)·막힌 주문 집계 표(findLockedOrderIds, #582)가 함께 씀
+    //   셋이 조건을 따로 쓰면 규칙을 바꿀 때 한 곳을 빠뜨려 같은 주문에 다른 답을 낼 수 있어 한곳에 둠 (#568 때 따로 고쳤음)
+    private BooleanExpression lockingFailure() {
+        return payoutFailure.reason.in(PayoutFailureReason.orderLockingReasons()).and(unresolvedFailure());
+    }
+
+    // 실패 기록(payoutFailure)에 해결 기록이 없는지 (#568)
+    // 여러 스냅샷에 걸쳐 실패 기록을 읽는 조건(잠금 lockedOrder·isOrderLocked, 해결 서비스의 저장 대상)에만 씀
+    //   실패 횟수(countFailedRunsByOrder)는 네이티브 SQL이라 같은 조건(r.failure_id = f.id)을 SQL에 따로 씀
+    // 한 스냅샷 안에서 빼는 조건(notFailedInSnapshot, findFailureRows)에는 쓰지 않음:
+    //   배치가 도는 중에 해결해도 그 실행에서 이미 실패한 후보는 그 실행의 draft·확정에서 계속 빠져야 함 (해결은 다음 실행부터)
+    private BooleanExpression unresolvedFailure() {
+        return JPAExpressions.selectOne()
+                .from(payoutFailureResolution)
+                .where(payoutFailureResolution.failureId.eq(payoutFailure.id))
+                .notExists();
     }
 
     // 이번 스냅샷 후보들의 주문 ID (금액 검사 집계 쿼리의 IN 조건)

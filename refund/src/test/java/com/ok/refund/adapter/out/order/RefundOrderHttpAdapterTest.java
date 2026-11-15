@@ -5,27 +5,33 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.refund.application.port.out.OrderCancellation;
+import com.ok.refund.application.port.out.OrderCancellationResult;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-// 주문 응답은 요청서에 적은 필드 이름으로 약속했다. 이름이 어긋나면 컴파일은 되고 값만 0이나 null로 들어와
-// 조용히 틀리므로, 요청서 모양의 JSON이 그대로 옮겨 담기는지 JDK 내장 서버로 확인한다.
-// 주문 팀 API가 아직 없어 실제 주문 모듈 대신 이 서버가 요청서대로 응답한다
+// 주문 응답의 경로와 필드 이름이 주문 API(조회 #533, 취소 반영 #542)와의 약속이다. 이름이 어긋나면 컴파일은 되고
+// 값만 0이나 null로 들어와 조용히 틀리므로, 같은 모양의 JSON이 그대로 옮겨 담기는지 JDK 내장 서버로 확인한다
 class RefundOrderHttpAdapterTest {
 
     private static final String ITEMS_JSON = """
@@ -117,16 +123,16 @@ class RefundOrderHttpAdapterTest {
         body.set(VALID_BODY);
 
         // when
-        BundleShipping sut = this.sut.getOrderItem(10L, 101L).bundle();
+        BundleShipping bundle = sut.getOrderItem(10L, 101L).bundle();
 
         // then
-        assertThat(sut).isNotNull();
+        assertThat(bundle).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.shippingFee()).isEqualTo(1_000L);
-            softly.assertThat(sut.remoteAreaFee()).isEqualTo(2_000L);
-            softly.assertThat(sut.baseShippingFee()).isEqualTo(3_000L);
-            softly.assertThat(sut.freeShippingThreshold()).isEqualTo(50_000L);
-            softly.assertThat(sut.items()).containsExactly(
+            softly.assertThat(bundle.shippingFee()).isEqualTo(1_000L);
+            softly.assertThat(bundle.remoteAreaFee()).isEqualTo(2_000L);
+            softly.assertThat(bundle.baseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(bundle.freeShippingThreshold()).isEqualTo(50_000L);
+            softly.assertThat(bundle.items()).containsExactly(
                     new BundleItem(101L, 10_000L, 3),
                     new BundleItem(102L, 5_000L, 1));
         });
@@ -261,14 +267,15 @@ class RefundOrderHttpAdapterTest {
 
     @Test
     void 취소_반영은_요청서_경로로_refundId와_수량과_뺀_배송비를_보낸다() {
-        // given: 성공 상태 코드가 요청서에 없어 본문 없는 204로 답한다
+        // given: 주문 API(#542)처럼 본문 없는 204로 답한다
         status.set(204);
 
         // when
-        sut.reflectCancellation(new OrderCancellation(7L, 101L, 2, 3_000L));
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 2, 3_000L));
 
         // then
         assertSoftly(softly -> {
+            softly.assertThat(result.rejected()).isFalse();
             softly.assertThat(method.get()).isEqualTo("POST");
             softly.assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
             softly.assertThat(requestBody.get()).isEqualToIgnoringWhitespace(
@@ -282,20 +289,103 @@ class RefundOrderHttpAdapterTest {
         status.set(200);
         body.set("{}");
 
-        // when & then: 예외 없이 끝난다
-        sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+        // when
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then: 예외 없이 반영됨으로 끝난다
+        assertThat(result.rejected()).isFalse();
         assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
     }
 
-    // 404(주문 상품 없음)·409(합계 초과, 수량이 다름)도 일시적 실패와 같은 코드다. 구분은 #516
-    @Test
-    void 취소_반영이_오류_상태를_받으면_ORDER_API_FAILED() {
+    // 409만 거절 결과다. 404 같은 그 밖의 오류 상태는 일시적 실패와 같은 코드다.
+    // 4xx 전체나 404를 반영됨·거절로 잘못 묶으면 주문이 모르는 취소의 돈이 나가거나 환불이 잘못 닫히므로 상태마다 확인한다
+    @ParameterizedTest
+    @MethodSource("_409가_아닌_오류_상태")
+    void 취소_반영이_409가_아닌_오류_상태를_받으면_ORDER_API_FAILED(int errorStatus) {
         // given
-        status.set(409);
+        status.set(errorStatus);
 
         // when & then
         assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+    }
+
+    static Stream<Integer> _409가_아닌_오류_상태() {
+        return Stream.of(400, 401, 403, 404, 500, 503);
+    }
+
+    // 요청은 받았는데 응답을 주지 않고 연결을 끊는 경우. 읽기 타임아웃(3초)과 같은 경로(응답 상태줄 읽기 실패)지만 기다리지 않으려고 연결을 닫는다
+    @Test
+    void 취소_반영_응답을_읽지_못하면_ORDER_API_FAILED() throws IOException {
+        // given: 요청을 읽은 뒤 응답 없이 소켓을 끊는 서버. JDK HttpServer는 응답 없이 끊기가 어려워 소켓으로 직접 연다
+        server.stop(0);
+        try (ServerSocket socket = new ServerSocket(0, 0, InetAddress.getByName("localhost"))) {
+            Thread acceptor = Thread.ofVirtual().start(() -> {
+                try (Socket client = socket.accept()) {
+                    client.getInputStream().read(new byte[4096]);
+                } catch (IOException ignored) {
+                    // 연결을 끊는 것이 목적이라 읽기 실패는 무시한다
+                }
+            });
+            sut = new RefundOrderHttpAdapter("http://localhost:" + socket.getLocalPort());
+
+            // when & then
+            assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
+                    .isInstanceOfSatisfying(RestApiException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
+            acceptor.interrupt();
+        }
+    }
+
+    @Test
+    void 취소_반영이_409면_거절_결과와_주문의_설명을_돌려준다() {
+        // given: 이유 이름(type)은 about:blank라 보지 않고 detail만 쓴다
+        status.set(409);
+        body.set("""
+                { "type": "about:blank", "title": "Conflict", "status": 409, "detail": "이미 출고된 상품입니다." }""");
+
+        // when
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("이미 출고된 상품입니다.");
+        });
+    }
+
+    @Test
+    void 취소_반영이_409인데_설명이_없으면_설명_없음으로_채운다() {
+        // given: 본문이 비어 있다. 설명이 없다고 거절을 실패로 바꾸면 안 된다
+        status.set(409);
+
+        // when
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+        });
+    }
+
+    @Test
+    void 취소_반영이_409인데_본문이_깨졌으면_설명_없음으로_채운다() {
+        // given
+        status.set(409);
+        body.set("not json");
+
+        // when
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+        });
     }
 }
