@@ -253,9 +253,9 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule review는_컨트롤러_서비스_리포지토리_도메인_순서로만_의존한다 = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
-            .layer("Controller").definedBy("com.ok.product.review.controller..")
-            .layer("Service").definedBy("com.ok.product.review.service..")
-            .layer("Repository").definedBy("com.ok.product.review.repository..")
+            .layer("Controller").definedBy("com.ok.product.review.adapter.in.web..")
+            .layer("Service").definedBy("com.ok.product.review.application.service..")
+            .layer("Repository").definedBy("com.ok.product.review.adapter.out.persistence..")
             .layer("Domain").definedBy("com.ok.product.review.domain..")
             .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
             .whereLayer("Service").mayOnlyBeAccessedByLayers("Controller")
@@ -268,7 +268,7 @@ class ArchitectureTest {
             .that().areAnnotatedWith(RestController.class)
             .and().resideInAPackage(LAYERED_REVIEW)
             .should().haveSimpleNameEndingWith("Controller")
-            .andShould().resideInAPackage("com.ok.product.review.controller..")
+            .andShould().resideInAPackage("com.ok.product.review.adapter.in.web..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
 
     @ArchTest
@@ -276,7 +276,7 @@ class ArchitectureTest {
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
             .and().resideInAPackage(LAYERED_REVIEW)
-            .should().resideInAPackage("com.ok.product.review.repository..")
+            .should().resideInAPackage("com.ok.product.review.adapter.out.persistence..")
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 
     // 모듈 전체
@@ -295,7 +295,7 @@ class ArchitectureTest {
             .that().areAnnotatedWith(Service.class)
             .should().haveSimpleNameEndingWith("Service")
             // review는 헥사고날로 옮길 때까지 service 패키지에 둔다
-            .andShould().resideInAnyPackage("com.ok.product.*.application.service..", "com.ok.product.review.service..")
+            .andShould().resideInAnyPackage("com.ok.product.*.application.service..", "com.ok.product.review.application.service..")
             .because("이름과 위치만 보고 서비스를 찾을 수 있어야 한다 (컨벤션 3.2, product 헥사고날 구조)");
 
     @ArchTest

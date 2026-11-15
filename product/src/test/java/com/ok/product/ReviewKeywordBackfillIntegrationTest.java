@@ -25,8 +25,8 @@ import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ReviewAnalysisRequest;
 import com.ok.product.review.domain.ReviewAnalysisStatus;
 import com.ok.product.review.domain.ReviewAnalysisType;
-import com.ok.product.review.repository.ProductReviewRepository;
-import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
+import com.ok.product.review.adapter.out.persistence.ProductReviewRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 // 키워드 분석 전에 쓰인 리뷰를 대기 요청으로 넣는 마이그레이션 파일을, 리뷰가 있는 DB에 그대로 다시 실행해 확인한다
