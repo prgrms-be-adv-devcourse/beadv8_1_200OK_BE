@@ -60,9 +60,7 @@ public class OrderPaymentService implements OrderPaymentUseCase {
                     result.orderId(), result.buyerId(), result.amount(), result.processedAt());
             return;
         }
-        // 처리 기록에 남는 실패는 잔액 부족뿐이다. 금액이 틀린 요청은 위에서 기록 없이 끝낸다
-        walletEventPublisher.publishOrderPaymentFailed(
-                result.orderId(), result.buyerId(), OrderPaymentFailureReason.INSUFFICIENT_BALANCE);
+        walletEventPublisher.publishOrderPaymentFailed(result.orderId(), result.buyerId(), result.failureReason());
     }
 
     // 보내기가 실패하면 예외를 그대로 올려 같은 주문을 다시 받게 한다. 결제는 이미 기록돼 있어 다시 받으면 처음 결과를 다시 보낸다.
@@ -92,7 +90,6 @@ public class OrderPaymentService implements OrderPaymentUseCase {
                     result.orderId(), result.buyerId(), result.amount(), result.processedAt());
             return;
         }
-        orderPaymentResultPublisher.publishPaymentFailed(
-                result.orderId(), result.buyerId(), OrderPaymentFailureReason.INSUFFICIENT_BALANCE);
+        orderPaymentResultPublisher.publishPaymentFailed(result.orderId(), result.buyerId(), result.failureReason());
     }
 }

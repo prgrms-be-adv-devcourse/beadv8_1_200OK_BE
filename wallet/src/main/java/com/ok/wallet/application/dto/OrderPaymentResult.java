@@ -34,4 +34,17 @@ public record OrderPaymentResult(
     public boolean paid() {
         return status == WalletOrderPaymentStatus.PAID;
     }
+
+    /**
+     * 실패한 결제를 주문에 알릴 사유를 돌려준다. 처음 처리할 때와 다시 보낼 때 같은 사유가 나가도록 사유는 여기서만 정한다.
+     *
+     * @throws IllegalStateException 결제된 결과면. 실패 사유가 없다
+     */
+    public OrderPaymentFailureReason failureReason() {
+        if (paid()) {
+            throw new IllegalStateException("결제된 주문에는 실패 사유가 없습니다. orderId=" + orderId);
+        }
+        // 지금 처리 기록에 남는 실패는 잔액 부족뿐이다. 결제 만료가 들어오면 기록된 사유를 읽게 바꾼다
+        return OrderPaymentFailureReason.INSUFFICIENT_BALANCE;
+    }
 }
