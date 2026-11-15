@@ -36,4 +36,17 @@ public interface RefundSagaUseCase {
      * 같은 이유가 이미 기록돼 있거나, 처리 중이 아니거나, 재고 단계가 이미 시작됐으면 넘긴다.
      */
     void recordWalletRefundFailure(WalletRefundFailedCommand command);
+
+    /**
+     * 환불 번호만으로 승인 뒤 단계를 이어 간다(#616). 지휘 작업(알람, #576)이 멈춘 환불을 다시 진행할 때 쓴다.
+     * 단계 줄을 보고 다음 할 일을 정해 그 단계부터 진행한다. 할 차례인 단계는 다시 시작해(시도 횟수 +1) 부른다.
+     * 시도 중이거나 지갑 결과를 기다리는 중이면 아무것도 하지 않고, 단계 줄이 없거나 멈춘 단계가 있거나 처리 중이 아닌 환불이면 WARN만 남긴다.
+     * 시도 중이 오래 멈춘 줄을 다시 시작하는 일(#576)과 결과 대기 시간 초과(#577)는 아직 하지 않는다.
+     *
+     * @return 진행한 뒤의 환불 상태
+     * @throws com.ok.common.exception.RestApiException 다른 모듈 호출이 실패하면 그 에러 코드(그 단계 줄에 실패를 남기고 그대로 올린다.
+     *                                                  환불마다 예외를 잡고 다음 환불로 넘어가는 일은 부르는 쪽이 한다)
+     * @throws IllegalStateException                    환불이 없으면, 열린 트랜잭션 안에서 부르면
+     */
+    RefundResult resume(Long refundId);
 }

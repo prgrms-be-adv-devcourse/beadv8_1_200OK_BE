@@ -5,6 +5,8 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.application.port.in.RefundResult;
+import com.ok.refund.application.port.in.RefundSagaUseCase;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
@@ -99,6 +101,9 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
     // 돌려줄 돈이 있는 승인은 처리 중으로 끝나고 완료는 지갑 완료 메시지가 와야 한다(#544). 지갑 대신 메시지를 실제 Kafka로 보낸다
     @Autowired
     RefundWalletResultSender walletResultSender;
+    // 알람(#576)이 부를 환불 번호 입구(resume)를 직접 부른다
+    @Autowired
+    RefundSagaUseCase refundSagaUseCase;
 
     private MockMvc mockMvc;
 
@@ -521,6 +526,48 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(
                         tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
                         tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED));
+    }
+
+    // 0원 환불의 재고 복구가 실패해 재고 줄이 할 차례로 남으면, 다시 진행에서 재고 줄을 다시 시작해(시도 2번째) 완료까지 간다(#616)
+    @Test
+    void 재고_복구가_실패한_0원_환불을_다시_진행하면_완료된다() throws Exception {
+        // given: 돌려줄_금액이_0원인_승인과 같은 묶음
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L, List.of(
+                new BundleItem(301L, 3_000L, 1), new BundleItem(302L, 27_000L, 1)));
+        orderQueryPort.put(orderItem(30L, 301L, 8L, 3_000L, 1, bundle));
+        orderQueryPort.put(orderItem(30L, 302L, 8L, 27_000L, 1, bundle));
+        Long refundId = requestedRefundId(30L, 301L);
+        productStockReleasePort.failNextCalls(1);
+        approve(8L, refundId).andExpect(status().isServiceUnavailable());
+
+        // when
+        RefundResult result = refundSagaUseCase.resume(refundId);
+
+        // then
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getAttemptCount)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, 1),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED, 2));
+    }
+
+    // 끝난 환불은 다시 진행해도 아무것도 바꾸지 않는다
+    @Test
+    void 완료된_환불을_다시_진행해도_바뀌지_않는다() throws Exception {
+        // given: 감자 1개 환불을 승인하고 지갑 완료 메시지까지 받아 완료됐다
+        approve(POTATO_SELLER_ID, requestedRefundId(POTATO_ORDER_ITEM_ID))
+                .andExpect(status().isOk());
+        Long refundId = onlyRefund().getId();
+        walletResultSender.completeByWallet(refundId);
+        int releasedBefore = productStockReleasePort.releaseCallCountOf(refundId);
+
+        // when
+        RefundResult result = refundSagaUseCase.resume(refundId);
+
+        // then
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isEqualTo(releasedBefore);
     }
 
     // 주문이 이미 출고돼 취소를 거절하면(409) 환불도 거절로 끝나고 다음 단계 줄은 만들지 않는다
