@@ -128,9 +128,20 @@ public class PayoutDepositCheck extends BaseTime {
     }
 
     // 지갑 답 하나를 반영함. 가장 최근 질문의 처음 온 답만 반영하고 나머지는 IGNORED
+    // 단 이전 질문의 늦은 답이라도 "있음, 같은 판매자·금액"이면 일치로 끝냄 (사용자 결정, 2026-11-15)
+    //   지갑 판매자 원장의 입금 줄은 고쳐지거나 지워지지 않아 지갑 답은 시간이 지나면 "없음 → 있음"으로만 바뀜
+    //   그래서 옛날 질문의 "있음"도 지금 사실이고, 버리면 최근 질문의 답이 끝내 안 올 때 입금된 정산이 "지갑 답 없음"으로 잘못 올라감
+    //   늦게 온 "없음"과 "있음, 다름"은 계속 버림: "없음"은 옛날 원장이라 지금은 들어갔을 수 있고, 다름은 최근 질문의 답으로 판정함
     public PayoutDepositAnswerOutcome applyAnswer(Long checkId, boolean found, Long answeredPayeeId, Long answeredAmount,
                                                   LocalDateTime depositedAt) {
-        if (status != PayoutDepositCheckStatus.WAITING || !Objects.equals(lastCheckId, checkId) || lastCheckAnswered) {
+        if (status != PayoutDepositCheckStatus.WAITING) {
+            return PayoutDepositAnswerOutcome.IGNORED;
+        }
+        boolean latestFirstAnswer = Objects.equals(lastCheckId, checkId) && !lastCheckAnswered;
+        if (!latestFirstAnswer) {
+            if (found && matches(answeredPayeeId, answeredAmount)) {
+                return matched(answeredPayeeId, answeredAmount, depositedAt);
+            }
             return PayoutDepositAnswerOutcome.IGNORED;
         }
         lastCheckAnswered = true;
@@ -145,8 +156,7 @@ public class PayoutDepositCheck extends BaseTime {
             if (!Objects.equals(amount, answeredAmount)) {
                 return needsReview(PayoutDepositMismatchReason.AMOUNT_MISMATCH);
             }
-            status = PayoutDepositCheckStatus.MATCHED;
-            return PayoutDepositAnswerOutcome.MATCHED;
+            return matched(answeredPayeeId, answeredAmount, depositedAt);
         }
         notFoundCount++;
         if (attemptCount >= MAX_ATTEMPTS) {
@@ -163,6 +173,18 @@ public class PayoutDepositCheck extends BaseTime {
         }
         needsReview(notFoundCount > 0 ? PayoutDepositMismatchReason.NOT_FOUND : PayoutDepositMismatchReason.NO_RESPONSE);
         return true;
+    }
+
+    private boolean matches(Long answeredPayeeId, Long answeredAmount) {
+        return Objects.equals(payeeId, answeredPayeeId) && Objects.equals(amount, answeredAmount);
+    }
+
+    private PayoutDepositAnswerOutcome matched(Long answeredPayeeId, Long answeredAmount, LocalDateTime depositedAt) {
+        walletPayeeId = answeredPayeeId;
+        walletAmount = answeredAmount;
+        walletDepositedAt = depositedAt;
+        status = PayoutDepositCheckStatus.MATCHED;
+        return PayoutDepositAnswerOutcome.MATCHED;
     }
 
     private PayoutDepositAnswerOutcome needsReview(PayoutDepositMismatchReason reason) {

@@ -116,6 +116,37 @@ class PayoutDepositCheckTest {
     }
 
     @Test
+    void 이전_질문의_답이라도_있음이고_같은_판매자_금액이면_일치로_끝낸다() {
+        // given: 어제 질문 3, 오늘 질문 7
+        PayoutDepositCheck sut = askedOnce(3L);
+        sut.recordAsked(7L, ASKED_AT.plusDays(1));
+
+        // when: 질문 3의 "있음, 같은 값"이 늦게 도착 (지갑 원장 입금 줄은 지워지지 않아 지금도 사실)
+        PayoutDepositAnswerOutcome outcome = sut.applyAnswer(3L, true, PAYEE_ID, AMOUNT, DEPOSITED_AT);
+
+        // then
+        assertThat(outcome).isEqualTo(PayoutDepositAnswerOutcome.MATCHED);
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED);
+            softly.assertThat(sut.getWalletDepositedAt()).isEqualTo(DEPOSITED_AT);
+        });
+    }
+
+    @Test
+    void 이전_질문의_늦은_답이_있음이어도_값이_다르면_버린다() {
+        // given
+        PayoutDepositCheck sut = askedOnce(3L);
+        sut.recordAsked(7L, ASKED_AT.plusDays(1));
+
+        // when
+        PayoutDepositAnswerOutcome outcome = sut.applyAnswer(3L, true, PAYEE_ID, 9_000L, DEPOSITED_AT);
+
+        // then: 판정은 최근 질문의 답으로 함
+        assertThat(outcome).isEqualTo(PayoutDepositAnswerOutcome.IGNORED);
+        assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
+    }
+
+    @Test
     void 같은_답이_두_번_오면_두_번째는_버린다() {
         // given
         PayoutDepositCheck sut = askedOnce(3L);
