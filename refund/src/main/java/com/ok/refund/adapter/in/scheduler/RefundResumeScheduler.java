@@ -54,7 +54,7 @@ public class RefundResumeScheduler {
     }
 
     // 회차가 끝난 뒤 1분 쉬고 다시 돈다(fixedDelay). 단계 줄의 다시 시도 간격(1분)과 맞췄다. 앱이 뜬 직후 몰리지 않게 1분 뒤 시작한다.
-    // TODO(#576): 간격을 설정 파일로 뺄지 정한다
+    // TODO(#577): 간격을 설정 파일로 뺄지 정한다. 지금은 단계 줄의 다시 시도 간격(1분)과 맞춘 상수다
     @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
     public void run() {
         // ShedLock이 만료 판단에 쓰는 시계와 같은 기준을 쓰려고 ShedLock 시계로 잠금 시작 시각을 잡는다

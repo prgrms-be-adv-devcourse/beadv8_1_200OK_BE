@@ -24,7 +24,7 @@ public class ResumeDueRefundsService implements ResumeDueRefundsUseCase {
 
     // 한 번에 집는 환불 수. 알람이 집는 것은 실패해서 멈춘 환불뿐이라 보통 한 번에 몇 건이다.
     // 많이 쌓여도 한 회차가 너무 길어지지 않게 묶음으로 끊고, 남은 것은 다음 회차가 이어 간다.
-    // TODO(#576): 설정 파일로 뺄지 정한다
+    // TODO(#577): 설정 파일로 뺄지 정한다. 지금은 실패한 환불만 집는 양을 보고 정한 상수다
     static final int BATCH_SIZE = 50;
 
     private final RefundStepPersistencePort refundStepPersistencePort;
