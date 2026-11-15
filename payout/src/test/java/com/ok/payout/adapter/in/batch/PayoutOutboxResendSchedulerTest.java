@@ -31,4 +31,14 @@ class PayoutOutboxResendSchedulerTest {
         // when & then
         assertThatCode(() -> sut.resendPending()).doesNotThrowAnyException();
     }
+
+    // 잠금 표 DB 오류는 발행 단계처럼 WARN으로 남기고 넘어감. 밖으로 던지면 Spring 기본 처리기가 ERROR로 남김
+    @Test
+    void 잠금_표_DB_오류가_나도_예외를_밖으로_내지_않는다() {
+        // given
+        given(payoutOutboxSendLock.publishPending()).willThrow(new IllegalStateException("shedlock 표 DB 오류"));
+
+        // when & then
+        assertThatCode(() -> sut.resendPending()).doesNotThrowAnyException();
+    }
 }

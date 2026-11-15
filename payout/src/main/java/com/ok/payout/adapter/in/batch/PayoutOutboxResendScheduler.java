@@ -28,7 +28,15 @@ public class PayoutOutboxResendScheduler {
     @Scheduled(fixedDelayString = "${payout.outbox-resend.fixed-delay:PT5M}",
             initialDelayString = "${payout.outbox-resend.fixed-delay:PT5M}")
     public void resendPending() {
-        Optional<PayoutPublishResult> result = payoutOutboxSendLock.publishPending();
+        Optional<PayoutPublishResult> result;
+        try {
+            result = payoutOutboxSendLock.publishPending();
+        } catch (RuntimeException e) {
+            // 잠금 표(shedlock)를 다루다 DB 오류가 나도 줄은 PENDING이라 다음 재발송이 보냄. 발행 단계(PayoutJobConfig)와 같은 WARN으로 맞춤
+            // 잡지 않으면 Spring 기본 처리기가 "Unexpected error occurred in scheduled task" ERROR로 남겨, 같은 오류가 곳마다 다르게 보임
+            log.warn("정산 outbox 발송 잠금을 다루지 못해 이번 재발송을 건너뜀. 남은 줄은 다음 재발송이 보냄", e);
+            return;
+        }
         if (result.isEmpty()) {
             // 정산 Job 발행 단계나 다른 서버의 재발송이 지금 보내는 중이라 정상. 남은 줄은 그쪽이 보내거나 다음 실행이 보냄
             log.info("다른 곳이 정산 outbox를 보내는 중이라 이번 재발송을 건너뜀");
