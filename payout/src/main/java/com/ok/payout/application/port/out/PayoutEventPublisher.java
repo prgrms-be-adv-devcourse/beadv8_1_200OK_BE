@@ -14,4 +14,10 @@ public interface PayoutEventPublisher {
      * 같은 정산이 두 번 갈 수 있어 받는 쪽은 정산 ID(payoutId)로 중복을 막아야 한다.
      */
     void publishSellerPayoutCreated(SellerPayoutCreated created);
+
+    /**
+     * 대사 질문 묶음("이 정산들, 지갑에 입금됐나요?")을 Kafka로 보낸다 (#619).
+     * 브로커가 받았음을 확인한 뒤에 돌아오고, 보내지 못하면 예외를 던진다. 지갑은 원장을 읽기만 하므로 같은 질문이 두 번 가도 답이 같다.
+     */
+    void publishDepositCheckRequested(PayoutDepositCheckRequested requested);
 }

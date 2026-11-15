@@ -562,6 +562,7 @@ class PayoutFailureRetryIntegrationTest extends AbstractIntegrationTest {
     // 정산 테이블을 전부 비우는 이유: 다른 통합 테스트가 남긴 정산 흔적이 실제 Job 실행 결과에 섞이지 않게 하려는 것 (다른 통합 테스트와 같음)
     // (리포지토리에는 삭제 기능이 없으므로 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");

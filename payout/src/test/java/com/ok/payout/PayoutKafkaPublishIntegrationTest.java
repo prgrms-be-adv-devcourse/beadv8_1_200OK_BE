@@ -157,6 +157,7 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
         assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         Long oldPayoutId = payoutIdOf(payoutRepository.findBySnapshotId(snapshotIdOf(first)), 10L);
         // 리포지토리에 삭제·되돌리기가 없어, 줄을 지우고 PENDING으로 다시 저장함
+        jdbcTemplate.update("DELETE FROM payout_deposit_check WHERE payout_id = ?", oldPayoutId);
         jdbcTemplate.update("DELETE FROM payout_outbox WHERE payout_id = ?", oldPayoutId);
         outboxJpaRepository.save(PayoutOutbox.pending(oldPayoutId));
 
@@ -337,6 +338,7 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
     // 정산·draft·스냅샷은 전부, 정산 후보·차감 기록은 이 클래스 번호대만 지움 (FK 때문에 자식 테이블 먼저)
     // (리포지토리에는 삭제 기능이 없으므로 테스트 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");

@@ -212,7 +212,7 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 정산_Kafka_리스너는_정산_오류_처리기를_쓴다() {
-        // given: 정산 그룹으로 받는 리스너 (구매확정, 결제 완료)
+        // given: 정산 그룹으로 받는 리스너 (구매확정, 결제 완료, 대사 답 #619)
         List<MessageListenerContainer> payoutContainers = new ArrayList<>();
         for (MessageListenerContainer container : listenerRegistry.getListenerContainers()) {
             if (PayoutTopics.CONSUMER_GROUP.equals(container.getGroupId())) {
@@ -222,7 +222,7 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
 
         // when & then: 기본 설정(오류 처리기 없음 → 간격 0으로 10번)이 아니라 정산 설정의 오류 처리기가 붙어 있다
         // 규칙 내용(다시 시도하지 않는 예외, 간격)은 PayoutKafkaConsumerConfigTest가 확인한다
-        assertThat(payoutContainers).hasSize(2);
+        assertThat(payoutContainers).hasSize(3);
         for (MessageListenerContainer container : payoutContainers) {
             assertThat(((AbstractMessageListenerContainer<?, ?>) container).getCommonErrorHandler())
                     .isInstanceOf(DefaultErrorHandler.class);

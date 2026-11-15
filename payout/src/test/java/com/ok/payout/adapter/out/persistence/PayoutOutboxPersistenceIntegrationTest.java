@@ -58,6 +58,9 @@ class PayoutOutboxPersistenceIntegrationTest extends AbstractIntegrationTest {
     void tearDown() {
         for (Long snapshotId : snapshotIds) {
             jdbcTemplate.update(
+                    "DELETE FROM payout_deposit_check WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)",
+                    snapshotId);
+            jdbcTemplate.update(
                     "DELETE FROM payout_outbox WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)",
                     snapshotId);
             jdbcTemplate.update("DELETE FROM payout WHERE snapshot_id = ?", snapshotId);

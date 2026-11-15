@@ -7,6 +7,7 @@ import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutDepositCheck;
 import com.ok.payout.domain.PayoutOverchargeEvidence;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
@@ -46,6 +47,7 @@ import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutDepositCheckRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRow;
 import lombok.RequiredArgsConstructor;
@@ -92,6 +94,7 @@ public class PayoutService implements PayoutUseCase {
     private final PayoutEventPublisher payoutEventPublisher;
     private final PayoutOutboxRepository payoutOutboxRepository;
     private final PayoutOutboxService payoutOutboxService;
+    private final PayoutDepositCheckRepository payoutDepositCheckRepository;
 
     // 조회 상한: 실행일 − 대기 일수 00:00 (생성 후 대기 일수가 지난 후보만 정산)
     @Override
@@ -587,6 +590,7 @@ public class PayoutService implements PayoutUseCase {
         // 지갑 입금용 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함
         // 지갑은 Kafka로만 입금하므로(#584) 이 줄이 지갑 입금의 유일한 근거임. Kafka 발송은 커밋 뒤 publishPending이 함
         List<PayoutOutbox> outboxes = new ArrayList<>();
+        List<PayoutDepositCheck> depositChecks = new ArrayList<>();
         for (Payout payout : payouts) {
             // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
             // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
@@ -597,8 +601,11 @@ public class PayoutService implements PayoutUseCase {
                 continue;
             }
             outboxes.add(PayoutOutbox.pending(payout.getId()));
+            // 지갑에 입금 메시지를 보내는 정산은 매일 대사로 실제 입금을 확인함 (#619). 대상 조건이 outbox와 같아 같은 자리에서 넣음
+            depositChecks.add(PayoutDepositCheck.waiting(payout.getId(), payout.getPayeeId(), payout.getAmount()));
         }
         payoutOutboxRepository.saveAll(outboxes);
+        payoutDepositCheckRepository.saveAll(depositChecks);
 
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 정산 확정은 돈이 장부에 기록되는 시점이라 INFO로 남김

@@ -841,6 +841,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
     // 정산·draft·실패·해결·스냅샷은 전부, 후보·차감 기록은 이 클래스 번호대만 지움 (FK 때문에 자식 테이블 먼저)
     // 해결 기록은 실패 기록을 외래키로 가리켜 실패 기록보다 먼저 지움 (다른 통합 테스트의 정리는 해결 기록을 모름 → 여기서 반드시 비움)
     private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");

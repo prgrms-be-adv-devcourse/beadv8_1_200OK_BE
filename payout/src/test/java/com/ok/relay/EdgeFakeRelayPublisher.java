@@ -1,5 +1,6 @@
 package com.ok.relay;
 
+import com.ok.payout.application.port.out.PayoutDepositCheckRequested;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 
@@ -9,5 +10,9 @@ public class EdgeFakeRelayPublisher implements PayoutEventPublisher {
 
     @Override
     public void publishSellerPayoutCreated(SellerPayoutCreated created) {
+    }
+
+    @Override
+    public void publishDepositCheckRequested(PayoutDepositCheckRequested requested) {
     }
 }

@@ -36,6 +36,7 @@ import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutDepositCheckRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRow;
 import org.junit.jupiter.api.Test;
@@ -128,6 +129,9 @@ class PayoutServiceTest {
 
     @Mock
     private PayoutOutboxService payoutOutboxService;
+
+    @Mock
+    private PayoutDepositCheckRepository payoutDepositCheckRepository;
 
     @InjectMocks
     private PayoutService sut;

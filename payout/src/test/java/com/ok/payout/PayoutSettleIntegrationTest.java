@@ -987,6 +987,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 한 스냅샷의 정산·draft·실패·스냅샷 행만 지움 (FK 때문에 자식 테이블 먼저, 다른 실행의 행은 그대로)
     private void deleteSnapshotRows(Long snapshotId) {
+        jdbcTemplate.update("DELETE FROM payout_deposit_check WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
         jdbcTemplate.update("DELETE FROM payout_outbox WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
         jdbcTemplate.update("DELETE FROM payout_item WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
         jdbcTemplate.update("DELETE FROM payout WHERE snapshot_id = ?", snapshotId);
@@ -2118,6 +2119,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // (리포지토리에는 삭제 기능이 없으므로 테스트 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
         unblockOrderDraftItem();
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");

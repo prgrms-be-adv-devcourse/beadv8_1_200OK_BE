@@ -864,6 +864,7 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM payout_blocked_order_cause");
         jdbcTemplate.update("DELETE FROM payout_blocked_order");
         jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = 0");
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
         jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");

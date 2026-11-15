@@ -20,6 +20,11 @@ public class PayoutKafkaTopicConfig {
         return TopicBuilder.name(PayoutTopics.SELLER_PAYOUT_CREATED).build();
     }
 
+    @Bean
+    public NewTopic payoutDepositCheckRequestedTopic() {
+        return TopicBuilder.name(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED).build();
+    }
+
     // 받는 토픽도 선언한다. 보내는 쪽(주문·지갑)이 아직 Kafka로 보내지 않아 토픽이 없으면, 리스너가 "토픽 없음" 경고를 계속 찍기 때문(#339)
     // NewTopic은 있으면 그대로라, 나중에 주문·지갑이 같은 선언을 해도 충돌하지 않는다
 
@@ -31,5 +36,11 @@ public class PayoutKafkaTopicConfig {
     @Bean
     public NewTopic walletPaymentCompletedTopic() {
         return TopicBuilder.name(PayoutTopics.WALLET_PAYMENT_COMPLETED).build();
+    }
+
+    // 지갑이 대사 답을 보내기 시작하기 전(#613)에도 리스너가 "토픽 없음" 경고를 찍지 않게 미리 만든다
+    @Bean
+    public NewTopic walletPayoutDepositCheckedTopic() {
+        return TopicBuilder.name(PayoutTopics.WALLET_PAYOUT_DEPOSIT_CHECKED).build();
     }
 }

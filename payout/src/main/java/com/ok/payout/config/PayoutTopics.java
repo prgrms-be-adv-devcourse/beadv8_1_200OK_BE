@@ -10,6 +10,9 @@ public final class PayoutTopics {
     /** 정산 → 지갑: 판매자에게 줄 정산금이 확정됨. 지갑이 받아 판매자 지갑에 입금한다. 키는 payoutId, 값은 {@link com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage} */
     public static final String SELLER_PAYOUT_CREATED = "payout.seller-payout-created";
 
+    /** 정산 → 지갑: 대사 질문 묶음("이 정산들, 입금됐나요?", #619). 키는 checkId, 값은 {@link com.ok.payout.adapter.out.event.dto.PayoutDepositCheckRequestedMessage} */
+    public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED = "payout.payout-deposit-check-requested";
+
     // 정산이 받는 토픽. 이름은 보내는 모듈(주문·지갑)의 것이라 보내는 쪽과 같은 값이어야 받는다(#339 합의)
 
     /** 주문 → 정산: 구매확정. 정산이 받아 정산 후보를 만든다. 키는 orderItemId, 값은 {@link com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage} */
@@ -17,6 +20,9 @@ public final class PayoutTopics {
 
     /** 지갑 → 정산: 결제 완료(예치금 차감). 정산이 받아 차감 기록을 남긴다. 키는 orderId, 값은 {@link com.ok.payout.adapter.in.event.dto.WalletPaymentCompletedMessage} */
     public static final String WALLET_PAYMENT_COMPLETED = "wallet.wallet-payment-completed";
+
+    /** 지갑 → 정산: 대사 답 묶음(#619, 지갑 #613). 키는 checkId, 값은 {@link com.ok.payout.adapter.in.event.dto.PayoutDepositCheckedMessage} */
+    public static final String WALLET_PAYOUT_DEPOSIT_CHECKED = "wallet.payout-deposit-checked";
 
     /** 정산 리스너의 컨슈머 그룹. 모듈마다 나눠야 같은 메시지를 모듈마다 받는다(#339 합의) */
     public static final String CONSUMER_GROUP = "payout";
