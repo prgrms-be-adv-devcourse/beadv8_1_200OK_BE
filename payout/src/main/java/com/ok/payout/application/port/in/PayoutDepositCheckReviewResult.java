@@ -15,7 +15,10 @@ public record PayoutDepositCheckReviewResult(
         String reason,
         // 지갑에 물어본 횟수
         int attemptCount,
-        // 지갑에 마지막으로 물은 시각 (답 받은 시각이 아님, PayoutDepositCheck.recordAsked)
+        // 지갑이 "없음"으로 답한 횟수. 입금 없음(NOT_FOUND)은 한 번만 "없음"이어도 되므로,
+        //   시도 횟수와 비교해 나머지가 답이 없었는지(지갑 수신 장애가 섞였는지) 관리자가 알 수 있게 함
+        int notFoundCount,
+        // 지갑에 마지막으로 물으려 한 시각 (답 받은 시각이 아님, 보내기 실패로 되돌린 시도의 시각일 수 있음, PayoutDepositCheck.undoAsked)
         LocalDateTime lastAskedAt
 ) {
 }

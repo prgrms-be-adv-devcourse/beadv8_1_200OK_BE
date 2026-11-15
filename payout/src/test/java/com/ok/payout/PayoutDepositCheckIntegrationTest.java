@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -20,6 +21,8 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -483,6 +486,7 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.get("walletAmount").asLong()).isEqualTo(9_600L);
             softly.assertThat(sut.get("reason").asString()).isEqualTo("PAYEE_MISMATCH");
             softly.assertThat(sut.get("attemptCount").asInt()).isEqualTo(1);
+            softly.assertThat(sut.get("notFoundCount").asInt()).isZero();
             softly.assertThat(LocalDateTime.parse(sut.get("lastAskedAt").asString())).isEqualTo(askedAt);
         });
     }
@@ -504,7 +508,31 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].walletPayeeId").value(nullValue()))
                 .andExpect(jsonPath("$.content[0].walletAmount").value(nullValue()))
                 .andExpect(jsonPath("$.content[0].reason").value("NO_RESPONSE"))
-                .andExpect(jsonPath("$.content[0].attemptCount").value(PayoutDepositCheck.MAX_ATTEMPTS));
+                .andExpect(jsonPath("$.content[0].attemptCount").value(PayoutDepositCheck.MAX_ATTEMPTS))
+                .andExpect(jsonPath("$.content[0].notFoundCount").value(0));
+    }
+
+    @Test
+    void 관리자_목록은_입금_없음_정산의_없음_답_횟수를_보여_준다() throws Exception {
+        // given: 첫 질문에 지갑이 "없음"으로 답하고, 두·세 번째 질문에는 답이 없어 네 번째 대사에서 입금 없음으로 닫힘
+        //   이유만 보면 3번 다 "없음"인지 알 수 없어, 없음 답 횟수(1)와 시도 횟수(3)를 함께 보여 줌 (#621 사용자 결정)
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        Long firstCheckId = checkOf(payoutId).getLastCheckId();
+        sendAnswer(firstCheckId, payoutId, false, null, null, null);
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutId).getNotFoundCount()).isEqualTo(1));
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+
+        // when & then
+        mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].payoutId").value(payoutId))
+                .andExpect(jsonPath("$.content[0].reason").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.content[0].attemptCount").value(PayoutDepositCheck.MAX_ATTEMPTS))
+                .andExpect(jsonPath("$.content[0].notFoundCount").value(1));
     }
 
     @Test
@@ -525,16 +553,18 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
         assertThat(checkOf(waiting).getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
 
         // when & then: 관리자 확인 필요 1건만 (개수에서도 다른 상태는 빠짐)
-        mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+        //   크기 1로 부름: 첫 쪽이 크기보다 적게 차면 PageableExecutionUtils가 개수 쿼리를 건너뛰어 개수 쿼리의 상태 조건을 확인하지 못함
+        mockMvc.perform(depositChecksRequest().param("size", "1").header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1))
                 .andExpect(jsonPath("$.content[*].payoutId").value(contains(review.intValue())))
                 .andExpect(jsonPath("$.content[0].reason").value("AMOUNT_MISMATCH"))
                 .andExpect(jsonPath("$.content[0].walletAmount").value(9_000L));
     }
 
     @Test
-    void 관리자_목록은_대사_줄_id_오름차순이고_페이지로_나눈다() throws Exception {
+    void 관리자_목록은_대사_줄_id_내림차순이고_페이지로_나눈다() throws Exception {
         // given: 정산 3건이 모두 지갑 답 없음으로 닫힘
         settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L, 30L, 3_000L));
         payoutDepositCheckUseCase.runCheck();
@@ -547,15 +577,15 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
         }
         String admin = tokens.bearer(ADMIN_ID, "ADMIN");
 
-        // when & then: 오래된 대사 줄 먼저, 크기 2면 2쪽
+        // when & then: 새 대사 줄 먼저, 크기 2면 2쪽
         mockMvc.perform(depositChecksRequest().param("page", "0").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(3))
                 .andExpect(jsonPath("$.totalPages").value(2))
                 .andExpect(jsonPath("$.content[*].payoutId")
-                        .value(contains(payoutIdsInCheckOrder.get(0), payoutIdsInCheckOrder.get(1))));
+                        .value(contains(payoutIdsInCheckOrder.get(2), payoutIdsInCheckOrder.get(1))));
         mockMvc.perform(depositChecksRequest().param("page", "1").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
-                .andExpect(jsonPath("$.content[*].payoutId").value(contains(payoutIdsInCheckOrder.get(2))));
+                .andExpect(jsonPath("$.content[*].payoutId").value(contains(payoutIdsInCheckOrder.get(0))));
     }
 
     @Test
@@ -581,12 +611,18 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    @Test
-    void 관리자_목록은_페이지_크기가_100을_넘으면_422다() throws Exception {
+    @ParameterizedTest
+    @MethodSource("범위_밖_페이지_크기")
+    void 관리자_목록은_페이지_크기가_1에서_100_밖이면_422다(String size) throws Exception {
         // when & then
-        mockMvc.perform(depositChecksRequest().param("size", "101")
+        mockMvc.perform(depositChecksRequest().param("size", size)
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isUnprocessableEntity());
+    }
+
+    // 아래·위 경계 바로 밖. 0은 하한 검사가 빠지면 쪽을 만드는 PageRequest가 거절해 422가 아닌 응답이 됨
+    static Stream<String> 범위_밖_페이지_크기() {
+        return Stream.of("0", "101");
     }
 
     @Test

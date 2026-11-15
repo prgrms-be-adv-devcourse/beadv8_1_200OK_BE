@@ -430,10 +430,13 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutDepositCheck.walletAmount,
                         payoutDepositCheck.mismatchReason,
                         payoutDepositCheck.attemptCount,
+                        payoutDepositCheck.notFoundCount,
                         payoutDepositCheck.lastCheckedAt))
                 .from(payoutDepositCheck)
                 .where(payoutDepositCheck.status.eq(PayoutDepositCheckStatus.NEEDS_REVIEW))
-                .orderBy(payoutDepositCheck.id.asc())
+                // 새 정산 먼저: 목록에서 줄을 빼는 기능이 없어 오래된 순이면 처리한 옛 건이 첫 쪽을 계속 차지함
+                //   옆 관리자 목록(막힌 주문·해결 기록)도 새 것 먼저. (status, id) 인덱스를 거꾸로 읽어 정렬 비용이 없음
+                .orderBy(payoutDepositCheck.id.desc())
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
                 .fetch();

@@ -195,7 +195,7 @@ public interface PayoutQueryRepository {
     List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds);
 
     // 관리자 대사 확인 목록 (#621): 관리자 확인 필요(NEEDS_REVIEW)인 대사 줄만. 확인 대기·일치 줄은 개수에서도 뺌
-    // 정렬은 대사 줄 id 오름차순 (정산 확정 때 넣는 줄이라 오래된 정산 먼저). id는 유일해서 페이지를 넘겨도 순서가 흔들리지 않음
-    // 대사 표의 (status, id) 인덱스로 관리자 확인 필요 줄만 id 순으로 읽음 (운영 시작 이후 대사 줄 전체를 읽지 않음, payout/CLAUDE.md 설계 전제)
+    // 정렬은 대사 줄 id 내림차순 (정산 확정 때 넣는 줄이라 새 정산 먼저). id는 유일해서 페이지를 넘겨도 순서가 흔들리지 않음
+    // 대사 표의 (status, id) 인덱스로 관리자 확인 필요 줄만 id 역순으로 읽음 (운영 시작 이후 대사 줄 전체를 읽지 않음, payout/CLAUDE.md 설계 전제)
     Page<DepositCheckReviewRow> findDepositChecksNeedingReview(Pageable pageable);
 }

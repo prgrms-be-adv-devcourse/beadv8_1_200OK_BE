@@ -24,7 +24,7 @@ public interface PayoutDepositCheckUseCase {
 
     /**
      * 관리자 확인 필요가 된 정산을 이유·지갑이 답한 값과 함께 페이지로 조회한다 (#621).
-     * 대사 줄 id 오름차순(오래된 정산 먼저)이고, 확인 대기·일치 줄은 나오지 않는다. 해당 건이 없으면 빈 페이지다.
+     * 대사 줄 id 내림차순(새 정산 먼저)이고, 확인 대기·일치 줄은 나오지 않는다. 해당 건이 없으면 빈 페이지다.
      */
     Page<PayoutDepositCheckReviewResult> getReviewItems(PayoutDepositCheckReviewSearchQuery query);
 }

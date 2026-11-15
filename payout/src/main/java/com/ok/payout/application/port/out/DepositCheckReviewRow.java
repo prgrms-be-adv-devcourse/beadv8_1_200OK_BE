@@ -14,6 +14,7 @@ public record DepositCheckReviewRow(
         Long walletAmount,            // 지갑이 "있음"으로 답한 금액. "있음" 답을 받지 못했으면 null
         PayoutDepositMismatchReason mismatchReason,
         Integer attemptCount,         // Querydsl이 생성자를 타입으로 찾아서 엔티티 필드(int)와 맞는 감싼 타입으로 둠 (BlockedOrderRow와 같음)
-        LocalDateTime lastCheckedAt   // 지갑에 마지막으로 물은 시각 (답 받은 시각이 아님)
+        Integer notFoundCount,        // 지갑이 "없음"으로 답한 횟수. attemptCount와 같은 이유로 감싼 타입
+        LocalDateTime lastCheckedAt   // 지갑에 마지막으로 물으려 한 시각 (답 받은 시각이 아님, 보내기에 실패한 시도의 시각일 수 있음)
 ) {
 }

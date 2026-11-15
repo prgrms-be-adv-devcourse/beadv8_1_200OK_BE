@@ -96,7 +96,8 @@ final class PayoutQueryResultMapper {
     // 엔티티 칸 이름 lastCheckedAt은 "물은 시각"이라 결과에서는 뜻이 드러나게 lastAskedAt으로 옮김 (답 받은 시각으로 오해하지 않게)
     static PayoutDepositCheckReviewResult toDepositCheckReviewResult(DepositCheckReviewRow row) {
         return new PayoutDepositCheckReviewResult(row.payoutId(), row.payeeId(), row.amount(), row.walletPayeeId(),
-                row.walletAmount(), row.mismatchReason().name(), row.attemptCount(), row.lastCheckedAt());
+                row.walletAmount(), row.mismatchReason().name(), row.attemptCount(), row.notFoundCount(),
+                row.lastCheckedAt());
     }
 
     private static PayoutOverchargeEvidenceResult toEvidenceResult(PayoutOverchargeEvidence evidence) {

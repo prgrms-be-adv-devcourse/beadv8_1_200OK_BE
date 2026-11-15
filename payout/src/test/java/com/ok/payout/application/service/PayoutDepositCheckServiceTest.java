@@ -147,11 +147,11 @@ class PayoutDepositCheckServiceTest {
 
     @Test
     void 관리자_확인_목록은_요청한_페이지로_읽고_이유는_이름으로_물은_시각은_lastAskedAt으로_옮긴다() {
-        // given: 판매자 다름 1줄 (지갑이 답한 값 있음). 판매자·금액 칸이 같은 Long 타입이라 값을 모두 다르게 넣어 순서가 뒤바뀌면 잡히게 함
+        // given: 판매자 다름 1줄 (지갑이 답한 값 있음). 판매자·금액 칸(Long)과 시도·없음 답 횟수 칸(int)이 같은 타입이라 값을 모두 다르게 넣어 순서가 뒤바뀌면 잡히게 함
         //   지갑 값이 null인 줄과 실제 조회·정렬은 통합 테스트(PayoutDepositCheckIntegrationTest)가 HTTP로 확인함
         LocalDateTime askedAt = LocalDateTime.of(2026, 11, 15, 2, 0);
         DepositCheckReviewRow row = new DepositCheckReviewRow(14L, 7L, 9_700L, 8L, 9_600L,
-                PayoutDepositMismatchReason.PAYEE_MISMATCH, 1, askedAt);
+                PayoutDepositMismatchReason.PAYEE_MISMATCH, 2, 1, askedAt);
         PageRequest pageable = PageRequest.of(2, 5);
         given(payoutQueryRepository.findDepositChecksNeedingReview(pageable))
                 .willReturn(new PageImpl<>(List.of(row), pageable, 11));
@@ -162,7 +162,7 @@ class PayoutDepositCheckServiceTest {
         // then
         assertThat(page.getTotalElements()).isEqualTo(11);
         assertThat(page.getContent()).containsExactly(
-                new PayoutDepositCheckReviewResult(14L, 7L, 9_700L, 8L, 9_600L, "PAYEE_MISMATCH", 1, askedAt));
+                new PayoutDepositCheckReviewResult(14L, 7L, 9_700L, 8L, 9_600L, "PAYEE_MISMATCH", 2, 1, askedAt));
     }
 
     // 줄 ID 목록으로 묶음을 만듦. 마지막 줄 ID가 다음 묶음의 시작점
