@@ -43,12 +43,15 @@ public class PayoutDepositCheckKafkaListener {
         payoutDepositCheckUseCase.handleAnswer(toCommand(message));
     }
 
-    // 묶음 안에서 읽을 수 없는 항목(정산 ID·있음 여부 없음)만 빼고 나머지는 반영한다
-    // 지갑도 읽을 수 없는 항목은 답에서 빼기로 했으니(합의 4-3절) 여기까지 오면 지갑 쪽 버그라 남긴다. 그 정산은 다음 날 다시 묻는다
+    // 묶음 안에서 읽을 수 없는 항목만 빼고 나머지는 반영한다
+    //   정산 ID·있음 여부가 없음, 또는 "있음"인데 판매자·금액이 없음(약속상 있음이면 채워 보냄)
+    //   "있음"인데 판매자·금액이 비면 판정하면 "판매자 다름"으로 잘못 기록돼, 돈이 다른 사람에게 간 것처럼 보이므로 뺀다
+    //   입금 시각은 판정에 쓰지 않아 비어도 빼지 않는다
+    // 지갑도 읽을 수 없는 항목은 답에서 빼기로 했으니(합의 4-3절) 여기까지 오면 지갑 쪽 버그라 남긴다. 그 정산은 다음 날 다시 묻는다(3번째 질문의 답이었다면 다시 묻지 않고 다음 날 대사가 닫아 관리자 확인으로 넘어감)
     private static PayoutDepositCheckAnswerCommand toCommand(PayoutDepositCheckedMessage message) {
         List<PayoutDepositCheckAnswerCommand.Item> items = new ArrayList<>();
         for (PayoutDepositCheckedMessage.Item item : message.items()) {
-            if (item == null || item.payoutId() == null || item.found() == null) {
+            if (isUnreadable(item)) {
                 log.warn("[PAYOUT_DEPOSIT_CHECK_SKIPPED] 읽을 수 없는 대사 답 항목이라 건너뜀. checkId={}, item={}", message.checkId(), item);
                 continue;
             }
@@ -56,5 +59,12 @@ public class PayoutDepositCheckKafkaListener {
                     item.payoutId(), item.found(), item.payeeId(), item.amount(), item.depositedAt()));
         }
         return new PayoutDepositCheckAnswerCommand(message.checkId(), items);
+    }
+
+    private static boolean isUnreadable(PayoutDepositCheckedMessage.Item item) {
+        if (item == null || item.payoutId() == null || item.found() == null) {
+            return true;
+        }
+        return item.found() && (item.payeeId() == null || item.amount() == null);
     }
 }

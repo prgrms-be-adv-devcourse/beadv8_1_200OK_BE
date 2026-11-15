@@ -18,6 +18,7 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 // 번호가 겹치면 "가장 최근 질문의 답만 처리" 규칙이 깨지므로 DB 자동 번호를 씀
 // 쌓기만 하는 기록 표라 @Immutable. 보낸 시각은 createdAt(BaseTime)
 // Kafka로 보내기에 실패한 묶음도 남음(번호를 먼저 받아야 메시지를 만들 수 있어서). 그 번호를 가리키는 대사 줄은 없음
+//   정리 작업은 두지 않음: 보내기에 실패한 날 하루 1줄 수준이고, 실패한 묶음도 "언제 물으려다 실패했는지" 기록이라 남겨 둠. 많아지면 그때 보관 기간을 정함
 @Entity
 @Immutable
 @Table(name = "payout_deposit_check_batch", catalog = PayoutSchema.NAME)

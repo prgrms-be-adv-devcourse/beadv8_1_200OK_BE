@@ -63,12 +63,15 @@ public class PayoutDepositCheckRecordService {
         return closed;
     }
 
+    // "오늘 이미 물은 줄"은 따로 거르지 않음: 대사를 시작하는 길은 하루 한 번 도는 PayoutDepositCheckScheduler 하나뿐이고,
+    // 서버가 여러 대여도 ShedLock(끝난 뒤 1분 유지)이 같은 날 두 번 돌지 않게 함. 그래서 물은 횟수 3번 = 3일이 지켜짐
+    // 대사를 수동으로 실행하는 길을 만들면 이 전제가 깨지므로, 그때 "마지막 질문이 오늘 이전인 줄만" 고르는 조건을 함께 넣음
     // 다음 질문 묶음을 만듦: 묶음 번호를 받고, 담은 줄마다 "이 번호로 물음"을 적음. 대기 줄이 더 없으면 빈 값
     // 커밋한 뒤에 보내야 지갑의 빠른 답이 이 번호를 찾을 수 있어, 보내기는 이 트랜잭션이 끝난 뒤 호출하는 쪽이 함
     @Transactional
     public Optional<PayoutDepositCheckPlan> prepareNextBatch(Long afterCheckRowId) {
-        List<PayoutDepositCheck> checks = payoutDepositCheckRepository.findTop500ByStatusAndIdGreaterThanOrderById(
-                PayoutDepositCheckStatus.WAITING, afterCheckRowId);
+        List<PayoutDepositCheck> checks = payoutDepositCheckRepository.findTop500ByStatusAndAttemptCountLessThanAndIdGreaterThanOrderById(
+                PayoutDepositCheckStatus.WAITING, PayoutDepositCheck.MAX_ATTEMPTS, afterCheckRowId);
         if (checks.isEmpty()) {
             return Optional.empty();
         }
@@ -99,6 +102,12 @@ public class PayoutDepositCheckRecordService {
     // 답 묶음 하나를 반영하고, 입금 메시지를 다시 보낼 정산을 돌려줌 (보내기는 트랜잭션 밖에서 호출하는 쪽이 함)
     @Transactional
     public List<SellerPayoutCreated> applyAnswer(PayoutDepositCheckAnswerCommand command) {
+        // 지갑은 질문 묶음 하나(최대 500건)에 답 묶음 하나를 보내기로 함(#613). 넘으면 지갑 쪽 버그라 큰 IN 조회를 하지 않고 거절함
+        // IllegalArgumentException은 정산 오류 처리기가 다시 시도하지 않고 넘김(PayoutKafkaConsumerConfig). 그 묶음의 줄은 확인 대기로 남아 다음 날 다시 물음(3번째 질문의 답이었다면 다음 날 대사가 닫아 관리자 확인으로 넘어감)
+        if (command.items().size() > PayoutDepositCheckBatch.MAX_ITEM_COUNT) {
+            throw new IllegalArgumentException("[PAYOUT_DEPOSIT_CHECK_SKIPPED] 대사 답 묶음이 " + PayoutDepositCheckBatch.MAX_ITEM_COUNT
+                    + "건을 넘습니다. checkId=" + command.checkId() + ", items=" + command.items().size() + "건");
+        }
         List<Long> payoutIds = new ArrayList<>();
         for (PayoutDepositCheckAnswerCommand.Item item : command.items()) {
             payoutIds.add(item.payoutId());
@@ -149,6 +158,10 @@ public class PayoutDepositCheckRecordService {
         return created;
     }
 
+    // 이 로그는 트랜잭션 커밋 전에 남음. 커밋 때 낙관적 잠금으로 저장이 거절되면 판정은 롤백되지만 로그는 남음
+    //   그래서 드물게 같은 줄의 ERROR가 두 번 찍히거나(다시 해서 저장됨), 저장되지 않은 판정이 로그에만 남을 수 있음(닫기를 다음 날로 미룸)
+    //   거절은 같은 줄을 같은 순간에 고칠 때만 생겨 드물고, 판정의 기준은 로그가 아니라 DB(관리자 목록 #621)라 그대로 둠
+    //   ERROR에 알림(#302)을 붙일 때 커밋 뒤에 남기도록 바꿈(트랜잭션 안에서는 바뀐 줄만 모아 돌려주고 호출하는 쪽이 커밋 뒤에 남김)
     private void logNeedsReview(PayoutDepositCheck check) {
         log.error("{} 관리자 확인 필요. payoutId={}, reason={}, payeeId={}, amount={}, walletPayeeId={}, walletAmount={}, attemptCount={}, notFoundCount={}",
                 MISMATCH_TAG, check.getPayoutId(), check.getMismatchReason(), check.getPayeeId(), check.getAmount(),

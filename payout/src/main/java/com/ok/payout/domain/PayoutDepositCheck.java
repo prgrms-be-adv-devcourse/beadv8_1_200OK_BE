@@ -124,6 +124,7 @@ public class PayoutDepositCheck extends BaseTime {
         }
         attemptCount--;
         lastCheckId = null;
+        // lastCheckedAt은 되돌리지 않음: 그 전 시각을 따로 남기지 않아 되돌릴 값이 없고, 판정에 쓰지 않는 기록용 칸이라 "마지막으로 물으려 한 시각"으로 둠
         return true;
     }
 

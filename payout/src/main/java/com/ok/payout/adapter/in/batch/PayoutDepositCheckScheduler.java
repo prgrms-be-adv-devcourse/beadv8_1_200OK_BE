@@ -39,6 +39,8 @@ public class PayoutDepositCheckScheduler {
     public void runDaily() {
         LockConfiguration lockConfig = new LockConfiguration(clock.instant(), LOCK_NAME, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR);
         LockingTaskExecutor.TaskResult<PayoutDepositCheckRunResult> result;
+        // executeWithLock이 Throwable을 던진다고 선언돼 있어, 실행 중 난 예외(RuntimeException·Error)는 그대로 다시 던지고
+        // 그 밖의 검사 예외만 IllegalStateException으로 감쌈 (PayoutJobRunner와 비슷한 방식)
         try {
             result = lockingTaskExecutor.executeWithLock(payoutDepositCheckUseCase::runCheck, lockConfig);
         } catch (RuntimeException | Error e) {

@@ -107,6 +107,23 @@ class PayoutDepositCheckServiceTest {
     }
 
     @Test
+    void 닫기가_두_번_다_거절돼도_묻기는_그대로_한다() {
+        // given: 닫기는 두 번 다 낙관적 잠금으로 거절, 묻기 묶음은 1건
+        PayoutDepositCheckPlan first = plan(10L, List.of(1L));
+        given(payoutDepositCheckRecordService.closeExhausted())
+                .willThrow(new OptimisticLockingFailureException("다른 트랜잭션이 먼저 고침"));
+        given(payoutDepositCheckRecordService.prepareNextBatch(0L)).willReturn(Optional.of(first));
+        given(payoutDepositCheckRecordService.prepareNextBatch(1L)).willReturn(Optional.empty());
+
+        // when
+        PayoutDepositCheckRunResult result = sut.runCheck();
+
+        // then: 닫은 줄 0, 묻기는 함
+        assertThat(result).isEqualTo(new PayoutDepositCheckRunResult(0, 1, 1, false));
+        then(payoutEventPublisher).should().publishDepositCheckRequested(first.requested());
+    }
+
+    @Test
     void 없음_답의_정산은_입금_메시지를_다시_보내고_하나를_못_보내도_나머지를_보낸다() {
         // given: 다시 보낼 정산 15·16번, 15번은 보내기 실패
         PayoutDepositCheckAnswerCommand command = new PayoutDepositCheckAnswerCommand(10L, List.of());

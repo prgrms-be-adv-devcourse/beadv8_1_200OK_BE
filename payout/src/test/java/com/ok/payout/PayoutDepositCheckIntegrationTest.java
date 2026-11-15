@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -32,6 +33,7 @@ import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
 import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
+import com.ok.payout.application.service.PayoutDepositCheckRecordService;
 import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutDepositCheck;
@@ -67,6 +69,10 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutDepositCheckUseCase payoutDepositCheckUseCase;
+
+    // 닫기가 실패한 날의 묻기 대상 조회만 따로 확인하려고 씀 (닫기 실패를 통합 테스트로 일으키기 어려워서)
+    @Autowired
+    private PayoutDepositCheckRecordService depositCheckRecordService;
 
     @Autowired
     private PayoutDepositCheckJpaRepository depositCheckRepository;
@@ -317,6 +323,26 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 세_번_물은_대기_줄은_닫지_못한_날에도_다시_묻지_않는다() throws Exception {
+        // given: 세 번 물어 대기로 남은 줄 (닫기가 실패한 날과 같은 상태)
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        Long thirdCheckId = checkOf(payoutId).getLastCheckId();
+
+        // when: 묻기 대상 묶음을 만듦
+        Optional<?> next = depositCheckRecordService.prepareNextBatch(0L);
+
+        // then: 4번째 질문에 담지 않음 (담았다면 recordAsked가 예외를 던져 묻기가 멈춤)
+        assertThat(next).isEmpty();
+        assertSoftly(softly -> {
+            softly.assertThat(checkOf(payoutId).getAttemptCount()).isEqualTo(PayoutDepositCheck.MAX_ATTEMPTS);
+            softly.assertThat(checkOf(payoutId).getLastCheckId()).isEqualTo(thirdCheckId);
+        });
+    }
+
+    @Test
     void 묶음_번호가_없는_답은_버리고_다음_답을_처리한다() throws Exception {
         // given
         Long payoutId = settleOnePayout(10L, 9_700L);
@@ -332,6 +358,52 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
         assertThat(checkOf(payoutId).getNotFoundCount()).isZero();
+    }
+
+    @Test
+    void 답_묶음이_500건을_넘으면_반영하지_않고_다음_답을_처리한다() throws Exception {
+        // given
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        Long checkId = checkOf(payoutId).getLastCheckId();
+
+        // when: 이 정산의 "없음"을 포함한 501건짜리 답, 이어서 같은 키로 정상 "있음, 같은 값" 답
+        List<Map<String, Object>> items = new ArrayList<>();
+        items.add(answerItem(payoutId, false, null, null, null));
+        for (long i = 1; i <= 500; i++) {
+            items.add(answerItem(900_000_000L + i, false, null, null, null));
+        }
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYOUT_DEPOSIT_CHECKED, String.valueOf(checkId), Map.of("checkId", checkId, "items", items));
+        sendAnswer(checkId, payoutId, true, 10L, 9_700L, "2026-11-15T02:05:00");
+
+        // then: 큰 묶음은 다시 시도 없이 넘어가고 정상 답이 반영됨 (큰 묶음이 반영됐다면 없음 1번이 남음)
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
+        assertThat(checkOf(payoutId).getNotFoundCount()).isZero();
+    }
+
+    @Test
+    void 있음인데_판매자_금액이_빈_항목은_건너뛰고_대기로_남긴다() throws Exception {
+        // given: 판매자 10·20의 정산을 한 묶음으로 물음
+        Map<Long, Long> payoutIdBySeller = settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L));
+        Long payoutA = payoutIdBySeller.get(10L);
+        Long payoutB = payoutIdBySeller.get(20L);
+        payoutDepositCheckUseCase.runCheck();
+        Long checkId = checkOf(payoutA).getLastCheckId();
+
+        // when: 정산 A는 "있음"인데 판매자·금액이 빔(지갑 버그), 표시용으로 같은 키의 정산 B "있음, 같은 값"
+        sendAnswer(checkId, payoutA, true, null, null, "2026-11-15T02:05:00");
+        sendAnswer(checkId, payoutB, true, 20L, 5_000L, "2026-11-15T02:05:00");
+
+        // then: B가 처리된 뒤 A는 판매자 다름으로 기록되지 않고 대기로 남음 (다음 날 다시 물음)
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutB).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
+        PayoutDepositCheck sut = checkOf(payoutA);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
+            softly.assertThat(sut.getMismatchReason()).isNull();
+        });
     }
 
     // ---------- 도우미 ----------
@@ -365,14 +437,20 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void sendAnswer(Long checkId, Long payoutId, boolean found, Long payeeId, Long amount, String depositedAt) {
+        Map<String, Object> message = Map.of("checkId", checkId,
+                "items", List.of(answerItem(payoutId, found, payeeId, amount, depositedAt)));
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYOUT_DEPOSIT_CHECKED, String.valueOf(checkId), message);
+    }
+
+    // 지갑 답 항목 하나 (null 값을 넣을 수 있게 HashMap)
+    private static Map<String, Object> answerItem(Long payoutId, boolean found, Long payeeId, Long amount, String depositedAt) {
         Map<String, Object> item = new HashMap<>();
         item.put("payoutId", payoutId);
         item.put("found", found);
         item.put("payeeId", payeeId);
         item.put("amount", amount);
         item.put("depositedAt", depositedAt);
-        Map<String, Object> message = Map.of("checkId", checkId, "items", List.of(item));
-        kafkaTemplate.send(PayoutTopics.WALLET_PAYOUT_DEPOSIT_CHECKED, String.valueOf(checkId), message);
+        return item;
     }
 
     private String readMessage(String topic, String key) {

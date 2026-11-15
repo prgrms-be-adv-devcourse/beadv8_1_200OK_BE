@@ -30,7 +30,7 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
     @Override
     public PayoutDepositCheckRunResult runCheck() {
         // 묻기 전에 먼저 닫음: 3번째 질문에도 하루를 기다려 준 뒤라, 그 답이 끝내 오지 않은 줄만 닫힘
-        int closed = retryOnceOnConflict(payoutDepositCheckRecordService::closeExhausted);
+        int closed = closeExhaustedOrSkip();
 
         int asked = 0;
         int batches = 0;
@@ -60,6 +60,9 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
         return new PayoutDepositCheckRunResult(closed, asked, batches, stopped);
     }
 
+    // TODO(#620): 재발송을 바로 보내지 말고 답 처리와 같은 트랜잭션에서 outbox 줄을 다시 "보낼 것(PENDING)"으로 돌려, #620의 짧은 간격 재발송이 보내게 바꾼다
+    //   지금은 건마다 Kafka 저장 확인을 기다려(최대 120초) 브로커가 느리면 답 처리가 Kafka 기본 max.poll.interval(5분)을 넘을 수 있음
+    //   outbox로 넘기면 답 처리는 DB만 고치고 끝나고, 서버가 죽어도 재발송이 사라지지 않음. #620 전에는 outbox를 정산 Job만 보내서 지금은 바로 보냄
     @Override
     public void handleAnswer(PayoutDepositCheckAnswerCommand command) {
         List<SellerPayoutCreated> resend = payoutDepositCheckRecordService.applyAnswer(command);
@@ -72,6 +75,17 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
                 // 못 보내도 다음 날 대사가 다시 "없음"을 받고 또 보냄. 답 처리는 이미 커밋돼 되돌리지 않음
                 log.warn("대사에서 입금 메시지를 다시 보내지 못함. 다음 대사에서 다시 보냄. payoutId={}", created.payoutId(), e);
             }
+        }
+    }
+
+    // 닫기가 두 번 다 거절돼도 묻기는 그대로 함. 닫기 때문에 그날 다른 정산의 질문이 통째로 빠지지 않게
+    // 못 닫은 줄은 확인 대기 그대로라 다음 날 대사가 다시 닫음 (3번을 다 물어 묻기 대상 조회에서는 빠짐, prepareNextBatch)
+    private int closeExhaustedOrSkip() {
+        try {
+            return retryOnceOnConflict(payoutDepositCheckRecordService::closeExhausted);
+        } catch (OptimisticLockingFailureException e) {
+            log.warn("3번 물은 대사 줄을 지갑 답 처리와 겹쳐 닫지 못함. 다음 날 다시 닫고 오늘 묻기는 그대로 함", e);
+            return 0;
         }
     }
 
