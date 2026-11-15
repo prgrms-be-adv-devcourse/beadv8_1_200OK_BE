@@ -237,9 +237,10 @@ class RefundSagaServiceWalletResultTest {
 
     @Test
     void 읽은_뒤_잠그기_전에_완료되면_완료로_다시_바꾸지_않는다() {
-        // given: 먼저 읽은 뒤 같은 메시지가 먼저 완료한 경우
+        // given: 먼저 읽은 뒤 같은 메시지가 먼저 완료한 경우. 지갑 줄은 결과 대기라 잠근 뒤 다시 보는 판단이 걸러야 한다
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null), null);
 
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
@@ -247,7 +248,44 @@ class RefundSagaServiceWalletResultTest {
         // then: 재고 단계를 시작하는 구간에서 걸러 단계 줄도, 상품 호출도 없다
         then(refundPersistencePort).should(never()).update(any());
         then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
         then(productStockReleasePort).should(never()).releaseStock(any());
+    }
+
+    // 같은 완료 메시지가 동시에 처리 중이면(재고 줄이 시도 중) 재고를 또 부르지 않는다(#616 결정 14).
+    // 서버가 죽어 오래 멈춘 시도 중 줄은 지휘 작업(#576)이 다시 집는다
+    @Test
+    void 재고_줄이_시도_중이면_같은_완료가_다시_와도_재고를_다시_부르지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, 1, null),
+                step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    // 재고를 되돌린 사이 같은 메시지가 먼저 완료했으면 완료 구간은 쓰지 않고 예외 없이 넘긴다(#616 결정 15)
+    @Test
+    void 재고를_되돌린_사이_이미_완료되면_예외_없이_넘긴다() {
+        // given: 재고 단계를 시작할 때는 처리 중, 완료하려고 잠글 때는 이미 완료
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID))
+                .willReturn(Optional.of(refund(RefundStatus.PROCESSING)), Optional.of(refund(RefundStatus.COMPLETED)));
+        RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null);
+        givenSteps(walletStep, null, null, step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
+
+        // then: 재고는 한 번 되돌렸고, 환불 행은 저장하지 않는다
+        then(productStockReleasePort).should().releaseStock(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     @Test

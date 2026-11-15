@@ -202,23 +202,24 @@ public class RefundSagaService implements RefundSagaUseCase {
 
     // 지갑 반환 요청을 발행하고 지갑 줄을 결과 대기로 바꾼다. 지갑 줄은 부르는 쪽이 이미 "시도 중"으로 준비해 두었다(먼저 기록하고 보내기)
     private RefundResult publishWallet(Long refundId, Refund refund, RefundResult current) {
+        // 발행이 끝났어도 지갑이 돈을 돌려줬다는 뜻은 아니다(Kafka에 들어갔을 뿐). 재고 복구와 완료는 지갑의 완료 메시지를 받은 뒤
+        // completeAfterWalletRefund가 한다. 그래서 발행 뒤에는 처리 중 그대로 응답한다(계획의 "기다림").
+        // 이 확인은 발행 전에 한다. 코드 버그로 걸렸을 때 지갑 요청은 나갔는데 판매자는 오류를 받는 일을 막으려는 것이다
+        requireNext(refund, RefundSagaPlan.Event.WALLET_PUBLISHED, RefundSagaPlan.Action.WAIT);
         runStep(refundId, RefundStepType.WALLET, () -> {
             walletRefundRequestPort.requestRefund(new WalletRefundRequest(
                     refundId, refund.getOrderId(), refund.getBuyerId(), refund.getSellerId(), refund.getRefundAmount()));
             return null;
         });
-            // 발행은 이미 끝나 되돌릴 수 없다. 여기서 "결과 대기" 기록이 실패해도(DB 오류 등) 판매자에게 오류를 주지 않고 처리 중으로 응답한다.
-            // 오류를 주면 지갑 요청은 나갔는데 판매자는 실패로 알고, 응답도 #574 전과 달라진다. 잃는 것은 없다: 지갑 줄은 "시도 중"으로 남고,
-            // 지갑 결과 메시지가 와도 시도 중 → 성공·멈춤으로 바뀔 수 있어(결정 2) 흐름이 이어지며, 끝나지 않으면 #576·#577이 그 줄을 본다.
-            // 예외를 삼키는 대신 확인이 필요한 이상이라 WARN으로 남긴다(service.md 로그 표)
-            try {
-                markWalletAwaitingResult(refundId);
-            } catch (RuntimeException e) {
-                log.warn("지갑 발행 뒤 결과 대기 기록 실패. 지갑 단계는 시도 중으로 남음. refundId={}", refundId, e);
-            }
-            // 발행이 끝났어도 지갑이 돈을 돌려줬다는 뜻은 아니다(Kafka에 들어갔을 뿐). 재고 복구와 완료는 지갑의 완료 메시지를 받은 뒤
-            // completeAfterWalletRefund가 한다. 그래서 처리 중 그대로 응답한다(계획의 "기다림"). 발행이 실패하면 예외가 나 이 줄에 오지 않는다
-        requireNext(refund, RefundSagaPlan.Event.WALLET_PUBLISHED, RefundSagaPlan.Action.WAIT);
+        // 발행은 이미 끝나 되돌릴 수 없다. 여기서 "결과 대기" 기록이 실패해도(DB 오류 등) 판매자에게 오류를 주지 않고 처리 중으로 응답한다.
+        // 오류를 주면 지갑 요청은 나갔는데 판매자는 실패로 알고, 응답도 #574 전과 달라진다. 잃는 것은 없다: 지갑 줄은 "시도 중"으로 남고,
+        // 지갑 결과 메시지가 와도 시도 중 → 성공·멈춤으로 바뀔 수 있어(결정 2) 흐름이 이어지며, 끝나지 않으면 #576·#577이 그 줄을 본다.
+        // 예외를 삼키는 대신 확인이 필요한 이상이라 WARN으로 남긴다(service.md 로그 표). 발행이 실패하면 예외가 나 이 줄에 오지 않는다
+        try {
+            markWalletAwaitingResult(refundId);
+        } catch (RuntimeException e) {
+            log.warn("지갑 발행 뒤 결과 대기 기록 실패. 지갑 단계는 시도 중으로 남음. refundId={}", refundId, e);
+        }
         return current;
     }
 
@@ -455,9 +456,14 @@ public class RefundSagaService implements RefundSagaUseCase {
         transaction.executeWithoutResult(status -> {
             Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
                     .orElseThrow(() -> new IllegalStateException("지갑 발행을 기록할 환불이 없습니다. refundId=" + refundId));
-            // 그사이 처리 중에서 벗어났으면(지갑 결과가 먼저 와서 완료 등) 쓰지 않는다(#616 결정 15)
+            // 그사이 처리 중에서 벗어났으면 쓰지 않는다(#616 결정 15). 지갑 완료 메시지가 이 기록보다 먼저 처리돼 완료된 것은
+            // 정상 경쟁이라 INFO, 그 밖의 상태는 확인이 필요해 WARN이다
             if (refund.getStatus() != RefundStatus.PROCESSING) {
-                log.warn("지갑 발행 뒤 환불이 처리 중이 아니라 결과 대기를 기록하지 않음. refundId={}, status={}", refundId, refund.getStatus());
+                if (refund.getStatus() == RefundStatus.COMPLETED) {
+                    log.info("지갑 발행 뒤 결과가 먼저 처리돼 이미 완료라 결과 대기를 기록하지 않음. refundId={}", refundId);
+                } else {
+                    log.warn("지갑 발행 뒤 환불이 처리 중이 아니라 결과 대기를 기록하지 않음. refundId={}, status={}", refundId, refund.getStatus());
+                }
                 return;
             }
             LocalDateTime now = LocalDateTime.now(clock);

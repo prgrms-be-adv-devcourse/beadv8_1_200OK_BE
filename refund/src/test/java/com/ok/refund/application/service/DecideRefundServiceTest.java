@@ -59,6 +59,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 
 // 승인 구간(주문 정보를 받은 뒤의 approve)은 패키지 안 메서드로 직접 부르고, 주문 호출 여부가 걸린 흐름은 decide로 부른다.
 // 주문 호출 여부는 설계 요구사항(승인만 주문을 다시 조회하고, 거절·끝난 요청은 주문에 묶이지 않음)이라 호출을 검증한다
@@ -929,6 +930,40 @@ class DecideRefundServiceTest {
         // then: 응답은 예전처럼 처리 중이고, 끝난 지갑 줄은 결과 대기로 저장하지 않는다
         assertThat(result.status()).isEqualTo("PROCESSING");
         then(refundStepPersistencePort).should(never()).update(argThat(step -> step.getType() == RefundStepType.WALLET));
+    }
+
+    // 다음 단계 줄이 이미 시도 중이면(다른 경로가 먼저 시작함) 지갑에 다시 보내지 않는다(#616 결정 14). 같은 반환 요청이 두 번 나가지 않게 한다
+    @Test
+    void 다음_단계_줄이_이미_시도_중이면_지갑에_보내지_않는다() {
+        // given
+        givenLockedBundle(requested());
+        givenOrderReflects();
+        storedSteps.put(RefundStepType.WALLET, inProgress(RefundStepType.WALLET));
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+    }
+
+    // 주문이 거절했지만 그사이 다른 경로가 환불을 끝냈으면, 거절로 바꾸지 않고 예외 없이 지금 상태로 응답한다(#616 결정 15)
+    @Test
+    void 주문이_거절했는데_그사이_환불이_끝났으면_지금_상태로_응답한다() {
+        // given: 주문을 부르는 사이 환불이 완료됐다
+        Refund locked = givenLockedBundle(requested());
+        willAnswer(invocation -> {
+            locked.complete(NOW);
+            return OrderCancellationResult.rejected("이미 출고");
+        }).given(orderCancellationPort).reflectCancellation(any());
+
+        // when
+        RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+        // then: 승인 구간의 저장 한 번 말고는 환불 행을 저장하지 않는다
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        then(refundPersistencePort).should(times(1)).update(any());
     }
 
     // 발행은 이미 나가 되돌릴 수 없다. 결과 대기 기록(DB)이 실패해도 판매자에게 오류를 주지 않고 #574 전처럼 처리 중으로 응답한다.

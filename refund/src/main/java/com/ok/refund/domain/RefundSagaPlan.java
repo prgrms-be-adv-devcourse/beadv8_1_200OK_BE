@@ -63,8 +63,10 @@ public final class RefundSagaPlan {
 
     /**
      * 방금 받은 답 없이(알람이 깨운 경우) 단계 줄만 보고 다음 할 일을 정한다(#616 환불 번호 입구, #576).
-     * 차례대로 앞 단계가 성공했는지 보며 내려간다. 줄이 없어야 할 곳에 없으면 그 단계를 부를 차례이고,
-     * 주문 줄이 없으면 승인 구간이 만드는 줄이 없는 것이라 있을 수 없는 상태로 멈춘다(#616 결정 13).
+     * 차례대로 앞 단계가 성공했는지 보며 내려간다. 다음 단계 줄은 앞 단계 성공과 같은 구간에서 만들므로(주문 성공 → 지갑·재고 줄,
+     * 지갑 완료 → 재고 줄), 앞 단계가 성공했는데 다음 줄이 없거나 주문 줄 자체가 없으면 있을 수 없는 상태라 멈춘다(#616 결정 13).
+     * 재고 줄이 있으면 지갑 완료를 이미 받은 것이라 지갑 줄 상태는 보지 않는다. 앞선 불일치로 지갑 줄이 멈춰 있어도
+     * 맞는 완료를 받아 재고로 간 환불(#544 결정 8)은 재고 줄 상태로 이어 간다. 지갑 답 거르기(WalletResultPolicy)도 같은 기준을 쓴다.
      * 시도 중·결과 대기는 기다림이다. 시도 중이 오래 멈춘 줄을 다시 시작하는 일(#576)과 결과 대기 시간 초과(#577)는
      * 지금 시각({@code now})으로 그 이슈에서 더한다.
      */
@@ -83,18 +85,18 @@ public final class RefundSagaPlan {
         if (order.getStatus() != RefundStepStatus.SUCCEEDED) {
             return actionFor(order, Action.CALL_ORDER);
         }
-        if (refund.getRefundAmount() > 0) {
+        RefundStep product = byType.get(RefundStepType.PRODUCT);
+        if (refund.getRefundAmount() > 0 && product == null) {
             RefundStep wallet = byType.get(RefundStepType.WALLET);
             if (wallet == null) {
-                return Action.CALL_WALLET;
+                return Action.STOP;
             }
             if (wallet.getStatus() != RefundStepStatus.SUCCEEDED) {
                 return actionFor(wallet, Action.CALL_WALLET);
             }
         }
-        RefundStep product = byType.get(RefundStepType.PRODUCT);
         if (product == null) {
-            return Action.CALL_PRODUCT;
+            return Action.STOP;
         }
         if (product.getStatus() != RefundStepStatus.SUCCEEDED) {
             return actionFor(product, Action.CALL_PRODUCT);

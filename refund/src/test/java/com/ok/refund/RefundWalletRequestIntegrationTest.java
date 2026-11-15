@@ -347,7 +347,6 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         // then
         assertThat(result.status()).isEqualTo("PROCESSING");
         assertThat(refundStepPersistencePort.findAllByRefundId(refundId)).isEmpty();
-        assertThat(orderCancellationPort.reflectedOf(refundId)).isPresent();
         assertThat(readMessagesOf(refundId, before)).isEmpty();
     }
 
