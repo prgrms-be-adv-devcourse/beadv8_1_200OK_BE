@@ -169,7 +169,8 @@ class RefundSagaServiceStepRunTest {
         // when & then
         assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
-        })).isInstanceOf(RestApiException.class);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
         ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should().update(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);

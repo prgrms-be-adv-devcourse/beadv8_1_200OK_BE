@@ -39,7 +39,8 @@ public class RefundStep {
     // 짧으면 아직 보내는 중인 줄을 다른 서버가 집어 같은 요청을 한 번 더 보낸다(지갑이 refundId로 걸러 돈은 한 번이지만 그 약속에만 기대게 된다)
     private static final Duration IN_PROGRESS_EXPIRY = Duration.ofMinutes(2);
     // 한 단계를 자동으로 시도하는 최대 횟수. 다 쓰면 멈춤으로 남겨 사람이 본다(#576).
-    // TODO(#576): 설정 파일로 뺄지 정한다. 1분 간격이면 처음 시도부터 약 4분 동안 다시 시도한다
+    // TODO(#576): 설정 파일로 뺄지 정한다. 다시 시도 간격(1분)과 알람이 끝난 뒤 쉬는 시간(1분)이 겹쳐 시도 사이가 1~2분이라,
+    // 처음 시도부터 약 4~8분 동안 다시 시도한다
     static final int MAX_ATTEMPTS = 5;
     // TODO(#577): 결과를 기다리는 시간 정책을 정한다
     private static final Duration RESULT_WAIT = Duration.ofMinutes(30);
@@ -139,7 +140,7 @@ public class RefundStep {
         return true;
     }
 
-    /** 시도 중인데 만료 시각이 지났는지(시도하던 쪽이 끝내지 못하고 멈춘 줄). */
+    /** 시도 중인데 만료 시각이 지났는지(시도하던 쪽이 끝내지 못하고 멈춘 줄) 확인한다. */
     public boolean isExpired(LocalDateTime now) {
         return status == RefundStepStatus.IN_PROGRESS && nextCheckAt != null && !nextCheckAt.isAfter(now);
     }

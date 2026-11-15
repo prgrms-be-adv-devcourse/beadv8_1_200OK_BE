@@ -362,7 +362,9 @@ public class RefundSagaService implements RefundSagaUseCase {
         try {
             releaseProduct(refundId, refund);
         } catch (RestApiException e) {
-            log.warn("지갑 완료 뒤 재고 복구가 실패해 알람의 다시 시도로 넘김. refundId={}, errorCode={}", refundId, e.getErrorCode().name());
+            // 다시 해도 같은 실패면 재고 줄은 이미 멈춤이고, 그 밖의 실패면 할 차례로 남아 알람이 다시 시도한다
+            log.warn("지갑 완료 뒤 재고 복구가 실패해 기록하고 넘김(다시 해도 같은 실패면 멈춤, 아니면 알람이 다시 시도). refundId={}, errorCode={}",
+                    refundId, e.getErrorCode().name());
             return;
         } catch (RuntimeException e) {
             // 다른 모듈 응답이 아닌 예외는 코드 버그일 수 있어 ERROR로 남긴다. 다시 시도는 위와 같이 알람이 한다

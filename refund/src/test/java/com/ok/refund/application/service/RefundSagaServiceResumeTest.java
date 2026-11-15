@@ -129,6 +129,35 @@ class RefundSagaServiceResumeTest {
         });
     }
 
+    // 시도 중 만료가 다섯 번째였다(횟수를 다 씀). 다시 집지 않고 멈춤으로 남기며 보내지 않는다(#576)
+    @Test
+    void 만료된_지갑_줄이_횟수를_다_썼으면_보내지_않고_멈춘다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(
+                step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS, 5, NOW, null, NOW.minusMinutes(10))));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                        5, NOW, null, NOW.minusMinutes(10))));
+
+        // when
+        RefundResult sut = saga.resume(REFUND_ID);
+
+        // then
+        assertThat(sut.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep stopped = captor.getValue();
+        assertThat(stopped).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(stopped.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(stopped.getLastReason()).isEqualTo(RefundStep.IN_PROGRESS_EXPIRED);
+        });
+    }
+
     // 읽을 때는 만료였지만 잠근 뒤 보니 다른 서버가 먼저 다시 집어 만료 시각을 새로 잡았다. 같은 요청을 두 번 보내지 않는다
     @Test
     void 읽은_뒤_다른_서버가_먼저_다시_집었으면_보내지_않는다() {

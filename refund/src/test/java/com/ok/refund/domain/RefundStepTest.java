@@ -187,6 +187,7 @@ class RefundStepTest {
         boolean changed = sut.failForRetry("PRODUCT_API_FAILED", NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(changed).isTrue();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
@@ -218,6 +219,7 @@ class RefundStepTest {
         boolean changed = sut.restartExpired(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(changed).isTrue();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
@@ -236,6 +238,7 @@ class RefundStepTest {
         boolean changed = sut.restartExpired(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(changed).isFalse();
             softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
@@ -253,6 +256,7 @@ class RefundStepTest {
         boolean changed = sut.restartExpired(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(changed).isTrue();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
@@ -272,6 +276,7 @@ class RefundStepTest {
         boolean changed = sut.restartExpired(NOW);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(changed).isFalse();
             softly.assertThat(sut.getStatus()).isEqualTo(status);
