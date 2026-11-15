@@ -9,7 +9,7 @@ package com.ok.common.jpa;
  */
 public final class QueryCountContext {
 
-    private static final ThreadLocal<Counter> CURRENT = new ThreadLocal<>();
+    private static final ThreadLocal<QueryCounter> CURRENT = new ThreadLocal<>();
 
     private QueryCountContext() {
     }
@@ -18,34 +18,35 @@ public final class QueryCountContext {
      * 현재 스레드에서 세기를 시작한다. 이미 열려 있으면 그 카운터를 이어서 쓰고, 닫아도 바깥 범위는 유지한다.
      */
     public static Scope open() {
-        Counter previous = CURRENT.get();
-        if (previous != null) {
-            return new Scope(previous, previous);
+        QueryCounter existing = CURRENT.get();
+        if (existing != null) {
+            return new Scope(existing, false);
         }
-        Counter counter = new Counter();
+        QueryCounter counter = new QueryCounter();
         CURRENT.set(counter);
-        return new Scope(counter, null);
+        return new Scope(counter, true);
     }
 
     static void increment() {
-        Counter counter = CURRENT.get();
+        QueryCounter counter = CURRENT.get();
         if (counter != null) {
             counter.count++;
         }
     }
 
-    private static final class Counter {
+    private static final class QueryCounter {
         private int count;
     }
 
     public static final class Scope implements AutoCloseable {
 
-        private final Counter counter;
-        private final Counter previous;
+        private final QueryCounter counter;
+        // 이 범위가 카운터를 처음 연 쪽이면 true. 안쪽에서 다시 연 범위는 닫을 때 바깥의 카운터를 지우면 안 된다
+        private final boolean owner;
 
-        private Scope(Counter counter, Counter previous) {
+        private Scope(QueryCounter counter, boolean owner) {
             this.counter = counter;
-            this.previous = previous;
+            this.owner = owner;
         }
 
         public int count() {
@@ -54,7 +55,7 @@ public final class QueryCountContext {
 
         @Override
         public void close() {
-            if (previous == null) {
+            if (owner) {
                 CURRENT.remove();
             }
         }

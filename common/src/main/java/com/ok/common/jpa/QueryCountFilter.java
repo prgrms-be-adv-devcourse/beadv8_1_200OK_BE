@@ -14,8 +14,9 @@ import java.io.IOException;
 /**
  * 요청 하나가 실행한 SQL 문 수를 엔드포인트(메서드 + 템플릿 URI)별 분포 지표 {@value #METRIC_NAME}로 남긴다.
  *
- * <p>uri 태그는 {@code /products/{productId}} 같은 템플릿이라 값이 요청마다 늘지 않는다. 컨트롤러에 매핑되지 않은 요청
- * (404, 정적 리소스 등)은 템플릿이 없어 uri 태그가 사용자 입력이 되므로 기록하지 않는다.
+ * <p>uri 태그는 {@code /products/{productId}} 같은 템플릿이라 값이 요청마다 늘지 않는다. 핸들러에 매핑되지 않은 요청
+ * (인증 실패로 Security에서 끝난 401 등)은 템플릿이 없어 uri 태그가 사용자 입력이 되므로 기록하지 않는다.
+ * 인증된 요청이 없는 경로를 부르면 정적 리소스 핸들러가 받아 uri가 {@code /**} 하나로 묶여 기록된다(실서버 통합 테스트로 확인).
  * 구간 경계({@link #SLO_BOUNDARIES})는 Prometheus가 요청당 쿼리 수의 분위수를 구할 수 있게 하는 히스토그램 버킷이다.
  */
 public class QueryCountFilter extends OncePerRequestFilter {

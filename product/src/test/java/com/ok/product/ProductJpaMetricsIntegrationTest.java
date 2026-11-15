@@ -161,6 +161,29 @@ class ProductJpaMetricsIntegrationTest extends AbstractIntegrationTest {
 		});
 	}
 
+	// repository 호출(예외 번역 프록시)과 바깥 트랜잭션(커밋 번역)이 모두 같은 예외를 지나가도 한 번만 세는지 본다
+	@Test
+	void 중첩_트랜잭션_안의_repository_flush에서_난_충돌은_한_번만_센다() {
+		// given
+		double before = optimisticLockFailures();
+		TransactionTemplate other = new TransactionTemplate(transactionManager);
+		other.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+		// when
+		assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(outer ->
+			transactionTemplate.executeWithoutResult(inner -> {
+				Product product = productRepository.findById(productId).orElseThrow();
+				product.changeVisibility(ProductVisibility.VISIBLE); // version 0으로 읽고 수정
+				other.executeWithoutResult(s ->
+					productRepository.findById(productId).orElseThrow().changeVisibility(ProductVisibility.VISIBLE));
+				productRepository.saveAndFlush(product); // repository 프록시에서 충돌이 난다
+			})))
+			.isInstanceOf(OptimisticLockingFailureException.class);
+
+		// then
+		assertThat(optimisticLockFailures()).isEqualTo(before + 1);
+	}
+
 	@Test
 	void 네이티브_쿼리와_벌크_쿼리도_JPQL_조회와_똑같이_센다() {
 		// given
