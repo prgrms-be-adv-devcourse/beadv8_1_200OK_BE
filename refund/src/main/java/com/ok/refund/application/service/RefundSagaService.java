@@ -18,8 +18,10 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundSagaPlan;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.WalletResultPolicy;
+import com.ok.refund.exception.RefundErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -30,6 +32,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -56,6 +59,10 @@ public class RefundSagaService implements RefundSagaUseCase {
     static final String ORDER_REFUSED_REASON = "ORDER_REFUSED";
     // 지갑이 알려 준 금액·주문·구매자가 환불과 다를 때 지갑 줄의 이유에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
     static final String RESULT_MISMATCH = "RESULT_MISMATCH";
+    // 다시 해도 결과가 같은 다른 모듈 실패(#576). 이 실패는 다시 시도하지 않고 단계를 바로 멈춘다.
+    // 상품이 해제할 수 없다고 답한 경우(해제 가능 수량 초과, 같은 refundId인데 내용이 다름, 재고 기록 없음)다.
+    // 주문 409는 예외가 아니라 거절 결과로 오고, 지갑 발행 실패는 Kafka 쪽 일시 실패라 여기 넣지 않는다
+    static final Set<String> NON_RETRYABLE_FAILURES = Set.of(RefundErrorCode.PRODUCT_RELEASE_REFUSED.name());
 
     // 잠근 구간에서 표시를 남겼는지와 못 남긴 이유. 이유마다 로그 수준이 달라(바뀜은 INFO, 지갑 완료 뒤 모순은 WARN) 참·거짓으로는 부족하다
     private enum MarkOutcome {
@@ -440,6 +447,20 @@ public class RefundSagaService implements RefundSagaUseCase {
             refundStepPersistencePort.update(step);
             return StepPrep.CALL;
         }
+        // 시도 중인데 만료 시각이 지났으면 시도하던 쪽(죽은 서버, 실패 기록마저 실패한 요청)이 멈춘 것이라 다시 집는다(#576).
+        // 잠근 구간 안에서 판단하므로 서버 여러 대가 같은 줄을 동시에 집지 않는다(먼저 집은 쪽이 만료 시각을 새로 잡는다).
+        // 정상 겹침(BUSY, INFO)과 구분하려고 WARN으로 남긴다. 횟수를 다 썼으면 멈춘다
+        if (step.restartExpired(now)) {
+            refundStepPersistencePort.update(step);
+            if (step.getStatus() == RefundStepStatus.STOPPED) {
+                log.warn("시도 중 만료가 반복돼 횟수를 다 써 단계를 멈춤(확인 필요). refundId={}, step={}, attemptCount={}",
+                        refundId, type, step.getAttemptCount());
+                return StepPrep.ENDED;
+            }
+            log.warn("시도 중인 채로 만료된 단계 줄을 다시 집음. refundId={}, step={}, attemptCount={}",
+                    refundId, type, step.getAttemptCount());
+            return StepPrep.CALL;
+        }
         return step.getStatus().isFinished() ? StepPrep.ENDED : StepPrep.BUSY;
     }
 
@@ -819,8 +840,16 @@ public class RefundSagaService implements RefundSagaUseCase {
             RefundStep stepRow = refundStepPersistencePort.findByRefundIdAndType(refundId, step)
                     .orElseThrow(() -> new IllegalStateException(
                             "실패를 기록할 단계 줄이 없습니다. refundId=" + refundId + ", step=" + step));
-            if (stepRow.failForRetry(failureCode, LocalDateTime.now(clock))) {
+            // 다시 해도 결과가 같은 실패는 다시 시도하지 않고 바로 멈춘다(#576). 실패 처리(되돌리기, #546)가 생기기 전까지는 사람이 본다
+            boolean changed = NON_RETRYABLE_FAILURES.contains(failureCode)
+                    ? stepRow.stop(failureCode)
+                    : stepRow.failForRetry(failureCode, LocalDateTime.now(clock));
+            if (changed) {
                 refundStepPersistencePort.update(stepRow);
+                if (stepRow.getStatus() == RefundStepStatus.STOPPED) {
+                    log.warn("다른 모듈 호출 실패로 단계를 멈춤(다시 해도 같은 실패이거나 시도 횟수를 다 씀, 확인 필요). refundId={}, step={}, failureCode={}, attemptCount={}",
+                            refundId, step, failureCode, stepRow.getAttemptCount());
+                }
             }
         });
     }

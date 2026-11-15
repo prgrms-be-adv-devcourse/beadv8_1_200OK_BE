@@ -67,8 +67,8 @@ public final class RefundSagaPlan {
      * 지갑 완료 → 재고 줄), 앞 단계가 성공했는데 다음 줄이 없거나 주문 줄 자체가 없으면 있을 수 없는 상태라 멈춘다(#616 결정 13).
      * 재고 줄이 있으면 지갑 완료를 이미 받은 것이라 지갑 줄 상태는 보지 않는다. 앞선 불일치로 지갑 줄이 멈춰 있어도
      * 맞는 완료를 받아 재고로 간 환불(#544 결정 8)은 재고 줄 상태로 이어 간다. 지갑 답 거르기(WalletResultPolicy)도 같은 기준을 쓴다.
-     * 시도 중·결과 대기는 기다림이다. 시도 중이 오래 멈춘 줄을 다시 시작하는 일(#576)과 결과 대기 시간 초과(#577)는
-     * 지금 시각({@code now})으로 그 이슈에서 더한다.
+     * 시도 중은 만료 시각이 지났으면 그 단계를 다시 부르고(#576), 아니면 기다림이다. 결과 대기는 기다림이다
+     * (결과 대기 시간 초과는 #577에서 지금 시각({@code now})으로 더한다).
      */
     public static Action fromSteps(Refund refund, List<RefundStep> steps, LocalDateTime now) {
         if (refund.getStatus() != RefundStatus.PROCESSING) {
@@ -83,7 +83,7 @@ public final class RefundSagaPlan {
             return Action.STOP;
         }
         if (order.getStatus() != RefundStepStatus.SUCCEEDED) {
-            return actionFor(order, Action.CALL_ORDER);
+            return actionFor(order, Action.CALL_ORDER, now);
         }
         RefundStep product = byType.get(RefundStepType.PRODUCT);
         if (refund.getRefundAmount() > 0 && product == null) {
@@ -92,24 +92,26 @@ public final class RefundSagaPlan {
                 return Action.STOP;
             }
             if (wallet.getStatus() != RefundStepStatus.SUCCEEDED) {
-                return actionFor(wallet, Action.CALL_WALLET);
+                return actionFor(wallet, Action.CALL_WALLET, now);
             }
         }
         if (product == null) {
             return Action.STOP;
         }
         if (product.getStatus() != RefundStepStatus.SUCCEEDED) {
-            return actionFor(product, Action.CALL_PRODUCT);
+            return actionFor(product, Action.CALL_PRODUCT, now);
         }
         return Action.COMPLETE;
     }
 
     // 성공하지 않은 단계 줄의 상태로 할 일을 정한다. 할 차례면 그 단계를 부르고, 시도 중·결과 대기면 기다리고,
-    // 거절됨·멈춤이면 멈춘다(거절된 주문은 승인 흐름이 이미 거절로 끝냈어야 해서 처리 중으로 남았다면 사람이 본다)
-    private static Action actionFor(RefundStep step, Action call) {
+    // 거절됨·멈춤이면 멈춘다(거절된 주문은 승인 흐름이 이미 거절로 끝냈어야 해서 처리 중으로 남았다면 사람이 본다).
+    // 시도 중이라도 만료 시각이 지났으면 시도하던 쪽이 멈춘 것이라 다시 부른다(#576). 실제로 다시 집을지는 지휘자가 잠근 뒤 다시 본다
+    private static Action actionFor(RefundStep step, Action call, LocalDateTime now) {
         return switch (step.getStatus()) {
             case READY -> call;
-            case IN_PROGRESS, AWAITING_RESULT -> Action.WAIT;
+            case IN_PROGRESS -> step.isExpired(now) ? call : Action.WAIT;
+            case AWAITING_RESULT -> Action.WAIT;
             case REFUSED, STOPPED -> Action.STOP;
             case SUCCEEDED -> throw new IllegalArgumentException("성공한 단계 줄은 넘기지 않는다. step=" + step.getType());
         };

@@ -81,7 +81,7 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
             softly.assertThat(sut.getType()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
             softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
-            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(1));
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
             softly.assertThat(sut.getLastReason()).isNull();
         });
         List<RefundStep> all = inTransaction(() -> refundStepPersistencePort.findAllByRefundId(refundId));

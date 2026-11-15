@@ -14,6 +14,7 @@ import com.ok.refund.domain.RefundStepType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -25,9 +26,11 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 
 // 환불 번호 입구(resume)가 단계 줄을 읽은 뒤 잠그기 전에 다른 경로가 먼저 움직인 경우를 본다.
@@ -93,6 +96,59 @@ class RefundSagaServiceResumeTest {
         then(walletRefundRequestPort).should(never()).requestRefund(any());
         then(refundStepPersistencePort).should(never()).update(any());
         then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
+    // 지갑 줄이 시도 중인 채로 만료됐다(시도하던 서버가 죽음). 잠근 뒤에도 만료 그대로면 다시 집어 한 번 보낸다(#576)
+    @Test
+    void 시도_중인_채로_만료된_지갑_줄은_다시_집어_보낸다() {
+        // given: 만료 시각이 지금(10:00)인 시도 중 지갑 줄
+        RefundStep expiredWallet = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                1, NOW, null, NOW.minusMinutes(2));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID))
+                .willReturn(List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED), expiredWallet));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                        1, NOW, null, NOW.minusMinutes(2))));
+
+        // when
+        RefundResult sut = saga.resume(REFUND_ID);
+
+        // then
+        assertThat(sut.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should().requestRefund(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should(atLeastOnce()).update(captor.capture());
+        // 같은 줄 객체를 다시 집기 → 결과 대기로 차례로 바꾸므로 마지막 모습을 본다. 다시 집으며 시도 횟수가 하나 늘었다
+        RefundStep restarted = captor.getAllValues().getLast();
+        assertThat(restarted).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(restarted.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(restarted.getAttemptCount()).isEqualTo(2);
+        });
+    }
+
+    // 읽을 때는 만료였지만 잠근 뒤 보니 다른 서버가 먼저 다시 집어 만료 시각을 새로 잡았다. 같은 요청을 두 번 보내지 않는다
+    @Test
+    void 읽은_뒤_다른_서버가_먼저_다시_집었으면_보내지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(
+                step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS, 1, NOW, null, NOW.minusMinutes(2))));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                        2, NOW.plusMinutes(2), null, NOW.minusMinutes(2))));
+
+        // when
+        RefundResult sut = saga.resume(REFUND_ID);
+
+        // then
+        assertThat(sut.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        then(refundStepPersistencePort).should(never()).update(any());
     }
 
     private static Refund refund(RefundStatus status) {

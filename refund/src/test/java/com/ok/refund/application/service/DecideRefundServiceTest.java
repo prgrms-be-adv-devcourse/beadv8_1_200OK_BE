@@ -774,7 +774,7 @@ class DecideRefundServiceTest {
             softly.assertThat(orderStep.getType()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(orderStep.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
             softly.assertThat(orderStep.getAttemptCount()).isEqualTo(1);
-            softly.assertThat(orderStep.getNextCheckAt()).isEqualTo(NOW.plusMinutes(1));
+            softly.assertThat(orderStep.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
         });
         // 같은 구간: 처리 중 저장 뒤, 주문을 부르기 전에 만든다
         InOrder order = inOrder(refundPersistencePort, refundStepPersistencePort, orderCancellationPort);
