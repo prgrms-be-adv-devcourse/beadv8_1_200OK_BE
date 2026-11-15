@@ -1,5 +1,6 @@
 package com.ok.refund.application.service;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.in.RefundSagaUseCase;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
@@ -17,26 +18,31 @@ import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepType;
+import com.ok.refund.exception.RefundErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * 승인 뒤 단계를 한 곳에서 진행하는 지휘자다(#575). 다음 단계를 정하고 주문·지갑·재고 포트를 부르는 곳은 이 클래스뿐이다.
  * 입구는 셋이다. 승인 서비스가 승인 구간을 커밋한 뒤 부르는 시작({@link #startAfterApproval}), 지갑 결과 메시지를 받는 완료·실패.
  * 시작: 주문 취소 반영(#513) → 지갑 반환 요청(#512)까지 하고, 돌려줄 돈이 있으면 지갑 요청을 보낸 데서 멈춘다. 0원이면 지갑을 거치지 않아
  * 같은 요청 안에서 재고 복구 → 완료(#414)까지 간다. 주문이 반영을 거절하면(이미 출고 등) 지갑·재고를 부르지 않고 거절로 끝낸다(#543).
- * 지갑 완료: 읽어서 거르기(읽기 구간) → 자기 행을 잠그고 지갑 줄 성공·재고 줄 시작(구간) → 재고 복구(구간 밖, {@link RefundStepRunner})
+ * 지갑 완료: 읽어서 거르기(읽기 구간) → 자기 행을 잠그고 지갑 줄 성공·재고 줄 시작(구간) → 재고 복구(구간 밖, 단계 실행 틀 {@link #runStep})
  * → 자기 행을 잠그고 재고 줄 성공과 완료(구간)로 나뉜다(#544).
  * 지갑 실패: 읽어서 거르기 → 자기 행을 잠그고 지갑 줄을 멈춤으로 기록(구간)이다. 거르는 판단은 단계 진행 표를 본다(#574).
  * 걸러 넘기는 경우는 예외를 던지지 않는다. 던지면 메시지 오류 처리기가 같은 메시지를 다시 시도해 줄만 막힌다.
  * 지갑 결과를 잠그지 않고 먼저 읽는 이유: 재고 복구(상품 HTTP) 동안 행 잠금을 쥐지 않으려는 것이고,
  * 읽은 뒤 잠그기 전에 상태가 바뀔 수 있어 잠근 뒤 상태를 다시 확인한다.
+ * 다른 모듈 호출은 모두 단계 실행 틀({@link #runStep})로 부른다. 실패하면 그 단계의 진행 줄(refund_step)에 이유를 남기고 같은 예외를 올린다(#574).
+ * 세 입구는 모두 트랜잭션 밖에서만 부른다. 열린 트랜잭션 안에서 부르면 실패 기록이 바깥과 함께 롤백되므로 입구에서 막는다.
  */
 @Slf4j
 @Service
@@ -81,24 +87,21 @@ public class RefundSagaService implements RefundSagaUseCase {
     private final ProductStockReleasePort productStockReleasePort;
     private final RefundPersistencePort refundPersistencePort;
     private final RefundStepPersistencePort refundStepPersistencePort;
-    // 다른 모듈 호출을 실패 기록과 함께 부르는 틀(#574). 실패하면 단계 줄에만 남기고(환불 행은 잠그기만 한다) 같은 예외를 올린다
-    private final RefundStepRunner refundStepRunner;
     private final Clock clock;
     // 지갑 결과를 거르기 위한 읽기용. 잠그지 않는다
     private final TransactionTemplate readOnlyTransaction;
-    // 자기 행을 잠그고 바꾸는 구간
+    // 자기 행을 잠그고 바꾸는 구간. 실패 기록(recordFailure)도 이 구간으로 따로 커밋한다. 입구가 바깥 트랜잭션을 막아 두므로 항상 새로 시작한다
     private final TransactionTemplate transaction;
 
     public RefundSagaService(OrderCancellationPort orderCancellationPort, WalletRefundRequestPort walletRefundRequestPort,
                              ProductStockReleasePort productStockReleasePort, RefundPersistencePort refundPersistencePort,
-                             RefundStepPersistencePort refundStepPersistencePort, RefundStepRunner refundStepRunner,
+                             RefundStepPersistencePort refundStepPersistencePort,
                              Clock clock, PlatformTransactionManager transactionManager) {
         this.orderCancellationPort = orderCancellationPort;
         this.walletRefundRequestPort = walletRefundRequestPort;
         this.productStockReleasePort = productStockReleasePort;
         this.refundPersistencePort = refundPersistencePort;
         this.refundStepPersistencePort = refundStepPersistencePort;
-        this.refundStepRunner = refundStepRunner;
         this.clock = clock;
         this.readOnlyTransaction = new TransactionTemplate(transactionManager);
         this.readOnlyTransaction.setReadOnly(true);
@@ -113,7 +116,7 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 되돌릴 수 없어, 돈은 나갔는데 상품은 배송되는 일이 생긴다. 주문이 거절하면 지갑·재고를 부르지 않고 거절로 끝낸다.
     // 지갑 발행이 실패하면 주문은 이미 취소를 기록한 상태다. 나중에 같은 refundId로 다시 보내면 주문이 성공으로 답하므로(멱등)
     // 다시 시도(#545)가 지갑 요청부터 이어 갈 수 있다.
-    // 승인 요청 안의 단계(주문·지갑·0원 재고)도 실패 기록 틀(RefundStepRunner)로 부른다(#574). 실패하면 그 단계 줄이 "할 차례"와 이유로 남고,
+    // 승인 요청 안의 단계(주문·지갑·0원 재고)도 단계 실행 틀(runStep)로 부른다(#574). 실패하면 그 단계 줄이 "할 차례"와 이유로 남고,
     // 예외는 그대로 올라가 판매자 응답은 예전과 같다(500·503, 다시 승인하면 409)
     // 예전과 다른 응답이 하나 있다. 주문 반영 뒤 단계 표를 고치는 구간(recordOrderSucceeded)이 실패하면 주문은 반영됐는데 500으로 응답하고,
     // 주문 줄은 "시도 중"으로 남는다. 반대로 지갑 발행 뒤 "결과 대기"로 바꾸는 구간(markWalletAwaitingResult)이 실패해도 WARN만 남기고 처리 중으로 응답한다
@@ -121,11 +124,12 @@ public class RefundSagaService implements RefundSagaUseCase {
     // "WALLET: 할 차례"가 남는다(#574). 그 줄을 보고 다시 보내는 일은 #576이 맡는다
     @Override
     public RefundResult startAfterApproval(RefundResult approved) {
+        requireNoTransaction();
         if (!RefundStatus.PROCESSING.name().equals(approved.status())) {
             return approved;
         }
         Long refundId = approved.refundId();
-        OrderCancellationResult orderResult = refundStepRunner.run(refundId, RefundStepType.ORDER,
+        OrderCancellationResult orderResult = runStep(refundId, RefundStepType.ORDER,
                 () -> orderCancellationPort.reflectCancellation(new OrderCancellation(
                         refundId, approved.orderItemId(), approved.quantity(), approved.deductedShippingFeeAmount())));
         if (orderResult.rejected()) {
@@ -142,7 +146,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             return current;
         }
         if (amount > 0) {
-            refundStepRunner.run(refundId, RefundStepType.WALLET, () -> {
+            runStep(refundId, RefundStepType.WALLET, () -> {
                 walletRefundRequestPort.requestRefund(new WalletRefundRequest(
                         refundId, approved.orderId(), approved.buyerId(), approved.sellerId(), amount));
                 return null;
@@ -162,7 +166,7 @@ public class RefundSagaService implements RefundSagaUseCase {
         }
         // 0원은 돌려줄 돈이 없어 지갑을 거치지 않으니 기다릴 메시지도 없다. 예: 취소 금액이 뺄 기본 배송비와 같을 때.
         // 그래서 이 요청 안에서 재고 복구 → 완료까지 간다
-        refundStepRunner.run(refundId, RefundStepType.PRODUCT, () -> {
+        runStep(refundId, RefundStepType.PRODUCT, () -> {
             productStockReleasePort.releaseStock(new StockRelease(
                     refundId, approved.orderId(), approved.productOptionId(), approved.quantity()));
             return null;
@@ -172,6 +176,7 @@ public class RefundSagaService implements RefundSagaUseCase {
 
     @Override
     public void completeAfterWalletRefund(WalletRefundCompletedCommand command) {
+        requireNoTransaction();
         Long refundId = command.refundId();
         Snapshot snapshot = readSnapshot(refundId);
         Refund refund = snapshot.refund();
@@ -190,7 +195,7 @@ public class RefundSagaService implements RefundSagaUseCase {
         }
         // 재고 복구는 구간 밖. 상품은 같은 refundId면 또 풀지 않아 같은 메시지가 다시 와도 안전하다.
         // 실패하면 틀이 재고 실패를 기록(재고 줄은 다시 시도 대기)하고 예외를 다시 던진다. 오류 처리기가 다시 시도한다
-        refundStepRunner.run(refundId, RefundStepType.PRODUCT, () -> {
+        runStep(refundId, RefundStepType.PRODUCT, () -> {
             productStockReleasePort.releaseStock(new StockRelease(
                     refundId, refund.getOrderId(), refund.getProductOptionId(), refund.getQuantity()));
             return null;
@@ -200,6 +205,7 @@ public class RefundSagaService implements RefundSagaUseCase {
 
     @Override
     public void recordWalletRefundFailure(WalletRefundFailedCommand command) {
+        requireNoTransaction();
         Long refundId = command.refundId();
         Snapshot snapshot = readSnapshot(refundId);
         Refund refund = snapshot.refund();
@@ -551,5 +557,102 @@ public class RefundSagaService implements RefundSagaUseCase {
         if (!completed) {
             log.info("재고 복구를 마친 사이 환불이 이미 바뀌어 완료하지 않고 넘김. refundId={}", refundId);
         }
+    }
+
+    /**
+     * 다른 모듈 호출 한 단계를 실행해 결과를 돌려준다. 실패하면 그 단계 줄에 이유를 기록한 뒤 원래 예외를 그대로 던진다(#574).
+     * 기록마저 실패하면 기록 실패를 원래 예외에 붙여(suppressed) 원래 예외를 던진다.
+     * {@link Error}(메모리 부족, 무한 호출 등)는 일부러 잡지 않아 기록하지 않는다. JVM이 망가진 상태라 DB 기록도 믿을 수 없고
+     * 기록하려다 상황을 더 나쁘게 만들 수 있어, 그대로 올려 서버 오류로 드러내는 편이 낫다(만일을 대비해 밝혀 둔다).
+     * 트랜잭션 밖에서 불린다는 전제는 입구(세 공개 메서드)가 지킨다. 이 메서드는 입구 안에서만 부른다.
+     * 패키지 안에서만 연다: 기록과 이유 이름 규칙을 호출 하나로 따로 확인하는 단위 테스트가 직접 부른다.
+     *
+     * @param call 다른 모듈 호출. 돌려줄 값이 없으면 {@code null}을 돌려준다
+     */
+    <T> T runStep(Long refundId, RefundStepType step, Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (RuntimeException e) {
+            recordFailureKeepingCause(refundId, step, e);
+            throw e;
+        }
+    }
+
+    // 실패 기록은 바깥 트랜잭션 없이 따로 커밋돼야 한다. 바깥 트랜잭션 안에서 부르면 기록이 거기에 합류해,
+    // 이어서 던지는 원래 예외로 바깥이 롤백될 때 기록도 함께 사라진다. 기록 자체는 성공했으니 ERROR 로그도 남지 않아 아무도 모른다.
+    // 그래서 입구에서 다른 모듈을 부르기 전에 막는다. 승인 서비스는 승인 구간을 커밋한 뒤 부르고, Kafka 수신기는 트랜잭션 없이 부르므로
+    // 정상 경로에서는 걸리지 않는다
+    private static void requireNoTransaction() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("환불 승인 뒤 단계는 트랜잭션 밖에서 불러야 합니다. 실패 기록이 바깥 트랜잭션과 함께 롤백됩니다.");
+        }
+    }
+
+    // 응답은 원래 예외로 한다. 사용자에게 필요한 건 "지갑이 응답하지 않았다" 같은 진짜 원인이고,
+    // 기록 실패(DB 순간 장애 등)로 응답을 바꾸면 그 원인이 가려진다.
+    // 대신 기록이 없으면 처리 중인 건과 멈춘 건이 구분되지 않아 운영자가 놓치므로, 기록 실패는 원래 예외에 붙이고 ERROR로 남긴다.
+    // 원래 예외가 RestApiException(*_API_FAILED 등)이면 ApiControllerAdvice가 응답만 만들고 로그를 남기지 않아, 이 로그가 기록 실패의 유일한 흔적이다.
+    // 원래 예외가 그 밖의 예외면 advice가 suppressed까지 함께 남겨 기록 실패가 두 번 찍히지만, 드문 경우라 놓치지 않는 쪽을 택한다
+    private void recordFailureKeepingCause(Long refundId, RefundStepType step, RuntimeException cause) {
+        String failureCode = failureCodeOf(cause);
+        try {
+            recordFailure(refundId, step, failureCode);
+        } catch (RuntimeException recordError) {
+            cause.addSuppressed(recordError);
+            log.error("환불 실패 단계 기록 실패. 멈춘 단계가 단계 줄에 남지 않음. refundId={}, step={}, failureCode={}",
+                    refundId, step, failureCode, recordError);
+        }
+    }
+
+    /**
+     * 다른 모듈 호출이 실패한 단계의 진행 줄에 이유를 새 트랜잭션 구간에서 남긴다. 환불 상태는 처리 중 그대로 둔다.
+     * 다른 모듈 호출은 트랜잭션 밖에서 하므로 이 기록은 호출과 따로 저장되고, 호출이 실패해도 기록은 남는다.
+     * 진행 줄은 호출 전에 만들어 두므로 여기서 만들지 않는다.
+     * 패키지 안에서만 연다: {@link #runStep} 안에서 쓰고, 칸 길이 같은 저장 조건을 실제 DB로 확인하는 테스트가 직접 부른다.
+     *
+     * @param failureCode 에러 코드 이름, 없으면 예외 클래스 이름
+     * @throws RestApiException      처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @throws IllegalStateException 환불이나 그 단계의 진행 줄이 없으면 (부르는 쪽 버그)
+     */
+    void recordFailure(Long refundId, RefundStepType step, String failureCode) {
+        transaction.executeWithoutResult(status -> {
+            // 같은 환불을 동시에 결정·기록하는 다른 트랜잭션과 섞이지 않게 다른 결정처럼 잠근 뒤 고친다.
+            // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)
+            Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
+                    .orElseThrow(() -> new IllegalStateException("실패를 기록할 환불이 없습니다. refundId=" + refundId));
+            // 환불 행은 고치지 않지만 잠근다. 단계 줄은 따로 잠그지 않고 환불 행 잠금으로 지키기 때문이다(결정 4, 잠금 순서: 환불 행 → 단계 줄).
+            // 처리 중이 아닌 환불(그사이 완료·거절 등)에 실패를 남기면 끝난 환불이 멈춘 것처럼 보이므로 막는다
+            if (refund.getStatus() != RefundStatus.PROCESSING) {
+                throw new RestApiException(RefundErrorCode.INVALID_REFUND_STATE);
+            }
+            // 다른 모듈을 부르기 전에 진행 줄을 만들어 커밋한다(결정 5). 없다면 그 순서를 어긴 코드 버그라 표준 예외로 던진다.
+            // 이 예외는 runStep에서 원래 예외에 붙고 ERROR 로그로 남는다
+            RefundStep stepRow = refundStepPersistencePort.findByRefundIdAndType(refundId, step)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "실패를 기록할 단계 줄이 없습니다. refundId=" + refundId + ", step=" + step));
+            if (stepRow.failForRetry(failureCode, LocalDateTime.now(clock))) {
+                refundStepPersistencePort.update(stepRow);
+            }
+        });
+    }
+
+    // 예외 메시지에는 다른 모듈의 응답 내용이 들어갈 수 있어 DB에 남기지 않고, 에러 코드 이름이나 예외 클래스 이름만 쓴다
+    private static String failureCodeOf(RuntimeException e) {
+        if (e instanceof RestApiException restApiException) {
+            return restApiException.getErrorCode().name();
+        }
+        String name = e.getClass().getSimpleName();
+        // 만일을 대비한 처리: 그 자리에서 만든 이름 없는 예외(new RuntimeException() { })는 짧은 이름이 빈 값이라,
+        // 그대로 넘기면 RefundStep.failForRetry가 "이유가 비었다"며 거부해 진짜 실패가 기록되지 않는다. 지금 환불 코드에는 없지만
+        // 이 틀로 부르는 호출(지금은 주문 반영·지갑 발행·재고 복구)이 늘어날 때를 위해 패키지까지 붙은 이름으로 바꾼다
+        if (name.isEmpty()) {
+            name = e.getClass().getName();
+        }
+        // 패키지까지 붙은 이름은 길 수 있다. 칸(last_reason VARCHAR(100))을 넘으면 저장이 실패해 역시 기록이 사라지므로,
+        // 어느 클래스인지 알아볼 수 있는 앞부분만 남긴다. 길이 상한은 이유를 저장하는 도메인(RefundStep)의 것을 쓴다
+        if (name.length() > RefundStep.MAX_REASON_LENGTH) {
+            name = name.substring(0, RefundStep.MAX_REASON_LENGTH);
+        }
+        return name;
     }
 }

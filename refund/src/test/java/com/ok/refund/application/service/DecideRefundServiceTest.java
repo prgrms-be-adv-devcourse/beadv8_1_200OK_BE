@@ -91,12 +91,11 @@ class DecideRefundServiceTest {
     @BeforeEach
     void setUp() {
         NoOpTransactionManager transactionManager = new NoOpTransactionManager();
-        // 실패 기록은 RefundStepRunner가 같은 영속 포트로 하므로 진짜 틀을 쓴다(단계 줄이 실제로 "할 차례"로 남는지 보려고)
-        RefundStepRunner refundStepRunner = new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
         // 승인 뒤 단계는 지휘자가 맡는다(#575). 지휘자도 같은 가짜 포트로 만든 진짜 객체를 쓴다. 옮기기 전과 같은 기대값으로
-        // 승인 → 주문 → 지갑·재고 호출을 한 흐름으로 확인해, 옮겨도 동작이 같다는 근거로 삼는다(#592)
+        // 승인 → 주문 → 지갑·재고 호출을 한 흐름으로 확인해, 옮겨도 동작이 같다는 근거로 삼는다(#592).
+        // 실패 기록도 지휘자가 같은 영속 포트로 하므로 단계 줄이 실제로 "할 차례"로 남는지 함께 본다
         RefundSagaService refundSagaService = new RefundSagaService(orderCancellationPort, walletRefundRequestPort,
-                productStockReleasePort, refundPersistencePort, refundStepPersistencePort, refundStepRunner, CLOCK, transactionManager);
+                productStockReleasePort, refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
         sut = new DecideRefundService(orderQueryPort, refundPersistencePort, refundStepPersistencePort, refundSagaService,
                 CLOCK, transactionManager);
     }

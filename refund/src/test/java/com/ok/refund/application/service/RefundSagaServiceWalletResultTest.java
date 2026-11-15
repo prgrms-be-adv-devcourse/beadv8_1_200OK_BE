@@ -45,7 +45,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
 // 지휘자(RefundSagaService)의 지갑 결과 입구를 본다. 승인 뒤 시작 입구는 DecideRefundServiceTest가 승인 흐름과 함께 본다.
-// 재고 복구 실패 기록은 RefundStepRunner가 같은 영속 포트로 하므로 진짜 틀을 쓴다(PRODUCT 단계가 실제로 기록되는지 보려고)
+// 재고 복구 실패 기록도 지휘자가 같은 영속 포트로 하므로 PRODUCT 단계가 실제로 기록되는지 함께 본다
 @ExtendWith(MockitoExtension.class)
 class RefundSagaServiceWalletResultTest {
 
@@ -78,8 +78,7 @@ class RefundSagaServiceWalletResultTest {
     void setUp() {
         NoOpTransactionManager transactionManager = new NoOpTransactionManager();
         sut = new RefundSagaService(orderCancellationPort, walletRefundRequestPort, productStockReleasePort,
-                refundPersistencePort, refundStepPersistencePort,
-                new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager), CLOCK, transactionManager);
+                refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
     }
 
     // ---- 완료 ----

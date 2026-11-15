@@ -5,8 +5,11 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
+import com.ok.refund.application.port.out.OrderCancellationPort;
+import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
+import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
@@ -41,7 +44,8 @@ import static org.mockito.Mockito.never;
 
 // 기록 여부와 기록한 값이 이 클래스의 요구사항이라 영속 포트에 넘긴 값을 검증한다
 @ExtendWith(MockitoExtension.class)
-class RefundStepRunnerTest {
+// 지휘자의 단계 실행 틀(runStep)만 호출 하나로 본다. 실패 기록과 이유 이름 규칙은 어느 단계든 같아서 입구를 거치지 않는다
+class RefundSagaServiceStepRunTest {
 
     private static final Long REFUND_ID = 7L;
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 4, 10, 0);
@@ -51,16 +55,24 @@ class RefundStepRunnerTest {
     RefundPersistencePort refundPersistencePort;
     @Mock
     RefundStepPersistencePort refundStepPersistencePort;
+    // 단계 실행 틀은 호출을 받아 실행만 한다. 다른 모듈 포트는 지휘자 생성에만 필요하다
+    @Mock
+    OrderCancellationPort orderCancellationPort;
+    @Mock
+    WalletRefundRequestPort walletRefundRequestPort;
+    @Mock
+    ProductStockReleasePort productStockReleasePort;
 
-    RefundStepRunner sut;
+    RefundSagaService sut;
 
     // 출력 문자열 검색은 스택에 찍힌 테스트 메서드 이름에도 "ERROR"가 있어 수준을 못 가린다. 로그 이벤트의 수준을 직접 받는다
-    private final Logger runnerLogger = (Logger) LoggerFactory.getLogger(RefundStepRunner.class);
+    private final Logger runnerLogger = (Logger) LoggerFactory.getLogger(RefundSagaService.class);
     private ListAppender<ILoggingEvent> logAppender;
 
     @BeforeEach
     void setUp() {
-        sut = new RefundStepRunner(refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
+        sut = new RefundSagaService(orderCancellationPort, walletRefundRequestPort, productStockReleasePort,
+                refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
     }
 
     @BeforeEach
@@ -78,7 +90,7 @@ class RefundStepRunnerTest {
     @Test
     void 성공하면_결과를_돌려주고_기록하지_않는다() {
         // when
-        String result = sut.run(REFUND_ID, RefundStepType.WALLET, () -> "OK");
+        String result = sut.runStep(REFUND_ID, RefundStepType.WALLET, () -> "OK");
 
         // then
         assertThat(result).isEqualTo("OK");
@@ -92,7 +104,7 @@ class RefundStepRunnerTest {
         givenRecordable(RefundStepType.ORDER);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
         assertRecorded(RefundStepType.ORDER, "ORDER_API_FAILED");
@@ -107,7 +119,7 @@ class RefundStepRunnerTest {
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER)).willReturn(Optional.of(stepRow));
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
             throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         })).isInstanceOfSatisfying(RestApiException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
@@ -132,7 +144,7 @@ class RefundStepRunnerTest {
         RestApiException failure = new RestApiException(RefundErrorCode.ORDER_API_FAILED);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure)
                 .satisfies(e -> assertThat(e.getSuppressed()).singleElement()
@@ -152,7 +164,7 @@ class RefundStepRunnerTest {
         givenRecordable(RefundStepType.PRODUCT);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.PRODUCT, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw failure;
         })).isSameAs(failure);
         assertRecorded(RefundStepType.PRODUCT, "IllegalStateException");
@@ -167,7 +179,7 @@ class RefundStepRunnerTest {
         givenRecordable(RefundStepType.ORDER);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
         assertRecorded(RefundStepType.ORDER, failure.getClass().getName());
@@ -182,11 +194,11 @@ class RefundStepRunnerTest {
         givenRecordable(RefundStepType.PRODUCT);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.PRODUCT, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw failure;
         })).isSameAs(failure);
-        assertThat(name.length()).isGreaterThan(RefundStepRunner.MAX_FAILURE_CODE_LENGTH);
-        assertRecorded(RefundStepType.PRODUCT, name.substring(0, RefundStepRunner.MAX_FAILURE_CODE_LENGTH));
+        assertThat(name.length()).isGreaterThan(RefundStep.MAX_REASON_LENGTH);
+        assertRecorded(RefundStepType.PRODUCT, name.substring(0, RefundStep.MAX_REASON_LENGTH));
     }
 
     private static class 이름이_아주_긴_예외_클래스는_실패_이유_칸의_길이를_넘을_수_있어서_앞부분만_남기는지_확인하려고_일부러_길게_지은_테스트_전용_예외_클래스_이름입니다_조금_더_길게_백자를_넘기도록
@@ -202,7 +214,7 @@ class RefundStepRunnerTest {
         willThrow(recordError).given(refundPersistencePort).findByIdForUpdate(REFUND_ID);
 
         // when & then
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.WALLET, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.WALLET, () -> {
             throw failure;
         })).isSameAs(failure)
                 .satisfies(e -> assertThat(e.getSuppressed()).containsExactly(recordError));
@@ -218,7 +230,7 @@ class RefundStepRunnerTest {
                 .given(refundPersistencePort).findByIdForUpdate(REFUND_ID);
 
         // when
-        assertThatThrownBy(() -> sut.run(REFUND_ID, RefundStepType.ORDER, () -> {
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
             throw failure;
         })).isSameAs(failure);
 

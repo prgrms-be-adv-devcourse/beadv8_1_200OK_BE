@@ -18,6 +18,7 @@ import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundRequestCommand;
 import com.ok.refund.application.port.in.RequestRefundUseCase;
+import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.out.RefundableOrderItem;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderQueryPort;
@@ -32,7 +33,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,15 +40,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 // 기록이 서비스의 트랜잭션 구간 밖에서 불려도 따로 커밋되어 DB에 남는지, 새 칸이 엔티티와 맞게 저장되는지 실제 DB로 확인한다
-class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
+class RefundSagaServiceStepIntegrationTest extends AbstractIntegrationTest {
 
     private static final Long BUYER_ID = 1L;
     private static final Long SELLER_ID = 7L;
     private static final Long ORDER_ID = 60L;
     private static final Long ORDER_ITEM_ID = 601L;
 
+    // 단계 실행 틀(runStep)과 실패 기록(recordFailure)은 패키지 안 메서드라 구현 클래스로 받는다
     @Autowired
-    RefundStepRunner refundStepRunner;
+    RefundSagaService refundSagaService;
     @Autowired
     RequestRefundUseCase requestRefundUseCase;
     @Autowired
@@ -85,7 +86,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         startOnly(refundId, RefundStepType.ORDER);
 
         // when
-        assertThatThrownBy(() -> refundStepRunner.run(refundId, RefundStepType.ORDER, () -> {
+        assertThatThrownBy(() -> refundSagaService.runStep(refundId, RefundStepType.ORDER, () -> {
             throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
         })).isInstanceOfSatisfying(RestApiException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_API_FAILED));
@@ -114,7 +115,7 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         String longestFailureCode = "E".repeat(100);
 
         // when
-        refundStepRunner.recordFailure(refundId, step, longestFailureCode);
+        refundSagaService.recordFailure(refundId, step, longestFailureCode);
 
         // then
         RefundStep sut = refundStepPersistencePort.findByRefundIdAndType(refundId, step).orElseThrow();
@@ -130,22 +131,21 @@ class RefundStepRunnerIntegrationTest extends AbstractIntegrationTest {
         return Stream.of(RefundStepType.values());
     }
 
-    // 바깥 트랜잭션 안에서 부르면 기록이 거기에 합류해 원래 예외로 롤백될 때 함께 사라진다. 다른 모듈을 부르기 전에 막아야 한다
+    // 바깥 트랜잭션 안에서 부르면 기록이 거기에 합류해 원래 예외로 롤백될 때 함께 사라진다. 지휘자 입구에서 다른 모듈을 부르기 전에 막아야 한다
     @Test
-    void 트랜잭션_안에서_부르면_다른_모듈을_부르기_전에_막는다() {
+    void 트랜잭션_안에서_지휘자_입구를_부르면_다른_모듈을_부르기_전에_막는다() {
         // given
+        Long refundId = processingRefundId();
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
         TransactionTemplate outer = new TransactionTemplate(transactionManager);
-        AtomicBoolean called = new AtomicBoolean(false);
 
         // when & then
         assertThatThrownBy(() -> outer.executeWithoutResult(status ->
-                refundStepRunner.run(1L, RefundStepType.ORDER, () -> {
-                    called.set(true);
-                    return null;
-                })))
+                refundSagaService.completeAfterWalletRefund(new WalletRefundCompletedCommand(
+                        refundId, refund.getOrderId(), refund.getBuyerId(), refund.getRefundAmount()))))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("환불 단계 실행은 트랜잭션 밖에서 불러야 합니다. 실패 기록이 바깥 트랜잭션과 함께 롤백됩니다.");
-        assertThat(called).isFalse();
+                .hasMessage("환불 승인 뒤 단계는 트랜잭션 밖에서 불러야 합니다. 실패 기록이 바깥 트랜잭션과 함께 롤백됩니다.");
+        assertThat(productStockReleasePort.releaseCallCountOf(refundId)).isZero();
     }
 
     // 승인 흐름이 남긴 단계 줄(주문 성공, 지갑 결과 대기)은 지우고 그 단계의 "시도 중" 줄 하나로 시작한다.

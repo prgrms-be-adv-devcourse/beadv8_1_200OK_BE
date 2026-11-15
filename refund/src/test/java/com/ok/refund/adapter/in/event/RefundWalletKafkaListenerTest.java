@@ -3,9 +3,9 @@ package com.ok.refund.adapter.in.event;
 import com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage;
 import com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage;
 import com.ok.refund.application.port.in.RefundSagaUseCase;
+import com.ok.refund.domain.RefundStep;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
-import com.ok.refund.application.service.RefundStepRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -39,12 +39,12 @@ class RefundWalletKafkaListenerTest {
     @InjectMocks
     private RefundWalletKafkaListener sut;
 
-    // 입력 어댑터는 서비스 패키지를 볼 수 없어(ArchitectureTest) 상한을 따로 둔다. 이 테스트가 두 값이 같게 지킨다.
+    // 입력 어댑터는 도메인을 볼 수 없어(ArchitectureTest) 상한을 따로 둔다. 이 테스트가 두 값이 같게 지킨다.
     // 단계 줄의 이유 칸(last_reason)이 VARCHAR(100)이라, 어느 한쪽만 바뀌면 긴 이유가 DB 저장에서 깨지거나(어댑터 상한이 더 큼) 멀쩡한 이유가 버려진다(더 작음)
     @Test
-    void 어댑터의_이유_길이_상한은_서비스의_실패_코드_길이_상한과_같다() {
+    void 어댑터의_이유_길이_상한은_도메인의_이유_길이_상한과_같다() {
         // when & then
-        assertThat(RefundWalletKafkaListener.MAX_REASON_LENGTH).isEqualTo(RefundStepRunner.MAX_FAILURE_CODE_LENGTH);
+        assertThat(RefundWalletKafkaListener.MAX_REASON_LENGTH).isEqualTo(RefundStep.MAX_REASON_LENGTH);
     }
 
     @Test
