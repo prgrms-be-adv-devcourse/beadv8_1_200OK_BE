@@ -787,6 +787,18 @@ com.ok.order
 
 `payout`도 헥사고날 구조입니다. 패키지와 의존 규칙은 정산 전용 규칙 `payout/CLAUDE.md`와 payout `ArchitectureTest`를 따릅니다.
 
+**Kafka 송수신**
+
+- 정산이 보내는 메시지
+  - 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309).
+  - 대사 질문 묶음(`payout.payout-deposit-check-requested`, 키 `checkId`, 한 묶음 최대 500건): 매일 대사가 지갑에 입금됐는지 묻습니다(#619).
+- 정산이 받는 메시지
+  - 구매확정(`order.order-product-confirmed`, 키 `orderItemId`)
+  - 결제 완료(`wallet.wallet-payment-completed`, 키 `orderId`)
+  - 대사 답 묶음(`wallet.payout-deposit-checked`, 키 `checkId`): 지갑이 원장을 읽고 답합니다(#619, 지갑 #613).
+- 토픽 이름과 컨슈머 그룹(`payout`)은 `PayoutTopics`에 있습니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
+- 대사는 매일 `payout.deposit-check.cron`(기본 `0 0 12 * * *`, Asia/Seoul)에 돕니다. 메시지 모양은 PR #548 문서 4절과 지갑 #613의 합의를 따릅니다.
+
 ## 7. 예외 처리 (ProblemDetail)
 
 모든 오류 응답은 RFC 9457 `application/problem+json` 형식입니다. `common.exception.ApiControllerAdvice`가 예외를 변환합니다.
