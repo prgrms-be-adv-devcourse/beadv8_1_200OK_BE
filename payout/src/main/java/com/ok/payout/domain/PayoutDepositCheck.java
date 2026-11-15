@@ -61,8 +61,8 @@ public class PayoutDepositCheck extends BaseTime {
     @Column(nullable = false)
     private int notFoundCount;
 
-    // 가장 최근에 물은 질문 묶음 번호(checkId). 이 번호의 답만 처리함
-    //   어제 질문의 답이 오늘 질문 뒤에 늦게 와도 버려, 늦은 "없음"이 이미 들어간 돈의 입금 메시지를 다시 보내거나 결과를 뒤집지 않게
+    // 가장 최근에 물은 질문 묶음 번호(checkId). "없음" 답은 이 번호의 답만 처리함 ("있음" 답은 번호와 상관없이 판정, applyAnswer)
+    //   어제 질문의 "없음"이 오늘 질문 뒤에 늦게 와도 버려, 옛날 원장의 "없음"이 이미 들어간 돈의 입금 메시지를 다시 보내거나 결과를 뒤집지 않게
     private Long lastCheckId;
 
     // 가장 최근 질문의 답을 처리했는지. Kafka는 같은 메시지를 두 번 전달할 수 있어 두 번째 답을 버리려고 둠
@@ -117,7 +117,7 @@ public class PayoutDepositCheck extends BaseTime {
     }
 
     // 질문을 Kafka로 보내지 못했을 때 recordAsked를 되돌림. 그 질문의 답이 이미 반영됐거나 다른 질문으로 바뀌었으면 건드리지 않음
-    // 그 전 질문 번호는 따로 남기지 않아 비움: 그 전 질문의 늦은 답은 원래도 버릴 답이고, 다음 날 새 질문을 함
+    // 그 전 질문 번호는 따로 남기지 않아 비움: 그 전 질문의 늦은 "없음"은 원래도 버릴 답이고("있음"은 번호와 상관없이 판정), 다음 날 새 질문을 함
     public boolean undoAsked(Long checkId) {
         if (status != PayoutDepositCheckStatus.WAITING || !Objects.equals(lastCheckId, checkId) || lastCheckAnswered) {
             return false;
@@ -127,42 +127,72 @@ public class PayoutDepositCheck extends BaseTime {
         return true;
     }
 
-    // 지갑 답 하나를 반영함. 가장 최근 질문의 처음 온 답만 반영하고 나머지는 IGNORED
-    // 단 이전 질문의 늦은 답이라도 "있음, 같은 판매자·금액"이면 일치로 끝냄 (사용자 결정, 2026-11-15)
-    //   지갑 판매자 원장의 입금 줄은 고쳐지거나 지워지지 않아 지갑 답은 시간이 지나면 "없음 → 있음"으로만 바뀜
-    //   그래서 옛날 질문의 "있음"도 지금 사실이고, 버리면 최근 질문의 답이 끝내 안 올 때 입금된 정산이 "지갑 답 없음"으로 잘못 올라감
-    //   늦게 온 "없음"과 "있음, 다름"은 계속 버림: "없음"은 옛날 원장이라 지금은 들어갔을 수 있고, 다름은 최근 질문의 답으로 판정함
+    // 지갑 답 하나를 반영함
+    // - 대기 줄에 온 가장 최근 질문의 처음 답: "있음"이면 판정, "없음"이면 횟수를 세고 다시 보냄(3번째면 관리자 확인)
+    // - 그 밖의 "있음" 답(이전 질문의 늦은 답, 보내기 실패로 되돌린 질문의 답 등)도 판정함 (사용자 결정, 2026-11-15)
+    //     지갑 판매자 원장의 입금 줄은 고쳐지거나 지워지지 않아(wallet SellerWalletLedger @Immutable, PAYOUT:{payoutId} 유니크)
+    //     지갑 답은 시간이 지나면 "없음 → 있음"으로만 바뀜. 그래서 옛날 질문의 "있음"도 판매자·금액까지 지금 사실임
+    //     버리면 최근 질문의 답이 끝내 안 올 때 입금된 정산이 "지갑 답 없음"으로 잘못 올라가거나, "판매자 다름" 증거가 사라짐
+    //   대기 줄: 같으면 일치, 다르면 관리자 확인(판매자 다름·금액 다름)
+    //   3번째 질문의 답을 못 받고 시간이 다 되어 닫힌 줄(closeIfNoAttemptsLeft, 이유 "입금 없음"·"지갑 답 없음"): 늦은 "있음"으로 다시 판정함
+    //     같으면 일치로 바꿈, 다르면 이유를 판매자 다름·금액 다름으로 바꾸고 지갑 값을 남김(관리자 확인 필요는 그대로)
+    //     답이 늦었을 뿐이라, "닫힌 판정은 대사가 고치지 않는다"의 예외로 둠 (payout/CLAUDE.md)
+    //   그 밖에 닫힌 줄은 건드리지 않음. 특히 3번째 질문에 지갑이 직접 "없음"으로 답해 닫힌 줄은, 원장이 "없음 → 있음"으로만 바뀌므로
+    //     그보다 앞선 질문의 "있음"이 나중에 올 일이 거의 없음
+    // - "없음" 답은 가장 최근 질문의 처음 답일 때만 반영함: 옛날 원장일 수 있어 지금은 들어갔을 수 있음
     public PayoutDepositAnswerOutcome applyAnswer(Long checkId, boolean found, Long answeredPayeeId, Long answeredAmount,
                                                   LocalDateTime depositedAt) {
-        if (status != PayoutDepositCheckStatus.WAITING) {
+        boolean latestFirstAnswer = status == PayoutDepositCheckStatus.WAITING
+                && Objects.equals(lastCheckId, checkId) && !lastCheckAnswered;
+        if (latestFirstAnswer) {
+            lastCheckAnswered = true;
+            if (found) {
+                return judgeFound(answeredPayeeId, answeredAmount, depositedAt);
+            }
+            notFoundCount++;
+            if (attemptCount >= MAX_ATTEMPTS) {
+                return needsReview(PayoutDepositMismatchReason.NOT_FOUND);
+            }
+            return PayoutDepositAnswerOutcome.NOT_FOUND_RETRY;
+        }
+        if (!found) {
             return PayoutDepositAnswerOutcome.IGNORED;
         }
-        boolean latestFirstAnswer = Objects.equals(lastCheckId, checkId) && !lastCheckAnswered;
-        if (!latestFirstAnswer) {
-            if (found && matches(answeredPayeeId, answeredAmount)) {
-                return matched(answeredPayeeId, answeredAmount, depositedAt);
-            }
-            return PayoutDepositAnswerOutcome.IGNORED;
+        if (status == PayoutDepositCheckStatus.WAITING) {
+            return judgeFound(answeredPayeeId, answeredAmount, depositedAt);
         }
-        lastCheckAnswered = true;
-        if (found) {
-            walletPayeeId = answeredPayeeId;
-            walletAmount = answeredAmount;
-            walletDepositedAt = depositedAt;
-            // 판매자가 다르면 돈이 다른 사람에게 간 것이라 금액보다 먼저 봄. 기다려도 저절로 맞춰지지 않아 바로 관리자 확인
-            if (!Objects.equals(payeeId, answeredPayeeId)) {
-                return needsReview(PayoutDepositMismatchReason.PAYEE_MISMATCH);
+        if (isClosedWithoutLastAnswer()) {
+            if (matches(answeredPayeeId, answeredAmount)) {
+                matched(answeredPayeeId, answeredAmount, depositedAt);
+                mismatchReason = null;
+                return PayoutDepositAnswerOutcome.REVIEW_CLEARED;
             }
-            if (!Objects.equals(amount, answeredAmount)) {
-                return needsReview(PayoutDepositMismatchReason.AMOUNT_MISMATCH);
-            }
-            return matched(answeredPayeeId, answeredAmount, depositedAt);
+            // 이유가 판매자 다름·금액 다름으로 바뀌므로 다음 늦은 답에서는 이 조건에 다시 걸리지 않음
+            return judgeFound(answeredPayeeId, answeredAmount, depositedAt);
         }
-        notFoundCount++;
-        if (attemptCount >= MAX_ATTEMPTS) {
-            return needsReview(PayoutDepositMismatchReason.NOT_FOUND);
+        return PayoutDepositAnswerOutcome.IGNORED;
+    }
+
+    // 3번째 질문의 답을 못 받은 채 closeIfNoAttemptsLeft가 닫은 줄인지
+    // 마지막 질문의 답을 받았는지(lastCheckAnswered)로 3번째 "없음" 답을 받아 닫힌 줄과 나눔 (새 칸 없이)
+    private boolean isClosedWithoutLastAnswer() {
+        return status == PayoutDepositCheckStatus.NEEDS_REVIEW
+                && !lastCheckAnswered
+                && (mismatchReason == PayoutDepositMismatchReason.NO_RESPONSE
+                || mismatchReason == PayoutDepositMismatchReason.NOT_FOUND);
+    }
+
+    // "있음" 답을 판정함. 판매자가 다르면 돈이 다른 사람에게 간 것이라 금액보다 먼저 봄. 기다려도 저절로 맞춰지지 않아 바로 관리자 확인
+    private PayoutDepositAnswerOutcome judgeFound(Long answeredPayeeId, Long answeredAmount, LocalDateTime depositedAt) {
+        if (!Objects.equals(payeeId, answeredPayeeId)) {
+            recordWalletValues(answeredPayeeId, answeredAmount, depositedAt);
+            return needsReview(PayoutDepositMismatchReason.PAYEE_MISMATCH);
         }
-        return PayoutDepositAnswerOutcome.NOT_FOUND_RETRY;
+        if (!Objects.equals(amount, answeredAmount)) {
+            recordWalletValues(answeredPayeeId, answeredAmount, depositedAt);
+            return needsReview(PayoutDepositMismatchReason.AMOUNT_MISMATCH);
+        }
+        return matched(answeredPayeeId, answeredAmount, depositedAt);
     }
 
     // 3번을 다 물었는데 마지막 질문의 답까지 오지 않은 줄을 끝냄. 매일 대사가 묻기 전에 부름 (마지막 질문에 하루를 기다려 준 뒤)
@@ -180,11 +210,15 @@ public class PayoutDepositCheck extends BaseTime {
     }
 
     private PayoutDepositAnswerOutcome matched(Long answeredPayeeId, Long answeredAmount, LocalDateTime depositedAt) {
+        recordWalletValues(answeredPayeeId, answeredAmount, depositedAt);
+        status = PayoutDepositCheckStatus.MATCHED;
+        return PayoutDepositAnswerOutcome.MATCHED;
+    }
+
+    private void recordWalletValues(Long answeredPayeeId, Long answeredAmount, LocalDateTime depositedAt) {
         walletPayeeId = answeredPayeeId;
         walletAmount = answeredAmount;
         walletDepositedAt = depositedAt;
-        status = PayoutDepositCheckStatus.MATCHED;
-        return PayoutDepositAnswerOutcome.MATCHED;
     }
 
     private PayoutDepositAnswerOutcome needsReview(PayoutDepositMismatchReason reason) {

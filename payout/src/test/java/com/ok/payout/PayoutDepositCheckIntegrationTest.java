@@ -228,23 +228,52 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 이전_질문의_늦은_없음은_버리고_최근_질문의_답으로_판정한다() throws Exception {
-        // given: 어제 질문(첫 번째 대사)과 오늘 질문(두 번째 대사)
+    void 이전_질문의_늦은_없음은_버린다() throws Exception {
+        // given: 판매자 10·20의 정산을 어제(첫 번째 대사)와 오늘(두 번째 대사) 한 묶음씩 물음
+        Map<Long, Long> payoutIdBySeller = settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L));
+        Long payoutA = payoutIdBySeller.get(10L);
+        Long payoutB = payoutIdBySeller.get(20L);
+        payoutDepositCheckUseCase.runCheck();
+        Long yesterdayCheckId = checkOf(payoutA).getLastCheckId();
+        payoutDepositCheckUseCase.runCheck();
+        assertThat(checkOf(payoutA).getLastCheckId()).isNotEqualTo(yesterdayCheckId);
+
+        // when: 어제 질문으로 정산 A의 "없음"이 늦게 온 뒤, 표시용으로 같은 어제 질문의 정산 B "있음, 같은 값"이 옴
+        sendAnswer(yesterdayCheckId, payoutA, false, null, null, null);
+        sendAnswer(yesterdayCheckId, payoutB, true, 20L, 5_000L, "2026-11-15T02:05:00");
+
+        // then: B가 처리될 때까지 기다린 뒤 A를 확인함
+        // 같은 키(어제 checkId)라 같은 파티션에서 보낸 순서대로 처리되므로, B가 처리됐으면 A의 늦은 "없음"도 이미 처리된 것이다
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutB).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
+        PayoutDepositCheck sut = checkOf(payoutA);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getNotFoundCount()).isZero();
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
+        });
+    }
+
+    @Test
+    void 지갑_답_없음으로_닫힌_뒤_늦은_있음이_같은_값이면_일치로_바뀐다() throws Exception {
+        // given: 세 번 물었는데 답이 없어 네 번째 대사에서 지갑 답 없음으로 닫힘
         Long payoutId = settleOnePayout(10L, 9_700L);
         payoutDepositCheckUseCase.runCheck();
-        Long yesterdayCheckId = checkOf(payoutId).getLastCheckId();
+        Long firstCheckId = checkOf(payoutId).getLastCheckId();
         payoutDepositCheckUseCase.runCheck();
-        Long todayCheckId = checkOf(payoutId).getLastCheckId();
-        assertThat(todayCheckId).isNotEqualTo(yesterdayCheckId);
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        assertThat(checkOf(payoutId).getMismatchReason()).isEqualTo(PayoutDepositMismatchReason.NO_RESPONSE);
+        Map<TopicPartition, Long> before = endOffsets(PayoutTopics.SELLER_PAYOUT_CREATED);
 
-        // when: 어제 질문의 "없음"이 늦게 오고, 이어서 오늘 질문의 "있음, 같은 값"이 옴
-        sendAnswer(yesterdayCheckId, payoutId, false, null, null, null);
-        sendAnswer(todayCheckId, payoutId, true, 10L, 9_700L, "2026-11-15T02:05:00");
+        // when: 첫 질문의 "있음, 같은 값"이 이제야 옴
+        sendAnswer(firstCheckId, payoutId, true, 10L, 9_700L, "2026-11-15T02:05:00");
 
-        // then: 일치로 끝나고 없음은 세지 않음 (어제 "없음"이 반영됐다면 없음 1번이 남음)
+        // then: 일치로 바뀌고, 입금 메시지는 다시 나가지 않음
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
-        assertThat(checkOf(payoutId).getNotFoundCount()).isZero();
+        assertThat(checkOf(payoutId).getMismatchReason()).isNull();
+        assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED, String.valueOf(payoutId), before)).isNull();
     }
 
     @Test

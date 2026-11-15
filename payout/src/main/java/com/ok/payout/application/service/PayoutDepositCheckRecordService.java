@@ -11,6 +11,7 @@ import com.ok.payout.domain.PayoutDepositAnswerOutcome;
 import com.ok.payout.domain.PayoutDepositCheck;
 import com.ok.payout.domain.PayoutDepositCheckBatch;
 import com.ok.payout.domain.PayoutDepositCheckStatus;
+import com.ok.payout.domain.PayoutDepositMismatchReason;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ import java.util.Optional;
  * <p>
  * 관리자 확인 필요가 되면 {@code ERROR}로 남긴다. 팀 로그 규칙({@code ERROR}는 처리되지 못한 예외)과 다르게 쓰는 이유:
  * 판매자에게 돈이 들어가지 않았거나 다른 금액·다른 사람에게 들어간 건이라 사람이 꼭 봐야 하고, 대사가 자동으로 고치지 않는다(#308 11/15 댓글 안건 4).
+ * 예외로 3번째 질문의 답을 못 받고 시간이 다 되어 닫힌 줄은 늦게 온 "있음"으로 다시 판정하고, 일치로 바뀌면 같은 태그로 {@code WARN}을 남긴다({@link PayoutDepositCheck#applyAnswer}, payout/CLAUDE.md).
  * 지갑 실패 기록도 같은 이유로 {@code ERROR}를 쓴다. 메시지는 {@code [정산-대사불일치]}로 시작해 한 번에 찾게 한다.
  */
 @Slf4j
@@ -114,14 +116,23 @@ public class PayoutDepositCheckRecordService {
                 log.warn("대사 줄이 없는 정산의 지갑 답이라 건너뜀. checkId={}, payoutId={}", command.checkId(), item.payoutId());
                 continue;
             }
+            // 일치로 바뀌면 이유가 비워지므로, 앞서 남긴 ERROR와 짝을 맞출 수 있게 바뀌기 전 이유를 잡아 둠
+            PayoutDepositMismatchReason reasonBefore = check.getMismatchReason();
             PayoutDepositAnswerOutcome outcome = check.applyAnswer(
                     command.checkId(), item.found(), item.payeeId(), item.amount(), item.depositedAt());
             switch (outcome) {
-                case IGNORED -> log.info("최근 질문의 답이 아니거나 이미 처리한 답이라 버림. checkId={}, payoutId={}, lastCheckId={}, status={}",
-                        command.checkId(), item.payoutId(), check.getLastCheckId(), check.getStatus());
+                // "없음"은 최근 질문의 처음 답이 아니어서, "있음"은 이미 끝난 줄이라 버림
+                //   (일치, 판매자 다름·금액 다름으로 닫힌 줄, 3번째 질문에 "없음" 답을 받고 닫힌 줄)
+                case IGNORED -> log.info("반영하지 않는 지갑 답이라 버림. checkId={}, payoutId={}, found={}, walletPayeeId={}, walletAmount={}, lastCheckId={}, status={}, reason={}",
+                        command.checkId(), item.payoutId(), item.found(), item.payeeId(), item.amount(),
+                        check.getLastCheckId(), check.getStatus(), check.getMismatchReason());
                 case MATCHED -> log.info("대사 일치. payoutId={}, attemptCount={}", item.payoutId(), check.getAttemptCount());
                 case NOT_FOUND_RETRY -> resendPayoutIds.add(item.payoutId());
                 case NEEDS_REVIEW -> logNeedsReview(check);
+                // 앞서 ERROR로 남긴 "지갑 답 없음"이 풀렸음을 같은 태그로 남겨, 관리자가 ERROR를 보고 찾을 때 함께 보이게 함
+                // 계속 진행하지만 이미 확인을 시작했을 수 있어 알려야 하는 일이라 WARN (service.md)
+                case REVIEW_CLEARED -> log.warn("{} 3번째 답을 못 받고 관리자 확인으로 넘겼던 정산이 늦게 온 답으로 일치가 됨. payoutId={}, 앞선 reason={}, checkId={}",
+                        MISMATCH_TAG, item.payoutId(), reasonBefore, command.checkId());
             }
         }
         return toSellerPayoutCreated(resendPayoutIds);
