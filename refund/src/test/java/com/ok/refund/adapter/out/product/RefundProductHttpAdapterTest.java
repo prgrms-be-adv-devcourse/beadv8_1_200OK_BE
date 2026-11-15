@@ -85,10 +85,10 @@ class RefundProductHttpAdapterTest {
         return Stream.of(404, 409, 422);
     }
 
-    // 서버 오류는 잠깐의 실패일 수 있어 다시 시도할 코드 그대로 둔다
+    // 서버 오류, 문서에 없는 4xx(설정 문제로 막힘·요청 과다 등)는 고치면 풀리거나 잠깐의 실패일 수 있어 다시 시도할 코드 그대로 둔다
     @ParameterizedTest
-    @MethodSource("서버_오류_상태")
-    void 서버_오류면_PRODUCT_API_FAILED(int errorStatus) {
+    @MethodSource("다시_시도할_상태")
+    void 서버_오류나_문서에_없는_4xx면_PRODUCT_API_FAILED(int errorStatus) {
         // given
         status.set(errorStatus);
 
@@ -98,8 +98,8 @@ class RefundProductHttpAdapterTest {
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
     }
 
-    static Stream<Integer> 서버_오류_상태() {
-        return Stream.of(500, 503);
+    static Stream<Integer> 다시_시도할_상태() {
+        return Stream.of(500, 503, 401, 403, 408, 429);
     }
 
     @Test

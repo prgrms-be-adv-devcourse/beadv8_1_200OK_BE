@@ -29,8 +29,10 @@ import java.time.Duration;
 public class RefundResumeScheduler {
 
     static final String LOCK_NAME = "refundResume";
-    // 이 시간이 지나면 잠근 서버가 죽었다고 보고 다른 서버가 잡을 수 있다. 한 회차는 보통 몇 초지만,
-    // 다른 모듈이 느리면 묶음 하나에 몇 분 걸릴 수 있다. 넘겨도 위 이유로 안전하고, 서버가 죽었을 때 알람이 멈추는 시간만큼 늦어진다
+    // 이 시간이 지나면 잠근 서버가 죽었다고 보고 다른 서버가 잡을 수 있다. 한 회차는 보통 몇 초다.
+    // 다만 Kafka가 죽으면 지갑 발행 한 번이 약 70초 막혀, 묶음 50건이면 한 회차가 이 시간을 넘길 수 있다. 그러면 다른 서버도 함께 돌지만
+    // 같은 단계는 두 번 불리지 않는다(위 이유). 서로 환불 행 잠금을 기다리는 헛일만 생긴다.
+    // 더 길게 잡으면 잠근 서버가 죽었을 때 알람이 그만큼 오래 멈춘다
     private static final Duration LOCK_AT_MOST_FOR = Duration.ofMinutes(5);
     // 회차가 금방 끝나도 이만큼은 잠금을 쥔다. 서버마다 시계가 조금 달라 같은 회차를 바로 이어 도는 것을 막는다
     private static final Duration LOCK_AT_LEAST_FOR = Duration.ofSeconds(10);
