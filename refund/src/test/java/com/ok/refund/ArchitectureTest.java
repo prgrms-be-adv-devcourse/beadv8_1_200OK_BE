@@ -420,25 +420,46 @@ class ArchitectureTest {
             .because("입력 포트 하나를 서비스 하나가 구현한다. 구현이 둘이면 어느 쪽이 주입될지 설정에 따라 갈린다 (refund/CLAUDE.md 3절)");
 
     // 서비스가 다른 서비스를 불러 흐름을 나누면 한 유스케이스를 한 클래스에서 읽을 수 없다.
-    // 함께 쓰는 규칙은 domain(정책), DB에서 꺼내는 방법은 영속 어댑터에 두고, 승인 뒤 단계 호출은 RefundStepRunner로 부른다
+    // 함께 쓰는 규칙은 domain(정책), DB에서 꺼내는 방법은 영속 어댑터에 두고, 승인 뒤 단계는 지휘자 포트(RefundSagaUseCase)로 넘긴다(#575)
     @ArchTest
     static final ArchRule 서비스는_다른_서비스를_쓰지_않는다 = noClasses()
             .that().resideInAPackage("..application.service..")
             .should().dependOnClassesThat().areAnnotatedWith(Service.class)
             .because("한 유스케이스의 흐름은 그 서비스 한 클래스에서 읽힌다 (refund/CLAUDE.md 3절)");
 
-    // 서비스 패키지에는 유스케이스 구현(@Service)과 실패 기록 틀(RefundStepRunner)만 둔다.
+    // 서비스 패키지에는 유스케이스 구현(@Service)만 둔다. 실패 기록 틀(RefundStepRunner)은 지휘자에 합쳤다(#592).
     // 서비스들이 함께 쓰는 코드는 규칙이면 domain(정책), DB에서 꺼내는 방법이면 영속 어댑터로 보낸다.
-    // 서비스 패키지에 보조 클래스가 생기면 규칙·흐름·기술이 섞인 "안쪽 클래스"가 되기 쉬워 이름으로 못 박는다
+    // 서비스 패키지에 보조 클래스가 생기면 규칙·흐름·기술이 섞인 "안쪽 클래스"가 되기 쉬워 막는다
     @ArchTest
-    static final ArchRule application_service에는_Service와_RefundStepRunner만_있다 = classes()
+    static final ArchRule application_service에는_Service만_있다 = classes()
             .that().resideInAPackage("..application.service..")
             .and().areTopLevelClasses()
-            .and().areNotAnnotatedWith(Service.class)
-            .should().haveSimpleName("RefundStepRunner")
+            .should().beAnnotatedWith(Service.class)
             .because("서비스 패키지는 유스케이스 흐름만 둔다. 함께 쓰는 규칙은 domain, DB 조회 방법은 영속 어댑터가 맡는다 (refund/CLAUDE.md 3절, 5절)");
 
-    // 위 규칙은 이름만 본다. 하위 패키지(application.service.support 등)에 RefundStepRunner라는 이름의 다른 클래스를 두면 통과하므로
+    // 서비스가 다른 서비스 대신 그 입력 포트를 부르면 위 "다른 서비스를 쓰지 않는다" 규칙을 피해 흐름이 여러 클래스로 나뉜다.
+    // 예외는 지휘자 포트 하나다. 승인 뒤 단계는 여러 요청(승인 → 몇 분 뒤 지갑 답 → #576 다시 시도)에 걸쳐 한 요청 안에서 끝나지 않아,
+    // 승인 서비스는 승인 구간을 커밋한 뒤 지휘자를 시작시키기만 한다(#575). 자기가 구현한 포트는 제외한다
+    @ArchTest
+    static final ArchRule 서비스가_부르는_다른_입력_포트는_지휘자뿐이다 = classes()
+            .that().resideInAPackage("..application.service..")
+            .should(new ArchCondition<JavaClass>("depend on no *UseCase other than its own and RefundSagaUseCase") {
+                @Override
+                public void check(JavaClass javaClass, ConditionEvents events) {
+                    for (Dependency dependency : javaClass.getDirectDependenciesFromSelf()) {
+                        JavaClass target = dependency.getTargetClass();
+                        if (!isUseCaseInterface(target)
+                                || target.getSimpleName().equals("RefundSagaUseCase")
+                                || javaClass.getAllRawInterfaces().contains(target)) {
+                            continue;
+                        }
+                        events.add(SimpleConditionEvent.violated(dependency, dependency.getDescription()));
+                    }
+                }
+            })
+            .because("한 유스케이스의 흐름은 그 서비스 한 클래스에서 읽힌다. 다른 입력 포트로 넘길 수 있는 것은 승인 뒤 단계 지휘자뿐이다 (refund/CLAUDE.md 3절, 이슈 #575)");
+
+    // 위 규칙은 @Service가 붙었는지만 본다. 하위 패키지(application.service.support 등)에 @Service를 단 보조 클래스를 두면 통과하므로
     // 서비스 패키지는 한 층으로만 둔다
     @ArchTest
     static final ArchRule application_service에는_하위_패키지를_두지_않는다 = classes()
