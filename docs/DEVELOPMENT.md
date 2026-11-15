@@ -657,8 +657,8 @@ com.ok.wallet
 
 **Kafka 수신과 실패 기록**
 
-- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested`, 키 `checkId`, #613)입니다. 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
-- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested`, 키 `checkId`, #613), 주문 생성(`order.order-created`, 키 `orderId`, #614)입니다. 주문 생성은 주문이 Kafka로 옮길 때(#602)까지 Spring 이벤트로도 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked`, 키 `checkId`), 주문 결제 결과(`wallet.wallet-payment-completed` / `wallet.wallet-payment-failed`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 Spring 이벤트로 받은 주문에는 Spring 이벤트로 보냅니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
 - 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
 - 넘긴 메시지는 건너뛰지 않고 지갑 DB의 `wallet_message_failure`에 원문·가장 안쪽 원인과 함께 대기(`PENDING`)로 남기고 `[WALLET_MESSAGE_FAILED]` ERROR 로그를 한 번 남깁니다. 같은 메시지(토픽·파티션·오프셋)는 한 번만 남습니다. 기록마저 실패하면 오프셋을 옮기지 않아 같은 메시지를 다시 받습니다.
@@ -671,6 +671,13 @@ com.ok.wallet
 - 거절은 다시 해도 결과가 같은 경우만입니다: 그 주문·구매자의 성공한 결제가 없음(`PAYMENT_NOT_FOUND`), 같은 주문의 반환 합계가 결제 금액을 넘음(`REFUND_TOTAL_EXCEEDED`). 환불은 지갑 거절을 받으면 주문 취소를 되돌리므로, DB 장애 같은 일시적 문제는 거절로 보내지 않고 다시 시도합니다. 보유 한도로는 거절하지 않습니다.
 - 반환 합계는 지갑을 잠근 뒤 잠금 조회로 읽습니다. 일반 조회는 잠금을 기다리기 전의 스냅샷을 봐서 방금 끝난 반환을 빼고 셉니다. 반환 트랜잭션은 READ COMMITTED로 돕니다. 기본 격리 수준에서는 반환 기록이 없는 주문을 잠금 조회할 때 빈 구간까지 잠겨, 이웃한 주문의 첫 반환끼리 교착이 납니다.
 - 결과는 반환이 커밋된 뒤, 메시지를 읽음 처리하기 전에 보내고 브로커 저장 확인을 기다립니다(`OrderRefundService`는 트랜잭션 없음). 보내기가 실패하면 예외로 같은 요청을 다시 받아 처음 결과를 다시 보내므로 outbox를 두지 않습니다.
+
+**주문 결제**
+
+- 받은 길로만 답합니다. Spring 이벤트로 받은 주문(`OrderEventListener` → `pay`)은 차감과 같은 트랜잭션에서 Spring 이벤트로, Kafka로 받은 주문(`OrderKafkaListener` → `payAndSendResult`)은 차감을 커밋한 뒤 Kafka로 보냅니다. Spring 수신부는 자기 트랜잭션 안에서 서비스를 부르므로, 거기서 Kafka로 보내면 커밋 전에 결과가 나가 롤백된 결제의 완료가 갈 수 있습니다. 두 길은 같은 처리 기록(`wallet_order_payment`)을 써서 어느 길로 와도 한 번만 차감합니다.
+- `OrderPaymentService`에는 클래스 단위 `@Transactional`을 두지 않습니다. 두면 Kafka 길도 트랜잭션 안에서 돌아 커밋 전에 보냅니다.
+- Kafka로 같은 주문이 다시 오면 돈은 다시 빼지 않고 처음 기록의 값(구매자, 금액, 처리 시각)으로 결과를 다시 보냅니다. Spring 길은 결과가 커밋과 함께 저장돼 다시 보내지 않습니다. 결제 시각(`paidAt`)은 처리 기록 시각이고, DB가 마이크로초까지 저장하므로 넣기 전에 마이크로초로 잘라 처음 결과와 다시 보낸 결과가 같게 합니다.
+- 실패 사유는 결과(`OrderPaymentResult.failureReason()`) 한 곳에서 정합니다. 금액이 0 이하이거나 없으면 처리 기록 없이 `INVALID_PAYMENT_REQUEST` 실패를 보내고, 주문·구매자 ID가 없으면 결과를 보낼 곳을 몰라 실패 기록에 남깁니다.
 
 **정산금 입금 확인**
 
