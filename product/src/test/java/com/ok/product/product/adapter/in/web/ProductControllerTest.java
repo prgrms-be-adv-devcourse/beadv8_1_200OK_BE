@@ -24,7 +24,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import com.ok.product.product.domain.Product;
-import com.ok.product.product.application.service.ProductService;
+import com.ok.product.product.application.port.in.SellerProductUseCase;
 
 @ActiveProfiles("test")
 @WebMvcTest(value = ProductController.class, properties = "app.problem.base-uri=https://api.example.com/problems")
@@ -48,12 +48,12 @@ class ProductControllerTest {
 	MockMvc mockMvc;
 
 	@MockitoBean
-	ProductService productService;
+	SellerProductUseCase sellerProductUseCase;
 
 	@Test
 	void 수정_커밋_중_낙관적_락이_실패하면_409를_반환한다() throws Exception {
 		willThrow(new ObjectOptimisticLockingFailureException(Product.class, 1L))
-			.given(productService).update(eq(SELLER_ID), eq(1L), any());
+			.given(sellerProductUseCase).update(eq(SELLER_ID), eq(1L), any());
 
 		update()
 			.andExpect(status().isConflict())
@@ -63,9 +63,9 @@ class ProductControllerTest {
 	@Test
 	void 상태_변경과_삭제도_커밋_중_낙관적_락이_실패하면_409를_반환한다() throws Exception {
 		willThrow(new ObjectOptimisticLockingFailureException(Product.class, 1L))
-			.given(productService).changeStatus(eq(SELLER_ID), eq(1L), any());
+			.given(sellerProductUseCase).changeStatus(eq(SELLER_ID), eq(1L), any());
 		willThrow(new ObjectOptimisticLockingFailureException(Product.class, 1L))
-			.given(productService).delete(SELLER_ID, 1L);
+			.given(sellerProductUseCase).delete(SELLER_ID, 1L);
 
 		mockMvc.perform(patch("/api/v1/products/{productId}/status", 1L)
 				.with(seller())

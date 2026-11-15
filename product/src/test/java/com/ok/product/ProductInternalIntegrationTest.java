@@ -49,9 +49,9 @@ import com.ok.product.product.domain.ProductStockAllocation;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.domain.StockAllocationStatus;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.adapter.out.persistence.ProductOptionRepository;
-import com.ok.product.product.adapter.out.persistence.ProductRepository;
-import com.ok.product.product.adapter.out.persistence.ProductStockAllocationRepository;
+import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductStockAllocationJpaRepository;
 import com.ok.product.product.application.service.ProductStockService;
 import com.ok.product.product.application.dto.StockChange;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -71,13 +71,13 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	MockMvc mockMvc;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductOptionRepository productOptionRepository;
+	ProductOptionJpaRepository productOptionRepository;
 
 	@Autowired
-	ProductStockAllocationRepository allocationRepository;
+	ProductStockAllocationJpaRepository allocationRepository;
 
 	@Autowired
 	ProductStockService productStockService;

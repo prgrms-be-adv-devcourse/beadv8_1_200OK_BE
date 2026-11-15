@@ -4,7 +4,7 @@ import com.ok.common.security.CurrentMemberId;
 import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
 import com.ok.product.product.adapter.in.web.dto.SellerProductDetailResponse;
 import com.ok.product.product.adapter.in.web.dto.SellerProductSummaryResponse;
-import com.ok.product.product.application.service.ProductService;
+import com.ok.product.product.application.port.in.SellerProductUseCase;
 import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.product.product.application.dto.ProductVisibilityCode;
 import com.ok.product.product.application.dto.SellerProductSearchQuery;
@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SellerProductController implements SellerProductControllerSpec {
 
-	private final ProductService productService;
+	private final SellerProductUseCase sellerProductUseCase;
 
 	@Override
 	@GetMapping
@@ -36,7 +36,7 @@ public class SellerProductController implements SellerProductControllerSpec {
 	) {
 		SellerProductSearchQuery query = new SellerProductSearchQuery(status, visibility, page, size);
 		return ResponseEntity.ok(ProductPageResponse.from(
-			productService.searchMyProducts(memberId, query).map(SellerProductSummaryResponse::from)));
+			sellerProductUseCase.searchMyProducts(memberId, query).map(SellerProductSummaryResponse::from)));
 	}
 
 	@Override
@@ -45,6 +45,6 @@ public class SellerProductController implements SellerProductControllerSpec {
 		@CurrentMemberId Long memberId,
 		@PathVariable Long productId
 	) {
-		return ResponseEntity.ok(SellerProductDetailResponse.from(productService.getMyProduct(memberId, productId)));
+		return ResponseEntity.ok(SellerProductDetailResponse.from(sellerProductUseCase.getMyProduct(memberId, productId)));
 	}
 }

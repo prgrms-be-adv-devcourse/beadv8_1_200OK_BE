@@ -4,7 +4,7 @@ import com.ok.product.product.adapter.in.web.dto.ProductCategoryGroupResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductDetailResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductSummaryResponse;
-import com.ok.product.product.application.service.ProductService;
+import com.ok.product.product.application.port.in.BuyerProductUseCase;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCategoryGroupCode;
 import com.ok.product.product.application.dto.ProductRegionCode;
@@ -25,7 +25,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class BuyerProductController implements BuyerProductControllerSpec {
 
-	private final ProductService productService;
+	private final BuyerProductUseCase buyerProductUseCase;
 
 	@Override
 	@GetMapping
@@ -38,19 +38,19 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 	) {
 		ProductSearchQuery query = new ProductSearchQuery(categoryGroup, category, region, page, size);
 		return ResponseEntity.ok(
-			ProductPageResponse.from(productService.searchVisibleProducts(query).map(ProductSummaryResponse::from)));
+			ProductPageResponse.from(buyerProductUseCase.searchVisibleProducts(query).map(ProductSummaryResponse::from)));
 	}
 
 	@Override
 	@GetMapping("/{productId}")
 	public ResponseEntity<ProductDetailResponse> getProduct(@PathVariable Long productId) {
-		return ResponseEntity.ok(ProductDetailResponse.from(productService.getVisibleProduct(productId)));
+		return ResponseEntity.ok(ProductDetailResponse.from(buyerProductUseCase.getVisibleProduct(productId)));
 	}
 
 	@Override
 	@GetMapping("/categories")
 	public ResponseEntity<List<ProductCategoryGroupResponse>> getCategories() {
-		return ResponseEntity.ok(productService.getCategories().stream()
+		return ResponseEntity.ok(buyerProductUseCase.getCategories().stream()
 			.map(ProductCategoryGroupResponse::from)
 			.toList());
 	}

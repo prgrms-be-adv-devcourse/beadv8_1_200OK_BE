@@ -1,5 +1,6 @@
 package com.ok.product.product.application.service;
 
+import com.ok.product.product.application.port.in.StockPartialReleaseUseCase;
 import com.ok.common.exception.RestApiException;
 import com.ok.product.product.exception.ProductErrorCode;
 import com.ok.product.product.application.dto.StockPartialReleaseCommand;
@@ -17,16 +18,11 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ProductStockPartialReleaseFacade {
+public class ProductStockPartialReleaseFacade implements StockPartialReleaseUseCase {
 
 	private final ProductStockService productStockService;
 
-	/**
-	 * 환불 한 건만큼 주문의 옵션 배정 재고를 일부 되돌린다.
-	 * 실패했더라도 같은 환불 ID로 같은 내용이 이미 반영됐으면 성공으로 끝낸다.
-	 *
-	 * @throws RestApiException {@link ProductStockService#partialRelease}의 에러 코드와 같다
-	 */
+	@Override
 	public void partialRelease(StockPartialReleaseCommand command) {
 		try {
 			productStockService.partialRelease(command);

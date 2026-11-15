@@ -3,9 +3,9 @@ package com.ok.product.product.adapter.in.web;
 import com.ok.product.product.adapter.in.web.dto.ProductOptionInfoResponse;
 import com.ok.product.product.adapter.in.web.dto.StockAllocationRequest;
 import com.ok.product.product.adapter.in.web.dto.StockPartialReleaseRequest;
-import com.ok.product.product.application.service.ProductService;
-import com.ok.product.product.application.service.ProductStockPartialReleaseFacade;
-import com.ok.product.product.application.service.ProductStockService;
+import com.ok.product.product.application.port.in.ProductOptionInfoUseCase;
+import com.ok.product.product.application.port.in.StockPartialReleaseUseCase;
+import com.ok.product.product.application.port.in.StockAllocationUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,14 +25,14 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ProductInternalController implements ProductInternalControllerSpec {
 
-	private final ProductService productService;
-	private final ProductStockService productStockService;
-	private final ProductStockPartialReleaseFacade productStockPartialReleaseFacade;
+	private final ProductOptionInfoUseCase productOptionInfoUseCase;
+	private final StockAllocationUseCase stockAllocationUseCase;
+	private final StockPartialReleaseUseCase stockPartialReleaseUseCase;
 
 	@Override
 	@GetMapping("/options")
 	public ResponseEntity<List<ProductOptionInfoResponse>> getOptions(@RequestParam List<Long> optionIds) {
-		return ResponseEntity.ok(productService.findOptionInfos(optionIds).stream()
+		return ResponseEntity.ok(productOptionInfoUseCase.findOptionInfos(optionIds).stream()
 			.map(ProductOptionInfoResponse::from)
 			.toList());
 	}
@@ -40,14 +40,14 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 	@Override
 	@PostMapping("/stock-allocations")
 	public ResponseEntity<Void> allocateStock(@RequestBody StockAllocationRequest request) {
-		productStockService.allocate(request.orderId(), request.toChanges());
+		stockAllocationUseCase.allocate(request.orderId(), request.toChanges());
 		return ResponseEntity.noContent().build();
 	}
 
 	@Override
 	@PostMapping("/stock-allocations/{orderId}/release")
 	public ResponseEntity<Void> releaseStock(@PathVariable Long orderId) {
-		productStockService.release(orderId);
+		stockAllocationUseCase.release(orderId);
 		return ResponseEntity.noContent().build();
 	}
 
@@ -55,7 +55,7 @@ public class ProductInternalController implements ProductInternalControllerSpec 
 	@PostMapping("/stock-allocations/{orderId}/partial-release")
 	public ResponseEntity<Void> partialReleaseStock(@PathVariable Long orderId,
 		@RequestBody StockPartialReleaseRequest request) {
-		productStockPartialReleaseFacade.partialRelease(request.toCommand(orderId));
+		stockPartialReleaseUseCase.partialRelease(request.toCommand(orderId));
 		return ResponseEntity.noContent().build();
 	}
 }

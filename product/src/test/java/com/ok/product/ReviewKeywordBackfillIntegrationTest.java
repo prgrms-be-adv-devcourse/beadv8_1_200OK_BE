@@ -20,7 +20,7 @@ import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
-import com.ok.product.product.adapter.out.persistence.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.product.review.domain.ProductReview;
 import com.ok.product.review.domain.ReviewAnalysisRequest;
 import com.ok.product.review.domain.ReviewAnalysisStatus;
@@ -39,7 +39,7 @@ class ReviewKeywordBackfillIntegrationTest extends AbstractIntegrationTest {
 	DataSource dataSource;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
 	ProductReviewRepository productReviewRepository;

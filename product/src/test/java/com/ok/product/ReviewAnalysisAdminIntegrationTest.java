@@ -40,7 +40,7 @@ import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
-import com.ok.product.product.adapter.out.persistence.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.product.review.domain.AspectSentiment;
 import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.ReviewExpressedKeyword;
@@ -75,7 +75,7 @@ class ReviewAnalysisAdminIntegrationTest extends AbstractIntegrationTest {
 	TestAccessTokens tokens;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
 	ProductReviewRepository productReviewRepository;

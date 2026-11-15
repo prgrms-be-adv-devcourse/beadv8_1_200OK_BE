@@ -31,10 +31,10 @@ import jakarta.persistence.EntityManager;
 class ProductOptionRepositoryTest {
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductOptionRepository productOptionRepository;
+	ProductOptionJpaRepository productOptionRepository;
 
 	@Autowired
 	EntityManager entityManager;

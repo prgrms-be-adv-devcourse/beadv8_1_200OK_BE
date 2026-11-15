@@ -8,7 +8,7 @@ import com.ok.product.product.adapter.in.web.dto.ProductStatusChangeRequest;
 import com.ok.product.product.adapter.in.web.dto.ProductUpdateRequest;
 import com.ok.product.product.adapter.in.web.dto.ProductVisibilityChangeRequest;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.application.service.ProductService;
+import com.ok.product.product.application.port.in.SellerProductUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ProductController implements ProductControllerSpec {
 
-	private final ProductService productService;
+	private final SellerProductUseCase sellerProductUseCase;
 
 	@Override
 	@PostMapping
@@ -39,7 +39,7 @@ public class ProductController implements ProductControllerSpec {
 		@CurrentMemberId Long memberId,
 		@Valid @RequestBody ProductCreateRequest request
 	) {
-		Long productId = productService.create(memberId, request.toCommand());
+		Long productId = sellerProductUseCase.create(memberId, request.toCommand());
 		return ResponseEntity.status(HttpStatus.CREATED).body(new ProductCreateResponse(productId));
 	}
 
@@ -50,7 +50,7 @@ public class ProductController implements ProductControllerSpec {
 		@PathVariable Long productId,
 		@Valid @RequestBody ProductUpdateRequest request
 	) {
-		runDetectingConflict(() -> productService.update(memberId, productId, request.toCommand()));
+		runDetectingConflict(() -> sellerProductUseCase.update(memberId, productId, request.toCommand()));
 		return ResponseEntity.noContent().build();
 	}
 
@@ -61,7 +61,7 @@ public class ProductController implements ProductControllerSpec {
 		@PathVariable Long productId,
 		@Valid @RequestBody ProductStatusChangeRequest request
 	) {
-		runDetectingConflict(() -> productService.changeStatus(memberId, productId, request.status()));
+		runDetectingConflict(() -> sellerProductUseCase.changeStatus(memberId, productId, request.status()));
 		return ResponseEntity.noContent().build();
 	}
 
@@ -72,7 +72,7 @@ public class ProductController implements ProductControllerSpec {
 		@PathVariable Long productId,
 		@Valid @RequestBody ProductVisibilityChangeRequest request
 	) {
-		runDetectingConflict(() -> productService.changeVisibility(memberId, productId, request.visibility()));
+		runDetectingConflict(() -> sellerProductUseCase.changeVisibility(memberId, productId, request.visibility()));
 		return ResponseEntity.noContent().build();
 	}
 
@@ -82,7 +82,7 @@ public class ProductController implements ProductControllerSpec {
 		@CurrentMemberId Long memberId,
 		@PathVariable Long productId
 	) {
-		runDetectingConflict(() -> productService.delete(memberId, productId));
+		runDetectingConflict(() -> sellerProductUseCase.delete(memberId, productId));
 		return ResponseEntity.noContent().build();
 	}
 

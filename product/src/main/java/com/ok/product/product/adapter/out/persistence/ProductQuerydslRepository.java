@@ -1,5 +1,6 @@
 package com.ok.product.product.adapter.out.persistence;
 
+import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductCategoryGroup;
@@ -19,13 +20,17 @@ import java.util.Objects;
 
 import static com.ok.product.product.domain.QProduct.product;
 
+/**
+ * {@link ProductQueryRepository}의 Querydsl 구현.
+ */
 @Repository
 @RequiredArgsConstructor
-public class ProductQueryRepository {
+public class ProductQuerydslRepository implements ProductQueryRepository {
 
 	private final JPAQueryFactory queryFactory;
 
 	// 구매자 목록
+	@Override
 	public Page<Product> findVisibleProducts(
 			ProductCategoryGroup categoryGroup,
 			ProductCategory category,
@@ -36,6 +41,7 @@ public class ProductQueryRepository {
 	}
 
 	// 판매자 본인 목록. 숨긴 상품도 나오고 삭제한 상품은 나오지 않는다.
+	@Override
 	public Page<Product> findSellerProducts(
 			Long sellerId,
 			ProductStatus status,

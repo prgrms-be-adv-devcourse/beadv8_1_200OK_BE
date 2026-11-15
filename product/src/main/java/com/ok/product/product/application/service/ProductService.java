@@ -1,5 +1,8 @@
 package com.ok.product.product.application.service;
 
+import com.ok.product.product.application.port.in.BuyerProductUseCase;
+import com.ok.product.product.application.port.in.ProductOptionInfoUseCase;
+import com.ok.product.product.application.port.in.SellerProductUseCase;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
@@ -7,9 +10,9 @@ import com.ok.product.product.domain.ProductCategoryGroup;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.adapter.out.persistence.ProductOptionRepository;
-import com.ok.product.product.adapter.out.persistence.ProductQueryRepository;
-import com.ok.product.product.adapter.out.persistence.ProductRepository;
+import com.ok.product.product.application.port.out.ProductOptionRepository;
+import com.ok.product.product.application.port.out.ProductQueryRepository;
+import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.product.application.dto.ProductCategoryGroupResult;
 import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductDetailResult;
@@ -37,7 +40,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ProductService {
+public class ProductService implements BuyerProductUseCase, SellerProductUseCase, ProductOptionInfoUseCase {
 
 	// 정제 후 상세설명 최대 길이
 	static final int MAX_DESCRIPTION_LENGTH = 100_000;
@@ -53,6 +56,7 @@ public class ProductService {
 	private final Clock clock;
 
 	// TODO(추후 고려): 필요시 ADMIN이 판매자 대신 등록하는 기능
+	@Override
 	@Transactional
 	public Long create(Long sellerId, ProductCreateCommand command) {
 		validateImageUrls(command.imageUrls());
@@ -70,6 +74,7 @@ public class ProductService {
 		return productRepository.save(product).getId();
 	}
 
+	@Override
 	@Transactional
 	public void update(Long sellerId, Long productId, ProductUpdateCommand command) {
 		Product product = findOwnedProduct(sellerId, productId);
@@ -108,18 +113,21 @@ public class ProductService {
 				});
 	}
 
+	@Override
 	@Transactional
 	public void changeStatus(Long sellerId, Long productId, ProductStatusCode status) {
 		Product product = findOwnedProduct(sellerId, productId);
 		product.changeStatus(status.toDomain());
 	}
 
+	@Override
 	@Transactional
 	public void changeVisibility(Long sellerId, Long productId, ProductVisibilityCode visibility) {
 		Product product = findOwnedProduct(sellerId, productId);
 		product.changeVisibility(visibility.toDomain());
 	}
 
+	@Override
 	@Transactional
 	public void delete(Long sellerId, Long productId) {
 		Product product = findOwnedProduct(sellerId, productId);
@@ -127,6 +135,7 @@ public class ProductService {
 	}
 
 	// 구매자에게 보이는 상품 목록을 최신순으로 조회한다.
+	@Override
 	public Page<ProductSummaryResult> searchVisibleProducts(ProductSearchQuery query) {
 		Page<Product> products = productQueryRepository.findVisibleProducts(
 			query.categoryGroup() == null ? null : query.categoryGroup().toDomain(),
@@ -139,6 +148,7 @@ public class ProductService {
 	}
 
 	// 판매자 본인의 상품 목록을 최신순으로 조회한다. 관리 화면용이라 숨긴 상품도 나오고, 삭제한 상품만 빠진다
+	@Override
 	public Page<SellerProductSummaryResult> searchMyProducts(Long sellerId, SellerProductSearchQuery query) {
 		Page<Product> products = productQueryRepository.findSellerProducts(
 			sellerId,
@@ -150,6 +160,7 @@ public class ProductService {
 	}
 
 	// 판매자 수정 화면용 상세. findOwnedProduct는 version을 올리는 락을 걸어서 쓰지 않는다
+	@Override
 	public SellerProductDetailResult getMyProduct(Long sellerId, Long productId) {
 		Product product = productRepository.findByIdAndDeletedAtIsNull(productId)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
@@ -160,6 +171,7 @@ public class ProductService {
 	}
 
 	// 구매자에게 보이는 상품 상세를 조회한다.
+	@Override
 	public ProductDetailResult getVisibleProduct(Long productId) {
 		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
@@ -167,16 +179,14 @@ public class ProductService {
 	}
 
 	// 목록 조회 필터에 쓰는 상위·하위 카테고리. DB를 거치지 않고 enum 정의에서 만든다
+	@Override
 	public List<ProductCategoryGroupResult> getCategories() {
 		return Arrays.stream(ProductCategoryGroup.values())
 			.map(ProductCategoryGroupResult::from)
 			.toList();
 	}
 
-	/**
-	 * 옵션 ID 목록으로 옵션 정보를 한 번에 조회한다.
-	 * 없는 ID는 빠지고, 숨기거나 삭제한 상품 및 옵션도 포함한다.
-	 */
+	@Override
 	public List<ProductOptionInfoResult> findOptionInfos(List<Long> optionIds) {
 		return productOptionRepository.findAllWithProductByIdIn(optionIds).stream()
 			.map(ProductOptionInfoResult::from)

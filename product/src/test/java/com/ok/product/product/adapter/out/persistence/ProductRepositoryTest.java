@@ -33,7 +33,7 @@ import jakarta.persistence.EntityManager;
 class ProductRepositoryTest {
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
 	EntityManager entityManager;

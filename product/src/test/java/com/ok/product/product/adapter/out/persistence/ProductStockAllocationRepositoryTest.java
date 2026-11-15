@@ -27,7 +27,7 @@ import jakarta.persistence.EntityManager;
 class ProductStockAllocationRepositoryTest {
 
 	@Autowired
-	ProductStockAllocationRepository repository;
+	ProductStockAllocationJpaRepository repository;
 
 	@Autowired
 	EntityManager entityManager;
