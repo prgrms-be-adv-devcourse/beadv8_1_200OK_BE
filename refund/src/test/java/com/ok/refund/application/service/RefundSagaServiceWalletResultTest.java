@@ -122,9 +122,10 @@ class RefundSagaServiceWalletResultTest {
         });
     }
 
+    // 지갑에 보냈다면 발행 전에 만든 지갑 줄이 있어야 한다. 없으면 있을 수 없는 상태라 진행하지 않고 사람이 보게 한다(#616 결정 13)
     @Test
-    void 단계_줄이_없는_처리_중_환불에_완료가_오면_지갑_줄을_성공으로_만들고_완료한다() {
-        // given: #574 전에 승인돼 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
+    void 단계_줄이_없는_처리_중_환불에_완료가_오면_재고를_부르지_않고_처리_중으로_둔다() {
+        // given: 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
@@ -132,20 +133,28 @@ class RefundSagaServiceWalletResultTest {
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
 
         // then
-        ArgumentCaptor<RefundStep> created = ArgumentCaptor.forClass(RefundStep.class);
-        then(refundStepPersistencePort).should(times(2)).saveNew(created.capture());
-        RefundStep wallet = created.getAllValues().get(0);
-        RefundStep product = created.getAllValues().get(1);
-        assertSoftly(softly -> {
-            softly.assertThat(wallet.getType()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
-            softly.assertThat(product.getType()).isEqualTo(RefundStepType.PRODUCT);
-            softly.assertThat(product.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
-        });
-        then(productStockReleasePort).should().releaseStock(any());
-        ArgumentCaptor<Refund> saved = ArgumentCaptor.forClass(Refund.class);
-        then(refundPersistencePort).should().update(saved.capture());
-        assertThat(saved.getValue().getStatus()).isEqualTo(RefundStatus.COMPLETED);
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    // 마이그레이션이 옮긴 옛 재고 멈춤 줄처럼 재고 줄이 끝 상태면 재고를 다시 부르지 않는다(#616 결정 14).
+    // 예전에는 재고를 부르고 완료했지만 줄은 멈춤으로 남아 표와 환불이 어긋났다
+    @Test
+    void 재고_줄이_끝_상태면_지갑_완료가_와도_재고를_부르지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, 1, null),
+                step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED, 1, "OLD_REASON"));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     // 지갑이 실패나 어긋난 결과를 먼저 알린 뒤 올바른 완료를 보내는 경우다. 앞선 기록은 멈춤으로 남기고(#544 결정 8) 환불은 완료한다
@@ -279,18 +288,20 @@ class RefundSagaServiceWalletResultTest {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null), null);
+
         // when
         sut.completeAfterWalletRefund(completed(orderId, buyerId, amount));
 
-        // then: 지갑 줄이 없던 환불이라 멈춤으로 만들어 남긴다. 환불 행은 처리 중 그대로라 저장하지 않는다
+        // then: 결과를 기다리던 지갑 줄을 멈춤으로 바꿔 남긴다. 환불 행은 처리 중 그대로라 저장하지 않는다
         then(refundPersistencePort).should(never()).update(any());
-        ArgumentCaptor<RefundStep> created = ArgumentCaptor.forClass(RefundStep.class);
-        then(refundStepPersistencePort).should().saveNew(created.capture());
-        assertThat(created.getValue()).isNotNull();
+        ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(updated.capture());
+        assertThat(updated.getValue()).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(created.getValue().getType()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(created.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
-            softly.assertThat(created.getValue().getLastReason()).isEqualTo("RESULT_MISMATCH");
+            softly.assertThat(updated.getValue().getType()).isEqualTo(RefundStepType.WALLET);
+            softly.assertThat(updated.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(updated.getValue().getLastReason()).isEqualTo("RESULT_MISMATCH");
         });
         then(productStockReleasePort).should(never()).releaseStock(any());
     }
@@ -354,9 +365,10 @@ class RefundSagaServiceWalletResultTest {
         });
     }
 
+    // 지갑 줄이 없으면 있을 수 없는 상태라 줄을 만들지 않고 WARN만 남긴다(#616 결정 13)
     @Test
-    void 단계_줄이_없는_처리_중_환불에_실패가_오면_지갑_줄을_멈춤으로_만든다() {
-        // given: #574 전에 승인돼 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
+    void 단계_줄이_없는_처리_중_환불에_실패가_오면_기록하지_않는다() {
+        // given: 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
@@ -364,16 +376,8 @@ class RefundSagaServiceWalletResultTest {
         sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
 
         // then
-        ArgumentCaptor<RefundStep> created = ArgumentCaptor.forClass(RefundStep.class);
-        then(refundStepPersistencePort).should().saveNew(created.capture());
-        assertThat(created.getValue()).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(created.getValue().getRefundId()).isEqualTo(REFUND_ID);
-            softly.assertThat(created.getValue().getType()).isEqualTo(RefundStepType.WALLET);
-            softly.assertThat(created.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
-            softly.assertThat(created.getValue().getLastReason()).isEqualTo("INSUFFICIENT_BALANCE");
-            softly.assertThat(created.getValue().getNextCheckAt()).isNull();
-        });
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
     }
 
     @Test

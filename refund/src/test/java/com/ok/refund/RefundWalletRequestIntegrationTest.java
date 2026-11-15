@@ -11,6 +11,8 @@ import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.application.port.in.RefundResult;
+import com.ok.refund.application.port.in.RefundSagaUseCase;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
@@ -109,6 +111,9 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     ConsumerFactory<?, ?> consumerFactory;
     @Autowired
     JsonMapper jsonMapper;
+    // 다시 진행을 흉내 내려고 지휘자 입구를 직접 부른다(환불 번호 입구는 #616 뒤 커밋, 알람은 #576)
+    @Autowired
+    RefundSagaUseCase refundSagaUseCase;
 
     private MockMvc mockMvc;
 
@@ -252,6 +257,32 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                         tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
                         tuple(RefundStepType.WALLET, RefundStepStatus.READY, "IllegalStateException"));
         assertThat(readMessagesOf(refundId, before)).isEmpty();
+    }
+
+    // 지갑 발행이 실패해 할 차례로 남은 환불을 같은 refundId로 다시 진행해도 지갑 줄을 새로 저장하지 않고 다시 시작한다(#616 결정 14).
+    // 예전에는 다음 단계 줄을 확인 없이 새로 저장해 (refund_id, step) 유일 제약에 걸렸다(11/15 재현)
+    @Test
+    void 지갑_발행이_실패한_환불을_다시_진행하면_지갑_줄을_다시_시작해_한_번_보낸다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        walletRefundRequestPort.fail();
+        approve(refundId)
+                .andExpect(status().isInternalServerError());
+        walletRefundRequestPort.clear();
+        Map<TopicPartition, Long> before = endOffsets();
+        RefundResult approved = RefundResult.from(refundPersistencePort.findById(refundId).orElseThrow());
+
+        // when
+        RefundResult result = refundSagaUseCase.startAfterApproval(approved);
+
+        // then: 지갑 줄은 같은 줄을 다시 시작해(시도 2번째) 결과 대기가 되고, 반환 요청은 한 건 나간다
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getAttemptCount)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, 1),
+                        tuple(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 2));
+        assertThat(readMessagesOf(refundId, before)).hasSize(1);
     }
 
     // 발행은 이미 끝나 되돌릴 수 없다. 그 뒤 "결과 대기"로 바꾸는 기록이 실패해도 판매자에게는 오류를 주지 않고 처리 중으로 응답한다.

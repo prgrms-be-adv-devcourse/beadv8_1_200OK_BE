@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
 @Getter
 public class Refund {
 
+    /** 출고됐거나 취소된 상품이라 취소할 수 없을 때 구매자에게 보이는 거절 사유. 승인 때 자동 거절과 승인 뒤 주문 거절이 같은 문구를 쓴다 */
+    public static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
+
     // 저장 전(request로 막 만든 것)에는 null이다. 저장소가 저장한 뒤 restore로 채운 새 객체를 돌려준다(setter를 두지 않으려고)
     private final Long id;
     private final Long orderId;

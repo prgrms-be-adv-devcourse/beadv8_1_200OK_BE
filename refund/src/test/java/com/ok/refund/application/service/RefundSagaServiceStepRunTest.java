@@ -259,18 +259,19 @@ class RefundSagaServiceStepRunTest {
         assertRecorded(RefundStepType.ORDER, "ORDER_API_FAILED");
     }
 
-    // 끝난 환불(그사이 완료·거절 등)에 실패를 남기면 끝난 환불이 멈춘 것처럼 보인다. 예전 환불 행 기록과 같은 오류로 막는다
+    // 끝난 환불(그사이 완료·거절 등)에 실패를 남기면 끝난 환불이 멈춘 것처럼 보인다. 기록하지 않고 WARN만 남긴다(#616 결정 15)
     @Test
     void 처리_중이_아닌_환불에는_실패를_기록하지_않는다() {
         // given
         Refund requested = Refund.request(10L, 101L, 2, 1L, 5L, 55L, "감자", "1kg", 10_000L, null);
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(requested));
 
-        // when & then
-        assertThatThrownBy(() -> sut.recordFailure(REFUND_ID, RefundStepType.ORDER, "ORDER_API_FAILED"))
-                .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+        // when: 예외 없이 끝난다. 원래 호출의 예외는 runStep이 그대로 올린다(#616 결정 15)
+        sut.recordFailure(REFUND_ID, RefundStepType.ORDER, "ORDER_API_FAILED");
+
+        // then
         then(refundStepPersistencePort).should(never()).update(any());
+        then(refundStepPersistencePort).should(never()).findByRefundIdAndType(any(), any());
     }
 
     // refundId는 승인을 마친 시스템이 넘기는 값이라 없으면 사용자 잘못이 아닌 버그다. 404가 아니라 표준 예외(500)로 드러나야 한다

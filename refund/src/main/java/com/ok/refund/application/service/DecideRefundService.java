@@ -40,9 +40,6 @@ public class DecideRefundService implements DecideRefundUseCase {
 
     // 승인 때 잠글 상태. 이 상태의 행만 처리 중으로 바뀌거나 이미 처리 중이라 집계를 바꿀 수 있다. 끝난 행(거절·철회)은 잠그지 않는다
     private static final List<RefundStatus> LOCK_TARGET_STATUSES = List.of(RefundStatus.REQUESTED, RefundStatus.PROCESSING);
-    // 승인 때 이미 출고됐거나 취소된 상품을 자동 거절할 때 구매자에게 보이는 사유
-    // 주문이 반영을 거절했을 때 지휘자(RefundSagaService)도 같은 문구를 쓴다. 같은지는 테스트가 본다
-    static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
 
     private final OrderQueryPort orderQueryPort;
     private final RefundPersistencePort refundPersistencePort;
@@ -170,7 +167,7 @@ public class DecideRefundService implements DecideRefundUseCase {
         LocalDateTime now = LocalDateTime.now(clock);
         if (orderItem.isNoLongerCancellable()) {
             // 배송비 판단은 하지 않는다. 취소할 수 없는 상품이라 뺄 배송비도 없고, 배송비 칸은 0으로 남는다
-            refund.reject(SHIPPED_REJECT_REASON, now);
+            refund.reject(Refund.SHIPPED_REJECT_REASON, now);
             // 도메인을 바꾼 것만으로는 저장되지 않는다(#481, 명시적 저장). 상태를 바꾼 경로마다 update를 불러야 한다
             refundPersistencePort.update(refund);
             return RefundResult.from(refund);
