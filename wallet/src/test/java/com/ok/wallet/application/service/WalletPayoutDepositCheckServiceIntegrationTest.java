@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 통합 테스트: 원장을 읽은 답이 정산이 받을 메시지 모양(정산 대사 #308 문서 4-3)으로 실제 Kafka에 나가는지 확인한다.
 // 정산 코드는 쓰지 않고, 토픽에 나간 JSON을 문자열 그대로 읽어 필드 이름과 값, 입금 시각의 글자 모양을 본다.
 // 입금 시각을 정해 두려고 원장을 SQL로 넣으므로 잔액과 맞지 않아, 끝난 뒤 잔액 검사 없이 지운다
-class PayoutDepositCheckServiceIntegrationTest extends AbstractIntegrationTest {
+class WalletPayoutDepositCheckServiceIntegrationTest extends AbstractIntegrationTest {
     private static final String CHECKED_TOPIC = "wallet.payout-deposit-checked";
 
     // 토픽에는 앞 테스트의 메시지가 남으므로 테스트마다 겹치지 않는 묶음·정산 번호를 쓴다

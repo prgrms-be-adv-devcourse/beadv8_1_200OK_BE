@@ -30,7 +30,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
-class PayoutDepositCheckServiceTest {
+class WalletPayoutDepositCheckServiceTest {
     private static final LocalDateTime DEPOSITED_AT = LocalDateTime.of(2026, 11, 15, 2, 0, 3);
 
     @Mock
@@ -40,7 +40,7 @@ class PayoutDepositCheckServiceTest {
     PayoutDepositCheckResultPublisher payoutDepositCheckResultPublisher;
 
     @InjectMocks
-    PayoutDepositCheckService payoutDepositCheckService;
+    WalletPayoutDepositCheckService payoutDepositCheckService;
 
     @Test
     void 원장에_있는_정산은_찾음으로_없는_정산은_못_찾음으로_요청_순서대로_답한다() {
@@ -82,7 +82,7 @@ class PayoutDepositCheckServiceTest {
     @Test
     void 조회_한도를_넘는_묶음은_나눠_읽고_모든_정산에_답한다() {
         // given
-        int size = PayoutDepositCheckService.QUERY_CHUNK_SIZE * 2 + 1;
+        int size = WalletPayoutDepositCheckService.QUERY_CHUNK_SIZE * 2 + 1;
         List<Long> payoutIds = LongStream.rangeClosed(1, size).boxed().toList();
         List<Collection<String>> queriedChunks = new ArrayList<>();
         given(sellerWalletLedgerRepository.findDepositsByReferenceKeys(any())).willAnswer(invocation -> {
@@ -95,7 +95,7 @@ class PayoutDepositCheckServiceTest {
 
         // then
         assertThat(queriedChunks).extracting(Collection::size)
-                .containsExactly(PayoutDepositCheckService.QUERY_CHUNK_SIZE, PayoutDepositCheckService.QUERY_CHUNK_SIZE, 1);
+                .containsExactly(WalletPayoutDepositCheckService.QUERY_CHUNK_SIZE, WalletPayoutDepositCheckService.QUERY_CHUNK_SIZE, 1);
         assertThat(publishedResult().items()).hasSize(size);
     }
 

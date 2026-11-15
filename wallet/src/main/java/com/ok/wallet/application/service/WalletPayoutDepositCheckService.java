@@ -24,7 +24,7 @@ import java.util.Objects;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
+public class WalletPayoutDepositCheckService implements PayoutDepositCheckUseCase {
     // 한 번에 조회할 근거 키 수. 정산은 한 묶음을 500건까지 보내기로 해서 보통은 한 번에 끝난다.
     // 더 많이 와도 거절하지 않고 나눠 읽어, 조회 조건이 한없이 길어지지 않게 한다
     static final int QUERY_CHUNK_SIZE = 500;

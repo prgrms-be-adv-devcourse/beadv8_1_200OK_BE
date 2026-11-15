@@ -18,7 +18,7 @@ import java.util.List;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PayoutDepositCheckKafkaListener {
+public class WalletPayoutDepositCheckKafkaListener {
     private final PayoutDepositCheckUseCase payoutDepositCheckUseCase;
 
     // 메시지에 보내는 쪽 클래스 이름(타입 헤더)이 없어서 읽을 타입을 리스너가 정한다

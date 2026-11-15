@@ -18,7 +18,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 
 // 보내기 실패 경로(시간 초과·중단 등)는 함께 쓰는 WalletKafkaSender를 KafkaWalletRefundResultPublisherTest가 본다.
-// 여기서는 실패했을 때 어느 묶음의 답인지 예외에 남는지만 본다. 성공 경로(실제 Kafka에 나간 JSON)는 PayoutDepositCheckServiceIntegrationTest가 본다
+// 여기서는 실패했을 때 어느 묶음의 답인지 예외에 남는지만 본다. 성공 경로(실제 Kafka에 나간 JSON)는 WalletPayoutDepositCheckServiceIntegrationTest가 본다
 @ExtendWith(MockitoExtension.class)
 class KafkaPayoutDepositCheckResultPublisherTest {
 

@@ -26,9 +26,9 @@ import static org.awaitility.Awaitility.await;
 
 // 통합 테스트: 정산이 Kafka로 보낸 입금 확인 묶음을 지갑 리스너가 받아, 원장을 읽은 답을 정산이 받을 토픽에 보내는지 확인한다
 // - 정산 코드는 쓰지 않고, 정산이 보낼 JSON(정산 대사 문서 4-2)을 테스트가 토픽에 직접 넣는다
-// - 입금은 실제 정산금 입금 기능으로 해서 잔액과 원장이 맞는지 끝에서 검사한다. 입금 시각의 글자 모양은 PayoutDepositCheckServiceIntegrationTest가 본다
+// - 입금은 실제 정산금 입금 기능으로 해서 잔액과 원장이 맞는지 끝에서 검사한다. 입금 시각의 글자 모양은 WalletPayoutDepositCheckServiceIntegrationTest가 본다
 // - 테스트 브로커는 파티션이 하나라 같은 키로 보낸 메시지는 보낸 순서대로 처리된다
-class PayoutDepositCheckKafkaListenerIntegrationTest extends AbstractIntegrationTest {
+class WalletPayoutDepositCheckKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
     private static final String CHECKED_TOPIC = "wallet.payout-deposit-checked";
     private static final Pattern PAYOUT_ID_FIELD = Pattern.compile("\"payoutId\":");
