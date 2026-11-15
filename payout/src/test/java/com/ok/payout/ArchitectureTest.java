@@ -239,11 +239,11 @@ class ArchitectureTest {
             .because("서비스는 출력 포트만 알고 발행 구현체가 그 포트를 구현해야 발행 방식(Spring 이벤트, Kafka, outbox)을 바꿔도 서비스가 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #441)");
 
     // 메서드 호출뿐 아니라 필드·매개변수·상속으로 쓰는 것까지 잡도록 "의존" 기준으로 검사한다
-    // 받는 쪽(adapter.in.event)과 보내는 쪽(adapter.out.event, 지갑 Spring 이벤트 발행)만 계약 타입을 쓴다. common.event 안의 상호 참조는 계약 타입 내부의 일이다
-    // TODO(#343): 지갑이 Spring 이벤트 수신을 지우면 adapter.out.event 허용을 뺀다
+    // 받는 쪽(adapter.in.event)만 계약 타입을 쓴다. common.event 안의 상호 참조는 계약 타입 내부의 일이다
+    // 보내는 쪽(adapter.out.event)은 지갑 Spring 이벤트 발행을 지워(#588) Kafka 메시지 DTO만 쓰므로 허용하지 않는다
     @ArchTest
     static final ArchRule 이벤트_클래스는_이벤트_어댑터만_사용한다 = noClasses()
-            .that().resideOutsideOfPackages("..adapter.in.event..", "..adapter.out.event..", "com.ok.common.event..")
+            .that().resideOutsideOfPackages("..adapter.in.event..", "com.ok.common.event..")
             .should().dependOnClassesThat().resideInAPackage("com.ok.common.event..")
             .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 유스케이스를 호출하고, "
                     + "발행 포트는 값을 받는다 (정산 헥사고날 구조, 이슈 #441)");

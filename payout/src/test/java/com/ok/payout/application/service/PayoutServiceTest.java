@@ -36,7 +36,6 @@ import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
-import com.ok.payout.application.port.out.PayoutModuleEventPublisher;
 import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRow;
 import org.junit.jupiter.api.Test;
@@ -123,9 +122,6 @@ class PayoutServiceTest {
 
     @Mock
     private PayoutEventPublisher payoutEventPublisher;
-
-    @Mock
-    private PayoutModuleEventPublisher payoutModuleEventPublisher;
 
     @Mock
     private PayoutOutboxRepository payoutOutboxRepository;
@@ -463,7 +459,7 @@ class PayoutServiceTest {
     // ---------- commit ----------
 
     @Test
-    void 금액이_0원보다_큰_판매자_몫_정산만_지갑_이벤트를_발행하고_outbox_줄을_남긴다() {
+    void 금액이_0원보다_큰_판매자_몫_정산만_outbox_줄을_남긴다() {
         // given: 판매자 10은 9,700원, 20은 19,400원, 30은 0원, 40은 -2,000원, 그리고 수수료 300원의 시스템 몫
         given(payoutQueryRepository.findFailureRows(SNAPSHOT_ID)).willReturn(List.of());
         given(payoutSellerDraftRepository.findBySnapshotId(SNAPSHOT_ID)).willReturn(List.of(
@@ -491,12 +487,6 @@ class PayoutServiceTest {
         sut.commit(SNAPSHOT_ID);
 
         // then
-        then(payoutModuleEventPublisher).should(times(2)).publishSellerPayoutCreated(createdCaptor.capture());
-        assertThat(createdCaptor.getAllValues())
-                .extracting(SellerPayoutCreated::payoutId, SellerPayoutCreated::payeeId, SellerPayoutCreated::amount)
-                .containsExactly(
-                        tuple(101L, 10L, 9_700L),
-                        tuple(102L, 20L, 19_400L));
         then(payoutOutboxRepository).should().saveAll(outboxesCaptor.capture());
         assertThat(outboxesCaptor.getValue())
                 .extracting(PayoutOutbox::getPayoutId)
@@ -504,7 +494,7 @@ class PayoutServiceTest {
     }
 
     @Test
-    void 정산_저장이_실패하면_지갑_이벤트도_outbox_줄도_남기지_않는다() {
+    void 정산_저장이_실패하면_outbox_줄을_남기지_않는다() {
         // given
         given(payoutQueryRepository.findFailureRows(SNAPSHOT_ID)).willReturn(List.of());
         given(payoutSellerDraftRepository.findBySnapshotId(SNAPSHOT_ID)).willReturn(List.of(
@@ -518,7 +508,6 @@ class PayoutServiceTest {
         assertThatThrownBy(() -> sut.commit(SNAPSHOT_ID))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("정산 저장 실패");
-        then(payoutModuleEventPublisher).shouldHaveNoInteractions();
         then(payoutOutboxRepository).shouldHaveNoInteractions();
     }
 

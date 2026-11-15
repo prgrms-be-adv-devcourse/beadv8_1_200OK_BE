@@ -1,7 +1,7 @@
 package com.ok.payout.application.port.out;
 
 /**
- * 정산 확정을 Kafka로 보낸다. 같은 애플리케이션 안의 지갑 입금은 {@link PayoutModuleEventPublisher}(Spring 이벤트)가 맡는다.
+ * 정산 확정을 Kafka로 보낸다. 지갑은 이 메시지로만 판매자 입금을 한다(#584).
  * 서비스는 이 인터페이스만 알고, 실제 발행 방식(지금은 Kafka, {@code KafkaPayoutEventPublisher})은 adapter/out/event의 구현체가 맡는다.
  * 나중에 모듈을 서비스로 나눠 발행 방식이 메시지 브로커 등으로 바뀌어도 PayoutService는 바뀌지 않는다.
  *

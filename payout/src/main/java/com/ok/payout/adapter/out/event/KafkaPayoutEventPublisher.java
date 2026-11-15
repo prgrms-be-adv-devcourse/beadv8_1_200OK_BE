@@ -15,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 /**
  * {@link PayoutEventPublisher}의 Kafka 구현체. 정산 확정을 {@link PayoutTopics#SELLER_PAYOUT_CREATED}로 보낸다.
  * 한 건마다 브로커의 저장 확인(acks=all)을 기다리고, 실패하면 정산 ID를 담은 예외를 던진다 (#339).
- * 지갑 입금용 Spring 이벤트는 {@link SpringPayoutEventPublisher}가 확정 때 따로 보낸다.
  */
 @Component
 @RequiredArgsConstructor

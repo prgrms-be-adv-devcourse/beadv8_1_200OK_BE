@@ -46,7 +46,6 @@ import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
-import com.ok.payout.application.port.out.PayoutModuleEventPublisher;
 import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRow;
 import lombok.RequiredArgsConstructor;
@@ -91,7 +90,6 @@ public class PayoutService implements PayoutUseCase {
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
     private final PayoutEventPublisher payoutEventPublisher;
-    private final PayoutModuleEventPublisher payoutModuleEventPublisher;
     private final PayoutOutboxRepository payoutOutboxRepository;
     private final PayoutOutboxService payoutOutboxService;
 
@@ -586,7 +584,8 @@ public class PayoutService implements PayoutUseCase {
 
         payoutRepository.saveAll(payouts);
 
-        // 지갑 Spring 이벤트와 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함
+        // 지갑 입금용 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함
+        // 지갑은 Kafka로만 입금하므로(#584) 이 줄이 지갑 입금의 유일한 근거임. Kafka 발송은 커밋 뒤 publishPending이 함
         List<PayoutOutbox> outboxes = new ArrayList<>();
         for (Payout payout : payouts) {
             // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
@@ -597,12 +596,6 @@ public class PayoutService implements PayoutUseCase {
             if (payout.isSystem() || payout.getAmount() <= 0) {
                 continue;
             }
-            payoutModuleEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
-                    payout.getId(),
-                    payout.getPayeeId(),
-                    payout.getAmount(),
-                    payout.getCreatedAt()
-            ));
             outboxes.add(PayoutOutbox.pending(payout.getId()));
         }
         payoutOutboxRepository.saveAll(outboxes);
