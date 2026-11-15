@@ -23,6 +23,17 @@ class WalletKafkaTopicConfig {
         return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_FAILED).build();
     }
 
+    // 정산이 결제 완료를 받으려고 미리 만드는 빈 이름이 walletPaymentCompletedTopic이라 겹치지 않게 한 단어를 더한다
+    @Bean
+    NewTopic walletOutboundPaymentCompletedTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.WALLET_PAYMENT_COMPLETED).build();
+    }
+
+    @Bean
+    NewTopic walletOutboundPaymentFailedTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.WALLET_PAYMENT_FAILED).build();
+    }
+
     // 정산이 같은 토픽을 받으려고 미리 만드는 빈 이름이 walletPayoutDepositCheckedTopic이라 겹치지 않게 한 단어를 더한다
     @Bean
     NewTopic walletOutboundPayoutDepositCheckedTopic() {
