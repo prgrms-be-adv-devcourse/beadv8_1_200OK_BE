@@ -5,7 +5,7 @@ summary: 환불 반환 요청을 Kafka로 받아 처리 기록을 먼저 넣는 
 status: 확정
 date: 2026-11-15
 paths: [wallet/src/main/java/com/ok/wallet/application/service/BuyerWalletService.java, wallet/src/main/java/com/ok/wallet/application/service/OrderRefundService.java, wallet/src/main/java/com/ok/wallet/adapter/in/event/RefundKafkaListener.java, wallet/src/main/java/com/ok/wallet/adapter/out/event/KafkaWalletRefundResultPublisher.java, wallet/src/main/resources/db/migration/wallet/V202611150057__wallet__create_wallet_order_refund_table.sql]
-related: [323, 360, 402, 413, 512, 544, 545, 546, 579, 609]
+related: [323, 360, 402, 413, 512, 544, 545, 546, 579, 609, 611]
 ---
 
 > 이 문서는 #34 작업의 결정과 이유를 남긴 기록이다. 무엇이 바뀌었는지는 PR이 정확하고, 코드가 바뀌었으면 코드가 우선이다.
@@ -13,7 +13,7 @@ related: [323, 360, 402, 413, 512, 544, 545, 546, 579, 609]
 ## 배경
 
 출고 전 취소를 환불 모듈이 맡으면서(#323) 지갑은 주문 취소 이벤트가 아니라 환불의 `refund.refund-approved`를 받아 돈을 돌려주게 됐다. 환불은 이미 이 메시지를 보내고 있었고(#512), 지갑 결과를 받아야 완료하도록 바뀌었다(#544, PR #555). 지갑에 받는 곳이 없어 돌려줄 돈이 있는 환불이 모두 처리 중에 멈춰 있었다.
-범위: 반환 처리 기록, 반환 처리, 결과 발행, Kafka 수신. 범위 밖: 이용 내역에 반환 줄 표시(#609), 상품명 표시, 돌려준 돈 다시 가져오기(#546 쪽 요청, 별도 이슈), 주문이 기한 지나 취소한 뒤 온 결제의 반환(#402).
+범위: 반환 처리 기록, 반환 처리, 결과 발행, Kafka 수신. 범위 밖: 이용 내역에 반환 줄 표시(#609), 상품명 표시, 돌려준 돈 다시 가져오기(#611), 주문이 기한 지나 취소한 뒤 온 결제의 반환(#402).
 
 ## 결정과 이유
 
@@ -46,6 +46,7 @@ related: [323, 360, 402, 413, 512, 544, 545, 546, 579, 609]
 ## 건드릴 때 주의
 
 - 주문 반환(#402)을 더하면 같은 결제 금액 상한을 함께 쓴다. 같은 구매자 지갑 잠금을 먼저 잡고, 반환 합계에 주문 반환 금액도 더해야 한다.
+- 돌려준 돈 다시 가져오기(#611)를 더하면 다시 가져온 환불을 반환 합계에서 뺀다. 지금 합계는 완료 기록을 모두 세므로, 빼지 않으면 같은 주문의 뒤 환불이 `REFUND_TOTAL_EXCEEDED`로 거절된다. 다시 가져오기도 같은 구매자 지갑 잠금을 먼저 잡는다.
 - 거절 사유는 환불 실패 처리(#546)가 주문 되돌리기를 결정하는 근거다. 사유를 더하거나 뜻을 바꾸면 환불 담당과 먼저 맞춘다. 일시적 오류를 거절로 바꾸지 않는다.
 - `refundForOrder`를 트랜잭션 안에서 부르게 바꾸면 READ COMMITTED가 무시돼 교착이 다시 날 수 있다. 바깥 서비스(`OrderRefundService`)는 트랜잭션을 열지 않는다.
 - 정합성 검사 SQL(`sql/wallet-balance-check.sql`)은 반환 기록과 `REFUND:` 원장의 짝을 양쪽에서 본다. 반환 원장을 만드는 새 길은 처리 기록도 함께 남겨야 한다.
