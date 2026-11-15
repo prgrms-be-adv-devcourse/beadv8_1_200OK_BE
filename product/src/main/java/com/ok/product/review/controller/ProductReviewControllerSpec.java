@@ -5,7 +5,7 @@ import java.util.List;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 
-import com.ok.product.product.controller.dto.ProductPageResponse;
+import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
 import com.ok.product.review.controller.dto.ProductReviewCreateRequest;
 import com.ok.product.review.controller.dto.ProductReviewCreateResponse;
 import com.ok.product.review.controller.dto.ProductReviewResponse;

@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.ok.common.security.CurrentMemberId;
-import com.ok.product.product.controller.dto.ProductPageResponse;
+import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
 import com.ok.product.review.controller.dto.ProductReviewCreateRequest;
 import com.ok.product.review.controller.dto.ProductReviewCreateResponse;
 import com.ok.product.review.controller.dto.ProductReviewResponse;

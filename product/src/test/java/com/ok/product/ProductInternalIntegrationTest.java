@@ -49,11 +49,11 @@ import com.ok.product.product.domain.ProductStockAllocation;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.domain.StockAllocationStatus;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.repository.ProductOptionRepository;
-import com.ok.product.product.repository.ProductRepository;
-import com.ok.product.product.repository.ProductStockAllocationRepository;
-import com.ok.product.product.service.ProductStockService;
-import com.ok.product.product.service.dto.StockChange;
+import com.ok.product.product.adapter.out.persistence.ProductOptionRepository;
+import com.ok.product.product.adapter.out.persistence.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductStockAllocationRepository;
+import com.ok.product.product.application.service.ProductStockService;
+import com.ok.product.product.application.dto.StockChange;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 @AutoConfigureMockMvc

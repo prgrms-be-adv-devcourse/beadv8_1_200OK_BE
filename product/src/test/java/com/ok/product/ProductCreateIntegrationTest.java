@@ -31,7 +31,7 @@ import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 

@@ -112,7 +112,8 @@ class ArchitectureTest {
     static final ArchRule RestController는_Controller로_끝나고_controller_패키지에_있다 = classes()
             .that().areAnnotatedWith(RestController.class)
             .should().haveSimpleNameEndingWith("Controller")
-            .andShould().resideInAPackage("..controller..")
+            // product 하위 도메인은 헥사고날로 옮기는 중이라 adapter.in.web도 허용한다
+            .andShould().resideInAnyPackage("..controller..", "..adapter.in.web..")
             .because("이름과 위치만 보고 컨트롤러를 찾을 수 있어야 한다 (컨벤션 3.2)");
 
     @ArchTest
@@ -126,7 +127,8 @@ class ArchitectureTest {
     static final ArchRule 리포지토리는_repository_패키지에_있다 = classes()
             .that().areAssignableTo(org.springframework.data.repository.Repository.class)
             .or().areAnnotatedWith(org.springframework.stereotype.Repository.class)
-            .should().resideInAPackage("..repository..")
+            // product 하위 도메인은 헥사고날로 옮기는 중이라 adapter.out.persistence도 허용한다
+            .should().resideInAnyPackage("..repository..", "..adapter.out.persistence..")
             .because("영속성 코드는 repository 패키지에 모아 역할별로 찾기 쉽게 한다 (컨벤션 2.1)");
 
     @ArchTest
