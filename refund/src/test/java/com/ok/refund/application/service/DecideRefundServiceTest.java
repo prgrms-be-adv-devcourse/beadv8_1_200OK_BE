@@ -884,7 +884,7 @@ class DecideRefundServiceTest {
             softly.assertThat(updatedSteps.get(0).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
             softly.assertThat(updatedSteps.get(1).getType()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(updatedSteps.get(1).getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
-            softly.assertThat(updatedSteps.get(1).getNextCheckAt()).isEqualTo(NOW.plusMinutes(30));
+            softly.assertThat(updatedSteps.get(1).getNextCheckAt()).isEqualTo(NOW.plusMinutes(5));
         });
     }
 

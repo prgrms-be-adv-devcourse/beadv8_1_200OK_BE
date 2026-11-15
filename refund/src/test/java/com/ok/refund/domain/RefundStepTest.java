@@ -51,6 +51,8 @@ class RefundStepTest {
             builder.add(Arguments.of(status, "succeed", (Function<RefundStep, Boolean>) RefundStep::succeed));
             builder.add(Arguments.of(status, "refuse", (Function<RefundStep, Boolean>) s -> s.refuse("거절")));
             builder.add(Arguments.of(status, "failForRetry", (Function<RefundStep, Boolean>) s -> s.failForRetry("실패", NOW)));
+            builder.add(Arguments.of(status, "resendAfterResultTimeout",
+                    (Function<RefundStep, Boolean>) s -> s.resendAfterResultTimeout(NOW.plusDays(1))));
         }
         return builder.build();
     }
@@ -92,7 +94,7 @@ class RefundStepTest {
     }
 
     @Test
-    void 시도_중에_결과를_기다리면_30분_뒤에_다시_본다() {
+    void 시도_중에_결과를_기다리면_5분_뒤에_다시_본다() {
         // given
         RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
         LocalDateTime later = NOW.plusSeconds(5);
@@ -104,7 +106,7 @@ class RefundStepTest {
         assertSoftly(softly -> {
             softly.assertThat(changed).isTrue();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
-            softly.assertThat(sut.getNextCheckAt()).isEqualTo(later.plusMinutes(30));
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(later.plusMinutes(5));
         });
     }
 
@@ -281,6 +283,80 @@ class RefundStepTest {
             softly.assertThat(changed).isFalse();
             softly.assertThat(sut.getStatus()).isEqualTo(status);
         });
+    }
+
+    @Test
+    void 결과_대기를_보내고_5분이_지나면_결과_대기_시간이_지난_것으로_본다() {
+        // given
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+        sut.awaitResult(NOW);
+
+        // when & then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isResultOverdue(NOW.plusMinutes(5).minusSeconds(1))).isFalse();
+            softly.assertThat(sut.isResultOverdue(NOW.plusMinutes(5))).isTrue();
+        });
+    }
+
+    // 시간 초과 다시 요청은 시도 횟수를 쓰지 않는다(#577 결정). 횟수를 다 쓴 줄이어도 멈추지 않고 다시 보낸다
+    @Test
+    void 결과_대기_시간이_지나면_횟수를_올리지_않고_시도_중으로_바꾼다() {
+        // given
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                RefundStep.MAX_ATTEMPTS, NOW, null, NOW.minusMinutes(30));
+
+        // when
+        boolean changed = sut.resendAfterResultTimeout(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
+        });
+    }
+
+    @Test
+    void 결과_대기_시간이_남았으면_다시_보내지_않는다() {
+        // given: 기다리는 시각까지 1초 남음
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                1, NOW.plusSeconds(1), null, NOW.minusMinutes(5));
+
+        // when
+        boolean changed = sut.resendAfterResultTimeout(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusSeconds(1));
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("결과_대기가_아닌_상태")
+    void 결과_대기가_아니면_결과_대기_시간이_지난_것으로_보지_않는다(RefundStepStatus status) {
+        // given: 다시 볼 시각이 지났어도
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, status, 1,
+                status.isFinished() ? null : NOW.minusMinutes(1), status == RefundStepStatus.STOPPED ? "멈춤" : null, NOW.minusMinutes(5));
+
+        // when
+        boolean changed = sut.resendAfterResultTimeout(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(status);
+        });
+    }
+
+    static Stream<RefundStepStatus> 결과_대기가_아닌_상태() {
+        return Stream.of(RefundStepStatus.READY, RefundStepStatus.IN_PROGRESS,
+                RefundStepStatus.SUCCEEDED, RefundStepStatus.REFUSED, RefundStepStatus.STOPPED);
     }
 
     static Stream<RefundStepStatus> 시도_중이_아닌_상태() {

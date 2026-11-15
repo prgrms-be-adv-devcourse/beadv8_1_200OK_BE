@@ -42,8 +42,11 @@ public class RefundStep {
     // TODO(#577): 설정 파일로 뺄지 정한다. 다시 시도 간격(1분)과 알람이 끝난 뒤 쉬는 시간(1분)이 겹쳐 시도 사이가 1~2분이라,
     // 처음 시도부터 약 4~8분 동안 다시 시도한다
     static final int MAX_ATTEMPTS = 5;
-    // TODO(#577): 결과를 기다리는 시간 정책을 정한다
-    private static final Duration RESULT_WAIT = Duration.ofMinutes(30);
+    // 지갑 결과를 기다리는 시간. 지나도 결과가 없으면 같은 refundId로 다시 요청한다(#577).
+    // 정상 답이 늦게 오는 최대 시간(발행 약 70초 + 환불 받기 다시 시도 약 31초 + 지갑 받기 다시 시도 약 7초, 약 108초)보다 길어야 한다.
+    // 짧으면 정상 답을 기다리는 중에 다시 보낸다(지갑이 refundId로 걸러 돈은 한 번이지만 그 약속에만 기대게 된다)
+    // TODO(#577): 설정 파일로 뺄지 정한다
+    private static final Duration RESULT_WAIT = Duration.ofMinutes(5);
 
     private final Long id;
     private final Long refundId;
@@ -137,6 +140,27 @@ public class RefundStep {
         }
         status = RefundStepStatus.READY;
         nextCheckAt = now.plus(RETRY_DELAY);
+        return true;
+    }
+
+    /** 결과 대기인데 기다리는 시각이 지났는지(지갑 결과가 오지 않은 줄, #577) 확인한다. */
+    public boolean isResultOverdue(LocalDateTime now) {
+        return status == RefundStepStatus.AWAITING_RESULT && nextCheckAt != null && !nextCheckAt.isAfter(now);
+    }
+
+    /**
+     * 결과를 기다리는 시각이 지난 줄을 같은 요청으로 다시 보내려고 시도 중으로 바꾼다(#577). 만료 시각은 새로 잡는다.
+     * 시도 횟수는 올리지 않고, 몇 번이 지나도 멈추지 않는다. 멈추면 끝 상태라 뒤늦게 온 진짜 지갑 답(잔액 부족 등)이 기록되지 않아
+     * 되돌리기(#546)가 "지갑이 거절함"과 "돈이 나갔는지 모름"을 가를 수 없다. 횟수는 발행 실패·만료 다시 집기와 함께 써서,
+     * 넣으면 Kafka가 잠깐 끊겼던 환불이 다시 요청도 못 하고 멈춘다. 지갑이 같은 refundId를 한 번만 처리하므로 다시 보내도 돈은 한 번만 나간다.
+     * 오래 걸리는 환불은 멈춘 환불 찾기(#577)가 사람에게 알린다. 시각이 지나지 않았으면 바꾸지 않는다.
+     */
+    public boolean resendAfterResultTimeout(LocalDateTime now) {
+        if (!isResultOverdue(now)) {
+            return false;
+        }
+        status = RefundStepStatus.IN_PROGRESS;
+        nextCheckAt = now.plus(IN_PROGRESS_EXPIRY);
         return true;
     }
 
