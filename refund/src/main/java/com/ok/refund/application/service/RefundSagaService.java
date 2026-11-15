@@ -15,9 +15,11 @@ import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.application.port.out.WalletRefundRequest;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundSagaPlan;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepType;
+import com.ok.refund.domain.WalletResultPolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -51,18 +53,6 @@ public class RefundSagaService implements RefundSagaUseCase {
     static final String ORDER_REFUSED_REASON = "ORDER_REFUSED";
     // 지갑이 알려 준 금액·주문·구매자가 환불과 다를 때 지갑 줄의 이유에 남기는 값. 지갑의 reason과 겹치지 않게 대문자 상수로 둔다
     static final String RESULT_MISMATCH = "RESULT_MISMATCH";
-
-    // 로그 문구(label)와 분기를 분리하려고 둔 종류. 문구를 고쳐도 분기가 바뀌지 않게 한다
-    private enum ResultKind {
-        COMPLETED("완료"),
-        FAILED("실패");
-
-        private final String label;
-
-        ResultKind(String label) {
-            this.label = label;
-        }
-    }
 
     // 잠근 구간에서 표시를 남겼는지와 못 남긴 이유. 이유마다 로그 수준이 달라(바뀜은 INFO, 지갑 완료 뒤 모순은 WARN) 참·거짓으로는 부족하다
     private enum MarkOutcome {
@@ -159,11 +149,18 @@ public class RefundSagaService implements RefundSagaUseCase {
                 () -> orderCancellationPort.reflectCancellation(new OrderCancellation(
                         refundId, refund.getOrderItemId(), refund.getQuantity(), refund.getDeductedShippingFeeAmount())));
         if (orderResult.rejected()) {
+            requireNext(refund, RefundSagaPlan.Event.ORDER_REFUSED, RefundSagaPlan.Action.REJECT);
             return rejectAfterOrderRefused(refundId, refund.getOrderItemId(), orderResult.orderDetail());
         }
-        // 음수는 여기 오지 않는다. 도메인 승인(Refund.approve)이 커밋 전에 막아 요청됨으로 남긴다
+        // 다음 단계(돈이 있으면 지갑, 0원이면 재고)는 계획이 정한다. 음수는 여기 오지 않는다(도메인 승인 Refund.approve가 커밋 전에 막음).
+        // 계획에 넘기는 환불은 주문을 부르기 전에 읽은 값이라 처리 중이다. 처리 중에서 벗어났는지는 아래 주문 성공 기록 구간이 잠근 뒤 본다
+        RefundStepType nextStep = switch (RefundSagaPlan.afterEvent(refund, RefundSagaPlan.Event.ORDER_REFLECTED)) {
+            case CALL_WALLET -> RefundStepType.WALLET;
+            case CALL_PRODUCT -> RefundStepType.PRODUCT;
+            case CALL_ORDER, COMPLETE, REJECT, WAIT, STOP -> throw new IllegalStateException(
+                    "주문 반영 뒤 다음 할 일이 지갑·재고가 아닙니다. refundId=" + refundId);
+        };
         long amount = refund.getRefundAmount();
-        RefundStepType nextStep = amount > 0 ? RefundStepType.WALLET : RefundStepType.PRODUCT;
         OrderRecorded recorded = recordOrderSucceeded(refundId, nextStep);
         RefundResult current = recorded.current();
         // 주문 호출 사이에 환불이 처리 중에서 벗어났으면(다른 경로가 먼저 끝냄) 다음 단계를 부르지 않는다.
@@ -182,7 +179,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             log.info("다음 단계 줄이 할 차례가 아니라 부르지 않음. refundId={}, step={}", refundId, nextStep);
             return current;
         }
-        if (amount > 0) {
+        if (nextStep == RefundStepType.WALLET) {
             runStep(refundId, RefundStepType.WALLET, () -> {
                 walletRefundRequestPort.requestRefund(new WalletRefundRequest(
                         refundId, refund.getOrderId(), refund.getBuyerId(), refund.getSellerId(), amount));
@@ -198,7 +195,8 @@ public class RefundSagaService implements RefundSagaUseCase {
                 log.warn("지갑 발행 뒤 결과 대기 기록 실패. 지갑 단계는 시도 중으로 남음. refundId={}", refundId, e);
             }
             // 발행이 끝났어도 지갑이 돈을 돌려줬다는 뜻은 아니다(Kafka에 들어갔을 뿐). 재고 복구와 완료는 지갑의 완료 메시지를 받은 뒤
-            // completeAfterWalletRefund가 한다. 그래서 처리 중 그대로 응답한다. 발행이 실패하면 예외가 나 이 줄에 오지 않는다
+            // completeAfterWalletRefund가 한다. 그래서 처리 중 그대로 응답한다(계획의 "기다림"). 발행이 실패하면 예외가 나 이 줄에 오지 않는다
+            requireNext(refund, RefundSagaPlan.Event.WALLET_PUBLISHED, RefundSagaPlan.Action.WAIT);
             return current;
         }
         // 0원은 돌려줄 돈이 없어 지갑을 거치지 않으니 기다릴 메시지도 없다. 예: 취소 금액이 뺄 기본 배송비와 같을 때.
@@ -208,6 +206,7 @@ public class RefundSagaService implements RefundSagaUseCase {
                     refundId, refund.getOrderId(), refund.getProductOptionId(), refund.getQuantity()));
             return null;
         });
+        requireNext(refund, RefundSagaPlan.Event.PRODUCT_RELEASED, RefundSagaPlan.Action.COMPLETE);
         Closing closing = completeWithProductStep(refundId);
         if (!closing.found()) {
             throw new IllegalStateException("승인한 환불을 완료하려는데 찾을 수 없습니다. refundId=" + refundId);
@@ -221,19 +220,24 @@ public class RefundSagaService implements RefundSagaUseCase {
         requireNoTransaction();
         Long refundId = command.refundId();
         Snapshot snapshot = readSnapshot(refundId);
+        // 받을지는 정책이 정한다(#616). 금액·주문·구매자가 다르면 완료하지 않고 불일치로 남긴다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다
+        // (지갑에 그 반환을 다시 가져와 달라고 보내는 것은 #572). 실패·불일치와 달리 "재고 줄 있음"은 거르지 않는다(정책 설명 참고).
+        // 재고가 실패해 "할 차례"로 남은 환불에 같은 완료 메시지가 다시 오면(오류 처리기의 다시 시도) 재고를 다시 시도해야 하기 때문이다
+        WalletResultPolicy.Verdict verdict = WalletResultPolicy.judge(WalletResultPolicy.Kind.COMPLETED, snapshot.refund(),
+                snapshot.walletStep(), snapshot.productStep(), command.orderId(), command.buyerId(), command.amount(), null);
+        if (verdict.decision() == WalletResultPolicy.Decision.SKIP) {
+            logSkipped(verdict.skipReason(), WalletResultPolicy.Kind.COMPLETED, refundId, snapshot, null);
+            return;
+        }
+        if (verdict.decision() == WalletResultPolicy.Decision.MISMATCH) {
+            recordMismatch(WalletResultPolicy.Kind.COMPLETED, refundId, command.orderId(), command.buyerId(), command.amount(),
+                    null, snapshot.refund());
+            return;
+        }
         Refund refund = snapshot.refund();
-        if (!isProcessingOrLog(refund, refundId, ResultKind.COMPLETED)) {
-            return;
-        }
-        // 지갑이 돌려준 금액·주문·구매자가 환불이 요청한 것과 다르면 완료하지 않는다. 돈이 어긋난 채 끝내면 되돌릴 방법이 없어 사람이 보게 한다
-        // (지갑에 그 반환을 취소해 달라고 보내는 것은 별도 이슈, #544 결정 13)
-        if (!matchesRefund(refund, command.orderId(), command.buyerId(), command.amount())) {
-            recordMismatch(refundId, command.orderId(), command.buyerId(), command.amount(), null, snapshot);
-            return;
-        }
-        // 실패·불일치와 달리 여기서는 "재고 줄 있음"을 거르지 않는다. 재고가 실패해 "할 차례"로 남은 환불에 같은 완료 메시지가
-        // 다시 오면(오류 처리기의 다시 시도) 재고를 다시 시도해야 하기 때문이다. 재고 줄 상태는 startProductStep이 본다(#616 결정 14)
-        ProductStart started = startProductStep(refundId);
+        requireNext(refund, RefundSagaPlan.Event.WALLET_COMPLETED, RefundSagaPlan.Action.CALL_PRODUCT);
+        // 재고 줄 상태는 startProductStep이 본다(#616 결정 14)
+        ProductStart started = startProductStep(refundId, command);
         if (started != ProductStart.STARTED) {
             logProductNotStarted(started, refundId);
             return;
@@ -245,6 +249,7 @@ public class RefundSagaService implements RefundSagaUseCase {
                     refundId, refund.getOrderId(), refund.getProductOptionId(), refund.getQuantity()));
             return null;
         });
+        requireNext(refund, RefundSagaPlan.Event.PRODUCT_RELEASED, RefundSagaPlan.Action.COMPLETE);
         Closing closing = completeWithProductStep(refundId);
         // 그사이 같은 메시지가 먼저 완료한 경우는 정상 중복이라 INFO다
         if (!closing.changed()) {
@@ -261,43 +266,36 @@ public class RefundSagaService implements RefundSagaUseCase {
         requireNoTransaction();
         Long refundId = command.refundId();
         Snapshot snapshot = readSnapshot(refundId);
-        Refund refund = snapshot.refund();
-        if (!isProcessingOrLog(refund, refundId, ResultKind.FAILED)) {
-            return;
-        }
-        // 금액·주문·구매자 비교보다 먼저 본다. 달라서 불일치로 기록하는 경우에도 재고 단계가 시작된 환불에 지갑 실패를 남기면 안 되기 때문이다
-        if (isAfterWalletSuccess(refund, snapshot.productStep())) {
-            logIgnoredAfterWalletSuccess(refund, snapshot.productStep(), "실패");
-            return;
-        }
-        // 금액·주문·구매자가 다르면 메시지의 어느 값이 틀렸는지 알 수 없다. 지갑 결과가 어긋난 것 자체가 문제라
+        // 받을지는 정책이 정한다(#616). 금액·주문·구매자가 다르면 메시지의 어느 값이 틀렸는지 알 수 없다. 지갑 결과가 어긋난 것 자체가 문제라
         // 완료 경로와 같이 불일치로 기록해 사람이 보게 한다(엉뚱한 환불에 표시가 붙을 수 있음은 감수, #544 결정 7·12).
         // 실패 메시지의 금액은 환불이 요청한 금액을 그대로 돌려준다고 본다(지갑 제안에 뜻이 없어 둔 가정, 결정 12).
         // 지갑이 알려 준 이유는 기록 대신 로그에 남는다. 예외를 던지면 오류 처리기가 같은 메시지를 다시 시도해 줄이 막히므로 던지지 않는다
-        if (!matchesRefund(refund, command.orderId(), command.buyerId(), command.amount())) {
-            recordMismatch(refundId, command.orderId(), command.buyerId(), command.amount(), command.reason(), snapshot);
+        WalletResultPolicy.Verdict verdict = WalletResultPolicy.judge(WalletResultPolicy.Kind.FAILED, snapshot.refund(),
+                snapshot.walletStep(), snapshot.productStep(), command.orderId(), command.buyerId(), command.amount(), command.reason());
+        if (verdict.decision() == WalletResultPolicy.Decision.SKIP) {
+            logSkipped(verdict.skipReason(), WalletResultPolicy.Kind.FAILED, refundId, snapshot, command.reason());
             return;
         }
-        if (isSameFailure(refund, snapshot.walletStep(), command.reason())) {
-            log.info("같은 지갑 반환 실패가 이미 기록돼 넘김. refundId={}, reason={}", refundId, command.reason());
+        if (verdict.decision() == WalletResultPolicy.Decision.MISMATCH) {
+            recordMismatch(WalletResultPolicy.Kind.FAILED, refundId, command.orderId(), command.buyerId(), command.amount(),
+                    command.reason(), snapshot.refund());
             return;
         }
         MarkOutcome outcome = transaction.execute(status -> {
-            // 읽은 뒤 잠그기 전에 상태나 기록이 바뀔 수 있어 잠근 뒤 다시 본다. 이 행을 잠그는 첫 조회라 옛 값을 쓰지 않는다
-            Optional<Refund> locked = refundPersistencePort.findByIdForUpdate(refundId);
-            if (locked.isEmpty()) {
-                return MarkOutcome.CHANGED;
-            }
+            // 읽은 뒤 잠그기 전에 상태나 기록이 바뀔 수 있어 잠근 뒤 같은 정책으로 다시 본다. 이 행을 잠그는 첫 조회라 옛 값을 쓰지 않는다
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElse(null);
             // 단계 줄은 환불 행을 잠근 뒤에 읽는다(결정 4, 잠금 순서 환불 행 → 단계 줄)
-            Optional<RefundStep> walletStep = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
-            // 처리 중 확인보다 먼저 본다. 그사이 완료됐으면 "바뀜"(INFO)이 아니라 읽을 때 완료였던 경우와 같은 모순(WARN)이다
-            RefundStep productStep = findProductStep(refundId);
-            if (isAfterWalletSuccess(locked.get(), productStep)) {
-                logIgnoredAfterWalletSuccess(locked.get(), productStep, "실패");
+            Optional<RefundStep> walletStep = locked == null ? Optional.empty()
+                    : refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
+            RefundStep productStep = locked == null ? null : findProductStep(refundId);
+            WalletResultPolicy.Verdict again = WalletResultPolicy.judge(WalletResultPolicy.Kind.FAILED, locked,
+                    walletStep.orElse(null), productStep, command.orderId(), command.buyerId(), command.amount(), command.reason());
+            // 그사이 완료됐거나 재고 단계가 시작됐으면 "바뀜"(INFO)이 아니라 읽을 때 그랬던 경우와 같은 모순(WARN)이다
+            if (isAfterWalletSuccess(again)) {
+                logIgnoredAfterWalletSuccess(locked, productStep, "실패");
                 return MarkOutcome.AFTER_WALLET_SUCCESS;
             }
-            if (locked.get().getStatus() != RefundStatus.PROCESSING
-                    || isSameFailure(locked.get(), walletStep.orElse(null), command.reason())) {
+            if (again.decision() != WalletResultPolicy.Decision.ACCEPT) {
                 return MarkOutcome.CHANGED;
             }
             // 환불 행은 바꾸지 않는다(실패는 지갑 줄에만 남는다, 결정 3). 환불 행은 단계 줄을 지키려고 잠근 것이다
@@ -352,7 +350,11 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 시도 중·결과 대기는 누군가 하는 중이거나 답을 기다리는 중이라 다시 보내지 않고(BUSY), 끝 상태는 진행하지 않는다(ENDED).
     // 확인 없이 새로 저장하면 같은 단계를 다시 진행할 때 (refund_id, step) 유일 제약에 걸린다
     private StepPrep prepareStep(Long refundId, RefundStepType type, LocalDateTime now) {
-        Optional<RefundStep> existing = refundStepPersistencePort.findByRefundIdAndType(refundId, type);
+        return prepareStep(refundId, type, refundStepPersistencePort.findByRefundIdAndType(refundId, type), now);
+    }
+
+    // 같은 구간에서 이미 읽은 줄로 준비한다(같은 줄을 두 번 읽지 않으려고)
+    private StepPrep prepareStep(Long refundId, RefundStepType type, Optional<RefundStep> existing, LocalDateTime now) {
         if (existing.isEmpty()) {
             refundStepPersistencePort.saveNew(RefundStep.start(refundId, type, now));
             return StepPrep.CALL;
@@ -477,29 +479,50 @@ public class RefundSagaService implements RefundSagaUseCase {
         }
     }
 
-    // 없는 환불이나 처리 중이 아닌 환불이면 이유를 남기고 false.
-    // 이미 완료된 환불의 완료 메시지는 같은 메시지가 두 번 온 정상(지갑은 첫 결과만 다시 보낸다)이라 INFO.
+    // 정책이 넘기라고 한 이유를 로그로 남긴다(잠그기 전 판단).
+    // 이미 완료된 환불의 완료 메시지는 같은 메시지가 두 번 온 정상(지갑은 첫 결과만 다시 보낸다)이라 INFO, 같은 실패가 이미 기록된 경우도 INFO.
     // 완료된 환불에 실패 메시지가 오면 중복이 아니라 앞선 완료 결과와 모순이므로 WARN으로 사람이 확인하게 한다(상태는 바꾸지 않는다).
-    // 그 밖(요청됨·거절·철회, 없는 환불)도 지갑이 돈을 움직인 환불이 이 상태일 수 없어 WARN.
+    // 그 밖(요청됨·거절·철회, 없는 환불, 재고 단계가 시작된 환불)도 사람이 확인해야 하는 이상이라 WARN.
     // WARN인 이유: 예외 없이 넘기지만 사람이 확인해야 하는 이상이다(service.md 로그 표, ERROR는 처리되지 못한 예외)
-    private boolean isProcessingOrLog(Refund refund, Long refundId, ResultKind kind) {
-        if (refund == null) {
-            log.warn("지갑 반환 {} 메시지의 환불이 없어 넘김. refundId={}", kind.label, refundId);
-            return false;
-        }
-        if (refund.getStatus() == RefundStatus.COMPLETED) {
-            if (kind == ResultKind.FAILED) {
-                log.warn("이미 완료된 환불에 지갑 반환 실패 메시지가 와 넘김(앞선 완료 결과와 모순, 확인 필요). refundId={}", refundId);
-            } else {
-                log.info("이미 완료된 환불의 지갑 반환 {} 메시지라 넘김. refundId={}", kind.label, refundId);
+    private static void logSkipped(WalletResultPolicy.SkipReason reason, WalletResultPolicy.Kind kind, Long refundId,
+                                   Snapshot snapshot, String walletReason) {
+        String label = labelOf(kind);
+        switch (reason) {
+            case REFUND_NOT_FOUND -> log.warn("지갑 반환 {} 메시지의 환불이 없어 넘김. refundId={}", label, refundId);
+            case ALREADY_COMPLETED -> {
+                if (kind == WalletResultPolicy.Kind.FAILED) {
+                    log.warn("이미 완료된 환불에 지갑 반환 실패 메시지가 와 넘김(앞선 완료 결과와 모순, 확인 필요). refundId={}", refundId);
+                } else {
+                    log.info("이미 완료된 환불의 지갑 반환 {} 메시지라 넘김. refundId={}", label, refundId);
+                }
             }
-            return false;
+            case NOT_PROCESSING -> log.warn("처리 중이 아닌 환불의 지갑 반환 {} 메시지라 넘김. refundId={}, status={}",
+                    label, refundId, snapshot.refund().getStatus());
+            // 실패 메시지는 금액 비교보다 재고 단계 확인이 먼저라 "실패"로, 완료 메시지는 불일치일 때만 여기 오므로 "결과 불일치"로 남긴다
+            case AFTER_WALLET_SUCCESS -> logIgnoredAfterWalletSuccess(snapshot.refund(), snapshot.productStep(),
+                    kind == WalletResultPolicy.Kind.FAILED ? "실패" : "결과 불일치");
+            case SAME_FAILURE -> log.info("같은 지갑 반환 실패가 이미 기록돼 넘김. refundId={}, reason={}", refundId, walletReason);
         }
-        if (refund.getStatus() != RefundStatus.PROCESSING) {
-            log.warn("처리 중이 아닌 환불의 지갑 반환 {} 메시지라 넘김. refundId={}, status={}", kind.label, refundId, refund.getStatus());
-            return false;
+    }
+
+    private static String labelOf(WalletResultPolicy.Kind kind) {
+        return kind == WalletResultPolicy.Kind.FAILED ? "실패" : "완료";
+    }
+
+    // 잠근 뒤 다시 본 결과가 "지갑 완료가 이미 반영됨"인지. 그사이 완료됐거나 재고 단계가 시작된 경우라 앞선 지갑 완료와 모순(WARN)이다
+    private static boolean isAfterWalletSuccess(WalletResultPolicy.Verdict verdict) {
+        return verdict.decision() == WalletResultPolicy.Decision.SKIP
+                && (verdict.skipReason() == WalletResultPolicy.SkipReason.AFTER_WALLET_SUCCESS
+                || verdict.skipReason() == WalletResultPolicy.SkipReason.ALREADY_COMPLETED);
+    }
+
+    // 다음 할 일을 계획에 묻고, 이 자리에서 이어 가는 할 일과 다르면 코드 버그로 막는다. 순서 판단은 계획 한 곳에만 둔다(#575 결정 5)
+    private static void requireNext(Refund refund, RefundSagaPlan.Event event, RefundSagaPlan.Action expected) {
+        RefundSagaPlan.Action next = RefundSagaPlan.afterEvent(refund, event);
+        if (next != expected) {
+            throw new IllegalStateException("다음 할 일이 흐름과 다릅니다. refundId=" + refund.getId()
+                    + ", event=" + event + ", 계획=" + next + ", 흐름=" + expected);
         }
-        return true;
     }
 
     // 거르는 판단에 쓸 값을 잠그지 않고 읽는다. 환불이 없으면 단계 줄도 읽지 않는다
@@ -519,14 +542,6 @@ public class RefundSagaService implements RefundSagaUseCase {
         return refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.PRODUCT).orElse(null);
     }
 
-    // 지갑 완료가 이미 반영된 환불이다. 완료됐거나, 지갑 완료를 받아 재고 단계가 시작된(재고 줄이 있는) 경우다.
-    // 재고 줄은 지갑 완료를 반영하는 구간과, 지갑을 거치지 않는 0원 승인에서만 만든다. 0원 환불은 지갑에 보낸 적이 없어
-    // 지갑 결과가 오면 그 자체가 이상이라, 여기서 함께 걸러 기록하지 않고 WARN만 남긴다. 어디까지 왔는지는 #545가 어디부터 다시 할지, #546이 무엇을 되돌릴지 정하는 기준이라,
-    // 지갑 결과로 지갑 실패를 남기면 돈을 다시 가져오지 않고 주문만 되돌려 구매자가 돈과 상품을 모두 받을 수 있다. 그래서 지갑 결과로는 남기지 않는다
-    private static boolean isAfterWalletSuccess(Refund refund, RefundStep productStep) {
-        return refund.getStatus() == RefundStatus.COMPLETED || productStep != null;
-    }
-
     // 앞선 지갑 완료와 모순된 결과라 사람이 확인해야 해 WARN으로 남긴다(읽을 때 완료였던 환불에 실패 메시지가 온 경우와 같은 취급).
     // 잠근 구간 안에서 불러도 된다. 아무것도 쓰지 않고 넘기는 경우라 커밋 전후로 결과가 달라지지 않는다.
     // 재고 줄 상태를 함께 남겨 재고 단계가 어디까지 왔는지(시도 중·다시 시도 대기·성공·멈춤) 로그만으로 알 수 있게 한다
@@ -534,13 +549,6 @@ public class RefundSagaService implements RefundSagaUseCase {
         String productStepStatus = productStep == null ? "없음" : productStep.getStatus().name();
         log.warn("지갑 완료가 이미 반영된 환불(완료 또는 재고 단계가 시작됨)이라 지갑 반환 {}를 기록하지 않고 넘김(앞선 지갑 완료와 모순, 확인 필요). refundId={}, status={}, productStepStatus={}",
                 what, refund.getId(), refund.getStatus(), productStepStatus);
-    }
-
-    // walletStep은 없을 수 있다(#574 전에 승인된 환불). 없으면 남은 지갑 실패가 없는 것이다
-    private static boolean isSameFailure(Refund refund, RefundStep walletStep, String reason) {
-        return refund.getStatus() == RefundStatus.PROCESSING
-                && walletStep != null
-                && walletStep.isStoppedWith(reason);
     }
 
     // 지갑 줄을 멈춤으로 남긴다. 환불 행을 잠근 구간 안에서만 부른다.
@@ -568,39 +576,28 @@ public class RefundSagaService implements RefundSagaUseCase {
                 refundId, newReason);
     }
 
-    // 지갑 결과의 주문·구매자·금액이 모두 환불과 같은지 본다. 완료·실패 메시지가 같은 기준을 쓰게 한 곳에 둔다.
-    // ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
-    private static boolean matchesRefund(Refund refund, Long orderId, Long buyerId, long amount) {
-        return refund.getOrderId().equals(orderId)
-                && refund.getBuyerId().equals(buyerId)
-                && refund.getRefundAmount() == amount;
-    }
-
     // 금액·주문·구매자가 다른 완료·실패 메시지를 불일치로 기록한다. 완료도 재고 복구도 하지 않는다.
     // 두 메시지가 같은 규칙을 따르게 한 곳에서 기록한다(한쪽만 고쳐 동작이 갈라지지 않게).
     // walletReason은 실패 메시지가 알려 준 이유다(완료 메시지면 null). 기록은 불일치로 덮이므로 로그로 남긴다
-    private void recordMismatch(Long refundId, Long messageOrderId, Long messageBuyerId, long messageAmount,
-                                String walletReason, Snapshot snapshot) {
-        Refund refund = snapshot.refund();
-        if (isAfterWalletSuccess(refund, snapshot.productStep())) {
-            logIgnoredAfterWalletSuccess(refund, snapshot.productStep(), "결과 불일치");
-            return;
-        }
+    // 잠그기 전 판단(재고 단계가 시작됐으면 넘김)은 정책이 이미 했다. 잠근 뒤 같은 정책으로 다시 본다
+    private void recordMismatch(WalletResultPolicy.Kind kind, Long refundId, Long messageOrderId, Long messageBuyerId,
+                                long messageAmount, String walletReason, Refund refund) {
         MarkOutcome outcome = transaction.execute(status -> {
-            Optional<Refund> locked = refundPersistencePort.findByIdForUpdate(refundId);
-            if (locked.isEmpty()) {
-                return MarkOutcome.CHANGED;
-            }
-            RefundStep productStep = findProductStep(refundId);
-            if (isAfterWalletSuccess(locked.get(), productStep)) {
-                logIgnoredAfterWalletSuccess(locked.get(), productStep, "결과 불일치");
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElse(null);
+            Optional<RefundStep> walletStep = locked == null ? Optional.empty()
+                    : refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
+            RefundStep productStep = locked == null ? null : findProductStep(refundId);
+            WalletResultPolicy.Verdict again = WalletResultPolicy.judge(kind, locked, walletStep.orElse(null), productStep,
+                    messageOrderId, messageBuyerId, messageAmount, walletReason);
+            if (isAfterWalletSuccess(again)) {
+                logIgnoredAfterWalletSuccess(locked, productStep, "결과 불일치");
                 return MarkOutcome.AFTER_WALLET_SUCCESS;
             }
-            if (locked.get().getStatus() != RefundStatus.PROCESSING) {
+            if (again.decision() != WalletResultPolicy.Decision.MISMATCH) {
                 return MarkOutcome.CHANGED;
             }
             // 환불 행은 바꾸지 않는다(불일치는 지갑 줄에만 남는다, 결정 3). 환불 행은 단계 줄을 지키려고 잠근 것이다
-            return stopWalletStep(refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET), RESULT_MISMATCH);
+            return stopWalletStep(walletStep, RESULT_MISMATCH);
         });
         if (outcome == MarkOutcome.AFTER_WALLET_SUCCESS) {
             return;
@@ -629,20 +626,24 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 재고 줄: 없으면 만들고, 할 차례(앞선 재고 실패)면 다시 시작한다. 시도 중·결과 대기면 누군가 하는 중이라 다시 부르지 않고,
     // 끝 상태(예: 마이그레이션이 옮긴 옛 멈춤 줄)면 진행하지 않는다(#616 결정 14).
     // 잠근 뒤 처리 중이 아니면(그사이 같은 메시지가 먼저 완료 등) 아무것도 쓰지 않는다
-    private ProductStart startProductStep(Long refundId) {
+    private ProductStart startProductStep(Long refundId, WalletRefundCompletedCommand command) {
         return transaction.execute(status -> {
-            Optional<Refund> locked = refundPersistencePort.findByIdForUpdate(refundId);
-            if (locked.isEmpty() || locked.get().getStatus() != RefundStatus.PROCESSING) {
+            Refund locked = refundPersistencePort.findByIdForUpdate(refundId).orElse(null);
+            Optional<RefundStep> walletStep = locked == null ? Optional.empty()
+                    : refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
+            RefundStep productStep = locked == null ? null : findProductStep(refundId);
+            WalletResultPolicy.Verdict again = WalletResultPolicy.judge(WalletResultPolicy.Kind.COMPLETED, locked,
+                    walletStep.orElse(null), productStep, command.orderId(), command.buyerId(), command.amount(), null);
+            if (again.decision() != WalletResultPolicy.Decision.ACCEPT) {
                 return ProductStart.CHANGED;
             }
-            Optional<RefundStep> walletStep = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET);
             if (walletStep.isEmpty()) {
                 return ProductStart.NO_WALLET_STEP;
             }
             if (walletStep.get().succeed()) {
                 refundStepPersistencePort.update(walletStep.get());
             }
-            StepPrep prep = prepareStep(refundId, RefundStepType.PRODUCT, LocalDateTime.now(clock));
+            StepPrep prep = prepareStep(refundId, RefundStepType.PRODUCT, Optional.ofNullable(productStep), LocalDateTime.now(clock));
             return switch (prep) {
                 case CALL -> ProductStart.STARTED;
                 case BUSY -> ProductStart.PRODUCT_BUSY;
