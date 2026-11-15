@@ -212,8 +212,11 @@ public class PayoutJobConfig {
     }
 
     // 발송 실패로 Step을 실패시키지 않음 (WRITE_COUNT = 보낸 수, WRITE_SKIP_COUNT = 실패 수)
-    // 짧은 간격 재발송과 같은 잠금(PayoutOutboxSendLock)을 잡고 보냄 (#620). 못 잡으면 재발송이 지금 같은 줄을 보내는 중이라
-    // 기다리지 않고 0건으로 끝냄. Step·Job은 실패하지 않고, 그쪽이 못 보낸 줄은 다음 재발송이 보냄
+    // 짧은 간격 재발송과 같은 잠금(PayoutOutboxSendLock)을 잡고 보냄 (#620). 못 잡으면 재발송이 지금 PENDING 줄을 보내는 중이라
+    // 기다리지 않고 0건으로 끝냄. Step·Job은 실패하지 않음
+    //   재발송이 이번 commit보다 먼저 목록을 읽었다면 이번 Job이 만든 줄은 그 목록에 없음. 이 줄들은 다음 재발송(최대 5분 + 실행 시간 뒤)이 보냄
+    // 잠금 표(shedlock)를 다루다 DB 오류가 나도 Job을 실패시키지 않음: 정산은 이미 확정됐고 줄은 PENDING이라 다음 재발송이 보냄
+    //   publishPending이 예외를 밖으로 내지 않는 것과 같은 이유 (PayoutService.publishPending 주석)
     @Bean
     public Step payoutPublishStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                   Tasklet payoutPublishTasklet) {
@@ -225,7 +228,13 @@ public class PayoutJobConfig {
     @Bean
     public Tasklet payoutPublishTasklet() {
         return (contribution, chunkContext) -> {
-            Optional<PayoutPublishResult> locked = payoutOutboxSendLock.publishPending();
+            Optional<PayoutPublishResult> locked;
+            try {
+                locked = payoutOutboxSendLock.publishPending();
+            } catch (RuntimeException e) {
+                log.warn("정산 outbox 발송 잠금을 다루지 못해 발행 단계는 보내지 않고 넘어감. 남은 줄은 짧은 간격 재발송이 보냄", e);
+                return RepeatStatus.FINISHED;
+            }
             if (locked.isEmpty()) {
                 log.info("짧은 간격 재발송이 정산 outbox를 보내는 중이라 발행 단계는 보내지 않고 넘어감");
                 return RepeatStatus.FINISHED;

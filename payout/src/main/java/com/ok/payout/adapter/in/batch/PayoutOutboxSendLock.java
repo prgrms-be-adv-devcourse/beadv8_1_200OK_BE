@@ -16,7 +16,7 @@ import net.javacrumbs.shedlock.core.LockingTaskExecutor;
 /**
  * outbox 발송을 잠금(payoutOutboxSend)을 잡은 채로 한다 (#620).
  * 정산 Job 발행 단계와 짧은 간격 재발송이 이 클래스를 같이 써서, 서버가 여러 대여도 같은 줄을 동시에 보내지 않는다.
- * 잠금을 못 잡으면 기다리지 않고 빈 값을 돌려준다. 다른 쪽이 지금 같은 PENDING 줄을 보내고 있어서다.
+ * 잠금을 못 잡으면 기다리지 않고 빈 값을 돌려준다. 다른 쪽이 지금 PENDING 줄을 보내고 있고, 그쪽이 못 본 줄은 다음 재발송이 보내서다.
  */
 @Component
 @RequiredArgsConstructor

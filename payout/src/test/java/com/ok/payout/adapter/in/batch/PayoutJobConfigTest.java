@@ -178,6 +178,20 @@ class PayoutJobConfigTest {
         });
     }
 
+    @Test
+    void 잠금_표를_다루다_DB_오류가_나도_publish_Step은_실패하지_않고_0건으로_끝낸다() throws Exception {
+        // given: shedlock 표 UPDATE가 DB 오류로 실패함 (정산은 이미 확정됨)
+        given(payoutOutboxSendLock.publishPending()).willThrow(new IllegalStateException("DB 연결 끊김"));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutPublishTasklet().execute(contribution, null);
+
+        // then: 남은 줄은 PENDING이라 짧은 간격 재발송이 보냄
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertThat(contribution.getWriteCount()).isZero();
+    }
+
     // 실제 Step처럼 tasklet을 회차마다 새 contribution으로 부르고, 끝난 회차의 수를 Step 실행 기록에 합산(apply)함
     // 마지막 회차의 결과를 반환 (예외가 나면 그대로 던짐)
     private RepeatStatus runRounds(StepExecution stepExecution, int rounds) throws Exception {
