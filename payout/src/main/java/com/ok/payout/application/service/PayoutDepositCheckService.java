@@ -4,13 +4,11 @@ import com.ok.payout.application.port.in.PayoutDepositCheckAnswerCommand;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
 import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
-import com.ok.payout.application.port.out.SellerPayoutCreated;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -60,22 +58,10 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
         return new PayoutDepositCheckRunResult(closed, asked, batches, stopped);
     }
 
-    // TODO(#620): 재발송을 바로 보내지 말고 답 처리와 같은 트랜잭션에서 outbox 줄을 다시 "보낼 것(PENDING)"으로 돌려, #620의 짧은 간격 재발송이 보내게 바꾼다
-    //   지금은 건마다 Kafka 저장 확인을 기다려(최대 120초) 브로커가 느리면 답 처리가 Kafka 기본 max.poll.interval(5분)을 넘을 수 있음
-    //   outbox로 넘기면 답 처리는 DB만 고치고 끝나고, 서버가 죽어도 재발송이 사라지지 않음. #620 전에는 outbox를 정산 Job만 보내서 지금은 바로 보냄
+    // 답 처리는 DB만 고치고 끝남. "입금 없음" 정산의 입금 메시지는 outbox 줄을 되돌려 짧은 간격 재발송이 보냄 (#620, applyAnswer 주석)
     @Override
     public void handleAnswer(PayoutDepositCheckAnswerCommand command) {
-        List<SellerPayoutCreated> resend = payoutDepositCheckRecordService.applyAnswer(command);
-        for (SellerPayoutCreated created : resend) {
-            try {
-                // 같은 정산이 두 번 가도 지갑은 payoutId로 한 번만 입금함(#584). 그래서 outbox를 거치지 않고 바로 보냄
-                payoutEventPublisher.publishSellerPayoutCreated(created);
-                log.info("대사에서 지갑 입금이 없어 입금 메시지를 다시 보냄. payoutId={}", created.payoutId());
-            } catch (RuntimeException e) {
-                // 못 보내도 다음 날 대사가 다시 "없음"을 받고 또 보냄. 답 처리는 이미 커밋돼 되돌리지 않음
-                log.warn("대사에서 입금 메시지를 다시 보내지 못함. 다음 대사에서 다시 보냄. payoutId={}", created.payoutId(), e);
-            }
-        }
+        payoutDepositCheckRecordService.applyAnswer(command);
     }
 
     // 닫기가 두 번 다 거절돼도 묻기는 그대로 함. 닫기 때문에 그날 다른 정산의 질문이 통째로 빠지지 않게

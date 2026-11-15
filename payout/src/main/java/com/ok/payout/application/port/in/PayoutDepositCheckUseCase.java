@@ -15,7 +15,8 @@ public interface PayoutDepositCheckUseCase {
 
     /**
      * 지갑의 답 묶음 하나를 반영한다.
-     * 가장 최근 질문의 처음 온 답만 반영하고, "없음"이고 물을 횟수가 남은 정산은 입금 메시지를 다시 보낸다.
+     * 가장 최근 질문의 처음 온 답만 반영하고, "없음"이고 물을 횟수가 남은 정산은 같은 트랜잭션에서 outbox 줄을 다시 보낼 것으로 되돌린다.
+     * 입금 메시지는 짧은 간격 재발송이 보낸다(#620).
      */
     void handleAnswer(PayoutDepositCheckAnswerCommand command);
 }

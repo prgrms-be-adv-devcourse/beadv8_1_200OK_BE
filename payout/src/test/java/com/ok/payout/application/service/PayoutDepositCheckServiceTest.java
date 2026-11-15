@@ -4,7 +4,6 @@ import com.ok.payout.application.port.in.PayoutDepositCheckAnswerCommand;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
 import com.ok.payout.application.port.out.PayoutDepositCheckRequested;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
-import com.ok.payout.application.port.out.SellerPayoutCreated;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -12,20 +11,18 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.OptimisticLockingFailureException;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
-// 대사 순서 정하기 (#619): 묶음을 이어서 묻기, 보내기 실패 때 멈추고 되돌리기, "없음" 답의 다시 보내기
+// 대사 순서 정하기 (#619): 묶음을 이어서 묻기, 보내기 실패 때 멈추고 되돌리기, 답 처리는 DB 반영만(#620)
 @ExtendWith(MockitoExtension.class)
 class PayoutDepositCheckServiceTest {
 
@@ -124,17 +121,16 @@ class PayoutDepositCheckServiceTest {
     }
 
     @Test
-    void 없음_답의_정산은_입금_메시지를_다시_보내고_하나를_못_보내도_나머지를_보낸다() {
-        // given: 다시 보낼 정산 15·16번, 15번은 보내기 실패
+    void 답_처리는_입금_메시지를_직접_보내지_않고_DB_반영만_한다() {
+        // given: "없음" 정산의 다시 보내기는 답 반영 트랜잭션이 outbox 줄을 되돌려 짧은 간격 재발송에 맡김 (#620)
         PayoutDepositCheckAnswerCommand command = new PayoutDepositCheckAnswerCommand(10L, List.of());
-        SellerPayoutCreated payout15 = new SellerPayoutCreated(15L, 5L, 9_700L, LocalDateTime.of(2026, 11, 15, 2, 0));
-        SellerPayoutCreated payout16 = new SellerPayoutCreated(16L, 8L, 12_000L, LocalDateTime.of(2026, 11, 15, 2, 0));
-        given(payoutDepositCheckRecordService.applyAnswer(command)).willReturn(List.of(payout15, payout16));
-        willThrow(new IllegalStateException("브로커 응답 없음")).given(payoutEventPublisher).publishSellerPayoutCreated(payout15);
 
-        // when & then
-        assertThatCode(() -> sut.handleAnswer(command)).doesNotThrowAnyException();
-        then(payoutEventPublisher).should().publishSellerPayoutCreated(payout16);
+        // when
+        sut.handleAnswer(command);
+
+        // then: 답 처리 중 Kafka를 기다리지 않음 (max.poll.interval을 넘지 않게)
+        then(payoutDepositCheckRecordService).should().applyAnswer(command);
+        then(payoutEventPublisher).should(never()).publishSellerPayoutCreated(any());
     }
 
     // 줄 ID 목록으로 묶음을 만듦. 마지막 줄 ID가 다음 묶음의 시작점

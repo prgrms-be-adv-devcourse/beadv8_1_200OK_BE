@@ -28,8 +28,10 @@ import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.in.batch.PayoutOutboxResendScheduler;
 import com.ok.payout.adapter.out.persistence.PayoutDepositCheckJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutOutboxJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
 import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
@@ -40,6 +42,8 @@ import com.ok.payout.domain.PayoutDepositCheck;
 import com.ok.payout.domain.PayoutDepositCheckStatus;
 import com.ok.payout.domain.PayoutDepositMismatchReason;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutOutboxStatus;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.testsupport.AbstractIntegrationTest;
 
@@ -79,6 +83,12 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutJpaRepository payoutRepository;
+
+    @Autowired
+    private PayoutOutboxJpaRepository outboxRepository;
+
+    @Autowired
+    private PayoutOutboxResendScheduler payoutOutboxResendScheduler;
 
     @Autowired
     private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
@@ -203,7 +213,7 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 지갑이_없다고_답하면_입금_메시지를_다시_보내고_같은_답이_두_번_와도_한_번만_센다() throws Exception {
+    void 지갑이_없다고_답하면_outbox_줄을_되돌려_재발송이_다시_보내고_같은_답이_두_번_와도_한_번만_센다() throws Exception {
         // given: 판매자 10·20의 정산 2건을 한 묶음으로 물음
         Map<Long, Long> payoutIdBySeller = settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L));
         Long payoutA = payoutIdBySeller.get(10L);
@@ -228,7 +238,20 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
         });
 
-        // then: A의 입금 메시지(같은 payoutId)가 다시 나감
+        // then: 답 처리는 A의 outbox 줄만 다시 보낼 것(PENDING)으로 되돌리고 보낸 시각을 비움 (#620). 일치한 B는 보냄 그대로
+        PayoutOutbox outboxA = outboxOf(payoutA);
+        assertThat(outboxA).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(outboxA.getStatus()).isEqualTo(PayoutOutboxStatus.PENDING);
+            softly.assertThat(outboxA.getSentAt()).isNull();
+            softly.assertThat(outboxOf(payoutB).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+        });
+
+        // when: 짧은 간격 재발송이 돎 (실제로는 5분마다, 여기서는 직접 부름)
+        payoutOutboxResendScheduler.resendPending();
+
+        // then: A의 입금 메시지(같은 payoutId)가 다시 나가고 줄은 보냄이 됨
+        assertThat(outboxOf(payoutA).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED, String.valueOf(payoutA), before)).isNotNull());
     }
@@ -428,6 +451,12 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
             payoutIdBySeller.put(check.getPayeeId(), check.getPayoutId());
         }
         return payoutIdBySeller;
+    }
+
+    private PayoutOutbox outboxOf(Long payoutId) {
+        List<PayoutOutbox> found = outboxRepository.findAllByPayoutIdIn(List.of(payoutId));
+        assertThat(found).hasSize(1);
+        return found.get(0);
     }
 
     private PayoutDepositCheck checkOf(Long payoutId) {
