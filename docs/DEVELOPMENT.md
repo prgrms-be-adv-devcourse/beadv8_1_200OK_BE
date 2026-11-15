@@ -847,29 +847,52 @@ com.ok.order
 
 ### product 모듈 구조(헥사고날)
 
-`product`는 하위 도메인 `product`(상품·재고), `review`(리뷰·리뷰 분석)로 나뉩니다. `product` 하위 도메인은 member·order와 같은 헥사고날 구조이고, `review`는 아직 레이어 구조입니다(옮기는 중).
+`product`는 하위 도메인 `product`(상품·재고)와 `review`(리뷰·리뷰 분석)로 나뉘고, 두 하위 도메인 모두 member·order와 같은 헥사고날 구조입니다.
 
 ```
-com.ok.product.product
-├── domain/, exception/
-├── application/
-│   ├── port/in/          BuyerProductUseCase, SellerProductUseCase, ProductOptionInfoUseCase(주문용),
-│   │                     StockAllocationUseCase(재고 배정·해제), StockPartialReleaseUseCase(환불용 일부 해제)
-│   ├── port/out/         ProductRepository, ProductOptionRepository, ProductQueryRepository,
-│   │                     ProductStockAllocationRepository, ProductStockAllocationHeaderRepository, ProductStockPartialReleaseRepository
-│   ├── service/          ProductService, ProductStockService(트랜잭션), ProductStockPartialReleaseFacade(트랜잭션 밖 재확인)
-│   └── dto/              *Command, *Query, *Result, *Code
-└── adapter/
-    ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
-    └── out/persistence/  *JpaRepository, ProductQuerydslRepository
+com.ok.product
+├── config/                    모듈 전용 설정 (Flyway)
+├── product/
+│   ├── domain/, exception/
+│   ├── application/
+│   │   ├── port/in/           BuyerProductUseCase, SellerProductUseCase, ProductOptionInfoUseCase(주문용),
+│   │   │                      StockAllocationUseCase(재고 배정·해제), StockPartialReleaseUseCase(환불용 일부 해제),
+│   │   │                      ReviewedProductUseCase(리뷰 하위 도메인용)
+│   │   ├── port/out/          ProductRepository, ProductOptionRepository, ProductQueryRepository,
+│   │   │                      ProductStockAllocationRepository, ProductStockAllocationHeaderRepository, ProductStockPartialReleaseRepository
+│   │   ├── service/           ProductService, ReviewedProductService, ProductStockService(트랜잭션),
+│   │   │                      ProductStockPartialReleaseFacade(트랜잭션 밖 재확인)
+│   │   └── dto/               *Command, *Query, *Result, *Code
+│   └── adapter/
+│       ├── in/web/            컨트롤러, *Spec, 요청·응답 DTO(dto/)
+│       └── out/persistence/   *JpaRepository, ProductQuerydslRepository
+└── review/
+    ├── domain/, exception/    exception에 분석기 실패 예외(ReviewAnalysisFailedException, ReviewAnalyzerUnavailableException)도 둔다
+    ├── application/
+    │   ├── port/in/           ProductReviewCreateUseCase, ProductReviewUseCase, ProductReviewKeywordUseCase,
+    │   │                      ReviewSentimentSummaryUseCase, ReviewAnalysisPreviewUseCase,
+    │   │                      ReviewKeywordAnalysisUseCase, ReviewSentimentAnalysisUseCase(작업자용)
+    │   ├── port/out/          저장소 4개, OrderApiClient(주문 모듈), ReviewKeywordAnalyzer·ReviewSentimentAnalyzer(외부 분석 서비스)
+    │   ├── service/           서비스, Facade, ReviewKeywordList(키워드 목록 파일)
+    │   └── dto/               *Command, *Query, *Result, 집계 행(Review*Count)
+    └── adapter/
+        ├── in/web/            컨트롤러, *Spec, 요청·응답 DTO(dto/)
+        ├── in/scheduler/      리뷰 분석 작업자 2개 (운영 설정에서만 켜짐, 이전 실행이 끝나고 5초 뒤)
+        ├── out/persistence/   *JpaRepository
+        ├── out/order/         OrderApiHttpClient (주문 모듈 내부 API 호출)
+        └── out/jev/           Jev 분석기 구현, ReviewSentimentCriteria(감성 분류 기준 파일)
 ```
 
-- 유스케이스는 부르는 쪽(구매자, 판매자, 주문, 재고 배정, 환불) 기준으로 묶었습니다. 컨트롤러는 유스케이스만 압니다.
+- 유스케이스는 부르는 쪽(구매자, 판매자, 관리자, 주문, 환불, 작업자) 기준으로 묶었습니다. 컨트롤러와 스케줄러는 유스케이스만 압니다.
+- review는 product를 `ReviewedProductUseCase`와 product의 `application.dto`(`ReviewedProductResult`, `ProductCategoryCode`)로만 씁니다. 상품 엔티티·저장소 포트·에러 코드·웹 DTO는 쓰지 않습니다. order의 장바구니처럼 같은 프로세스 안의 호출이라 출력 어댑터 없이 서비스가 바로 부르고, 호출은 review 서비스의 트랜잭션에 참여합니다(리뷰 집계 `addReviewStats`도 리뷰 저장과 같은 트랜잭션).
+- `ReviewedProductUseCase`가 던지는 `PRODUCT_NOT_FOUND`는 트랜잭션 프록시를 지나며 참여 중인 review 트랜잭션을 롤백 전용으로 표시합니다. review에서 이 예외를 잡고 계속 진행하면 커밋 때 `UnexpectedRollbackException`이 나므로 잡지 않고 그대로 올립니다.
+- 페이지 응답 `ProductPageResponse`는 두 하위 도메인이 각자 `adapter/in/web/dto`에 같은 이름과 필드로 둡니다. 서로의 웹 DTO를 쓰지 않으면서 JSON과 Swagger 스키마 이름(`ProductPageResponse<항목 타입>`)을 전과 같게 유지하기 위해서입니다. 모듈 최상위는 다른 모듈에 공개하는 자리라 두지 않았습니다.
 - 재고 일부 해제는 `ProductStockPartialReleaseFacade`가 유스케이스를 구현합니다. 겹친 환불 요청이 롤백되면 새 트랜잭션에서 이력을 다시 확인해야 해서, `ProductStockService`의 `partialRelease`·`isPartiallyReleased`는 유스케이스에 넣지 않았습니다.
-- 저장소 포트와 `*JpaRepository`의 관계, 통합 테스트가 `*JpaRepository`를 주입받는 것은 member와 같습니다. `@Query`·`@Modifying`·`@Lock`은 `*JpaRepository`에서 `@Override`로 다시 선언합니다.
+- 저장소 포트와 `*JpaRepository`의 관계, 통합 테스트가 `*JpaRepository`를 주입받는 것은 member와 같습니다. `@Query`·`@Modifying`·`@Lock`·`@QueryHints`는 `*JpaRepository`에서 `@Override`로 다시 선언합니다.
 - `ProductStockAllocationHeaderJpaRepository`는 `JpaRepository`를 상속하지 않습니다(`Repository`만). 상속하면 생기는 `findById`·`save`가 헤더 upsert보다 먼저 불려 스냅샷이 일찍 잡히는 일을 막기 위해서입니다.
-- 잠금 조회 규칙은 이름(`ForUpdate`)으로 찾고 `@Lock`이나 네이티브 쿼리의 `FOR UPDATE`를 확인합니다. `findForUpdateByIdAndDeletedAtIsNull`은 수정용 조회라 비관적 잠금 대신 `OPTIMISTIC_FORCE_INCREMENT`를 기대합니다.
-- `review`는 옮길 때까지 product의 엔티티·저장소 포트·에러 코드·`ProductPageResponse`를 직접 씁니다. `ArchitectureTest`는 이 의존만 예외로 두고, review에는 레이어 규칙을 그대로 겁니다.
+- 잠금 조회 규칙은 이름(`ForUpdate`, `ForShare`)으로 찾고 `@Lock`이나 네이티브 쿼리의 `FOR UPDATE`를 확인합니다. 이름과 잠금이 어긋나는 조회는 `ArchitectureTest`의 `LOCK_MODE_BY_METHOD`에 "포트 이름.메서드 이름"으로 적습니다(수정용 상품 조회는 `OPTIMISTIC_FORCE_INCREMENT`, 분석 요청을 꺼내는 `SKIP LOCKED` 조회는 `PESSIMISTIC_WRITE`). `SKIP LOCKED` 조회는 `SKIP_LOCKED_METHODS`에도 적어 `@QueryHints`(`lock.timeout=-2`) 재선언까지 검사합니다.
+- 테스트에서 주문 모듈과 외부 분석 서비스는 `testsupport`의 Fake(`FakeOrderApiClient`, `FakeReviewKeywordAnalyzer`, `FakeReviewSentimentAnalyzer`)가 출력 포트를 구현해 대신합니다.
+- 이 구조는 product `ArchitectureTest`가 하위 도메인 목록(`SUBDOMAINS`)마다 같은 규칙으로 검사합니다.
 
 ## 7. 예외 처리 (ProblemDetail)
 
