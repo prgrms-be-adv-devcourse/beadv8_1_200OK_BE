@@ -5,6 +5,7 @@ import com.ok.payout.application.port.out.BlockedFailureRow;
 import com.ok.payout.application.port.out.BlockedOrderRow;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
+import com.ok.payout.application.port.out.DepositCheckReviewRow;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
 import com.ok.payout.application.port.out.OverchargeCandidateRow;
@@ -18,6 +19,7 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutBlockedOrderCause;
 import com.ok.payout.domain.PayoutBlockedStatus;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutDepositCheckStatus;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
@@ -52,6 +54,7 @@ import static com.ok.payout.domain.QPayout.payout;
 import static com.ok.payout.domain.QPayoutBlockedOrder.payoutBlockedOrder;
 import static com.ok.payout.domain.QPayoutBlockedOrderCause.payoutBlockedOrderCause;
 import static com.ok.payout.domain.QPayoutCandidateItem.payoutCandidateItem;
+import static com.ok.payout.domain.QPayoutDepositCheck.payoutDepositCheck;
 import static com.ok.payout.domain.QPayoutFailure.payoutFailure;
 import static com.ok.payout.domain.QPayoutFailureResolution.payoutFailureResolution;
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
@@ -411,6 +414,34 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
             Long count = queryFactory.select(payoutBlockedOrder.count())
                     .from(payoutBlockedOrder)
                     .where(notPendingBlockedOrder())
+                    .fetchOne();
+            return Objects.requireNonNullElse(count, 0L);
+        });
+    }
+
+    @Override
+    public Page<DepositCheckReviewRow> findDepositChecksNeedingReview(Pageable pageable) {
+        List<DepositCheckReviewRow> content = queryFactory
+                .select(Projections.constructor(DepositCheckReviewRow.class,
+                        payoutDepositCheck.payoutId,
+                        payoutDepositCheck.payeeId,
+                        payoutDepositCheck.amount,
+                        payoutDepositCheck.walletPayeeId,
+                        payoutDepositCheck.walletAmount,
+                        payoutDepositCheck.mismatchReason,
+                        payoutDepositCheck.attemptCount,
+                        payoutDepositCheck.lastCheckedAt))
+                .from(payoutDepositCheck)
+                .where(payoutDepositCheck.status.eq(PayoutDepositCheckStatus.NEEDS_REVIEW))
+                .orderBy(payoutDepositCheck.id.asc())
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        return PageableExecutionUtils.getPage(content, pageable, () -> {
+            Long count = queryFactory.select(payoutDepositCheck.count())
+                    .from(payoutDepositCheck)
+                    .where(payoutDepositCheck.status.eq(PayoutDepositCheckStatus.NEEDS_REVIEW))
                     .fetchOne();
             return Objects.requireNonNullElse(count, 0L);
         });
