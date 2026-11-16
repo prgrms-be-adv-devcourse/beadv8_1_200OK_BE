@@ -72,3 +72,8 @@ management:
 logging:
   level:
     com.ok: ${LOG_LEVEL_OK:INFO}
+product:
+  search:
+    # 키워드 검색 점수 하한(ProductSearchPolicy). E0 평가셋(상품 300개)에서 recall@10을 0.7%p만 잃고 평균 결과 수를 178건에서 30건으로 줄인 값이다(#659).
+    # FULLTEXT 점수는 상품 수에 따라 달라지므로 상품이 크게 늘면 다시 잰다. monolith/application.yaml에도 같은 값을 둔다
+    min-score: 1.0

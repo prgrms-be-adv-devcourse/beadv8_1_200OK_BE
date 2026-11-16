@@ -29,8 +29,10 @@ interface BuyerProductControllerSpec {
 
 	@SecurityRequirements
 	@Operation(summary = "상품 목록 조회", description = """
-		노출(VISIBLE)된 상품을 최신순으로 조회합니다. 판매 상태와 관계없이 나오므로 화면은 status로 판매 예정·일시 중지·판매 종료를 표시합니다.
-		필터는 모두 선택이고, 함께 보내면 모두 만족하는 상품만 나옵니다.
+		노출(VISIBLE)된 상품을 조회합니다. 판매 상태와 관계없이 나오므로 화면은 status로 판매 예정·일시 중지·판매 종료를 표시합니다.
+		keyword가 있으면 상품명·옵션명·카테고리 이름으로 찾아 정확도순으로, 없으면 최신순으로 나옵니다.
+		검색어와 관계가 낮은 상품은 결과와 totalElements에서 빠지고, 맞는 상품이 없으면 빈 목록입니다.
+		검색어와 필터는 모두 선택이고, 함께 보내면 모두 만족하는 상품만 나옵니다.
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "성공"),
@@ -40,6 +42,8 @@ interface BuyerProductControllerSpec {
 		)
 	})
 	ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
+		@Parameter(description = "검색어. 띄어쓰기가 달라도 찾습니다. 비우거나 공백·기호만 보내면 검색어 없이 조회합니다",
+			example = "샤인머스캣") String keyword,
 		@Parameter(description = "상위 카테고리", example = "AGRICULTURE") ProductCategoryGroupCode categoryGroup,
 		@Parameter(description = "하위 카테고리", example = "FRUIT") ProductCategoryCode category,
 		@Parameter(description = "산지 (시·도)", example = "GYEONGBUK") ProductRegionCode region,

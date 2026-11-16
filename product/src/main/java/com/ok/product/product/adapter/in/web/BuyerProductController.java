@@ -30,13 +30,14 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 	@Override
 	@GetMapping
 	public ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
+		@RequestParam(required = false) String keyword,
 		@RequestParam(required = false) ProductCategoryGroupCode categoryGroup,
 		@RequestParam(required = false) ProductCategoryCode category,
 		@RequestParam(required = false) ProductRegionCode region,
 		@RequestParam(defaultValue = "0") int page,
 		@RequestParam(defaultValue = "20") int size
 	) {
-		ProductSearchQuery query = new ProductSearchQuery(categoryGroup, category, region, page, size);
+		ProductSearchQuery query = new ProductSearchQuery(keyword, categoryGroup, category, region, page, size);
 		return ResponseEntity.ok(
 			ProductPageResponse.from(buyerProductUseCase.searchVisibleProducts(query).map(ProductSummaryResponse::from)));
 	}

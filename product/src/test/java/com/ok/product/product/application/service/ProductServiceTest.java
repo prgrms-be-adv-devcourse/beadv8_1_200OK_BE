@@ -3,10 +3,12 @@ package com.ok.product.product.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,13 +16,19 @@ import static org.mockito.Mockito.verify;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.ok.common.exception.RestApiException;
@@ -30,9 +38,11 @@ import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
+import com.ok.product.product.domain.ProductSearchKeyword;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
+import com.ok.product.product.application.port.out.ProductKeywordSearchRepository;
 import com.ok.product.product.application.port.out.ProductOptionRepository;
 import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductRepository;
@@ -40,7 +50,9 @@ import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductOptionCommand;
 import com.ok.product.product.application.dto.ProductRegionCode;
+import com.ok.product.product.application.dto.ProductSearchQuery;
 import com.ok.product.product.application.dto.ProductStatusCode;
+import com.ok.product.product.application.dto.ProductSummaryResult;
 import com.ok.product.product.application.dto.ProductUpdateCommand;
 import com.ok.product.product.application.dto.ProductVisibilityCode;
 
@@ -50,6 +62,7 @@ class ProductServiceTest {
 	private static final String BUCKET_URL = "https://bucket.s3.ap-northeast-2.amazonaws.com/product/";
 	private static final Long PRODUCT_ID = 10L;
 	private static final Long OPTION_ID = 100L;
+	private static final double MIN_SCORE = 1.5;
 
 	@Mock
 	ProductRepository productRepository;
@@ -61,6 +74,9 @@ class ProductServiceTest {
 	ProductQueryRepository productQueryRepository;
 
 	@Mock
+	ProductKeywordSearchRepository productKeywordSearchRepository;
+
+	@Mock
 	ProductSearchIndexer productSearchIndexer;
 
 	ProductService service;
@@ -70,7 +86,7 @@ class ProductServiceTest {
 		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
 		// ProductService가 Clock을 주입받으므로 생성자에 넣는다 (#93). 시각을 검증하는 테스트가 없어 실제 시계를 그대로 쓴다
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
-			productQueryRepository, productSearchIndexer, new ProductDescriptionSanitizer(imageUrlValidator),
+			productQueryRepository, productKeywordSearchRepository, new ProductSearchPolicy(MIN_SCORE), productSearchIndexer, new ProductDescriptionSanitizer(imageUrlValidator),
 			new MediaUrlResolver("bucket", "ap-northeast-2"), Clock.systemDefaultZone());
 	}
 
@@ -215,6 +231,53 @@ class ProductServiceTest {
 		assertThat(product.isDeleted()).isFalse();
 	}
 
+	// ---------- 구매자 목록 ----------
+
+	@ParameterizedTest
+	@MethodSource("검색어가_없는_것으로_보는_값")
+	void 검색어가_비었거나_기호뿐이면_기존_목록으로_조회한다(String keyword) {
+		// given
+		Product product = productWithId(PRODUCT_ID);
+		given(productQueryRepository.findVisibleProducts(null, null, null, PageRequest.of(0, 20)))
+			.willReturn(new PageImpl<>(List.of(product), PageRequest.of(0, 20), 1));
+
+		// when
+		Page<ProductSummaryResult> sut = service.searchVisibleProducts(new ProductSearchQuery(keyword, null, null, null, 0, 20));
+
+		// then
+		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(PRODUCT_ID);
+		then(productKeywordSearchRepository).shouldHaveNoInteractions();
+	}
+
+	static Stream<String> 검색어가_없는_것으로_보는_값() {
+		return Stream.of(null, "", "   ", "@@@", "!!!");
+	}
+
+	@Test
+	void 검색어가_있으면_정규화한_검색어와_하한으로_찾고_검색_결과의_순서대로_돌려준다() {
+		// given
+		PageRequest pageable = PageRequest.of(1, 3);
+		given(productKeywordSearchRepository.findVisibleProductIds(any(), eq(null), eq(ProductCategory.FRUIT),
+			eq(ProductRegion.JEJU), eq(MIN_SCORE), eq(pageable)))
+			.willReturn(new PageImpl<>(List.of(30L, 10L, 20L), pageable, 7));
+		// 저장소는 ID 순서를 지키지 않는다
+		given(productRepository.findAllById(List.of(30L, 10L, 20L)))
+			.willReturn(List.of(productWithId(10L), productWithId(20L), productWithId(30L)));
+
+		// when
+		Page<ProductSummaryResult> sut = service.searchVisibleProducts(new ProductSearchQuery("샤인 머스캣!", null,
+			ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, 1, 3));
+
+		// then
+		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(30L, 10L, 20L);
+		assertThat(sut.getTotalElements()).isEqualTo(7);
+		ArgumentCaptor<ProductSearchKeyword> captor = ArgumentCaptor.forClass(ProductSearchKeyword.class);
+		then(productKeywordSearchRepository).should()
+			.findVisibleProductIds(captor.capture(), any(), any(), any(), anyDouble(), any());
+		assertThat(captor.getValue()).isEqualTo(new ProductSearchKeyword("샤인 머스캣", "샤인머스캣", "ㅅㅑㅇㅣㄴㅁㅓㅅㅡㅋㅐㅅ"));
+		then(productQueryRepository).shouldHaveNoInteractions();
+	}
+
 	// id·version이 채워진 저장된 상품처럼 만들어 수정용 조회가 돌려주게 한다
 	private Product givenProduct(Long sellerId) {
 		Product product = Product.create(sellerId, "청송 꿀사과", "<p>설명</p>", ProductCategory.FRUIT,
@@ -224,6 +287,13 @@ class ProductServiceTest {
 		ReflectionTestUtils.setField(product, "version", 0);
 		ReflectionTestUtils.setField(product.getOptions().getFirst(), "id", OPTION_ID);
 		given(productRepository.findForUpdateByIdAndDeletedAtIsNull(PRODUCT_ID)).willReturn(Optional.of(product));
+		return product;
+	}
+
+	private Product productWithId(Long id) {
+		Product product = Product.create(1L, "청송 꿀사과", "<p>설명</p>", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 100)), List.of("product/a.jpg"));
+		ReflectionTestUtils.setField(product, "id", id);
 		return product;
 	}
 

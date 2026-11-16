@@ -6,10 +6,14 @@ import com.ok.product.product.application.port.in.SellerProductUseCase;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
+import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductCategoryGroup;
 import com.ok.product.product.domain.ProductOptionSpec;
+import com.ok.product.product.domain.ProductRegion;
+import com.ok.product.product.domain.ProductSearchKeyword;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
+import com.ok.product.product.application.port.out.ProductKeywordSearchRepository;
 import com.ok.product.product.application.port.out.ProductOptionRepository;
 import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductRepository;
@@ -29,6 +33,7 @@ import com.ok.product.product.application.dto.SellerProductSummaryResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +41,9 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -49,6 +57,8 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	private final ProductImageUrlValidator productImageUrlValidator;
 	private final ProductOptionRepository productOptionRepository;
 	private final ProductQueryRepository productQueryRepository;
+	private final ProductKeywordSearchRepository productKeywordSearchRepository;
+	private final ProductSearchPolicy productSearchPolicy;
 	private final ProductSearchIndexer productSearchIndexer;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
 	private final MediaUrlResolver mediaUrlResolver;
@@ -140,14 +150,19 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		product.delete(now());
 	}
 
-	// 구매자에게 보이는 상품 목록을 최신순으로 조회한다.
+	// 구매자에게 보이는 상품 목록을 조회한다. 검색어가 있으면 정확도순, 없으면 최신순이다
 	@Override
 	public Page<ProductSummaryResult> searchVisibleProducts(ProductSearchQuery query) {
-		Page<Product> products = productQueryRepository.findVisibleProducts(
-			query.categoryGroup() == null ? null : query.categoryGroup().toDomain(),
-			query.category() == null ? null : query.category().toDomain(),
-			query.region() == null ? null : query.region().toDomain(),
-			PageRequest.of(query.page(), query.size()));
+		ProductCategoryGroup categoryGroup = query.categoryGroup() == null ? null : query.categoryGroup().toDomain();
+		ProductCategory category = query.category() == null ? null : query.category().toDomain();
+		ProductRegion region = query.region() == null ? null : query.region().toDomain();
+		PageRequest pageable = PageRequest.of(query.page(), query.size());
+
+		// TODO(#659): 검색어가 없을 때도 검색 경로로 옮기고 ProductQueryRepository의 구매자 메서드를 지운다.
+		// 정렬 선택과 품절 뒤로 보내기를 두 구현에 나눠 두면 어긋나므로 그 기능과 함께 옮긴다. 그때까지는 기존 목록과 결과·순서가 같아야 한다
+		Page<Product> products = ProductSearchKeyword.from(query.keyword())
+			.map(keyword -> findByKeyword(keyword, categoryGroup, category, region, pageable))
+			.orElseGet(() -> productQueryRepository.findVisibleProducts(categoryGroup, category, region, pageable));
 		// 품절 판정은 상세와 같은 Product.isSoldOut()을 쓴다. 옵션은 지연 로딩이지만
 		// default_batch_fetch_size 덕분에 첫 접근 때 페이지 상품들의 옵션을 IN 쿼리 한 번으로 불러온다
 		return products.map(product -> ProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
@@ -197,6 +212,18 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		return productOptionRepository.findAllWithProductByIdIn(optionIds).stream()
 			.map(ProductOptionInfoResult::from)
 			.toList();
+	}
+
+	// 검색 SQL은 점수만 계산해 ID 한 페이지를 주고, 상품은 엔티티로 다시 불러온다. 응답 값과 품절 판정을
+	// 검색어 없는 목록과 같은 코드(Product, ProductSummaryResult)로 만들어야 두 목록의 카드가 어긋나지 않는다.
+	// findAllById는 순서를 지키지 않으므로 검색 결과의 ID 순서로 다시 맞춘다
+	private Page<Product> findByKeyword(ProductSearchKeyword keyword, ProductCategoryGroup categoryGroup,
+		ProductCategory category, ProductRegion region, Pageable pageable) {
+		Page<Long> productIds = productKeywordSearchRepository.findVisibleProductIds(keyword, categoryGroup, category,
+			region, productSearchPolicy.minScore(), pageable);
+		Map<Long, Product> productsById = productRepository.findAllById(productIds.getContent()).stream()
+			.collect(Collectors.toMap(Product::getId, Function.identity()));
+		return productIds.map(productsById::get);
 	}
 
 	private void validateImageUrls(List<String> imageUrls) {
