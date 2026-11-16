@@ -20,7 +20,7 @@ public class SellerOriginPostalCodeKafkaListener {
     // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 간격을 늘려 가며 다시 시도한다
     @KafkaListener(
             topics = DeliveryInboundTopics.SELLER_ORIGIN_POSTAL_CODE,
-            groupId = DeliveryInboundTopics.CONSUMER_GROUP,
+            groupId = DeliveryInboundTopics.SELLER_ORIGIN_SYNC_GROUP,
             containerFactory = DeliveryKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.delivery.adapter.in.event.dto.SellerOriginPostalCodeMessage")
     void onKafka(SellerOriginPostalCodeMessage message) {

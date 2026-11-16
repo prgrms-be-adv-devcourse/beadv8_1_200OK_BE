@@ -21,9 +21,8 @@ public final class DeliveryInboundTopics {
     /** 결제 완료를 받아 shipment를 만드는 리스너의 그룹 */
     public static final String SHIPMENT_CREATE_GROUP = "delivery.shipment-create";
 
-    // 그룹을 delivery로 고정하는 이유: 같은 토픽을 다른 모듈이 받더라도 그룹이 다르면 메시지가 각자에게 모두 간다.
-    // 배송 서버가 여러 대여도 같은 그룹이라 한 메시지는 한 대만 처리한다
-    public static final String CONSUMER_GROUP = "delivery";
+    /** 판매자 출고지 우편번호를 받아 배송 쪽 사본에 저장하는 리스너의 그룹 */
+    public static final String SELLER_ORIGIN_SYNC_GROUP = "delivery.seller-origin-sync";
 
     /**
      * 처리하지 못한 결제 완료 메시지를 옮겨 두는 토픽(DLT). {@code <받은 토픽>.<그룹>.DLT} 형식이다.
@@ -32,7 +31,7 @@ public final class DeliveryInboundTopics {
     public static final String ORDER_PAID_DLT = ORDER_PAID + "." + SHIPMENT_CREATE_GROUP + ".DLT";
 
     /** 처리하지 못한 출고지 우편번호 메시지를 옮겨 두는 토픽(DLT). 형식과 이유는 {@link #ORDER_PAID_DLT}와 같다 */
-    public static final String SELLER_ORIGIN_POSTAL_CODE_DLT = SELLER_ORIGIN_POSTAL_CODE + "." + CONSUMER_GROUP + ".DLT";
+    public static final String SELLER_ORIGIN_POSTAL_CODE_DLT = SELLER_ORIGIN_POSTAL_CODE + "." + SELLER_ORIGIN_SYNC_GROUP + ".DLT";
 
     private DeliveryInboundTopics() {
     }
