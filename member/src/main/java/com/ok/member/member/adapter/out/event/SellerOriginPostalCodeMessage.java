@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  *
  * @param sellerId   판매자인 회원의 ID (member의 회원 ID와 같은 값)
  * @param postalCode 출고지 우편번호 (5자리 숫자)
- * @param occurredAt 우편번호가 바뀐 시각 (한국 시간, 시간대 표기 없음). 정산 → 지갑 메시지의 시각과 같은 모양
+ * @param occurredAt 이 우편번호를 저장한 시각(승인이면 승인 시각) (한국 시간, 시간대 표기 없음). 정산 → 지갑 메시지의 시각과 같은 모양
  */
 public record SellerOriginPostalCodeMessage(Long sellerId, String postalCode, LocalDateTime occurredAt) {
 }

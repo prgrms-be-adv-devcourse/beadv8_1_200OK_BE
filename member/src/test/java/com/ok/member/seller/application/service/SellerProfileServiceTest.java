@@ -91,8 +91,8 @@ class SellerProfileServiceTest {
     }
 
     @Test
-    void 출고지_우편번호를_그대로_두고_수정하면_알리지_않는다() {
-        // given: 상호명·소개만 바뀌는 수정
+    void 출고지_우편번호를_그대로_두고_수정해도_현재_값을_알린다() {
+        // given: 상호명·소개만 바뀌는 수정. 사본이 어긋났어도 다음 저장 때 맞춰지도록 저장마다 보낸다(#651)
         SellerProfile profile = SellerProfile.register(
                 MEMBER_ID, "옛 상호", "김영수", "054-873-2210", "37421", null, null);
         given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
@@ -101,7 +101,7 @@ class SellerProfileServiceTest {
         sellerProfileService.update(MEMBER_ID, command(null, "37421"));
 
         // then
-        then(sellerEventPublisher).shouldHaveNoInteractions();
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "37421", NOW_MICROS);
     }
 
     @Test

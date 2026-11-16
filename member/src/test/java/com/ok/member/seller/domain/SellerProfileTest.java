@@ -115,19 +115,18 @@ class SellerProfileTest {
     }
 
     @Test
-    void 수정으로_출고지_우편번호가_바뀌었는지_알려_준다() {
+    void 수정하면_출고지_우편번호를_앞뒤_공백을_지운_새_값으로_바꾼다() {
         // given
-        SellerProfile profile = SellerProfile.register(1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        SellerProfile sut = SellerProfile.register(1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
 
         // when
-        boolean unchanged = profile.update("청송 사과농원", "김영수", "054-873-2210", " 37421 ", null, null);
-        boolean changed = profile.update("청송 사과농원", "김영수", "054-873-2210", "06236", null, null);
+        sut.update("청송 사과농원", "김영수", "054-873-2210", " 06236 ", null, null);
 
-        // then: 상호명만 바뀐 수정은 출고지 변경이 아니다. 앞뒤 공백은 지운 값으로 비교한다
+        // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(unchanged).isFalse();
-            softly.assertThat(changed).isTrue();
-            softly.assertThat(profile.getOriginPostalCode()).isEqualTo("06236");
+            softly.assertThat(sut.getStoreName()).isEqualTo("청송 사과농원");
+            softly.assertThat(sut.getOriginPostalCode()).isEqualTo("06236");
         });
     }
 

@@ -728,12 +728,12 @@ com.ok.member.seller
 
 `member` 하위 도메인은 여기에 `adapter/in/bootstrap`(앱이 시작될 때 설정값으로 최초 관리자 계정을 만드는 설정·실행기)이 더 있습니다. 앱 시작이라는 외부 입력의 진입점이라 컨트롤러처럼 유스케이스만 부릅니다.
 
-member가 Kafka로 보내는 메시지는 모두 `member` 하위 도메인의 outbox(`member_outbox`)를 거칩니다.
+member가 Kafka로 보내는 메시지는 모두 `member` 하위 도메인의 outbox(`member_outbox`)를 거칩니다. 토픽 이름 끝의 버전은 #648 규칙입니다.
 
 | 토픽 | 언제 | 키 | 값 |
 |---|---|---|---|
-| `member.member-registered` (#560) | 회원가입이 커밋됨 | `memberId` | `{"memberId": 1}` |
-| `member.seller-origin-postal-code` (#587) | 판매자 승인(신청서의 처음 값), 판매자 프로필 등록, 수정으로 출고지 우편번호가 바뀜 | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
+| `member.member-registered.v1` (#560) | 회원가입이 커밋됨 | `memberId` | `{"memberId": 1}` |
+| `member.seller-origin-postal-code.v1` (#587) | 판매자 승인(신청서의 처음 값), 판매자 프로필 등록, 판매자 프로필 수정(우편번호가 그대로여도, #651) | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
 
 `sellerId`는 판매자인 회원의 ID(`memberId`)와 같은 값입니다. 출고지 우편번호는 판매자 신청 때 필수로 받아 승인 때 보내고(상품 등록은 SELLER 권한만 보므로 프로필 등록 전에도 판매할 수 있어서), 이후 변경은 프로필에서 합니다. "판매자가 승인됐다"는 사실 자체를 알리는 메시지는 받는 모듈이 없어 보내지 않습니다(#587에서 스프링 이벤트도 지움).
 

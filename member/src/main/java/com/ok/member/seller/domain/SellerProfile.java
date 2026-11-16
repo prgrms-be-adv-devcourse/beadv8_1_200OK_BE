@@ -53,7 +53,7 @@ public class SellerProfile extends BaseTime {
     @Column(name = "customer_service_phone", nullable = false, length = 20)
     private String customerServicePhone;
 
-    // 출고지(상품을 보내는 곳)의 우편번호. delivery가 배송비 계산용 사본을 갖도록 바뀔 때마다 Kafka로 보낸다(#587).
+    // 출고지(상품을 보내는 곳)의 우편번호. delivery가 배송비 계산용 사본을 갖도록 저장할 때마다 Kafka로 보낸다(#587, #651).
     // 이 컬럼 전에 만든 프로필은 값이 없다(null). 등록·수정 때는 필수라 다음 수정 때 채워진다
     @Column(name = "origin_postal_code", length = OriginPostalCode.LENGTH)
     private String originPostalCode;
@@ -104,13 +104,10 @@ public class SellerProfile extends BaseTime {
      * 검증 규칙은 {@link #register}와 같다.
      *
      * @param profileImageKey 프로필 사진 object key. {@code null}이면 사진을 지운다
-     * @return 출고지 우편번호가 바뀌었으면(비어 있다가 처음 채워진 경우 포함) {@code true}. 바뀔 때만 delivery에 알리는 데 쓴다
      */
-    public boolean update(String storeName, String representativeName, String customerServicePhone,
-                          String originPostalCode, String introduction, String profileImageKey) {
-        String before = this.originPostalCode;
+    public void update(String storeName, String representativeName, String customerServicePhone,
+                       String originPostalCode, String introduction, String profileImageKey) {
         change(storeName, representativeName, customerServicePhone, originPostalCode, introduction, profileImageKey);
-        return !this.originPostalCode.equals(before);
     }
 
     // 등록과 수정이 같은 검증을 거치도록 값 변경을 한곳에 모은다.

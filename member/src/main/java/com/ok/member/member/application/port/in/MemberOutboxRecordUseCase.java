@@ -12,10 +12,10 @@ import java.time.LocalDateTime;
 public interface MemberOutboxRecordUseCase {
 
     /**
-     * 출고지 우편번호 변경 메시지를 남긴다. 30초 주기 발송 작업이 커밋 뒤에 보낸다.
+     * 출고지 우편번호 메시지를 남긴다. 30초 주기 발송 작업이 커밋 뒤에 보낸다.
      *
      * @param sellerId   판매자인 회원의 ID
-     * @param occurredAt 우편번호가 바뀐 시각
+     * @param occurredAt 이 우편번호를 저장한 시각
      */
     void recordSellerOriginPostalCodeChanged(Long sellerId, String postalCode, LocalDateTime occurredAt);
 

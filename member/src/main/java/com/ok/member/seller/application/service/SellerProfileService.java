@@ -66,7 +66,7 @@ public class SellerProfileService implements SellerProfileUseCase {
     public SellerProfileResult update(Long memberId, SellerProfileCommand command) {
         SellerProfile profile = findProfile(memberId);
 
-        boolean originPostalCodeChanged = profile.update(
+        profile.update(
                 command.storeName(),
                 command.representativeName(),
                 command.customerServicePhone(),
@@ -75,11 +75,10 @@ public class SellerProfileService implements SellerProfileUseCase {
                 imageUrlValidator.toObjectKey(command.profileImageUrl())
         );
         flushDetectingConflict();
-        // 상호명·소개만 고친 수정은 delivery가 알 필요가 없어 보내지 않는다. 메시지 수를 줄이려는 것이고,
-        // delivery는 발생 시각 기준으로 덮어써서 같은 값을 다시 받아도 결과는 같다
-        if (originPostalCodeChanged) {
-            publishOriginPostalCodeChanged(profile);
-        }
+        // 우편번호가 그대로여도 저장마다 보낸다(#651). 메시지가 빠지거나 delivery가 처리하지 못해 사본이 어긋나도
+        // 다음 저장 때 맞춰진다. 프로필 저장은 드물어 메시지가 거의 늘지 않고, delivery는 발생 시각 기준으로 덮어써
+        // 같은 값을 다시 받아도 결과가 같다
+        publishOriginPostalCodeChanged(profile);
         return toResult(profile);
     }
 
@@ -97,8 +96,8 @@ public class SellerProfileService implements SellerProfileUseCase {
 
     /**
      * 변경을 바로 DB에 반영해 낙관적 락(@Version) 검사를 이 메서드 안에서 하게 한다.
-     * 두 탭이 같은 프로필을 읽고 저장하면 나중 요청이 먼저 바꾼 출고지를 되돌리면서도 "바뀌지 않음"으로 보아 메시지를 남기지 않아,
-     * member와 delivery의 출고지가 어긋난다. 버전으로 나중 쪽을 409로 막고, 검사를 통과한 수정만 메시지를 남긴다.
+     * 두 탭이 같은 프로필을 읽고 저장하면 둘 다 커밋되어, 나중 요청이 먼저 바꾼 값을 되돌린다(출고지라면 delivery 사본과도 어긋날 수 있다).
+     * 버전으로 나중 쪽을 409로 막고, 검사를 통과한 수정만 메시지를 남긴다.
      */
     private void flushDetectingConflict() {
         try {

@@ -42,7 +42,7 @@ interface SellerProfileControllerSpec {
                     판매자 본인의 상점 프로필 전체를 요청 값으로 바꿉니다.
                     profileImageUrl을 비우거나 null로 보내면 프로필 사진을 지웁니다(화면에서 상호 첫 글자를 보여 줍니다).
                     출고지 우편번호(originPostalCode)는 필수입니다. 이 항목이 생기기 전에 프로필을 등록했다면 이번 수정에서 채웁니다.
-                    우편번호가 바뀌었을 때만 배송 모듈에 전달됩니다.
+                    저장할 때마다 출고지 우편번호가 배송 모듈에 전달됩니다.
                     """
     )
     @ApiResponse(responseCode = "200", description = "수정 성공")

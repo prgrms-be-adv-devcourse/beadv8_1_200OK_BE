@@ -15,11 +15,11 @@ import java.time.LocalDateTime;
 public interface SellerEventPublisher {
 
     /**
-     * 출고지 우편번호가 정해지거나 바뀌었음을 delivery에 알린다 (#587). 판매자 승인(신청서의 처음 값), 프로필 등록, 우편번호가 바뀐 프로필 수정 때 부른다.
+     * 판매자의 현재 출고지 우편번호를 delivery에 알린다 (#587). 판매자 승인(신청서의 처음 값), 프로필 등록, 프로필 수정 때마다 부른다(#651).
      * 승인·프로필을 저장하는 트랜잭션 안에서 불러야 한다. 구현체가 보낼 기록(outbox)을 그 트랜잭션에 남겨, 롤백되면 보내지 않는다.
      *
      * @param sellerId   판매자인 회원의 ID (회원 ID와 같은 값)
-     * @param occurredAt 우편번호가 바뀐 시각. delivery는 이 값으로 늦게 온 옛 메시지를 버린다
+     * @param occurredAt 이 우편번호를 저장한 시각. delivery는 이 값으로 늦게 온 옛 메시지를 버린다
      */
     void publishOriginPostalCodeChanged(Long sellerId, String postalCode, LocalDateTime occurredAt);
 
