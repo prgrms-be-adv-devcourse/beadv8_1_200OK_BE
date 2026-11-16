@@ -12,6 +12,7 @@ public interface ProductStockReleasePort {
      *
      * @throws com.ok.common.exception.RestApiException 상품이 다시 해도 결과가 같은 이유로 거절하면 {@code PRODUCT_RELEASE_REFUSED}(다시 시도하지 않음),
      *                                                   응답하지 않거나 서버 오류면 {@code PRODUCT_API_FAILED}(다시 시도함)
+     * @throws IllegalStateException                    상품이 요청 값 오류(422)로 답하면. 환불이 보낸 값의 버그라 거절과 나눈다(다시 시도한 뒤 멈춤, #546)
      */
     void releaseStock(StockRelease release);
 }

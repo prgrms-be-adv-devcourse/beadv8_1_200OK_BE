@@ -68,7 +68,7 @@ class RefundProductHttpAdapterTest {
         });
     }
 
-    // 상품 API 문서가 4xx(404·409·422)를 "다시 해도 결과가 같음"으로 정해, 다시 시도하지 않을 코드로 바꾼다(#576)
+    // 상품의 거절(404·409)은 다시 해도 결과가 같아, 다시 시도하지 않을 코드로 바꾼다(#576)
     @ParameterizedTest
     @MethodSource("다시_해도_같은_상태")
     void 다시_해도_같은_거절이면_PRODUCT_RELEASE_REFUSED(int errorStatus) {
@@ -82,7 +82,19 @@ class RefundProductHttpAdapterTest {
     }
 
     static Stream<Integer> 다시_해도_같은_상태() {
-        return Stream.of(404, 409, 422);
+        return Stream.of(404, 409);
+    }
+
+    // 422는 우리가 보낸 값이 틀린 것(환불 버그)이라 상품의 거절로 섞지 않는다. 섞으면 돈 다시 가져오기(#546)가 우리 버그로 구매자 돈을 회수한다
+    @Test
+    void 요청_값_오류_422는_거절이_아니라_표준_예외() {
+        // given
+        status.set(422);
+
+        // when & then
+        assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("상품이 재고 해제 요청 값을 거절함(422, 환불이 보낸 값의 오류). refundId=7, orderId=10");
     }
 
     // 서버 오류, 문서에 없는 4xx(설정 문제로 막힘·요청 과다 등)는 고치면 풀리거나 잠깐의 실패일 수 있어 다시 시도할 코드 그대로 둔다
