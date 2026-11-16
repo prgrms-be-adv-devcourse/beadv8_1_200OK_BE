@@ -44,3 +44,7 @@ related: [545, 576, 616, 546, 649]
 - 결과 대기 5분과 시도 중 만료 2분은 Kafka 발행 대기(`max.block.ms` 기본 60초)를 전제로 계산했다. 팀이 `common-kafka.yaml`에 producer 상한을 두면(#649 C3) 다시 계산한다.
 - "다음 줄 없음" 규칙은 `RefundSagaPlan.fromSteps`와 `RefundStepJpaRepository.findRefundIdsNeedingAttention` 두 곳에 있다. 한쪽을 고치면 대조 테스트(`RefundStepPersistenceAdapterIntegrationTest`)가 깨지는지 본다.
 - 잠금 이름 `refundAttention`은 코드 상수와 마이그레이션 두 곳에 있다. 이름을 바꾸면 새 마이그레이션도 필요하다.
+
+## 후속 (2026-11-16)
+
+- 다시 진행할 수 없는 환불에서도 이미 보낸 줄(`awaiting_since` 있음)은 멈추지 않는다. `stopBlockedSteps`가 결과 대기로 두고 다시 볼 시각을 비운다(`RefundStep.holdForLateResult`). 멈추면 늦은 지갑 답을 기록하지 못하고, 건너뛰기만 하면 알람이 매분 다시 뽑는다(#546, PR #654 2차 봇 리뷰 1번 후속).
