@@ -29,6 +29,13 @@ public interface PayoutCandidateItemJpaRepository
     // 한 주문의 정산후보 전체. 배송비 행은 orderItemId가 null이라 findAllByOrderItemId로는 찾을 수 없음
     List<PayoutCandidateItem> findAllByOrderId(Long orderId);
 
+    // 원래 후보(adjustment_id = 0)는 늘 있어(조정 생성이 원래 후보를 먼저 확인함) 조정이 없을 때도 0이 나옴. 원래도 없으면 coalesce로 0
+    // JPQL로 씀: 이름으로 만드는 조회는 최댓값 하나를 숫자로 돌려줄 수 없음
+    @Override
+    @Query("SELECT COALESCE(MAX(c.adjustmentId), 0) FROM PayoutCandidateItem c "
+            + "WHERE c.orderItemId = :orderItemId AND c.eventType = :eventType")
+    long findMaxAdjustmentId(Long orderItemId, PayoutEventType eventType);
+
     // 배송비 후보를 "이미 있으면 그냥 넘어가기"로 저장한다. 배송비는 판매자 묶음 단위라 (주문, 판매자)당 1건 (#309)
     // 확인 → 저장으로 나누면 같은 묶음이 동시에 처리될 때 둘 다 "없음"으로 보고, 늦은 쪽이 유니크 키 예외로
     // 같은 트랜잭션의 대금·수수료까지 롤백됐다. 한 문장으로 넣어 겹치면 아무것도 바꾸지 않고(id = id) 성공으로 끝낸다

@@ -1,6 +1,7 @@
 package com.ok.payout.adapter.in.web;
 
 import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
@@ -215,12 +216,23 @@ interface PayoutAdminControllerSpec {
             @Parameter(description = "주문 항목 ID", example = "900") Long orderItemId
     );
 
-    @Operation(summary = "정산 수동 조정 (막아 둠)", description = """
-            관리자 전용 기능이지만 조정 번호 발급 방식이 정해지지 않아 막아 두었습니다. 누가 요청해도 조정되지 않습니다.
-            로그인하지 않았으면 401, 요청 형식이 틀리면 422가 먼저이고, 형식이 맞으면 관리자는 501, 관리자가 아니면 403입니다.
+    @Operation(summary = "정산 수동 조정", description = """
+            관리자 전용입니다. 금액이 틀린 정산후보를 조정 정산후보(음수면 차감)로 바로잡습니다. 조정은 지우거나 되돌릴 수 없으니 한 번만 넣으세요.
+            조정 번호는 서버가 그 주문 항목·종류의 마지막 번호 + 1로 붙이고, 주문·판매자는 원래 정산후보에서 가져옵니다.
+            조정은 원래 정산후보를 따라 정산됩니다. 원래가 아직 15일 대기 중이면 함께 기다리고, 이미 정산됐으면 다음 배치에 바로 들어갑니다.
+            판매자의 그 배치 합계가 0원 이하면 그 판매자는 정산하지 않고 다음 매출이 생길 때까지 보류합니다.
+
+            금액 불일치로 막힌 주문을 풀 때는 순서를 지키세요: 실패가 난 뒤 조정을 넣고, 그다음 "다시 처리"로 해결합니다.
+            이 순서로 넣은 조정만 다음 배치의 금액 검사에 들어갑니다. 해결한 뒤에 넣은 조정은 검사에 들어가지 않아 다시 실패합니다.
+            수수료 불일치를 풀 때는 판매 대금과 수수료를 함께 맞춰야 합니다.
+            예) 판매 40,000(대금 38,800 / 수수료 1,200)인데 결제는 30,000 → 대금 -9,700과 수수료 -300을 각각 넣습니다. 대금만 -10,000을 넣으면 수수료 불일치로 다시 막힙니다.
+
+            같은 주문 항목·종류·금액·사유의 조정이 이미 있으면 409입니다(같은 요청을 다시 보낸 경우). 일부러 한 번 더 넣으려면 사유를 다르게 적으세요.
+            로그인하지 않았으면 401, 요청 형식이 틀리면 422가 먼저이고, 관리자가 아니면 403입니다.
             조정한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받습니다.
             """)
     @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "조정을 만듦. 방금 저장한 조정 정산후보"),
             @ApiResponse(
                     responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
@@ -230,11 +242,19 @@ interface PayoutAdminControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
-                    responseCode = "422", description = "요청 값 검증 실패 (금액 0원, 사유 공백·255자 초과, 지원하지 않는 항목 종류 등)",
-                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+                    responseCode = "409", description = "같은 조정이 이미 있음 (같은 요청 재전송, 동시에 두 요청)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class),
+                            examples = @ExampleObject(name = "같은 조정", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/payout/duplicate-adjustment",
+                                      "title": "Duplicate adjustment",
+                                      "status": 409,
+                                      "detail": "같은 조정이 이미 있습니다. 한 번 더 넣으려면 사유를 다르게 적으세요."
+                                    }
+                                    """))
             ),
             @ApiResponse(
-                    responseCode = "501", description = "아직 지원하지 않는 기능 (관리자 요청)",
+                    responseCode = "422", description = "요청 값 검증 실패 (금액 0원, 사유 공백·255자 초과, 지원하지 않는 항목 종류·배송비), 원래 정산후보 없음",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             ),
             @ApiResponse(
@@ -242,7 +262,7 @@ interface PayoutAdminControllerSpec {
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
             )
     })
-    ResponseEntity<Void> createAdjustment(
+    ResponseEntity<PayoutAdjustmentCreateResponse> createAdjustment(
             @Parameter(hidden = true) Long memberId,
             PayoutAdjustmentCreateRequest request
     );

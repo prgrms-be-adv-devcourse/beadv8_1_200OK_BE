@@ -5,6 +5,7 @@ import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutBlockedOrder;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutDepositCheck;
+import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutOutbox;
@@ -21,6 +22,7 @@ import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.port.out.PayoutFailureRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.application.port.out.AdjustmentCandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
@@ -32,6 +34,7 @@ import com.ok.payout.application.port.out.PayoutSnapshotItemRepository;
 import com.ok.payout.application.port.out.PayoutSnapshotRepository;
 import com.ok.payout.application.port.out.PayoutSystemDraftItemRepository;
 import com.ok.payout.application.port.in.PayoutAdjustmentCreateCommand;
+import com.ok.payout.application.port.in.PayoutAdjustmentCreateResult;
 import com.ok.payout.application.port.in.PayoutCandidateResult;
 import com.ok.payout.application.port.in.PayoutCandidateSearchQuery;
 import com.ok.payout.application.port.in.PayoutDetailResult;
@@ -52,6 +55,7 @@ import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.application.port.out.PayoutOutboxRow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -167,10 +171,12 @@ public class PayoutService implements PayoutUseCase {
 
         // 1) 기간 안 후보에서 멈춘 주문의 후보를 뺌: 주문 단위로 멈추므로 그 주문의 다른 후보(스스로는 실패하지 않은 것, 뒤늦게 들어온 것)도 같이 빠짐
         //    이미 정산된 후보(다른 판매자가 통과한 것 등)는 미정산 조회에 안 나와 영향이 없음
+        //    조정 후보는 여기서 넣지 않고 4)에서 원래 후보를 따라 넣음 (#291 결정 1번, 1)~3) 모두 같음)
+        //      기간 조회는 조정 자기 생성 시각으로 걸러서, 그대로 두면 원래 9,700이 먼저 나가고 −2,000 조정만 15일 뒤 혼자 남음
         List<PayoutCandidateItem> candidates = new ArrayList<>();
         Set<Long> candidateIds = new HashSet<>();
         for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to)) {
-            if (stoppedOrderIds.contains(candidate.getOrderId())) {
+            if (stoppedOrderIds.contains(candidate.getOrderId()) || isAdjustment(candidate)) {
                 continue;
             }
             candidates.add(candidate);
@@ -182,11 +188,41 @@ public class PayoutService implements PayoutUseCase {
         //    잠긴 주문은 이 조회가 이미 빼므로 다시 들어오지 않음
         //    1)에서 이미 들어온 후보는 ID로 걸러 한 번만 넣음
         for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(retryOrderIds, to)) {
-            if (candidateIds.add(candidate.getId())) {
+            if (!isAdjustment(candidate) && candidateIds.add(candidate.getId())) {
                 candidates.add(candidate);
             }
         }
-        // 두 조회가 각각 ID 오름차순이라 합친 뒤 다시 정렬: 스냅샷 항목이 후보 ID 순으로 들어가도록 (기존 동작과 같음)
+
+        // 3) 판매자 합계가 0원 이하라 보류된 후보(#291 결정 2번)를 조회 기간 하한 없이 다시 넣음
+        //    commit이 그 판매자의 정산을 만들지 않고 후보를 남겨 둠. 하한이 올라가 기간 밖으로 밀려도 새 매출이 생긴 배치에서 함께 정산되게 하려는 것
+        //    예) 이미 9,700 지급된 판매자에게 −2,000 조정, 새 매출 없음 → 보류. 3일 뒤 하한 밖이어도 다시 넣어, 새 매출 5,000이 들어온 날 3,000 지급
+        //    멈춘 주문은 뺌: 빼지 않으면 #549 3번 멈춤을 이 길로 우회함. 잠긴 주문은 조회가 뺌
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findHeldCandidatesBefore(to)) {
+            if (!stoppedOrderIds.contains(candidate.getOrderId()) && candidateIds.add(candidate.getId())) {
+                candidates.add(candidate);
+            }
+        }
+
+        // 4) 조정 후보는 원래 후보를 따라 넣음 (#291 결정 1번)
+        //    원래가 이번 스냅샷에 들었으면 같은 배치에 넣음: 원래가 아직 15일 대기 중이면 조정도 같이 기다림
+        //    원래가 이미 정산됐으면 바로 넣음: 조정은 자기 15일을 기다리지 않음 (원래 지급 뒤 넣은 조정)
+        //    원래가 아직 대기 중이거나, 잠기거나 멈춰 빠졌으면 넣지 않음: 원래 없이 조정만 정산되면 돈이 어긋남
+        //      (잠긴 주문은 조회가 빼고, 멈춘 주문은 여기서 뺌)
+        //    Job 도중 들어온 조정은 이 스냅샷 목록에 없어 다음 배치로 넘어감 (금액 검사도 같은 범위만 봄, PayoutQuerydslRepository.checkedCandidate)
+        for (AdjustmentCandidateRow row : payoutQueryRepository.findUnsettledAdjustments()) {
+            PayoutCandidateItem adjustment = row.adjustment();
+            if (stoppedOrderIds.contains(adjustment.getOrderId())) {
+                continue;
+            }
+            // 원래 후보가 없는 조정(생성이 막아 정상이면 없음, 그 전 데이터·코드 버그)은 넣음: 금액 검사의 "판정 불가" 안전망이 실패로 잡아
+            //   3번이면 멈추고 관리자 목록에 보임 (빼면 기록 없이 영영 정산되지 않아 아무도 모름, PayoutAmountValidator ADJUSTMENT_ONLY)
+            boolean noOriginal = row.originalCandidateId() == null;
+            if (noOriginal || row.originalSettled() || candidateIds.contains(row.originalCandidateId())) {
+                candidateIds.add(adjustment.getId());
+                candidates.add(adjustment);
+            }
+        }
+        // 조회들이 각각 ID 오름차순이라 합친 뒤 다시 정렬: 스냅샷 항목이 후보 ID 순으로 들어가도록 (기존 동작과 같음)
         candidates.sort(Comparator.comparing(PayoutCandidateItem::getId));
 
         List<PayoutSnapshotItem> items = new ArrayList<>();
@@ -222,6 +258,10 @@ public class PayoutService implements PayoutUseCase {
         return snapshot.getId();
     }
 
+    private static boolean isAdjustment(PayoutCandidateItem candidate) {
+        return candidate.getAdjustmentId() > PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID;
+    }
+
     // 입력 검증(validateStep): 이번 스냅샷 후보 중 입력이 틀린 후보를 실패로 기록하고, 기록한 건수를 반환
     // 실패로 기록된 후보는 이번 정산에서 빠짐 (draftStep이 실패 기록을 보고 제외)
     // 예외를 던지지 않고 기록만 함 → 틀린 주문만 빠지고 나머지는 계속 정산됨
@@ -248,7 +288,7 @@ public class PayoutService implements PayoutUseCase {
         List<PayoutCandidateItem> targets = payoutQueryRepository.findCandidatesWithDeduction(snapshotId);
         Map<Long, Long> totals = payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId);
         Map<Long, Long> deductions = payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId);
-        List<PayoutCandidateItem> originals = payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId);
+        List<PayoutCandidateItem> originals = payoutQueryRepository.findSaleCandidatesForFeeCheckInSnapshot(snapshotId);
 
         // 초과 청구 근거(#391): 초과 청구에 걸리는 주문만 후보 전체·지갑 금액 충돌을 다시 읽음 (걸린 주문이 없으면 조회하지 않음)
         //   같은 트랜잭션(REPEATABLE READ)이라 위 합계 조회와 같은 시점의 데이터를 봄 → 근거의 누적합이 합계와 맞음
@@ -257,7 +297,7 @@ public class PayoutService implements PayoutUseCase {
         List<OverchargeCandidateRow> overchargeCandidates = List.of();
         Map<Long, List<Long>> conflictAmounts = Map.of();
         if (!overchargedOrderIds.isEmpty()) {
-            overchargeCandidates = payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds);
+            overchargeCandidates = payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds, snapshotId);
             conflictAmounts = payoutQueryRepository.findReceivedConflictAmountsByOrder(overchargedOrderIds);
         }
 
@@ -557,20 +597,38 @@ public class PayoutService implements PayoutUseCase {
     public void commit(Long snapshotId) {
         PayoutVerifyExclusion exclusion = PayoutVerifyExclusion.from(payoutQueryRepository.findFailureRows(snapshotId));
         int excludedItemCount = 0;
+        int heldSellerCount = 0;
 
         List<Payout> payouts = new ArrayList<>();
         for (PayoutSellerDraft draft : payoutSellerDraftRepository.findBySnapshotId(snapshotId)) {
             List<PayoutSellerDraftItem> items = new ArrayList<>();
+            long sellerAmount = 0L;
             for (PayoutSellerDraftItem item : draft.getItems()) {
                 if (exclusion.excludes(item.getOrderId(), item.getCandidateId())) {
                     excludedItemCount++;
                 } else {
                     items.add(item);
+                    sellerAmount += item.getAmount();
                 }
             }
-            if (!items.isEmpty()) {
-                payouts.add(Payout.forSeller(snapshotId, draft.getSellerId(), items));
+            if (items.isEmpty()) {
+                continue;
             }
+            // 판매자 합계가 0원 이하면 이번에는 정산하지 않고 보류함 (#291 결정 2번)
+            //   전에는 0원 이하 정산도 장부에 남기고 지갑으로만 보내지 않았음(#106) → 음수가 다음 정산에서 빠지지 않아 회수되지 않았음
+            //     예) 이미 9,700 지급된 판매자에게 −2,000 조정, 새 매출 없음 → 장부 −2,000, 지갑 0 → 판매자는 9,700을 그대로 가짐
+            //   보류하면 후보가 미정산(payout_item 없음)으로 남아 다음 배치에 다시 들어가고(createSnapshot 3)·4)), 새 매출이 생긴 날 함께 정산됨
+            //     예) 새 매출 5,000이 들어온 배치에서 5,000 − 2,000 = 3,000 지급
+            //   실패 기록은 남기지 않음: 실패로 남기면 #549 횟수에 세어 3번 뒤 멈추는데, 판매자 잘못이 아니라 매출을 기다리는 것뿐임
+            //   draft 단계에서 빼지 않는 이유: 결과 검증(verify)이 "draft에 없는 스냅샷 후보"를 draft 누락으로 보고 주문을 잠금
+            //   대가: 판매자가 더 팔지 않으면 음수는 회수되지 않음 (장부에는 정산 없이 후보로만 남음, 알고 감)
+            //   0원도 보류: 지급할 돈이 없고, 정산을 만들면 그 후보가 "정산됨"이 되어 뒤에 들어온 조정과 묶이지 않음
+            // 수수료(시스템 몫)는 판매자와 상관없이 아래에서 그대로 정산함: 수수료는 구매자가 낸 돈의 플랫폼 몫이라 판매자 보류와 묶을 이유가 없음
+            if (sellerAmount <= 0) {
+                heldSellerCount++;
+                continue;
+            }
+            payouts.add(Payout.forSeller(snapshotId, draft.getSellerId(), items));
         }
 
         List<PayoutSystemDraftItem> systemItems = new ArrayList<>();
@@ -593,10 +651,9 @@ public class PayoutService implements PayoutUseCase {
         List<PayoutDepositCheck> depositChecks = new ArrayList<>();
         for (Payout payout : payouts) {
             // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
-            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
-            //   0원: 지갑에 반영할 금액이 없음
-            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
-            // 정산(payout) 자체는 장부 기록으로 그대로 남김
+            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청: 지갑은 음수를 받지 않음)
+            //   #291부터 판매자 몫은 위에서 0원 이하면 정산을 만들지 않고 보류해 여기 오지 않음. 같은 조건을 남겨 두는 것은 안전망
+            //   (판매자 정산을 만드는 다른 길이 생겨도 음수 입금 메시지가 나가지 않게)
             if (payout.isSystem() || payout.getAmount() <= 0) {
                 continue;
             }
@@ -609,8 +666,9 @@ public class PayoutService implements PayoutUseCase {
 
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 정산 확정은 돈이 장부에 기록되는 시점이라 INFO로 남김
-        log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건), 결과 검증 실패로 뺀 draft 항목 수={}",
-                snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1, excludedItemCount);
+        // 보류한 판매자 수도 남김: 0원 이하라 정산이 안 된 판매자가 있는 날을 로그로 찾을 수 있게
+        log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건), 결과 검증 실패로 뺀 draft 항목 수={}, 0원 이하라 보류한 판매자 수={}",
+                snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1, excludedItemCount, heldSellerCount);
     }
 
     // outbox의 PENDING 줄을 덜 시도한 줄부터 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
@@ -891,17 +949,69 @@ public class PayoutService implements PayoutUseCase {
     }
 
     /**
-     * 정산 수동 조정을 요청한다. 지금은 막아 둔 기능이라 항상 예외를 던진다(성공하는 경우 없음).
-     * 관리자 전용 기능이며 관리자 확인은 컨트롤러({@code @PreAuthorize})에서 한다. 기능을 열 때는 TODO 아래의 예외만 실제 조정 로직으로 바꾼다.
+     * 정산 수동 조정을 만든다. 관리자 확인은 컨트롤러({@code @PreAuthorize})에서 한다.
+     * 조정 번호는 그 주문 항목·종류의 마지막 번호 + 1, 주문·판매자는 원래 정산후보의 값이다.
      *
-     * @param adminId 요청한 관리자 ID. 조정 기능을 열면 정산후보의 adminId로 기록함 (#65 리뷰 후속: 요청 바디가 아닌 인증 정보에서 받음)
-     * @throws RestApiException 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
+     * @param adminId 요청한 관리자 ID. 정산후보의 adminId로 기록함 (#65 리뷰 후속: 요청 바디가 아닌 인증 정보에서 받음)
+     * @throws RestApiException 배송비 조정({@code SHIPPING_FEE_ADJUSTMENT_NOT_SUPPORTED}), 원래 정산후보 없음({@code ADJUSTMENT_ORIGINAL_NOT_FOUND}),
+     *                          같은 조정이 이미 있음({@code DUPLICATE_ADJUSTMENT})
      */
     @Override
-    public void createAdjustment(Long adminId, PayoutAdjustmentCreateCommand command) {
-        // TODO(논의 필요): 조정 번호(adjustmentId) 발급 방식(조정 요청 테이블에서 서버 발급 vs 클라이언트 전달)이 정해지지 않아 막아 둠
-        throw new RestApiException(PayoutErrorCode.FEATURE_NOT_SUPPORTED,
-                "정산 수동 조정은 아직 지원하지 않습니다. (orderItemId: " + command.orderItemId() + ")");
+    @Transactional
+    public PayoutAdjustmentCreateResult createAdjustment(Long adminId, PayoutAdjustmentCreateCommand command) {
+        // 허용 값은 요청 DTO가 이미 거름(@Pattern). 여기 이상한 값이 오면 호출 쪽 버그라 valueOf의 표준 예외(500) 그대로 둠
+        PayoutEventType eventType = PayoutEventType.valueOf(command.eventType());
+        // 배송비 조정은 이번에 열지 않음 (#291 결정 6번): 배송비 후보는 주문상품 ID가 없어 이 요청 모양으로는 가리킬 수 없음
+        //   요청 DTO가 먼저 막고, 서비스를 다른 길로 불러도 같은 결과가 나게 한 번 더 막음
+        if (eventType == PayoutEventType.SALE_SHIPPING_FEE) {
+            throw new RestApiException(PayoutErrorCode.SHIPPING_FEE_ADJUSTMENT_NOT_SUPPORTED);
+        }
+
+        // 원래 후보가 없으면 받지 않음 (#291 결정 7번)
+        //   조정은 원래 후보를 따라 정산되고(createSnapshot 4)), 확인한 조정의 금액 검사도 원래 후보가 있어야 기준이 생김
+        //   주문·판매자를 요청으로 받지 않고 원래 후보에서 복사함: 다른 판매자 몫에 조정이 들어가는 실수를 막으려고 (DB 제약은 이를 막지 않음)
+        //   잠기거나 멈춘 주문이어도 받음: 조정을 넣고 "다시 처리"로 푸는 것이 그 주문의 출구라서
+        PayoutCandidateItem original = payoutCandidateItemRepository
+                .findByOrderItemIdAndEventTypeAndAdjustmentId(command.orderItemId(), eventType,
+                        PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)
+                .orElseThrow(() -> new RestApiException(PayoutErrorCode.ADJUSTMENT_ORIGINAL_NOT_FOUND));
+
+        // 재전송 막기 1겹 (#291 결정 3번): 같은 주문상품·종류·금액·사유의 조정이 이미 있으면 409
+        //   응답을 못 받은 화면이 같은 요청을 다시 보내면 서버가 새 번호를 붙여 같은 돈이 두 번 빠짐. 덜 주는 쪽은 배치 검사(초과 청구만 봄)에 안 걸려
+        //   판매자가 문의하기 전엔 드러나지 않으므로 여기서 막음. 일부러 한 번 더 넣으려면 사유를 다르게 씀
+        //   사유는 요청 DTO가 앞뒤 공백을 지운 값이라 공백만 다른 재전송도 같은 사유로 봄
+        //   대가: 금액이나 사유를 바꿔 다시 보낸 것은 다른 조정으로 봄
+        if (payoutCandidateItemRepository.existsByOrderItemIdAndEventTypeAndAmountAndReasonAndAdjustmentIdGreaterThan(
+                command.orderItemId(), eventType, command.amount(), command.reason(),
+                PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)) {
+            throw new RestApiException(PayoutErrorCode.DUPLICATE_ADJUSTMENT);
+        }
+
+        // 조정 번호 = 마지막 번호 + 1 (새 테이블 없음, #291 처리 방향)
+        // 재전송 막기 2겹: 두 요청이 거의 동시에 오면 둘 다 위 검사를 통과하고 같은 번호를 받음 → 두 번째 저장이 UK(주문상품, 종류, 조정 번호)에 걸림
+        //   중복 키면 409로 바꾸고 다시 던져 이 트랜잭션을 롤백함 (해결 API #568과 같은 방식). 다른 무결성 오류는 코드 버그라 그대로 던짐
+        //   대가: 서로 다른 조정을 동시에 넣어도 한쪽이 409를 받아 다시 넣어야 함 (관리자가 손으로 넣는 일이라 드묾)
+        long adjustmentId = payoutCandidateItemRepository.findMaxAdjustmentId(command.orderItemId(), eventType) + 1;
+        PayoutCandidateItem adjustment = PayoutCandidateItem.manualAdjustment(eventType, original.getOrderId(),
+                command.orderItemId(), original.getSellerId(), command.amount(), adjustmentId, adminId, command.reason());
+        PayoutCandidateItem saved;
+        try {
+            // IDENTITY라 saveAll에서 바로 INSERT가 나가 UK 위반이 여기서 남
+            saved = payoutCandidateItemRepository.saveAll(List.of(adjustment)).get(0);
+        } catch (DataIntegrityViolationException e) {
+            if (DuplicateKeyErrors.isDuplicateKey(e)) {
+                throw new RestApiException(PayoutErrorCode.DUPLICATE_ADJUSTMENT);
+            }
+            throw e;
+        }
+
+        // 정산 금액을 바꾸는 관리자 조치라 INFO로 남김 (사유는 길이를 예측할 수 없어 빼고 정산후보에만 둠)
+        log.info("정산 수동 조정 생성. candidateId={}, orderId={}, orderItemId={}, sellerId={}, eventType={}, adjustmentId={}, amount={}, adminId={}",
+                saved.getId(), saved.getOrderId(), saved.getOrderItemId(), saved.getSellerId(), eventType, adjustmentId,
+                saved.getAmount(), adminId);
+        return new PayoutAdjustmentCreateResult(saved.getId(), saved.getAdjustmentId(), saved.getOrderId(),
+                saved.getOrderItemId(), saved.getSellerId(), eventType.name(), saved.getAmount(), saved.getReason(),
+                saved.getAdminId(), saved.getCreatedAt());
     }
 
     /**

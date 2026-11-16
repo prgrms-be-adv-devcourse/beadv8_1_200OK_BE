@@ -25,6 +25,10 @@ import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.QPayoutCandidateItem;
+import com.ok.payout.domain.QPayoutFailure;
+import com.ok.payout.domain.QPayoutFailureResolution;
+import com.ok.payout.domain.QPayoutItem;
+import com.ok.payout.application.port.out.AdjustmentCandidateRow;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.Projections;
@@ -188,6 +192,65 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .from(payoutCandidateItem)
                 .where(payoutCandidateItem.orderId.in(orderIds), unsettledInPeriod(null, to), lockedOrder().not())
                 .fetch();
+    }
+
+    // 보류된 판매자의 원래 후보 (#291 결정 2번): 이전 스냅샷에서 draft까지 갔는데 정산(payout_item)이 안 된 후보, 조회 기간 하한 없음
+    //   commit이 판매자 합계 0원 이하인 판매자의 정산을 만들지 않고 남겨 두므로(PayoutService.commit), 하한이 올라가도 다시 잡으려고 고름
+    //   하한을 두면 보류 3일 뒤(여유 일수) 원래 후보가 기간 밖으로 밀려 영영 정산되지 않음 → 그 판매자의 음수 조정도 회수되지 않음
+    // 조정은 뺌: 조정은 원래 후보를 따라 들어가므로(findUnsettledAdjustments) 여기서 따로 넣지 않음
+    // 결과 검증으로 빠진 항목(#290)도 draft는 있고 정산은 없지만, 그 주문은 잠겨 lockedOrder가 뺌 (해결하면 다시 들어오는 것이 맞음)
+    //   FAILED로 끝난 실행의 draft 후보도 여기서 다시 들어옴: 아직 정산 안 된 후보라 들어오는 것이 맞고, 금액 검사를 다시 거침
+    // draft 항목 표를 미정산 후보마다 EXISTS로 봄: draft 항목은 정산되면 payout_item이 생겨 미정산 조건이 먼저 거름. 대량에서의 시간은 #304
+    @Override
+    public List<PayoutCandidateItem> findHeldCandidatesBefore(LocalDateTime to) {
+        return queryFactory
+                .selectFrom(payoutCandidateItem)
+                .where(payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        unsettledInPeriod(null, to),
+                        JPAExpressions.selectOne()
+                                .from(payoutSellerDraftItem)
+                                .where(payoutSellerDraftItem.candidateId.eq(payoutCandidateItem.id))
+                                .exists(),
+                        lockedOrder().not())
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+    }
+
+    // 아직 정산 안 된 조정 후보와 그 원래 후보 (#291 결정 1번: 조정은 원래 후보를 따라감)
+    // 조정 자기 생성 시각으로 기간을 거르지 않음: 원래가 이미 정산됐으면 조정은 15일을 기다리지 않고 다음 배치에 들어가야 함
+    //   (기간으로 거르면 원래 9,700이 먼저 나가고 -2,000 조정만 15일 뒤 혼자 남아 회수가 어려워짐)
+    // 원래 후보 = 같은 주문상품·종류의 adjustment_id = 0 후보 (UK order_item_id·event_type·adjustment_id라 최대 1건)
+    //   조정 생성이 원래 후보가 없으면 거절해서(PayoutService.createAdjustment) 정상이면 늘 있음
+    //   없으면 원래 후보 ID를 null로 돌려줌(LEFT JOIN): 부르는 쪽이 스냅샷에 넣어 금액 검사의 "판정 불가" 안전망이 잡고 3번이면 멈춰 관리자 목록에 보이게 함
+    //     (INNER JOIN으로 빼면 그 조정은 아무 기록 없이 영영 정산되지 않아 아무도 모름)
+    // 원래가 정산됐는지는 원래 후보의 payout_item으로 봄 (LEFT JOIN, candidate_id 유니크라 줄이 늘지 않음)
+    // 잠긴 주문은 뺌: 원래가 잠겨 빠지면 조정만 따로 정산되면 안 됨. 멈춘 주문은 부르는 쪽이 뺌 (스냅샷의 다른 조회와 같음)
+    // 미정산 조정만 보므로 보통 몇 건뿐임 (조정은 관리자가 손으로 넣음)
+    @Override
+    public List<AdjustmentCandidateRow> findUnsettledAdjustments() {
+        QPayoutCandidateItem original = new QPayoutCandidateItem("original");
+        QPayoutItem originalItem = new QPayoutItem("originalItem");
+        List<Tuple> rows = queryFactory
+                .select(payoutCandidateItem, original.id, originalItem.id)
+                .from(payoutCandidateItem)
+                .leftJoin(original).on(original.orderItemId.eq(payoutCandidateItem.orderItemId),
+                        original.eventType.eq(payoutCandidateItem.eventType),
+                        original.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
+                .leftJoin(originalItem).on(originalItem.candidateId.eq(original.id))
+                .where(payoutCandidateItem.adjustmentId.gt(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        JPAExpressions.selectOne()
+                                .from(payoutItem)
+                                .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
+                                .notExists(),
+                        lockedOrder().not())
+                .orderBy(payoutCandidateItem.id.asc())
+                .fetch();
+        List<AdjustmentCandidateRow> result = new ArrayList<>();
+        for (Tuple row : rows) {
+            result.add(new AdjustmentCandidateRow(row.get(payoutCandidateItem), row.get(original.id),
+                    row.get(originalItem.id) != null));
+        }
+        return result;
     }
 
     // 해결 기록이 있는 주문 중, 상한(to) 전 미정산 후보가 남아 있고 잠기지 않은 주문 ID (#568, 중복 없음, 조회 기간 하한 없음)
@@ -667,19 +730,19 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
     // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지
     //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
-    // 조정 후보(adjustment_id > 0)는 뺌(#552): 넣으면 −조정이 초과 청구를 가려 틀린 금액이 통과됨
-    //   예) 결제 30,000, 원래 후보 40,000(10,000 초과), −10,000 조정 → 합계 30,000이라 통과됐음. 이제 40,000 > 30,000으로 걸림
-    //   #552 전에는 잠금이 이 위험을 가렸음(잠긴 주문엔 조정이 와도 스냅샷에 안 들어감). 잠금을 없애며 함께 막음
-    //   조정으로 금액 불일치를 바로잡는 흐름은 #291에서 다시 설계 (수수료 검사는 이미 조정을 뺌, findOriginalSaleCandidatesInSnapshot)
+    // 조정 후보는 관리자가 확인한 것만 넣음(#291 결정 4번, 조건은 checkedCandidate). 확인 안 한 조정은 뺌(#552)
+    //   확인 안 한 조정을 넣으면 −조정이 초과 청구를 가려 틀린 금액이 통과됨
+    //   예) 결제 30,000, 원래 후보 40,000(10,000 초과), 상관없는 이유로 넣은 −10,000 조정 → 합계 30,000이라 통과됐음(#552 전). 지금은 40,000 > 30,000으로 걸림
+    //   관리자가 그 초과 청구를 보고 −10,000을 넣은 뒤 "다시 처리"로 해결했으면 확인한 조정이라 넣음 → 30,000이라 통과
     //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
-    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) AND adjustment_id = 0 GROUP BY order_id
+    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) AND (adjustment_id = 0 OR 확인한 조정) GROUP BY order_id
     @Override
     public Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId) {
         List<Tuple> rows = queryFactory
                 .select(payoutCandidateItem.orderId, payoutCandidateItem.amount.sumLong())
                 .from(payoutCandidateItem)
                 .where(payoutCandidateItem.orderId.in(orderIdsInSnapshot(snapshotId)),
-                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
+                        checkedCandidate(snapshotId))
                 .groupBy(payoutCandidateItem.orderId)
                 .fetch();
         Map<Long, Long> sums = new HashMap<>();
@@ -723,18 +786,21 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return amounts;
     }
 
-    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
+    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 판매 대금·수수료 후보 (원래 후보 + 관리자가 확인한 조정)
     // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
-    // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
+    // 확인한 조정을 넣는 이유(#291 결정 5번): 수수료 불일치(FEE_MISMATCH)로 잠긴 주문상품을 조정으로 풀 출구 (#649 P4 멘토 기대)
+    //   부르는 쪽이 대금·수수료별로 더해 짝을 만듦(PayoutAmountValidator.pairByOrderItem)
+    //   예) 원래 9,000 / 1,000(판매 10,000의 수수료는 300이라 불일치) + 확인한 조정 +700 / −700 → 9,700 / 300이라 통과
+    // 확인 안 한 조정은 뺌: 수수료 계산식과 상관없는 금액(보상 등)이 섞이면 맞는 주문상품도 틀렸다고 봄. 범위는 초과 청구 합계와 같은 checkedCandidate
     // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
     // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
     @Override
-    public List<PayoutCandidateItem> findOriginalSaleCandidatesInSnapshot(Long snapshotId) {
+    public List<PayoutCandidateItem> findSaleCandidatesForFeeCheckInSnapshot(Long snapshotId) {
         QPayoutCandidateItem snapshotCandidate = new QPayoutCandidateItem("snapshotCandidate");
         return queryFactory
                 .selectFrom(payoutCandidateItem)
                 .where(
-                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        checkedCandidate(snapshotId),
                         payoutCandidateItem.eventType.in(PayoutEventType.SALE_AMOUNT, PayoutEventType.SALE_FEE),
                         payoutCandidateItem.orderItemId.in(JPAExpressions
                                 .select(snapshotCandidate.orderItemId)
@@ -746,12 +812,13 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서로, 이미 정산됐는지와 함께
-    // 조정 후보는 뺌(#552): 판정 합계(sumCandidateAmountByOrderInSnapshot)와 같은 범위여야 근거의 누적합이 합계와 맞음
+    // 원래 후보 + 확인한 조정(checkedCandidate): 판정 합계(sumCandidateAmountByOrderInSnapshot)와 같은 범위여야 근거의 누적합이 합계와 맞음
+    //   snapshotId가 있으면 판정과 같은 스냅샷 범위, null이면(관리자 목록의 "지금" 근거, #570) 확인한 조정을 스냅샷과 상관없이 넣음
     //   SQL) SELECT c.*, pi.id FROM payout_candidate_items c LEFT JOIN payout_item pi ON pi.candidate_id = c.id
-    //        WHERE c.order_id IN (...) AND c.adjustment_id = 0 ORDER BY c.created_at, c.id
+    //        WHERE c.order_id IN (...) AND (c.adjustment_id = 0 OR 확인한 조정) ORDER BY c.created_at, c.id
     // 정산 여부는 select에 조건식을 두지 않고 payout_item id를 읽어 Java에서 null 여부로 정함 (JPQL select의 조건식 지원에 기대지 않으려고)
     @Override
-    public List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds) {
+    public List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds, Long snapshotId) {
         List<Tuple> rows = queryFactory
                 .select(payoutCandidateItem.id,
                         payoutCandidateItem.orderId,
@@ -762,8 +829,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutItem.id)
                 .from(payoutCandidateItem)
                 .leftJoin(payoutItem).on(payoutItem.candidateId.eq(payoutCandidateItem.id))
-                .where(payoutCandidateItem.orderId.in(orderIds),
-                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
+                .where(payoutCandidateItem.orderId.in(orderIds), checkedCandidate(snapshotId))
                 .orderBy(payoutCandidateItem.createdAt.asc(), payoutCandidateItem.id.asc())
                 .fetch();
         List<OverchargeCandidateRow> result = new ArrayList<>();
@@ -1027,6 +1093,50 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .from(payoutFailureResolution)
                 .where(payoutFailureResolution.failureId.eq(payoutFailure.id))
                 .notExists();
+    }
+
+    // 금액 검사(초과 청구 합계·근거, 수수료 짝)에 넣는 후보: 원래 후보, 또는 관리자가 확인한 조정 (#291 결정 4번)
+    // 세 조회가 이 메서드 하나를 씀: 범위가 하나라도 다르면 근거의 누적합이 판정 합계와 어긋나거나, 두 검사가 서로 다른 돈을 봄 (lockingFailure를 한곳에 둔 것과 같은 이유)
+    // snapshotId가 있으면 확인한 조정 중 이번 스냅샷에 들었거나 이미 정산된 것만 넣음
+    //   합계는 스냅샷 밖 후보까지 DB 전체에서 더하므로, 스냅샷을 만든 뒤(Job 도중) 넣은 조정이 검사에는 들어가고 지급에서는 빠질 수 있음
+    //   예) 결제 30,000, 원래 40,000. 스냅샷 뒤 −10,000 조정·해결 → 검사 합계 30,000 통과, 그런데 이번 지급은 40,000 → 10,000이 샘
+    //   이번 스냅샷에 없는 아직 미정산인 확인한 조정은 다음 배치에서 원래와 함께 들어가 그때 검사됨
+    // snapshotId가 null이면 범위를 걸지 않음 (관리자 목록의 "지금" 근거: 다음 배치에서 볼 값에 가깝게)
+    private BooleanExpression checkedCandidate(Long snapshotId) {
+        BooleanExpression confirmed = confirmedAdjustment();
+        if (snapshotId != null) {
+            confirmed = confirmed.and(inSnapshot(snapshotId).or(JPAExpressions.selectOne()
+                    .from(payoutItem)
+                    .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
+                    .exists()));
+        }
+        return payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID).or(confirmed);
+    }
+
+    // 관리자가 확인한 조정인지 (#291 결정 4번): 아래를 모두 채우는 해결 기록 r과 실패 기록 f가 있음
+    //   1. f는 같은 주문의 금액 불일치(초과 청구 AMOUNT_MISMATCH 또는 수수료 FEE_MISMATCH) 실패
+    //   2. r은 f를 해결한 기록 (해결은 실패 기록마다 1건)
+    //   3. f.생성 시각 ≤ 조정.생성 시각 < r.생성 시각 = "금액 불일치를 보고 → 조정을 넣고 → 다시 처리" 순서
+    // 사유를 거르는 이유: 해결 한 번에 그 주문의 해결 안 된 실패가 사유와 상관없이 모두 해결됨(PayoutFailureResolutionService)
+    //   사유를 안 거르면 지갑 늦음(DEDUCTION_MISSING)으로 해결하기 전에 넣은 상관없는 −3,000 보상이 나중 상품의 초과 청구 3,000을 가림
+    // 하한(f 이후)을 두는 이유: 금액 불일치가 나기 전에 다른 이유로 넣어 둔 조정은 관리자가 그 불일치를 보고 넣은 것이 아님
+    //   대가: 관리자가 불일치 전에 미리 넣은 조정은 확인으로 세지 않아, 다시 실패하면 한 번 더 넣고 해결해야 함 (돈은 덜 나가는 쪽)
+    // 해결 뒤 넣은 조정은 빠짐(엄격 비교 <): #552가 막은 "확인 안 한 조정이 불일치를 가림"이 해결 뒤에 다시 열리지 않게
+    //   순서를 거꾸로(해결 → 조정) 하면 다시 실패해 한 번 더 해결해야 함 (Spec에 "조정 먼저, 그다음 다시 처리"로 안내)
+    // 해결 방법은 거르지 않음: 지금은 REPROCESS(다시 처리)만 있음. 다른 방법이 생기면 REPROCESS만 골라야 함
+    // 바깥 쿼리의 payoutFailure·payoutFailureResolution과 섞이지 않게 별칭을 따로 둠
+    private BooleanExpression confirmedAdjustment() {
+        QPayoutFailure checkedFailure = new QPayoutFailure("checkedFailure");
+        QPayoutFailureResolution checkedResolution = new QPayoutFailureResolution("checkedResolution");
+        return payoutCandidateItem.adjustmentId.gt(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)
+                .and(JPAExpressions.selectOne()
+                        .from(checkedResolution)
+                        .join(checkedFailure).on(checkedFailure.id.eq(checkedResolution.failureId))
+                        .where(checkedFailure.orderId.eq(payoutCandidateItem.orderId),
+                                checkedFailure.reason.in(PayoutFailureReason.AMOUNT_MISMATCH, PayoutFailureReason.FEE_MISMATCH),
+                                checkedFailure.createdAt.loe(payoutCandidateItem.createdAt),
+                                checkedResolution.createdAt.gt(payoutCandidateItem.createdAt))
+                        .exists());
     }
 
     // 이번 스냅샷 후보들의 주문 ID (금액 검사 집계 쿼리의 IN 조건)

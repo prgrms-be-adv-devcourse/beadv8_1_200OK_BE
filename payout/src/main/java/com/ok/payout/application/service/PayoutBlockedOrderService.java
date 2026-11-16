@@ -91,7 +91,7 @@ public class PayoutBlockedOrderService implements PayoutBlockedOrderUseCase {
     }
 
     // "지금" 초과 청구 근거 (#570): 원인에 초과 청구가 있는 주문만, 볼 때의 원본으로 계산 (주문 ID → 근거)
-    // 금액 검사와 같은 계산(PayoutAmountValidator.overchargeEvidence)과 같은 범위(조정 제외 정산후보 전체)를 써서
+    // 금액 검사와 같은 계산(PayoutAmountValidator.overchargeEvidence)과 같은 범위(원래 후보 전체 + 관리자가 확인한 조정, #291)를 써서
     //   "막힌 순간" 값과 나란히 놓으면 무엇이 바뀌었는지 보임
     // 한 페이지 주문 ID로 묶어 세 번만 조회함 (주문마다 따로 조회하지 않음, payout/CLAUDE.md 설계 전제)
     // 근거를 계산할 수 없는 주문은 결과에 없음(목록에서 null): 차감 기록이 없거나, 조정만 있어 합계가 없는 주문
@@ -113,7 +113,7 @@ public class PayoutBlockedOrderService implements PayoutBlockedOrderUseCase {
 
         Map<Long, Long> deductions = payoutQueryRepository.findDeductionAmountsByOrderIds(overchargedOrderIds);
         Map<Long, List<OverchargeCandidateRow>> rowsByOrder = PayoutAmountValidator.groupRowsByOrder(
-                payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds));
+                payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds, null));
         Map<Long, List<Long>> conflictAmounts =
                 payoutQueryRepository.findReceivedConflictAmountsByOrder(overchargedOrderIds);
         for (Long orderId : overchargedOrderIds) {
@@ -122,7 +122,7 @@ public class PayoutBlockedOrderService implements PayoutBlockedOrderUseCase {
             if (deducted == null || rows == null) {
                 continue;
             }
-            // 합계는 근거 줄을 더해 냄: 금액 검사의 합계 조회와 같은 범위(조정 제외)라 따로 조회하지 않음
+            // 합계는 근거 줄을 더해 냄: 금액 검사의 합계 조회와 같은 범위(원래 후보 + 확인한 조정)라 따로 조회하지 않음
             long total = 0L;
             for (OverchargeCandidateRow row : rows) {
                 total += row.amount();

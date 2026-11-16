@@ -9,19 +9,20 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
-@Schema(description = "정산 수동 조정 요청 (지금은 막아 둔 API라 항상 501)")
+@Schema(description = "정산 수동 조정 요청 (#291)")
 public record PayoutAdjustmentCreateRequest(
 
-        @Schema(description = "조정할 주문 항목 ID", example = "900")
+        @Schema(description = "조정할 주문 항목 ID (그 주문 항목·종류의 원래 정산후보가 있어야 함)", example = "900")
         @NotNull(message = "주문 항목 ID는 필수입니다.")
         @Positive(message = "주문 항목 ID는 1 이상이어야 합니다.")
         Long orderItemId,
 
-        // 허용 값은 PayoutEventType과 같아야 함. 컨트롤러 DTO는 domain enum을 쓸 수 없어 문자열 패턴으로 검증
-        @Schema(description = "조정할 정산 항목 종류 (원래 정산후보와 같은 종류)", example = "SALE_AMOUNT",
-                allowableValues = {"SALE_AMOUNT", "SALE_SHIPPING_FEE", "SALE_FEE"})
+        // 허용 값은 PayoutEventType 중 조정을 연 것만. 컨트롤러 DTO는 domain enum을 쓸 수 없어 문자열 패턴으로 검증
+        // 배송비(SALE_SHIPPING_FEE)는 뺌 (#291 결정 6번): 배송비 후보는 주문 항목 ID가 없어 이 요청 모양으로는 가리킬 수 없음 (서비스도 한 번 더 막음)
+        @Schema(description = "조정할 정산 항목 종류 (원래 정산후보와 같은 종류). 판매 대금 SALE_AMOUNT, 수수료 SALE_FEE. 배송비는 아직 조정할 수 없음",
+                example = "SALE_AMOUNT", allowableValues = {"SALE_AMOUNT", "SALE_FEE"})
         @NotBlank(message = "정산 항목 종류는 필수입니다.")
-        @Pattern(regexp = "SALE_AMOUNT|SALE_SHIPPING_FEE|SALE_FEE", message = "지원하지 않는 정산 항목 종류입니다.")
+        @Pattern(regexp = "SALE_AMOUNT|SALE_FEE", message = "지원하지 않는 정산 항목 종류입니다.")
         String eventType,
 
         @Schema(description = "조정 금액 (원). 음수면 차감, 0은 불가", example = "-2000")

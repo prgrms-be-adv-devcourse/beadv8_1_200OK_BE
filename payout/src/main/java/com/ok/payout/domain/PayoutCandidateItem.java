@@ -52,7 +52,7 @@ public class PayoutCandidateItem extends BaseTime {
     // 조정 사유 최대 길이 (DB reason VARCHAR(255)와 맞춤)
     public static final int MAX_REASON_LENGTH = 255;
 
-    // 0이면 평소 이벤트, 0보다 크면 관리자 조정 요청 ID
+    // 0이면 평소 이벤트, 0보다 크면 관리자 조정 번호 (같은 주문상품·종류 안에서 1, 2, 3… 서버가 마지막 번호 + 1로 붙임, #291)
     @Column(nullable = false)
     private Long adjustmentId;
 
@@ -91,7 +91,7 @@ public class PayoutCandidateItem extends BaseTime {
     }
 
     // 관리자 수동 조정 (오류 수정용, 원래 정산후보와 같은 eventType). 음수 금액 허용
-    // 조정 번호는 관리자 조정 요청 ID라 1 이상만 허용 (0은 평소 이벤트 전용, null·0은 호출 쪽 버그)
+    // 조정 번호는 1 이상만 허용 (0은 평소 이벤트 전용, null·0은 호출 쪽 버그)
     // 배송비 조정이면 orderItemId는 null (원래 배송비 후보와 같은 (주문, 판매자) 단위)
     public static PayoutCandidateItem manualAdjustment(PayoutEventType eventType, Long orderId, Long orderItemId, Long sellerId,
                                                        Long amount, Long adjustmentId, Long adminId, String reason) {

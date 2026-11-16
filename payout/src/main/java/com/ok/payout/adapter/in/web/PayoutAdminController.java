@@ -2,6 +2,7 @@ package com.ok.payout.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
@@ -118,16 +119,16 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
         return ResponseEntity.noContent().build();
     }
 
-    // 정산 수동 조정. 형태만 공개하고 지금은 막아 둠 (막아 둔 이유는 PayoutService.createAdjustment 참고)
-    // 조정 기능을 열면 201과 생성된 정산후보 ID를 응답할 예정
+    // 정산 수동 조정 (#291). 조정 정산후보가 새로 생기므로 201, 응답은 방금 저장한 조정 (주문·판매자는 원래 후보에서 가져온 값)
+    // 조정한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받음 (#65 리뷰 후속)
     @Override
     @PostMapping("/adjustments")
-    public ResponseEntity<Void> createAdjustment(
+    public ResponseEntity<PayoutAdjustmentCreateResponse> createAdjustment(
             @CurrentMemberId Long memberId,
             @Valid @RequestBody PayoutAdjustmentCreateRequest request
     ) {
-        payoutUseCase.createAdjustment(memberId, request.toCommand());
-        return ResponseEntity.status(HttpStatus.CREATED).build();
+        return ResponseEntity.status(HttpStatus.CREATED).body(PayoutAdjustmentCreateResponse.from(
+                payoutUseCase.createAdjustment(memberId, request.toCommand())));
     }
 
     // 잠기거나 멈춘 주문 해결 "다시 처리" (#568). 다음 배치에서 그 주문을 금액 검사·결과 검증부터 다시 거쳐 정산함

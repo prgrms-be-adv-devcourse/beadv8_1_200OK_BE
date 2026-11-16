@@ -13,6 +13,15 @@ public enum PayoutErrorCode implements ErrorCode {
     MISSING_ADMIN_ID(HttpStatus.UNPROCESSABLE_ENTITY, "Missing admin id", "수동 조정에는 관리자 ID가 필수입니다."),
     MISSING_ADJUSTMENT_REASON(HttpStatus.UNPROCESSABLE_ENTITY, "Missing adjustment reason", "수동 조정에는 조정 사유가 필수입니다."),
     ADJUSTMENT_REASON_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Adjustment reason too long", "조정 사유는 255자 이하여야 합니다."),
+    // 배송비 조정은 이번에 열지 않음 (#291 결정 6번): 요청이 주문상품 ID로 대상을 가리키는데 배송비 후보는 주문상품 ID가 없음((주문, 판매자) 단위)
+    //   요청 DTO가 먼저 막고(허용 값에서 뺌), 서비스가 한 번 더 막음
+    SHIPPING_FEE_ADJUSTMENT_NOT_SUPPORTED(HttpStatus.UNPROCESSABLE_ENTITY, "Shipping fee adjustment not supported", "배송비 조정은 아직 지원하지 않습니다."),
+    // 같은 주문상품·종류의 원래 정산후보가 없는 조정 (#291 결정 7번): 조정은 원래 후보를 따라 정산되고, 판매자·주문도 원래 후보에서 가져오므로 기준이 없으면 받지 않음
+    //   정산은 주문 테이블이 없어 "없는 주문상품"과 "아직 구매확정 전"을 구별할 수 없어 404 대신 422
+    ADJUSTMENT_ORIGINAL_NOT_FOUND(HttpStatus.UNPROCESSABLE_ENTITY, "Adjustment original not found", "조정할 원래 정산후보가 없습니다. 구매확정된 주문상품과 종류인지 확인하세요."),
+    // 같은 조정이 이미 있음 (#291 결정 3번): 같은 주문상품·종류·금액·사유의 조정이 이미 있거나, 동시에 들어온 두 요청이 같은 조정 번호를 받음
+    //   재전송으로 같은 돈이 두 번 빠지지 않게 막는 것. 일부러 한 번 더 넣으려면 사유를 다르게 씀
+    DUPLICATE_ADJUSTMENT(HttpStatus.CONFLICT, "Duplicate adjustment", "같은 조정이 이미 있습니다. 한 번 더 넣으려면 사유를 다르게 적으세요."),
     // 해결 메모 검증 (#568). 요청 DTO가 먼저 422로 막고, 엔티티가 저장 전에 한 번 더 막음 (사용자 입력이라 RestApiException, 조정 사유와 같음)
     MISSING_RESOLUTION_MEMO(HttpStatus.UNPROCESSABLE_ENTITY, "Missing resolution memo", "해결 메모는 필수입니다."),
     RESOLUTION_MEMO_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Resolution memo too long", "해결 메모는 255자 이하여야 합니다."),
@@ -43,8 +52,8 @@ public enum PayoutErrorCode implements ErrorCode {
     NOTHING_TO_RESOLVE(HttpStatus.CONFLICT, "Nothing to resolve", "해결할 잠금이나 멈춤이 없는 주문입니다."),
     // 정산 Job이 이미 실행 중이라 다른 실행을 거절함 (동시 실행 방지 잠금, #223)
     PAYOUT_JOB_ALREADY_RUNNING(HttpStatus.CONFLICT, "Payout job already running", "정산이 이미 실행 중입니다."),
-    // 형태만 공개하고 실제 동작은 막아 둔 API(1건 수동 실행, 수동 조정)를 표시하는 임시 코드
-    // 두 API가 모두 열리면 이 항목도 지움. 막아 둔 이유는 각 API의 TODO(논의 필요) 주석 참고
+    // 형태만 공개하고 실제 동작은 막아 둔 API(1건 수동 실행)를 표시하는 임시 코드 (수동 조정은 #291에서 엶)
+    // 그 API가 열리면 이 항목도 지움. 막아 둔 이유는 그 API의 TODO(논의 필요) 주석 참고
     FEATURE_NOT_SUPPORTED(HttpStatus.NOT_IMPLEMENTED, "Feature not supported", "아직 지원하지 않는 기능입니다.");
 
     private final HttpStatus httpStatus;

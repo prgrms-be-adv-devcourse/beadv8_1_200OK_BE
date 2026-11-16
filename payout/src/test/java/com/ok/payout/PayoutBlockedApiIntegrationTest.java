@@ -1,6 +1,5 @@
 package com.ok.payout;
 
-import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
@@ -22,20 +21,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 통합 테스트: 형태만 공개하고 막아 둔 정산 API(1건 수동 실행, 수동 조정)가 정말 막혀 있는지 실제 HTTP 요청으로 확인
+// 통합 테스트: 관리자 전용 정산 API(1건 수동 실행, 수동 조정)의 권한·형식 검증과, 막아 둔 1건 수동 실행이 정말 막혀 있는지 실제 HTTP 요청으로 확인
 //
 // [임시 테스트]
-// 두 API는 정책이 정해지지 않아 임시로 막아 둔 상태라, 이 테스트도 "막혀 있음"을 확인하는 임시 테스트다.
+// 1건 수동 실행은 정책이 정해지지 않아 임시로 막아 둔 상태라, 그 501 테스트는 "막혀 있음"을 확인하는 임시 테스트다.
 //   - 1건 수동 실행: 재처리 정책 미정 (PayoutService.runOrderItem의 TODO(논의 필요))
-//   - 수동 조정: 조정 번호(adjustmentId) 발급 방식 미정 (PayoutService.createAdjustment의 TODO(논의 필요))
-// API를 열면 501을 기대하는 테스트는 실제 동작(실행·조정 결과)을 확인하는 테스트로 바꿔야 하고,
+// API를 열면 501을 기대하는 테스트는 실제 동작을 확인하는 테스트로 바꿔야 하고,
 // 401(로그인 필요), 403(관리자 전용)과 422(형식 검증) 테스트는 그대로 쓸 수 있다.
+// 수동 조정은 #291에서 열어 501 테스트를 지웠고, 실제 조정 동작은 PayoutAdjustmentIntegrationTest에서 확인함
 //
 // [확인하는 것]
-//   - 관리자가 부르면 501(아직 지원하지 않는 기능)이고, 데이터가 바뀌지 않음
+//   - 관리자가 1건 수동 실행을 부르면 501(아직 지원하지 않는 기능)이고, 데이터가 바뀌지 않음
 //   - 관리자가 아니면 403(권한 없음)
 //   - 로그인 토큰이 없으면 401
-//   - 조정 요청의 형식이 틀리면 422 (권한·501 확인보다 먼저 거절됨)
+//   - 조정 요청의 형식이 틀리면 422 (권한 확인보다 먼저 거절됨)
 //
 // [회원 정보 받는 방식]
 // 두 API 모두 로그인 토큰으로 받고, 관리자가 아니면 컨트롤러 @PreAuthorize가 거절함 → 403 type이 공통 forbidden
@@ -80,9 +79,6 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PayoutJpaRepository payoutRepository;
-
-    @Autowired
-    private PayoutCandidateItemJpaRepository candidateRepository;
 
     // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
     @BeforeEach
@@ -146,22 +142,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
 
     // ---------- 수동 조정 ----------
 
-    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정, 막아 둠)
-    // 요청: 관리자 토큰, 형식이 올바른 조정 요청 (주문 항목 5000001에서 2,000원 차감)
-    // 확인: 501(아직 지원하지 않는 기능)이고, 그 주문 항목에 정산후보(조정 건)가 생기지 않았는지
-    @Test
-    void 관리자가_수동_조정을_요청하면_501이고_정산후보가_생기지_않는다() throws Exception {
-        // when & then
-        mockMvc.perform(adjustmentRequest(VALID_ADJUSTMENT_BODY)
-                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
-                .andExpect(status().isNotImplemented())                                  // 501
-                .andExpect(jsonPath("$.type").value(endsWith(FEATURE_NOT_SUPPORTED_TYPE)));
-
-        // then: 막아 둔 API라 조정 데이터(정산후보)가 만들어지면 안 됨
-        assertThat(candidateRepository.findAllByOrderItemId(ORDER_ITEM_ID)).isEmpty();
-    }
-
-    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정, 막아 둠)
+    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정)
     // 요청: 판매자 토큰(BUYER, SELLER), 형식이 올바른 조정 요청
     // 확인: 403(권한 없음)이고 type이 공통 forbidden인지 (관리자 전용 기능, @PreAuthorize가 거절)
     @Test
@@ -175,7 +156,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.type").value(endsWith(FORBIDDEN_TYPE)));
     }
 
-    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정, 막아 둠)
+    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정)
     // 요청: 로그인 토큰 없음, 형식이 올바른 조정 요청
     // 확인: 401(로그인 필요)인지
     @Test
@@ -185,7 +166,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnauthorized());                                  // 401
     }
 
-    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정, 막아 둠)
+    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정)
     // 요청: 판매자 토큰, 금액 0원 (형식도 틀리고 권한도 없음)
     // 확인: 403이 아니라 422인지 (요청 본문 검증이 @PreAuthorize 권한 확인보다 먼저 일어남)
     @Test
@@ -201,7 +182,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableEntity());                           // 422
     }
 
-    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정, 막아 둠)
+    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정)
     // 요청: 관리자 토큰, 금액 0원
     // 확인: 422이고 오류 목록에 amountNotZero가 나오는지 (0원 조정은 장부에 의미 없는 줄만 남겨서 거절)
     @Test
@@ -218,7 +199,7 @@ class PayoutBlockedApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.errors[*].path").value(contains("amountNotZero")));
     }
 
-    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정, 막아 둠)
+    // API: POST /api/v1/admin/payouts/adjustments (정산 수동 조정)
     // 요청: 관리자 토큰, 조정 사유가 공백뿐 ("   ")
     // 확인: 422이고 오류 목록에 reason이 나오는지 (서버가 앞뒤 공백을 지운 뒤 빈 값이라 필수값 검증에 걸림)
     @Test

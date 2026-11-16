@@ -60,12 +60,15 @@ public interface PayoutUseCase {
     void runOrderItem(Long orderItemId);
 
     /**
-     * 정산 수동 조정을 요청한다. 지금은 막아 둔 기능이라 항상 {@code FEATURE_NOT_SUPPORTED}를 던진다.
+     * 정산 수동 조정을 만든다. 조정 번호는 서버가 그 주문 항목·종류의 마지막 번호 + 1로 붙이고, 주문·판매자는 원래 정산후보에서 가져온다.
+     * 만든 조정은 원래 정산후보를 따라 정산된다(원래가 대기 중이면 함께, 이미 정산됐으면 다음 배치).
      *
      * @param adminId 요청한 관리자 ID (인증 정보에서 받은 값)
-     * @throws com.ok.common.exception.RestApiException 아직 열리지 않은 기능({@code FEATURE_NOT_SUPPORTED})
+     * @throws com.ok.common.exception.RestApiException 배송비 조정({@code SHIPPING_FEE_ADJUSTMENT_NOT_SUPPORTED}),
+     *                                                  원래 정산후보 없음({@code ADJUSTMENT_ORIGINAL_NOT_FOUND}),
+     *                                                  같은 조정이 이미 있음({@code DUPLICATE_ADJUSTMENT})
      */
-    void createAdjustment(Long adminId, PayoutAdjustmentCreateCommand command);
+    PayoutAdjustmentCreateResult createAdjustment(Long adminId, PayoutAdjustmentCreateCommand command);
 
     /**
      * 관리자가 정산 목록을 조회한다.

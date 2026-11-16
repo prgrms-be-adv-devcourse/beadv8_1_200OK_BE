@@ -24,7 +24,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -36,10 +35,6 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class PayoutFailureResolutionService implements PayoutFailureResolutionUseCase {
-
-    // MySQL 오류 번호 1062(ER_DUP_ENTRY, 중복 키). 해결 기록 표에서 중복으로 막히는 제약은 실패 기록 ID 유니크 하나뿐이라(기본 키는 자동 증가),
-    // 이 번호면 "같은 실패 기록을 이미 해결함"이라는 뜻. 오류 메시지 글자는 DB 버전·언어 설정에 따라 바뀔 수 있어 번호로 봄
-    private static final int MYSQL_DUPLICATE_KEY_ERROR = 1062;
 
     private final PayoutQueryRepository payoutQueryRepository;
     private final PayoutFailureResolutionRepository payoutFailureResolutionRepository;
@@ -123,15 +118,9 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
                 .map(PayoutQueryResultMapper::toResolutionRequestResult);
     }
 
-    // 원인 사슬에서 DB 드라이버 예외(SQLException)를 찾아 오류 번호가 중복 키(1062)인지 봄 (통합 테스트에서 실제 MySQL로 확인)
+    // 해결 기록 표에서 중복으로 막히는 제약은 실패 기록 ID 유니크 하나뿐이라(기본 키는 자동 증가),
+    // 중복 키면 "같은 실패 기록을 이미 해결함"이라는 뜻 (판정은 조정 생성과 같은 도우미, #291)
     private static boolean isDuplicateResolution(DataIntegrityViolationException e) {
-        Throwable cause = e;
-        while (cause != null) {
-            if (cause instanceof SQLException sqlException) {
-                return sqlException.getErrorCode() == MYSQL_DUPLICATE_KEY_ERROR;
-            }
-            cause = cause.getCause();
-        }
-        return false;
+        return DuplicateKeyErrors.isDuplicateKey(e);
     }
 }

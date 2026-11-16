@@ -115,14 +115,14 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
         // when
         JobExecution execution = payoutJobRunner.runScheduled();
 
-        // then: 정산은 판매자 10, 판매자 20(0원), 시스템 몫 3건이 확정됨
+        // then: 정산은 판매자 10, 시스템 몫 2건만 확정됨. 판매자 20은 합계 0원이라 정산을 만들지 않고 보류 (#291 결정 2번)
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         List<Payout> payouts = payoutRepository.findBySnapshotId(snapshotIdOf(execution));
         assertThat(payouts)
                 .extracting(Payout::getPayeeId, Payout::getAmount)
-                .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(20L, 0L), tuple(null, 300L));
+                .containsExactlyInAnyOrder(tuple(10L, 9_700L), tuple(null, 300L));
 
-        // then: 토픽에는 판매자 10의 정산만 1건 나감 (0원·시스템 몫은 안 나감). 키는 payoutId
+        // then: 토픽에는 판매자 10의 정산만 1건 나감 (시스템 몫은 안 나감). 키는 payoutId
         Long seller10PayoutId = payoutIdOf(payouts, 10L);
         Map<String, String> sent = readMessages(keysOf(payouts));
         assertThat(sent).containsOnlyKeys(String.valueOf(seller10PayoutId));

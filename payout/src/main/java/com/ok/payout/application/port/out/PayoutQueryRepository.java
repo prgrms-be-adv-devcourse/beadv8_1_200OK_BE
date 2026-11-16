@@ -68,10 +68,10 @@ public interface PayoutQueryRepository {
     List<PayoutCandidateItem> findCandidatesWithDeduction(Long snapshotId);
 
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
-    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지. 조정 후보는 뺌(#552: −조정이 초과 청구를 가리지 않게)
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지
     //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
-    //   SQL) SELECT order_id, SUM(amount) FROM payout_candidate_items
-    //        WHERE order_id IN (이번 스냅샷 후보의 order_id) AND adjustment_id = 0 GROUP BY order_id
+    // 조정 후보는 관리자가 확인한 것(금액 불일치 실패 → 조정 → 해결 순서)만 더함 (#291 결정 4번). 확인 안 한 조정은 뺌(#552: −조정이 초과 청구를 가리지 않게)
+    //   확인한 조정도 이번 스냅샷에 들었거나 이미 정산된 것만 더함 (Job 도중 넣은 조정이 검사엔 들고 지급엔 빠지지 않게)
     Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId);
 
     // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
@@ -82,19 +82,28 @@ public interface PayoutQueryRepository {
     // 위 조회는 스냅샷 기준이라 목록 한 페이지의 주문 ID로 따로 읽음 (차감 기록 UK order_id 인덱스). orderIds가 비면 빈 맵
     Map<Long, Long> findDeductionAmountsByOrderIds(Collection<Long> orderIds);
 
-    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보
+    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 판매 대금·수수료 후보 (원래 후보 + 관리자가 확인한 조정, #291 결정 5번)
     // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
-    // 조정 후보(adjustment_id > 0)는 뺌: 조정은 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
-    // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK)
+    // 확인한 조정의 범위는 초과 청구 합계와 같음. 확인 안 한 조정은 뺌: 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
+    // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK). 조정은 여러 건일 수 있어 부르는 쪽이 종류별로 더함
     // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
-    List<PayoutCandidateItem> findOriginalSaleCandidatesInSnapshot(Long snapshotId);
+    List<PayoutCandidateItem> findSaleCandidatesForFeeCheckInSnapshot(Long snapshotId);
 
     // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서(created_at, id)로, 이미 정산됐는지와 함께
-    // 범위는 초과 청구 합계(sumCandidateAmountByOrderInSnapshot)와 같음: 그 주문의 조정 아닌 후보 전부 (스냅샷 밖·이미 정산 포함, #552부터 조정 제외)
+    // 범위는 초과 청구 합계(sumCandidateAmountByOrderInSnapshot)와 같음: 그 주문의 원래 후보 전부(스냅샷 밖·이미 정산 포함) + 확인한 조정
     //   범위가 다르면 근거의 누적합이 합계와 어긋나 "넘게 만든 주문상품"을 잘못 찾음
+    //   snapshotId가 null이면(관리자 목록의 "지금" 근거, #570) 확인한 조정을 스냅샷과 상관없이 넣음
     // 이미 정산됨 = payout_item에 그 후보가 있음 (후보 1건 = 정산 항목 최대 1건, UK candidate_id라 조인해도 줄이 늘지 않음)
     // 초과 청구에 걸린 주문만 넘기므로 보통 몇 건뿐임 (빈 목록을 넘기지 않음)
-    List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds);
+    List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds, Long snapshotId);
+
+    // 보류된 판매자의 원래 후보 (#291 결정 2번): 이전 스냅샷에서 draft까지 갔는데 정산이 안 된 후보, 상한(to) 전·조회 기간 하한 없음·잠긴 주문 제외
+    // 판매자 합계가 0원 이하라 commit이 정산을 만들지 않은 판매자의 후보가, 하한이 올라가 영영 빠지지 않게 다시 넣으려고 씀
+    List<PayoutCandidateItem> findHeldCandidatesBefore(LocalDateTime to);
+
+    // 아직 정산 안 된 조정 후보 전부와 그 원래 후보 상태 (#291 결정 1번), 잠긴 주문 제외, 후보 ID 오름차순
+    // 조정 자기 생성 시각으로 기간을 거르지 않음: 조정은 원래 후보를 따라 정산됨 (원래가 이번 스냅샷에 들었거나 이미 정산됐으면 포함)
+    List<AdjustmentCandidateRow> findUnsettledAdjustments();
 
     // 초과 청구 근거용(#391): 주문들의 지갑 금액 충돌에서 받은 금액 (주문 ID → 받은 금액 목록, 기록 순서). 충돌이 없는 주문은 결과에 없음
     Map<Long, List<Long>> findReceivedConflictAmountsByOrder(Collection<Long> orderIds);

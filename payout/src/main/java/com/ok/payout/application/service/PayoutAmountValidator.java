@@ -39,7 +39,7 @@ final class PayoutAmountValidator {
     // 255자를 넘을 수 있어(주문상품·충돌이 많을 때) 항상 PayoutFailure.fitDetail을 거침
     private static final String OVERCHARGE_DETAIL =
             "초과 청구: 결제 %d, 후보 합계 %d, 넘친 금액 %d, 넘게 만든 주문상품 %s, 이미 지급 %s, 혼자 넘는 주문상품 %s, 판매자 %d명, %s";
-    // 원래 후보 없이 조정 후보만 있어 초과 청구 합계를 낼 수 없는 주문의 실패 상세 (#552부터 합계가 조정을 빼서 생김)
+    // 원래 후보 없이 확인 안 한 조정 후보만 있어 초과 청구 합계를 낼 수 없는 주문의 실패 상세 (#552부터 합계가 확인 안 한 조정을 빼서 생김)
     private static final String ADJUSTMENT_ONLY_DETAIL = "초과 청구 판정 불가: 원래 후보 없이 조정 후보만 있음";
     // 배송비 후보는 주문상품이 없어 주문상품 ID 대신 이 이름으로 씀
     private static final String SHIPPING_FEE_LABEL = "배송비";
@@ -53,9 +53,9 @@ final class PayoutAmountValidator {
     // 판정에 쓰는 값 묶음 (모두 PayoutQueryRepository 조회 결과)
     record Input(
             List<PayoutCandidateItem> targets,                  // 검사 대상: 이번 스냅샷 후보 중 차감 기록이 있고 아직 실패가 아닌 것
-            Map<Long, Long> candidateTotalsByOrder,             // 주문 ID → 그 주문 정산후보 합계 (스냅샷 밖 포함, 조정 후보 제외 #552)
+            Map<Long, Long> candidateTotalsByOrder,             // 주문 ID → 그 주문 정산후보 합계 (스냅샷 밖 포함, 조정은 확인한 것만 #552·#291)
             Map<Long, Long> deductionsByOrder,                  // 주문 ID → 지갑 차감액
-            List<PayoutCandidateItem> originalSaleCandidates,   // 대상 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보 (스냅샷 밖 포함)
+            List<PayoutCandidateItem> saleCandidates,           // 대상 주문상품의 판매 대금·수수료 후보: 원래 + 관리자가 확인한 조정 (스냅샷 밖 포함, #291)
             // 아래 둘은 초과 청구 근거용 (#391). 초과 청구에 걸린 주문(overchargedOrderIds)만 조회해서 넘김
             List<OverchargeCandidateRow> overchargeCandidates,  // 그 주문의 정산후보 전체 (합계와 같은 범위), 생성 순서(createdAt, id)
             Map<Long, List<Long>> conflictAmountsByOrder        // 주문 ID → 지갑 금액 충돌로 받은 금액들 (없는 주문은 키 없음)
@@ -95,7 +95,7 @@ final class PayoutAmountValidator {
 
     // 금액 검사에 걸린 후보의 실패 기록 목록을 반환 (비어 있으면 모두 통과). 후보 하나에 실패는 최대 1건
     static List<PayoutFailure> validate(Long snapshotId, Input input) {
-        Map<Long, SalePair> pairsByOrderItem = pairByOrderItem(input.originalSaleCandidates());
+        Map<Long, SalePair> pairsByOrderItem = pairByOrderItem(input.saleCandidates());
         Map<Long, List<OverchargeCandidateRow>> overchargeRowsByOrder = groupRowsByOrder(input.overchargeCandidates());
 
         List<PayoutFailure> failures = new ArrayList<>();
@@ -114,18 +114,18 @@ final class PayoutAmountValidator {
             // TODO(논의 필요): 한 주문의 상품들을 함께 잡아 확인하는 지금 방식을 유지할지, 정산이 주문상품별 비교 금액을 모두 갖춰
             //   틀린 상품만 골라내는 방향(아래 TODO(#52))으로 갈지 등 처리 방향을 정해야 함
             // TODO(#52): 주문 생성 시점의 주문상품별 금액을 이벤트로 받아 주문상품 단위로 비교 (없으면 ORDER_MISSING)
-            // 합계에 조정 후보는 넣지 않음(#552, 조회가 뺌): −조정이 초과 청구를 가려 틀린 금액이 통과되지 않게. 조정으로 바로잡는 흐름은 #291에서 다시 설계
+            // 합계에는 관리자가 확인한 조정만 넣음(#552·#291, 조회가 고름): 확인 안 한 −조정이 초과 청구를 가려 틀린 금액이 통과되지 않게
             // TODO(#52): 부분 환불이 생기면 기준값을 "차감액 − 환불액"으로 바꿔야 함 (주문 #28 구매확정 금액에 환불 수량 미반영)
             // TODO(#52): 할인 도입 예정. 할인이 생기면 이 검사 기준도 함께 다시 정해야 함 (지금은 정해진 것 없음)
             // 조회 조건상 대상 주문에는 항상 합계·차감액이 있음 (대상 = 스냅샷 후보 중 차감 기록이 있는 것)
             //   차감 기록·정산후보는 INSERT만 하고 지우지 않아서, 대상 조회 뒤에 한 합계·차감액 조회에도 그 주문이 반드시 있음 (격리 수준과 무관)
             //   없는 주문을 건너뛰게 만들지 않는 이유: 건너뛴 주문은 실패 기록이 없어 금액 검사 없이 정산·지급되기 때문
             long deducted = input.deductionsByOrder().get(orderId);
-            // 단 #552부터 합계는 조정 후보를 빼므로, 원래 후보 없이 조정만 있는 주문은 합계가 없음
+            // 단 합계는 확인 안 한 조정 후보를 빼므로(#552), 원래 후보 없이 조정만 있는 주문은 합계가 없음
             //   그대로 꺼내면 NPE → validate 롤백 → 주문 하나 때문에 Job 전체가 FAILED (#557 리뷰)
             //   합계 0으로 보고 통과시키지 않고 금액 불일치로 빼는 이유: 원래 후보 없는 조정은 정상 경로에서 생기지 않는 상태라,
             //   검사할 기준이 없는 돈을 내보내는 것보다 빼 두는 편이 안전함. 횟수에 세어 3번이면 멈추고 관리자 목록(#301)으로 감
-            //   지금은 조정 API가 막혀 있어(501) 생기지 않음. TODO(#291): 조정 API를 열 때 조정만 있는 주문을 어떻게 검사할지 정함
+            //   #291부터 조정 생성이 원래 후보가 없으면 거절해 정상 경로에서는 생기지 않음. 그 전 데이터나 코드 버그에 대비한 안전망으로 둠
             Long total = input.candidateTotalsByOrder().get(orderId);
             if (total == null) {
                 for (PayoutCandidateItem candidate : orderTargets) {
@@ -163,7 +163,7 @@ final class PayoutAmountValidator {
         return failures;
     }
 
-    // 초과 청구 근거 8개를 값별로 만듦 (#391, #570). 모든 계산은 합계와 같은 범위(그 주문의 조정 아닌 정산후보 전체, #552부터 조정 제외)로 함
+    // 초과 청구 근거 8개를 값별로 만듦 (#391, #570). 모든 계산은 합계와 같은 범위(그 주문의 원래 후보 전체 + 확인한 조정, #552·#291)로 함
     //   근거도 판정 공식(합계 > 차감액)과 같은 범위로 봐야 "넘친 금액"과 누적합이 서로 맞음
     // 실패 상세 글(overchargeDetail), 막힌 주문 표의 "막힌 순간" 근거(PayoutService.validate),
     //   관리자 목록의 "지금" 근거(PayoutBlockedOrderService)가 모두 이 메서드로 만들어 같은 계산을 씀
@@ -314,10 +314,12 @@ final class PayoutAmountValidator {
     // TODO(논의 필요): 수수료 정책(수수료율 변경, 0원 수수료 이벤트 등)이 바뀌면 이 검사도 함께 바꿔야 함
     //   지금은 현재 수수료율 하나로 계산해서, 예전 수수료율로 만든 후보나 수수료 면제 이벤트로 0원이 된 후보(판매 금액이 있는데 수수료 0원)를 틀렸다고 봄
     //   (소액이라 버림으로 0원이 된 수수료는 계산과 같아 통과함)
-    // TODO(논의 필요): 조정 후보는 수수료 검사에서 뺌 (원래 후보끼리만 비교). 조정은 환불 작업 때 다른 방향으로 처리 예정
-    //   이번 스냅샷에 조정 후보만 들어와도 그 주문상품의 원래 대금·수수료 짝(이미 정산된 것 포함)을 다시 검사함
-    //   예) 3%로 정산된 원래 짝(9,700 / 300)에 조정이 들어왔는데 그사이 수수료율이 바뀌었으면 → 불일치로 주문이 잠김
-    //   지금은 조정 API가 막혀 있고(501) 수수료율 변경 계획도 없어 생기지 않음. 환불·조정 작업에서 조정 처리 방식이 정해지면 이 부분도 함께 수정
+    // 짝에는 원래 후보와 관리자가 확인한 조정만 들어감 (#291 결정 5번, 조회가 고름). 확인 안 한 조정은 수수료 계산식과 상관없는 금액이라 뺌
+    //   확인한 조정은 대금·수수료를 함께 맞춰야 통과함: 대금만 줄이면 수수료가 판매 금액에 비해 커져 불일치
+    //   예) 판매 40,000(38,800 / 1,200), 결제 30,000 → 대금 −10,000만 넣으면 28,800 / 1,200이라 불일치(기대 900), −9,700 / −300으로 나눠 넣어야 통과
+    //   이렇게 엄격하게 둔 이유: 대금만 줄인 채 통과시키면 판매자는 300원 덜 받고 시스템이 300원을 더 가짐 (초과 청구 검사로는 못 잡음)
+    //   이번 스냅샷에 조정 후보만 들어와도 그 주문상품의 짝(이미 정산된 것 포함)을 다시 검사함
+    //   예) 3%로 정산된 원래 짝(9,700 / 300)에 조정이 들어왔는데 그사이 수수료율이 바뀌었으면 → 불일치로 주문이 잠김 (수수료율 변경 계획이 없어 지금은 생기지 않음)
     private static Map<Long, String> findFeeMismatches(List<PayoutCandidateItem> orderTargets,
                                                        Map<Long, SalePair> pairsByOrderItem) {
         Map<Long, String> mismatches = new LinkedHashMap<>();
@@ -345,19 +347,26 @@ final class PayoutAmountValidator {
     private record SalePair(Long amount, Long fee) {
     }
 
-    // 원래 판매 대금·수수료 후보를 주문상품별 짝으로 묶음
-    private static Map<Long, SalePair> pairByOrderItem(List<PayoutCandidateItem> originals) {
+    // 판매 대금·수수료 후보(원래 + 확인한 조정)를 주문상품별 짝으로 묶음. 같은 종류는 더함 (#291 결정 5번)
+    //   덮어쓰면 마지막 줄이 이겨 짝이 깨짐. 예) 원래 대금 9,000 + 조정 +700 → 덮어쓰면 700, 더하면 9,700
+    //   한쪽이 아직 없으면 null로 두어 "짝이 없음"과 "합이 0"을 구별함 (짝이 없으면 수수료 검사를 건너뜀)
+    private static Map<Long, SalePair> pairByOrderItem(List<PayoutCandidateItem> saleCandidates) {
         Map<Long, SalePair> pairs = new LinkedHashMap<>();
-        for (PayoutCandidateItem candidate : originals) {
+        for (PayoutCandidateItem candidate : saleCandidates) {
             SalePair pair = pairs.getOrDefault(candidate.getOrderItemId(), new SalePair(null, null));
             if (candidate.getEventType() == PayoutEventType.SALE_AMOUNT) {
-                pair = new SalePair(candidate.getAmount(), pair.fee());
+                pair = new SalePair(addOrStart(pair.amount(), candidate.getAmount()), pair.fee());
             } else if (candidate.getEventType() == PayoutEventType.SALE_FEE) {
-                pair = new SalePair(pair.amount(), candidate.getAmount());
+                pair = new SalePair(pair.amount(), addOrStart(pair.fee(), candidate.getAmount()));
             }
             pairs.put(candidate.getOrderItemId(), pair);
         }
         return pairs;
+    }
+
+    // 지금까지의 합(없으면 null)에 금액을 더함
+    private static Long addOrStart(Long sum, Long amount) {
+        return sum == null ? amount : sum + amount;
     }
 
     // 검사 대상 후보를 주문별로 묶음 (조회 순서(id)를 유지해 실패 기록 순서가 매번 같게 함)
