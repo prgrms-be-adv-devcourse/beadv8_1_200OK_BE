@@ -630,7 +630,7 @@ com.ok.delivery
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
     ├── in/event/         이벤트 리스너(Spring 이벤트, Kafka), 받는 메시지 DTO(dto/), Kafka 수신 설정(재시도·DLT), 택배사 알림 이벤트(CarrierDeliveredEvent)
-    ├── in/scheduler/     outbox 발송 스케줄러
+    ├── in/scheduler/     outbox 발송 스케줄러(즉시 발송에서 남은 줄)
     ├── out/persistence/  Spring Data JPA 저장소, Querydsl 조회
     ├── out/event/        이벤트 발행 구현체(outbox, 스프링 이벤트), Kafka 발송기, 토픽 선언, 보내는 메시지 DTO(dto/)
     └── out/carrier/      가짜 택배사(MockCarrierClient)
@@ -659,7 +659,9 @@ com.ok.delivery
 | 배송 → 주문 | `delivery.shipment-dispatched.v1` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `carrier`, `trackingNumber`, `shippedAt` |
 | 배송 → 주문 | `delivery.shipment-delivered.v1` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `deliveredAt` |
 
-- **보내기:** `OutboxDeliveryEventPublisher`가 배송 생성·출고·배송 완료 트랜잭션 안에서 메시지 본문(JSON)을 `delivery_outbox`에 남기고, `DeliveryOutboxRelayScheduler`가 30초마다(`delivery.outbox.relay.cron`) 쌓인 순서대로 Kafka로 보냅니다. 배송 생성·출고·배송 완료가 롤백되면 줄이 남지 않아 보내지 않습니다. 한 줄이 실패하면 그 실행은 거기서 멈추고 다음 실행에서 다시 보냅니다(같은 주문의 메시지 순서를 지키려는 것). 같은 줄이 10번을 넘게 실패하면 ERROR 로그를 남깁니다. 보낸 줄은 지우지 않고 `SENT`로 남깁니다.
+- **보내기:** `OutboxDeliveryEventPublisher`가 배송 생성·출고·배송 완료 트랜잭션 안에서 메시지 본문(JSON)을 `delivery_outbox`에 남기고 배송 안 이벤트 `DeliveryOutboxRecordedEvent`(줄 id)를 냅니다. 커밋되면 `DeliveryOutboxSendListener`(`@TransactionalEventListener` + `@Async`)가 배송 전용 실행기 `delivery-outbox-send`(`DeliveryAsyncConfig`, `platform` 스레드 2개)에서 그 줄을 바로 Kafka로 보냅니다. 롤백되면 줄도 이벤트도 없어 보내지 않습니다. `@ApplicationModuleListener`를 쓰지 않는 이유는 이름 없는 `@Async`(공용 `event` 실행기)와 `REQUIRES_NEW`가 붙기 때문입니다. 커밋 뒤 리스너라 이 구조도 줄마다 Modulith 이벤트 발행 기록(`event_publication`) 한 행을 남깁니다. 브로커 확인을 기다리는 동안에는 DB 커넥션을 잡지 않고, 줄 읽기·"보냄" 기록·발행 기록 완료 표시에서만 잠깐 씁니다.
+- **다시 보내기:** 즉시 발송이 실패하면 예외를 올리지 않고 실패 횟수와 원인만 남기며, 줄은 `PENDING`으로 남습니다. 커밋 직후 서버가 죽은 줄도 `PENDING`입니다. 이런 줄은 `DeliveryOutboxRelayScheduler`가 30초마다(`delivery.outbox.relay.cron`) 남은 지 10초(`min-age`)가 지난 것만 쌓인 순서대로 보냅니다. 평소에는 이 주기를 기다리지 않습니다. 한 줄이 실패하면 그 실행은 거기서 멈추고, 같은 줄이 10번을 넘게 실패하면 ERROR 로그를 남깁니다.
+- **중복과 순서:** "보냄" 기록은 아직 `PENDING`일 때만 바꾸는 조건부 UPDATE라, 즉시 발송과 스케줄러가 같은 줄을 함께 보내면 뒤쪽이 0줄을 받고 INFO 로그를 남깁니다. 메시지는 두 번 나가고 주문이 중복을 무시합니다. 즉시 발송은 줄마다 다른 스레드에서 나가 같은 주문의 메시지 순서를 지키지 않습니다. 주문이 순서 뒤바뀜을 처리합니다(#603). 보낸 줄은 지우지 않고 `SENT`로 남깁니다.
 - **배송 생성:** 결제 완료로 `ShipmentService.create()`가 판매자별 shipment를 만들면 판매자마다 한 줄을 남깁니다. `orderItemIds`는 그 판매자 묶음의 주문 상품 ID이고, `createdAt`은 shipment에 저장된 생성 시각입니다. 같은 결제 완료를 다시 받으면 shipment를 만들지 않으므로 줄도 더 남지 않습니다. 아직 받는 쪽이 없어 Spring 이벤트는 내지 않습니다.
 - **배송 완료:** 택배사 알림(`CarrierNotificationFacade`)과 Mock·조회 경로(`CarrierEventListener`)가 모두 `ShipmentService.deliver()`를 거쳐 같은 줄을 남깁니다. `deliveredAt`은 shipment에 기록한 배송 완료 시각 그대로이고, 주문은 이 값을 자동 구매확정 기준으로 씁니다.
 - **택배사 추적 요청:** 출고 때 배송 안 이벤트 `CarrierTrackingRequestedEvent`도 함께 내고, `CarrierEventListener`가 커밋 뒤에 받아 택배사에 HTTP로 요청합니다. 같은 서버 안의 일이라 Kafka를 거치지 않습니다.

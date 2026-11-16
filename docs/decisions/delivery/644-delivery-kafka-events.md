@@ -4,7 +4,7 @@ module: delivery
 summary: 배송과 주문 사이 Spring 이벤트를 Kafka로 옮기고, 배송 상태를 상태별 토픽과 outbox로 보내며 구매확정은 받아서 반영한다
 status: 확정
 date: 2026-11-17
-paths: [delivery/src/main/java/com/ok/delivery/adapter/out/event/OutboxDeliveryEventPublisher.java, delivery/src/main/java/com/ok/delivery/application/service/DeliveryOutboxRelayFacade.java, delivery/src/main/java/com/ok/delivery/adapter/in/scheduler/DeliveryOutboxRelayScheduler.java, delivery/src/main/java/com/ok/delivery/application/service/ShipmentService.java, delivery/src/main/java/com/ok/delivery/application/dto/CarrierTrackingRequestedEvent.java]
+paths: [delivery/src/main/java/com/ok/delivery/adapter/out/event/OutboxDeliveryEventPublisher.java, delivery/src/main/java/com/ok/delivery/application/service/DeliveryOutboxRelayFacade.java, delivery/src/main/java/com/ok/delivery/adapter/in/scheduler/DeliveryOutboxRelayScheduler.java, delivery/src/main/java/com/ok/delivery/adapter/in/event/DeliveryOutboxSendListener.java, delivery/src/main/java/com/ok/delivery/config/DeliveryAsyncConfig.java, delivery/src/main/java/com/ok/delivery/application/service/ShipmentService.java, delivery/src/main/java/com/ok/delivery/application/dto/CarrierTrackingRequestedEvent.java]
 related: [599, 603, 648, 558, 668, 600]
 ---
 
@@ -28,7 +28,7 @@ related: [599, 603, 648, 558, 668, 600]
 | 결정 | 선택 | 이유 |
 |---|---|---|
 | 작업 단위 | 이슈 #644 하나에 이벤트별 PR(결제 완료 수신, 배송 시작, 배송 완료, 배송 생성 발행, 구매확정 수신). 발행 PR은 outbox 위에, 구매확정 수신은 결제 완료 수신 위에 `gh stack`으로 쌓는다 | 한 PR에 몰지 말고 이벤트 하나씩 옮기자는 팀 피드백(사용자 결정). 각 PR이 필요한 기반 위에만 올라가 기존 PR을 다시 쌓지 않는다 |
-| 보내는 방식 | 배송 전용 `delivery_outbox` 표에 상태 변경과 같은 트랜잭션으로 줄을 남기고, 스케줄러가 쌓인 순서대로 보낸다. 첫 실패에서 그 실행을 멈춘다 | 롤백되면 나가지 않고 브로커 장애가 끝나면 빠짐없이 나간다. 회원·정산 outbox와 같은 방식이라 리뷰가 쉽다. 멈추는 것은 같은 주문의 메시지 순서를 지키려는 것이다 |
+| 보내는 방식 | 배송 전용 `delivery_outbox` 표에 상태 변경과 같은 트랜잭션으로 줄을 남긴다. 커밋 뒤 이름 붙은 전용 실행기(`delivery-outbox-send`, #417)의 `@Async`로 그 줄을 바로 보내고, 못 보낸 줄은 스케줄러(30초)가 보낸다(사용자 결정). 스케줄러는 남은 지 10초 지난 줄만 고르고, "보냄"은 `PENDING`일 때만 바꾸는 조건부 UPDATE다 | 롤백되면 나가지 않고 브로커 장애가 끝나면 빠짐없이 나간다. 주문의 Spring 경로가 지워지면 이 경로뿐이라 상태 변경이 최대 30초 늦지 않게 한다(측정: 커밋 뒤 토픽 도착 16ms). 요청 스레드가 넘기므로 대기열 있는 `platform`이고, 브로커 확인 중에는 커넥션을 잡지 않아 2스레드. 10초는 브로커 확인 대기 상한과 같다. 두 경로가 겹치면 한 번 더 나가고 주문이 무시한다. 10초·조건부 UPDATE·중복 허용은 구현 중 설계다 |
 | 토픽 모양 | 상태별 토픽. `status` 필드를 둔 토픽 하나로 합치지 않는다 | 상태마다 필드가 달라 합치면 null 필드가 많다. 받는 쪽이 필요한 상태만 구독하고 상태별로 재처리·DLT를 본다. 주문이 순서 뒤바뀜을 이미 처리해 단일 토픽의 순서 보장 이점이 작다(사용자 결정) |
 | 받다가 실패 | 1·2·4초 재시도 뒤 그룹별 DLT(`<받은 토픽>.<그룹>.DLT`). `IllegalArgumentException`과 읽지 못한 JSON은 재시도 없이 바로 DLT. 로그에는 배송지 대신 토픽·파티션·오프셋·키만 | 배송 생성이 빠지면 결제된 주문이 배송되지 않아 건너뛸 수 없다. 그룹은 리스너마다 `<모듈>.<용도>`(#648) |
 | 전환 순서 | 이중 경로. 배송이 Spring·Kafka 둘 다 받고 보낸 뒤, 주문(#686) 머지 다음에 배송의 Spring 경로를 지운다 | 머지 날짜가 묶이지 않는다. 주문 담당 동의 |
@@ -41,7 +41,7 @@ related: [599, 603, 648, 558, 668, 600]
 
 ## 버린 대안
 
-- **보내는 방식:** 커밋 뒤 바로 `send`는 브로커 장애·앱 종료 때 메시지를 잃는다. Modulith 외부화(`@Externalized`)는 공통 의존성이라 팀 결정이 필요하다.
+- **보내는 방식:** outbox 없이 커밋 뒤 바로 `send`는 브로커 장애·앱 종료 때 메시지를 잃는다. Modulith 외부화(`@Externalized`)는 공통 의존성이라 팀 결정이 필요하다. 스케줄러만 쓰면 최대 30초 늦고 처리량이 약 3.3건/초다. 이름 없는 `@Async`는 모든 리스너가 쓰는 `event` 실행기를 같이 써 브로커가 느리면 다른 리스너가 밀린다. `@ApplicationModuleListener`는 이름 없는 `@Async`(공용 `event` 실행기)와 `REQUIRES_NEW`를 강제해, 실행기를 나눌 수 없고 브로커 확인 중에도 커넥션을 잡는다.
 - **토픽:** `delivery.shipment-status-changed.v1` 하나에 `status` 필드. 같은 주문의 순서가 보장되지만 null 필드가 늘고, 이미 합의한 주문(#686)과 PR을 함께 바꿔야 한다.
 - **작업 단위:** 세 이벤트를 한 PR(닫은 #645)로. 리뷰 범위가 넓어 팀 피드백으로 나눴다. 구매확정 수신을 위해 결제 완료 수신 PR 위로 발행 PR들을 다시 쌓는 한 줄 스택은 기존 PR을 rebase·재생성해야 해서 버렸다.
 - **구매확정:** 배송이 배송 완료 N일 뒤 스스로 확정하는 배치. 주문에 이미 있고 합의와 어긋난다.
@@ -52,7 +52,10 @@ related: [599, 603, 648, 558, 668, 600]
 
 - 주문 PR #686은 주문의 Spring 경로를 한꺼번에 지운다. 배송의 결제 완료 수신, 배송 시작·완료 발행 PR이 모두 머지된 뒤에 머지해야 한다. 하나라도 빠지면 그 이벤트가 상대에 닿지 않는다.
 - 토픽이 상태별이라 같은 주문이라도 토픽 사이 순서는 보장되지 않는다. 주문이 주문 상품 상태로 중복·순서 뒤바뀜을 처리한다는 전제다. 이 전제가 바뀌면 토픽 결정을 다시 본다.
-- 릴레이는 30초마다 100줄을 한 줄씩 동기 전송한다. 계산상 처리량 상한이 약 3.3건/초다. 메시지가 이보다 많이 생기면 PENDING이 쌓인다.
+- 즉시 발송은 같은 주문의 순서를 지키지 않는다. 스케줄러는 즉시 발송에서 남은 줄만 보내며, 30초마다 100줄이라 장애 뒤 복구 처리량은 약 3.3건/초다.
+- 즉시 발송 실행기의 대기열(1000)이 차면 커밋한 요청 스레드가 기다린다(#417 정책). 브로커가 오래 죽으면 작업마다 10초씩 걸려 찰 수 있다. (미확인) 부하에서 측정하지 않았다.
+- min-age는 대기열에서 기다린 시간을 빼 주지 않는다. 브로커 장애 때 10초 넘게 기다린 즉시 발송과 스케줄러가 같은 줄을 함께 보낼 수 있다. 대부분은 `send()`가 보내기 전에 `PENDING`인지 다시 보는 것으로 걸러진다.
+- 즉시 발송 리스너도 커밋 뒤 리스너라 Modulith가 outbox 줄마다 `event_publication` 행을 하나 더 쌓는다(업무 트랜잭션의 INSERT, 발송 뒤 완료 표시). 지금은 그대로 둔다.
 - 릴레이는 줄을 잠그지 않는다. 서버를 여러 대 띄우면 같은 줄을 여러 번 보낸다(주문은 중복을 무시한다). 모듈별 서버로 나눌 때 다시 본다.
 - DLT에는 받는 DTO로 다시 직렬화한 값이 들어간다(DTO에 없는 필드는 빠짐). 읽지 못한 JSON만 원본 그대로다.
 - `deliveredAt`은 주문 자동 구매확정(배송 완료 3일 뒤)의 기준 시각이다. 배송에 저장된 완료 시각을 그대로 보낸다.
