@@ -12,6 +12,7 @@ import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.SellerShippingFee;
 import com.ok.order.order.application.port.out.OrderRepository;
+import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.testsupport.FakeDeliveryPort;
 import com.ok.testsupport.FakeProductPort;
 import com.ok.testsupport.FakeWalletPort;
@@ -32,6 +33,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -136,11 +138,43 @@ class OrderModuleTest {
     void 결제_실패를_받으면_주문이_결제_실패되고_재고를_풀고_장바구니는_그대로다(Scenario scenario) {
         // when & then
         scenario.publish(new WalletPaymentFailedEvent(orderId, BUYER_ID, WalletPaymentFailedEvent.INSUFFICIENT_BALANCE))
-                .andWaitForStateChange(() -> fakeProductPort.releasedOrderIds().contains(orderId), released -> released)
-                .andVerify(released -> assertSoftly(softly -> {
+                .andWaitForStateChange(this::stockReleasedAt)
+                .andVerify(releasedAt -> assertSoftly(softly -> {
                     softly.assertThat(orderStatus()).isEqualTo("PAYMENT_FAILED");
                     softly.assertThat(itemStatuses()).containsOnly("PAYMENT_FAILED");
+                    softly.assertThat(fakeProductPort.releasedOrderIds()).contains(orderId);
                     softly.assertThat(cartOptionIds()).containsExactlyInAnyOrder(ORDERED_OPTION_ID, NOT_ORDERED_OPTION_ID);
+                }));
+    }
+
+    // 리스너가 트랜잭션을 열면 결제 실패와 재고 해제 HTTP가 한 트랜잭션에 묶여, 해제 응답을 기다리는 동안 주문 행 잠금과 커넥션을 쥔다.
+    // 해제를 받는 순간 다른 연결로 주문 상태를 읽어, 결제 실패가 이미 커밋돼 잠금이 풀린 뒤 해제를 부르는지 본다(#657)
+    @Test
+    void 결제_실패는_재고_해제를_부르기_전에_커밋된다(Scenario scenario) {
+        // given
+        AtomicReference<String> statusAtRelease = new AtomicReference<>();
+        fakeProductPort.beforeRelease(released -> statusAtRelease.set(orderStatus()));
+
+        // when & then
+        scenario.publish(new WalletPaymentFailedEvent(orderId, BUYER_ID, WalletPaymentFailedEvent.INSUFFICIENT_BALANCE))
+                .andWaitForStateChange(this::stockReleasedAt)
+                .andVerify(releasedAt -> assertThat(statusAtRelease.get()).isEqualTo("PAYMENT_FAILED"));
+    }
+
+    // 리스너가 트랜잭션 없이 받아 결제 실패를 먼저 커밋하므로, 재고 해제가 실패해도 결제 실패는 남는다(#657).
+    // 리스너 처리가 끝났다는 Modulith 완료 기록도 남아, 트랜잭션을 뺀 리스너도 처리 기록이 붙는지 함께 확인한다
+    @Test
+    void 결제_실패_처리_중_재고_해제가_실패해도_결제_실패는_남고_해제는_재처리_대상이_된다(Scenario scenario) {
+        // given
+        fakeProductPort.failReleaseWith(OrderErrorCode.PRODUCT_API_FAILED);
+
+        // when & then
+        scenario.publish(new WalletPaymentFailedEvent(orderId, BUYER_ID, WalletPaymentFailedEvent.INSUFFICIENT_BALANCE))
+                .andWaitForStateChange(this::countCompletedPaymentFailedEvents, count -> count == 1)
+                .andVerify(count -> assertSoftly(softly -> {
+                    softly.assertThat(orderStatus()).isEqualTo("PAYMENT_FAILED");
+                    softly.assertThat(stockReleasedAt()).isNull();
+                    softly.assertThat(fakeProductPort.releasedOrderIds()).doesNotContain(orderId);
                 }));
     }
 
@@ -193,6 +227,18 @@ class OrderModuleTest {
     private List<Long> cartOptionIds() {
         return jdbcTemplate.queryForList("SELECT ci.product_option_id FROM " + OrderSchema.NAME + ".cart_item ci JOIN "
                 + OrderSchema.NAME + ".cart c ON ci.cart_id = c.id WHERE c.member_id = ?", Long.class, BUYER_ID);
+    }
+
+    private LocalDateTime stockReleasedAt() {
+        return jdbcTemplate.queryForObject("SELECT stock_released_at FROM " + OrderSchema.NAME + ".orders WHERE id = ?",
+                LocalDateTime.class, orderId);
+    }
+
+    private long countCompletedPaymentFailedEvents() {
+        return completedEventPublications.findAll().stream()
+                .map(EventPublication::getEvent)
+                .filter(e -> e instanceof WalletPaymentFailedEvent failed && failed.orderId().equals(orderId))
+                .count();
     }
 
     // 리스너 처리가 끝난 결제 완료 이벤트 수. 완료 기록을 지우도록 설정이 바뀌면 기다리는 방식을 바꿔야 한다
