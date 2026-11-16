@@ -27,4 +27,10 @@ public interface ShipmentJpaRepository extends JpaRepository<Shipment, Long>, Sh
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Shipment s where s.id = :id")
     Optional<Shipment> findByIdForUpdate(@Param("id") Long id);
+
+    // fetch join으로 items를 채우면 조건에 맞는 항목 하나만 담겨 거래완료 판정이 틀어지므로 join만 하고 items는 따로 읽는다
+    @Override
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Shipment s join s.items i where i.orderItemId = :orderItemId")
+    Optional<Shipment> findByOrderItemIdForUpdate(@Param("orderItemId") Long orderItemId);
 }

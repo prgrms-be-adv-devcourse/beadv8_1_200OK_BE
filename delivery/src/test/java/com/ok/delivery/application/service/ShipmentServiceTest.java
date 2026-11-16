@@ -11,9 +11,11 @@ import com.ok.delivery.application.port.out.DeliveryEventPublisher;
 import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestRepository;
 import com.ok.delivery.application.port.out.ShipmentQueryRepository;
 import com.ok.delivery.application.port.out.ShipmentRepository;
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.DeliveryDatePolicy;
 import com.ok.delivery.domain.SellerShippingSetting;
 import com.ok.delivery.domain.Shipment;
+import com.ok.delivery.domain.ShipmentItem;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.domain.WeekendBusinessDayCalendar;
 import com.ok.delivery.exception.DeliveryErrorCode;
@@ -331,6 +333,82 @@ class ShipmentServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
         then(deliveryEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 항목이_하나인_shipment를_구매확정하면_지금_시각으로_거래완료된다() {
+        // given
+        Shipment sut = deliveredShipment(item(101L));
+        given(shipmentRepository.findByOrderItemIdForUpdate(101L)).willReturn(Optional.of(sut));
+
+        // when
+        shipmentService.confirmPurchase(101L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.COMPLETED);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(FRIDAY_NOON);
+        });
+    }
+
+    @Test
+    void 항목이_둘이면_두_번째_구매확정에서_거래완료된다() {
+        // given
+        Shipment sut = deliveredShipment(item(101L), item(102L));
+        given(shipmentRepository.findByOrderItemIdForUpdate(101L)).willReturn(Optional.of(sut));
+        given(shipmentRepository.findByOrderItemIdForUpdate(102L)).willReturn(Optional.of(sut));
+
+        // when
+        shipmentService.confirmPurchase(101L);
+        ShipmentStatus afterFirst = sut.getStatus();
+        shipmentService.confirmPurchase(102L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(afterFirst).isEqualTo(ShipmentStatus.DELIVERED);
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.COMPLETED);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("repeatedConfirmations")
+    void 같은_구매확정이_다시_와도_예외_없이_결과가_같다(List<Long> orderItemIds, ShipmentStatus expectedStatus) {
+        // given
+        Shipment sut = deliveredShipment(item(101L), item(102L));
+        orderItemIds.stream().distinct().forEach(id ->
+                given(shipmentRepository.findByOrderItemIdForUpdate(id)).willReturn(Optional.of(sut)));
+
+        // when
+        orderItemIds.forEach(shipmentService::confirmPurchase);
+
+        // then
+        assertThat(sut.getStatus()).isEqualTo(expectedStatus);
+    }
+
+    static Stream<Arguments> repeatedConfirmations() {
+        return Stream.of(
+                // 확정된 항목을 다시 확정: 다른 항목이 남아 배송 완료 그대로
+                Arguments.of(List.of(101L, 101L), ShipmentStatus.DELIVERED),
+                // 거래완료된 뒤 다시 확정: 거래완료 그대로
+                Arguments.of(List.of(101L, 102L, 102L), ShipmentStatus.COMPLETED));
+    }
+
+    @Test
+    void 구매확정할_주문_상품이_담긴_shipment가_없으면_IllegalArgumentException이다() {
+        // given
+        given(shipmentRepository.findByOrderItemIdForUpdate(999L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.confirmPurchase(999L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("구매확정할 주문 상품이 담긴 shipment가 없습니다. orderItemId=999");
+    }
+
+    private static Shipment deliveredShipment(ShipmentItem... items) {
+        Shipment shipment = shipment(items);
+        shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", FRIDAY_NOON);
+        shipment.deliver(FRIDAY_NOON);
+        return shipment;
     }
 
     private static ShipmentCreateCommand command(SellerShipmentCommand seller) {

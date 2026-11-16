@@ -9,7 +9,7 @@ import com.ok.delivery.application.dto.ShipmentSummaryResult;
 import org.springframework.data.domain.Page;
 
 /**
- * 결제 완료된 주문의 배송 생성, 출고, 배송 완료와 구매자·판매자의 배송 조회 유스케이스.
+ * 결제 완료된 주문의 배송 생성, 출고, 배송 완료, 구매확정 반영과 구매자·판매자의 배송 조회 유스케이스.
  */
 public interface ShipmentUseCase {
 
@@ -43,6 +43,16 @@ public interface ShipmentUseCase {
      * @throws com.ok.common.exception.RestApiException 없으면 {@code SHIPMENT_NOT_FOUND}, 상태 규칙은 {@link com.ok.delivery.domain.Shipment#deliver}를 따른다
      */
     void deliver(Long shipmentId);
+
+    /**
+     * 주문이 정한 구매확정을 반영한다. 항목을 확정하고, 모든 항목이 확정되면 {@code DELIVERED → COMPLETED}
+     * 같은 shipment의 다른 항목 구매확정과 겹쳐도 거래완료를 놓치지 않도록 shipment 행 잠금 아래에서 처리한다.
+     * 이미 {@code COMPLETED}면 아무것도 하지 않아 같은 구매확정이 다시 와도 결과가 같다.
+     *
+     * @throws IllegalArgumentException 주문 상품이 담긴 shipment가 없으면
+     * @throws com.ok.common.exception.RestApiException 상태·항목 규칙은 {@link com.ok.delivery.domain.Shipment#confirmPurchase}를 따른다
+     */
+    void confirmPurchase(Long orderItemId);
 
     /**
      * 구매자의 배송 목록을 최신순으로 25건씩 조회한다.

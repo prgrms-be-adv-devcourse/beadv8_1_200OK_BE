@@ -32,5 +32,11 @@ public interface ShipmentRepository {
      */
     Optional<Shipment> findByIdForUpdate(Long id);
 
+    /**
+     * 주문 상품이 담긴 shipment를 쓰기 잠금으로 조회한다. 주문 상품은 한 shipment에만 담긴다({@code shipment_item.order_item_id} UNIQUE).
+     * 잠금 계약은 {@link #findByIdForUpdate}와 같다.
+     */
+    Optional<Shipment> findByOrderItemIdForUpdate(Long orderItemId);
+
     void flush();
 }

@@ -273,6 +273,27 @@ public class Shipment extends BaseTime {
     }
 
     /**
+     * 주문 상품 하나를 구매확정하고, 전량 취소된 항목을 뺀 모든 항목이 확정되면 거래를 완료한다. {@code DELIVERED → COMPLETED}
+     * 이미 확정된 항목이면 그대로 둔다. 이미 {@code COMPLETED}인 shipment의 중복 구매확정은 호출하는 쪽이 거른다.
+     *
+     * @param orderItemId 주문이 넘기는 주문 상품 ID. 이 shipment의 항목이어야 한다
+     * @throws RestApiException {@code DELIVERED}가 아니면 {@code INVALID_SHIPMENT_STATE},
+     *                          항목 규칙은 {@link ShipmentItem#confirm}을 따른다
+     * @throws IllegalArgumentException 이 shipment의 항목이 아니면
+     */
+    public void confirmPurchase(Long orderItemId, LocalDateTime now) {
+        requireStatus(ShipmentStatus.DELIVERED);
+        items.stream()
+                .filter(it -> it.getOrderItemId().equals(orderItemId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("shipment에 없는 주문 상품입니다. orderItemId=" + orderItemId))
+                .confirm();
+        if (isAllConfirmed()) {
+            complete(now);
+        }
+    }
+
+    /**
      * 배송을 취소한다. {@code PREPARING → CANCELLED}
      *
      * <p>모든 항목이 전량 취소 확정되어 있어야 한다. 일부만 취소되면 배송은 계속된다.

@@ -400,6 +400,68 @@ class ShipmentTest {
     }
 
     @Test
+    void 구매확정으로_마지막_항목이_확정되면_거래완료가_된다() {
+        // given
+        Shipment sut = shipmentIn(ShipmentStatus.DELIVERED);
+        sut.confirmPurchase(1L, NOW);
+
+        // when
+        sut.confirmPurchase(2L, NOW.plusDays(1));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.COMPLETED);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(NOW.plusDays(1));
+        });
+    }
+
+    @Test
+    void 확정되지_않은_항목이_남으면_구매확정해도_배송_완료_상태다() {
+        // given
+        Shipment sut = shipmentIn(ShipmentStatus.DELIVERED);
+
+        // when
+        sut.confirmPurchase(1L, NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
+            softly.assertThat(sut.getItems().get(0).isConfirmed()).isTrue();
+            softly.assertThat(sut.getItems().get(1).isConfirmed()).isFalse();
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("statusesExceptDelivered")
+    void 배송_완료가_아니면_구매확정할_수_없고_항목도_그대로다(ShipmentStatus status) {
+        // given
+        Shipment sut = shipmentIn(status);
+        boolean confirmedBefore = sut.getItems().getFirst().isConfirmed();
+
+        // when & then
+        assertThatThrownBy(() -> sut.confirmPurchase(1L, NOW))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
+        assertThat(sut.getItems().getFirst().isConfirmed()).isEqualTo(confirmedBefore);
+    }
+
+    static Stream<ShipmentStatus> statusesExceptDelivered() {
+        return EnumSet.complementOf(EnumSet.of(ShipmentStatus.DELIVERED)).stream();
+    }
+
+    @Test
+    void shipment에_없는_주문_상품은_구매확정할_수_없다() {
+        // given
+        Shipment sut = shipmentIn(ShipmentStatus.DELIVERED);
+
+        // when & then
+        assertThatThrownBy(() -> sut.confirmPurchase(999L, NOW))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("shipment에 없는 주문 상품입니다. orderItemId=999");
+    }
+
+    @Test
     void 모든_항목이_전량_취소되면_취소가_된다() {
         // given
         Shipment sut = shipmentIn(ShipmentStatus.PREPARING);

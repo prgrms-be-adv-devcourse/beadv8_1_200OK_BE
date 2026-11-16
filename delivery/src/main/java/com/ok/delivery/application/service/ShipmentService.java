@@ -138,6 +138,20 @@ public class ShipmentService implements ShipmentUseCase {
     }
 
     @Override
+    @Transactional
+    public void confirmPurchase(Long orderItemId) {
+        // 주문은 배송이 알린 배송 완료 항목만 구매확정하므로 shipment가 없으면 데이터가 어긋난 것이다.
+        // 다시 해도 같으니 건너뛰지 않고 표준 예외로 알려 DLT에 남긴다
+        Shipment shipment = shipmentRepository.findByOrderItemIdForUpdate(orderItemId)
+                .orElseThrow(() -> new IllegalArgumentException("구매확정할 주문 상품이 담긴 shipment가 없습니다. orderItemId=" + orderItemId));
+        if (shipment.getStatus() == ShipmentStatus.COMPLETED) {
+            log.info("이미 거래완료된 shipment의 구매확정, 무시. shipmentId={}, orderItemId={}", shipment.getId(), orderItemId);
+            return;
+        }
+        shipment.confirmPurchase(orderItemId, LocalDateTime.now(clock));
+    }
+
+    @Override
     public Page<ShipmentSummaryResult> getBuyerShipments(Long buyerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findByBuyerId(buyerId, PageRequest.of(page, PAGE_SIZE));
         Map<Long, List<ShipmentItem>> itemsByShipmentId = itemsByShipmentId(idsOf(shipments));
