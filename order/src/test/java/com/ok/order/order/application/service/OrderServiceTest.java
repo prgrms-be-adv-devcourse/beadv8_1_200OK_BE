@@ -14,6 +14,7 @@ import com.ok.order.order.application.dto.OrderDetailItemResult;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
+import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
@@ -86,7 +87,7 @@ class OrderServiceTest {
     @Test
     void 주문_생성_이벤트에는_주문_ID_구매자_결제_총액을_담는다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.of(savedOrder(10L)));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(savedOrder(10L)));
 
         // when
         sut.publishCreated(10L);
@@ -96,9 +97,171 @@ class OrderServiceTest {
     }
 
     @Test
+    void 주문_생성_이벤트를_발행하면_결제_요청_시각을_남긴다() {
+        // given
+        Order order = savedOrder(10L);
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.publishCreated(10L);
+
+        // then
+        assertThat(order.getPaymentRequestedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void 정리로_취소된_주문에는_결제를_요청하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.cancel();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishCreated(10L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("결제 대기가 아닌 주문에는 결제를 요청할 수 없습니다. status=CANCELED");
+        then(orderEventPublisher).should(never()).publishOrderCreatedEvent(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void 같은_멱등키의_주문이_결제를_요청했으면_그_주문_ID를_돌려준다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentRequested(NOW);
+        given(orderRepository.findByBuyerIdAndIdempotencyKey(1L, "key")).willReturn(Optional.of(order));
+
+        // when
+        Optional<Long> orderId = sut.findIdByIdempotencyKey(1L, "key");
+
+        // then
+        assertThat(orderId).contains(10L);
+    }
+
+    @Test
+    void 같은_멱등키의_주문을_아직_만드는_중이면_처리_중으로_거절한다() {
+        // given
+        given(orderRepository.findByBuyerIdAndIdempotencyKey(1L, "key")).willReturn(Optional.of(savedOrder(10L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.findIdByIdempotencyKey(1L, "key"))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_CREATION_IN_PROGRESS));
+    }
+
+    @Test
+    void 결제_대기_정리_대상은_결제_요청_전은_5분_요청_뒤는_30분_전을_기준으로_찾는다() {
+        // when
+        sut.findStalePaymentPendingOrderIds();
+
+        // then
+        then(orderRepository).should().findStalePaymentPendingOrderIds(
+                OrderStatus.PAYMENT_PENDING, NOW.minusMinutes(5), NOW.minusMinutes(30));
+    }
+
+    @Test
+    void 결제_요청_전에_멈춘_주문은_5분이_지나면_취소하고_재고를_풀어야_한다() {
+        // given
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(5));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        });
+    }
+
+    @Test
+    void 결제를_요청하고_30분이_지나도_결과가_없으면_취소하고_재고를_풀어야_한다() {
+        // given
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(30));
+        order.markPaymentRequested(NOW.minusMinutes(30));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        });
+    }
+
+    @Test
+    void 조회_뒤_결제를_요청해_기준이_다시_시작된_주문은_취소하지_않는다() {
+        // given: 생성은 5분 전이지만 방금 결제를 요청했다
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(5));
+        order.markPaymentRequested(NOW);
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        });
+    }
+
+    @Test
+    void 조회_뒤_결제_결과가_먼저_왔으면_정리하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        ReflectionTestUtils.setField(order, "createdAt", NOW.minusHours(1));
+        order.markPaymentRequested(NOW.minusHours(1));
+        order.markPaid();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(shouldReleaseStock).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+        });
+    }
+
+    @Test
+    void 정리할_주문이_없으면_예외_없이_재고를_풀지_않는다() {
+        // given
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
+
+        // when
+        boolean shouldReleaseStock = sut.cancelStalePaymentPending(10L);
+
+        // then
+        assertThat(shouldReleaseStock).isFalse();
+    }
+
+    @Test
+    void 정리로_취소된_주문에_결제_완료가_늦게_와도_상태를_바꾸지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.cancel();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        then(removeOrderedCartItems).should(never()).removeOrderItems(anyLong(), anyList());
+        then(orderEventPublisher).should(never()).publishOrderPaidEvent(any());
+    }
+
+    @Test
     void 없는_주문은_생성_이벤트를_발행할_수_없다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> sut.publishCreated(10L))
@@ -108,10 +271,46 @@ class OrderServiceTest {
     }
 
     @Test
+    void 결제_대기_주문을_취소하면_주문이_취소로_남는다() {
+        // given
+        Order order = savedOrder(10L);
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.cancel(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+    }
+
+    @Test
+    void 결제_결과를_받은_주문은_취소하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.cancel(10L);
+
+        // then
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+    }
+
+    @Test
+    void 취소할_주문이_없으면_예외_없이_넘어간다() {
+        // given
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
+
+        // when & then
+        sut.cancel(10L);
+    }
+
+    @Test
     void 주문_목록에는_대표_상품명과_상품_수와_총액을_담는다() {
         // given
         Page<Order> orders = new PageImpl<>(List.of(savedOrder(10L)));
-        given(orderRepository.findByBuyerIdOrderByIdDesc(eq(1L), any(Pageable.class))).willReturn(orders);
+        given(orderRepository.findByBuyerIdAndStatusNotOrderByIdDesc(eq(1L), eq(OrderStatus.CANCELED), any(Pageable.class))).willReturn(orders);
 
         // when
         Page<OrderSummaryResult> result = sut.getOrders(1L, 0, 10);
@@ -170,7 +369,7 @@ class OrderServiceTest {
     void 결제_대기_주문에_결제_완료가_오면_결제_완료되고_장바구니에서_빠진다() {
         // given
         Order order = savedOrder(10L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -188,7 +387,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -202,7 +401,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaymentFailed();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -216,7 +415,7 @@ class OrderServiceTest {
     void 결제_대기_주문에_결제_실패가_오면_결제_실패가_되고_재고를_풀어야_한다() {
         // given
         Order order = savedOrder(10L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         boolean shouldReleaseStock = sut.failPayment(10L);
@@ -235,7 +434,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaymentFailed();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         boolean shouldReleaseStock = sut.failPayment(10L);
@@ -250,7 +449,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         boolean shouldReleaseStock = sut.failPayment(10L);
@@ -265,7 +464,7 @@ class OrderServiceTest {
     @Test
     void 결제_이벤트의_주문이_없으면_예외_없이_넘어가고_재고를_풀지_않는다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then (예외를 던지면 이벤트가 계속 재처리됨)
         assertThatCode(() -> sut.completePayment(10L)).doesNotThrowAnyException();
@@ -280,7 +479,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.startShipping(10L, 100L);
@@ -295,7 +494,7 @@ class OrderServiceTest {
         LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 20, 15, 0);
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completeDelivery(10L, 100L, deliveredAt);
@@ -310,7 +509,7 @@ class OrderServiceTest {
     @Test
     void 배송_이벤트의_주문이_없으면_예외_없이_넘어간다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then
         assertThatCode(() -> sut.startShipping(10L, 100L)).doesNotThrowAnyException();
@@ -492,7 +691,7 @@ class OrderServiceTest {
         order.registerShippingAddress("홍길동", "010-1234-5678", "06236", "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요");
         order.applyShippingFee(100L, new SellerShippingFee(3_000L, null, 3_000L, 0L));
         ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
@@ -525,12 +724,86 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completePayment(10L);
 
         // then
         then(orderEventPublisher).should(never()).publishOrderPaidEvent(any());
+    }
+
+    // ---------- 환불 반영 뒤 구매확정 (#28) ----------
+
+    // 출고 전에 환불을 반영한 뒤 배송 완료된 주문 (사과 10,000원 × 2개, 판매자 100, 구매자 배송비 0원)
+    private Order deliveredOrderAfterRefund(int refundQuantity, long deductedShippingFee) {
+        Order order = savedOrder(10L);
+        order.markPaid();
+        order.getAllItems().get(0).recordRefund(7L, refundQuantity, deductedShippingFee);
+        order.markDelivered(100L, NOW.minusDays(1));
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
+        return order;
+    }
+
+    @Test
+    void 일부_환불된_상품을_구매확정하면_환불분을_뺀_금액과_뺀_배송비를_더한_배송비로_이벤트를_발행한다() {
+        // given: 2개 중 1개 환불, 환불에서 기본 배송비 3,000원을 뺐다
+        Order order = deliveredOrderAfterRefund(1, 3_000L);
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.confirmPurchase(1L, 10L, 1L);
+
+        // then
+        then(orderEventPublisher).should().publishOrderProductConfirmedEvent(10L, 1L, 100L, 10_000L, 3_000L);
+    }
+
+    @Test
+    void 모두_환불된_상품은_구매확정해도_정산용_이벤트를_발행하지_않는다() {
+        // given: #658 전에는 모두 환불된 상품도 묶음과 함께 배송 완료가 됐다. 그때 배송 완료된 상품을 상태로 직접 만든다
+        Order order = savedOrder(10L);
+        order.markPaid();
+        order.getAllItems().get(0).recordRefund(7L, 2, 0L);
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "status", OrderItemStatus.DELIVERED);
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
+        given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.confirmPurchase(1L, 10L, 1L);
+
+        // then
+        assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+        then(orderEventPublisher).should(never())
+                .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    // ---------- 환불 취소 반영 (#28) ----------
+
+    @Test
+    void 환불_취소를_반영할_주문_상품이_없으면_404다() {
+        // given
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(new RecordOrderItemRefundCommand(1L, 7L, 1, 0L)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+    }
+
+    @Test
+    void 같은_환불_ID가_다른_주문_상품에_이미_반영됐으면_거절한다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        ReflectionTestUtils.setField(item, "id", 1L);
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+        given(orderRepository.findOrderItemIdByRefundId(7L)).willReturn(Optional.of(2L));
+
+        // when & then
+        assertThatThrownBy(() -> sut.recordRefund(new RecordOrderItemRefundCommand(1L, 7L, 1, 0L)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.REFUND_ID_CONFLICT));
+        assertThat(item.refundedQuantity()).isZero();
     }
 }

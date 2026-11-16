@@ -2,22 +2,29 @@ package com.ok.payout.application.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutBlockedOrder;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutDepositCheck;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import com.ok.payout.domain.PayoutPolicy;
 import com.ok.payout.domain.PayoutSellerDraft;
 import com.ok.payout.domain.PayoutSellerDraftItem;
 import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.exception.PayoutErrorCode;
+import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.port.out.PayoutFailureRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
+import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.SnapshotItemRow;
 import com.ok.payout.application.port.out.PayoutRepository;
 import com.ok.payout.application.port.out.PayoutSellerDraftRepository;
@@ -35,10 +42,14 @@ import com.ok.payout.application.port.in.PayoutSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerCandidateSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
 import com.ok.payout.application.port.in.PayoutSummaryResult;
+import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
-import com.ok.payout.application.port.out.SellerPayoutCreatedCommand;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutDepositCheckRepository;
+import com.ok.payout.application.port.out.PayoutOutboxRepository;
+import com.ok.payout.application.port.out.PayoutOutboxRow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -49,8 +60,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,6 +77,7 @@ public class PayoutService implements PayoutUseCase {
 
     // 코드 고장으로 전체를 멈출 때 예외 메시지에 담는 항목(판매자 합계 불일치 내용, 후보 ID) 최대 개수 (메시지가 너무 길어지지 않게, 나머지는 건수로만 남김)
     private static final int MESSAGE_ITEM_LIMIT = 20;
+    private static final int MAX_CONSECUTIVE_PUBLISH_FAILURES = 3;
 
     private final PayoutQueryRepository payoutQueryRepository;
     private final PayoutCandidateItemRepository payoutCandidateItemRepository;
@@ -73,10 +87,14 @@ public class PayoutService implements PayoutUseCase {
     private final PayoutSellerDraftRepository payoutSellerDraftRepository;
     private final PayoutSystemDraftItemRepository payoutSystemDraftItemRepository;
     private final PayoutFailureRepository payoutFailureRepository;
+    // 금액 검사가 초과 청구 "막힌 순간" 근거를 막힌 주문 집계 표에 예비 줄로 남김 (#570)
+    private final PayoutBlockedOrderRepository payoutBlockedOrderRepository;
     // draftStep의 판매자 1명 저장·실패 기록 (판매자마다 별도 트랜잭션, #90)
     private final PayoutSellerDraftService payoutSellerDraftService;
-    // 지갑으로 정산 확정을 알리는 발행 인터페이스. 발행 방식(Spring 이벤트 등)은 구현체(adapter/out/event)가 맡는다
     private final PayoutEventPublisher payoutEventPublisher;
+    private final PayoutOutboxRepository payoutOutboxRepository;
+    private final PayoutOutboxService payoutOutboxService;
+    private final PayoutDepositCheckRepository payoutDepositCheckRepository;
 
     // 조회 상한: 실행일 − 대기 일수 00:00 (생성 후 대기 일수가 지난 후보만 정산)
     @Override
@@ -84,17 +102,30 @@ public class PayoutService implements PayoutUseCase {
         return runDate.minusDays(PayoutPolicy.SETTLEMENT_WAITING_DAYS).atStartOfDay();
     }
 
-    // 조회 하한: 마지막 정산일 − (대기 일수 + 여유 일수) 00:00, 정산이 없으면 null(하한 없음)
-    // 마지막 정산일 기준이라 배치가 밀리면 하한도 그만큼 과거로 내려가 밀린 후보까지 조회됨
+    // 조회 하한: 기준일 − (대기 일수 + 여유 일수) 00:00, 기준일이 없으면 null(하한 없음)
+    // 기준일 = 정산을 1건 이상 만든 마지막 정기(SCHEDULED) 완료 실행의 요청일
+    //  - 수동(MANUAL) 실행은 제외: 임의로 돌린 실행이 하한을 움직이지 않게 함
+    //  - 대기 건너뛰기(SKIP_WAIT)는 제외: 요청일이 +17일 미래라 하한이 앞으로 튐
+    //  - 정산 0건 실행은 제외: 정산이 만들어졌을 때만 하한이 움직이게 함
+    //  - 요청일은 settlementTo가 상한을 계산하는 기준과 같아서, 하한 = 지난 상한 − 여유 일수가 됨
+    // 위 조건에 맞는 정기 실행이 없으면 마지막 정산 생성일로 대체함. 없애 버리면 하한이 통째로 사라지기 때문
+    //  - 배치 기록이 지워진 경우, 정산 기록이 지워져 실행 기록만 고아로 남은 경우
+    //  - 수동·대기 건너뛰기 실행만 정산을 만들었거나, 정기 실행이 전부 정산 0건이었던 경우
+    // 기준이 마지막 실행이라 배치가 밀리면 하한도 그만큼 과거로 내려가 밀린 후보까지 조회됨
     @Override
     public LocalDateTime settlementFrom() {
-        LocalDateTime last = payoutRepository.findFirstByOrderByIdDesc()
-                .map(Payout::getCreatedAt)
-                .orElse(null);
-        if (last == null) {
-            return null;
+        LocalDate baseDate;
+        Optional<LocalDateTime> lastScheduledRequestedAt = payoutQueryRepository.findLastCompletedScheduledRequestedAt();
+        if (lastScheduledRequestedAt.isPresent()) {
+            baseDate = lastScheduledRequestedAt.get().toLocalDate();
+        } else {
+            Optional<Payout> lastPayout = payoutRepository.findFirstByOrderByIdDesc();
+            if (lastPayout.isEmpty()) {
+                return null;
+            }
+            baseDate = lastPayout.get().getCreatedAt().toLocalDate();
         }
-        return last.toLocalDate()
+        return baseDate
                 .minusDays(PayoutPolicy.SETTLEMENT_WAITING_DAYS + PayoutPolicy.SETTLEMENT_LOOKBACK_MARGIN_DAYS)
                 .atStartOfDay();
     }
@@ -102,17 +133,62 @@ public class PayoutService implements PayoutUseCase {
     // 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환
     // 헤더와 목록을 한 트랜잭션에서 만들어, 중간에 실패하면 둘 다 남지 않음 (반쪽짜리 스냅샷 방지)
     // 이후 Step은 이 목록만 보고 처리하므로, 배치 도중 새로 생긴 정산후보는 다음 배치로 넘어감
-    // 잠긴 주문(금액 검사 #195, 결과 검증 #290)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐
+    // 잠긴 주문(수수료 불일치 #195·#391, 결과 검증 #290)의 후보는 스냅샷에 넣지 않음 → 실패 기록도 다시 생기지 않고 정산 대상에서 계속 빠짐 (초과 청구는 #552부터 잠그지 않음)
+    // 성공한 실행에서 PayoutPolicy.MAX_FAILED_RUNS번 실패한 주문도 스냅샷에서 뺌(멈춤), 1번 이상 그 미만이면 조회 기간 밖이어도 다시 넣음 (#549)
     //
     // 지금은 팀 규칙(QueryDSL 조회 + JPA 저장)을 따라 대상을 Java로 불러와 저장함
     // 대상 전체를 메모리에 올리고, ID가 IDENTITY라 batch insert가 안 돼 건수만큼 INSERT가 나감
     // → 하루 정산후보가 수만 건을 넘어 메모리·시간이 부담되면 HQL INSERT ... SELECT(DB 안에서 1문장 복사)로 바꾸는 것을 고려
     @Override
     @Transactional
-    public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to) {
-        PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to));
+    public Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to, PayoutRunType runType) {
+        PayoutSnapshot snapshot = payoutSnapshotRepository.save(PayoutSnapshot.create(jobExecutionId, from, to, runType));
 
-        List<PayoutCandidateItem> candidates = payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to);
+        // 주문별 "성공한 실행에서 실패한 횟수"(#549)로 주문을 나눔: MAX_FAILED_RUNS번 이상이면 멈춘 주문, 1번 이상 그 미만이면 다시 넣을 주문
+        Map<Long, Long> failedRunCounts = payoutQueryRepository.countFailedRunsByOrder();
+        Set<Long> stoppedOrderIds = new HashSet<>();
+        List<Long> retryOrderIds = new ArrayList<>();
+        for (Map.Entry<Long, Long> entry : failedRunCounts.entrySet()) {
+            if (PayoutPolicy.isStopped(entry.getValue())) {
+                stoppedOrderIds.add(entry.getKey());
+            } else {
+                retryOrderIds.add(entry.getKey());
+            }
+        }
+        // 관리자가 해결한 주문(#568)도 조회 기간 밖이어도 다시 넣음
+        //   해결하면 그 실패가 횟수에서 빠져 0번이 되므로 위 "1~2번 실패한 주문"에 들지 않음 → 기간 밖으로 밀린 뒤 해결한 주문은 따로 골라야 정산됨
+        //   해결 뒤 다시 3번 실패해 멈춘 주문은 뺌: 빼지 않으면 매 실행 다시 들어가 4·5·6번 실패가 이어짐 (#549 3번 규칙이 깨짐)
+        //   그래서 해결 뒤 새 실패가 없는(횟수 0) 주문만 더함: 1~2번 다시 실패했으면 이미 위 목록에 있고, 3번 이상이면 멈춘 주문
+        for (Long orderId : payoutQueryRepository.findResolvedOrderIdsWithUnsettledCandidatesBefore(to)) {
+            if (!failedRunCounts.containsKey(orderId)) {
+                retryOrderIds.add(orderId);
+            }
+        }
+
+        // 1) 기간 안 후보에서 멈춘 주문의 후보를 뺌: 주문 단위로 멈추므로 그 주문의 다른 후보(스스로는 실패하지 않은 것, 뒤늦게 들어온 것)도 같이 빠짐
+        //    이미 정산된 후보(다른 판매자가 통과한 것 등)는 미정산 조회에 안 나와 영향이 없음
+        List<PayoutCandidateItem> candidates = new ArrayList<>();
+        Set<Long> candidateIds = new HashSet<>();
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesInPeriod(from, to)) {
+            if (stoppedOrderIds.contains(candidate.getOrderId())) {
+                continue;
+            }
+            candidates.add(candidate);
+            candidateIds.add(candidate.getId());
+        }
+
+        // 2) 아직 멈추지 않은 실패 주문(1~2번)과 해결한 주문(#568)의 후보를 조회 기간 하한 없이 다시 넣음
+        //    조회 기간 하한은 정기 실행마다 올라가서, 실패한 주문의 후보가 기간 밖으로 밀려 영영 못 잡히는 것을 막으려는 것 (상한 to는 그대로)
+        //    잠긴 주문은 이 조회가 이미 빼므로 다시 들어오지 않음
+        //    1)에서 이미 들어온 후보는 ID로 걸러 한 번만 넣음
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findUnsettledCandidatesOfOrdersBefore(retryOrderIds, to)) {
+            if (candidateIds.add(candidate.getId())) {
+                candidates.add(candidate);
+            }
+        }
+        // 두 조회가 각각 ID 오름차순이라 합친 뒤 다시 정렬: 스냅샷 항목이 후보 ID 순으로 들어가도록 (기존 동작과 같음)
+        candidates.sort(Comparator.comparing(PayoutCandidateItem::getId));
+
         List<PayoutSnapshotItem> items = new ArrayList<>();
         for (PayoutCandidateItem candidate : candidates) {
             items.add(PayoutSnapshotItem.create(snapshot.getId(), candidate));
@@ -124,9 +200,21 @@ public class PayoutService implements PayoutUseCase {
         // jobExecutionId로 배치 실행 기록과, snapshotId로 이후 Step 로그(결과 검증으로 뺀 주문 등)와 이어서 볼 수 있음
         log.info("정산 스냅샷 생성. snapshotId={}, jobExecutionId={}, 대상 건수={}", snapshot.getId(), jobExecutionId, items.size());
 
-        // 이번 조회 기간에서 잠긴 주문(#195, #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
+        // 이번 조회 기간에서 잠긴 주문(수수료 불일치 #195·#391, 결과 검증 #290) 때문에 빠진 후보가 있는 날만 남김: 잠금 때문에 정산되지 않은 후보가 있다는 것을 로그로 바로 알 수 있게
         // (0건이면 매일 같은 로그가 남아 생략)
         // 조회 기간 안의 후보만 세므로 누적 잠금 건수가 아님: 기간이 지난 후보는 다음 날부터 이 수에서 빠짐 (누적은 실패 기록의 잠금 사유로 확인)
+        // 멈춘 주문이 있는 날만 WARN: MAX_FAILED_RUNS번 실패해 정산에서 빠진 주문은 사람이 확인해야 하므로 INFO보다 높게 남김 (0건이면 생략)
+        // 세는 대상: 멈춘 주문 중 잠기지 않았고, 상한(to) 전의 미정산 후보가 남아 있는 주문 (같은 주문의 후보가 여러 건이어도 1건)
+        //   기간 안 후보만 세면, 기간 밖에서 다시 넣어져 3번째로 실패한 주문은 멈춰도 WARN이 한 번도 안 남기 때문에 기간과 상관없이 셈 (#549 완료 조건 2)
+        //   대가: 멈춘 주문이 해결(#568 "다시 처리")되기 전까지는 매 실행마다 같은 주문이 다시 세어짐 (사용자가 감수하기로 함)
+        //   이미 정산된 후보와 잠긴 주문은 이 조회가 빼므로 세지 않음 (잠긴 주문은 아래 잠금 로그가 따로 알림)
+        // 실패를 저장하는 시점이 아니라 스냅샷을 만들 때 남기는 이유: 실행이 FAILED로 끝나면 그 실패는 횟수에 안 세므로, 저장 시점에는 멈춤이 확정이 아님
+        //   후보 엔티티 대신 주문 ID만 중복 없이 받음: 멈춘 주문이 쌓여도 매 실행 불러오는 양이 주문 수만큼으로 그침
+        List<Long> reportedStoppedOrderIds = payoutQueryRepository.findOrderIdsWithUnsettledCandidatesBefore(stoppedOrderIds, to);
+        if (!reportedStoppedOrderIds.isEmpty()) {
+            log.warn("{}번 실패한 주문이라 스냅샷에서 제외. snapshotId={}, 제외 주문 수={}",
+                    PayoutPolicy.MAX_FAILED_RUNS, snapshot.getId(), reportedStoppedOrderIds.size());
+        }
         long lockedCount = payoutQueryRepository.countLockedUnsettledCandidatesInPeriod(from, to);
         if (lockedCount > 0) {
             log.info("잠긴 주문이라 스냅샷에서 제외. snapshotId={}, 제외 후보 수={}", snapshot.getId(), lockedCount);
@@ -140,8 +228,8 @@ public class PayoutService implements PayoutUseCase {
     // 검사 순서: 차감 기록 없음(#194) → 금액 검사(초과 청구 → 수수료, #195). 앞 검사에 걸린 후보는 뒤 검사 대상에서 빠짐 (후보당 실패 1건)
     // 모든 검사 결과를 모아 한 번에 저장: 같은 트랜잭션이라 중간에 실패하면 이번 검증의 기록이 하나도 남지 않음
     //
-    // 금액 검사에 걸린 주문은 잠김(AMOUNT_MISMATCH) → 다음 배치부터 그 주문의 후보는 스냅샷에 들어가지 않음
-    // 잠금은 이후 Step이 실패해 Job이 FAILED로 끝나도 유지됨 (입력 금액에 대한 판정이라 재실행해도 다시 잠김)
+    // 초과 청구에 걸린 주문은 잠그지 않음(#552): 다음 실행에서 다시 검사하고, 횟수에 세어 MAX_FAILED_RUNS번이면 멈춤(#549)
+    //   입력이 그대로면 매번 같은 검사에 걸려 돈이 나가지 않음. 수수료 불일치는 다시 검사해도 풀릴 길이 없어 잠금 유지(사람이 #301에서 풂)
     @Override
     @Transactional
     public int validate(Long snapshotId) {
@@ -157,26 +245,137 @@ public class PayoutService implements PayoutUseCase {
         // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (createSnapshot 주석 참고)
         // 1)과 2)의 조회가 같은 시점의 데이터를 본다는 전제: MySQL 기본 격리 수준(REPEATABLE READ)이라 한 트랜잭션 안의 조회는 같은 스냅샷을 읽음
         //   READ COMMITTED로 바꾸면 1)과 2) 사이에 들어온 차감 기록 때문에 같은 후보가 두 번 실패로 잡혀 UK 위반 → 매 배치 실패할 수 있음
+        List<PayoutCandidateItem> targets = payoutQueryRepository.findCandidatesWithDeduction(snapshotId);
+        Map<Long, Long> totals = payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId);
+        Map<Long, Long> deductions = payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId);
+        List<PayoutCandidateItem> originals = payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId);
+
+        // 초과 청구 근거(#391): 초과 청구에 걸리는 주문만 후보 전체·지갑 금액 충돌을 다시 읽음 (걸린 주문이 없으면 조회하지 않음)
+        //   같은 트랜잭션(REPEATABLE READ)이라 위 합계 조회와 같은 시점의 데이터를 봄 → 근거의 누적합이 합계와 맞음
+        //   판정 공식은 PayoutAmountValidator.overchargedOrderIds 한곳에 둬서, 여기서 고른 주문과 validate가 초과 청구로 보는 주문이 같음
+        Set<Long> overchargedOrderIds = PayoutAmountValidator.overchargedOrderIds(totals, deductions);
+        List<OverchargeCandidateRow> overchargeCandidates = List.of();
+        Map<Long, List<Long>> conflictAmounts = Map.of();
+        if (!overchargedOrderIds.isEmpty()) {
+            overchargeCandidates = payoutQueryRepository.findOverchargeCandidates(overchargedOrderIds);
+            conflictAmounts = payoutQueryRepository.findReceivedConflictAmountsByOrder(overchargedOrderIds);
+        }
+
         List<PayoutFailure> amountFailures = PayoutAmountValidator.validate(snapshotId, new PayoutAmountValidator.Input(
-                payoutQueryRepository.findCandidatesWithDeduction(snapshotId),
-                payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId),
-                payoutQueryRepository.findDeductionAmountByOrderInSnapshot(snapshotId),
-                payoutQueryRepository.findOriginalSaleCandidatesInSnapshot(snapshotId)));
+                targets, totals, deductions, originals, overchargeCandidates, conflictAmounts));
         failures.addAll(amountFailures);
 
         payoutFailureRepository.saveAll(failures);
+        recordOverchargeEvidence(amountFailures, totals, deductions, overchargeCandidates, conflictAmounts);
 
-        logLockedOrders(snapshotId, amountFailures);
+        logAmountCheckFailedOrders(snapshotId, amountFailures);
+        logOverchargedOrderItems(snapshotId, amountFailures, overchargeCandidates);
+        logFeeMismatches(amountFailures);
         // 팀 로그 규칙(service.md "로그"): 업무상 의미 있는 사건이라 INFO. 빠진 후보가 있는 날을 로그로 바로 찾을 수 있게 함
         log.info("정산 입력 검증. snapshotId={}, 차감 기록 없어 제외한 후보 수={}, 금액 검사로 제외한 후보 수={}",
                 snapshotId, missing.size(), amountFailures.size());
         return failures.size();
     }
 
-    // 주문이 새로 잠길 때마다 WARN: 잠긴 주문은 저절로 풀리지 않아(TODO(#52)) 사람이 원인을 확인해야 함
-    // 판매자 수를 남기는 이유: 한 판매자의 금액이 틀려도 같은 주문의 다른 판매자 후보까지 함께 보류되어, 영향받은 판매자를 바로 알 수 있게
+    // 초과 청구로 실패를 기록한 주문의 근거를 막힌 주문 집계 표에 "막힌 순간" 값으로 남김 (#570)
+    // 여기서 저장하는 이유: 근거 합계에는 스냅샷 밖 대기 중 후보도 들어가, Job 끝 갱신에서 다시 계산하면
+    //   그사이 같은 주문에 들어온 구매확정 때문에 실패 상세 글과 값이 달라질 수 있음. 지금 계산한 값을 그대로 남겨야 상세 글과 같음
+    // 지금은 그 주문이 막힘(3번째 실패)인지 몰라 실패마다 예비(PENDING) 줄로 넣음. Job 끝 갱신이 막힘이면 상태만 바꾸고 아니면 지움
+    // 실패 기록과 같은 트랜잭션: 실패 기록이 롤백되면 근거도 같이 롤백되어 서로 어긋나지 않음
+    // 이번 검사에서 새로 실패한 주문만 다룸 (같은 스냅샷을 다시 검증해 새 실패가 없으면 근거도 그대로)
+    private void recordOverchargeEvidence(List<PayoutFailure> amountFailures, Map<Long, Long> totals,
+                                          Map<Long, Long> deductions, List<OverchargeCandidateRow> overchargeCandidates,
+                                          Map<Long, List<Long>> conflictAmounts) {
+        // 주문 → 그 주문 초과 청구 실패 기록 중 가장 늦은 기록 시각 (예비 줄의 마지막 실패 시각)
+        Map<Long, LocalDateTime> failedAtByOrder = new LinkedHashMap<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (failure.getReason() != PayoutFailureReason.AMOUNT_MISMATCH) {
+                continue;
+            }
+            // 조정만 있는 주문(합계 없음)은 근거를 계산할 수 없어 남기지 않음 (근거 칸은 비어 있음)
+            if (!totals.containsKey(failure.getOrderId())) {
+                continue;
+            }
+            LocalDateTime failedAt = failedAtByOrder.get(failure.getOrderId());
+            if (failedAt == null || failure.getCreatedAt().isAfter(failedAt)) {
+                failedAtByOrder.put(failure.getOrderId(), failure.getCreatedAt());
+            }
+        }
+        if (failedAtByOrder.isEmpty()) {
+            return;
+        }
+
+        Map<Long, List<OverchargeCandidateRow>> rowsByOrder = PayoutAmountValidator.groupRowsByOrder(overchargeCandidates);
+        Map<Long, PayoutOverchargeEvidence> evidenceByOrder = new LinkedHashMap<>();
+        for (Long orderId : failedAtByOrder.keySet()) {
+            evidenceByOrder.put(orderId, PayoutAmountValidator.overchargeEvidence(deductions.get(orderId),
+                    totals.get(orderId), rowsByOrder.getOrDefault(orderId, List.of()),
+                    conflictAmounts.getOrDefault(orderId, List.of())));
+        }
+
+        // 줄이 이미 있으면(해결된 RESOLVED 줄) 새로 넣지 않고 근거만 바꿈: 주문 ID가 기본 키라 새로 넣으면 중복 오류로 금액 검사가 롤백됨
+        //   잠김·멈춤 줄은 스냅샷에서 빠져 금액 검사를 받지 않으므로 여기 오는 줄은 해결됨(또는 갱신이 아직 못 지운 예비) 줄
+        //   이미 있는 줄은 변경 감지(트랜잭션이 끝날 때 바뀐 칸을 UPDATE)로 저장됨
+        Set<Long> existingOrderIds = new HashSet<>();
+        for (PayoutBlockedOrder blockedOrder : payoutBlockedOrderRepository.findAllByOrderIdIn(evidenceByOrder.keySet())) {
+            blockedOrder.recordEvidence(evidenceByOrder.get(blockedOrder.getOrderId()));
+            existingOrderIds.add(blockedOrder.getOrderId());
+        }
+        List<PayoutBlockedOrder> pendingOrders = new ArrayList<>();
+        for (Map.Entry<Long, PayoutOverchargeEvidence> entry : evidenceByOrder.entrySet()) {
+            if (!existingOrderIds.contains(entry.getKey())) {
+                pendingOrders.add(PayoutBlockedOrder.pending(entry.getKey(), failedAtByOrder.get(entry.getKey()),
+                        entry.getValue()));
+            }
+        }
+        payoutBlockedOrderRepository.saveAll(pendingOrders);
+    }
+
+    // 초과 청구로 실패를 기록한 주문마다 주문상품 전체 목록을 WARN (#391)
+    // 실패 상세는 255자라 주문상품이 많으면 잘림 → 원인을 찾을 때 볼 전체 목록(주문상품별 합계, 배송비 포함)은 로그에 남김
+    // 이번 스냅샷 후보가 모두 이미 실패로 기록돼 새 실패가 없는 주문(같은 스냅샷 재검증)은 남기지 않음
+    private void logOverchargedOrderItems(Long snapshotId, List<PayoutFailure> amountFailures,
+                                          List<OverchargeCandidateRow> overchargeCandidates) {
+        Set<Long> overchargedOrderIds = new LinkedHashSet<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                overchargedOrderIds.add(failure.getOrderId());
+            }
+        }
+        for (Long orderId : overchargedOrderIds) {
+            List<OverchargeCandidateRow> orderRows = new ArrayList<>();
+            for (OverchargeCandidateRow row : overchargeCandidates) {
+                if (row.orderId().equals(orderId)) {
+                    orderRows.add(row);
+                }
+            }
+            log.warn("정산 초과 청구 주문상품 목록. snapshotId={}, orderId={}, 주문상품별 합계={}",
+                    snapshotId, orderId, PayoutAmountValidator.amountsByOrderItem(orderRows));
+        }
+    }
+
+    // 수수료 불일치(FEE_MISMATCH)로 기록한 주문상품마다 ERROR 1번 (#391)
+    // ERROR로 남기는 이유(사용자 결정): 수수료 불일치는 정상 경로에서는 생기지 않아 시스템 문제일 가능성이 커서, 알림(#302 슬랙 전송)으로 바로 알리려고 함
+    //   팀 로그 규칙(service.md "로그")은 ERROR를 "처리되지 못한 예외"로 정해 두었는데, 여기는 예외 없이 실패로 기록하고 계속 진행하는 경우라 규칙과 다름
+    //   (정산 모듈 규칙 payout/CLAUDE.md "팀 규칙과 다르게 쓰는 것"에 예외로 적음. #302에서 알림을 붙일 때 이 로그 모양을 그대로 찾도록 메시지 모양을 고정함)
+    // 같은 주문상품의 대금·수수료 두 후보가 함께 실패하므로, 주문상품 ID로 한 번만 남김 (같은 문제로 알림이 두 번 가지 않게)
+    private void logFeeMismatches(List<PayoutFailure> amountFailures) {
+        Set<Long> loggedOrderItemIds = new LinkedHashSet<>();
+        for (PayoutFailure failure : amountFailures) {
+            if (failure.getReason() != PayoutFailureReason.FEE_MISMATCH) {
+                continue;
+            }
+            if (loggedOrderItemIds.add(failure.getOrderItemId())) {
+                log.error("[정산-시스템문제] 수수료 불일치 orderItemId={}", failure.getOrderItemId());
+            }
+        }
+    }
+
+    // 금액 검사에 걸린 주문마다 WARN (#552 전에는 "정산 주문 잠금"): 이번 실행에서 그 주문이 빠졌고 왜 빠졌는지를 그날 바로 알 수 있게
+    //   문구를 바꾼 이유: #552부터 초과 청구는 잠그지 않고(3번이면 멈춤, #549) 수수료 불일치만 잠가, "잠금"이라고 쓰면 초과 청구에서 틀림
+    // 판매자 수를 남기는 이유: 한 판매자의 금액이 틀려도 같은 주문의 다른 판매자 후보까지 함께 빠져, 영향받은 판매자를 바로 알 수 있게
     // 금액 검사 실패 목록은 주문별로 이어서 들어옴 (PayoutAmountValidator가 주문 단위로 만듦)
-    private void logLockedOrders(Long snapshotId, List<PayoutFailure> amountFailures) {
+    private void logAmountCheckFailedOrders(Long snapshotId, List<PayoutFailure> amountFailures) {
         Map<Long, List<PayoutFailure>> failuresByOrder = new LinkedHashMap<>();
         for (PayoutFailure failure : amountFailures) {
             if (!failuresByOrder.containsKey(failure.getOrderId())) {
@@ -190,12 +389,15 @@ public class PayoutService implements PayoutUseCase {
             String cause = null;
             for (PayoutFailure failure : entry.getValue()) {
                 sellerIds.add(failure.getSellerId());
-                // 사유는 원인 후보(AMOUNT_MISMATCH)의 상세로 남김 (함께 보류된 ORDER_LOCKED 상세는 원인이 아님)
-                if (cause == null && failure.getReason() == PayoutFailureReason.AMOUNT_MISMATCH) {
+                // 사유는 원인 후보(초과 청구 AMOUNT_MISMATCH, 수수료 FEE_MISMATCH)의 상세로 남김
+                // 함께 보류된 ORDER_HELD만 빼고 고름: 금액 검사가 만드는 사유 중 원인이 아닌 것은 ORDER_HELD뿐이라,
+                //   원인 사유를 하나씩 이름으로 고르면(#391에서 FEE_MISMATCH를 나눌 때처럼) 새 원인 사유를 놓쳐 사유=null이 됨
+                //   #552 전에는 locksOrder로 골랐으나, 초과 청구가 잠그지 않게 되어 locksOrder로는 초과 청구를 원인으로 고르지 못함
+                if (cause == null && failure.getReason() != PayoutFailureReason.ORDER_HELD) {
                     cause = failure.getDetail();
                 }
             }
-            log.warn("정산 주문 잠금. snapshotId={}, orderId={}, 사유={}, 판매자 수={}, 후보 수={}",
+            log.warn("정산 금액 검사로 주문 제외. snapshotId={}, orderId={}, 사유={}, 판매자 수={}, 후보 수={}",
                     snapshotId, entry.getKey(), cause, sellerIds.size(), entry.getValue().size());
         }
     }
@@ -203,16 +405,18 @@ public class PayoutService implements PayoutUseCase {
     // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환
     // 판매자 수가 0이면 더 없음 → tasklet 종료
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
-    // payout 생성(commitStep)과 이벤트 발행(publishStep)은 검증 이후 단계에서 함
+    // payout 생성·지갑 이벤트(commitStep)와 Kafka 발송(publishStep)은 검증 이후 단계에서 함
     //
     // 판매자 단위 격리(#90): 판매자마다 저장 트랜잭션을 따로 둠 (PayoutSellerDraftService, REQUIRES_NEW)
-    //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 후보 전체를 UNEXPECTED_ERROR로 기록한 뒤 다음 판매자로 넘어감
+    //   한 판매자에서 예외가 나면 그 판매자 것만 롤백하고, 주문별로 다시 저장해 본 뒤(#534, retryByOrder) 실패한 주문의 후보만 UNEXPECTED_ERROR로 기록하고 다음 판매자로 넘어감
     //   → 같은 회차의 다른 판매자와 이후 회차는 계속 처리되고, 일부만 실패하면 Job도 멈추지 않음 (전에는 회차 전체가 롤백되고 Job이 FAILED)
     //   실패로 기록된 후보는 다음 회차의 조회 조건(조건 ④)에서 빠지므로, 실패한 판매자를 다시 뽑는 무한 반복은 없음
-    //   실패 판매자는 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
+    //   실패한 주문은 판매자 몫과 수수료가 함께 롤백되어 commitStep에서 자연히 빠짐 (판매자 정산·시스템 몫 수수료 모두 없음)
     // 판매자 수에는 실패한 판매자도 셈: 0이 아니면 tasklet이 다음 회차를 부르고, 남은 판매자가 없을 때 0이 됨
     // 실패 수는 따로 돌려줘 배치 실행 기록(write skip count)에 남김: 일부 판매자가 실패해도 Job은 COMPLETED라 로그 말고도 볼 곳이 있어야 함
     //   일부만 실패하면 Job은 COMPLETED → 실패 수·WARN 로그로 확인 (반복 실패 알림은 #52)
+    //   일부 주문만 실패한 판매자는 실패 수에 들어가지 않음(#534): 그 주문은 WARN 로그와 payout_failure로만 확인
+    // TODO(#302): 일부 주문만 실패한 날도 실행 기록·알림으로 드러나게 실패 주문 수를 남김 (지금은 로그를 직접 봐야 알 수 있음)
     //   전원 실패(성공 0명)면 draft Step이 끝날 때 Job을 FAILED로 만듦 (PayoutJobConfig.failIfEverySellerFailed)
     //
     // 이 메서드에서 쓰는 것이 없음: 저장은 판매자마다 별도 트랜잭션에서 커밋되므로 이 메서드 자체는 조회만 함
@@ -259,18 +463,80 @@ public class PayoutService implements PayoutUseCase {
             } catch (RuntimeException e) {
                 // 예외를 다시 던지지 않고 기록으로 남기므로 팀 로그 규칙의 "던질 때 로그 금지"에 해당하지 않음
                 // 그대로 묻히지 않게 스택 트레이스까지 WARN으로 남김 (계속 진행하지만 원인 확인이 필요한 이상)
-                log.warn("정산 draft 판매자 처리 실패, 이 판매자만 제외하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
+                log.warn("정산 draft 판매자 처리 실패, 주문이 여럿이면 주문별로 다시 시도하고 계속 진행. snapshotId={}, sellerId={}, 후보 수={}",
                         snapshotId, sellerId, sellerCandidates.size(), e);
                 // 실패 기록 저장마저 실패하면 예외가 그대로 나가 Job이 멈춤
                 // 기록 없이 넘어가면 그 후보가 draft에도 실패에도 없어 verify가 "draft 누락"으로 그 주문들을 잠금 (#290)
                 //   → 일시적 오류였어도 관리자가 풀어야 하므로, 여기서 멈추는 편이 원인이 분명하고 뒷수습도 적음
                 // TODO(#52): 실패 기록 저장마저 실패할 때의 처리는 고민 중 (지금은 위 이유로 Job을 멈춤)
                 //   다른 방법 후보: 실패 기록 저장 재시도, 기록 없이 그 판매자만 건너뛰고 verify 규칙에서 따로 허용 등 → 어떻게 할지 #52에서 정함
-                payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, e);
-                failedSellerCount++;
+                // 판매자 전체가 아니라 오류를 일으킨 주문만 실패로 남기려고 주문별로 다시 시도함 (#534)
+                if (!retryByOrder(snapshotId, sellerId, sellerCandidates, e)) {
+                    failedSellerCount++;
+                }
             }
         }
         return new PayoutDraftResult(sellerIds.size(), failedSellerCount);
+    }
+
+    // 판매자 저장이 실패한 뒤, 후보를 주문별로 나눠 다시 저장해 봄 (#534). 저장된 주문이 하나라도 있으면 true
+    //   예) 판매자 A의 주문 100(오류 원인)과 주문 200(정상) → 200만 그날 정산, 100 후보만 UNEXPECTED_ERROR
+    //   전에는 어느 주문 때문인지 몰라 판매자 후보 전부를 실패로 남겨, 정상 주문도 하루 늦어지고 #549 실패 횟수도 함께 쌓였음
+    // 순서
+    //   1. 주문마다 시험 저장(trySaveDraft: 써 보고 롤백). 실패한 주문은 그 주문의 예외로 바로 실패 기록
+    //   2. 통과한 주문을 모아 판매자 draft 1건으로 진짜 저장 (판매자 draft는 스냅샷당 판매자 1건이라 주문마다 저장할 수 없음)
+    //   3. 진짜 저장마저 실패하면(주문 하나씩은 되는데 합치면 안 되는 경우) 통과했던 주문도 그 예외로 실패 기록
+    // 주문이 1개뿐이면 다시 해도 같은 저장이라 시험 없이 바로 실패 기록
+    //   대가: 데드락 같은 일시적 오류는 다시 하면 될 수도 있는데, 주문이 여럿인 판매자만 사실상 한 번 더 시도받음 (주문 1개면 다음 실행에서 다시 시도)
+    // 다시 시도 상한은 두지 않음(사용자 결정): 주문마다 시험 저장 1번
+    //   대가: DB 연결이 끊기는 등 주문과 상관없는 오류면 모든 주문이 시험 저장에서 실패해, 주문 수만큼 시간이 더 걸림
+    //   그 경우 실패 기록 저장도 실패할 가능성이 커서, 보통 첫 기록에서 예외가 나가 Job이 멈춤 (위 catch 주석과 같은 이유)
+    // 판매자 안에서 주문으로 나누므로, 한 주문에 판매자가 여럿이면 그 판매자 몫만 나뉨 (다른 판매자 후보는 각자 판매자 저장에서 처리)
+    private boolean retryByOrder(Long snapshotId, Long sellerId, List<PayoutCandidateItem> sellerCandidates,
+                                 RuntimeException sellerFailure) {
+        Map<Long, List<PayoutCandidateItem>> candidatesByOrder = new LinkedHashMap<>();
+        for (PayoutCandidateItem candidate : sellerCandidates) {
+            Long orderId = candidate.getOrderId();
+            if (!candidatesByOrder.containsKey(orderId)) {
+                candidatesByOrder.put(orderId, new ArrayList<>());
+            }
+            candidatesByOrder.get(orderId).add(candidate);
+        }
+        if (candidatesByOrder.size() == 1) {
+            payoutSellerDraftService.recordUnexpectedError(snapshotId, sellerCandidates, sellerFailure);
+            return false;
+        }
+
+        List<PayoutCandidateItem> passedCandidates = new ArrayList<>();
+        int passedOrderCount = 0;
+        for (Map.Entry<Long, List<PayoutCandidateItem>> entry : candidatesByOrder.entrySet()) {
+            List<PayoutCandidateItem> orderCandidates = entry.getValue();
+            try {
+                payoutSellerDraftService.trySaveDraft(snapshotId, sellerId, orderCandidates);
+                passedCandidates.addAll(orderCandidates);
+                passedOrderCount++;
+            } catch (RuntimeException orderFailure) {
+                // 스택 트레이스는 판매자 실패 WARN에 이미 남김. 주문마다 또 남기면 DB 장애 때 주문 수만큼 쌓여 예외 종류·메시지만 남김
+                log.warn("정산 draft 주문 처리 실패. snapshotId={}, sellerId={}, orderId={}, 예외={}: {}",
+                        snapshotId, sellerId, entry.getKey(), orderFailure.getClass().getSimpleName(), orderFailure.getMessage());
+                payoutSellerDraftService.recordUnexpectedError(snapshotId, orderCandidates, orderFailure);
+            }
+        }
+        if (passedCandidates.isEmpty()) {
+            return false;
+        }
+
+        try {
+            payoutSellerDraftService.saveDraft(snapshotId, sellerId, passedCandidates);
+        } catch (RuntimeException mergedFailure) {
+            log.warn("정산 draft 주문별 다시 시도 후 합친 저장 실패, 통과한 주문도 실패로 기록. snapshotId={}, sellerId={}, 주문 수={}",
+                    snapshotId, sellerId, passedOrderCount, mergedFailure);
+            payoutSellerDraftService.recordUnexpectedError(snapshotId, passedCandidates, mergedFailure);
+            return false;
+        }
+        log.warn("정산 draft 주문별 다시 시도로 일부 주문 저장. snapshotId={}, sellerId={}, 저장한 주문 수={}, 실패한 주문 수={}",
+                snapshotId, sellerId, passedOrderCount, candidatesByOrder.size() - passedOrderCount);
+        return true;
     }
 
     // 검증을 통과한 draft를 payout·payout_item으로 확정
@@ -321,54 +587,101 @@ public class PayoutService implements PayoutUseCase {
 
         payoutRepository.saveAll(payouts);
 
+        // 지갑 입금용 Kafka outbox 줄을 payout과 같은 트랜잭션에서 남겨, 확정과 함께 커밋·롤백되게 함
+        // 지갑은 Kafka로만 입금하므로(#584) 이 줄이 지갑 입금의 유일한 근거임. Kafka 발송은 커밋 뒤 publishPending이 함
+        List<PayoutOutbox> outboxes = new ArrayList<>();
+        List<PayoutDepositCheck> depositChecks = new ArrayList<>();
+        for (Payout payout : payouts) {
+            // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
+            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
+            //   0원: 지갑에 반영할 금액이 없음
+            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
+            // 정산(payout) 자체는 장부 기록으로 그대로 남김
+            if (payout.isSystem() || payout.getAmount() <= 0) {
+                continue;
+            }
+            outboxes.add(PayoutOutbox.pending(payout.getId()));
+            // 지갑에 입금 메시지를 보내는 정산은 매일 대사로 실제 입금을 확인함 (#619). 대상 조건이 outbox와 같아 같은 자리에서 넣음
+            depositChecks.add(PayoutDepositCheck.waiting(payout.getId(), payout.getPayeeId(), payout.getAmount()));
+        }
+        payoutOutboxRepository.saveAll(outboxes);
+        payoutDepositCheckRepository.saveAll(depositChecks);
+
         // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
         // 정산 확정은 돈이 장부에 기록되는 시점이라 INFO로 남김
         log.info("정산 확정. snapshotId={}, payout 건수={} (시스템 몫 {}건), 결과 검증 실패로 뺀 draft 항목 수={}",
                 snapshotId, payouts.size(), systemItems.isEmpty() ? 0 : 1, excludedItemCount);
     }
 
-    // 이번 스냅샷에서 확정된 판매자 몫 정산만 지갑 이벤트로 발행하고(0원 이하 제외), 발행 건수를 반환
-    // 시스템 몫은 정산 테이블에만 기록하고 지갑으로 보내지 않음 (지갑 담당자와 협의 완료)
-    // 발행은 Kafka(payout.seller-payout-created)로 한 건씩 저장 확인을 기다림. 한 건이라도 실패하면 예외로 이 Step이 멈춤
-    // 같은 정산이 두 번 전달돼도 지갑은 payoutId로 중복 반영을 막음
-    //
-    // TODO(#309): 발행 누락 위험. commitStep은 성공했는데 publishStep이 실패하면 확정된 정산의 이벤트가 영원히 발행되지 않음
-    //   예) 판매자 100명 중 37번째에서 브로커 오류 → Job FAILED, 37~100은 정산은 확정됐지만 메시지가 안 감
-    //       1~36은 Kafka 토픽에는 남지만, 지갑이 아직 받는 Spring 이벤트는 이 트랜잭션 롤백으로 전달되지 않아 입금되지 않음 (지갑 전환 전까지)
-    //       → 다음 배치의 스냅샷은 "payout_item에 없는 후보"만 대상이라 이미 확정된 이 정산은 다시 다뤄지지 않음
-    //       → 판매자는 정산이 확정됐는데 지갑에 돈이 들어오지 않음
-    //   지금 구조는 실패한 Job을 재시작(restart)하지 않고 새로 재실행하므로 이 publishStep만 다시 돌릴 경로가 없음
-    //   누락 찾는 방법: payout_snapshot.job_execution_id로 BATCH_STEP_EXECUTION에서 payoutPublishStep이 COMPLETED가 아닌 실행을 찾고,
-    //   EXIT_MESSAGE의 payoutId(멈춘 정산)부터 그 스냅샷의 판매자 몫 payout을 다시 발행 (지갑은 payoutId로 중복 반영을 막음)
-    //   해결 방향: outbox. 보낼 메시지를 commitStep 트랜잭션에서 payout과 함께 DB에 저장하고, 별도 발행기가 보내고 실패하면 다시 보냄
-    //   현재는 이슈 #69 설계(확정과 발행을 Step으로 분리)를 따름
+    // outbox의 PENDING 줄을 덜 시도한 줄부터 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
+    // 부르는 곳은 정산 Job 발행 단계와 짧은 간격 재발송(PayoutOutboxResendScheduler) 두 곳 (#620)
+    //   둘은 같은 잠금(payoutOutboxSend, PayoutOutboxSendLock)을 잡고 부르므로 같은 줄을 동시에 보내지 않음. 잠금은 입구(adapter.in.batch)에서 잡음
+    // 이 메서드는 트랜잭션을 더 만들지 않고, 보냄·실패 기록만 줄마다 짧은 별도 트랜잭션(PayoutOutboxService)에 남김
+    // 그래서 한 줄의 실패가 앞 줄의 보냄 기록을 되돌리지 않음
+    // 실패해도 멈추지 않음: 정산은 이미 끝났고 남은 줄은 다음 실행(짧은 간격 재발송, 기본 5분 뒤)이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음
+    // Kafka 발송이든 보냄·실패 기록(DB)이든 예외를 밖으로 내지 않음: 정산이 끝났는데 발송 단계 문제로 Job이 FAILED가 되지 않게
+    // 단 연속으로 실패하면 브로커·DB 장애로 보고 이번 발송을 멈춤 (줄마다 최대 120초씩 기다리지 않게)
     @Override
-    @Transactional
-    public int publish(Long snapshotId) {
-        List<Payout> payouts = payoutRepository.findBySnapshotIdAndSystemFalse(snapshotId);
-        int published = 0;
-        for (Payout payout : payouts) {
-            // 0원 이하 정산은 지갑 이벤트를 보내지 않음 (#106, 지갑 쪽 요청)
-            //   0원: 지갑에 반영할 금액이 없음
-            //   음수: 아직 음수(환불·차감) 처리를 하지 않아 지갑이 받을 수 없음 → 환불 작업 때 넘기는 방법을 다시 정함
-            // 정산(payout) 자체는 장부 기록으로 그대로 남김
-            if (payout.getAmount() <= 0) {
+    public PayoutPublishResult publishPending() {
+        List<PayoutOutboxRow> rows = payoutOutboxRepository.findPendingRows();
+        int sent = 0;
+        int failed = 0;
+        int consecutiveFailures = 0;
+        for (PayoutOutboxRow row : rows) {
+            if (sendAndMarkSent(row)) {
+                sent++;
+                consecutiveFailures = 0;
                 continue;
             }
-            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreatedCommand(
-                    payout.getId(),
-                    payout.getPayeeId(),
-                    payout.getAmount(),
-                    payout.getCreatedAt()
-            ));
-            published++;
+            failed++;
+            // 기다리다 스레드가 중단됐으면 다음 줄을 헛되이 실패로 기록하지 않고 멈춤 (남은 줄은 PENDING)
+            if (Thread.currentThread().isInterrupted()) {
+                break;
+            }
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_PUBLISH_FAILURES) {
+                break;
+            }
         }
 
-        // 팀 로그 규칙(service.md "로그"): INFO는 업무상 의미 있는 사건에 남기고, 식별자는 key={} 형태로 넣음
-        // 지갑으로 돈이 넘어가기 시작하는 시점이라 INFO로 남김. 발행 누락을 추적할 때 이 로그가 없는 snapshotId를 찾으면 됨
-        log.info("정산 지갑 이벤트 발행. snapshotId={}, 발행 건수={}, 0원 이하라 제외한 건수={}",
-                snapshotId, published, payouts.size() - published);
-        return published;
+        int remaining = rows.size() - sent - failed;
+        log.info("정산 Kafka 발송. 보낸 수={}, 실패 수={}, 멈춰서 남은 수={}", sent, failed, remaining);
+        return new PayoutPublishResult(sent, failed, remaining);
+    }
+
+    // 한 줄을 Kafka로 보내고 보냄으로 기록. 어디서 실패하든 줄은 PENDING으로 남아 다음 실행이 다시 보냄
+    private boolean sendAndMarkSent(PayoutOutboxRow row) {
+        try {
+            payoutEventPublisher.publishSellerPayoutCreated(new SellerPayoutCreated(
+                    row.payoutId(), row.payeeId(), row.amount(), row.payoutCreatedAt()));
+        } catch (RuntimeException e) {
+            log.warn("정산 Kafka 발송 실패, 다음 실행에서 다시 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+            recordFailure(row, e);
+            return false;
+        }
+        try {
+            payoutOutboxService.markSent(row.outboxId());
+            return true;
+        } catch (RuntimeException e) {
+            // Kafka는 이미 받았는데 DB에 못 적음. Kafka 실패가 아니라서 실패 기록은 남기지 않고, 다음 실행에서 한 번 더 감
+            log.warn("정산 outbox 보냄 기록 실패, 다음 실행에서 Kafka로 한 번 더 보냄. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+            return false;
+        }
+    }
+
+    // 실패 기록마저 저장하지 못해도 줄은 PENDING이라 다음 실행이 다시 보냄. 시도 수·오류만 빠짐
+    private void recordFailure(PayoutOutboxRow row, RuntimeException cause) {
+        try {
+            payoutOutboxService.recordFailure(row.outboxId(), failureMessage(cause));
+        } catch (RuntimeException e) {
+            log.warn("정산 outbox 실패 기록 저장 실패. payoutId={}, outboxId={}", row.payoutId(), row.outboxId(), e);
+        }
+    }
+
+    // 발행기 예외에는 어느 정산인지만 있고 실제 원인은 cause에 있어, 원인 쪽을 남김
+    private static String failureMessage(RuntimeException e) {
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        return cause.toString();
     }
 
     // 결과 검증(verifyStep): 스냅샷과 draft를 후보 단위로 비교해, 어긋난 후보의 주문을 이번 정산에서 빼고 잠금 (#290)
@@ -446,10 +759,9 @@ public class PayoutService implements PayoutUseCase {
 
         // 3) 걸린 주문을 빼고 나니 정산할 항목이 0건이면, 실패 기록·잠금을 남기지 않고 전체를 멈춤
         //   전부 걸렸다 = 대부분 모든 주문이 같이 쓰는 코드가 망가진 것 (위 코드 고장 세 가지와 같은 성격)
-        //   이때 기록하면 그날 대상 주문이 전부 잠김 → 코드를 고쳐도 해제 기능이 없어(#291) DB에서 직접 지워야 하고,
-        //     잠긴 지 약 3일이 지나면 지워도 조회 기간 밖이라 다시 정산되지 않음
+        //   이때 기록하면 그날 대상 주문이 전부 잠김 → 코드를 고친 뒤 관리자가 주문마다 해결(#568)해야 다시 정산됨 (주문이 많으면 손이 많이 감)
         //   기록 없이 멈추면 코드를 고친 뒤 재실행만으로 새 스냅샷에서 깨끗하게 다시 처리됨
-        //     (정산이 만들어지지 않는 동안은 조회 하한(마지막 정산일 기준)도 그대로라 밀린 후보가 계속 조회됨)
+        //     (정산이 만들어지지 않는 동안은 조회 하한(정산을 만든 마지막 정기 실행의 요청일 기준)도 그대로라 밀린 후보가 계속 조회됨)
         //   한계: 그날 대상이 정말로 틀린 주문뿐이었어도 잠기지 않음 → 다음 배치에서 다시 걸려 또 멈추므로 매일 FAILED로 드러남
         // "걸려서 0건"일 때만 해당: 대상이 없는 날, validate·draft 실패만으로 0건인 날은 걸린 주문이 없어 정상 진행(COMPLETED)
         if (remainingItemCount == 0 && exclusion.orderCount() > 0) {
@@ -711,7 +1023,7 @@ public class PayoutService implements PayoutUseCase {
     // 관리자·판매자 항목 조회의 공통 부분
     private Page<PayoutItemResult> loadItems(Long payoutId, PayoutItemSearchQuery query) {
         return payoutQueryRepository.findItemsWithCandidate(payoutId, PageRequest.of(query.page(), query.size()))
-                .map(PayoutItemResult::from);
+                .map(PayoutQueryResultMapper::toItemResult);
     }
 
     /**
@@ -744,7 +1056,7 @@ public class PayoutService implements PayoutUseCase {
     private Page<PayoutCandidateResult> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
                                                          boolean unsettledOnly, boolean sellerShareOnly, int page, int size) {
         return payoutQueryRepository.searchCandidates(sellerId, from, to, unsettledOnly, sellerShareOnly, PageRequest.of(page, size))
-                .map(PayoutCandidateResult::from);
+                .map(PayoutQueryResultMapper::toCandidateResult);
     }
 
     private Payout findPayout(Long payoutId) {

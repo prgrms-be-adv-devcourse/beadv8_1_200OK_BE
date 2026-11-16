@@ -6,16 +6,21 @@ import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderSellerGroup;
+import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.application.dto.OrderDetailResult;
+import com.ok.order.order.application.dto.OrderItemForRefundResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
+import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.CompletePaymentUseCase;
 import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
+import com.ok.order.order.application.port.in.GetOrderItemForRefundUseCase;
 import com.ok.order.order.application.port.in.GetOrderUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
+import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
 import com.ok.order.order.application.port.in.UpdateShippingStatusUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import com.ok.order.order.application.port.out.OrderRepository;
@@ -24,9 +29,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,7 +44,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, UpdateShippingStatusUseCase,
-        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase {
+        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, GetOrderItemForRefundUseCase,
+        RecordOrderItemRefundUseCase {
 
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
@@ -46,37 +54,98 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
 
     private static final int AUTO_CONFIRM_DAYS = 3;
 
+    // 결제 요청 전에 멈춘 주문의 정리 기준. 주문 생성은 외부 호출 타임아웃을 합쳐도 몇 초 안에 끝나므로 넉넉히 잡는다(#402)
+    private static final Duration CREATING_TIMEOUT = Duration.ofMinutes(5);
+    // 결제 요청 뒤 결과가 없는 주문의 정리 기준. 지갑 결제는 이벤트를 받는 즉시 끝나므로,
+    // 이만큼 지나면 지갑 처리가 실패해 재시작 재발행만 기다리는 상태로 보고 재고를 먼저 푼다(#402)
+    private static final Duration PAYMENT_TIMEOUT = Duration.ofMinutes(30);
+
     // 주문 저장
     @Transactional
     public Long create(Order order) {
         return orderRepository.save(order).getId();
     }
 
-    // 같은 멱등키로 이미 만든 주문 ID
+    /**
+     * 같은 멱등키로 이미 만든 주문 ID를 조회한다.
+     * 그 주문이 아직 만드는 중(결제 요청 전)이면 409로 알린다. 앞 요청이 곧 재고 선점에 실패해 취소될 수 있어,
+     * 성공으로 돌려주면 클라이언트가 취소될 주문을 성공으로 받는다(#402).
+     *
+     * @throws RestApiException 같은 키의 주문을 아직 만드는 중이면 {@code ORDER_CREATION_IN_PROGRESS}
+     */
     public Optional<Long> findIdByIdempotencyKey(Long buyerId, String idempotencyKey) {
-        return orderRepository.findByBuyerIdAndIdempotencyKey(buyerId, idempotencyKey)
-                .map(Order::getId);
+        Optional<Order> found = orderRepository.findByBuyerIdAndIdempotencyKey(buyerId, idempotencyKey);
+        if (found.isPresent() && found.get().isBeingCreated()) {
+            throw new RestApiException(OrderErrorCode.ORDER_CREATION_IN_PROGRESS);
+        }
+        return found.map(Order::getId);
     }
 
-    // 주문 생성 이벤트 발행
+    // 주문 생성 이벤트 발행(지갑에 결제 요청). 요청 시각을 같은 트랜잭션에 기록해 이벤트 발행 기록과 어긋나지 않게 한다.
+    // 정리 스케줄러의 취소와 같은 잠금으로 줄을 세워, 취소된 주문에 결제를 요청하지 않는다(#402)
     @Transactional
     public void publishCreated(Long orderId) {
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
+        order.markPaymentRequested(LocalDateTime.now(clock));
         orderEventPublisher.publishOrderCreatedEvent(order.getId(), order.getBuyerId(), order.getTotalAmount());
     }
 
-    // 보상용 삭제
+    // 보상용 취소: 주문 생성 중 재고 선점·이벤트 발행이 실패한 주문을 지우지 않고 취소로 남긴다(#401)
     @Transactional
-    public void delete(Long orderId) {
-        orderRepository.deleteById(orderId);
+    public void cancel(Long orderId) {
+        // 결제 완료·실패와 같은 잠금으로 줄을 세운다(#398). 지금 호출하는 주문 생성 중 취소는 지갑이 주문을 모르는 상태라
+        // 겹칠 결제 결과가 없지만, 결제 대기 주문 정리(#402)에서 재사용하면 늦게 온 결제 완료와 겹칠 수 있다
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
+        if (found.isEmpty()) {
+            log.warn("[ORDER_CANCEL_ORDER_NOT_FOUND] 취소할 주문이 없습니다. orderId={}", orderId);
+            return;
+        }
+        Order order = found.get();
+        if (!order.cancel()) {
+            log.warn("[ORDER_CANCEL_IGNORED] 결제 대기가 아닌 주문은 취소하지 않습니다. orderId={}, status={}",
+                    orderId, order.getStatus());
+        }
     }
 
-    // 내 주문 목록 (최신순)
+    // 결제 대기 정리 대상 주문 ID(#402)
+    public List<Long> findStalePaymentPendingOrderIds() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return orderRepository.findStalePaymentPendingOrderIds(
+                OrderStatus.PAYMENT_PENDING, now.minus(CREATING_TIMEOUT), now.minus(PAYMENT_TIMEOUT));
+    }
+
+    // 결제 대기로 오래 남은 주문 취소(#402). 재고를 풀어야 하면(취소했으면) true
+    @Transactional
+    public boolean cancelStalePaymentPending(Long orderId) {
+        // 결제 완료·실패, 결제 요청과 같은 잠금으로 줄을 세운다. 조회한 뒤 결제 결과가 먼저 커밋됐으면 바뀐 상태를 읽고 넘어간다
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
+        if (found.isEmpty()) {
+            log.warn("[ORDER_STALE_CANCEL_ORDER_NOT_FOUND] 정리할 주문이 없습니다. orderId={}", orderId);
+            return false;
+        }
+        Order order = found.get();
+
+        // 조회와 잠금 사이에 결제를 요청했으면 기준 시각이 다시 시작되므로, 잠근 뒤 최신 값으로 다시 확인한다
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (!order.isStalePaymentPending(now.minus(CREATING_TIMEOUT), now.minus(PAYMENT_TIMEOUT))) {
+            log.info("[ORDER_STALE_CANCEL_SKIPPED] 정리 대상이 아니게 된 주문입니다. orderId={}, status={}",
+                    orderId, order.getStatus());
+            return false;
+        }
+
+        // 결제를 요청한 주문은 지갑이 나중에 결제할 수 있다. 그때 completePayment가 ERROR로 남기므로 여기서는 기록만 구분한다
+        log.warn("[ORDER_STALE_CANCELED] 결제 대기로 오래 남은 주문을 취소합니다. orderId={}, paymentRequestedAt={}",
+                orderId, order.getPaymentRequestedAt());
+        order.cancel();
+        return true;
+    }
+
+    // 내 주문 목록 (최신순). 취소된 주문은 구매자가 만든 적 없는 결과라 보여 주지 않는다
     @Override
     public Page<OrderSummaryResult> getOrders(Long buyerId, int page, int size) {
         PageRequest pageRequest = PageRequest.of(page, size);
-        return orderRepository.findByBuyerIdOrderByIdDesc(buyerId, pageRequest)
+        return orderRepository.findByBuyerIdAndStatusNotOrderByIdDesc(buyerId, OrderStatus.CANCELED, pageRequest)
                 .map(OrderSummaryResult::from);
     }
 
@@ -88,11 +157,23 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         return OrderDetailResult.from(order);
     }
 
+    // 환불용 주문 상품 조회 (환불 모듈 내부 API용). 구매자는 확인하지 않고 환불이 buyerId로 직접 확인한다
+    @Override
+    public OrderItemForRefundResult getOrderItemForRefund(Long orderId, Long orderItemId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
+        OrderItem item = order.findItem(orderItemId)
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+        return OrderItemForRefundResult.from(order, item);
+    }
+
     // 결제 완료
     @Transactional
     @Override
     public void completePayment(Long orderId) {
-        Optional<Order> found = orderRepository.findById(orderId);
+        // 결제 실패와 동시에 처리되면 둘 다 결제 대기를 읽고 나중 커밋이 앞의 상태를 덮어쓴다(#398).
+        // 잠금으로 늦게 온 쪽이 바뀐 상태를 읽게 해, 아래 상태 분기가 항상 최신 상태로 동작하게 한다
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 완료 대상 주문이 없습니다. orderId={}", orderId);
             return;
@@ -103,6 +184,9 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             if (order.isPaymentFailed()) {
                 // 실패 처리 후 완료가 온 경우: 돈은 빠졌는데 주문은 실패 → 환불 확인 필요
                 log.error("[ORDER_PAID_AFTER_FAILED] 결제 실패 주문에 결제 완료가 도착했습니다. 환불 확인이 필요합니다. orderId={}", orderId);
+            } else if (order.isCanceled()) {
+                // 결제 대기 정리(#402)가 취소한 뒤 지갑이 늦게 결제한 경우: 돈은 빠졌는데 주문은 취소 → 환불 확인 필요(#517)
+                log.error("[ORDER_PAID_AFTER_CANCELED] 취소된 주문에 결제 완료가 도착했습니다. 환불 확인이 필요합니다. orderId={}", orderId);
             } else {
                 log.info("[ORDER_PAYMENT_ALREADY_HANDLED] 이미 처리된 주문입니다. orderId={}, status={}", orderId, order.getStatus());
             }
@@ -118,7 +202,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
 
     @Transactional
     public boolean failPayment(Long orderId) {
-        Optional<Order> found = orderRepository.findById(orderId);
+        // completePayment와 같은 이유로 잠금 조회한다(#398)
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 실패 대상 주문이 없습니다. orderId={}", orderId);
             return false;
@@ -148,11 +233,13 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         return optionIds;
     }
 
-    // 배송 시작: 해당 판매자 묶음의 배송 준비 상품을 배송 중으로
+    // 배송 시작: 해당 판매자 묶음의 배송 준비 상품을 배송 중으로.
+    // 환불 기록(recordRefund)과 같은 주문 잠금으로 줄을 세운다. 잠그지 않으면 환불이 "배송 준비"를 확인한 뒤
+    // 커밋하기 전에 배송 시작이 상품을 바꿔, 출고된 상품에 환불이 기록된다(#658)
     @Transactional
     @Override
     public void startShipping(Long orderId, Long sellerId) {
-        Optional<Order> order = orderRepository.findById(orderId);
+        Optional<Order> order = orderRepository.findByIdForUpdate(orderId);
         if (order.isEmpty()) {
             // 예외를 던지면 이벤트가 계속 재처리되므로 로그만 남김
             log.warn("[ORDER_SHIPPING_ORDER_NOT_FOUND] 배송 시작 대상 주문이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
@@ -169,7 +256,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     @Transactional
     @Override
     public void completeDelivery(Long orderId, Long sellerId, LocalDateTime deliveredAt) {
-        Optional<Order> order = orderRepository.findById(orderId);
+        // 배송 시작 없이 배송 준비에서 바로 완료될 수 있어 배송 시작과 같은 이유로 잠근다(#658)
+        Optional<Order> order = orderRepository.findByIdForUpdate(orderId);
         if (order.isEmpty()) {
             log.warn("[ORDER_DELIVERY_ORDER_NOT_FOUND] 배송 완료 대상 주문이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
             return;
@@ -216,15 +304,52 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     }
 
     // 구매확정 이벤트 발행
+    // 환불 반영된 수량은 상품 금액에서 빼고, 환불에서 뺀 배송비는 판매자 몫 배송비에 더한다(#28)
     private void publishConfirmed(Order order, OrderItem item) {
+        // 모두 환불된 상품은 정산할 금액이 없다. 0원 정산 후보를 만들지 않도록 보내지 않는다.
+        // #658부터 모두 환불된 상품은 배송 완료가 되지 않아 여기 오지 않지만, 그 전에 배송 완료된 상품이 남아 있어 지운다면 데이터부터 확인한다
+        if (item.isFullyRefunded()) {
+            log.info("[ORDER_CONFIRM_SKIPPED_FULLY_REFUNDED] 모두 환불된 주문 상품이라 구매확정 이벤트를 보내지 않습니다. orderId={}, orderItemId={}",
+                    order.getId(), item.getId());
+            return;
+        }
         OrderSellerGroup group = item.getSellerGroup();
         orderEventPublisher.publishOrderProductConfirmedEvent(
                 order.getId(),
                 item.getId(),
                 group.getSellerId(),
-                item.getItemAmount(),     // TODO 부분 환불 정책이 정해지면 환불 수량 제외 (#28)
-                group.getShippingFee()
+                item.confirmedItemAmount(),
+                group.shippingFeeForPayout()
         );
+    }
+
+    // 환불 취소 반영 (환불 모듈 내부 API용).
+    // READ COMMITTED로 연다. 잠금 조회의 하위 쿼리(주문 상품 → 주문 ID)는 일반 조회라 REPEATABLE READ에서는 잠금을 기다리기 전에
+    // 스냅샷을 고정한다. 그러면 잠금을 얻은 뒤에도 앞 요청이 커밋한 환불 기록이 안 보여 합계가 주문 수량을 넘는다(동시성 테스트로 재현).
+    // 내부 API 컨트롤러가 트랜잭션 없이 부르므로 이 격리 수준이 그대로 적용된다
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Override
+    public void recordRefund(RecordOrderItemRefundCommand command) {
+        // 주문을 잠가 같은 주문 상품의 환불이 차례로 최신 기록을 보고 합계를 확인하게 한다
+        Order order = orderRepository.findByOrderItemIdForUpdate(command.orderItemId())
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+        OrderItem item = order.findItem(command.orderItemId())
+                .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_ITEM_NOT_FOUND));
+
+        // 같은 환불 ID가 다른 주문 상품에 기록돼 있으면 유니크 제약 위반(500) 대신 내용 불일치로 알린다
+        orderRepository.findOrderItemIdByRefundId(command.refundId())
+                .filter(recordedOrderItemId -> !recordedOrderItemId.equals(command.orderItemId()))
+                .ifPresent(recordedOrderItemId -> {
+                    throw new RestApiException(OrderErrorCode.REFUND_ID_CONFLICT);
+                });
+
+        if (item.recordRefund(command.refundId(), command.quantity(), command.deductedShippingFee())) {
+            log.info("[ORDER_REFUND_RECORDED] 환불 취소를 반영했습니다. orderItemId={}, refundId={}, quantity={}, deductedShippingFee={}",
+                    command.orderItemId(), command.refundId(), command.quantity(), command.deductedShippingFee());
+        } else {
+            log.info("[ORDER_REFUND_ALREADY_RECORDED] 이미 반영된 환불입니다. orderItemId={}, refundId={}",
+                    command.orderItemId(), command.refundId());
+        }
     }
 
     // 자동 구매확정 대상 주문 ID

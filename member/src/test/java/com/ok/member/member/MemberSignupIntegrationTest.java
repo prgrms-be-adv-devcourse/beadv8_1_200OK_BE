@@ -1,8 +1,9 @@
 package com.ok.member.member;
 
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
+import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberType;
-import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +39,10 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
+
+    @Autowired
+    MemberOutboxJpaRepository memberOutboxRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;
@@ -53,8 +57,10 @@ class MemberSignupIntegrationTest extends AbstractIntegrationTest {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
     }
 
+    // 가입하면 outbox 줄이 남고(#560) 그 줄이 회원을 외래키로 참조하므로 먼저 지운다
     @AfterEach
     void tearDown() {
+        memberOutboxRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();
     }
 

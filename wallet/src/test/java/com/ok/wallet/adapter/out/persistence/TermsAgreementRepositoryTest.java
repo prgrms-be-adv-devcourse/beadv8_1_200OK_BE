@@ -2,6 +2,8 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.wallet.application.port.out.TermsAgreementRepository;
+import com.ok.wallet.application.port.out.TermsRepository;
 import com.ok.wallet.domain.TermsAgreement;
 import com.ok.wallet.domain.TermsType;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,15 +20,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
+@Import({JpaConfig.class, TestcontainersConfiguration.class, TermsAgreementRepositoryAdapter.class, TermsRepositoryAdapter.class})
 class TermsAgreementRepositoryTest {
     private static final LocalDateTime AGREED_AT = LocalDateTime.of(2026, 10, 16, 12, 0);
 
     @Autowired
-    TermsAgreementJpaRepository termsAgreementRepository;
+    TermsAgreementRepository termsAgreementRepository;
 
     @Autowired
-    TermsJpaRepository termsRepository;
+    TermsRepository termsRepository;
 
     // 마이그레이션으로 들어간 약관 v1의 ID
     Long financialTermsId;

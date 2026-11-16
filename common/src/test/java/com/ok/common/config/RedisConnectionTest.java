@@ -1,6 +1,7 @@
 package com.ok.common.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -8,10 +9,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.data.redis.test.autoconfigure.DataRedisTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import com.ok.testsupport.RedisTestcontainersConfiguration;
+
+import io.lettuce.core.api.async.RedisAsyncCommands;
 
 /**
  * 스타터와 자동 설정, Lettuce가 실제 Redis와 연결되는지 검증한다. Redis를 쓰는 후속 테스트가 같은 방식으로 {@code @Import}하면 된다.
@@ -31,6 +36,9 @@ class RedisConnectionTest {
     @Autowired
     StringRedisTemplate sut;
 
+    @Autowired
+    RedisConnectionFactory connectionFactory;
+
     // 컨테이너를 JVM 안의 다른 Redis 테스트와 공유하므로, 이 테스트가 넣은 키를 남기지 않는다
     @AfterEach
     void tearDown() {
@@ -44,6 +52,20 @@ class RedisConnectionTest {
 
         // then
         assertThat(actual).isEqualTo("PONG");
+    }
+
+    // 지금은 검색이 필요 없어 스타터 기본 클라이언트(Lettuce)를 쓴다. 클라이언트를 바꾸는 것은 의도한 결정이어야 하므로, 기본값이 달라지면 알려 준다
+    @Test
+    void Redis_클라이언트는_Lettuce다() {
+        // when
+        Object nativeConnection = sut.execute((RedisCallback<Object>) connection -> connection.getNativeConnection());
+
+        // then
+        assertThat(nativeConnection).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(connectionFactory).isInstanceOf(LettuceConnectionFactory.class);
+            softly.assertThat(nativeConnection).isInstanceOf(RedisAsyncCommands.class);
+        });
     }
 
     @Test

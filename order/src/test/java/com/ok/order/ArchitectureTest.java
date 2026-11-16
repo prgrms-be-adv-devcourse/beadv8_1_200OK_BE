@@ -4,12 +4,16 @@ import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import java.util.List;
+
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethod;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -29,6 +34,7 @@ import com.ok.order.OrderSchema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.Table;
 
 import com.tngtech.archunit.lang.ArchCondition;
@@ -136,6 +142,40 @@ class ArchitectureTest {
             .should().implement(resideInAPackage("com.ok.order.*.application.port.out.."))
             .because("서비스는 출력 포트만 알고, adapter.out의 구현체가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (헥사고날 구조 #438)");
+
+    // 영속성
+
+    // member ArchitectureTest와 같은 규칙(#519). 포트는 JPA를 몰라 @Lock을 붙일 수 없어 *JpaRepository에 다시 선언해야 한다.
+    // 빠뜨리면 이름은 ForUpdate인데 잠그지 않는 조회가 되어 컴파일도 평소 테스트도 통과한다(#658)
+    @ArchTest
+    static final ArchRule 잠금_조회는_JPA_저장소에_Lock과_함께_다시_선언한다 = methods()
+            .that().areDeclaredInClassesThat().resideInAPackage("com.ok.order.*.application.port.out..")
+            .and().haveNameMatching(".*For(Update|Share).*")
+            .should(new ArchCondition<JavaMethod>("be redeclared in a *JpaRepository with a @Lock mode matching its name") {
+                @Override
+                public void check(JavaMethod portMethod, ConditionEvents events) {
+                    LockModeType expected = portMethod.getName().contains("ForUpdate")
+                            ? LockModeType.PESSIMISTIC_WRITE
+                            : LockModeType.PESSIMISTIC_READ;
+                    List<JavaClass> jpaRepositories = portMethod.getOwner().getAllSubclasses().stream()
+                            .filter(sub -> resideInAPackage("..adapter.out.persistence..").test(sub)
+                                    && sub.getSimpleName().endsWith("JpaRepository"))
+                            .toList();
+                    // 구현체마다 따로 확인해, 여럿 중 하나만 잠금을 가져도 통과하는 일을 막는다.
+                    // 구현체가 없으면 allMatch가 참이 되므로 따로 실패시킨다
+                    boolean ok = !jpaRepositories.isEmpty() && jpaRepositories.stream()
+                            .allMatch(repository -> repository.getMethods().stream()
+                                    .anyMatch(method -> method.getName().equals(portMethod.getName())
+                                            && method.getRawParameterTypes().equals(portMethod.getRawParameterTypes())
+                                            && method.tryGetAnnotationOfType(Lock.class)
+                                                    .map(lock -> lock.value() == expected)
+                                                    .orElse(false)));
+                    events.add(new SimpleConditionEvent(portMethod, ok,
+                            portMethod.getFullName() + (ok ? " is" : " is not")
+                                    + " redeclared in a *JpaRepository with @Lock(" + expected + ")"));
+                }
+            })
+            .because("잠금이 빠진 조회는 동시에 요청이 몰릴 때만 드러난다. 결제 완료·실패가 서로를 덮어쓰거나(#398) 출고된 상품에 환불이 기록된다(#658). 빌드에서 바로 실패하게 한다");
 
     // 이름과 위치
 

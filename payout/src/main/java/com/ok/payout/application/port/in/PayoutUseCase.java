@@ -1,5 +1,6 @@
 package com.ok.payout.application.port.in;
 
+import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.data.domain.Page;
 
 import java.time.LocalDate;
@@ -16,14 +17,15 @@ public interface PayoutUseCase {
     LocalDateTime settlementTo(LocalDate runDate);
 
     /**
-     * 정산 대상 조회 하한을 구한다. 마지막 정산일 기준으로 대기·여유 일수를 뺀 날 00:00이며, 정산이 없으면 {@code null}(하한 없음)이다.
+     * 정산 대상 조회 하한을 구한다. 정산을 1건 이상 만든 마지막 정기(SCHEDULED) 완료 실행의 요청일에서 대기·여유 일수를 뺀 날 00:00이다.
+     * 그런 실행이 없으면(배치 기록 삭제, 정기 실행이 정산을 만든 적 없음 등) 마지막 정산 생성일로 대체하고, 정산도 없으면 {@code null}(하한 없음)이다.
      */
     LocalDateTime settlementFrom();
 
     /**
-     * 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환한다.
+     * 이번 배치의 정산 대상을 스냅샷으로 고정하고 스냅샷 ID를 반환한다. 실행 유형(정기·관리자·대기 건너뛰기)도 함께 남긴다.
      */
-    Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to);
+    Long createSnapshot(Long jobExecutionId, LocalDateTime from, LocalDateTime to, PayoutRunType runType);
 
     /**
      * 스냅샷 후보 중 입력이 틀린 후보를 실패로 기록하고 기록한 건수를 반환한다. 예외 없이 기록만 하므로 나머지 후보는 계속 정산된다.
@@ -41,9 +43,9 @@ public interface PayoutUseCase {
     void commit(Long snapshotId);
 
     /**
-     * 확정된 판매자 몫 정산을 지갑 이벤트로 발행하고(0원 이하 제외) 발행 건수를 반환한다.
+     * outbox에 남은(PENDING) 정산을 Kafka로 보내고 보낸 수·실패 수·남은 수를 반환한다. 실패·중단 규칙은 구현체 참고.
      */
-    int publish(Long snapshotId);
+    PayoutPublishResult publishPending();
 
     /**
      * 스냅샷과 draft를 후보 단위로 비교해 어긋난 주문을 이번 정산에서 빼고 잠근다. 코드 고장이 의심되면 기록 없이 예외로 중단한다.

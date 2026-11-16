@@ -5,11 +5,11 @@ import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
 import com.ok.member.seller.application.port.out.SellerApplicationRepository;
+import com.ok.member.seller.application.port.out.SellerEventPublisher;
 import com.ok.member.seller.application.dto.SellerApplicationAdminResult;
 import com.ok.member.seller.application.dto.SellerApplicationRejectCommand;
 import com.ok.member.seller.application.dto.SellerApplicationSearchQuery;
 import com.ok.member.seller.application.dto.SellerApplyCommand;
-import com.ok.member.seller.application.port.out.SellerEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -64,7 +64,7 @@ class SellerApplicationServiceTest {
     SellerApplicationService sellerApplicationService;
 
     private final SellerApplyCommand command =
-            new SellerApplyCommand("청송 햇살농원", "김영수", BUSINESS_NUMBER, "제2026-경북청송-0031호");
+            new SellerApplyCommand("청송 햇살농원", "김영수", BUSINESS_NUMBER, "제2026-경북청송-0031호", "37421");
 
     // @InjectMocks는 @Mock 필드만 생성자에 넣어 주므로 Clock을 넣어 직접 만든다
     @BeforeEach
@@ -197,7 +197,7 @@ class SellerApplicationServiceTest {
     }
 
     @Test
-    void 심사를_시작하면_현재_시각을_심사_시작_일시로_기록하고_이벤트는_발행하지_않는다() {
+    void 심사를_시작하면_현재_시각을_심사_시작_일시로_기록한다() {
         // given
         SellerApplication application = savedApplication();
         given(sellerApplicationRepository.findById(APPLICATION_ID)).willReturn(Optional.of(application));
@@ -211,11 +211,10 @@ class SellerApplicationServiceTest {
             softly.assertThat(sut.reviewStartedAt()).isEqualTo(NOW);
         });
         then(sellerApplicationRepository).should().flush();
-        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
-    void 승인하면_심사자와_승인_일시를_기록하고_같은_일시로_승인_이벤트를_발행한다() {
+    void 승인하면_심사자와_승인_일시를_기록한다() {
         // given
         SellerApplication application = savedApplication();
         application.startReview(NOW);
@@ -230,11 +229,54 @@ class SellerApplicationServiceTest {
             softly.assertThat(sut.approvedAt()).isEqualTo(NOW);
             softly.assertThat(sut.reviewerId()).isEqualTo(ADMIN_ID);
         });
-        then(sellerEventPublisher).should().publishSellerApproved(MEMBER_ID, NOW);
     }
 
     @Test
-    void 심사를_시작하지_않은_신청을_승인하면_이벤트를_발행하지_않는다() {
+    void 승인하면_신청서의_출고지_우편번호를_승인_일시로_알린다() {
+        // given: 판매자가 되자마자(프로필 등록 전에도) 상품을 올릴 수 있어, 승인 때 delivery에 출고지를 보낸다
+        SellerApplication application = savedApplication();
+        application.startReview(NOW);
+        given(sellerApplicationRepository.findById(APPLICATION_ID)).willReturn(Optional.of(application));
+
+        // when
+        sellerApplicationService.approve(ADMIN_ID, APPLICATION_ID);
+
+        // then
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "37421", NOW);
+    }
+
+    @Test
+    void 출고지_우편번호가_없는_예전_신청은_승인해도_알리지_않는다() {
+        // given: 이 항목이 생기기 전에 한 신청
+        SellerApplication application = savedApplication();
+        ReflectionTestUtils.setField(application, "originPostalCode", null);
+        application.startReview(NOW);
+        given(sellerApplicationRepository.findById(APPLICATION_ID)).willReturn(Optional.of(application));
+
+        // when
+        sellerApplicationService.approve(ADMIN_ID, APPLICATION_ID);
+
+        // then
+        then(sellerEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 다른_관리자가_먼저_처리해_승인이_실패하면_출고지를_알리지_않는다() {
+        // given
+        SellerApplication application = savedApplication();
+        application.startReview(NOW);
+        given(sellerApplicationRepository.findById(APPLICATION_ID)).willReturn(Optional.of(application));
+        willThrow(new ObjectOptimisticLockingFailureException(SellerApplication.class, APPLICATION_ID))
+                .given(sellerApplicationRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> sellerApplicationService.approve(ADMIN_ID, APPLICATION_ID))
+                .isInstanceOf(RestApiException.class);
+        then(sellerEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 심사를_시작하지_않은_신청은_승인할_수_없다() {
         // given
         given(sellerApplicationRepository.findById(APPLICATION_ID)).willReturn(Optional.of(savedApplication()));
 
@@ -242,11 +284,10 @@ class SellerApplicationServiceTest {
         assertThatThrownBy(() -> sellerApplicationService.approve(ADMIN_ID, APPLICATION_ID))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_SELLER_APPLICATION_STATUS));
-        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
-    void 다른_관리자가_먼저_처리해_버전이_어긋나면_409로_바꾸고_승인_이벤트를_발행하지_않는다() {
+    void 다른_관리자가_먼저_처리해_버전이_어긋나면_409로_바꾼다() {
         // given
         SellerApplication application = savedApplication();
         application.startReview(NOW);
@@ -258,11 +299,10 @@ class SellerApplicationServiceTest {
         assertThatThrownBy(() -> sellerApplicationService.approve(ADMIN_ID, APPLICATION_ID))
                 .isInstanceOfSatisfying(RestApiException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(SellerErrorCode.SELLER_APPLICATION_CONCURRENT_MODIFICATION));
-        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
-    void 거절하면_심사자와_거절_일시와_사유를_기록하고_이벤트는_발행하지_않는다() {
+    void 거절하면_심사자와_거절_일시와_사유를_기록한다() {
         // given
         given(sellerApplicationRepository.findById(APPLICATION_ID)).willReturn(Optional.of(savedApplication()));
 
@@ -278,7 +318,6 @@ class SellerApplicationServiceTest {
             softly.assertThat(sut.reviewerId()).isEqualTo(ADMIN_ID);
         });
         then(sellerApplicationRepository).should().flush();
-        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
@@ -299,7 +338,7 @@ class SellerApplicationServiceTest {
     // 저장된 신청처럼 id가 있는 심사 대기 신청
     private static SellerApplication savedApplication() {
         SellerApplication application = SellerApplication.apply(
-                MEMBER_ID, "청송 햇살농원", "김영수", BUSINESS_NUMBER, "제2026-경북청송-0031호", NOW);
+                MEMBER_ID, "청송 햇살농원", "김영수", BUSINESS_NUMBER, "제2026-경북청송-0031호", "37421", NOW);
         ReflectionTestUtils.setField(application, "id", APPLICATION_ID);
         return application;
     }

@@ -25,7 +25,7 @@ import java.util.List;
 /**
  * 통합 테스트에서 요청에 붙일 Access Token을 만든다.
  *
- * <p>실제 서비스({@code AccessTokenProvider})와 같은 인코더·알고리즘·헤더(typ, kid)·클레임(iss, aud, roles)으로 만들어,
+ * <p>실제 서비스({@code JwtAccessTokenIssuer})와 같은 인코더·알고리즘·헤더(typ, kid)·클레임(iss, aud, roles)으로 만들어,
  * 보안 필터가 실제 토큰과 똑같이 검증한다. 형식이 바뀌면 이 클래스도 함께 바꿔야 실제 토큰과 어긋나지 않는다.
  * 로그인 API를 거치지 않아 어느 모듈의 테스트에서든 회원과 권한을 정해 토큰을 만들 수 있다.
  *

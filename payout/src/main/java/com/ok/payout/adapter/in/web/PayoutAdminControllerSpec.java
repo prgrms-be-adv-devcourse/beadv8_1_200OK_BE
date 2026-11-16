@@ -1,18 +1,28 @@
 package com.ok.payout.adapter.in.web;
 
 import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -144,6 +154,7 @@ interface PayoutAdminControllerSpec {
     @Operation(summary = "정산 전체 수동 실행", description = """
             정산 배치를 지금 1회 실행합니다. 평소 정산은 스케줄러가 실행하며, 이 API는 관리자가 바로 1회 실행할 때 씁니다.
             관리자만 실행할 수 있습니다.
+            이미 실행 중이면 새로 시작하지 않고 409로 응답합니다.
             배치가 COMPLETED가 아니면 서버 오류(500)로 응답합니다. 실행 ID와 배치 상태는 서버 로그에 남습니다.
             실패 기록과 연결한 정식 응답은 #67에서 바뀝니다.
             """)
@@ -156,6 +167,20 @@ interface PayoutAdminControllerSpec {
             @ApiResponse(
                     responseCode = "403", description = "관리자가 아님",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "409", description = "정산이 이미 실행 중",
+                    content = @Content(mediaType = "application/problem+json",
+                            schema = @Schema(implementation = ProblemDetail.class),
+                            examples = @ExampleObject(name = "실행 중", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/payout/payout-job-already-running",
+                                      "title": "Payout job already running",
+                                      "status": 409,
+                                      "detail": "정산이 이미 실행 중입니다.",
+                                      "instance": "/api/v1/admin/payouts/run"
+                                    }
+                                    """))
             ),
             @ApiResponse(
                     responseCode = "500", description = "배치 실행 실패 (실행 ID와 배치 상태는 서버 로그에 남음)",
@@ -220,5 +245,170 @@ interface PayoutAdminControllerSpec {
     ResponseEntity<Void> createAdjustment(
             @Parameter(hidden = true) Long memberId,
             PayoutAdjustmentCreateRequest request
+    );
+
+    @Operation(summary = "잠기거나 멈춘 주문 해결 (다시 처리)", description = """
+            관리자 전용입니다. 결과 검증 불일치·수수료 불일치로 잠긴 주문이나, 3번 실패해 멈춘 주문을 "다시 처리"로 해결합니다.
+            그 주문의 해결되지 않은 실패 기록 전부에 해결 기록(관리자, 시각, 메모)을 남기고, 다음 배치에서 그 주문을 다시 검사해 정산합니다.
+            조회 기간 밖으로 밀린 주문도 다시 들어갑니다. 돈을 바로 내보내지 않고 금액 검사·결과 검증을 똑같이 거칩니다.
+            데이터나 코드를 고치지 않고 해결하면 다시 검사에서 또 실패해 다시 잠기거나 3번 뒤 다시 멈춥니다. 되돌리기는 없습니다.
+            해결한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받습니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "해결함. 방금 저장한 해결 기록"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "409", description = "해결할 잠금이나 멈춤이 없음 (이미 해결됨, 같은 주문을 동시에 두 번 요청, 잘못된 주문 ID)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class),
+                            examples = @ExampleObject(name = "해결할 것 없음", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/payout/nothing-to-resolve",
+                                      "title": "Nothing to resolve",
+                                      "status": 409,
+                                      "detail": "해결할 잠금이나 멈춤이 없는 주문입니다.",
+                                      "instance": "/api/v1/admin/payouts/orders/100/resolution"
+                                    }
+                                    """))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (메모 공백·255자 초과)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "요청 본문을 읽을 수 없음",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutOrderResolutionResponse> resolveOrder(
+            @Parameter(hidden = true) Long memberId,
+            @Parameter(description = "해결할 주문 ID", example = "100") Long orderId,
+            PayoutOrderResolveRequest request
+    );
+
+    @Operation(summary = "해결 기록 조회 (1줄씩)", description = """
+            관리자 전용입니다. 주문 하나의 해결 기록을 해결 시각 최신순으로 조회합니다(같은 시각이면 해결 기록 ID 역순).
+            해결은 주문 단위로 요청하지만 기록은 해결한 실패 기록마다 1줄이라, 해결 1번에 여러 줄이 같은 요청 번호·관리자·메모로 나옵니다.
+            줄마다 그 실패 기록의 사유·범주·상세·실패 시각과, 실패한 정산후보의 종류·금액을 함께 줍니다.
+            해결 요청 1번을 1줄로 보려면 GET /api/v1/admin/payouts/orders/{orderId}/resolution-requests를 씁니다.
+            해결 기록이 없는 주문은 빈 목록입니다(정산은 주문 정보를 갖고 있지 않아 없는 주문인지 구별하지 않습니다).
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "주문 ID가 숫자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutResolutionResponse>> getResolutions(
+            @Parameter(description = "주문 ID", example = "100") Long orderId,
+            @ParameterObject PayoutResolutionSearchRequest request
+    );
+
+    @Operation(summary = "해결 기록 조회 (해결 요청 묶음)", description = """
+            관리자 전용입니다. 주문 하나의 해결 기록을 해결 요청 1번 = 1줄로 묶어 해결 시각 최신순으로 조회합니다.
+            줄마다 해결한 관리자·메모·해결 시각과, 그 요청으로 해결한 실패 기록 수를 줍니다.
+            어느 실패 기록을 풀었는지는 GET /api/v1/admin/payouts/orders/{orderId}/resolutions에서 같은 요청 번호의 줄로 봅니다.
+            해결 시각은 그 요청에서 가장 이른 해결 기록의 시각입니다(해결 기록마다 시각이 따로 찍혀 아주 조금씩 다를 수 있습니다).
+            해결 기록이 없는 주문은 빈 목록입니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "주문 ID가 숫자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequests(
+            @Parameter(description = "주문 ID", example = "100") Long orderId,
+            @ParameterObject PayoutResolutionSearchRequest request
+    );
+
+    @Operation(summary = "막힌 주문 목록 (잠김·멈춤)", description = """
+            관리자 전용입니다. 정산이 막혀 사람이 봐야 하는 주문을 마지막 실패 시각 최신순으로 조회합니다(같은 시각이면 주문 ID 역순).
+            - LOCKED 잠김: 수수료 불일치·결과 검증 불일치. 다시 검사해도 풀리지 않아 관리자가 해결해야 합니다(실패 횟수와 상관없음).
+            - STOPPED 멈춤: 잠기지 않았지만 성공한 정산 실행에서 3번 실패해 자동 재검사가 멈췄습니다.
+            - RESOLVED 해결됨: 관리자가 해결했고, 다음 정산 실행이 끝나면 목록에서 빠집니다(다시 막혔으면 LOCKED·STOPPED로 바뀝니다).
+            목록에 나오는 주문은 해결 API(POST /api/v1/admin/payouts/orders/{orderId}/resolution)가 해결할 것이 있다고 보는 주문과 같습니다.
+            목록은 정산 실행이 끝날 때 갱신되는 막힌 주문 집계 표를 읽습니다. 기간 조건은 없습니다.
+            원인 상세는 내부 검사 내용이라 관리자 화면에만 보여 주고, 화면에 출력할 때 HTML 이스케이프가 필요합니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공 (막힌 주문이 없으면 빈 목록)"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutBlockedOrderResponse>> getBlockedOrders(
+            @ParameterObject PayoutBlockedOrderSearchRequest request
+    );
+
+    @Operation(summary = "대사 관리자 확인 목록", description = """
+            관리자 전용입니다. 정산·지갑 대사(매일 지갑에 정산 입금을 묻는 확인)에서 관리자 확인 필요가 된 정산을 이유와 함께 조회합니다.
+            확인 대기·일치인 정산은 나오지 않습니다. 정렬은 새 정산 먼저(대사 줄이 생긴 순서의 역순)입니다.
+            - NOT_FOUND: 3번 물을 때까지 입금이 확인되지 않았고, 그중 한 번 이상 지갑이 "없음"으로 답함(나머지는 답이 없었을 수 있음. notFoundCount로 확인)
+            - NO_RESPONSE: 3번 물을 때까지 지갑이 한 번도 답하지 않음(지갑 수신 장애일 수 있음)
+            - PAYEE_MISMATCH: 입금은 있는데 판매자가 다름(지갑이 답한 판매자·금액을 함께 보여 줍니다)
+            - AMOUNT_MISMATCH: 같은 판매자에게 입금은 있는데 금액이 다름(지갑이 답한 판매자·금액을 함께 보여 줍니다)
+            대사는 어긋난 건을 자동으로 고치지 않습니다. 이 목록은 조회만 하고, 다시 보내기·완료 표시 같은 처리는 없습니다.
+            NOT_FOUND·NO_RESPONSE로 닫힌 정산에 지갑 답이 늦게 와서 일치로 바뀌면 목록에서 빠집니다.
+            PAYEE_MISMATCH·AMOUNT_MISMATCH로 닫힌 정산은 늦은 답으로 바뀌지 않습니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공 (관리자 확인 필요인 정산이 없으면 빈 목록)"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutDepositCheckReviewResponse>> getDepositCheckReviews(
+            @ParameterObject PayoutDepositCheckReviewSearchRequest request
     );
 }

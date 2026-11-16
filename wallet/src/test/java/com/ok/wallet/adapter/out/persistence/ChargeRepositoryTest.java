@@ -2,6 +2,7 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.wallet.application.port.out.ChargeRepository;
 import com.ok.wallet.domain.Charge;
 import com.ok.wallet.domain.ChargeStatus;
 import org.junit.jupiter.api.Test;
@@ -20,13 +21,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
+@Import({JpaConfig.class, TestcontainersConfiguration.class, ChargeRepositoryAdapter.class})
 class ChargeRepositoryTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 12, 0);
     private static final String PAYMENT_KEY = "payment-key-1";
 
     @Autowired
-    ChargeJpaRepository chargeRepository;
+    ChargeRepository chargeRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

@@ -55,6 +55,7 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
                 command.representativeName(),
                 command.businessNumber(),
                 command.mailOrderNumber(),
+                command.originPostalCode(),
                 now()
         );
 
@@ -110,8 +111,7 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
         LocalDateTime approvedAt = now();
         application.approve(adminId, approvedAt);
         flushDetectingConflict();
-        // 버전 검사를 통과한 승인만 이벤트를 낸다. 이벤트는 커밋 후에 전달되므로, 롤백되면 함께 사라진다
-        sellerEventPublisher.publishSellerApproved(application.getMemberId(), approvedAt);
+        publishOriginPostalCode(application, approvedAt);
         return SellerApplicationAdminResult.from(application);
     }
 
@@ -122,6 +122,18 @@ public class SellerApplicationService implements SellerApplicationUseCase, Selle
         application.reject(adminId, command.reason(), now());
         flushDetectingConflict();
         return SellerApplicationAdminResult.from(application);
+    }
+
+    // 판매자가 되는 순간 delivery가 출고지를 갖도록 신청서의 처음 값을 보낸다(#587). 상품 등록은 SELLER 권한만 보므로
+    // 프로필을 등록하기 전에도 팔 수 있어서다. 이후 변경은 프로필이 보낸다.
+    // 버전 검사(flush)를 통과한 승인만 보낸다. 같은 트랜잭션에 outbox 줄로 남아 롤백되면 함께 사라진다.
+    // 이 항목이 생기기 전 신청은 값이 없어 보내지 않는다(delivery는 출고지가 없는 판매자에게 기본값을 쓴다)
+    private void publishOriginPostalCode(SellerApplication application, LocalDateTime approvedAt) {
+        if (application.getOriginPostalCode() == null) {
+            return;
+        }
+        sellerEventPublisher.publishOriginPostalCodeChanged(
+                application.getMemberId(), application.getOriginPostalCode(), approvedAt);
     }
 
     /**

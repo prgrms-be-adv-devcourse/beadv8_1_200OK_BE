@@ -1,0 +1,4 @@
+payout:
+  skip-wait-run:
+    # 대기 건너뛰기 통합 테스트를 위해 켠다. 꺼짐 동작은 PayoutJobRunnerTest(단위)에서 확인한다 (#485)
+    enabled: true

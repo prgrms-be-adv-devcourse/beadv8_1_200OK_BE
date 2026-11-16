@@ -46,4 +46,11 @@ class PayoutPolicyTest {
         // Assert
         assertThat(fee).isZero();
     }
+
+    @Test
+    void 성공한_실행에서_최대_횟수만큼_실패하면_멈춘다() {
+        // when & then: 경계 (최대 횟수 바로 아래는 아직 다시 검사)
+        assertThat(PayoutPolicy.isStopped(PayoutPolicy.MAX_FAILED_RUNS - 1)).isFalse();
+        assertThat(PayoutPolicy.isStopped(PayoutPolicy.MAX_FAILED_RUNS)).isTrue();
+    }
 }

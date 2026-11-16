@@ -2,11 +2,11 @@ package com.ok.member.auth;
 
 import com.jayway.jsonpath.JsonPath;
 import com.ok.common.security.TokenClaims;
-import com.ok.member.auth.repository.RefreshTokenRepository;
-import com.ok.member.auth.service.TokenHasher;
+import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
+import com.ok.member.auth.application.service.TokenHasher;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.member.domain.MemberStatus;
-import com.ok.member.member.repository.MemberRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,10 +48,10 @@ class AuthLoginIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
-    RefreshTokenRepository refreshTokenRepository;
+    RefreshTokenJpaRepository refreshTokenRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;

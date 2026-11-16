@@ -1,15 +1,14 @@
 package com.ok.member.auth;
 
-import com.ok.PaldoGotganApplication;
-import org.springframework.boot.test.context.SpringBootTest;
 import com.jayway.jsonpath.JsonPath;
+import com.ok.PaldoGotganApplication;
 import com.ok.common.security.TokenClaims;
-import com.ok.member.auth.repository.RefreshTokenRepository;
+import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -52,13 +52,13 @@ class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
     WebApplicationContext context;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;
 
     @Autowired
-    RefreshTokenRepository refreshTokenRepository;
+    RefreshTokenJpaRepository refreshTokenRepository;
 
     @Autowired
     PasswordEncoder passwordEncoder;
@@ -184,7 +184,7 @@ class AuthSellerRoleIntegrationTest extends AbstractIntegrationTest {
     // 상태를 하나 추가하면 default가 없는 이 switch가 컴파일되지 않아, 권한 테스트에 새 상태를 넣도록 강제한다
     private SellerApplication saveApplicationIn(SellerApplicationStatus status) {
         SellerApplication application = SellerApplication.apply(memberId, "청송 햇살농원", "김영수",
-                "512-81-04273", "제2026-경북청송-0031호", APPLIED_AT);
+                "512-81-04273", "제2026-경북청송-0031호", "37421", APPLIED_AT);
         switch (status) {
             case PENDING -> {
                 // 신청하면 심사 대기 상태라 바꿀 것이 없다

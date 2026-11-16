@@ -1,0 +1,4 @@
+# 운영 앱 수집 대상 (compose.prod.yml이 /etc/prometheus/targets로 마운트). 관리 포트 18080은 호스트·nginx에 열지 않고 compose 네트워크로만 닿는다
+# 모듈별 서버로 나뉘면 아래 targets에 주소를 한 줄씩 추가한다. 앱이 지표에 application 라벨을 직접 달므로 labels에는 application을 넣지 않는다
+# 예) - targets: ['wallet:18080', 'order:18080']
+- targets: ['app:18080']

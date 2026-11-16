@@ -21,8 +21,8 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 |---|---|
 | 언어 / 빌드 | Java 25, Gradle (Kotlin DSL) |
 | 프레임워크 | Spring Boot 4.1.1 (Web MVC, Security, Validation) |
-| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 (Spring Data Redis, Lettuce) |
-| 메시지 브로커 | Apache Kafka 4.2 (KRaft combined, 브로커 3대), Spring for Apache Kafka |
+| 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 (단일 또는 클러스터, Spring Data Redis, Lettuce) |
+| 메시지 브로커 | Apache Kafka 4.2 (KRaft, 브로커 1대 또는 3대), Spring for Apache Kafka |
 | 구조 | Gradle 멀티 모듈 + Spring Modulith (도메인 모듈 분리) |
 | 배치 / 문서 / 외부 | Spring Batch, springdoc-openapi (Swagger), AWS SDK v2 (S3) |
 | 테스트 | JUnit 5, AssertJ, Testcontainers, ArchUnit, JaCoCo |
@@ -47,75 +47,239 @@ cp .env.example .env
 
 ## 3. 로컬 실행
 
-```bash
-# 1) DB·Redis·Kafka 실행 (MySQL은 data/mysql, Kafka는 도커 볼륨에 데이터 저장, Redis는 볼륨 없이 재시작하면 비워짐)
-docker compose up -d
+처음이면 위에서부터 순서대로 따라 하면 됩니다. 명령은 모두 저장소 루트에서 실행합니다.
 
-# 2) 앱 실행 (기본 프로파일 dev)
+### 한눈에 보기
+
+`docker compose`가 띄우는 것은 **프로파일**로 나뉩니다. 프로파일이 없는 서비스는 항상 뜨고, 프로파일이 있는 서비스는 그 프로파일을 켰을 때만 뜹니다.
+
+| 서비스 | 프로파일 | 호스트 포트 | 비고 |
+|---|---|---|---|
+| `mysql` | 없음(항상) | `3306` | 데이터는 `data/mysql` |
+| `redis` (1대) | `single` | `6379` (`127.0.0.1`만) | AOF, 메모리 한도 512m, 비밀번호 없음. 평소 쓰는 구성 |
+| `redis-1`~`redis-6` (6대), `redis-cluster-init` | `cluster` | `7001`~`7006` (`127.0.0.1`만) | 마스터 3 + 복제본 3. `single`과 함께 켜지 않는다 |
+| `kafka` (브로커 1대) | `single` | `19092` (`127.0.0.1`만) | 메모리 한도 1024m. 평소 쓰는 구성 |
+| `kafka-1`~`kafka-3` (브로커 3대) | `cluster` | `19092`, `29092`, `39092` | `single`과 함께 켜지 않는다 |
+| `prometheus`, `grafana`, `mysqld-exporter`, `cadvisor`, `kafka-exporter` | `monitoring` | `9090`, `3000` (`127.0.0.1`만) | 모니터링 |
+| `app` | `app` | `8080` (`APP_PORT`) | 앱까지 컨테이너로 실행 |
+
+**프로파일을 켜는 방법은 두 가지이고, 섞어 쓰면 안 됩니다.**
+
+1. `.env`의 `COMPOSE_PROFILES`에 쉼표로 적는다(권장). 예: `COMPOSE_PROFILES=single,monitoring`. 그러면 `docker compose up -d`만 하면 됩니다.
+2. 명령줄에 `--profile`을 붙인다. 이때 **`.env`의 `COMPOSE_PROFILES`는 무시됩니다.** `.env`에 `single`이 있어도 `--profile monitoring`만 주면 Kafka는 빠집니다.
+
+| 명령 | 뜨는 Kafka |
+|---|---|
+| `.env`에 `COMPOSE_PROFILES=single` 두고 `docker compose up -d` | `kafka`, `redis` |
+| `.env`에 `COMPOSE_PROFILES=single,monitoring` 두고 `docker compose up -d` | `kafka` + 모니터링 |
+| `docker compose --profile single --profile monitoring up -d` | `kafka` + 모니터링 |
+| `docker compose --profile monitoring up -d` | **없음.** `kafka-exporter`만 떠서 브로커에 붙지 못한다 |
+
+### 처음 한 번만 준비
+
+1. Docker를 켭니다. Compose는 2.20 이상이어야 합니다(`docker compose version`). `depends_on`의 `required`를 쓰기 때문입니다.
+2. `cp .env.example .env`를 실행합니다. 이 파일에 `COMPOSE_PROFILES=single`이 들어 있어 Kafka(브로커 1대)까지 뜹니다. `.env`가 이미 있으면 이 줄이 있는지 확인합니다.
+3. 앱을 실행할 때는 JWT 키(`keys/`)가 필요합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
+
+### 상황별 실행
+
+| 하고 싶은 것 | 방법 | 뜨는 것 |
+|---|---|---|
+| 평소 개발(앱은 IDE나 `bootRun`) | `docker compose up -d` 후 `./gradlew :monolith:bootRun` | mysql, redis, kafka |
+| 모니터링도 같이 | `.env`에 `COMPOSE_PROFILES=single,monitoring`을 적고 `docker compose up -d` | 위 + prometheus, grafana 등 |
+| 앱까지 컨테이너로 | `docker compose --profile single --profile app up -d --build` (JWT 키 필요) | 위 + app |
+| Kafka 브로커 3대, Redis 6대 | `.env`에 `COMPOSE_PROFILES=cluster`와 `REDIS_MODE=cluster`. 컨테이너 앱이면 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`도 | kafka-1~3, redis-1~6 |
+| 앱이 compose를 대신 켜게 | `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 적고 `bootRun` | mysql, redis, kafka |
+
+모니터링과 앱 컨테이너의 자세한 사용법은 아래 "로컬 모니터링", "앱까지 컨테이너(docker compose)로 실행"을 봅니다.
+
+### 앱 실행
+
+```bash
 ./gradlew :monolith:bootRun            # 모든 모듈을 함께 (포트 8080)
 ./gradlew :wallet:bootRun              # 또는 모듈 하나만 단독으로 (6절 참고)
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
-  이때 DB(mysql)와 Redis만 기동하고 앱 컨테이너는 만들지 않습니다.
+  이때 DB(mysql), Redis, Kafka(`.env`의 `COMPOSE_PROFILES`)만 기동하고 앱 컨테이너는 만들지 않습니다.
 - Swagger UI: `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
 - 현재는 로그인 없이 모든 요청을 허용합니다 (`config/SecurityConfig`). 인증을 구현하면 교체하세요.
-- 로컬 DB를 처음 상태로 되돌리려면 앱과 DB를 끄고 `docker compose down` 후 `rm -rf data/mysql`
-  (데이터가 모두 삭제됩니다).
+
+### 잘 떴는지 확인
+
+```bash
+docker compose ps                                           # mysql, redis, kafka가 모두 healthy인지
+docker compose exec redis redis-cli ping                    # PONG
+docker compose exec redis redis-cli config get appendonly   # yes (AOF가 켜짐)
+docker compose exec kafka sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list'   # 오류 없이 끝나면 브로커가 응답한다
+# 메모리 한도와 swap 한도가 같으면 swap을 쓰지 않는다 (Redis 536870912, Kafka 1073741824)
+docker inspect -f '{{.Name}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' server-redis-1 server-kafka-1
+```
+
+- 컨테이너 이름은 프로젝트 이름(`server`)을 따라 `server-<서비스>-1`입니다. `cluster`의 첫 브로커는 `server-kafka-1-1`입니다.
+- 앱 설정으로 실제 Redis·Kafka에 붙는지는 `./gradlew :common:infraTest`로 확인합니다(아래 "인프라 연결 확인 테스트").
+
+### 멈추기와 초기화
+
+| 하고 싶은 것 | 명령 | 데이터 |
+|---|---|---|
+| 잠시 멈춤 | `docker compose stop` (다시 켜려면 `start`) | 그대로 |
+| 컨테이너 삭제 | `docker compose down` | 그대로(MySQL은 `data/mysql`, Kafka·Redis는 도커 볼륨) |
+| Kafka·Redis·모니터링 데이터까지 삭제 | `docker compose down -v` | 도커 볼륨이 지워진다(토픽·메시지·AOF·지표). MySQL의 `data/mysql`은 그대로 |
+| MySQL까지 처음 상태로 | `docker compose down` 후 `rm -rf data/mysql` | 모두 삭제 |
+
+`stop`, `start`, `down`은 프로파일을 주지 않아도 이 프로젝트의 컨테이너 전체에 적용됩니다(프로파일이 있는 서비스 포함). 반대로 `up -d`는 켠 프로파일의 서비스만 올리고, 켜지 않은 프로파일의 컨테이너가 이미 떠 있어도 멈추지 않습니다. 그래서 `cluster`에서 `single`로 바꿀 때는 먼저 `docker compose down`으로 내립니다.
+
+### 문제가 생기면
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `docker compose ps`에 `kafka`가 없다. 앱이 Kafka에 붙지 못한다 | Kafka 프로파일이 켜지지 않았다. `.env`에 `COMPOSE_PROFILES`가 없거나, `--profile`을 줘서 `.env` 값이 무시됐다 | `.env`에 `COMPOSE_PROFILES=single`을 넣거나 명령에 `--profile single`을 붙인다 |
+| `port is already allocated`(`6379`, `19092`, `3306`) | 다른 프로젝트의 컨테이너가 같은 포트를 쓴다. `single`과 `cluster`를 함께 켜도 `19092`가 겹친다 | 다른 쪽을 내리거나 `.env`의 `REDIS_PORT`, `KAFKA_1_PORT`, `MYSQL_PORT`를 바꾼다. Kafka 포트를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꾼다 |
+| Redis나 Kafka가 갑자기 종료됐다(`Exited (137)`) | 메모리 한도를 넘어 OOM kill됐다. swap을 쓰지 않아 한도에서 바로 죽는다 | `docker inspect -f '{{.State.OOMKilled}}' server-redis-1`이 `true`면 한도 초과다 |
+| `single`↔`cluster`를 바꾼 뒤 컨테이너 앱이 브로커를 못 찾는다 | 앱이 `kafka:9092`(`single`의 기본 주소)로 붙는데 `cluster`에는 없다 | `cluster`면 `.env`에 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣는다 |
+| Kafka가 뜨지 않고 다시 시작을 반복한다 | `CLUSTER_ID`나 `KAFKA_VERSION`을 바꿔 기존 볼륨과 맞지 않는다 | `docker compose down -v`로 볼륨까지 지우고 다시 시작한다(메시지가 사라진다) |
+| compose가 `required`를 모르는 속성이라고 한다 | Compose가 2.20보다 오래됐다 | Docker를 업데이트한다 |
 
 ### 로컬 Kafka (#318)
 
-`docker compose up -d`는 MySQL과 함께 Kafka 브로커 3대(`kafka-1`~`kafka-3`)를 띄웁니다. 운영과 같은 구성(클러스터 1개, 브로커 3대, KRaft combined)입니다.
+Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정하고(`.env.example`에는 `single`), 둘 중 하나만 켭니다. 운영(`deploy/compose.prod.yml`)과 같은 두 구성이 있습니다.
 
-- 내 PC에서는 `localhost:19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서).
-- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값이 위 3대라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
-- 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다. 상태는 `docker compose ps`에서 `healthy`로 확인합니다.
-- 메시지는 3대에 복사되고 2대 이상에 저장돼야 발행 성공입니다. 그래서 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고, 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다.
+| 프로파일 | 구성 | 메모리 | 쓰는 때 |
+|---|---|---|---|
+| `single` (기본) | 브로커 1대(`kafka`), 복제·최소 동기화 1 | `mem_limit` 1024m, swap 금지 | 평소. 인프라 자원 한계로 운영도 이 구성이다 |
+| `cluster` | 브로커 3대(`kafka-1`~`kafka-3`), 복제 3·최소 동기화 2 | 한도 없음(Docker 메모리 약 2GB) | 인프라가 확장돼 3대를 쓸 때 다시 쓰려고 설정을 그대로 남겨 둔 구성 |
+
+- 내 PC에서는 `single`이면 `localhost:19092`, `cluster`면 `19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서). 두 프로파일은 같은 `KAFKA_1_PORT`를 쓰므로 함께 켜면 포트가 겹쳐 시작에 실패합니다.
+- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값의 첫 주소(`localhost:19092`)가 `single`의 브로커라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
+- 상태는 `docker compose ps`에서 `healthy`로 확인합니다. `cluster`는 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다.
+- `cluster`에서는 메시지가 3대에 복사되고 2대 이상에 저장돼야 발행 성공이라, 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다. `single`은 브로커가 멈추면 Kafka 전체가 멈춥니다.
+- `single`에서 `cluster`로 바꾸려면(또는 반대로) 켜 둔 쪽을 먼저 내립니다(`docker compose down`). 볼륨이 서로 달라(`kafka-data`, `kafka-N-data`) 한쪽의 메시지는 다른 쪽에서 보이지 않습니다.
 - Kafka만 처음 상태로 되돌리려면 `docker compose down -v`로 볼륨까지 지웁니다(토픽·메시지가 모두 사라지고 새 클러스터로 시작합니다).
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
-- Kafka 상태는 앱 헬스체크(`/actuator/health`)에 들어가지 않습니다. 앱은 메시지를 보내거나 받을 때 처음 브로커에 접속하므로, 브로커가 꺼져 있어도 기동은 됩니다.
-- 메시지 키는 문자열, 값은 JSON(Jackson)입니다. 메시지 헤더에 보내는 쪽 Java 클래스 이름(타입 헤더)을 싣지 않으므로, 받는 쪽은 리스너(토픽)마다 읽을 타입을 정합니다. 값을 JSON으로 읽지 못한 메시지 때문에 컨슈머가 멈추지 않도록 역직렬화 실패는 오류 처리로 넘깁니다(`ErrorHandlingDeserializer`). 설정은 `monolith`의 `application.yaml`의 `spring.kafka`에만 있습니다.
-- 의존성(`spring-boot-starter-kafka`)은 `common`이 `api`로 모든 모듈에 노출합니다. 모듈 yaml에는 Kafka 설정을 두지 않으므로, 모듈을 단독 실행하며 Kafka를 쓰게 되면 `monolith`의 `spring.kafka` 블록을 그대로 복사합니다. 직렬화 설정이 모듈마다 다르면 보내는 쪽과 받는 쪽이 메시지를 서로 읽지 못합니다.
+- Kafka 상태는 앱 헬스체크(`/actuator/health`, 관리 포트 18080)에 들어가지 않습니다. 앱은 메시지를 보내거나 받을 때 처음 브로커에 접속하므로, 브로커가 꺼져 있어도 기동은 됩니다.
+- 메시지 키는 문자열, 값은 JSON입니다. 접속 주소와 직렬화·역직렬화 설정은 `common`의 [`common-kafka.yaml`](../common/src/main/resources/common-kafka.yaml) 한 곳에 있고, Kafka를 쓰는 앱(`monolith`, `refund`, `payout`, `wallet`)이 `spring.config.import`로 가져옵니다(#538).
+  - **JSON 모양:** 날짜·시간은 ISO-8601 문자열(`"2026-10-30T14:00:00"`), 금액은 JSON 숫자이고, 값이 없는 필드도 이름을 남기고 `null`입니다. 보내는 쪽 클래스 이름(타입 헤더)은 싣지 않습니다.
+  - **필드가 달라질 때:** 받는 쪽은 모르는 필드가 와도 읽고 빠진 필드는 `null`로 읽습니다. 그래서 보내는 쪽이 필드를 더해도 받는 쪽이 멈추지 않습니다. 필드 이름 변경·삭제나 타입 변경은 받는 쪽이 읽지 못하므로 두 모듈을 함께 바꿉니다.
+  - **읽을 타입:** 타입 헤더가 없어 받는 쪽이 리스너(토픽)마다 정합니다(`@KafkaListener`의 `properties = "spring.json.value.default.type=..."`).
+  - **읽을 수 없는 메시지:** JSON으로 읽지 못한 메시지는 예외를 던지지 않고(`ErrorHandlingDeserializer`) 컨슈머 오류 처리기로 넘어가 ERROR 로그를 남기고 건너뜁니다. 컨슈머가 같은 메시지에서 멈추지 않고, 원본 바이트는 오류 헤더에 남습니다. 보관(DLT)은 #388에서 정합니다.
+  - 이 동작은 `KafkaSerializationTest`(common)와 `PayoutKafkaReceiveIntegrationTest`가 확인합니다.
+- 의존성(`spring-boot-starter-kafka`)은 `common`이 `api`로 모든 모듈에 노출합니다. 모듈을 단독 실행하며 Kafka를 쓰게 되면 그 모듈 yaml의 `spring.config.import`에 `classpath:common-kafka.yaml`을 더합니다(설정을 복사하지 않습니다). 직렬화 설정이 앱마다 다르면 보내는 쪽과 받는 쪽이 메시지를 서로 읽지 못하기 때문입니다.
+
+### 로컬 모니터링 (#374)
+
+앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. **`--profile`을 주면 `.env`의 `COMPOSE_PROFILES`가 대신 무시되므로**, Kafka 프로파일(`single`)도 함께 적어야 Kafka가 같이 뜹니다. `.env`에 `COMPOSE_PROFILES=single,monitoring`으로 적어 두면 `docker compose up -d`만으로 같습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
+
+```bash
+docker compose --profile single --profile monitoring up -d   # 기본 서비스와 Kafka에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
+deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를 바꿀 때도). 로컬은 아래 COMPOSE_FILE을 붙인다
+```
+
+- 계정 스크립트는 로컬에서 `COMPOSE_FILE=../docker-compose.yml COMPOSE_PROFILES=monitoring deploy/monitoring/create-exporter-user.sh`로 실행합니다. 몇 번 실행해도 같은 결과이고, `.env`의 `MYSQL_EXPORTER_PASSWORD`로 `exporter` 계정(조회 전용)을 만들거나 비밀번호를 맞춥니다. 계정이 없으면 MySQL 지표(`mysql_up`)만 0입니다.
+- Grafana: `http://localhost:3000` (`admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`, 기본 `admin`), Prometheus: `http://localhost:9090`. 둘 다 `127.0.0.1`에만 열립니다. 대시보드 `paldo-gotgan 개요`가 자동 등록됩니다.
+- 앱 지표는 컨테이너로 띄운 앱(`--profile app`)의 관리 포트(`app:18080`)를 가져옵니다. 운영과 같은 주소입니다. IDE나 `:monolith:bootRun`으로 내 PC에서 앱을 띄우는 경우에는 `deploy/monitoring/prometheus/targets/local/app.yml`의 대상을 `host.docker.internal:18080`으로 바꿉니다(재시작 없이 반영되고, 이 변경은 커밋하지 않습니다).
+- 대시보드는 위에서부터 주요 지표(트래픽·지연 P50/P95/P99·에러 4xx/5xx·포화도) 현재값과 색 임계값, API별 p95 상위 10 표, 원인 분석(JVM·커넥션 풀), 컨테이너 포화도, MySQL 순서입니다. 색 임계값은 글의 기준(CPU 80%, 풀 사용률 90%)과 시작값이라 서비스의 평소 값에 맞춰 `deploy/monitoring/grafana/dashboards/overview.json`에서 조정합니다. 앱 재시작은 그래프에 주황색 마커로 표시됩니다(`process_start_time_seconds` 변화).
+- 컨테이너 CPU 스로틀링은 cAdvisor가 모읍니다(`monitoring` 프로파일에 함께 뜸, 호스트 포트 없음, 대상은 `deploy/monitoring/prometheus/targets/local/cadvisor.yml`). 스로틀링은 CPU 사용률이 낮아 보여도 CPU limit에 걸려 멈춘 비율이라 P99를 키웁니다. 컨테이너 CPU limit은 서비스에 `cpus`를 주어야 생기고(기본으로는 어느 서비스에도 걸려 있지 않음), limit이 없는 컨테이너는 스로틀 비율이 0이라 대시보드에 값이 없습니다(`-`).
+- 스로틀링을 재현하려면 `docker run --rm --cpus 0.2 busybox sh -c 'while :; do :; done'`를 실행하고 대시보드의 `container` 변수에서 그 컨테이너를 고르면 스로틀 비율이 100%에 가깝게 오릅니다.
+- Docker Desktop(Mac)에서는 cAdvisor가 도커 소켓을 직접 연결해야 컨테이너를 찾습니다(compose에 이미 연결해 둠). 이렇게 하면 `name` 라벨이 채워져 컨테이너 이름으로 고를 수 있음을 확인했습니다(Docker Desktop 4.92). 그래도 `name`이 비어 나오면 대시보드의 `container` 변수에 아무것도 뜨지 않으니, `container_cpu_cfs_throttled_periods_total` 같은 지표를 Prometheus에서 `id` 라벨(`/docker/<컨테이너 ID>`)로 직접 골라 봅니다. Linux(EC2)에서의 동작은 아직 확인하지 않았습니다.
+- 슬로우 쿼리 로그(1초 이상)는 MySQL에 항상 켜져 있고(`docker compose exec mysql tail /var/lib/mysql/slow.log`), 개수는 대시보드의 MySQL 행에서 봅니다.
+- 로컬 compose의 MySQL 서비스에 슬로우 쿼리 설정이 생겨서, 이 변경을 받은 뒤 처음 `docker compose up -d`를 하면 mysql 컨테이너가 한 번 다시 만들어집니다(`data/mysql`은 그대로).
+- Grafana·Prometheus 데이터는 이름 있는 볼륨이라 `docker compose down -v`를 하면 지워집니다(Kafka 볼륨도 함께 지워지니 주의).
+
+### 인프라 연결 확인 테스트 (#530)
+
+compose로 띄운 실제 Redis·Kafka에 앱과 같은 접속 설정으로 붙는지 확인합니다. `common`의 공통 기반(`common-redis.yaml`, Kafka 접속 환경변수)을 확인하는 테스트라 `common`에 있습니다(`com.ok.common.config`의 `RedisInfraConnectionTest`, `KafkaInfraConnectionTest`). Testcontainers가 아니라 떠 있는 컨테이너를 쓰므로 `@Tag("infraTest")`로 표시해 기본 `test`(CI 포함)에서는 빠지고, 아래 태스크로만 돕니다.
+
+```bash
+docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single 이 있어야 redis와 kafka가 뜬다
+./gradlew :common:infraTest
+```
+
+- Redis(`single` 기준, `REDIS_MODE`를 정하지 않은 상태): PING, 값 저장·조회, AOF 켜짐(`appendonly yes`, `everysec`), `noeviction`, `maxmemory`가 컨테이너 한도(512m)보다 작은지
+- Kafka: 브로커 연결과 클러스터 조회, `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(`single`과 `cluster` 모두 통과). 연결만 확인하므로 값은 문자열로 보내고, 앱의 JSON 직렬화는 따로 검증한다
+- 접속 주소는 앱과 같이 `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS` 환경변수로 바꿉니다. 인프라가 꺼져 있으면 실패합니다(Redis는 2초, Kafka는 10초 안에).
+
+### JPA 지표 (#509)
+
+앱이 `/actuator/prometheus`로 JPA 지표를 함께 내놓습니다(대시보드 패널은 이후 PR에서 추가).
+
+| 지표 | 의미 |
+|---|---|
+| `jpa_queries_per_request` (`_count` `_sum` `_max` `_bucket`) | HTTP 요청 하나가 Hibernate로 실행한 SQL 문 수. `method`, `uri`(템플릿) 태그로 엔드포인트별 분포 |
+| `jpa_optimistic_lock_failures_total` | `@Version` 낙관적 락 충돌 횟수. `entity` 태그(`Product` 등) |
+| `hibernate_*` (`statements`, `transactions`, `query_executions_max` 등) | Hibernate 통계(`hibernate.generate_statistics`). 앱 전체 합계. 카운터에는 Prometheus가 `_total`을 붙임 |
+
+- 엔드포인트별 평균 쿼리 수: `sum by (method, uri) (rate(jpa_queries_per_request_sum[5m])) / sum by (method, uri) (rate(jpa_queries_per_request_count[5m]))`
+- 엔드포인트별 p95: `histogram_quantile(0.95, sum by (le, method, uri) (rate(jpa_queries_per_request_bucket[5m])))`. 버킷 경계는 1·3·5·10·20·50·100입니다.
+- N+1 의심: 같은 엔드포인트에서 목록 건수나 데이터가 늘수록 요청당 쿼리 수가 따라 늘면 의심합니다. 시작값으로 p95가 20을 넘는 엔드포인트를 먼저 봅니다. 서비스의 평소 값에 맞춰 조정합니다.
+- 쿼리 수는 Hibernate가 준비한 SQL 문 수입니다. 네이티브 쿼리(`nativeQuery = true`, `createNativeQuery`)와 벌크 UPDATE·DELETE도 센다는 것을 통합 테스트로 확인했습니다. JDBC 배치로 나가는 INSERT·UPDATE는 한 번으로 세고, Hibernate를 거치지 않는 JDBC 호출은 세지 않습니다(애플리케이션 코드에는 `JdbcTemplate` 사용이 없습니다). 핸들러가 없어 Security에서 끝난 요청(401 등)은 기록하지 않고, 인증된 요청의 없는 경로는 `uri="/**"` 하나로 묶여 기록됩니다. 관리 포트(actuator) 요청은 기록하지 않습니다.
+- 요청 스레드 밖에서 실행한 쿼리는 세지 않아 과소 집계됩니다: 스케줄러, 비동기 이벤트 리스너(`@ApplicationModuleListener`), `@Async`, `CompletableFuture`, 가상 스레드 위임, `Callable`·`DeferredResult`를 반환하는 컨트롤러(필터는 최초 디스패치만 기록)입니다. 이런 엔드포인트는 값이 작게 나오는 것을 N+1이 없다는 뜻으로 읽지 않습니다.
+- `app.metrics.jpa.enabled=false`(환경변수 `APP_METRICS_JPA_ENABLED=false`)로 이 절의 지표 수집(Hibernate 통계, SQL 카운터, 충돌 카운터)을 끌 수 있습니다. 기본은 켜짐이며, 끄면 `hibernate_*`는 0으로 나옵니다. Hibernate 통계의 운영 오버헤드는 부하테스트에서 확인합니다.
+- `hibernate_optimistic_failures`는 이 프로젝트의 충돌에서 오르지 않아(통합 테스트로 확인) 쓰지 않고, 항상 0으로 나옵니다. 충돌 횟수는 `jpa_optimistic_lock_failures_total`을 봅니다.
+- 낙관적 락 충돌의 행 id는 태그로 달지 않습니다(값이 끝없이 늘어 시계열이 폭증).
 
 ### 로컬 Kafka 지표 확인 (#396)
 
 `monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
 
 ```bash
-docker compose --profile monitoring up -d
+docker compose --profile single --profile monitoring up -d
 # 지표 보기. 포트를 열지 않으므로 컨테이너 안에서 조회한다
 # Kafka 내부 토픽(__consumer_offsets)은 파티션이 50개라 줄이 많아 뺀다
 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^kafka_brokers|under_replicated|consumergroup_lag_sum' | grep -v __consumer_offsets
 ```
 
-- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 브로커 3대가 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 켜진 프로파일(`single`이면 브로커 1대, `cluster`면 3대)이 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 기본은 `single`의 `kafka:9092`를 봅니다. `cluster`로 쓰면 `.env`에 `KAFKA_EXPORTER_SERVER_1=kafka-1:9092`, `KAFKA_EXPORTER_SERVER_2=kafka-2:9092`, `KAFKA_EXPORTER_SERVER_3=kafka-3:9092`를 넣습니다.
 - 확인 명령과 헬스체크는 이미지 안의 `wget`(BusyBox)을 씁니다. `KAFKA_EXPORTER_VERSION`을 올리면 위 명령이 그대로 되는지 다시 확인합니다.
 - 주로 보는 값
-  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `3`
+  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `1`(`single`) 또는 `3`(`cluster`)
   - `kafka_topic_partition_under_replicated_partition`: 복사본이 모자란 파티션이면 `1`. 평소 모두 `0`
   - `kafka_consumergroup_lag_sum`: 그룹·토픽별 랙. 계속 커지면 받는 쪽이 따라가지 못하는 것
-- 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다.
+- `cluster`에서 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다. `single`은 복사본이 없어 언더 복제가 항상 `0`입니다.
 - 컨슈머 그룹이 하나도 없으면(앱을 띄우기 전) 랙 값은 나오지 않습니다.
 - 띄운 직후 첫 조회에서 `Cannot get consumer group: broker not connected` 로그가 나올 수 있습니다. 브로커 연결이 준비되기 전이라 다음 조회부터는 나오지 않습니다.
 - 그룹 오프셋은 조회만 하고 컨슈머 그룹에 가입하지 않으므로 앱 컨슈머에 영향을 주지 않습니다.
 - Prometheus·Grafana 대시보드 연결은 #374 이후에 추가합니다.
 
+### 로컬 Redis 클러스터 (#366)
+
+`cluster` 프로파일(`.env`에 `COMPOSE_PROFILES=cluster`와 `REDIS_MODE=cluster`)일 때의 구성입니다. `single`(기본)은 Redis 1대라 이 절이 해당하지 않습니다. `docker compose up -d`가 Redis 노드 6대(`redis-1`~`redis-6`)를 띄우고, `redis-cluster-init`이 마스터 3 + 복제본 3으로 묶은 뒤 끝납니다. 노드가 모두 `cluster_state:ok`(healthy)가 되면 앱이 시작합니다. Docker 메모리는 Redis에 약 0.75GB를 더 잡아 둡니다(노드당 `mem_limit` 128m).
+
+```bash
+docker compose exec redis-1 redis-cli -p 7001 cluster info | grep cluster_state   # cluster_state:ok
+docker compose exec redis-1 redis-cli -p 7001 cluster nodes                       # 노드 6대와 마스터·복제본 역할
+redis-cli -c -h redis-1.localhost -p 7001 set k v                                 # 내 PC에서 접속 (-c는 슬롯 이동을 따라감)
+```
+
+- **접속 주소:** 노드가 클라이언트에게 알려 주는 주소로 앱이 다시 접속합니다. 그래서 노드 이름은 `redis-N.localhost`, 포트는 `7001`~`7006`으로 고정입니다(바꿀 수 없음). 내 PC에서는 `*.localhost`가 `127.0.0.1`로 풀리고, 컨테이너 안에서는 compose 네트워크 별칭으로 풀려 두 곳 모두 같은 값(`REDIS_CLUSTER_NODES`)으로 접속하도록 만들었습니다(컨테이너 안에서 `redis-cli`로 접속되는 것은 확인했습니다. 앱 컨테이너를 `--profile app`으로 처음 띄울 때 `/actuator/health`가 `UP`인지 확인합니다). `*.localhost`가 풀리지 않는 환경(일부 Linux·Windows)은 hosts 파일에 `127.0.0.1 redis-1.localhost` ~ `redis-6.localhost`를 추가합니다.
+- **장애 조치 해 보기:** `cluster nodes`에서 마스터 하나를 찾아 `docker compose stop redis-N` 하면 몇 초 안에 그 복제본이 마스터가 됩니다(`cluster_state:ok` 유지). 다시 `docker compose start redis-N` 하면 복제본으로 합류하고, 노드 ID는 그대로입니다(`nodes.conf`가 볼륨에 있음). 단, **마스터 2대를 동시에 죽이면** 마스터 과반이 없어 자동 승격이 안 되고 클러스터 전체가 `CLUSTERDOWN`이 됩니다. 복구 방법은 `docs/DEPLOY.md`의 Redis 절을 봅니다.
+- **처음부터 다시:** 노드 볼륨에는 노드 ID와 데이터가 들어 있습니다. 노드 일부의 볼륨만 지우면 `redis-cluster-init`이 클러스터를 만들지 않고 실패합니다(기존 데이터 보호). 6대를 모두 지우려면 `docker compose down -v`를 합니다(Kafka 볼륨도 함께 지워짐).
+- 로컬 Redis는 비밀번호가 없고, 호스트 포트는 `127.0.0.1`에만 엽니다.
+
+**클러스터에서 코드를 쓸 때의 규칙** (캐시·락 같은 사용처를 만드는 이슈에서 지킵니다)
+
+- 여러 키를 한 번에 다루는 명령(`MGET`, `MSET`, 트랜잭션)과 Lua 스크립트는 키가 같은 슬롯에 있어야 합니다. 키에 해시 태그를 씁니다. 예: `order:{123}:lock`, `order:{123}:cache`는 `{123}`만 해시되어 같은 슬롯에 갑니다. 다른 슬롯의 키를 한 명령에 섞으면 `CROSSSLOT` 오류입니다.
+- 읽기는 복제본을 우선합니다(`read-from: replicaPreferred`). 복제는 비동기라 **복제본은 마지막 쓰기보다 오래된 값을 줄 수 있습니다.** 그래서 락과 중복 방지는 "읽고 판단"하지 말고 `SET key value NX PX <ms>`나 Lua 스크립트 같은 원자적 명령으로 합니다(쓰기와 원자적 명령은 항상 마스터로 갑니다).
+- **Redis는 락과 중복 방지의 정합성을 보장하지 않습니다.** 장애 조치 순간에는 마스터가 가진 최신 키가 새 마스터에 없을 수 있습니다. 락은 짧은 TTL로 쓰고, 정합성이 필요하면 DB 유니크 제약 같은 최종 방어선을 둡니다.
+- 메모리 정책은 `noeviction`입니다(#319 그대로, 정책 재검토는 #324). 노드당 `maxmemory`가 64mb라 데이터가 차면 쓰기가 실패합니다.
+
 ### 앱까지 컨테이너(docker compose)로 실행
 
-`docker compose up -d`는 DB와 Redis만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
+`docker compose up -d`는 DB, Redis, Kafka(`.env`의 `COMPOSE_PROFILES`)만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다. 이때도 `--profile`을 주면 `.env`의 `COMPOSE_PROFILES`가 무시되므로 `single`(또는 `cluster`)을 함께 적습니다.
 
 먼저 JWT 키(`keys/`)를 만들어야 합니다. 앱이 기동할 때 키 파일을 읽는데, 이미지에는 키가 없고 compose가 저장소 루트의 `keys/`를 컨테이너의 `/app/keys`에 읽기 전용으로 연결합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
 
 ```bash
-docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, 앱 실행
+docker compose --profile single --profile app up -d --build   # 이미지 빌드 후 DB, Redis, Kafka, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
-docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
+docker compose down                          # 종료 (data/mysql 은 유지됨)
 ```
 
-- DB, Redis, Kafka 3대가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 `REDIS_HOST=redis`, `REDIS_PORT=6379`로 고정해 접속합니다(`.env`의 `REDIS_PORT`는 호스트 포트).
-- 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름(`kafka-1:9092,...`)으로 덮어씁니다. `.env`의 `localhost:...`는 컨테이너 안에서 앱 자신을 가리키기 때문입니다.
-- Kafka 3대는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
+- DB, 켜진 프로파일의 Redis(`single`이면 1대, `cluster`면 6대와 `redis-cluster-init`)와 Kafka(`single`이면 1대, `cluster`면 3대)가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 Redis 주소를 compose가 정해 덮어씁니다. 기본(`single`)은 `REDIS_HOST=redis`, `REDIS_PORT=6379`이고(`.env`의 `REDIS_PORT`는 호스트 포트), `cluster`면 `.env`에 `REDIS_MODE=cluster`를 두고 노드 목록(`redis-N.localhost:700N`)은 compose가 고정합니다.
+- 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름으로 덮어씁니다. 기본은 `kafka:9092`(`single`)이고, `cluster`면 `.env`에 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣습니다. `.env`의 `KAFKA_BOOTSTRAP_SERVERS`(`localhost:...`)는 컨테이너 안에서 앱 자신을 가리키기 때문에 쓰지 않습니다.
+- Kafka 브로커는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
 - 호스트 포트는 `.env`의 `APP_PORT`(기본 8080)입니다. IntelliJ나 `:monolith:bootRun`으로 앱을 같이 실행 중이면 포트가 겹치니 하나만 실행하세요.
@@ -146,12 +310,18 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `MYSQL_VERSION` | MySQL 이미지 버전 (docker compose, 통합 테스트 공통) | `9.4` |
 | `MYSQL_PORT` | 호스트에 열 DB 포트 | `3306` |
 | `REDIS_VERSION` | Redis 이미지 버전 (docker compose, 통합 테스트 공통) | `8.10` |
-| `REDIS_PORT` | 호스트의 loopback(127.0.0.1)에만 여는 Redis 포트(비밀번호가 없어 외부 비공개). 앱을 호스트에서 실행할 때 접속 포트이기도 함 | `6379` |
-| `REDIS_HOST` / `REDIS_PASSWORD` | 앱의 Redis 접속 정보. 비밀번호가 비어 있으면 없이 접속(로컬). 운영은 `REDIS_PASSWORD` 필수 | `localhost` / 빈 값 |
+| `REDIS_MODE` | 앱이 Redis에 붙는 방식. `single`(기본, 단일 Redis)이나 `cluster`. `cluster` 프로파일이면 `cluster`로 둔다(compose·운영은 deploy.sh가 정함) | `single` |
+| `REDIS_HOST`, `REDIS_PORT` | 단일 Redis 주소(`REDIS_MODE`가 `single`일 때). `REDIS_PORT`는 compose의 호스트 포트이기도 하다 | `localhost`, `6379` |
+| `REDIS_CLUSTER_NODES` | 앱이 접속할 Redis 클러스터 노드 목록(`REDIS_MODE=cluster`일 때, 쉼표 구분). 접속 후 나머지 노드와 역할은 앱이 스스로 읽는다. 노드 포트(7001~7006)는 노드가 알리는 주소와 같아야 해서 바꿀 수 없음(로컬 Redis 클러스터 절) | `redis-1.localhost:7001,...,redis-6.localhost:7006` |
+| `REDIS_PASSWORD` | 앱의 Redis 비밀번호. 비어 있으면 없이 접속(로컬). 운영은 필수 | 빈 값 |
 | `APP_PORT` | docker compose로 실행하는 앱 컨테이너의 호스트 포트 | `8080` |
+| `CADVISOR_VERSION` | 모니터링 프로파일의 cAdvisor 이미지 태그 | `v0.60.6` |
+| `GRAFANA_PORT` / `PROMETHEUS_PORT` | 모니터링 프로파일의 Grafana·Prometheus 호스트 포트 (`127.0.0.1`에만 열림) | `3000` / `9090` |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana 관리자(`admin`) 비밀번호. Grafana DB를 처음 만들 때만 쓰임 | `admin` |
+| `MYSQL_EXPORTER_PASSWORD` | mysqld-exporter 전용 DB 계정(`exporter`) 비밀번호. `create-exporter-user.sh`가 이 값으로 계정을 만듦 | `exporterpassword` |
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | docker compose의 MySQL 계정 | `.env.example` 참고 |
 | `DOCKER_COMPOSE_ENABLED` | 앱 실행 시 compose 자동 기동 (dev) | `false` |
-| `BATCH_JOB_ENABLED` | 앱 시작 시 배치 Job 자동 실행 (dev, 운영은 `true` 고정) | `false` |
+| `BATCH_JOB_ENABLED` | 앱 시작 시 배치 Job 자동 실행 (dev, 운영도 `false` 고정. 켜면 Job 시작 전 검사에 걸려 앱이 시작되지 않음, #245·#485) | `false` |
 | `MODULITH_REPUBLISH_ON_RESTART` | 재시작 시 미완료 이벤트 재발행 (dev, 운영은 `true` 고정) | `false` |
 | `JPA_DDL_AUTO` | Hibernate `ddl-auto` (dev, 운영은 `validate` 고정) | `validate` |
 | `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `Asia/Seoul` |
@@ -159,8 +329,11 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 | `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
 | `KAFKA_EXPORTER_VERSION` | Kafka 지표 수집 이미지 버전 (`monitoring` 프로파일) | `v1.11.0` |
-| `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림) | `19092` / `29092` / `39092` |
-| `KAFKA_BOOTSTRAP_SERVERS` | 앱이 접속할 브로커 3대 | `localhost:19092,localhost:29092,localhost:39092` |
+| `COMPOSE_PROFILES` | 켤 compose 프로파일. Kafka와 Redis는 `single`(각 1대) 또는 `cluster`(브로커 3대, Redis 6대) 중 하나만 (#530). 모니터링은 `monitoring`을 쉼표로 더한다 | 없음(`.env.example`은 `single`). 비우면 Kafka·Redis가 뜨지 않음 |
+| `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림). `single`은 `KAFKA_1_PORT`만 씀 | `19092` / `29092` / `39092` |
+| `KAFKA_BOOTSTRAP_SERVERS` | 내 PC에서 실행하는 앱이 접속할 브로커. `single`이면 첫 주소만 맞으면 됨 | `localhost:19092,localhost:29092,localhost:39092` |
+| `KAFKA_INTERNAL_BOOTSTRAP_SERVERS` | 컨테이너로 띄운 앱(`app` 프로파일)이 접속할 브로커. `cluster`일 때만 지정 | `kafka:9092` |
+| `KAFKA_EXPORTER_SERVER_1` ~ `_3` | Kafka 지표 수집기가 볼 브로커. `cluster`일 때만 지정 | `kafka:9092` |
 | `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`) |
 
 ### 새 설정값을 환경변수로 추가하는 방법
@@ -206,7 +379,7 @@ docker compose --profile app down            # 종료 (data/mysql 은 유지됨)
 | `spring.flyway.out-of-order` | `${FLYWAY_OUT_OF_ORDER:false}` | 순서가 뒤바뀐 마이그레이션 허용 여부. 기본은 운영과 같게 막고, 개발 중 필요할 때만 `FLYWAY_OUT_OF_ORDER=true`로 엽니다 |
 | `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
-| `spring.data.redis.*` | `${REDIS_HOST:localhost}`, `${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
+| `spring.data.redis.*` | `host`=`${REDIS_HOST:localhost}`, `port`=`${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s. `REDIS_MODE=cluster`이면 `common-redis-cluster.yaml`이 더해져 `cluster.nodes`=`${REDIS_CLUSTER_NODES:...}`, 리다이렉트 3회, 복제본 우선 읽기, 토폴로지 30초 주기 갱신(리다이렉트·재연결 때는 즉시 갱신) | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
 | `trace.node-id` | `0` | traceId(Snowflake)에 들어가는 노드 번호(0~1023). 설정이 없으면 0이고, 범위를 벗어나면 기동이 실패합니다. 서버(인스턴스)를 둘 이상 띄울 때 서버마다 다르게 지정합니다. 자세한 내용은 [12. 추적](#12-추적-traceid) |
 | `app.async.*` | `default-executor`, `executors.<이름>.*` | 비동기 실행기(가상 스레드)의 설정. `event` 실행기의 값은 `common`의 `common-async.yaml` 한 곳에 있고, 모듈이 쓰는 실행기는 이름을 붙여 추가합니다. 자세한 내용은 [11. 비동기 처리](#11-비동기-처리-이벤트-리스너와-async) |
 | `jwt.verification-keys` | `file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem` | 검증용 공개키. 저장소 루트의 `keys/`에서 읽습니다. member는 서명용 개인키 `jwt.signing`(`keys/rs256-v1-private.pem`)도 둡니다. 파일이 없으면 기동이 실패합니다(테스트는 `application-test.yml`의 테스트 키를 씁니다). 자세한 내용은 [키 관리와 교체](#키-관리와-교체) |
@@ -326,6 +499,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 | `common` | 공통 코드와 전역 설정(`com.ok.common.config`의 `SecurityConfig`, JWT 검증, Flyway 도우미 등). 도메인을 참조하지 않는 코드만 둔다. 앱이 아니라 라이브러리 | - |
 | `media`, `member`, `wallet`, `order`, `product`, `delivery`, `payout`, `refund` | 도메인 모듈. 각자 단독으로 기동하는 앱 클래스(`com.ok.<모듈 이름>Application`)를 가진다 | 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088 (이 순서) |
 | `monolith` | 모든 모듈을 의존하는 통합 앱(`PaldoGotganApplication`). 운영 이미지가 이것이고, 모듈 간 이벤트 연동은 이 앱에서만 동작한다. 여러 모듈을 가로지르는 테스트를 둔다 | 8080 |
+| `carrier-simulator` | Delivery Tracker를 대신하는 시험용 가짜 택배사 서버. 도메인 모듈이 아니고 `monolith`에 넣지 않는다. [가짜 택배사](#가짜-택배사carrier-simulator) 참고 | 8090 |
 
 - 공통 빌드 설정은 `build-logic`(컨벤션 플러그인 `ok.java-conventions`, 도메인 모듈용 `ok.spring-module-conventions`)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다. 컨벤션 플러그인은 플러그인, 툴체인, 테스트 설정 같은 공통 설정만 주고, 의존성은 모듈의 `build.gradle.kts`에 직접 적습니다.
 - 웹, 보안, JPA, Flyway, MySQL, Modulith 같은 스타터는 `common`이 `api`로 열어 둡니다. 도메인 모듈은 `implementation(project(":common"))`에 자기만 쓰는 의존성(예: `media`의 썸네일, `payout`의 배치)을 더합니다.
@@ -355,6 +529,78 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 
 `notification`/`알림`은 예시 값이고 실제로는 `-PmoduleName=<모듈이름>`(영문 소문자, 이미 있는 이름은 불가) `-PdisplayName=<표시이름>`을 씁니다. 모듈 폴더, `build.gradle.kts`, 기본 패키지(`package-info`), 앱 클래스, 설정(`application-<모듈>.yaml`), `.env.example`, `ArchitectureTest` 틀을 만듭니다. 설정은 `build-logic/templates/application-module.yaml`에서 만들고 포트는 기존 모듈 다음 값을 자동으로 배정합니다(`-Pport=<포트>`로 바꿀 수 있습니다). 이어서 직접 할 일은 실행 끝에 안내됩니다: `settings.gradle.kts`의 `include`에 추가, 운영에 포함하려면 `monolith/build.gradle.kts`에 `implementation(project(":모듈"))` 추가. 스키마를 쓰는 모듈이면 `<모듈>Schema`, `<모듈>FlywayConfig`를 만들고(`media`를 참고), `settings.gradle.kts`에 모듈을 추가한 뒤 `./gradlew generateInitDb`로 스키마 목록(`deploy/initdb/modules.txt`)을 갱신합니다. 이미 만든 로컬 DB 볼륨에는 새 스키마가 없으므로 직접 만들거나 볼륨을 초기화합니다. 목록을 갱신하지 않으면 `./gradlew check`가 실패합니다. 모듈 단독 실행용 DB 계정은 `./infra/mysql/sync-module-users.sh --init`으로 만듭니다.
 
+### 가짜 택배사(carrier-simulator)
+
+실제 택배사와 계약이 없어 실제 송장으로 연동을 확인할 수 없으므로, [Delivery Tracker](https://tracker.delivery/docs/tracking-api)와 같은 형식으로 답하는 시험용 서버를 둡니다(#559). 운영에는 배포하지 않습니다. delivery는 운영과 같은 어댑터(`TrackerCarrierClient`)로 접속 주소만 바꿔 붙습니다.
+
+```bash
+./gradlew :carrier-simulator:bootRun     # http://127.0.0.1:8090 (관리 화면)
+./gradlew :carrier-simulator:test
+```
+
+- 포트는 `CARRIER_SIMULATOR_PORT`(기본 8090), 여는 주소는 `CARRIER_SIMULATOR_ADDRESS`(기본 `127.0.0.1`)로 바꿉니다. 로그인이 없으므로 밖에서 접속되는 주소로 열지 않습니다.
+- DB, Redis, Kafka를 쓰지 않습니다. 송장, 통계, 보낸 기록은 모두 메모리에 있고 서버를 다시 띄우면 지워집니다.
+- 관리 화면의 폼은 같은 주소에서 보낸 것만 받습니다. 브라우저로 연 다른 웹 페이지가 이 서버로 폼을 보내면 403으로 거절합니다(`CrossSiteGuard`). `curl` 같은 도구와 `/graphql`, `/oauth2/token`은 막지 않습니다.
+- DB 스키마가 없어 `deploy/initdb/modules.txt` 대상에서 빠져 있습니다(루트 `build.gradle.kts`).
+
+delivery를 가짜 택배사에 붙일 때의 환경변수입니다. 아이디와 시크릿은 비어 있지만 않으면 됩니다.
+
+```bash
+DELIVERY_CARRIER_TYPE=tracker
+DELIVERY_TRACKER_BASE_URL=http://localhost:8090/graphql
+DELIVERY_TRACKER_AUTH_URL=http://localhost:8090/oauth2/token
+DELIVERY_TRACKER_CLIENT_ID=any
+DELIVERY_TRACKER_CLIENT_SECRET=any
+DELIVERY_TRACKER_POLL_INTERVAL=2s
+```
+
+위 이름은 `:delivery:bootRun`(단독 실행)에서만 먹습니다. `application-delivery.yaml`이 이 이름을 `delivery.carrier.tracker.*`에 연결해 주기 때문입니다. `:monolith:bootRun`에는 그 연결과 기본값(`connect-timeout`, `read-timeout`)이 없어서, 같은 설정을 Spring이 직접 바인딩하는 이름으로 모두 줘야 합니다. 하나라도 빠지면 기동이 실패합니다.
+
+```bash
+DELIVERY_CARRIER_TYPE=tracker
+DELIVERY_CARRIER_TRACKER_BASE_URL=http://localhost:8090/graphql
+DELIVERY_CARRIER_TRACKER_AUTH_URL=http://localhost:8090/oauth2/token
+DELIVERY_CARRIER_TRACKER_CLIENT_ID=any
+DELIVERY_CARRIER_TRACKER_CLIENT_SECRET=any
+DELIVERY_CARRIER_TRACKER_POLL_INTERVAL=2s
+DELIVERY_CARRIER_TRACKER_CONNECT_TIMEOUT=3s
+DELIVERY_CARRIER_TRACKER_READ_TIMEOUT=15s
+```
+
+제공하는 것:
+
+| 경로 | 내용 |
+|---|---|
+| `POST /oauth2/token` | 토큰 발급(client credentials). 수명은 `simulator.token-ttl`(기본 1시간) |
+| `POST /graphql` | `track` 조회와 `registerTrackWebhook` 알림 등록. 오류는 HTTP 200 본문의 `errors[].extensions.code`(`UNAUTHENTICATED`, `NOT_FOUND`, `BAD_REQUEST`, `INTERNAL`). 문법이나 검증이 틀린 요청은 `BAD_REQUEST`, 예상 못 한 예외는 `INTERNAL`이다 |
+| 등록한 `callbackUrl` | 상태가 바뀔 때마다 `{"carrierId", "trackingNumber"}`만 담아 POST. 1초 안에 2XX가 오지 않으면 1초, 2초, 4초…(최대 5분) 간격으로 만료 시각 전까지 다시 보냄. 처음 등록할 때도 한 번 보냄 |
+| `/`, `/parcels`, `/send`, `/settings` | 관리 화면(현황, 송장, 보내기, 실험 설정) |
+
+송장은 스스로 진행합니다. 처음 조회하거나 등록한 순간에 흐름이 시작되고, 가상 시간으로 정한 시나리오를 재생 속도만큼 빨리 감습니다. 기본은 가상 하루를 10초로 재생해 정상 배송(30시간)이 약 12.5초에 끝납니다. 사건의 시각(`time`)은 가상 시각이 아니라 실제로 일어난 시각입니다.
+
+시나리오는 송장 번호 앞자리로 고릅니다. `90` + 시나리오 2자리 + 순번 8자리(12자리)이고, 규칙에 맞지 않는 번호는 정상 시나리오입니다. 같은 번호는 언제나 같은 흐름을 냅니다.
+
+| 앞자리 | 시나리오 | 동작 |
+|---|---|---|
+| `9010` | 정상 | 접수 → 집화(4시간) → 이동 중(10, 20시간) → 배송 출발(26시간) → 배송 완료(30시간) |
+| `9020` | 느린 진행 | 정상의 3배 시간 |
+| `9030` | 이동 멈춤 | 이동 중에서 더 진행하지 않음 |
+| `9040` | 없는 송장 | 언제나 `NOT_FOUND` |
+| `9050` | 늦게 등록 | 6시간 동안 `NOT_FOUND`, 그 뒤 정상 |
+| `9060` | 배송 실패 후 재배송 | 배송 출발 → 배송 실패(`ATTEMPT_FAIL`) → 배송 출발 → 배송 완료 |
+| `9070` | 이력 끼어듦 | 10시간째 사건이 22시간째에야 이력에 추가됨. 마지막 상태는 그대로인데 알림이 감 |
+| `9080` | 사고 | `EXCEPTION`에서 끝남 |
+
+관리 화면에서 하는 일:
+
+- 송장: 시나리오와 개수를 골라 더미 송장을 만듭니다(한 번에 10만 건까지). 받는 곳 주소를 넣으면 48시간짜리 알림 등록까지 한 것으로 보고 알림을 보냅니다. 송장 한 건을 누르면 사건별 "일어난 시각"과 "처음 조회해 간 시각"의 차이(감지 지연)를 봅니다.
+- 보내기: 알림을 몇 초마다 몇 건씩, 동시에 몇 건까지 보낼지 정합니다. 송장 번호와 상태를 지정해 바로 보낼 수 있고, 그렇게 보낸 송장은 시나리오가 더 진행하지 않습니다. 보낸 기록에서 받는 쪽 응답과 걸린 시간을 송장 번호로 찾습니다.
+- 실험 설정: 재생 속도, 일시정지, 하루 건너뛰기, 응답 지연, 오류 응답 비율, 알림 중복과 순서 섞기, 토큰 만료, 통계·송장 지우기.
+
+구조: `core` 패키지가 시나리오, 시간, 송장, 알림 대기 줄, 장애 판단, 통계를 모두 맡는 순수 자바이고(Spring 의존을 `CoreArchitectureTest`가 막습니다) 현재 시각과 시드를 인자로 받습니다. 같은 설정에 같은 순서로 같은 시각을 넣으면 같은 결과가 나옵니다. 바깥(`web`, `webhook`)은 HTTP, 타이머, 화면만 맡습니다. 도메인 모듈이 아니어서 `CONVENTION.md`의 패키지·엔티티·API 규칙은 적용하지 않고, 코드 포맷과 테스트 규칙만 따릅니다.
+
+Delivery Tracker와 다른 점: 호출 제한(초당 10회, 동시 웹훅 1,000개)과 알림 서명을 흉내 내지 않습니다. 모르는 번호를 조회하면 `NOT_FOUND`가 아니라 새 송장으로 받습니다. 응답의 `extensions`에 `classification` 키가 하나 더 들어갑니다.
+
 ### delivery 모듈 구조(헥사고날)
 
 `delivery`는 모듈별 서버 배포와 브로커 연동 전환에 대비해 진입점과 외부 연결을 패키지로 나눈 헥사고날 구조입니다. 다른 모듈은 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 구조 그대로입니다.
@@ -383,6 +629,10 @@ com.ok.delivery
 - 모듈 간 연동은 지금처럼 Spring 이벤트와 `/internal` 호출입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
 
+### refund 모듈 구조(헥사고날)
+
+`refund`도 헥사고날 구조입니다. 패키지와 의존 규칙은 환불 전용 규칙 `refund/CLAUDE.md`와 refund `ArchitectureTest`를 따릅니다.
+
 ### wallet 모듈 구조(헥사고날)
 
 `wallet`은 연동이 Kafka로 바뀌고 토스 결제 조회·취소가 늘어날 것에 대비해, 진입점과 외부 연결을 delivery와 같은 헥사고날 구조로 나눴습니다.
@@ -399,24 +649,67 @@ com.ok.wallet
 │   └── dto/              *Command, *Query, *Result, 토스 승인 결과(TossConfirmResult)
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
-    ├── in/event/         이벤트 리스너
-    ├── out/persistence/  Spring Data JPA 저장소, Querydsl 조회
-    ├── out/event/        스프링 이벤트 발행 구현체
+    ├── in/event/         이벤트 리스너(Spring 이벤트, Kafka), 받는 메시지 DTO(dto/), Kafka 수신 설정과 실패 기록 연결
+    ├── out/persistence/  저장소 포트 구현(*RepositoryAdapter), Spring Data JPA 저장소, Querydsl 조회
+    ├── out/event/        발행 구현체(Spring 이벤트, Kafka), 보내는 메시지 DTO(dto/), 보내는 토픽 생성
     └── out/toss/         토스 결제 승인 HTTP 구현, 토스 요청·응답 DTO, 설정
 ```
 
-- 의존 방향, 저장소 포트와 `*JpaRepository`의 관계, 이벤트 수신·발행 위치는 delivery와 같습니다.
+- 의존 방향, 이벤트 수신·발행 위치는 delivery와 같습니다.
+- 저장소 포트는 delivery와 달리 `*JpaRepository`가 상속하지 않고, 어댑터 클래스(`*RepositoryAdapter`)가 구현해 `*JpaRepository`에 넘깁니다. 어댑터는 트랜잭션을 열지 않으므로 잠금과 쿼리는 서비스의 트랜잭션 안에서 지금과 같이 동작합니다. 저장소 메서드를 추가하면 포트, 어댑터, `*JpaRepository` 세 곳을 고칩니다.
+- 어댑터에는 `@Repository`가 아니라 `@Component`를 붙입니다. DB 예외 변환은 안쪽 `*JpaRepository` 프록시가 이미 하므로 다시 할 필요가 없습니다.
+- 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`saveAndFlush`, `deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다. `@DataJpaTest`로 포트를 쓰는 테스트는 어댑터를 `@Import`로 등록합니다.
 - 토스 승인은 출력 포트(`TossPaymentsClient`)로 부릅니다. 서비스는 승인 결과(`TossConfirmResult`)만 알고, HTTP 요청·응답 모양은 `adapter/out/toss` 안에 둡니다.
 - 충전 승인은 토스를 부르는 `ChargeConfirmService`(트랜잭션 없음)만 `ChargeConfirmUseCase`를 구현합니다. DB 반영은 `ChargeTransactionService`가 포트 없이 다른 빈으로 맡습니다. 같은 빈 안에서 부르면 `@Transactional`이 걸리지 않으므로 두 서비스를 합치지 않습니다.
 - 엔티티를 도메인 모델과 나누지 않습니다. 잔액 변경과 충전 완료는 엔티티 값만 바꾸고 저장은 변경 감지에 맡기므로, 나누면 저장이 빠졌을 때 오류 없이 잔액이 반영되지 않습니다.
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
-- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지를 더 검사).
+- 잠금 조회는 이름에 `ForUpdate`/`ForShare`를 넣고, `*JpaRepository`에만 `@Lock`을 붙입니다(`ForUpdate`는 `PESSIMISTIC_WRITE`, `ForShare`는 `PESSIMISTIC_READ`). 어댑터가 `@Lock`이 붙은 메서드를 직접 부르므로 포트 쪽에서 다시 선언하는 단계가 없습니다.
+- 이 구조는 `wallet`의 `ArchitectureTest`가 검사합니다(delivery 규칙에 더해 application의 HTTP 클라이언트 의존 금지, 입력 포트의 도메인 의존 금지, JPA 저장소의 포트 상속 금지, 잠금 조회 이름과 `@Lock` 종류가 맞는지, 어댑터의 잠금 조회가 같은 종류의 `@Lock` 메서드만 부르는지, Kafka 타입은 `adapter`에서만 쓰는지 검사).
+
+**지갑 생성**
+
+- 지갑은 처음 쓸 때 `getOrCreate`로만 만듭니다. 구매자 지갑은 충전 승인을 시작할 때(토스에 승인을 요청하기 전), 판매자 지갑은 첫 정산금 입금 때 생깁니다. 회원가입·판매자 승인 이벤트로 미리 만들지 않습니다.
+- 조회는 지갑을 만들지 않습니다. 지갑이 없으면 잔액은 0원, 이용 내역은 빈 목록으로 답합니다.
+- "지갑이 있다"를 가입·판매자 승인의 증거로 쓰지 않습니다. 그런 판단이 필요하면 회원 쪽에 묻습니다.
+- 지갑이 없어도 뜻이 있는 정보(약관 동의처럼)는 지갑 행이 아니라 회원 ID로 따로 저장합니다. 지갑 정지처럼 지갑 자체의 상태를 바꾸는 기능만 `getOrCreate`로 지갑을 가져옵니다. 이렇게 두면 "지갑이 먼저 있어야 하는 기능"이 지갑을 바꾸는 입구 하나로 모입니다.
+- 판매자 지갑 `getOrCreate`는 판매자 승인 여부를 확인하지 않습니다. 지금은 승인된 판매자에게만 오는 정산금 입금에서만 부릅니다. 판매자가 직접 부르는 길(출금 등)을 만들면 승인 확인을 함께 넣습니다.
+
+**Kafka 수신과 실패 기록**
+
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested`, 키 `checkId`, #613)입니다. 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
+- 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
+- 넘긴 메시지는 건너뛰지 않고 지갑 DB의 `wallet_message_failure`에 원문·가장 안쪽 원인과 함께 대기(`PENDING`)로 남기고 `[WALLET_MESSAGE_FAILED]` ERROR 로그를 한 번 남깁니다. 같은 메시지(토픽·파티션·오프셋)는 한 번만 남습니다. 기록마저 실패하면 오프셋을 옮기지 않아 같은 메시지를 다시 받습니다.
+- 지금은 사람이 기록을 보고 원인을 고친 뒤 처리하고 상태를 `RESOLVED`로 바꿉니다. 자동으로 다시 처리하는 기능은 아직 없습니다.
+- 리스너는 값 검사를 서비스를 부르기 전에 끝냅니다. 받는 메시지의 값이 틀리면 `IllegalArgumentException`을 던집니다(다시 시도하지 않고 기록됨).
+
+**환불 반환**
+
+- 환불 반환은 결제와 같이 처리 기록(`wallet_order_refund`, 환불 ID 유니크)을 먼저 넣어 보고 판단합니다. 같은 환불이 다시 오면 돈은 다시 주지 않고 처음 결과(금액 포함)를 다시 보냅니다. 금액이 달라도 처음 기록이 기준이라, 환불이 자기 금액과 비교해 어긋남을 잡습니다.
+- 거절은 다시 해도 결과가 같은 경우만입니다: 그 주문·구매자의 성공한 결제가 없음(`PAYMENT_NOT_FOUND`), 같은 주문의 반환 합계가 결제 금액을 넘음(`REFUND_TOTAL_EXCEEDED`). 환불은 지갑 거절을 받으면 주문 취소를 되돌리므로, DB 장애 같은 일시적 문제는 거절로 보내지 않고 다시 시도합니다. 보유 한도로는 거절하지 않습니다.
+- 반환 합계는 지갑을 잠근 뒤 잠금 조회로 읽습니다. 일반 조회는 잠금을 기다리기 전의 스냅샷을 봐서 방금 끝난 반환을 빼고 셉니다. 반환 트랜잭션은 READ COMMITTED로 돕니다. 기본 격리 수준에서는 반환 기록이 없는 주문을 잠금 조회할 때 빈 구간까지 잠겨, 이웃한 주문의 첫 반환끼리 교착이 납니다.
+- 결과는 반환이 커밋된 뒤, 메시지를 읽음 처리하기 전에 보내고 브로커 저장 확인을 기다립니다(`OrderRefundService`는 트랜잭션 없음). 보내기가 실패하면 예외로 같은 요청을 다시 받아 처음 결과를 다시 보내므로 outbox를 두지 않습니다.
+
+**정산금 입금 확인**
+
+- 정산이 매일 "이 정산들이 지갑에 입금됐는지"를 묶음(최대 500건)으로 묻고, 지갑은 판매자 원장에서 `PAYOUT:{payoutId}`를 찾아 있는지, 판매자 회원 ID, 금액, 입금 시각(원장 `created_at`)을 답합니다. 맞는지 판정하고 다시 묻는 일은 정산이 합니다.
+- 원장을 읽기만 합니다. 같은 묶음이 다시 와도 같은 답을 보내고 잔액은 바뀌지 않습니다. 묶음의 원장은 근거 키 목록으로 한 번에 읽습니다(500건씩 나눠 읽음).
+- 묶음 번호나 항목이 없는 묶음은 답할 곳을 몰라 실패 기록에 남깁니다. 정산 ID가 없는 항목만 로그를 남기고 답에서 빼고, 정산은 답이 없는 정산을 다음 날 다시 묻습니다.
+- 답은 환불 반환 결과와 같이 메시지를 읽음 처리하기 전에 보내고 브로커 저장 확인을 기다립니다(`WalletPayoutDepositCheckService`는 트랜잭션 없음). 보내기와 저장 확인 대기는 두 결과가 `adapter/out/event`의 `WalletKafkaSender`를 함께 씁니다.
+
+**잔액을 바꾸는 테스트**
+
+- 잔액이나 원장을 바꾸는 테스트는 공통 정리 도우미(테스트 코드의 `support/WalletTestDataCleaner`)로 정리합니다. 시작 전에는 `deleteAll()`, 끝난 뒤에는 `verifyAndDeleteAll()`을 부릅니다. 입금 시각을 정하려고 원장을 SQL로 직접 넣는 테스트는 잔액과 맞지 않으므로 끝난 뒤에도 `deleteAll()`을 부릅니다.
+- `verifyAndDeleteAll()`은 `sql/wallet-balance-check.sql`로 잔액과 원장이 맞는지(원장 이어짐, 마지막 원장 = 잔액, 충전·결제·반환과 원장의 짝) 검사합니다. 어긋나도 데이터를 먼저 지운 뒤 실패해 다음 테스트로 번지지 않습니다. 같은 SQL을 로컬 DB 도구에서 그대로 실행해도 됩니다.
+- 충전 짝은 충전 건 쪽에서만 봅니다. 충전 건 없이 생긴 충전 원장(`CHARGE:`)은 잡지 않습니다. 테스트들이 `chargeByPayment`를 직접 불러 충전 건 없이 원장을 만들기 때문입니다. 충전 원장을 만드는 새 길은 충전 건이 함께 생기는지 그 테스트에서 직접 확인합니다.
+- 원장을 SQL로 직접 넣는 테스트(이용 내역 조회, 저장소 테스트)는 잔액과 일부러 맞지 않으므로 검사하지 않습니다.
+- 원장 유형을 새로 만들면 검사 SQL의 증감 방향(`CASE`)에도 넣습니다. 넣지 않으면 `UNKNOWN_LEDGER_TYPE`으로 실패합니다.
+- 잔액을 바꾸는 새 길은 동시 요청 테스트를 함께 만듭니다. 같은 지갑에 서로 부딪힐 수 있는 요청 종류를 섞어 10개 이상을 한꺼번에 출발시키고 여러 번 반복합니다. 잠금 누락은 요청이 실제로 부딪혀야 드러나기 때문입니다.
 
 ### member 모듈 구조(헥사고날)
 
-`member`는 연동이 Kafka로 바뀌는 것에 대비해 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮기고 있습니다. 하위 도메인마다 그 아래에 같은 패키지를 둡니다.
-
-> 전환 상태: `seller` 완료(#476). `member`(#477), `auth`(#478)는 아직 [CONVENTION.md](CONVENTION.md#2-패키지모듈-구조)의 레이어 구조입니다.
+`member`는 모듈별 서버 배포와 Kafka 연동에 대비해(#475) 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮겼습니다(#476~#479). 진입점은 유스케이스 포트만, 서비스는 출력 포트만 알고, 하위 도메인 사이 호출은 출력 어댑터에 모읍니다.
 
 ```
 com.ok.member.seller
@@ -424,23 +717,81 @@ com.ok.member.seller
 ├── exception/            SellerErrorCode
 ├── application/
 │   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
-│   ├── port/out/         출력 포트: 저장소, 이벤트 발행
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행(SellerEventPublisher)
 │   ├── service/          유스케이스 구현 (*Service), 검증기 (*Validator)
 │   └── dto/              *Command, *Query, *Result
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
     ├── out/persistence/  Spring Data JPA 저장소 (*JpaRepository)
-    └── out/event/        스프링 이벤트 발행 구현체
+    └── out/member/       MemberOutboxAdapter (이벤트를 회원 하위 도메인의 outbox에 기록)
 ```
+
+`member` 하위 도메인은 여기에 `adapter/in/bootstrap`(앱이 시작될 때 설정값으로 최초 관리자 계정을 만드는 설정·실행기)이 더 있습니다. 앱 시작이라는 외부 입력의 진입점이라 컨트롤러처럼 유스케이스만 부릅니다.
+
+member가 Kafka로 보내는 메시지는 모두 `member` 하위 도메인의 outbox(`member_outbox`)를 거칩니다. 토픽 이름 끝의 버전은 #648 규칙입니다.
+
+| 토픽 | 언제 | 키 | 값 |
+|---|---|---|---|
+| `member.member-registered.v1` (#560) | 회원가입이 커밋됨 | `memberId` | `{"memberId": 1}` |
+| `member.seller-origin-postal-code.v1` (#587) | 판매자 승인(신청서의 처음 값), 판매자 프로필 등록, 판매자 프로필 수정(우편번호가 그대로여도, #651) | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
+
+`sellerId`는 판매자인 회원의 ID(`memberId`)와 같은 값입니다. 출고지 우편번호는 판매자 신청 때 필수로 받아 승인 때 보내고(상품 등록은 SELLER 권한만 보므로 프로필 등록 전에도 판매할 수 있어서), 이후 변경은 프로필에서 합니다. "판매자가 승인됐다"는 사실 자체를 알리는 메시지는 받는 모듈이 없어 보내지 않습니다(#587에서 스프링 이벤트도 지움).
+
+```
+com.ok.member.member
+├── domain/               MemberOutbox (보낼 메시지 1건의 발송 대기 기록), MemberOutboxStatus, MemberOutboxEventType
+├── application/
+│   ├── port/in/          MemberOutboxRelayUseCase (쌓인 메시지 보내기), MemberOutboxRecordUseCase (다른 하위 도메인이 줄을 남김)
+│   ├── port/out/         MemberOutboxRepository, MemberMessageSender (메시지 브로커로 보냄), MemberMessagePayloadWriter (본문 JSON 만들기)
+│   └── service/          MemberOutboxRelayFacade (트랜잭션 없이 보냄), MemberOutboxService (줄 기록·읽기·결과 저장)
+└── adapter/
+    ├── in/scheduler/     MemberOutboxRelayScheduler (30초마다 발송)
+    ├── out/persistence/  MemberOutboxJpaRepository
+    └── out/event/        OutboxMemberEventPublisher (회원가입 줄 기록), KafkaMemberMessageSender, MemberMessagePayloadJson,
+                          MemberTopics, MemberRegisteredMessage, SellerOriginPostalCodeMessage, MemberKafkaTopicConfig
+```
+
+- 판매자 하위 도메인은 outbox를 직접 쓰지 않고, 자기 출력 어댑터(`seller/adapter/out/member/MemberOutboxAdapter`)에서 `MemberOutboxRecordUseCase`를 부릅니다(하위 도메인 간 호출 규칙). 이 유스케이스는 `Propagation.MANDATORY`라 부른 쪽 트랜잭션 없이는 실패합니다. 프로필 저장과 outbox 줄이 반드시 함께 커밋·롤백되게 하려는 것입니다.
+- 회원가입 줄은 본문 없이 회원 ID만 두고, 출고지 우편번호 줄은 기록한 시점의 값을 `payload`(JSON)로 저장합니다. 보낼 때 그 JSON을 메시지 객체로 다시 읽어 Kafka 공통 직렬화로 보내므로, 실제로 나가는 JSON 모양(시각 형식 등)은 다른 모듈의 메시지와 같습니다.
+
+- 가입 서비스는 그대로 `MemberEventPublisher`를 부르고, 구현체 `OutboxMemberEventPublisher`가 같은 트랜잭션에서 `member_outbox`에 PENDING 줄을 남깁니다. 그래서 롤백되면 보내지 않고 커밋되면 반드시 한 번은 보냅니다. Spring Modulith의 이벤트 발행 기록(`event_publication`)에 기대지 않는 이유는 팀이 Modulith를 걷어 내기로 해서입니다.
+- `MemberOutboxRelayScheduler`가 30초마다(`member.outbox.relay.cron`, 한 번에 `batch-size` 100줄) PENDING 줄을 쌓인 순서대로 보냅니다. 보내기는 브로커의 저장 확인을 10초까지 기다리고, 그동안 DB 커넥션을 잡지 않도록 `MemberOutboxRelayFacade`는 트랜잭션 없이 돌며 줄마다 결과를 따로 저장합니다.
+- 한 줄이 실패하면 시도 횟수와 원인을 남기고 그 실행은 멈춥니다. 실패는 대개 브로커 장애라 뒤 줄도 실패할 뿐이고, 멈춰야 같은 회원의 뒤 메시지가 앞 메시지보다 먼저 나가지 않습니다. 줄은 PENDING으로 남아 다음 실행에서 다시 나갑니다.
+- 보낸 뒤 "보냄" 기록이 실패하거나 서버가 여러 대면 같은 메시지가 두 번 갈 수 있습니다. 받는 쪽은 중복에 안전해야 합니다. 보낸 줄은 지우지 않습니다(정산 outbox와 같음).
+- 통합 테스트는 `src/test/resources/module-test.yml`에서 스케줄러를 끄고(`cron: "-"`) 발송 유스케이스를 직접 부릅니다.
+- 장바구니가 아직 스프링 이벤트로 받으므로, 장바구니가 Kafka로 옮길 때까지 스프링 이벤트 발행도 그대로 둡니다.
+
+`auth` 하위 도메인은 저장소 말고도 출력 포트가 둘 더 있습니다.
+
+```
+com.ok.member.auth
+├── config/               JWT 서명 키 설정, 비밀번호 인코더
+├── application/
+│   ├── port/in/          LoginUseCase, TokenReissueUseCase, RefreshTokenCleanupUseCase
+│   ├── port/out/         RefreshTokenRepository, AccessTokenIssuer, MemberCredentialReader, SellerApprovalReader
+│   └── service/          LoginFacade(트랜잭션 밖 비밀번호 확인), AuthService(트랜잭션), RefreshTokenService, RefreshTokenCleanupService
+└── adapter/
+    ├── in/web/           AuthController, JwksController
+    ├── in/scheduler/     RefreshTokenCleanupScheduler (만료된 Refresh Token 정리)
+    ├── out/persistence/  RefreshTokenJpaRepository
+    ├── out/token/        JwtAccessTokenIssuer (JWT 서명)
+    └── out/member/       MemberAuthAdapter (member·seller 유스케이스 호출)
+```
+
+- 로그인 경로는 #425 규칙을 그대로 따릅니다. `LoginFacade`에는 `@Transactional`을 붙이지 않고 저장소와 출력 포트를 직접 부르지 않습니다. 비밀번호 확인 없이 토큰을 내주는 `AuthService`의 두 메서드(`findLoginCredential`, `issueLoginTokens`)는 입력 포트에 넣지 않고 package-private으로 두므로, `LoginFacade`와 `AuthService`는 같은 `application/service` 패키지에 있어야 합니다.
+- JWT 서명(`JwtEncoder`, `JwsHeader`)은 `adapter/out/token`에서만 씁니다. `ArchitectureTest`가 `application`의 `org.springframework.security.oauth2.jwt`, `com.nimbusds` 의존을 막습니다.
 
 - 의존 방향은 `adapter.in` → `application`(`port.in`, `dto`) → `domain`, `adapter.out` → `application.port.out`, `domain`입니다. 컨트롤러는 `port.in`의 유스케이스 인터페이스만 알고, 서비스는 JPA 저장소를 모르고 `port.out` 인터페이스에만 의존합니다.
 - 저장소 포트(`*Repository`)는 Spring Data `Repository`를 상속하지 않습니다. `adapter/out/persistence`의 Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로입니다.
 - `application`은 JPA와 Spring Data 저장소에 의존하지 않지만, Spring의 `Page`, `Pageable`, `Sort`와 DAO 예외(`DataIntegrityViolationException`, `OptimisticLockingFailureException`)는 씁니다. 영속 기술이 아닌 Spring 추상화라 허용하고, `ArchitectureTest`도 막지 않습니다.
-- 이벤트 발행은 `port.out`의 발행 인터페이스로 하고, `ApplicationEventPublisher`와 `common.event`의 이벤트 클래스는 `adapter/out/event`의 구현체에서만 씁니다.
-- 다른 하위 도메인은 옮긴 하위 도메인의 `port.in`과 `dto`만 씁니다. 예를 들어 `auth`는 토큰 권한을 정할 때 `SellerApprovalCheckUseCase`로 승인 여부만 확인합니다. 하위 도메인을 다른 서버로 나눌 때 유스케이스 호출만 원격 호출로 바꾸면 됩니다.
-- 포트와 `JpaRepository`가 같은 메서드(`findById`, `saveAndFlush`)를 서로 다른 제네릭 형태로 물려주어, `*JpaRepository` 타입으로 부르면 모호한 호출 오류가 납니다. 이런 메서드는 `*JpaRepository`에서 다시 선언해 하나로 합칩니다.
+- 이벤트 발행은 `port.out`의 발행 인터페이스로 하고, 발행 도구(`ApplicationEventPublisher`, `KafkaOperations`)와 `common.event`의 이벤트 클래스는 `adapter/out/event`의 구현체에서만 씁니다. 발행을 Kafka로 바꿔도 구현체가 출력 포트를 구현해야 합니다.
+- 다른 하위 도메인은 그 하위 도메인의 `port.in`과 `dto`만, 그것도 자기 `adapter/out`에서만 씁니다. 서비스는 자기 출력 포트만 알고, 출력 어댑터가 상대 유스케이스를 불러 자기 DTO로 바꿉니다. 예를 들어 `auth`의 `AuthService`는 `MemberCredentialReader`, `SellerApprovalReader` 포트만 쓰고, `adapter/out/member/MemberAuthAdapter`가 `MemberAuthAccountUseCase`(로그인 정보와 관리자·탈퇴·정지 여부)와 `SellerApprovalCheckUseCase`(판매자 승인 여부)를 부릅니다. 유스케이스는 엔티티나 도메인 enum 대신 판단 결과를 값으로 돌려줍니다. 하위 도메인 사이 의존이 출력 어댑터 한 곳에 모여, 상대 하위 도메인의 유스케이스나 DTO가 바뀌어도 서비스는 바뀌지 않습니다.
+- 다른 하위 도메인을 부르는 출력 어댑터는 부르는 대상 이름으로 `adapter/out/<대상>` 패키지에 두고, `<대상><용도>Adapter`로 짓습니다(예: `auth/adapter/out/member/MemberAuthAdapter`). 같은 member 모듈인 `member`와 `seller`를 함께 부르면 어댑터 하나로 묶습니다. `order`의 장바구니처럼 같은 모듈 안의 유스케이스를 바로 부르지 않고 어댑터를 두는 이유는, 서비스가 다른 하위 도메인의 타입을 모르게 해 의존을 한 곳에서 보이게 하기 위해서입니다.
+- 하위 도메인을 서버로 나눌지는 정하지 않았습니다. 이 경계가 있어도 서버를 나누면 어댑터 교체만으로 끝나지 않습니다. 비밀번호 해시를 API로 내보내지 않도록 비밀번호 확인 위치를 옮기고, 같은 트랜잭션 안에서 하던 계정 확인과 원격 호출의 장애 처리를 다시 정해야 합니다. 분리를 검토할 조건과 방식은 #478의 결정 기록(`docs/decisions/member/`)에 있습니다.
+- 포트와 `JpaRepository`가 같은 메서드(`findById`, `save`, `saveAndFlush`)를 서로 다른 제네릭 형태로 물려주어, `*JpaRepository` 타입으로 부르면 모호한 호출 오류가 납니다. 이런 메서드는 `*JpaRepository`에서 다시 선언해 하나로 합칩니다.
 - 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다.
-- 이 구조는 `member`의 `ArchitectureTest`에서 `seller_`로 시작하는 규칙이 검사합니다(레이어 방향, 입력 어댑터 제한, 입력 포트의 도메인 의존 금지, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, seller 밖에서 `port.in`과 `dto` 외 접근 금지). 아직 옮기지 않은 하위 도메인은 기존 레이어 구조 규칙으로 검사합니다.
+- 이 구조는 `member`의 `ArchitectureTest`가 하위 도메인 목록(`SUBDOMAINS`)마다 같은 규칙으로 검사합니다(레이어 방향, 입력 어댑터 제한, 입력 포트의 도메인 의존 금지, application의 영속·토큰 서명 기술 의존 금지, 포트 규칙, 이름·위치, 다른 하위 도메인은 `adapter.out`에서 `port.in`과 `dto`만 사용, 잠금 조회의 `@Lock` 재선언, `LoginFacade`의 트랜잭션·출력 포트 의존 금지). 모듈 최상위 패키지(`com.ok.member`)는 다른 모듈에 공개하는 클래스 자리라 유스케이스를 쓸 수 있습니다. 이벤트 발행 구현체 규칙은 하위 도메인 목록 대신 모듈 전체에 걸어, 이벤트를 발행하지 않는 하위 도메인(`auth`)도 발행을 시작하면 따로 등록하지 않아도 검사됩니다.
+- 새 하위 도메인을 만들면 `SUBDOMAINS`에 더합니다. 목록 밖 패키지는 위 규칙이 검사하지 않으므로, 하위 도메인·모듈 최상위·`config` 밖에 클래스가 생기면 `ArchitectureTest`가 실패합니다.
 
 ### order 모듈 구조(헥사고날)
 
@@ -456,7 +807,7 @@ com.ok.order
 └── order/
     ├── domain/, exception/
     ├── application/
-    │   ├── port/in/           주문서·주문 생성·조회·구매확정·결제 결과·배송 상태·리뷰 후보 유스케이스
+    │   ├── port/in/           주문서·주문 생성·조회·구매확정·결제 결과·배송 상태·리뷰 후보·환불용 주문 상품 조회·환불 취소 반영 유스케이스
     │   ├── port/out/          OrderRepository, OrderEventPublisher, ProductPort, DeliveryPort, WalletPort
     │   ├── service/           OrderFacade(외부 호출 조율), OrderService(트랜잭션)
     │   └── dto/
@@ -476,6 +827,73 @@ com.ok.order
 - 주문은 같은 모듈의 장바구니를 어댑터 없이 장바구니의 `port.in` 유스케이스와 `application.dto`로만 씁니다. 같은 프로세스 안의 호출이라 어댑터를 두면 변환만 늘기 때문입니다. 장바구니의 서비스, 출력 포트, 어댑터, 도메인은 쓰지 않습니다.
 - 테스트에서 상품·배송·지갑 호출은 `testsupport`의 Fake 출력 포트(`FakeProductPort` 등)가 대신합니다. HTTP 응답 변환은 어댑터 DTO 단위 테스트로 확인합니다.
 - 이 구조는 `order`의 `ArchitectureTest`가 두 하위 도메인에 같은 규칙으로 검사합니다(`com.ok.order.*.<레이어>`).
+
+### payout 모듈 구조(헥사고날)
+
+`payout`도 헥사고날 구조입니다. 패키지와 의존 규칙은 정산 전용 규칙 `payout/CLAUDE.md`와 payout `ArchitectureTest`를 따릅니다.
+
+**Kafka 송수신**
+
+- 정산이 보내는 메시지
+  - 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309). 못 보낸 줄과 대사에서 "입금 없음"으로 답한 정산은 짧은 간격 재발송이 다시 보냅니다(#620).
+  - 대사 질문 묶음(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 한 묶음 최대 500건): 매일 대사가 지갑에 입금됐는지 묻습니다(#619).
+  - 지갑이 `.v1`로 옮길 때까지 두 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#653). 지갑이 옮기면 옛 이름 발행을 지웁니다.
+- 정산이 받는 메시지
+  - 구매확정(`order.order-product-confirmed.v1`, 키 `orderItemId`, 그룹 `payout.candidate-create`, #661)
+  - 결제 완료(`wallet.wallet-payment-completed`, 키 `orderId`)
+  - 대사 답 묶음(`wallet.payout-deposit-checked`, 키 `checkId`): 지갑이 원장을 읽고 답합니다(#619, 지갑 #613).
+- 토픽 이름과 컨슈머 그룹은 `PayoutTopics`에 있습니다. 그룹은 리스너마다 `<모듈>.<용도>`로 나누는 중이고(#648), 결제 완료·대사 답은 #653까지 `payout`을 씁니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
+- 대사는 매일 `payout.deposit-check.cron`(기본 `0 0 12 * * *`, Asia/Seoul)에 돕니다. 메시지 모양은 PR #548 문서 4절과 지갑 #613의 합의를 따릅니다.
+- 재발송은 `payout.outbox-resend.fixed-delay`(기본 `PT5M`, 앞 실행이 끝난 뒤부터 셈) 간격으로 돕니다. 정산 Job 발행 단계와 같은 잠금(`payoutOutboxSend`)을 써서 같은 줄을 동시에 보내지 않습니다.
+
+### product 모듈 구조(헥사고날)
+
+`product`는 하위 도메인 `product`(상품·재고)와 `review`(리뷰·리뷰 분석)로 나뉘고, 두 하위 도메인 모두 member·order와 같은 헥사고날 구조입니다.
+
+```
+com.ok.product
+├── config/                    모듈 전용 설정 (Flyway)
+├── product/
+│   ├── domain/, exception/
+│   ├── application/
+│   │   ├── port/in/           BuyerProductUseCase, SellerProductUseCase, ProductOptionInfoUseCase(주문용),
+│   │   │                      StockAllocationUseCase(재고 배정·해제), StockPartialReleaseUseCase(환불용 일부 해제),
+│   │   │                      ReviewedProductUseCase(리뷰 하위 도메인용)
+│   │   ├── port/out/          ProductRepository, ProductOptionRepository, ProductQueryRepository,
+│   │   │                      ProductStockAllocationRepository, ProductStockAllocationHeaderRepository, ProductStockPartialReleaseRepository
+│   │   ├── service/           ProductService, ReviewedProductService, ProductStockService(트랜잭션),
+│   │   │                      ProductStockPartialReleaseFacade(트랜잭션 밖 재확인)
+│   │   └── dto/               *Command, *Query, *Result, *Code
+│   └── adapter/
+│       ├── in/web/            컨트롤러, *Spec, 요청·응답 DTO(dto/)
+│       └── out/persistence/   *JpaRepository, ProductQuerydslRepository
+└── review/
+    ├── domain/, exception/    exception에 분석기 실패 예외(ReviewAnalysisFailedException, ReviewAnalyzerUnavailableException)도 둔다
+    ├── application/
+    │   ├── port/in/           ProductReviewCreateUseCase, ProductReviewUseCase, ProductReviewKeywordUseCase,
+    │   │                      ReviewSentimentSummaryUseCase, ReviewAnalysisPreviewUseCase,
+    │   │                      ReviewKeywordAnalysisUseCase, ReviewSentimentAnalysisUseCase(작업자용)
+    │   ├── port/out/          저장소 4개, OrderApiClient(주문 모듈), ReviewKeywordAnalyzer·ReviewSentimentAnalyzer(외부 분석 서비스)
+    │   ├── service/           서비스, Facade, ReviewKeywordList(키워드 목록 파일)
+    │   └── dto/               *Command, *Query, *Result, 집계 행(Review*Count)
+    └── adapter/
+        ├── in/web/            컨트롤러, *Spec, 요청·응답 DTO(dto/)
+        ├── in/scheduler/      리뷰 분석 작업자 2개 (운영 설정에서만 켜짐, 이전 실행이 끝나고 5초 뒤)
+        ├── out/persistence/   *JpaRepository
+        ├── out/order/         OrderApiHttpClient (주문 모듈 내부 API 호출)
+        └── out/jev/           Jev 분석기 구현, ReviewSentimentCriteria(감성 분류 기준 파일)
+```
+
+- 유스케이스는 부르는 쪽(구매자, 판매자, 관리자, 주문, 환불, 작업자) 기준으로 묶었습니다. 컨트롤러와 스케줄러는 유스케이스만 압니다.
+- review는 product를 `ReviewedProductUseCase`와 product의 `application.dto`(`ReviewedProductResult`, `ProductCategoryCode`)로만 씁니다. 상품 엔티티·저장소 포트·에러 코드·웹 DTO는 쓰지 않습니다. order의 장바구니처럼 같은 프로세스 안의 호출이라 출력 어댑터 없이 서비스가 바로 부르고, 호출은 review 서비스의 트랜잭션에 참여합니다(리뷰 집계 `addReviewStats`도 리뷰 저장과 같은 트랜잭션).
+- `ReviewedProductUseCase`가 던지는 `PRODUCT_NOT_FOUND`는 트랜잭션 프록시를 지나며 참여 중인 review 트랜잭션을 롤백 전용으로 표시합니다. review에서 이 예외를 잡고 계속 진행하면 커밋 때 `UnexpectedRollbackException`이 나므로 잡지 않고 그대로 올립니다.
+- 페이지 응답 `ProductPageResponse`는 두 하위 도메인이 각자 `adapter/in/web/dto`에 같은 이름과 필드로 둡니다. 서로의 웹 DTO를 쓰지 않으면서 JSON과 Swagger 스키마 이름(`ProductPageResponse<항목 타입>`)을 전과 같게 유지하기 위해서입니다. 모듈 최상위는 다른 모듈에 공개하는 자리라 두지 않았습니다.
+- 재고 일부 해제는 `ProductStockPartialReleaseFacade`가 유스케이스를 구현합니다. 겹친 환불 요청이 롤백되면 새 트랜잭션에서 이력을 다시 확인해야 해서, `ProductStockService`의 `partialRelease`·`isPartiallyReleased`는 유스케이스에 넣지 않았습니다.
+- 저장소 포트와 `*JpaRepository`의 관계, 통합 테스트가 `*JpaRepository`를 주입받는 것은 member와 같습니다. `@Query`·`@Modifying`·`@Lock`·`@QueryHints`는 `*JpaRepository`에서 `@Override`로 다시 선언합니다.
+- `ProductStockAllocationHeaderJpaRepository`는 `JpaRepository`를 상속하지 않습니다(`Repository`만). 상속하면 생기는 `findById`·`save`가 헤더 upsert보다 먼저 불려 스냅샷이 일찍 잡히는 일을 막기 위해서입니다.
+- 잠금 조회 규칙은 이름(`ForUpdate`, `ForShare`)으로 찾고 `@Lock`이나 네이티브 쿼리의 `FOR UPDATE`를 확인합니다. 이름과 잠금이 어긋나는 조회는 `ArchitectureTest`의 `LOCK_MODE_BY_METHOD`에 "포트 이름.메서드 이름"으로 적습니다(수정용 상품 조회는 `OPTIMISTIC_FORCE_INCREMENT`, 분석 요청을 꺼내는 `SKIP LOCKED` 조회는 `PESSIMISTIC_WRITE`). `SKIP LOCKED` 조회는 `SKIP_LOCKED_METHODS`에도 적어 `@QueryHints`(`lock.timeout=-2`) 재선언까지 검사합니다.
+- 테스트에서 주문 모듈과 외부 분석 서비스는 `testsupport`의 Fake(`FakeOrderApiClient`, `FakeReviewKeywordAnalyzer`, `FakeReviewSentimentAnalyzer`)가 출력 포트를 구현해 대신합니다.
+- 이 구조는 product `ArchitectureTest`가 하위 도메인 목록(`SUBDOMAINS`)마다 같은 규칙으로 검사합니다.
 
 ## 7. 예외 처리 (ProblemDetail)
 
@@ -800,9 +1218,11 @@ ADMIN_BOOTSTRAP_EMAIL=admin@example.com
   IntelliJ에서는 테스트 실행 방식을 Gradle로 두세요.
 - MySQL 버전은 `.env`의 `MYSQL_VERSION`을 따라가고, 없으면 `9.4`입니다. docker compose와 같은 값을 씁니다.
 - MySQL 컨테이너는 서브프로젝트의 테스트 실행(JVM) 한 번에 하나만 뜨고 그 안의 모든 테스트 컨텍스트가 같은 DB를 씁니다. 컨테이너가 모듈 스키마를 모두 만들며, 모듈 테스트는 자기 모듈 스키마를, `monolith` 테스트는 기본 스키마를 접속 DB로 씁니다. 롤백되지 않는 테스트는 남긴 데이터를 직접 정리하세요.
-- Redis 컨테이너는 `AbstractIntegrationTest`가 MySQL과 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
-- Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:8080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
-- 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`TestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
+- MySQL(`TestcontainersConfiguration`), Redis(`RedisTestcontainersConfiguration`), Kafka(`KafkaTestcontainersConfiguration`) 컨테이너는 설정이 하나씩 따로 있고, `AbstractIntegrationTest`가 셋을 함께 켭니다. 통합 테스트는 `AbstractIntegrationTest`를 상속하기만 하면 Redis와 Kafka를 쓸 수 있습니다. MySQL과 같이 JVM당 하나를 공유하고, 버전은 `REDIS_VERSION`(기본 `8.10`)을 따릅니다. 기동 시간 때문에 **단일 노드**로 띄우며(접속 정보 빈이 `cluster.nodes` 속성보다 우선), 클러스터 모드 접속은 `common`의 `RedisClusterConnectionTest`(클러스터 모드 컨테이너 1개)가 따로 검증합니다. 장애 조치는 자동 테스트가 없고 위 로컬 Redis 클러스터 절의 절차로 확인합니다. 슬라이스 테스트(`@DataRedisTest`)만 `@Import(RedisTestcontainersConfiguration.class)`로 직접 켭니다. 예시는 `common`의 `RedisConnectionTest`입니다.
+- Redis 연결 확인: Redis를 켜고(`docker compose up -d`) `./gradlew :monolith:bootRun`으로 실행한 뒤 `curl localhost:18080/actuator/health`가 `UP`이면 Redis까지 연결된 것입니다. Redis에 연결하지 못하면 503(`DOWN`)이 됩니다. 통합 테스트는 Redis 컨테이너가 함께 떠서 `UP`입니다.
+- 통합 테스트는 Kafka도 Testcontainers로 띄웁니다. MySQL처럼 서브프로젝트의 테스트 실행(JVM) 한 번에 브로커 1대가 뜨고 모든 테스트 컨텍스트가 같이 씁니다(`KafkaTestcontainersConfiguration`). 버전은 compose와 같은 `KAFKA_VERSION`을 따르고, 없으면 `4.2.1`입니다.
+- 슬라이스 테스트는 필요한 설정만 `@Import`합니다. Kafka만 필요하면 `@Import(KafkaTestcontainersConfiguration.class)`입니다(예시는 `common`의 `TestKafkaConsumerTest`). `@DataJpaTest`의 `TestcontainersConfiguration`은 이제 MySQL만 켭니다.
+- 보낸 메시지의 JSON을 그대로 확인하려면 `@Import(TestKafkaConsumer.class)`로 테스트용 컨슈머를 켭니다. `test-topic`의 메시지를 문자열로 모아 `getReceivedMessage(timeout, unit)`로 꺼내고, 토픽은 테스트가 만들며, 파티션을 받은 뒤(`isAssigned()`)에 보내야 받습니다. 위 두 클래스에 `@TestConfiguration`·`@TestComponent`를 붙이지 않은 이유는 `AbstractIntegrationTest`가 `com.ok`를 스캔해서 붙이면 모든 통합 테스트에 켜지기 때문입니다.
 - 토픽의 메시지는 테스트마다 지워지지 않습니다. 메시지를 확인하는 테스트는 자기가 만든 키(예: `payoutId`)로 걸러서 셉니다.
 - 테스트를 실행하려면 Docker가 켜져 있어야 합니다.
 
@@ -987,3 +1407,23 @@ SELECT FROM_UNIXTIME(((111634463317819397 >> 22) + 1767225600000) / 1000) AS iss
 
 - 추적 키(`traceId`, `orderId`, `shipmentId`, `module`, `step`, `eventType`)의 MDC 이름은 [`TraceContext`](../common/src/main/java/com/ok/common/trace/TraceContext.java)의 상수입니다. 현재 진입점이 채우는 것은 `traceId`뿐이고(`/internal/` 요청은 헤더가 있으면 `orderId`, `shipmentId`도), 나머지는 `bindOrderId`, `bindShipmentId`로 범위 안에서 붙일 수 있습니다.
 - 새 진입점이 직접 범위를 열어야 하면 `try (TraceContext.Scope scope = TraceContext.open(traceId)) { ... }`로 씁니다. 닫으면 진입 전 MDC 전체로 되돌립니다.
+
+## 13. Redis 캐시 (`CacheStore`, #538)
+
+Redis는 `CacheStore` 인터페이스로만 쓴다. 클라이언트는 Lettuce(Spring Data Redis 기본)이고, Redis에 닿는 코드는 [`com.ok.common.persistence.redis`](../common/src/main/java/com/ok/common/persistence/redis) 한 곳에 있다. 서비스는 `RedisTemplate`, `StringRedisTemplate`, Lettuce 타입을 직접 쓰지 않는다(monolith의 `ArchitectureTest`가 막는다). 나중에 클라이언트나 저장소가 바뀌어도 이 패키지의 구현체만 바뀐다.
+
+```java
+private final CacheStore cacheStore;
+
+cacheStore.put("delivery:shipping-fee:63100", fee, Duration.ofMinutes(10));    // 저장 (TTL 필수)
+Optional<ShippingFee> cached = cacheStore.get("delivery:shipping-fee:63100", ShippingFee.class);
+cacheStore.evict("delivery:shipping-fee:63100");                                // 지우기
+```
+
+- **키**는 `모듈:도메인:식별자` 형식으로 호출하는 쪽이 만든다. 다른 모듈과 겹치지 않게 모듈 이름을 앞에 둔다.
+- **TTL은 필수**이고 1밀리초 이상이다. 운영 Redis는 메모리가 차도 키를 지우지 않고 쓰기를 거절(`noeviction`)하므로, 만료 없는 키가 쌓이면 모든 쓰기가 막힌다.
+- **값은 JSON 문자열**로 저장하고 타입 정보(클래스 이름 등)는 싣지 않는다. 읽는 쪽이 `get(key, 타입)`으로 타입을 정한다(Kafka 메시지와 같은 방식). 직렬화는 앱의 `JsonMapper`를 쓰고 JDK 직렬화는 쓰지 않는다.
+- 저장된 값을 읽지 못하면(배포로 클래스 모양이 바뀐 경우 등) 오류 대신 **캐시 미스**로 돌려주고 그 키를 지운다. 오류로 두면 TTL이 끝날 때까지 같은 키가 계속 실패한다.
+- **Redis 장애 시**: 캐시는 없어도 본 흐름이 동작해야 하므로, `get`은 캐시 미스(`Optional.empty()`)로 돌려주고 `put`은 경고 로그만 남기고 끝난다. 호출하는 쪽은 `get`이 비면 원본(DB 등)에서 읽으면 된다. `evict`만 예외(`DataAccessException`)를 그대로 올린다. 삼키면 낡은 값이 TTL이 끝날 때까지 남는 것을 알 수 없어서, 어떻게 할지(트랜잭션 실패, 짧은 TTL에 맡김 등)를 호출하는 쪽이 정한다. Redis가 응답하지 않으면 `common-redis.yaml`의 타임아웃(연결 2초, 명령 1초)만큼 요청이 느려진다.
+- `List<X>`처럼 제네릭 타입을 바로 읽는 메서드는 아직 없다. 필요한 사용처가 생기면 그때 더한다.
+- 테스트는 인터페이스의 Fake가 아직 없다. Redis를 쓰는 통합 테스트는 `AbstractIntegrationTest`가 띄우는 Redis 컨테이너를 쓴다.

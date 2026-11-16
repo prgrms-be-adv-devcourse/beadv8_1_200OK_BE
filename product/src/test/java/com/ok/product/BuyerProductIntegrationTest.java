@@ -25,8 +25,8 @@ import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.repository.ProductOptionRepository;
-import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 @AutoConfigureMockMvc
@@ -38,10 +38,10 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 	MockMvc mockMvc;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductOptionRepository productOptionRepository;
+	ProductOptionJpaRepository productOptionRepository;
 
 	@Autowired
 	TransactionTemplate transactionTemplate;

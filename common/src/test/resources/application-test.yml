@@ -1,4 +1,7 @@
 spring:
+  config:
+    # 모듈 전용 테스트 설정이 있으면 읽는다(src/test/resources/module-test.yml). 없는 모듈은 무시된다 (#485)
+    import: optional:classpath:module-test.yml
   docker:
     compose:
       enabled: false

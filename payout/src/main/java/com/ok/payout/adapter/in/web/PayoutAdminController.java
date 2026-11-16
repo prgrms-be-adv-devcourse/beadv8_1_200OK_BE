@@ -2,16 +2,28 @@ package com.ok.payout.adapter.in.web;
 
 import com.ok.common.security.CurrentMemberId;
 import com.ok.payout.adapter.in.web.dto.PayoutAdjustmentCreateRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.application.port.in.PayoutBlockedOrderUseCase;
+import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
+import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +50,9 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
 
     private final PayoutJobRunner payoutJobRunner;
     private final PayoutUseCase payoutUseCase;
+    private final PayoutFailureResolutionUseCase payoutFailureResolutionUseCase;
+    private final PayoutBlockedOrderUseCase payoutBlockedOrderUseCase;
+    private final PayoutDepositCheckUseCase payoutDepositCheckUseCase;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
     @Override
@@ -83,7 +98,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     @Override
     @PostMapping("/run")
     public ResponseEntity<PayoutRunResponse> run() throws Exception {
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runManual();
         // 배치 실패는 사용자 입력이 아니라 시스템 결과라 표준 예외로 던짐 (exception.md: 값의 출처 기준)
         // 공통 처리기가 500으로 응답하고 실행 ID·상태가 담긴 메시지는 서버 로그(ERROR)에만 남김 (응답 detail에는 나가지 않음)
         // TODO(#67): 임시로 실패 여부만 알림. 정산 실패 기록이 생기면 무엇이 실패했는지와 실패 기록 ID를 함께 응답하도록 변경
@@ -113,5 +128,68 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         payoutUseCase.createAdjustment(memberId, request.toCommand());
         return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    // 잠기거나 멈춘 주문 해결 "다시 처리" (#568). 다음 배치에서 그 주문을 금액 검사·결과 검증부터 다시 거쳐 정산함
+    // 해결 기록이 새로 생기므로 201, 응답은 방금 저장한 해결 기록 (나중에 보는 조회는 #571)
+    // 해결한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받음 (조정 API와 같음)
+    @Override
+    @PostMapping("/orders/{orderId}/resolution")
+    public ResponseEntity<PayoutOrderResolutionResponse> resolveOrder(
+            @CurrentMemberId Long memberId,
+            @PathVariable Long orderId,
+            @Valid @RequestBody PayoutOrderResolveRequest request
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(PayoutOrderResolutionResponse.from(
+                payoutFailureResolutionUseCase.resolveOrder(request.toCommand(orderId, memberId))));
+    }
+
+    // 해결 기록 조회 (#571, 1줄씩 보기): 실패 기록 1건 = 1줄
+    // 찾는 조건은 주문 ID 하나: 막고 푸는 단위가 주문이라, 주문상품 ID로 찾으면 배송비 줄·주문이 막힌 뒤 들어온 상품이 빈 결과로 보여 오해할 수 있음
+    @Override
+    @GetMapping("/orders/{orderId}/resolutions")
+    public ResponseEntity<PayoutPageResponse<PayoutResolutionResponse>> getResolutions(
+            @PathVariable Long orderId,
+            @Valid @ModelAttribute PayoutResolutionSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutFailureResolutionUseCase.getResolutions(orderId, request.toQuery()).map(PayoutResolutionResponse::from)));
+    }
+
+    // 해결 기록 조회 (#571, 묶음 보기): 해결 요청 1번 = 1줄. 1줄씩 보기와 같은 주문을 프런트가 골라 볼 수 있게 둘 다 둠
+    // 경로를 /resolutions/grouped 대신 /resolution-requests로 한 것: "해결 요청"이 관리자가 한 번 누른 실제 단위라 리소스(복수형 명사)로 이름 붙임 (api.md)
+    @Override
+    @GetMapping("/orders/{orderId}/resolution-requests")
+    public ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequests(
+            @PathVariable Long orderId,
+            @Valid @ModelAttribute PayoutResolutionSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutFailureResolutionUseCase.getResolutionRequests(orderId, request.toQuery())
+                        .map(PayoutResolutionRequestResponse::from)));
+    }
+
+    // 막힌 주문 목록 (#569): 잠김·멈춤·해결됨 주문을 원인과 함께. 막힌 주문 집계 표(#582)를 읽기만 함
+    // 경로 /blocked-orders는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음 (/candidates와 같음)
+    // 이름을 /orders/blocked 대신 /blocked-orders로 한 것: api.md "리소스는 복수형 명사" (#571에서 형용사 grouped를 버린 것과 같은 기준)
+    @Override
+    @GetMapping("/blocked-orders")
+    public ResponseEntity<PayoutPageResponse<PayoutBlockedOrderResponse>> getBlockedOrders(
+            @Valid @ModelAttribute PayoutBlockedOrderSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutBlockedOrderUseCase.getBlockedOrders(request.toQuery()).map(PayoutBlockedOrderResponse::from)));
+    }
+
+    // 대사 관리자 확인 목록 (#621): 지갑 입금 확인에서 관리자 확인 필요가 된 정산만, 이유와 지갑이 답한 값과 함께
+    // 목록에서 바로 고치는 기능(다시 보내기·완료 표시)은 이슈 범위 밖이라 조회만 둠
+    // 경로 /deposit-checks는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음 (/blocked-orders와 같음)
+    @Override
+    @GetMapping("/deposit-checks")
+    public ResponseEntity<PayoutPageResponse<PayoutDepositCheckReviewResponse>> getDepositCheckReviews(
+            @Valid @ModelAttribute PayoutDepositCheckReviewSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutDepositCheckUseCase.getReviewItems(request.toQuery()).map(PayoutDepositCheckReviewResponse::from)));
     }
 }

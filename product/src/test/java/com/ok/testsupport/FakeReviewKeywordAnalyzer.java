@@ -10,12 +10,12 @@ import java.util.stream.Collectors;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
-import com.ok.product.review.client.ReviewAnalysisFailedException;
-import com.ok.product.review.client.ReviewAnalyzerUnavailableException;
-import com.ok.product.review.client.ReviewKeywordAnalyzer;
-import com.ok.product.review.client.ReviewKeywordList;
-import com.ok.product.review.service.dto.ReviewKeywordAnalysis;
-import com.ok.product.review.service.dto.ReviewKeywordInput;
+import com.ok.product.review.exception.ReviewAnalysisFailedException;
+import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;
+import com.ok.product.review.application.port.out.ReviewKeywordAnalyzer;
+import com.ok.product.review.application.service.ReviewKeywordList;
+import com.ok.product.review.application.dto.ReviewKeywordAnalysis;
+import com.ok.product.review.application.dto.ReviewKeywordInput;
 
 /**
  * 외부 키워드 분석 서비스 대신 리뷰 본문마다 넣어 둔 확률을 돌려주는 Fake.

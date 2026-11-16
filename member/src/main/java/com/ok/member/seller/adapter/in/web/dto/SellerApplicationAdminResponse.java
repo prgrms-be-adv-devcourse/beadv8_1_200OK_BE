@@ -30,6 +30,10 @@ public record SellerApplicationAdminResponse(
         @Schema(description = "통신판매업 신고번호", example = "제2026-경북청송-0031호")
         String mailOrderNumber,
 
+        @Schema(description = "출고지 우편번호 (5자리 숫자, 신청 당시 값). 승인 때 배송 모듈에 전달된다. 이 항목이 생기기 전 신청은 null",
+                example = "37421", nullable = true)
+        String originPostalCode,
+
         @Schema(description = "신청 일시", example = "2026-10-18T14:30:00")
         LocalDateTime appliedAt,
 
@@ -58,6 +62,7 @@ public record SellerApplicationAdminResponse(
                 result.representativeName(),
                 result.businessNumber(),
                 result.mailOrderNumber(),
+                result.originPostalCode(),
                 result.appliedAt(),
                 result.reviewStartedAt(),
                 result.approvedAt(),

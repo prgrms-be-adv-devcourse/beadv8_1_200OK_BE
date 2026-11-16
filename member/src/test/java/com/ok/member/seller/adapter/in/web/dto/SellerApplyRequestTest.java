@@ -52,7 +52,7 @@ class SellerApplyRequestTest {
     void 요청을_신청_입력으로_바꿀_때_필드가_뒤바뀌지_않는다() {
         // given
         SellerApplyRequest request = new SellerApplyRequest(
-                "  청송 햇살농원 ", " 김영수 ", "5128104273", " 제2026-경북청송-0031호 ");
+                "  청송 햇살농원 ", " 김영수 ", "5128104273", " 제2026-경북청송-0031호 ", " 37421 ");
 
         // when
         SellerApplyCommand sut = request.toCommand();
@@ -64,11 +64,12 @@ class SellerApplyRequestTest {
             softly.assertThat(sut.representativeName()).isEqualTo("김영수");
             softly.assertThat(sut.businessNumber()).isEqualTo("512-81-04273");
             softly.assertThat(sut.mailOrderNumber()).isEqualTo("제2026-경북청송-0031호");
+            softly.assertThat(sut.originPostalCode()).isEqualTo("37421");
         });
     }
 
     private static SellerApplyRequest request(String businessNumber) {
-        return new SellerApplyRequest("청송 햇살농원", "김영수", businessNumber, "제2026-경북청송-0031호");
+        return new SellerApplyRequest("청송 햇살농원", "김영수", businessNumber, "제2026-경북청송-0031호", "37421");
     }
 
 }

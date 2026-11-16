@@ -8,8 +8,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
-import com.ok.product.review.client.OrderApiClient;
-import com.ok.product.review.service.dto.ReviewablePurchase;
+import com.ok.product.review.application.port.out.OrderApiClient;
+import com.ok.product.review.application.dto.ReviewablePurchase;
 
 /**
  * 주문 모듈 내부 API 대신 메모리에 넣어 둔 구매 건을 돌려주는 Fake.
@@ -19,13 +19,9 @@ import com.ok.product.review.service.dto.ReviewablePurchase;
  */
 @Component
 @Primary
-public class FakeOrderApiClient extends OrderApiClient {
+public class FakeOrderApiClient implements OrderApiClient {
 
 	private final Map<String, List<ReviewablePurchase>> purchases = new ConcurrentHashMap<>();
-
-	public FakeOrderApiClient() {
-		super("http://localhost:0"); // 실제로 호출하지 않으므로 주소는 의미 없다
-	}
 
 	public void add(Long memberId, Long productId, ReviewablePurchase purchase) {
 		purchases.computeIfAbsent(key(memberId, productId), key -> new CopyOnWriteArrayList<>()).add(purchase);

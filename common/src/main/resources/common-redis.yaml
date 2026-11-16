@@ -1,6 +1,10 @@
 # Redis를 쓰는 앱이 spring.config.import로 가져다 쓰는 공통 Redis 설정 (#319)
 # 지금은 monolith가 가져온다. 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 추가한다. 값을 바꿀 곳은 여기 한 곳이다
 spring:
+  config:
+    # REDIS_MODE=cluster 이면 클러스터 접속 설정(common-redis-cluster.yaml)을 더한다. 기본은 단일 Redis다 (#530, #366)
+    # 단일 모드 파일은 따로 없어 optional로 건너뛴다. 클러스터 속성은 하나라도 있으면 Boot가 클러스터로 접속하므로 파일을 나눈다
+    import: optional:classpath:common-redis-${REDIS_MODE:single}.yaml
   data:
     redis:
       host: ${REDIS_HOST:localhost}

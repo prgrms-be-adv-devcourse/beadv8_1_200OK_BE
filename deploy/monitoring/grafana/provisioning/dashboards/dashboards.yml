@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: paldo-gotgan
+    type: file
+    # 화면에서 바꾼 내용이 JSON 파일과 어긋나 남지 않도록, 대시보드는 파일로만 고친다
+    allowUiUpdates: false
+    disableDeletion: true
+    options:
+      # compose가 deploy/monitoring/grafana/dashboards를 이 경로로 마운트한다
+      path: /var/lib/grafana/dashboards

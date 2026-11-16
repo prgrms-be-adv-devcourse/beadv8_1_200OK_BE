@@ -5,11 +5,13 @@ plugins {
 
 dependencies {
     api("org.springframework.boot:spring-boot-starter-webmvc")
-    api("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)
+    api("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)와 지표 노출
+    api("io.micrometer:micrometer-registry-prometheus") // 지표를 Prometheus 형식으로 노출(/actuator/prometheus) (#374)
     api("org.springframework.boot:spring-boot-starter-validation")
     api("org.springframework.boot:spring-boot-starter-security")
     api("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
     api("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("org.hibernate.orm:hibernate-micrometer") // Hibernate 통계를 Micrometer 지표로 노출(hibernate.* 지표). Boot가 이 클래스가 있을 때만 자동으로 바인딩한다 (#509)
     api("org.springframework.boot:spring-boot-starter-flyway")
     api("org.flywaydb:flyway-mysql")
     api(libs.querydsl.jpa)
@@ -35,4 +37,25 @@ dependencies {
     annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
     annotationProcessor("jakarta.annotation:jakarta.annotation-api")
+}
+
+// 떠 있는 Redis·Kafka가 필요한 테스트(@Tag("infraTest"), #530)는 기본 test(CI 포함)에서 뺀다
+tasks.test {
+    useJUnitPlatform {
+        excludeTags("infraTest")
+    }
+}
+
+val infraTest by tasks.registering(Test::class) {
+    description = "compose로 띄운 실제 Redis·Kafka에 앱과 같은 접속 설정으로 붙는지 확인한다"
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("infraTest")
+    }
+    // 인프라 상태는 Gradle이 모르는 입력이라 매번 다시 돌린다
+    outputs.upToDateWhen { false }
+    // 공통 설정의 jacocoTestReport가 일반 test(Testcontainers)를 먼저 돌려서 뗀다
+    setFinalizedBy(emptyList<Any>())
 }

@@ -76,6 +76,19 @@ public class OrderSellerGroup extends BaseTime {
         this.remoteAreaFee = fee.remoteAreaFee();
     }
 
+    /**
+     * 구매확정 때 정산에 보낼 판매자 몫 배송비를 계산한다.
+     * 무료배송 묶음이 일부 환불로 기준 아래가 되면 환불이 구매자 환불 금액에서 기본 배송비를 빼는데(RefundShippingFeePolicy),
+     * 그 금액은 남은 상품의 택배비로 판매자 몫이라 묶음 배송비에 더한다.
+     */
+    public long shippingFeeForPayout() {
+        long deducted = 0;
+        for (OrderItem item : items) {
+            deducted += item.deductedShippingFee();
+        }
+        return shippingFee + deducted;
+    }
+
     long productAmount() {
         long sum = 0;
         for (OrderItem item : items) {

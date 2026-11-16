@@ -1,15 +1,20 @@
 package com.ok.payout.application.service;
 
+import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
 import com.ok.payout.domain.PayoutPolicy;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 // validateStep 금액 검사 판정 (#195). DB 조회·저장은 PayoutService.validate가 하고, 여기는 받은 값으로 판정만 함
 // verifyStep의 PayoutDraftValidator와 역할이 다름:
@@ -17,38 +22,81 @@ import java.util.Map;
 //   PayoutDraftValidator(결과 검증) = 우리 코드가 만든 draft가 맞는지 → 틀리면 코드 버그 (그 주문을 잠그거나, 코드 고장이면 Job 전체를 멈춤, #290)
 //
 // 판정 단위는 주문: 이번 스냅샷에 들어온 같은 주문의 후보를 묶어 먼저 판정한 뒤 실패 목록을 한 번에 돌려줌
-//   주문상품마다 바로 실패를 만들면, 한 주문에 틀린 주문상품이 2개일 때 같은 후보가 AMOUNT_MISMATCH와 ORDER_LOCKED로 두 번 기록됨
+//   주문상품마다 바로 실패를 만들면, 한 주문에 틀린 주문상품이 2개일 때 같은 후보가 FEE_MISMATCH와 ORDER_HELD로 두 번 기록됨
 //   → 실패 기록 UK(snapshot_id, candidate_id) 위반 → validate 롤백 → 같은 데이터라 매 배치 같은 이유로 실패
 // 아직 구매확정되지 않은 같은 주문의 상품은 기다리지 않음: 들어온 상품만 판정하고, 나머지는 들어오는 배치에서 판정
 //
 // 검사 순서 (앞 검사에 걸린 주문은 뒤 검사를 하지 않음 → 후보당 실패 기록 1건)
 //   0) 차감 기록 없음(DEDUCTION_MISSING): 이 클래스 밖에서 먼저 걸러짐 (차감 기록이 있는 주문의 후보만 여기로 옴)
 //   1) 초과 청구: 그 주문 후보 합계 > 지갑 차감액이면 이번 스냅샷의 그 주문 후보 전부 AMOUNT_MISMATCH
-//   2) 수수료: 주문상품의 원래 수수료 ≠ 수수료 계산이면 그 주문상품 후보는 AMOUNT_MISMATCH, 같은 주문 나머지는 ORDER_LOCKED
+//   2) 수수료: 주문상품의 원래 수수료 ≠ 수수료 계산이면 그 주문상품 후보는 FEE_MISMATCH, 같은 주문 나머지는 ORDER_HELD (#391 전에는 AMOUNT_MISMATCH)
 final class PayoutAmountValidator {
 
-    // 초과 청구 실패 상세. 어느 주문상품이 틀렸는지 알 수 없다는 한계를 함께 남김 (관리자가 상세만 보고 원인을 한 상품으로 오해하지 않게)
-    private static final String OVERCHARGE_DETAIL = "주문 합계 초과: 차감액 %d, 후보 합계 %d (어느 주문상품이 틀렸는지 판별 불가)";
+    // 초과 청구 실패 상세 (#391): 원인을 찾는 데 쓸 근거를 한 줄에 남김
+    //   결제(차감액), 후보 합계, 넘친 금액, 넘게 만든 주문상품, 이미 지급한 금액·주문상품, 혼자 넘는 주문상품, 판매자 수, 지갑 금액 충돌
+    //   예) 초과 청구: 결제 30000, 후보 합계 45000, 넘친 금액 15000, 넘게 만든 주문상품 102, 이미 지급 30000(주문상품 101),
+    //       혼자 넘는 주문상품 없음, 판매자 1명, 지갑 금액 충돌 없음
+    // 255자를 넘을 수 있어(주문상품·충돌이 많을 때) 항상 PayoutFailure.fitDetail을 거침
+    private static final String OVERCHARGE_DETAIL =
+            "초과 청구: 결제 %d, 후보 합계 %d, 넘친 금액 %d, 넘게 만든 주문상품 %s, 이미 지급 %s, 혼자 넘는 주문상품 %s, 판매자 %d명, %s";
+    // 원래 후보 없이 조정 후보만 있어 초과 청구 합계를 낼 수 없는 주문의 실패 상세 (#552부터 합계가 조정을 빼서 생김)
+    private static final String ADJUSTMENT_ONLY_DETAIL = "초과 청구 판정 불가: 원래 후보 없이 조정 후보만 있음";
+    // 배송비 후보는 주문상품이 없어 주문상품 ID 대신 이 이름으로 씀
+    private static final String SHIPPING_FEE_LABEL = "배송비";
+    // 누적합으로 넘게 만든 후보를 찾지 못했을 때 (예: 근거 조회와 합계 조회의 범위가 어긋남)
+    private static final String UNKNOWN_LABEL = "판별 불가";
     // 수수료 불일치 실패 상세 (기대값 = 수수료 계산, 실제값 = 수수료 후보, 계산에 쓴 판매 금액)
     private static final String FEE_MISMATCH_DETAIL = "수수료 불일치: 기대값 %d, 실제값 %d (판매 금액 %d 기준)";
     // 함께 보류된 후보의 상세: 원인 주문상품을 남겨, 이 후보 자체에는 문제가 없다는 것을 바로 알 수 있게 함
-    private static final String ORDER_LOCKED_DETAIL = "같은 주문의 수수료 불일치로 보류 (원인 주문상품 %s)";
+    private static final String ORDER_HELD_DETAIL = "같은 주문의 수수료 불일치로 보류 (원인 주문상품 %s)";
 
     // 판정에 쓰는 값 묶음 (모두 PayoutQueryRepository 조회 결과)
     record Input(
             List<PayoutCandidateItem> targets,                  // 검사 대상: 이번 스냅샷 후보 중 차감 기록이 있고 아직 실패가 아닌 것
-            Map<Long, Long> candidateTotalsByOrder,             // 주문 ID → 그 주문 정산후보 전체 합계 (스냅샷 밖 포함)
+            Map<Long, Long> candidateTotalsByOrder,             // 주문 ID → 그 주문 정산후보 합계 (스냅샷 밖 포함, 조정 후보 제외 #552)
             Map<Long, Long> deductionsByOrder,                  // 주문 ID → 지갑 차감액
-            List<PayoutCandidateItem> originalSaleCandidates    // 대상 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보 (스냅샷 밖 포함)
+            List<PayoutCandidateItem> originalSaleCandidates,   // 대상 주문상품의 원래(조정 아닌) 판매 대금·수수료 후보 (스냅샷 밖 포함)
+            // 아래 둘은 초과 청구 근거용 (#391). 초과 청구에 걸린 주문(overchargedOrderIds)만 조회해서 넘김
+            List<OverchargeCandidateRow> overchargeCandidates,  // 그 주문의 정산후보 전체 (합계와 같은 범위), 생성 순서(createdAt, id)
+            Map<Long, List<Long>> conflictAmountsByOrder        // 주문 ID → 지갑 금액 충돌로 받은 금액들 (없는 주문은 키 없음)
     ) {
     }
 
     private PayoutAmountValidator() {
     }
 
+    // 초과 청구에 걸리는 주문 ID (판정 공식 = 후보 합계 > 차감액)
+    // 서비스가 근거를 조회할 주문을 미리 고를 때와 validate의 판정이 같은 공식을 쓰도록 한곳에 둠
+    // 차감액이 있는 주문만 봄 (차감 기록이 없는 주문은 금액 검사 대상이 아님)
+    static Set<Long> overchargedOrderIds(Map<Long, Long> candidateTotalsByOrder, Map<Long, Long> deductionsByOrder) {
+        Set<Long> orderIds = new LinkedHashSet<>();
+        for (Map.Entry<Long, Long> deduction : deductionsByOrder.entrySet()) {
+            Long total = candidateTotalsByOrder.get(deduction.getKey());
+            if (total != null && isOvercharged(total, deduction.getValue())) {
+                orderIds.add(deduction.getKey());
+            }
+        }
+        return orderIds;
+    }
+
+    private static boolean isOvercharged(long total, long deducted) {
+        return total > deducted;
+    }
+
+    // 주문상품별 후보 금액 합계 (주문상품 ID 또는 "배송비" → 합계). 생성 순서대로 처음 나온 순서를 유지함
+    // 초과 청구 주문의 주문상품 전체 목록 WARN 로그(PayoutService)에 씀
+    static Map<String, Long> amountsByOrderItem(List<OverchargeCandidateRow> orderRows) {
+        Map<String, Long> amounts = new LinkedHashMap<>();
+        for (OverchargeCandidateRow row : orderRows) {
+            amounts.merge(labelOf(row), row.amount(), Long::sum);
+        }
+        return amounts;
+    }
+
     // 금액 검사에 걸린 후보의 실패 기록 목록을 반환 (비어 있으면 모두 통과). 후보 하나에 실패는 최대 1건
     static List<PayoutFailure> validate(Long snapshotId, Input input) {
         Map<Long, SalePair> pairsByOrderItem = pairByOrderItem(input.originalSaleCandidates());
+        Map<Long, List<OverchargeCandidateRow>> overchargeRowsByOrder = groupRowsByOrder(input.overchargeCandidates());
 
         List<PayoutFailure> failures = new ArrayList<>();
         for (Map.Entry<Long, List<PayoutCandidateItem>> order : groupByOrder(input.targets()).entrySet()) {
@@ -57,25 +105,39 @@ final class PayoutAmountValidator {
 
             // 1) 초과 청구 (주문 단위): 정산후보 합계(판매자 몫 + 수수료)가 구매자에게서 받은 돈(차감액)보다 많으면 안 됨
             //    작은 것은 허용: 차감액(주문 결제 금액)에는 있지만 정산후보로 오지 않는 금액이 있을 수 있음
-            // 한계: 주문 합계로만 비교해서 어느 주문상품이 틀렸는지 모름
+            // 한계: 주문 합계로만 비교해서 어느 주문상품이 틀렸는지 모름 (#391부터 상세에 원인을 찾는 근거를 남김, overchargeDetail)
             //   먼저 들어온 틀린 금액은 합계가 아직 작아 통과·지급되고, 나중에 들어온 맞는 주문상품이 합계를 넘겨 잡힐 수 있음
             // 합계에는 아직 대기 기간(15일)이 안 지난 같은 주문의 후보도 들어감 (이번 배치 대상이 아니어도 DB에 이미 있는 후보)
             //   예) 결제 30,000 = 상품1 10,000(이번 배치) + 상품2 20,000(대기 중)인데 상품2가 25,000으로 들어옴
-            //       → 합계 35,000 > 30,000이라 이번 배치에서 주문이 잠기고, 문제없는 상품1도 함께 지급되지 않음
+            //       → 합계 35,000 > 30,000이라 이번 배치에서 주문이 빠지고(#552부터 잠그지 않고 다음 실행에서 다시 검사, 3번이면 멈춤), 문제없는 상품1도 함께 지급되지 않음
             //   이렇게 둔 이유: 틀린 금액이 지급되기 전에 더 일찍 잡으려고. 대신 정상 상품이 틀린 상품과 함께 묶임
             // TODO(논의 필요): 한 주문의 상품들을 함께 잡아 확인하는 지금 방식을 유지할지, 정산이 주문상품별 비교 금액을 모두 갖춰
             //   틀린 상품만 골라내는 방향(아래 TODO(#52))으로 갈지 등 처리 방향을 정해야 함
             // TODO(#52): 주문 생성 시점의 주문상품별 금액을 이벤트로 받아 주문상품 단위로 비교 (없으면 ORDER_MISSING)
-            // TODO(논의 필요): 합계에 조정 후보도 넣음. 조정 방향(±)이 정해지면 다시 볼 것 (+조정은 정상인데 초과로, -조정은 초과를 가릴 수 있음)
+            // 합계에 조정 후보는 넣지 않음(#552, 조회가 뺌): −조정이 초과 청구를 가려 틀린 금액이 통과되지 않게. 조정으로 바로잡는 흐름은 #291에서 다시 설계
             // TODO(#52): 부분 환불이 생기면 기준값을 "차감액 − 환불액"으로 바꿔야 함 (주문 #28 구매확정 금액에 환불 수량 미반영)
             // TODO(#52): 할인 도입 예정. 할인이 생기면 이 검사 기준도 함께 다시 정해야 함 (지금은 정해진 것 없음)
             // 조회 조건상 대상 주문에는 항상 합계·차감액이 있음 (대상 = 스냅샷 후보 중 차감 기록이 있는 것)
             //   차감 기록·정산후보는 INSERT만 하고 지우지 않아서, 대상 조회 뒤에 한 합계·차감액 조회에도 그 주문이 반드시 있음 (격리 수준과 무관)
             //   없는 주문을 건너뛰게 만들지 않는 이유: 건너뛴 주문은 실패 기록이 없어 금액 검사 없이 정산·지급되기 때문
             long deducted = input.deductionsByOrder().get(orderId);
-            long total = input.candidateTotalsByOrder().get(orderId);
-            if (total > deducted) {
-                String detail = String.format(OVERCHARGE_DETAIL, deducted, total);
+            // 단 #552부터 합계는 조정 후보를 빼므로, 원래 후보 없이 조정만 있는 주문은 합계가 없음
+            //   그대로 꺼내면 NPE → validate 롤백 → 주문 하나 때문에 Job 전체가 FAILED (#557 리뷰)
+            //   합계 0으로 보고 통과시키지 않고 금액 불일치로 빼는 이유: 원래 후보 없는 조정은 정상 경로에서 생기지 않는 상태라,
+            //   검사할 기준이 없는 돈을 내보내는 것보다 빼 두는 편이 안전함. 횟수에 세어 3번이면 멈추고 관리자 목록(#301)으로 감
+            //   지금은 조정 API가 막혀 있어(501) 생기지 않음. TODO(#291): 조정 API를 열 때 조정만 있는 주문을 어떻게 검사할지 정함
+            Long total = input.candidateTotalsByOrder().get(orderId);
+            if (total == null) {
+                for (PayoutCandidateItem candidate : orderTargets) {
+                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.AMOUNT_MISMATCH, ADJUSTMENT_ONLY_DETAIL));
+                }
+                continue;
+            }
+            if (isOvercharged(total, deducted)) {
+                // 같은 주문의 초과 청구 후보는 모두 같은 상세 (주문 단위 판정이라)
+                String detail = overchargeDetail(overchargeEvidence(deducted, total,
+                        overchargeRowsByOrder.getOrDefault(orderId, List.of()),
+                        input.conflictAmountsByOrder().getOrDefault(orderId, List.of())));
                 for (PayoutCandidateItem candidate : orderTargets) {
                     failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.AMOUNT_MISMATCH, detail));
                 }
@@ -88,17 +150,159 @@ final class PayoutAmountValidator {
                 continue;
             }
             // 원인 주문상품이 아주 많으면 255자를 넘을 수 있어 잘라서 기록함
-            String lockedDetail = PayoutFailure.fitDetail(String.format(ORDER_LOCKED_DETAIL, feeMismatches.keySet()));
+            String lockedDetail = PayoutFailure.fitDetail(String.format(ORDER_HELD_DETAIL, feeMismatches.keySet()));
             for (PayoutCandidateItem candidate : orderTargets) {
                 String mismatchDetail = candidate.getOrderItemId() == null ? null : feeMismatches.get(candidate.getOrderItemId());
                 if (mismatchDetail != null) {
-                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.AMOUNT_MISMATCH, mismatchDetail));
+                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.FEE_MISMATCH, mismatchDetail));
                 } else {
-                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.ORDER_LOCKED, lockedDetail));
+                    failures.add(PayoutFailure.of(snapshotId, candidate, PayoutFailureReason.ORDER_HELD, lockedDetail));
                 }
             }
         }
         return failures;
+    }
+
+    // 초과 청구 근거 8개를 값별로 만듦 (#391, #570). 모든 계산은 합계와 같은 범위(그 주문의 조정 아닌 정산후보 전체, #552부터 조정 제외)로 함
+    //   근거도 판정 공식(합계 > 차감액)과 같은 범위로 봐야 "넘친 금액"과 누적합이 서로 맞음
+    // 실패 상세 글(overchargeDetail), 막힌 주문 표의 "막힌 순간" 근거(PayoutService.validate),
+    //   관리자 목록의 "지금" 근거(PayoutBlockedOrderService)가 모두 이 메서드로 만들어 같은 계산을 씀
+    // "지금" 근거는 초과가 풀린 주문에도 부를 수 있음: 그때 넘친 금액은 0이나 음수, 넘게 만든 주문상품은 "판별 불가"
+    static PayoutOverchargeEvidence overchargeEvidence(long deducted, long total, List<OverchargeCandidateRow> orderRows,
+                                                       List<Long> conflictAmounts) {
+        return PayoutOverchargeEvidence.of(
+                deducted,
+                total,
+                firstOverflowLabel(deducted, orderRows),
+                settledAmount(orderRows),
+                settledItems(orderRows),
+                aloneOverItems(deducted, orderRows),
+                countSellers(orderRows),
+                conflictAmounts);
+    }
+
+    // 초과 청구 실패 상세(근거)를 한 줄 글로 만듦 (#391). 글 모양은 #570 전과 같음 (실패 기록은 쌓기만 해서 예전 글과 모양을 맞춤)
+    private static String overchargeDetail(PayoutOverchargeEvidence evidence) {
+        return PayoutFailure.fitDetail(String.format(OVERCHARGE_DETAIL,
+                evidence.getDeductedAmount(),
+                evidence.getCandidateTotal(),
+                evidence.getOverflowAmount(),
+                evidence.getFirstOverflowItem(),
+                settledSummary(evidence),
+                aloneOverSummary(evidence),
+                evidence.getSellerCount(),
+                conflictSummary(evidence.conflictAmountList())));
+    }
+
+    // 넘게 만든 주문상품: 후보를 생성 순서(createdAt, id)로 더해 갈 때 누적합이 처음 차감액보다 커진 후보의 주문상품 (배송비면 "배송비")
+    // 주의: 이 후보가 틀렸다는 뜻이 아님. 먼저 들어온 틀린 금액이 합계를 키워 두고, 나중에 들어온 맞는 후보가 마지막에 넘길 수도 있음
+    //   "언제부터 넘었는지"를 알려 주는 단서일 뿐이라, 원인은 혼자 넘는 주문상품·이미 지급·충돌과 함께 사람이 판단해야 함
+    // 같은 주문상품의 대금·수수료도 따로 더함 (후보 단위로 넘는 순간을 찾음)
+    // 누적합이 끝까지 차감액을 넘지 못하면(근거 조회와 합계 조회가 다른 값을 본 경우 등) "판별 불가"
+    private static String firstOverflowLabel(long deducted, List<OverchargeCandidateRow> orderRows) {
+        long cumulative = 0L;
+        for (OverchargeCandidateRow row : orderRows) {
+            cumulative += row.amount();
+            if (cumulative > deducted) {
+                return labelOf(row);
+            }
+        }
+        return UNKNOWN_LABEL;
+    }
+
+    // 이미 지급: 이미 정산된(payout_item 있음) 후보의 금액 합과 그 주문상품들
+    // 이미 지급한 돈은 이번에 막아도 돌아오지 않으므로, 넘친 금액 중 얼마가 이미 나갔는지 보는 근거
+    private static long settledAmount(List<OverchargeCandidateRow> orderRows) {
+        long settledAmount = 0L;
+        for (OverchargeCandidateRow row : orderRows) {
+            if (row.settled()) {
+                settledAmount += row.amount();
+            }
+        }
+        return settledAmount;
+    }
+
+    // 이미 지급한 주문상품 (중복 없이 생성 순서대로, 배송비는 "배송비")
+    private static List<String> settledItems(List<OverchargeCandidateRow> orderRows) {
+        Set<String> settledItems = new LinkedHashSet<>();
+        for (OverchargeCandidateRow row : orderRows) {
+            if (row.settled()) {
+                settledItems.add(labelOf(row));
+            }
+        }
+        return new ArrayList<>(settledItems);
+    }
+
+    // 실패 상세 글의 이미 지급 부분. 지급한 주문상품이 없으면 "0"
+    private static String settledSummary(PayoutOverchargeEvidence evidence) {
+        List<String> settledItems = evidence.settledItemList();
+        if (settledItems.isEmpty()) {
+            return "0";
+        }
+        return evidence.getSettledAmount() + "(주문상품 " + String.join(", ", settledItems) + ")";
+    }
+
+    // 실패 상세 글의 혼자 넘는 주문상품 부분. 없으면 "없음"
+    private static String aloneOverSummary(PayoutOverchargeEvidence evidence) {
+        List<String> aloneOverItems = evidence.aloneOverItemList();
+        if (aloneOverItems.isEmpty()) {
+            return "없음";
+        }
+        return String.join(", ", aloneOverItems);
+    }
+
+    // 혼자 넘는 주문상품: 한 주문상품의 후보 합계만으로 차감액보다 큰 것 (있으면 그 주문상품 금액이 틀린 게 확실)
+    // 배송비는 주문상품이 아니라서 뺌. 여러 개면 모두
+    private static List<String> aloneOverItems(long deducted, List<OverchargeCandidateRow> orderRows) {
+        Map<Long, Long> amountsByItem = new LinkedHashMap<>();
+        for (OverchargeCandidateRow row : orderRows) {
+            if (row.orderItemId() != null) {
+                amountsByItem.merge(row.orderItemId(), row.amount(), Long::sum);
+            }
+        }
+        List<String> overItems = new ArrayList<>();
+        for (Map.Entry<Long, Long> item : amountsByItem.entrySet()) {
+            if (item.getValue() > deducted) {
+                overItems.add(String.valueOf(item.getKey()));
+            }
+        }
+        return overItems;
+    }
+
+    // 그 주문 정산후보 전체의 서로 다른 판매자 수 (이번 스냅샷 후보만이 아님). 판매자가 여럿이면 어느 판매자 금액이 틀렸는지 따로 봐야 함
+    private static int countSellers(List<OverchargeCandidateRow> orderRows) {
+        Set<Long> sellerIds = new HashSet<>();
+        for (OverchargeCandidateRow row : orderRows) {
+            sellerIds.add(row.sellerId());
+        }
+        return sellerIds.size();
+    }
+
+    // 지갑 금액 충돌: 차감 기록과 다른 금액의 지갑 이벤트가 온 적이 있으면 받은 금액들을 씀 (저장된 금액은 이미 "결제"로 나옴)
+    // 충돌이 있으면 차감액 자체가 틀렸을 수 있다는 근거
+    private static String conflictSummary(List<Long> conflictAmounts) {
+        if (conflictAmounts.isEmpty()) {
+            return "지갑 금액 충돌 없음";
+        }
+        List<String> amounts = new ArrayList<>();
+        for (Long amount : conflictAmounts) {
+            amounts.add(String.valueOf(amount));
+        }
+        return "지갑 금액 충돌 있음(받은 금액 " + String.join(", ", amounts) + ")";
+    }
+
+    // 후보를 사람이 읽는 주문상품 이름으로 (주문상품 ID, 배송비는 "배송비")
+    private static String labelOf(OverchargeCandidateRow row) {
+        return row.orderItemId() == null ? SHIPPING_FEE_LABEL : String.valueOf(row.orderItemId());
+    }
+
+    // 근거 조회 결과를 주문별로 묶음 (조회 순서 = 생성 순서를 유지). 근거를 따로 만드는 곳(#570)도 같은 묶음을 씀
+    static Map<Long, List<OverchargeCandidateRow>> groupRowsByOrder(List<OverchargeCandidateRow> rows) {
+        Map<Long, List<OverchargeCandidateRow>> byOrder = new LinkedHashMap<>();
+        for (OverchargeCandidateRow row : rows) {
+            byOrder.computeIfAbsent(row.orderId(), orderId -> new ArrayList<>()).add(row);
+        }
+        return byOrder;
     }
 
     // 주문 하나의 대상 후보 중 수수료가 틀린 주문상품을 찾아 (주문상품 ID → 실패 상세)로 반환

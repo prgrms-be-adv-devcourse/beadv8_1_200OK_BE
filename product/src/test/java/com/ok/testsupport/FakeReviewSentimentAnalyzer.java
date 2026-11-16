@@ -10,15 +10,15 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
-import com.ok.product.review.client.ReviewAnalysisFailedException;
-import com.ok.product.review.client.ReviewAnalyzerUnavailableException;
-import com.ok.product.review.client.ReviewSentimentAnalyzer;
-import com.ok.product.review.client.ReviewSentimentCriteria;
+import com.ok.product.review.exception.ReviewAnalysisFailedException;
+import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;
+import com.ok.product.review.application.port.out.ReviewSentimentAnalyzer;
+import com.ok.product.review.adapter.out.jev.ReviewSentimentCriteria;
 import com.ok.product.review.domain.AspectSentiment;
 import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.Sentiment;
-import com.ok.product.review.service.dto.ReviewSentimentAnalysis;
-import com.ok.product.review.service.dto.ReviewSentimentInput;
+import com.ok.product.review.application.dto.ReviewSentimentAnalysis;
+import com.ok.product.review.application.dto.ReviewSentimentInput;
 
 /**
  * 외부 감성 분석 서비스 대신 리뷰 본문마다 넣어 둔 결과를 돌려주는 Fake.

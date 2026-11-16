@@ -4,8 +4,6 @@ import com.ok.payout.application.port.out.PayoutWalletDeductionRepository;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.util.Optional;
-
 /**
  * 지갑 차감 기록 저장소 출력 포트({@link PayoutWalletDeductionRepository})의 JPA 구현.
  */
@@ -17,5 +15,6 @@ public interface PayoutWalletDeductionJpaRepository
     <S extends PayoutWalletDeduction> S save(S deduction);
 
     // 테스트 검증용 (운영 코드에서는 사용하지 않음)
-    Optional<PayoutWalletDeduction> findByOrderId(Long orderId);
+    // 운영 코드는 #391부터 저장된 금액이 필요해 포트의 findByOrderId를 씀
+    boolean existsByOrderId(Long orderId);
 }

@@ -2,6 +2,7 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.wallet.application.port.out.TermsRepository;
 import com.ok.wallet.domain.Terms;
 import com.ok.wallet.domain.TermsType;
 import org.junit.jupiter.api.Test;
@@ -20,10 +21,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // 약관은 마이그레이션으로만 추가하므로, 새 버전은 SQL로 직접 넣어 확인한다.
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
+@Import({JpaConfig.class, TestcontainersConfiguration.class, TermsRepositoryAdapter.class})
 class TermsRepositoryTest {
     @Autowired
-    TermsJpaRepository termsRepository;
+    TermsRepository termsRepository;
 
     @Autowired
     JdbcTemplate jdbcTemplate;

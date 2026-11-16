@@ -4,6 +4,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
 import com.ok.wallet.application.dto.OrderPaymentResult;
 import com.ok.wallet.domain.BuyerWallet;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,10 +41,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
-        jdbcTemplate.update("DELETE FROM wallet_order_payment");
-        jdbcTemplate.update("DELETE FROM buyer_wallet_ledger");
-        buyerWalletRepository.deleteAll();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     @Test
@@ -72,6 +70,15 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Then
         assertThat(wallet.getId()).isEqualTo(existing.getId());
         assertThat(countBuyerWallets(memberId)).isEqualTo(1);
+    }
+
+    @Test
+    void 회원_ID가_없으면_지갑을_만들지_않고_예외가_난다() {
+        // when & then
+        assertThatThrownBy(() -> buyerWalletService.getOrCreate(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("회원 ID는 필수입니다.");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM buyer_wallet", Long.class)).isZero();
     }
 
     @Test

@@ -39,6 +39,10 @@ public class Order extends BaseTime {
     @Column(nullable = false, length = 20)
     private OrderStatus status;
 
+    // 지갑에 결제를 요청한 시각(주문 생성 이벤트 발행 시각). 비어 있으면 아직 만드는 중이다(#402)
+    @Column(name = "payment_requested_at")
+    private LocalDateTime paymentRequestedAt;
+
     // 수령인 이름
     @Column(nullable = false, length = 50)
     private String recipientName;
@@ -222,6 +226,37 @@ public class Order extends BaseTime {
         return status == OrderStatus.PAYMENT_FAILED;
     }
 
+    // 취소 상태인지
+    public boolean isCanceled() {
+        return status == OrderStatus.CANCELED;
+    }
+
+    // 아직 만드는 중인지: 결제 대기인데 지갑에 결제를 요청하기 전(재고 선점 중이거나 그 뒤 보상 취소까지 실패해 멈춤)
+    public boolean isBeingCreated() {
+        return status == OrderStatus.PAYMENT_PENDING && paymentRequestedAt == null;
+    }
+
+    // 지갑에 결제를 요청했다고 기록한다.
+    // 결제 대기일 때만 허용한다. 정리 스케줄러가 먼저 취소한 주문에 결제를 요청하면 취소된 주문에서 돈이 빠지기 때문이다(#402)
+    public void markPaymentRequested(LocalDateTime requestedAt) {
+        if (status != OrderStatus.PAYMENT_PENDING) {
+            throw new IllegalStateException("결제 대기가 아닌 주문에는 결제를 요청할 수 없습니다. status=" + status);
+        }
+        this.paymentRequestedAt = requestedAt;
+    }
+
+    // 결제 대기로 기준보다 오래 남았는지(#402).
+    // 결제 요청 전이면 생성 시각을, 요청 뒤면 요청 시각을 기준과 비교한다. 두 경우의 기준은 위험이 달라 따로 받는다
+    public boolean isStalePaymentPending(LocalDateTime creatingDeadline, LocalDateTime paymentDeadline) {
+        if (status != OrderStatus.PAYMENT_PENDING) {
+            return false;
+        }
+        if (paymentRequestedAt == null) {
+            return !getCreatedAt().isAfter(creatingDeadline);
+        }
+        return !paymentRequestedAt.isAfter(paymentDeadline);
+    }
+
     // 결제 완료
     public void markPaid() {
         this.status = OrderStatus.PAID;
@@ -236,6 +271,21 @@ public class Order extends BaseTime {
         for (OrderItem item : getAllItems()) {
             item.markPaymentFailed();
         }
+    }
+
+    // 취소 -> 주문과 상품 모두 취소. 삭제하지 않고 남겨 실패 원인과 재고 해제 여부를 추적할 수 있게 한다(#401).
+    // 멱등키는 비운다. 멱등키는 성공한 주문이 두 번 생기지 않게 하려는 것이라, 실패한 주문 때문에 같은 키로 다시 주문하지 못하면 안 된다.
+    // 결제 대기일 때만 취소한다. 결제 결과를 받은 주문은 이미 돈이 오간 상태라, 누가 호출하든 취소로 덮지 않도록 주문이 직접 막는다
+    public boolean cancel() {
+        if (status != OrderStatus.PAYMENT_PENDING) {
+            return false;
+        }
+        this.status = OrderStatus.CANCELED;
+        this.idempotencyKey = null;
+        for (OrderItem item : getAllItems()) {
+            item.cancel();
+        }
+        return true;
     }
 
     // 판매자 묶음의 상품들을 '배송 중'으로 변경

@@ -14,6 +14,7 @@ import com.ok.payout.domain.PayoutSnapshot;
 import com.ok.payout.domain.PayoutSnapshotItem;
 import com.ok.payout.domain.PayoutSystemDraftItem;
 import com.ok.payout.domain.PayoutWalletDeduction;
+import com.ok.payout.domain.PayoutWalletDeductionConflict;
 import com.ok.payout.exception.PayoutErrorCode;
 import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutFailureJpaRepository;
@@ -24,26 +25,48 @@ import com.ok.payout.adapter.out.persistence.PayoutSnapshotItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutSystemDraftItemJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionConflictJpaRepository;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.in.batch.PayoutJobScheduler;
 import com.ok.payout.application.service.PayoutService;
+import com.ok.payout.application.port.in.PayoutDraftResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
 import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobOperator;
+import org.springframework.batch.core.repository.JobRepository;
+import com.ok.payout.domain.type.PayoutRunType;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -55,7 +78,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // - SQL로 넣는 시각은 변환 없이 그대로 넣는다. 테스트 JVM(build-logic의 ok.java-conventions)과 Hibernate 시간대(application-test.yml)가
 //   모두 Asia/Seoul로 고정되어(#93), JPA가 저장·조회하는 시각과 기준이 같기 때문이다
 // - 결과 확인은 JPA 리포지토리로 한다 (팀 규칙). JDBC는 데이터 준비·정리에만 쓴다
-// - 정산·스냅샷·draft는 이 클래스만 만들고 "마지막 정산일"이 범위 계산에 쓰이므로, 테스트 전후로 전부 비운다
+// - 정산·스냅샷·draft는 이 클래스만 만들고 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다
 class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 이 클래스 전용 주문항목 ID 번호대 (PayoutCandidateIntegrationTest는 주문항목 9_000_000, 주문 9_500_000부터 사용)
@@ -72,6 +95,14 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private static final LocalDateTime TO = LocalDateTime.of(2026, 9, 25, 0, 0);
     private static final int LIMIT = PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE;
 
+    // 주문 하나만 draft 저장 오류를 내는 테스트용 트리거 이름과 오류 메시지 (#534)
+    private static final String BLOCK_ORDER_TRIGGER = "test_block_order_seller_draft_item";
+    private static final String BLOCK_ORDER_MESSAGE = "테스트: 이 주문의 draft 항목 저장을 막음";
+
+    // 실패 사유 이름 변경(ORDER_LOCKED → ORDER_HELD, #391) 마이그레이션. 옛 이름 행을 넣고 다시 실행해 결과를 확인함
+    private static final String ORDER_HELD_RENAME_MIGRATION =
+            "db/migration/payout/V202611121209__payout__update_order_locked_to_order_held_in_payout_failure.sql";
+
     @Autowired
     private PayoutService payoutService;
 
@@ -82,7 +113,13 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private PayoutJobRunner payoutJobRunner;
 
     @Autowired
+    private PayoutJobScheduler payoutJobScheduler;
+
+    @Autowired
     private JobOperator jobOperator;
+
+    @Autowired
+    private JobRepository jobRepository;
 
     @Autowired
     private Job payoutJob;
@@ -112,7 +149,13 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     private PayoutFailureJpaRepository failureRepository;
 
     @Autowired
+    private PayoutWalletDeductionConflictJpaRepository conflictRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    // 이 테스트가 주문 저장을 막는 트리거를 만들었는지 (#534, unblockOrderDraftItem 참고)
+    private boolean orderDraftItemBlocked;
 
     // 이전 테스트가 중간에 실패해 남긴 데이터가 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
@@ -177,10 +220,10 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // given: Job 실행 1회 = 스냅샷 1건 (UK job_execution_id)
         insertSaleAmount(10L, 1_000L, TO.minusDays(1));
         long jobExecutionId = JOB_EXECUTION_ID_SEQ.incrementAndGet();
-        payoutService.createSnapshot(jobExecutionId, FROM, TO);
+        payoutService.createSnapshot(jobExecutionId, FROM, TO, PayoutRunType.SCHEDULED);
 
         // when & then
-        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO))
+        assertThatThrownBy(() -> payoutService.createSnapshot(jobExecutionId, FROM, TO, PayoutRunType.SCHEDULED))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThat(snapshotRepository.findAll())
                 .filteredOn(snapshot -> snapshot.getJobExecutionId().equals(jobExecutionId))
@@ -728,7 +771,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         }
 
         // when: 스케줄러/API와 같은 경로로 실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -752,7 +795,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 정산_대상이_없어도_Job은_COMPLETED로_끝나고_빈_스냅샷이_남는다() throws Exception {
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 대상이 없던 날도 "배치는 돌았다"는 기록이 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -772,7 +815,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_FEE, orderB, 20L, 600L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공하고(실패가 있어도 verify 통과), 주문 B의 후보 2건만 실패로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -801,7 +844,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertShippingFeeWithoutDeduction(orderB, 20L, 3_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 주문 단위 검사라 배송비도 같은 주문으로 걸리고, 실패 기록의 주문상품 ID는 비어 있음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -831,6 +874,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(failureRepository.findBySnapshotId(snapshotId)).hasSize(1);
     }
 
+    // 실패가 1번뿐이라 다음 실행에서 다시 검사됨. 성공한 실행에서 3번 실패한 주문은 멈춰 다시 검사하지 않음 (#549, PayoutFailureRetryIntegrationTest)
     @Test
     void 차감_기록이_없어_빠진_후보는_다음_배치_전에_차감_기록이_들어오면_그때_정산된다() throws Exception {
         // given: 차감 기록이 없는 주문 B (판매자 20)
@@ -839,9 +883,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidateWithoutDeduction(PayoutEventType.SALE_AMOUNT, orderB, 20L, 19_400L, createdAt);
 
         // when: 1차 배치 → 빠짐, 그 뒤 지갑 차감 기록이 늦게 들어옴 → 2차 배치
-        JobExecution first = payoutJobRunner.run();
+        JobExecution first = payoutJobRunner.runScheduled();
         givenDeduction(orderB);
-        JobExecution second = payoutJobRunner.run();
+        JobExecution second = payoutJobRunner.runScheduled();
 
         // then: 1차는 실패 기록만 있고 정산 없음 (잠그지 않아 미정산 후보로 남음)
         Long firstSnapshotId = snapshotIdOf(first);
@@ -857,24 +901,160 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(20L, 19_400L));
     }
 
+    // #390: 정기 실행이 BATCH_JOB_EXECUTION_PARAMS에 실제로 저장한 requestedAt을 쿼리가 읽고 파싱해 하한을 구하는지 확인함
+    // 기대값은 첫 실행의 requestedAt 파라미터에서 계산하고, 저장된 글자를 읽어 파싱하는 일은 조회 쿼리가 함
+    // 대체 경로(마지막 정산 생성일)로도 같은 값이 나오면 쿼리를 안 써도 통과하므로, 정산 생성일을 requestedAt과 다른 날로 옮겨 둠
     @Test
-    void requestedAt_없이_실행하면_Job이_FAILED로_끝나고_스냅샷도_만들지_않는다() throws Exception {
+    void 두_번째_정기_실행의_조회_하한은_첫_정기_실행_요청일에서_18일을_뺀_날이다() throws Exception {
+        // given: 첫 정기 실행이 정산을 실제로 만듦 (정산이 없으면 하한 기준이 되지 않아 검증이 의미 없음)
+        givenSettleableOrder(10L);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
+        LocalDateTime firstRequestedAt = (LocalDateTime) first.getJobParameters().getParameter("requestedAt").value();
+
+        // 정산 엔티티는 생성일을 바꿀 수 없어(불변) SQL로 옮김: 정산 생성일 날짜가 요청일 날짜와 같으면 대체 경로와 구분이 안 됨
+        LocalDateTime backdatedCreatedAt = firstRequestedAt.minusDays(10);
+        backdatePayoutCreatedAt(firstSnapshotId, backdatedCreatedAt);
+
+        // when
+        JobExecution second = payoutJobRunner.runScheduled();
+
+        // then: 요청일 기준 값이어야 하고, 대체 경로(정산 생성일 기준) 값이면 안 됨
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(second)).orElseThrow();
+        LocalDateTime fromRequestedAt = firstRequestedAt.toLocalDate().minusDays(18).atStartOfDay();
+        LocalDateTime fromFallback = backdatedCreatedAt.toLocalDate().minusDays(18).atStartOfDay();
+        assertThat(fromRequestedAt).isNotEqualTo(fromFallback);
+        assertThat(sut.getPeriodFrom()).isEqualTo(fromRequestedAt).isNotEqualTo(fromFallback);
+    }
+
+    // #390 D5: 정산·스냅샷은 지워지고 BATCH 실행 기록만 남은 실행이 하한 기준이 되면 안 됨
+    // 고아 실행 기록이 하한을 정하면 "요청일 − 18일"이고, 맞는 답은 대체 경로의 "남은 정산 생성일 − 18일"이라 둘이 다르게 만들어 둠
+    // 함께 확인: 하한이 과거로 내려가 조회 기간이 넓어져도 이미 정산된 후보는 다시 정산되지 않음 (지금 동작 유지)
+    @Test
+    void 정산이_지워진_실행_기록만_남으면_하한은_남은_정산_생성일_기준이다() throws Exception {
+        // given: 1회차는 정산을 만들되 MANUAL로 바꿔 하한 기준에서 빼고, 정산은 대체 경로(남은 정산 생성일)용으로 남기며 생성일을 옮김
+        long firstOrderId = givenSettleableOrder(10L);
+        List<Long> firstCandidateIds = candidateIdsOf(firstOrderId);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long firstSnapshotId = snapshotIdOf(first);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isNotEmpty();
+        LocalDateTime firstRequestedAt = (LocalDateTime) first.getJobParameters().getParameter("requestedAt").value();
+        LocalDateTime backdatedCreatedAt = firstRequestedAt.minusDays(10);
+        backdatePayoutCreatedAt(firstSnapshotId, backdatedCreatedAt);
+        jdbcTemplate.update("UPDATE payout_snapshot SET run_type = 'MANUAL' WHERE id = ?", firstSnapshotId);
+
+        // given: 2회차가 정산을 만든 뒤 그 정산·스냅샷만 지움 (BATCH_* 기록은 고아로 남음: 정기·COMPLETED·1회차보다 최신)
+        givenSettleableOrder(20L);
+        JobExecution second = payoutJobRunner.runScheduled();
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long secondSnapshotId = snapshotIdOf(second);
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isNotEmpty();
+        deleteSnapshotRows(secondSnapshotId);
+        assertThat(snapshotRepository.findById(secondSnapshotId)).isEmpty();
+        LocalDateTime secondRequestedAt = (LocalDateTime) second.getJobParameters().getParameter("requestedAt").value();
+
+        // when
+        JobExecution third = payoutJobRunner.runScheduled();
+
+        // then: 고아 기록(2회차 요청일 기준)이 아니라 남은 정산(1회차 정산 생성일) 기준이어야 함
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(third)).orElseThrow();
+        LocalDateTime expected = backdatedCreatedAt.toLocalDate().minusDays(18).atStartOfDay();
+        LocalDateTime orphanAnswer = secondRequestedAt.toLocalDate().minusDays(18).atStartOfDay();
+        assertThat(expected).isNotEqualTo(orphanAnswer);
+        assertThat(sut.getPeriodFrom()).isEqualTo(expected).isNotEqualTo(orphanAnswer);
+
+        // then: 3회차 조회 기간이 1회차 후보(20일 전 생성)를 포함하도록 넓어졌는데도, 이미 정산된 1회차 후보는 다시 정산되지 않음
+        // 먼저 후보가 3회차 기간 안에 있음을 확인해야 아래 검증이 의미 있음 (기간 밖이라 빠진 것이면 통과해도 증명이 안 됨)
+        for (Long candidateId : firstCandidateIds) {
+            LocalDateTime candidateCreatedAt = candidateRepository.findById(candidateId).orElseThrow().getCreatedAt();
+            assertThat(candidateCreatedAt).isBetween(sut.getPeriodFrom(), sut.getPeriodTo());
+        }
+        List<Long> thirdSnapshotCandidateIds = new ArrayList<>();
+        for (PayoutSnapshotItem item : snapshotItemRepository.findBySnapshotId(snapshotIdOf(third))) {
+            thirdSnapshotCandidateIds.add(item.getCandidateId());
+        }
+        assertThat(thirdSnapshotCandidateIds).doesNotContainAnyElementsOf(firstCandidateIds);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(third)))
+                .extracting(Payout::getPayeeId).doesNotContain(10L);   // 1회차 판매자의 정산은 3회차에 다시 생기지 않음
+    }
+
+    private void backdatePayoutCreatedAt(Long snapshotId, LocalDateTime createdAt) {
+        jdbcTemplate.update("UPDATE payout SET created_at = ? WHERE snapshot_id = ?", createdAt, snapshotId);
+    }
+
+    // 한 스냅샷의 정산·draft·실패·스냅샷 행만 지움 (FK 때문에 자식 테이블 먼저, 다른 실행의 행은 그대로)
+    private void deleteSnapshotRows(Long snapshotId) {
+        jdbcTemplate.update("DELETE FROM payout_deposit_check WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_outbox WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_item WHERE payout_id IN (SELECT id FROM payout WHERE snapshot_id = ?)", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_seller_draft_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_seller_draft WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_system_draft_item WHERE snapshot_id = ?", snapshotId);
+        // 해결 기록은 실패 기록을 외래키로 가리켜 먼저 지움 (#568·#571)
+        jdbcTemplate.update("DELETE FROM payout_failure_resolution WHERE failure_id IN (SELECT id FROM payout_failure WHERE snapshot_id = ?)", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_failure WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_snapshot_item WHERE snapshot_id = ?", snapshotId);
+        jdbcTemplate.update("DELETE FROM payout_snapshot WHERE id = ?", snapshotId);
+    }
+
+    // 생성 20일 전(15일 지남) 판매 대금·수수료 후보를 넣어 정기 실행이 정산을 만들게 함
+    private long givenSettleableOrder(long sellerId) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long orderItemId = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemId, sellerId, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, orderItemId, sellerId, 300L, createdAt);
+        return orderItemId;   // candidateIdsOf(주문 ID)에 그대로 넘길 수 있음 (이 테스트는 주문 ID = 주문항목 ID)
+    }
+
+    // 필수 파라미터 검사는 Job 시작 전(PayoutJobParametersValidator)에 하므로, 잘못된 실행이 FAILED 기록으로 남지 않아야 함
+    // 검사기의 RestApiException이 감싸지지 않고 그대로 나오는지도 여기서 실제 JobOperator로 확인함
+    // JobInstance는 검사 전에 만들어질 수 있어 개수는 확인하지 않고, 실행 기록(JobExecution)과 스냅샷만 확인함
+    @Test
+    void 필수_파라미터가_잘못되면_Job을_시작하지_않아_실행_기록도_스냅샷도_남지_않는다() throws Exception {
         // given: 정산 대상이 있어도 (앱 시작 시 자동 실행 등 의도치 않은 실행 방지)
         insertSaleAmount(10L, 1_000L, LocalDateTime.now().minusDays(20));
+        int executionsBefore = payoutJobExecutionCount();
+        JobParameters withoutRequestedAt = new JobParametersBuilder()
+                .addString("runType", PayoutRunType.MANUAL.name(), false)
+                .toJobParameters();
+        JobParameters withoutRunType = new JobParametersBuilder()
+                .addLocalDateTime("requestedAt", LocalDateTime.now())
+                .toJobParameters();
 
-        // when: 파라미터 없이 직접 실행
-        JobExecution execution = jobOperator.start(payoutJob, new JobParameters());
+        // when & then: requestedAt이 없으면 MISSING_PAYOUT_REQUESTED_AT
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, withoutRequestedAt))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.MISSING_PAYOUT_REQUESTED_AT));
+        // runType이 없으면 INVALID_PAYOUT_RUN_TYPE
+        assertThatThrownBy(() -> jobOperator.start(payoutJob, withoutRunType))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.INVALID_PAYOUT_RUN_TYPE));
 
-        // then
-        assertThat(execution.getStatus()).isEqualTo(BatchStatus.FAILED);
-        assertThat(snapshotRepository.findAll()).isEmpty();
-        assertThat(payoutRepository.count()).isZero();
+        // then: 실행 기록·스냅샷·정산이 하나도 늘지 않음
+        assertSoftly(softly -> {
+            softly.assertThat(payoutJobExecutionCount()).isEqualTo(executionsBefore);
+            softly.assertThat(snapshotRepository.findAll()).isEmpty();
+            softly.assertThat(payoutRepository.count()).isZero();
+        });
+    }
+
+    // 정산 Job의 모든 실행 기록 수 (JobInstance를 거쳐 JobExecution을 셈)
+    private int payoutJobExecutionCount() {
+        int count = 0;
+        for (JobInstance instance : jobRepository.findJobInstances("payoutJob")) {
+            count += jobRepository.getJobExecutions(instance).size();
+        }
+        return count;
     }
 
     @Test
     void Job_실행_기록이_DB에_저장된다() throws Exception {
         // when: 정산 대상 없이 실행 (대상 유무와 상관없이 실행 기록은 남아야 함)
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 반환된 실행 ID로 메타 테이블을 직접 조회 → 메모리 저장이면 행이 없어 실패
         // (Spring Batch 메타 테이블은 엔티티가 없어 JDBC로 확인)
@@ -897,7 +1077,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payoutService.verify(failedSnapshotId)).isInstanceOf(RestApiException.class);
 
         // when: 재실행
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 새 스냅샷으로 판매자 10, 20 모두 정산되고, 실패한 스냅샷의 draft는 기록으로 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -934,7 +1114,9 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = settleAll(FROM, TO);
 
         // then: 주문 X 후보 2건이 초과 청구로 빠지고, 정산은 주문 Y만
-        String detail = "주문 합계 초과: 차감액 9999, 후보 합계 10000 (어느 주문상품이 틀렸는지 판별 불가)";
+        // 이 테스트는 주문 ID = 주문상품 ID라, 넘게 만든 주문상품·혼자 넘는 주문상품이 주문 X의 번호로 나옴
+        String detail = "초과 청구: 결제 9999, 후보 합계 10000, 넘친 금액 1, 넘게 만든 주문상품 " + orderX
+                + ", 이미 지급 0, 혼자 넘는 주문상품 " + orderX + ", 판매자 1명, 지갑 금액 충돌 없음";
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason, PayoutFailure::getDetail)
                 .containsExactly(
@@ -946,47 +1128,77 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 금액_불일치로_잠긴_주문은_다음_스냅샷에서_빠진다() {
-        // given: 1차 배치에서 주문 X가 초과 청구로 잠김
+    void 금액_불일치_주문은_잠기지_않고_다음_스냅샷에서_다시_검사되어_입력이_그대로면_또_빠진다() {
+        // given: 1차 배치에서 주문 X가 초과 청구로 빠짐
         long orderX = nextOrderItemId();
         givenDeduction(orderX, 9_000L);
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
         Long firstSnapshotId = settleAll(FROM, TO);
 
         // when: 2차 배치
-        Long secondSnapshotId = createSnapshot(FROM, TO);
+        Long secondSnapshotId = settleAll(FROM, TO);
 
         // then: 1차에서 금액 불일치로 빠져 정산되지 않음 (미정산 후보로 남음)
-        // 이걸 먼저 확인하는 이유: 1차에서 그냥 정산돼 버려도 2차 스냅샷은 비므로, 아래 확인만으로는 잠금 때문인지 알 수 없음
         assertThat(failureRepository.findBySnapshotId(firstSnapshotId))
                 .extracting(PayoutFailure::getReason)
                 .containsExactly(PayoutFailureReason.AMOUNT_MISMATCH);
         assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).isEmpty();
-        // then: 미정산인데도 잠긴 주문이라 스냅샷에 들어가지 않음 (차감 기록 없음과 달리 다시 검사하지 않음)
-        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+        // then: 잠그지 않아(#552) 2차 스냅샷에 다시 들어가고, 입력이 그대로라 같은 검사에 또 걸려 돈이 나가지 않음
+        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).hasSize(1);
+        assertThat(failureRepository.findBySnapshotId(secondSnapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.AMOUNT_MISMATCH);
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
     }
 
     @Test
-    void 잠긴_주문에_나중에_생긴_후보도_다음_스냅샷에서_빠진다() {
-        // given: 주문 X가 잠긴 뒤, 같은 주문의 다른 주문상품과 조정 후보가 새로 들어옴
+    void 금액_불일치_주문은_사람이_데이터를_바로잡으면_실패_기록을_지우지_않아도_다음_배치에서_정산된다() {
+        // given: 1차 배치에서 주문 X가 초과 청구로 빠짐 (차감액 9,000 < 후보 9,700)
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 9_000L);
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, TO.minusDays(1));
+        Long firstSnapshotId = settleAll(FROM, TO);
+        assertThat(payoutRepository.findBySnapshotId(firstSnapshotId)).as("준비: 1차는 정산되지 않음").isEmpty();
+        // 사람이 데이터를 바로잡은 상황: 차감액을 맞는 값(10,000)으로 고침 (실패 기록은 지우지 않음)
+        //   차감 기록은 처음 온 값을 유지하므로(#391 충돌 기록) 정상 경로로는 바뀌지 않음 → 운영자가 바로잡는 것을 SQL로 흉내 냄
+        correctDeductionAmount(orderX, 10_000L);
+
+        // when: 2차 배치
+        Long secondSnapshotId = settleAll(FROM, TO);
+
+        // then: 잠그지 않았으므로(#552) 다시 검사해 통과하고 정산됨 (#552 전에는 실패 기록을 손으로 지워야 했음)
+        assertThat(failureRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(10L, 9_700L));
+    }
+
+    @Test
+    void 조정이_들어와도_초과_청구를_가리지_못해_금액_불일치_주문은_또_빠진다() {
+        // given: 주문 X가 초과 청구로 빠진 뒤(차감액 9,000 < 후보 9,700), −700 조정이 들어옴
+        //   조정까지 더하면 합계 9,000이라 통과하지만, 원래 후보 9,700은 여전히 결제보다 큼
         LocalDateTime createdAt = TO.minusDays(1);
         long orderX = nextOrderItemId();
         givenDeduction(orderX, 9_000L);
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 9_700L, createdAt);
         settleAll(FROM, TO);
-        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, nextOrderItemId(), 20L, 1_000L, createdAt);
         insertAdjustment(PayoutEventType.SALE_AMOUNT, orderX, 10L, -700L, 1L, createdAt);
 
-        // when
-        Long secondSnapshotId = createSnapshot(FROM, TO);
+        // when: 2차 배치
+        Long secondSnapshotId = settleAll(FROM, TO);
 
-        // then: 스냅샷 번호와 상관없이 주문 단위로 잠겨, 새 후보도 들어가지 않음
-        assertThat(snapshotItemRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
+        // then: 초과 청구 합계에서 조정을 빼므로(#552) 원래 후보와 조정 모두 금액 불일치로 빠지고 돈이 나가지 않음
+        //   (#552 전에는 잠금이 이 경우를 막았음. 잠금을 없애며 조정을 합계에서 빼서 막음)
+        assertThat(failureRepository.findBySnapshotId(secondSnapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsOnly(PayoutFailureReason.AMOUNT_MISMATCH)
+                .hasSize(2);
+        assertThat(payoutRepository.findBySnapshotId(secondSnapshotId)).isEmpty();
     }
 
     @Test
-    void 결과_검증에_실패한_Job이_남긴_잠금도_다음_스냅샷에서_작동한다() {
-        // given: 입력 검증에서 주문 X를 잠근 뒤 결과 검증(verify)이 코드 고장 검사(판매자 합계 불일치)로 멈춰 정산 없이 끝남
+    void 결과_검증에_실패한_Job_뒤에도_금액_불일치_주문은_잠기지_않고_다음_스냅샷에_다시_들어간다() {
+        // given: 입력 검증에서 주문 X가 금액 불일치로 빠진 뒤 결과 검증(verify)이 코드 고장 검사(판매자 합계 불일치)로 멈춰 정산 없이 끝남
         // 판매자 20의 후보는 다음 스냅샷이 비어 있지 않게 하려고 둠
         long orderX = nextOrderItemId();
         givenDeduction(orderX, 9_000L);
@@ -1001,10 +1213,11 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // when: 다음 배치
         Long nextSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 둘 다 미정산 후보지만, 판매자 20의 후보만 들어가고 주문 X는 실패한 Job이 남긴 잠금 때문에 빠짐
+        // then: 둘 다 미정산 후보라 함께 들어감. 금액 불일치는 #552부터 잠그지 않아, 실패한 Job이 남긴 기록이 있어도 다시 검사 대상
+        //   (#552 전에는 주문 X가 잠겨 판매자 20의 후보만 들어갔음)
         assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId))
                 .extracting(PayoutSnapshotItem::getAmount)
-                .containsExactly(2_000L);
+                .containsExactlyInAnyOrder(9_700L, 2_000L);
     }
 
     @Test
@@ -1035,6 +1248,41 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void 초과_청구_상세는_실제_정산_항목과_생성_순서로_근거를_계산하고_주문상품_목록을_WARN으로_남긴다(CapturedOutput output) {
+        // given: 주문 X(결제 15,000)의 주문상품 1(판매자 10, 10,000)이 지난 배치에 정산됨
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 15_000L);
+        long firstItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, firstItem, 10L, 9_700L, TO.minusDays(2));
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, firstItem, 10L, 300L, TO.minusDays(2));
+        settleAll(FROM, TO);
+        // 그 뒤 주문상품 2(판매자 20, 6,000)가 들어옴. id는 더 크지만 생성 시각은 주문상품 1보다 이름
+        //   → id 순이면 주문상품 2가, 생성 순(created_at)이면 주문상품 1이 누적합을 넘김. 생성 순으로 계산하는지 확인
+        long secondItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, secondItem, 20L, 5_820L, TO.minusDays(3));
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 180L, TO.minusDays(3));
+        // 지갑에서 이 주문에 20,000 이벤트가 온 적이 있음 (차감 기록은 15,000 그대로)
+        conflictRepository.save(PayoutWalletDeductionConflict.create(orderX, 15_000L, 20_000L));
+
+        // when
+        Long snapshotId = settleAll(FROM, TO);
+
+        // then: 이미 지급은 payout_item이 있는 주문상품 1의 10,000, 판매자는 주문 전체 기준 2명
+        String detail = "초과 청구: 결제 15000, 후보 합계 16000, 넘친 금액 1000, 넘게 만든 주문상품 " + firstItem
+                + ", 이미 지급 10000(주문상품 " + firstItem + "), 혼자 넘는 주문상품 없음, 판매자 2명"
+                + ", 지갑 금액 충돌 있음(받은 금액 20000)";
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getReason, PayoutFailure::getDetail)
+                .containsExactly(
+                        tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH, detail),
+                        tuple(secondItem, PayoutFailureReason.AMOUNT_MISMATCH, detail));
+        // then: 상세가 잘려도 원인을 찾을 수 있게 주문상품 전체 목록(생성 순, 주문상품별 합계)이 WARN으로 남음
+        assertThat(output.getAll()).contains("정산 초과 청구 주문상품 목록. snapshotId=" + snapshotId + ", orderId=" + orderX
+                + ", 주문상품별 합계={" + secondItem + "=6000, " + firstItem + "=10000}");
+    }
+
+    @Test
     void 주문_후보_합계가_차감액보다_작으면_정상_정산된다() {
         // given: 후보 합계 13,000 < 차감액 13,500 (차감액에는 있지만 정산후보로 오지 않는 금액이 있는 경우)
         LocalDateTime createdAt = TO.minusDays(1);
@@ -1055,7 +1303,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 수수료가_틀리면_원인은_금액_불일치_같은_주문의_다른_판매자_후보는_보류되고_Job은_완료된다() throws Exception {
+    void 수수료가_틀리면_원인은_수수료_불일치_같은_주문의_다른_판매자_후보는_보류되고_Job은_완료된다() throws Exception {
         // given: 주문 X에 판매자 10(수수료 500, 계산은 309)과 판매자 20(정상 + 배송비), 주문 Y(판매자 30)는 정상
         LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
         long orderX = nextOrderItemId();
@@ -1072,7 +1320,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertCandidate(PayoutEventType.SALE_FEE, orderY, 30L, 300L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: Job은 끝까지 성공, 주문 X의 후보 5건은 1건씩 실패로 기록
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1080,16 +1328,57 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getSellerId, PayoutFailure::getReason)
                 .containsExactlyInAnyOrder(
-                        tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
-                        tuple(wrongItem, 10L, PayoutFailureReason.AMOUNT_MISMATCH),
-                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_LOCKED),
-                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_LOCKED),
-                        tuple(null, 20L, PayoutFailureReason.ORDER_LOCKED));   // 배송비
+                        tuple(wrongItem, 10L, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(wrongItem, 10L, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_HELD),
+                        tuple(rightItem, 20L, PayoutFailureReason.ORDER_HELD),
+                        tuple(null, 20L, PayoutFailureReason.ORDER_HELD));   // 배송비
 
         // then: 정산은 주문 Y만
         assertThat(payoutRepository.findBySnapshotId(snapshotId))
                 .extracting(Payout::getPayeeId, Payout::getAmount)
                 .containsExactlyInAnyOrder(tuple(30L, 9_700L), tuple(null, 300L));
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void 수수료_불일치는_주문상품마다_ERROR_로그를_1번_남기고_제외_로그에_원인을_남기며_잠겨_다음_스냅샷에서도_빠진다(CapturedOutput output) {
+        // given: 주문 X에 판매자 10의 주문상품(수수료 500, 계산은 309)과 판매자 20의 정상 주문상품·배송비
+        LocalDateTime createdAt = TO.minusDays(1);
+        long orderX = nextOrderItemId();
+        givenDeduction(orderX, 40_000L);
+        long wrongItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, wrongItem, 10L, 9_800L, createdAt);
+        insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, wrongItem, 10L, 500L, createdAt);
+        long rightItem = nextOrderItemId();
+        insertOrderCandidate(PayoutEventType.SALE_AMOUNT, orderX, rightItem, 20L, 19_400L, createdAt);
+        insertShippingFee(orderX, 20L, 3_000L, createdAt);
+        Long snapshotId = createSnapshot(FROM, TO);
+
+        // when
+        payoutService.validate(snapshotId);
+        Long nextSnapshotId = createSnapshot(FROM, TO);
+
+        // then: 원인 주문상품은 FEE_MISMATCH, 나머지는 ORDER_HELD
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderItemId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(wrongItem, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(wrongItem, PayoutFailureReason.FEE_MISMATCH),
+                        tuple(rightItem, PayoutFailureReason.ORDER_HELD),
+                        tuple(null, PayoutFailureReason.ORDER_HELD));
+        // then: 수수료 불일치는 다시 검사해도 풀릴 길이 없어 잠금 유지(#552) → 미정산인데도 다음 스냅샷에 들어가지 않음
+        assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+        // then: 대금·수수료 두 후보가 실패해도 ERROR는 주문상품당 1번 (#302 알림이 두 번 가지 않게)
+        assertThat(countMatches(output.getAll(), "[정산-시스템문제] 수수료 불일치 orderItemId=" + wrongItem + System.lineSeparator()))
+                .isEqualTo(1);
+        // then: 등급이 ERROR (정산 모듈 규칙: 시스템 문제 알림은 ERROR. #302 알림이 이 등급의 로그를 찾음)
+        assertThat(output.getAll())
+                .containsPattern("ERROR .*\\[정산-시스템문제\\] 수수료 불일치 orderItemId=" + wrongItem);
+        // then: 제외 WARN의 사유가 비지 않고 원인(수수료 불일치) 상세로 남음 (ORDER_HELD를 원인으로 고르거나 원인을 못 찾으면 틀림)
+        assertThat(output.getAll())
+                .contains("정산 금액 검사로 주문 제외. snapshotId=" + snapshotId + ", orderId=" + orderX
+                        + ", 사유=수수료 불일치: 기대값 309, 실제값 500 (판매 금액 10300 기준)");
     }
 
     @Test
@@ -1106,7 +1395,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertOrderCandidate(PayoutEventType.SALE_FEE, orderX, secondItem, 20L, 1_000L, createdAt);
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then: 실패 기록 UK에 걸려 롤백되지 않고 4건이 1건씩 남음
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1221,13 +1510,32 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long snapshotId = settleAll(FROM, TO);
         Long nextSnapshotId = createSnapshot(FROM, TO);
 
-        // then: 수수료 후보가 금액 불일치로 빠지고, 수수료 검사로 잠긴 주문도 다음 스냅샷에 들어가지 않음
+        // then: 수수료 후보가 수수료 불일치로 빠지고, 수수료 검사로 잠긴 주문도 다음 스냅샷에 들어가지 않음
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getReason, PayoutFailure::getDetail)
-                .containsExactly(tuple(PayoutFailureReason.AMOUNT_MISMATCH,
+                .containsExactly(tuple(PayoutFailureReason.FEE_MISMATCH,
                         "수수료 불일치: 기대값 306, 실제값 500 (판매 금액 10200 기준)"));
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
         assertThat(snapshotItemRepository.findBySnapshotId(nextSnapshotId)).isEmpty();
+    }
+
+    @Test
+    void 옛_이름_ORDER_LOCKED로_저장된_실패_기록은_이름_변경_마이그레이션_뒤_ORDER_HELD로_읽힌다() {
+        // given: 이름을 바꾸기 전(#391 전)에 저장된 실패 기록 1건
+        // Flyway는 컨테이너를 띄울 때 이미 모든 마이그레이션을 적용했으므로, 옛 이름 행을 넣은 뒤 같은 SQL 파일을 다시 실행해 확인함
+        long orderX = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, orderX, 10L, 1_000L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        insertFailure(snapshotId, candidateIdOf(orderX, 10L, PayoutEventType.SALE_AMOUNT), orderX, 10L, "ORDER_LOCKED");
+
+        // when
+        new ResourceDatabasePopulator(new ClassPathResource(ORDER_HELD_RENAME_MIGRATION))
+                .execute(Objects.requireNonNull(jdbcTemplate.getDataSource()));
+
+        // then: JPA가 예외 없이 enum으로 읽음 (옛 이름이 남아 있으면 enum 변환에 실패해 예외가 남)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsExactly(PayoutFailureReason.ORDER_HELD);
     }
 
     @Test
@@ -1326,6 +1634,97 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactlyInAnyOrder(tuple(20L, 19_400L), tuple(null, 600L));
     }
 
+    // ---------- draftStep 판매자 저장 실패 뒤 주문별 다시 시도 (#534) ----------
+
+    @Test
+    void 판매자의_한_주문이_저장_오류를_내도_같은_판매자의_다른_주문은_그날_정산된다() throws Exception {
+        // given: 판매자 20의 주문 2개 (각 대금·수수료). 20일 전에 생겨 대기 기간이 지남
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(20);
+        long brokenOrder = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, brokenOrder, 20L, 9_700L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, brokenOrder, 20L, 300L, createdAt);
+        long normalOrder = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, normalOrder, 20L, 19_400L, createdAt);
+        insertCandidate(PayoutEventType.SALE_FEE, normalOrder, 20L, 600L, createdAt);
+        // brokenOrder의 판매자 몫 항목을 저장할 때만 DB 오류가 나게 함
+        blockOrderDraftItem(brokenOrder);
+
+        // when: 실제 Job 실행 (판매자 저장 실패 → 주문별 시험 저장 → 통과한 주문만 저장)
+        JobExecution execution;
+        try {
+            execution = payoutJobRunner.runScheduled();
+        } finally {
+            unblockOrderDraftItem();
+        }
+
+        // then: Job은 끝까지 성공 (판매자 20은 주문 하나라도 저장됐으므로 실패 판매자가 아님)
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long snapshotId = snapshotIdOf(execution);
+
+        // then: 오류를 낸 주문의 후보 2건만 UNEXPECTED_ERROR, 트리거 메시지가 상세에 남음
+        //   (판매자 저장 예외도 같은 트리거 메시지라, 어느 예외로 기록했는지는 PayoutServiceTest가 확인)
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(brokenOrder, PayoutFailureReason.UNEXPECTED_ERROR),
+                        tuple(brokenOrder, PayoutFailureReason.UNEXPECTED_ERROR));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .allSatisfy(failure -> assertThat(failure.getDetail())
+                        .startsWith("draft 처리 중 예외: ")
+                        .contains(BLOCK_ORDER_MESSAGE));
+
+        // then: 정상 주문만 정산. 오류 주문의 수수료(300)는 시스템 몫에 들어가지 않음
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(20L, 19_400L), tuple(null, 600L));
+
+        // then: 시험 저장은 모두 롤백됨 → 판매자 draft는 1건, 항목은 정상 주문 것만 (시험 저장이 남았다면 결과 검증이 Job을 멈춤)
+        assertThat(sellerDraftRepository.findBySnapshotId(snapshotId))
+                .singleElement()
+                .satisfies(draft -> assertThat(draft.getItems())
+                        .extracting(PayoutSellerDraftItem::getOrderId)
+                        .containsOnly(normalOrder));
+        assertThat(systemDraftItemRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutSystemDraftItem::getOrderId)
+                .containsOnly(normalOrder);
+
+        // then: 오류가 사라진 다음 실행에서 실패했던 주문만 정산됨 (하루 늦어질 뿐 빠지지 않음, 정상 주문은 두 번 정산되지 않음)
+        JobExecution next = payoutJobRunner.runScheduled();
+        assertThat(next.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(next)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(20L, 9_700L), tuple(null, 300L));
+    }
+
+    @Test
+    void 판매자_단위_오류면_모든_주문이_실패로_남는다() {
+        // given: 판매자 20의 주문 2개. 판매자 draft 자체가 막혀(UK 위반) 어느 주문으로 시험해도 실패함
+        long order1 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, order1, 20L, 9_700L, TO.minusDays(2));
+        long order2 = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, order2, 20L, 19_400L, TO.minusDays(1));
+        Long snapshotId = createSnapshot(FROM, TO);
+        payoutService.validate(snapshotId);
+        blockSellerDraft(snapshotId, 20L);
+
+        // when
+        PayoutDraftResult drafted;
+        try {
+            drafted = payoutService.draft(snapshotId, LIMIT);
+        } finally {
+            unblockSellerDraft(snapshotId, 20L);
+        }
+
+        // then: 판매자 단위 오류라 두 주문 후보 모두 실패 기록, 판매자 20은 실패 판매자
+        //   (#534 전 코드에서도 같은 결과. 주문별로 시험하는 분기는 PayoutServiceTest가 확인하고, 여기서는 실제 DB 예외로 Job이 멈추지 않는지 봄)
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1));
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
+                .containsExactlyInAnyOrder(
+                        tuple(order1, PayoutFailureReason.UNEXPECTED_ERROR),
+                        tuple(order2, PayoutFailureReason.UNEXPECTED_ERROR));
+    }
+
     // ---------- 대기 건너뛰기 실행 (#224) ----------
 
     @Test
@@ -1343,13 +1742,54 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(10L, 1_000L));
     }
 
+    // 새벽 정기 스케줄러 입구(PayoutJobScheduler.runDaily)가 SCHEDULED로 시작하는지 본다 (러너가 아니라 스케줄러 빈을 직접 호출)
+    @Test
+    void 스케줄러가_실행하면_실행_유형이_SCHEDULED인_스냅샷이_남는다() throws Exception {
+        // given: 후보 없이도 스냅샷은 만들어짐 (테스트마다 DB를 비우므로 스냅샷은 이 실행의 1건뿐)
+
+        // when
+        payoutJobScheduler.runDaily();
+
+        // then
+        List<PayoutSnapshot> sut = snapshotRepository.findAll();
+        assertThat(sut).hasSize(1);
+        assertThat(sut.get(0).getRunType()).isEqualTo(PayoutRunType.SCHEDULED);
+    }
+
+    // 실행 경로마다 Job 시작 메서드가 정한 실행 유형이 스냅샷에 남는지 본다 (스위치는 module-test.yml로 켜져 있음)
+    @ParameterizedTest
+    @MethodSource("실행_경로들")
+    void 실행_경로마다_스냅샷에_맞는_실행_유형이_남는다(JobStarter starter, PayoutRunType expected) throws Exception {
+        // given: 후보 없이도 스냅샷은 만들어짐
+
+        // when
+        JobExecution execution = starter.start(payoutJobRunner);
+
+        // then
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        PayoutSnapshot sut = snapshotRepository.findById(snapshotIdOf(execution)).orElseThrow();
+        assertThat(sut.getRunType()).isEqualTo(expected);
+    }
+
+    private static Stream<Arguments> 실행_경로들() {
+        return Stream.of(
+                Arguments.of((JobStarter) PayoutJobRunner::runScheduled, PayoutRunType.SCHEDULED),
+                Arguments.of((JobStarter) PayoutJobRunner::runManual, PayoutRunType.MANUAL),
+                Arguments.of((JobStarter) PayoutJobRunner::runSkippingWait, PayoutRunType.SKIP_WAIT));
+    }
+
+    @FunctionalInterface
+    private interface JobStarter {
+        JobExecution start(PayoutJobRunner runner) throws Exception;
+    }
+
     @Test
     void 평소_실행은_15일이_안_지난_후보를_정산하지_않는다() throws Exception {
         // given: 위 테스트와 같은 후보. 건너뛰기 실행만 차이를 만든다는 것을 보이기 위한 짝
         insertSaleAmount(10L, 1_000L, LocalDateTime.now());
 
         // when
-        JobExecution execution = payoutJobRunner.run();
+        JobExecution execution = payoutJobRunner.runScheduled();
 
         // then
         assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
@@ -1382,7 +1822,7 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // 서비스 직접 호출용 스냅샷 생성 (Job 실행 ID는 테스트마다 새로 발급)
     private Long createSnapshot(LocalDateTime from, LocalDateTime to) {
-        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to);
+        return payoutService.createSnapshot(JOB_EXECUTION_ID_SEQ.incrementAndGet(), from, to, PayoutRunType.SCHEDULED);
     }
 
     // draftStep처럼 0이 나올 때까지 회차 반복
@@ -1429,6 +1869,12 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         }
         payoutWalletDeductionRepository.save(
                 PayoutWalletDeduction.create(orderId, 1L, amount, LocalDateTime.now()));
+    }
+
+    // 금액 불일치의 원인이 사라진 상황을 만듦: 차감액을 맞는 값으로 바로잡음 (#552)
+    // 차감 기록 엔티티는 금액을 바꾸는 메서드가 없고(처음 온 값을 유지, #391 충돌 기록) 정상 경로로는 바꿀 수 없어 SQL로 바꿈
+    private void correctDeductionAmount(long orderId, long amount) {
+        jdbcTemplate.update("UPDATE payout_wallet_deduction SET amount = ? WHERE order_id = ?", amount, orderId);
     }
 
     // 판매 대금 후보 1건 (주문항목 ID는 자동 발급)
@@ -1518,6 +1964,42 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 snapshotId, sellerId, now, now);
     }
 
+    // 주문 하나만 저장 오류를 내는 상황 재현 (#534): 그 주문의 판매자 몫 항목을 넣을 때 DB가 오류를 냄 (MySQL 트리거)
+    // 미리 행을 넣어 UK로 막는 방법은 쓸 수 없음: 이미 draft 항목이 있는 후보는 draft 대상 조회에서 빠져 오류가 나지 않음
+    // 트리거는 테이블에 남으므로 반드시 unblockOrderDraftItem으로 지움 (cleanUp에서도 지움)
+    private void blockOrderDraftItem(long orderId) {
+        unblockOrderDraftItem();
+        orderDraftItemBlocked = true;
+        executeAsRoot(
+                "CREATE TRIGGER " + BLOCK_ORDER_TRIGGER + " BEFORE INSERT ON payout_seller_draft_item FOR EACH ROW " +
+                        "BEGIN IF NEW.order_id = " + orderId + " THEN " +
+                        "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '" + BLOCK_ORDER_MESSAGE + "'; END IF; END");
+    }
+
+    // 트리거를 만든 테스트에서만 root로 접속해 지움: 모든 테스트가 root로 접속하면 root 접속 문제 하나로 이 클래스 테스트가 전부 깨짐
+    private void unblockOrderDraftItem() {
+        if (!orderDraftItemBlocked) {
+            return;
+        }
+        executeAsRoot("DROP TRIGGER IF EXISTS " + BLOCK_ORDER_TRIGGER);
+        orderDraftItemBlocked = false;
+    }
+
+    // 트리거는 root로 만듦: 테스트 MySQL은 바이너리 로그가 켜져 있어, 앱 계정(SUPER 권한 없음)으로는 트리거를 만들 수 없음
+    //   공통 테스트 컨테이너 설정(common TestcontainersConfiguration)을 바꾸지 않으려고 이 테스트 안에서만 root로 따로 연결함
+    //   root 비밀번호: Testcontainers MySQL은 root 비밀번호를 앱 계정 비밀번호와 같게 둠
+    private void executeAsRoot(String sql) {
+        try {
+            HikariDataSource dataSource = jdbcTemplate.getDataSource().unwrap(HikariDataSource.class);
+            try (Connection connection = DriverManager.getConnection(dataSource.getJdbcUrl(), "root", dataSource.getPassword());
+                 Statement statement = connection.createStatement()) {
+                statement.execute(sql);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("테스트 트리거 SQL 실행 실패: " + sql, e);
+        }
+    }
+
     // 오류가 사라진 상황 재현: 막아 둔 빈 draft를 지움
     // 실제 오류 상황(롤백되어 아무것도 안 남음)과 같은 상태로 되돌려, 이후 검증·확정이 실제와 같은 데이터를 보게 함
     private void unblockSellerDraft(Long snapshotId, Long sellerId) {
@@ -1585,11 +2067,16 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
 
     // draft된 후보에 실패 기록이 있는 상황 (draft 대상 조회 조건이 실패 후보를 거르지 못한 것과 같은 상태)
     private void insertFailure(Long snapshotId, Long candidateId, long orderId, Long sellerId) {
+        insertFailure(snapshotId, candidateId, orderId, sellerId, PayoutFailureReason.DEDUCTION_MISSING.name());
+    }
+
+    // 사유 이름을 글자로 받는 이유: 지금 enum에 없는 옛 이름(ORDER_LOCKED, #391)으로 저장된 행을 만들 때도 씀
+    private void insertFailure(Long snapshotId, Long candidateId, long orderId, Long sellerId, String reasonName) {
         LocalDateTime now = LocalDateTime.now();
         jdbcTemplate.update(
                 "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) " +
                         "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
-                snapshotId, candidateId, orderId, sellerId, PayoutFailureReason.DEDUCTION_MISSING.name(), "테스트", now, now);
+                snapshotId, candidateId, orderId, sellerId, reasonName, "테스트", now, now);
     }
 
     // 주문·판매자·타입으로 정산후보 id 하나를 찾음 (JPA 조회)
@@ -1606,6 +2093,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
     }
 
+    // 글 안에 찾는 글이 몇 번 나오는지 셈 (로그가 정해진 횟수만 남았는지 확인용)
+    private static int countMatches(String text, String target) {
+        int count = 0;
+        int from = text.indexOf(target);
+        while (from >= 0) {
+            count++;
+            from = text.indexOf(target, from + target.length());
+        }
+        return count;
+    }
+
     // 주문의 정산후보 id 목록 (JPA 조회)
     // 주문 ID로 찾는 이유: 배송비 후보는 order_item_id가 NULL이라 주문항목 ID로는 빠짐
     // 이 테스트는 주문 ID = 주문항목 ID라서 주문항목 번호를 그대로 넘겨도 됨
@@ -1620,12 +2118,17 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     // 정산·draft·스냅샷은 전부, 정산 후보는 이 클래스 번호대만 지움 (FK 때문에 자식 테이블 먼저)
     // (리포지토리에는 삭제 기능이 없으므로 테스트 정리용으로만 SQL 직접 실행)
     private void cleanUp() {
+        unblockOrderDraftItem();
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
+        jdbcTemplate.update("DELETE FROM payout_outbox");
         jdbcTemplate.update("DELETE FROM payout_item");
         jdbcTemplate.update("DELETE FROM payout");
         jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
         jdbcTemplate.update("DELETE FROM payout_seller_draft");
         jdbcTemplate.update("DELETE FROM payout_system_draft_item");
         // 실패 기록은 스냅샷·후보를 가리키는 FK가 있어 둘보다 먼저 지움
+        // 해결 기록은 실패 기록을 외래키로 가리켜 먼저 지움 (#568·#571)
+        jdbcTemplate.update("DELETE FROM payout_failure_resolution");
         jdbcTemplate.update("DELETE FROM payout_failure");
         jdbcTemplate.update("DELETE FROM payout_snapshot_item");
         jdbcTemplate.update("DELETE FROM payout_snapshot");
@@ -1635,6 +2138,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
         // 지갑 차감 기록도 이 클래스 번호대만 지움 (후보를 넣을 때 같은 주문 ID로 함께 넣음)
         jdbcTemplate.update("DELETE FROM payout_wallet_deduction WHERE order_id > ? AND order_id <= ?",
+                ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
+        jdbcTemplate.update("DELETE FROM payout_wallet_deduction_conflict WHERE order_id > ? AND order_id <= ?",
                 ORDER_ITEM_ID_START, ORDER_ITEM_ID_END);
     }
 }

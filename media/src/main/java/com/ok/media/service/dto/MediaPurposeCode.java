@@ -10,6 +10,11 @@ public enum MediaPurposeCode {
 	SELLER_PROFILE;
 
 	public MediaPurpose toDomain() {
-		return MediaPurpose.valueOf(name());
+		return switch (this) {
+			case PRODUCT -> MediaPurpose.PRODUCT;
+			case PRODUCT_REVIEW -> MediaPurpose.PRODUCT_REVIEW;
+			case MEMBER_PROFILE -> MediaPurpose.MEMBER_PROFILE;
+			case SELLER_PROFILE -> MediaPurpose.SELLER_PROFILE;
+		};
 	}
 }

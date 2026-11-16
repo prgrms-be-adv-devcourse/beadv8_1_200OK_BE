@@ -24,12 +24,13 @@ interface OrderControllerSpec {
     ResponseEntity<CheckoutResponse> getCheckout(Long memberId);
 
     @Operation(summary = "주문 생성", description = "배송지·동의·확인 금액을 받아 주문을 생성하고 재고를 선점합니다. "
-            + "같은 Idempotency-Key로 다시 요청하면 주문을 새로 만들지 않고 처음 만든 주문 ID를 돌려줍니다.")
+            + "같은 Idempotency-Key로 다시 요청하면 주문을 새로 만들지 않고 처음 만든 주문 ID를 돌려줍니다. "
+            + "처음 요청을 아직 처리하는 중이면 409(order/order-creation-in-progress)로 답합니다.")
     @ApiResponse(responseCode = "201", description = "주문 생성 성공 (같은 키로 다시 요청한 경우 기존 주문 ID)")
     @ApiResponse(responseCode = "400", description = "Idempotency-Key 헤더가 없거나 비어 있거나 64자 초과")
     @ApiResponse(responseCode = "401", description = "로그인 필요")
     @ApiResponse(responseCode = "403", description = "구매 권한 없음 (관리자 등)")
-    @ApiResponse(responseCode = "409", description = "주문 금액 변경, 잔액 부족, 재고 부족, 같은 Idempotency-Key 요청의 동시 처리 충돌 등")
+    @ApiResponse(responseCode = "409", description = "주문 금액 변경, 잔액 부족, 재고 부족, 같은 Idempotency-Key 요청의 동시 처리 충돌, 같은 키의 처음 요청이 아직 처리 중 등")
     @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
     ResponseEntity<CreateOrderResponse> createOrder(
             Long memberId,

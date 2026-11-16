@@ -40,17 +40,17 @@ import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
-import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.product.review.domain.AspectSentiment;
 import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.ReviewExpressedKeyword;
 import com.ok.product.review.domain.Sentiment;
-import com.ok.product.review.repository.ProductReviewRepository;
-import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
-import com.ok.product.review.repository.ReviewKeywordRepository;
-import com.ok.product.review.repository.ReviewSentimentRepository;
-import com.ok.product.review.service.ReviewKeywordAnalysisFacade;
-import com.ok.product.review.service.dto.ReviewablePurchase;
+import com.ok.product.review.adapter.out.persistence.ProductReviewJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewKeywordJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewSentimentJpaRepository;
+import com.ok.product.review.application.service.ReviewKeywordAnalysisFacade;
+import com.ok.product.review.application.dto.ReviewablePurchase;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderApiClient;
 import com.ok.testsupport.FakeReviewKeywordAnalyzer;
@@ -75,19 +75,19 @@ class ReviewAnalysisAdminIntegrationTest extends AbstractIntegrationTest {
 	TestAccessTokens tokens;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductReviewRepository productReviewRepository;
+	ProductReviewJpaRepository productReviewRepository;
 
 	@Autowired
-	ReviewAnalysisRequestRepository analysisRequestRepository;
+	ReviewAnalysisRequestJpaRepository analysisRequestRepository;
 
 	@Autowired
-	ReviewKeywordRepository reviewKeywordRepository;
+	ReviewKeywordJpaRepository reviewKeywordRepository;
 
 	@Autowired
-	ReviewSentimentRepository reviewSentimentRepository;
+	ReviewSentimentJpaRepository reviewSentimentRepository;
 
 	@Autowired
 	ReviewKeywordAnalysisFacade reviewKeywordAnalysisFacade;

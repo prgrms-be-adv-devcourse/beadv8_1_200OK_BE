@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 class SellerProfileValidationRuleTest {
 
     private static final String PHONE = "054-873-2210";
+    private static final String POSTAL_CODE = "37421";
 
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 
@@ -30,7 +31,7 @@ class SellerProfileValidationRuleTest {
     })
     void 고객센터_연락처는_요청과_엔티티가_같은_값을_같게_판정한다(String phone) {
         // when
-        boolean requestRejects = requestRejects(new SellerProfileRequest("청송 햇살농원", "김영수", phone, null, null),
+        boolean requestRejects = requestRejects(new SellerProfileRequest("청송 햇살농원", "김영수", phone, POSTAL_CODE, null, null),
                 "customerServicePhone");
         boolean entityRejects = entityRejects("청송 햇살농원", "김영수", phone, null);
 
@@ -44,7 +45,7 @@ class SellerProfileValidationRuleTest {
             String field, String storeName, String representativeName, String introduction) {
         // when
         boolean requestRejects = requestRejects(
-                new SellerProfileRequest(storeName, representativeName, PHONE, introduction, null), field);
+                new SellerProfileRequest(storeName, representativeName, PHONE, POSTAL_CODE, introduction, null), field);
         boolean entityRejects = entityRejects(storeName, representativeName, PHONE, introduction);
 
         // then
@@ -62,6 +63,26 @@ class SellerProfileValidationRuleTest {
         );
     }
 
+    @ParameterizedTest
+    @MethodSource("출고지_우편번호_후보")
+    void 출고지_우편번호는_요청과_엔티티가_같은_값을_같게_판정한다(String postalCode) {
+        // when
+        boolean requestRejects = requestRejects(
+                new SellerProfileRequest("청송 햇살농원", "김영수", PHONE, postalCode, null, null), "originPostalCode");
+        boolean entityRejects = catchThrowable(() -> SellerProfile.register(
+                1L, "청송 햇살농원", "김영수", PHONE, postalCode, null, null)) != null;
+
+        // then
+        assertThat(requestRejects).isEqualTo(entityRejects);
+    }
+
+    static Stream<String> 출고지_우편번호_후보() {
+        return Stream.of(
+                "37421", "06236", "63534",                              // 허용
+                "3742", "374210", "37-421", "3742a", "", " ", null      // 거절
+        );
+    }
+
     private boolean requestRejects(SellerProfileRequest request, String field) {
         return validator.validate(request).stream()
                 .anyMatch(violation -> violation.getPropertyPath().toString().equals(field));
@@ -69,7 +90,7 @@ class SellerProfileValidationRuleTest {
 
     private static boolean entityRejects(String storeName, String representativeName, String phone,
                                          String introduction) {
-        return catchThrowable(() -> SellerProfile.register(1L, storeName, representativeName, phone,
+        return catchThrowable(() -> SellerProfile.register(1L, storeName, representativeName, phone, POSTAL_CODE,
                 introduction, null)) != null;
     }
 

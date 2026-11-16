@@ -41,13 +41,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
 import com.jayway.jsonpath.JsonPath;
-import com.ok.product.review.client.ReviewAnalysisFailedException;
+import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.repository.ProductRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.product.review.domain.AspectSentiment;
 import com.ok.product.review.domain.ReviewAnalysisRequest;
 import com.ok.product.review.domain.ReviewAnalysisStatus;
@@ -56,16 +56,16 @@ import com.ok.product.review.domain.ReviewAspect;
 import com.ok.product.review.domain.ReviewAspectSentiment;
 import com.ok.product.review.domain.ReviewSentiment;
 import com.ok.product.review.domain.Sentiment;
-import com.ok.product.review.repository.ProductReviewRepository;
-import com.ok.product.review.repository.ReviewAnalysisRequestRepository;
-import com.ok.product.review.repository.ReviewSentimentRepository;
-import com.ok.product.review.service.ProductReviewService;
-import com.ok.product.review.service.ReviewSentimentAnalysisFacade;
-import com.ok.product.review.service.ReviewSentimentService;
-import com.ok.product.review.service.dto.ProductReviewCreateCommand;
-import com.ok.product.review.service.dto.ReviewSentimentAnalysis;
-import com.ok.product.review.service.dto.ReviewSentimentTarget;
-import com.ok.product.review.service.dto.ReviewablePurchase;
+import com.ok.product.review.adapter.out.persistence.ProductReviewJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewAnalysisRequestJpaRepository;
+import com.ok.product.review.adapter.out.persistence.ReviewSentimentJpaRepository;
+import com.ok.product.review.application.service.ProductReviewService;
+import com.ok.product.review.application.service.ReviewSentimentAnalysisFacade;
+import com.ok.product.review.application.service.ReviewSentimentService;
+import com.ok.product.review.application.dto.ProductReviewCreateCommand;
+import com.ok.product.review.application.dto.ReviewSentimentAnalysis;
+import com.ok.product.review.application.dto.ReviewSentimentTarget;
+import com.ok.product.review.application.dto.ReviewablePurchase;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderApiClient;
 import com.ok.testsupport.FakeReviewSentimentAnalyzer;
@@ -89,16 +89,16 @@ class ReviewSentimentIntegrationTest extends AbstractIntegrationTest {
 	TestAccessTokens tokens;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductReviewRepository productReviewRepository;
+	ProductReviewJpaRepository productReviewRepository;
 
 	@Autowired
-	ReviewAnalysisRequestRepository analysisRequestRepository;
+	ReviewAnalysisRequestJpaRepository analysisRequestRepository;
 
 	@Autowired
-	ReviewSentimentRepository reviewSentimentRepository;
+	ReviewSentimentJpaRepository reviewSentimentRepository;
 
 	@Autowired
 	ProductReviewService productReviewService;

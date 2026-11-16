@@ -15,6 +15,10 @@ public record SellerProfileResponse(
         @Schema(description = "고객센터 연락처", example = "054-873-2210")
         String customerServicePhone,
 
+        @Schema(description = "출고지 우편번호 (5자리 숫자). 이 항목이 생기기 전에 등록한 프로필은 다음 수정 전까지 null",
+                example = "37421", nullable = true)
+        String originPostalCode,
+
         @Schema(description = "상점 소개. 없으면 null", nullable = true)
         String introduction,
 
@@ -27,6 +31,7 @@ public record SellerProfileResponse(
                 result.storeName(),
                 result.representativeName(),
                 result.customerServicePhone(),
+                result.originPostalCode(),
                 result.introduction(),
                 result.profileImageUrl()
         );

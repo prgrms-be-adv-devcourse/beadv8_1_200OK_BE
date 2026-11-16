@@ -1,8 +1,5 @@
 package com.ok.payout.application.port.in;
 
-import com.ok.payout.application.port.out.CandidateRow;
-import com.ok.payout.domain.PayoutCandidateItem;
-
 import java.time.LocalDateTime;
 
 // 정산후보 1건. 서비스가 엔티티 대신 컨트롤러에 넘기는 값 (관리자·판매자 공용, 판매자에게 안 보일 값은 판매자 응답 DTO에서 뺌)
@@ -28,18 +25,4 @@ public record PayoutCandidateResult(
         // 관리자 조정 건이면 조정 정보, 평소 건이면 null
         PayoutAdjustmentResult adjustment
 ) {
-
-    /**
-     * 조회 결과 한 줄을 정산후보 결과로 바꾼다. 조정 정보는 모두 담고, 판매자에게 보여 주지 않을 값은 판매자 응답 DTO에서 뺀다.
-     */
-    public static PayoutCandidateResult from(CandidateRow row) {
-        PayoutAdjustmentResult adjustment = null;
-        // 평소 건은 adjustmentId가 0 (PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)
-        if (row.adjustmentId() != PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID) {
-            adjustment = new PayoutAdjustmentResult(row.adjustmentId(), row.adminId(), row.reason());
-        }
-        return new PayoutCandidateResult(row.candidateId(), row.eventType().name(), row.orderId(), row.orderItemId(),
-                row.sellerId(), row.amount(), row.candidateCreatedAt(), row.payoutId() != null, row.payoutId(),
-                adjustment);
-    }
 }

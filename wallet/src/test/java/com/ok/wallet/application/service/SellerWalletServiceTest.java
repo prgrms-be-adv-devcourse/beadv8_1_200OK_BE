@@ -3,6 +3,7 @@ package com.ok.wallet.application.service;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.adapter.out.persistence.SellerWalletJpaRepository;
 import com.ok.wallet.domain.SellerWallet;
+import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,18 +40,12 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
     // 다른 테스트가 남긴 원장(정산 배치가 발행한 이벤트로 입금된 것 등)이 있어도 영향받지 않도록 시작 전에도 정리
     @BeforeEach
     void setUp() {
-        cleanUp();
+        new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
 
     @AfterEach
     void tearDown() {
-        cleanUp();
-    }
-
-    // 원장은 지갑을 FK로 참조하므로 먼저 지운다. 원장 저장소에는 삭제 메서드가 없어 SQL로 정리한다.
-    private void cleanUp() {
-        jdbcTemplate.update("DELETE FROM seller_wallet_ledger");
-        sellerWalletRepository.deleteAll();
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
     }
 
     // getOrCreate
@@ -79,6 +74,15 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
         assertThat(countSellerWallets(2L)).isEqualTo(1);
     }
 
+    @Test
+    void 회원_ID가_없으면_지갑을_만들지_않고_예외가_난다() {
+        // when & then
+        assertThatThrownBy(() -> sellerWalletService.getOrCreate(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("회원 ID는 필수입니다.");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seller_wallet", Long.class)).isZero();
+    }
+
     // depositPayout
 
     @Test
@@ -99,7 +103,7 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
 
     @Test
     void 지갑이_없으면_생성한_뒤_입금한다() {
-        // Given: 판매자 승인 이벤트가 오지 않아 지갑이 없는 상태
+        // Given: 판매자 지갑은 첫 정산금 입금 때 생기므로 아직 지갑이 없는 상태
         Long sellerId = 11L;
 
         // When
@@ -228,6 +232,43 @@ class SellerWalletServiceTest extends AbstractIntegrationTest {
             }
 
             // Then: 덮어써졌다면 10,000원보다 적게 남는다
+            assertThat(balanceOf(sellerId)).isEqualTo(10_000);
+            assertThat(countLedgers(sellerId)).isEqualTo(threadCount);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void 지갑이_없는_판매자에게_서로_다른_정산이_동시에_와도_지갑은_하나만_생기고_모두_입금된다() throws Exception {
+        // given: 판매자 지갑은 첫 정산금 입금 때 생기므로, 첫 입금들이 동시에 지갑을 만들려는 상황
+        Long sellerId = 19L;
+        int threadCount = 10;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> results = new ArrayList<>();
+
+        try {
+            // when
+            for (int i = 0; i < threadCount; i++) {
+                long payoutId = PAYOUT_ID + 200 + i;
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    sellerWalletService.depositPayout(sellerId, payoutId, 1_000);
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<?> result : results) {
+                result.get(30, TimeUnit.SECONDS);
+            }
+
+            // then
+            assertThat(countSellerWallets(sellerId)).isEqualTo(1);
             assertThat(balanceOf(sellerId)).isEqualTo(10_000);
             assertThat(countLedgers(sellerId)).isEqualTo(threadCount);
         } finally {

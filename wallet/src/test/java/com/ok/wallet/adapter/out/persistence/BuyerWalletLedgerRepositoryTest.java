@@ -2,6 +2,7 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.wallet.application.port.out.BuyerWalletLedgerRepository;
 import com.ok.wallet.domain.BuyerWallet;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,10 +20,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // 여기서는 애플리케이션 검증이 빠져도 DB 제약이 막는지 보려고 SQL로 직접 저장한다.
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class})
+@Import({JpaConfig.class, TestcontainersConfiguration.class, BuyerWalletLedgerRepositoryAdapter.class})
 class BuyerWalletLedgerRepositoryTest {
     @Autowired
-    BuyerWalletLedgerJpaRepository buyerWalletLedgerRepository;
+    BuyerWalletLedgerRepository buyerWalletLedgerRepository;
 
     @Autowired
     BuyerWalletJpaRepository buyerWalletRepository;

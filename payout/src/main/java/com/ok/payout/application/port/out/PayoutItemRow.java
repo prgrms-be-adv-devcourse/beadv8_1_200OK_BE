@@ -5,7 +5,7 @@ import com.ok.payout.domain.PayoutEventType;
 import java.time.LocalDateTime;
 
 // 정산 항목 한 줄 + 그 항목의 정산후보 정보 (항목 조회용)
-// 조회 포트(PayoutQueryRepository)가 돌려주는 결과 모양이라 포트와 같은 application/port/out에 둠. 입력 포트의 결과 값(application/port/in의 *Result)은 이 타입을 읽기만 해서 의존이 port.in → port.out 한 방향으로 유지됨
+// 조회 포트(PayoutQueryRepository)가 돌려주는 결과 모양이라 포트와 같은 application/port/out에 둠. 서비스(PayoutQueryResultMapper)가 이 타입을 읽어 결과 값으로 바꾸고, 입력 포트(application/port/in)는 이 타입을 모름 (#469)
 public record PayoutItemRow(
         Long payoutItemId,
         Long candidateId,

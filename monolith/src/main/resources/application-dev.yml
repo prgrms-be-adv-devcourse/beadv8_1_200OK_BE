@@ -4,7 +4,8 @@ spring:
       enabled: ${DOCKER_COMPOSE_ENABLED:false}
   batch:
     job:
-      # 앱 시작 시 Job 자동 실행 여부 (운영은 true 고정)
+      # 앱 시작 시 Job 자동 실행 여부. 기본은 false로 자동 실행하지 않는다(운영도 false 고정, #245)
+      # true로 켜면 파라미터 없이 실행되어 Job 시작 전 검사(#485)에 걸려 앱이 시작되지 않는다. 정산은 스케줄러와 관리자 API로 실행한다
       enabled: ${BATCH_JOB_ENABLED:false}
     jdbc:
       # 배치 메타데이터 테이블은 Flyway 마이그레이션으로 관리하므로 자동 생성 안 함

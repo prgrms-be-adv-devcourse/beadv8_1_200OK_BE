@@ -1,13 +1,13 @@
 package com.ok.member.seller;
 
 import com.ok.common.exception.RestApiException;
+import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
-import com.ok.member.member.repository.MemberRepository;
+import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
+import com.ok.member.seller.application.service.SellerApplicationDuplicateValidator;
 import com.ok.member.seller.domain.SellerApplication;
 import com.ok.member.seller.domain.SellerApplicationStatus;
 import com.ok.member.seller.exception.SellerErrorCode;
-import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
-import com.ok.member.seller.application.service.SellerApplicationDuplicateValidator;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
@@ -18,8 +18,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -67,7 +67,7 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
     JsonMapper jsonMapper;
 
     @Autowired
-    MemberRepository memberRepository;
+    MemberJpaRepository memberRepository;
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;
@@ -144,7 +144,8 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
                 "storeName", " ",
                 "representativeName", "김영수",
                 "businessNumber", "512-81-0427",
-                "mailOrderNumber", "제2026-경북청송-0031호"));
+                "mailOrderNumber", "제2026-경북청송-0031호",
+                "originPostalCode", "37421"));
 
         // when
         ResultActions result = performApply(memberId, body);
@@ -262,6 +263,7 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.storeName").value("청송 햇살농원"))
                 .andExpect(jsonPath("$.representativeName").value("김영수"))
                 .andExpect(jsonPath("$.businessNumber").value(BUSINESS_NUMBER))
+                .andExpect(jsonPath("$.originPostalCode").value("37421"))
                 .andExpect(jsonPath("$.appliedAt", startsWith("2026-10-18T14:30")));
     }
 
@@ -393,7 +395,8 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
                 "storeName", "청송 햇살농원",
                 "representativeName", "김영수",
                 "businessNumber", businessNumber,
-                "mailOrderNumber", "제2026-경북청송-0031호"));
+                "mailOrderNumber", "제2026-경북청송-0031호",
+                "originPostalCode", "37421"));
     }
 
     private Long saveMember(String loginId, String email) {
@@ -403,7 +406,7 @@ class SellerApplicationIntegrationTest extends AbstractIntegrationTest {
 
     private SellerApplication pending(Long applicantId, String businessNumber) {
         return SellerApplication.apply(applicantId, "청송 햇살농원", "김영수", businessNumber,
-                "제2026-경북청송-0031호", APPLIED_AT);
+                "제2026-경북청송-0031호", "37421", APPLIED_AT);
     }
 
     private Long saveApproved(Long applicantId, String businessNumber) {

@@ -45,7 +45,7 @@ class SellerApplicationTest {
     void 회원_id가_없으면_신청을_만들지_않는다() {
         // when & then
         assertThatThrownBy(() -> SellerApplication.apply(
-                null, "청송 햇살농원", "김영수", "512-81-04273", "제2026-경북청송-0031호", APPLIED_AT))
+                null, "청송 햇살농원", "김영수", "512-81-04273", "제2026-경북청송-0031호", "37421", APPLIED_AT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("memberId는 필수입니다.");
     }
@@ -56,7 +56,7 @@ class SellerApplicationTest {
             String storeName, String representativeName, String mailOrderNumber, String expectedDetail) {
         // when & then
         assertThatThrownBy(() -> SellerApplication.apply(
-                1L, storeName, representativeName, "512-81-04273", mailOrderNumber, APPLIED_AT))
+                1L, storeName, representativeName, "512-81-04273", mailOrderNumber, "37421", APPLIED_AT))
                 .isInstanceOfSatisfying(RestApiException.class, e -> assertSoftly(softly -> {
                     softly.assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_SELLER_APPLICATION_FIELD);
                     softly.assertThat(e.getMessage()).isEqualTo(expectedDetail);
@@ -80,7 +80,7 @@ class SellerApplicationTest {
     void 사업자등록번호가_000_00_00000_형식이_아니면_신청을_만들지_않는다(String businessNumber) {
         // when & then
         assertThatThrownBy(() -> SellerApplication.apply(
-                1L, "청송 햇살농원", "김영수", businessNumber, "제2026-경북청송-0031호", APPLIED_AT))
+                1L, "청송 햇살농원", "김영수", businessNumber, "제2026-경북청송-0031호", "37421", APPLIED_AT))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_BUSINESS_NUMBER));
     }
@@ -90,17 +90,32 @@ class SellerApplicationTest {
         return Stream.of("5128104273", "512-81-0427", "512-81-0427a", null);
     }
 
+    @ParameterizedTest
+    @MethodSource("허용하지_않는_출고지_우편번호")
+    void 출고지_우편번호가_5자리_숫자가_아니면_신청을_만들지_않는다(String postalCode) {
+        // when & then: 프로필과 같은 규칙이다(OriginPostalCode)
+        assertThatThrownBy(() -> SellerApplication.apply(
+                1L, "청송 햇살농원", "김영수", "512-81-04273", "제2026-경북청송-0031호", postalCode, APPLIED_AT))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_ORIGIN_POSTAL_CODE));
+    }
+
+    static Stream<String> 허용하지_않는_출고지_우편번호() {
+        return Stream.of("3742", "374210", "37-421", "3742a", "", " ", null);
+    }
+
     @Test
     void 입력값의_앞뒤_공백을_지우고_저장한다() {
         // when: 요청 DTO를 거치지 않아 공백이 그대로 들어왔다
         SellerApplication sut = SellerApplication.apply(
-                1L, "  청송 햇살농원 ", " 김영수 ", "512-81-04273", " 제2026-경북청송-0031호 ", APPLIED_AT);
+                1L, "  청송 햇살농원 ", " 김영수 ", "512-81-04273", " 제2026-경북청송-0031호 ", " 37421 ", APPLIED_AT);
 
         // then
         assertSoftly(softly -> {
             softly.assertThat(sut.getStoreName()).isEqualTo("청송 햇살농원");
             softly.assertThat(sut.getRepresentativeName()).isEqualTo("김영수");
             softly.assertThat(sut.getMailOrderNumber()).isEqualTo("제2026-경북청송-0031호");
+            softly.assertThat(sut.getOriginPostalCode()).isEqualTo("37421");
         });
     }
 
@@ -291,7 +306,7 @@ class SellerApplicationTest {
     }
 
     private static SellerApplication apply() {
-        return SellerApplication.apply(1L, "청송 햇살농원", "김영수", "512-81-04273", "제2026-경북청송-0031호", APPLIED_AT);
+        return SellerApplication.apply(1L, "청송 햇살농원", "김영수", "512-81-04273", "제2026-경북청송-0031호", "37421", APPLIED_AT);
     }
 
 }

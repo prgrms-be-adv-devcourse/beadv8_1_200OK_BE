@@ -1,5 +1,8 @@
 package com.ok.payout;
 
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.domain.PayoutSnapshot;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,6 +13,11 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.endsWith;
@@ -24,6 +32,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 //   - 관리자 토큰이면 배치가 끝까지 돌고(COMPLETED) 200
 //   - 판매자·구매자 토큰이면 403이고 배치가 돌지 않음
 //   - 토큰이 없으면 401이고 배치가 돌지 않음
+//   - 관리자 실행이 실행 유형 SKIP_WAIT 스냅샷을 만듦
+// 스위치가 켜져 있어야 하는데, 이 테스트는 module-test.yml(payout.skip-wait-run.enabled=true)로 켜진 상태에 기댐
+// (꺼짐 동작은 PayoutJobRunnerTest 단위 테스트에서 확인)
 // 15일이 안 지난 후보도 정산되는지는 PayoutSettleIntegrationTest에서 확인하므로 여기서는 권한과 API 연결만 봄
 // 임시 기능이라 기능을 지울 때 이 클래스도 함께 지울 수 있도록 PayoutRunIntegrationTest와 분리함
 //
@@ -48,6 +59,9 @@ class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JobRepository jobRepository;
+
+    @Autowired
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
     @BeforeEach
@@ -125,8 +139,46 @@ class PayoutSkipWaitRunIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutJobRunCount()).isEqualTo(runCountBefore);
     }
 
+    // API: POST /api/v1/admin/payouts/run/skip-wait (정산 대기 건너뛰기 실행)
+    // 요청: 관리자 토큰
+    // 확인: 이 입구가 실행 유형 SKIP_WAIT 스냅샷을 1건 만드는지 (입구마다 맞는 실행 유형이 남는지)
+    @Test
+    void 관리자가_실행하면_실행_유형이_SKIP_WAIT인_스냅샷이_남는다() throws Exception {
+        // given
+        Set<Long> idsBefore = snapshotIds();
+
+        // when
+        mockMvc.perform(post(SKIP_WAIT_RUN_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "ADMIN")))
+                .andExpect(status().isOk());
+
+        // then
+        List<PayoutSnapshot> sut = snapshotsCreatedSince(idsBefore);
+        assertThat(sut).hasSize(1);
+        assertThat(sut.get(0).getRunType()).isEqualTo(PayoutRunType.SKIP_WAIT);
+    }
+
     // 정산 Job이 지금까지 실행된 횟수 (PayoutRunIntegrationTest.payoutJobRunCount와 같은 이유로 findJobInstances 사용)
     private int payoutJobRunCount() {
         return jobRepository.findJobInstances(PAYOUT_JOB_NAME).size();
+    }
+
+    // 이번 테스트 중 새로 생긴 스냅샷 (실행 전 ID 목록과 비교함. Job 실행 1회 = 스냅샷 1건)
+    private List<PayoutSnapshot> snapshotsCreatedSince(Set<Long> idsBefore) {
+        List<PayoutSnapshot> created = new ArrayList<>();
+        for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
+            if (!idsBefore.contains(snapshot.getId())) {
+                created.add(snapshot);
+            }
+        }
+        return created;
+    }
+
+    private Set<Long> snapshotIds() {
+        Set<Long> ids = new HashSet<>();
+        for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
+            ids.add(snapshot.getId());
+        }
+        return ids;
     }
 }

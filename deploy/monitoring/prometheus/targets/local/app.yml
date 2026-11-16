@@ -1,0 +1,5 @@
+# 로컬 앱 수집 대상 (docker-compose.yml이 /etc/prometheus/targets로 마운트)
+# 기본값은 컨테이너로 띄운 앱(--profile app)이다. 운영(targets/prod/app.yml)과 같은 주소라 두 환경이 같은 방식으로 맞춰진다
+# IDE나 bootRun으로 내 PC에서 앱을 띄우는 경우에는 아래를 'host.docker.internal:18080'으로 바꾼다(이 변경은 커밋하지 않는다)
+# 모듈별 서버로 나뉘면 targets에 주소를 한 줄씩 추가한다. 앱이 지표에 application 라벨을 직접 달므로 labels에는 application을 넣지 않는다
+- targets: ['app:18080']

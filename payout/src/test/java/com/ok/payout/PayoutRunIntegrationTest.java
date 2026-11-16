@@ -1,5 +1,8 @@
 package com.ok.payout;
 
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.domain.PayoutSnapshot;
+import com.ok.payout.domain.type.PayoutRunType;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,6 +13,11 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.endsWith;
@@ -24,6 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 //   - 관리자 토큰이면 배치가 끝까지 돌고(COMPLETED) 200
 //   - 판매자·구매자 토큰이면 403이고 배치가 돌지 않음
 //   - 토큰이 없으면 401이고 배치가 돌지 않음
+//   - 관리자 실행이 실행 유형 MANUAL 스냅샷을 만듦
 // 관리자 확인은 컨트롤러의 @PreAuthorize("hasRole('ADMIN')")가 하고, 401·403 응답은 공통 처리기(ApiControllerAdvice)가 만듦
 //
 // [배치가 돌았는지 보는 방법]
@@ -52,6 +61,9 @@ class PayoutRunIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JobRepository jobRepository;
+
+    @Autowired
+    private PayoutSnapshotJpaRepository snapshotRepository;
 
     // 보안 필터를 적용해야 토큰 검증과 401·403 처리가 실제와 같게 동작한다 (DEVELOPMENT.md "테스트에서 토큰 보내기")
     @BeforeEach
@@ -129,10 +141,48 @@ class PayoutRunIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutJobRunCount()).isEqualTo(runCountBefore);
     }
 
+    // API: POST /api/v1/admin/payouts/run (정산 전체 수동 실행)
+    // 요청: 관리자 토큰
+    // 확인: 이 입구가 실행 유형 MANUAL 스냅샷을 1건 만드는지 (입구마다 맞는 실행 유형이 남는지)
+    @Test
+    void 관리자가_실행하면_실행_유형이_MANUAL인_스냅샷이_남는다() throws Exception {
+        // given
+        Set<Long> idsBefore = snapshotIds();
+
+        // when
+        mockMvc.perform(post(RUN_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(1L, "ADMIN")))
+                .andExpect(status().isOk());
+
+        // then
+        List<PayoutSnapshot> sut = snapshotsCreatedSince(idsBefore);
+        assertThat(sut).hasSize(1);
+        assertThat(sut.get(0).getRunType()).isEqualTo(PayoutRunType.MANUAL);
+    }
+
     // 정산 Job이 지금까지 실행된 횟수
     // getJobInstanceCount()는 한 번도 실행된 적이 없으면 0이 아니라 예외(NoSuchJobException)를 던져서,
     // 빈 목록을 돌려주는 findJobInstances(...).size()를 씀 (테스트 DB가 비어 있을 때도 안전)
     private int payoutJobRunCount() {
         return jobRepository.findJobInstances(PAYOUT_JOB_NAME).size();
+    }
+
+    // 이번 테스트 중 새로 생긴 스냅샷 (실행 전 ID 목록과 비교함. Job 실행 1회 = 스냅샷 1건)
+    private List<PayoutSnapshot> snapshotsCreatedSince(Set<Long> idsBefore) {
+        List<PayoutSnapshot> created = new ArrayList<>();
+        for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
+            if (!idsBefore.contains(snapshot.getId())) {
+                created.add(snapshot);
+            }
+        }
+        return created;
+    }
+
+    private Set<Long> snapshotIds() {
+        Set<Long> ids = new HashSet<>();
+        for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
+            ids.add(snapshot.getId());
+        }
+        return ids;
     }
 }

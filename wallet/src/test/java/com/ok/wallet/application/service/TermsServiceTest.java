@@ -3,6 +3,8 @@ package com.ok.wallet.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.common.config.JpaConfig;
 import com.ok.testsupport.TestcontainersConfiguration;
+import com.ok.wallet.adapter.out.persistence.TermsAgreementRepositoryAdapter;
+import com.ok.wallet.adapter.out.persistence.TermsRepositoryAdapter;
 import com.ok.wallet.application.dto.TermsAgreeCommand;
 import com.ok.wallet.application.dto.TermsResult;
 import com.ok.wallet.application.port.out.TermsAgreementRepository;
@@ -34,7 +36,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // 동의 시각을 정확한 값으로 확인하려고 Clock을 고정한다 (@DataJpaTest는 ClockConfig를 띄우지 않으므로 여기서 등록한 Clock이 주입된다).
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JpaConfig.class, TestcontainersConfiguration.class, TermsService.class, TermsServiceTest.FixedClockConfig.class})
+@Import({JpaConfig.class, TestcontainersConfiguration.class, TermsService.class, TermsRepositoryAdapter.class,
+        TermsAgreementRepositoryAdapter.class, TermsServiceTest.FixedClockConfig.class})
 class TermsServiceTest {
     private static final Long MEMBER_ID = 1L;
     // 2026-10-16 12:00 (Asia/Seoul)

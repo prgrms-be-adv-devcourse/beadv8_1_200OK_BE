@@ -4,32 +4,8 @@ spring:
   application:
     name: paldo-gotgan
   config:
-    # Redis 설정은 common의 common-redis.yaml 한 곳에서 관리한다 (#319)
-    import: optional:file:.env[.properties],classpath:common-redis.yaml,classpath:common-async.yaml
-  # Kafka 접속 설정. 운영(monolith)이 쓰는 기준 설정이다
-  # 모듈 yaml에는 두지 않는다. 모듈을 단독 실행하며 Kafka를 쓰게 되면 이 블록을 그대로 복사해 직렬화 방식을 맞춘다
-  kafka:
-    # 브로커 3대를 모두 적어 1대가 죽어 있어도 처음 접속한다. 기본값은 로컬 compose의 브로커 3대(127.0.0.1에만 열림)
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}
-    producer:
-      # 브로커 min.insync.replicas=2와 짝이다. 3대 중 2대 이상에 저장돼야 발행 성공으로 본다
-      acks: all
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
-      properties:
-        # 받는 쪽이 보내는 쪽 Java 클래스를 몰라도 되도록 타입 헤더를 싣지 않는다
-        spring.json.add.type.headers: false
-    consumer:
-      # 기본은 앱 이름. 서비스로 나누면 서비스마다 그룹이 달라져 같은 이벤트를 각자 받는다
-      group-id: ${KAFKA_CONSUMER_GROUP_ID:${spring.application.name}}
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      # JSON으로 못 읽는 메시지 하나 때문에 컨슈머가 같은 메시지에서 멈추지 않게 실패를 오류 처리로 넘긴다
-      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
-      properties:
-        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
-        # 타입 헤더가 없으므로 읽을 타입은 리스너(토픽)마다 정한다
-        spring.json.use.type.headers: false
+    # Redis와 Kafka 설정은 common의 common-redis.yaml, common-kafka.yaml 한 곳에서 관리한다 (#319, #538)
+    import: optional:file:.env[.properties],classpath:common-redis.yaml,classpath:common-kafka.yaml,classpath:common-async.yaml
   profiles:
     default: dev
   jackson:
@@ -80,7 +56,7 @@ app:
       connect-timeout: 3s
       read-timeout: 10s
 
-# 앱 시작 시 만들 최초 관리자 계정 (member.member.config.AdminBootstrapConfig)
+# 앱 시작 시 만들 최초 관리자 계정 (member.member.adapter.in.bootstrap.AdminBootstrapConfig)
 # - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)
 # - 같은 아이디의 회원이 이미 있으면 만들지 않고 비밀번호도 바꾸지 않는다
 admin-bootstrap:
@@ -122,11 +98,29 @@ delivery:
     cutoff-time: "13:00"
 
 management:
+  server:
+    # 관리 엔드포인트(health, prometheus)를 서비스 포트(8080)와 분리한다. 이 포트는 호스트에 publish하지 않고 nginx도 프록시하지 않아
+    # 외부에서 닿지 않는다. 8081~8088은 모듈 단독 실행이 쓰는 서버 포트라 피했다
+    # MANAGEMENT_SERVER_PORT를 빈 문자열로 주면 포트 분리가 풀려 서비스 포트에 prometheus가 열린다. 값을 비우지 않는다
+    port: ${MANAGEMENT_SERVER_PORT:18080}
   endpoints:
     web:
       exposure:
-        # 컨테이너 헬스체크에만 쓴다. 외부 노출은 nginx가 막고, 다른 엔드포인트는 열지 않는다
-        include: health
+        # health는 컨테이너 헬스체크, prometheus는 지표 수집(Prometheus scrape)에 쓴다. 다른 엔드포인트는 열지 않는다
+        include: health,prometheus
   endpoint:
     health:
       show-details: never
+  metrics:
+    tags:
+      # 지표를 어느 앱이 냈는지 구분한다. instance는 Prometheus가 scrape 대상 주소로 자동 부여하므로 앱에서 달지 않는다
+      application: ${spring.application.name}
+    distribution:
+      # p95/p99를 Prometheus에서 histogram_quantile로 구하려면 버킷이 필요하다
+      # 버킷 범위를 5ms~10s로 제한해 uri마다 늘어나는 시계열 수를 줄인다
+      percentiles-histogram:
+        http.server.requests: true
+      minimum-expected-value:
+        http.server.requests: 5ms
+      maximum-expected-value:
+        http.server.requests: 10s

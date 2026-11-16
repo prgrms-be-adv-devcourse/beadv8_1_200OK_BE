@@ -4,7 +4,10 @@ import com.ok.order.order.application.port.out.OrderRepository;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
+import com.ok.order.order.domain.OrderStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -21,8 +24,24 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     @Override
     Optional<Order> findById(Long id);
 
+    // 포트는 JPA를 몰라 @Lock을 붙일 수 없다. 여기서 다시 선언하지 않으면 잠금 없는 조회로 오류 없이 돈다
     @Override
-    void deleteById(Long id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.id = :id")
+    Optional<Order> findByIdForUpdate(@Param("id") Long id);
+
+    // 하위 쿼리의 주문 상품·판매자 묶음 행은 잠그지 않고 바깥의 주문 행만 잠근다(MySQL 잠금 읽기는 하위 쿼리에 번지지 않는다)
+    @Override
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select o from Order o
+            where o.id = (select i.sellerGroup.order.id from OrderItem i where i.id = :orderItemId)
+            """)
+    Optional<Order> findByOrderItemIdForUpdate(@Param("orderItemId") Long orderItemId);
+
+    @Override
+    @Query("select r.orderItem.id from OrderItemRefund r where r.refundId = :refundId")
+    Optional<Long> findOrderItemIdByRefundId(@Param("refundId") Long refundId);
 
     @Override
     @Query("""
@@ -50,5 +69,18 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     List<Long> findOrderIdsToAutoConfirm(
             @Param("status") OrderItemStatus status,
             @Param("deadline") LocalDateTime deadline
+    );
+
+    @Override
+    @Query("""
+            select o.id from Order o
+            where o.status = :status
+              and ((o.paymentRequestedAt is null and o.createdAt <= :creatingDeadline)
+                or o.paymentRequestedAt <= :paymentDeadline)
+            """)
+    List<Long> findStalePaymentPendingOrderIds(
+            @Param("status") OrderStatus status,
+            @Param("creatingDeadline") LocalDateTime creatingDeadline,
+            @Param("paymentDeadline") LocalDateTime paymentDeadline
     );
 }
