@@ -677,7 +677,8 @@ com.ok.wallet
 **Kafka 수신과 실패 기록**
 
 - 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested`, 키 `checkId`, #613)입니다. 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
-- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 환불·정산이 `.v1`로 옮길 때까지 세 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#669). 두 토픽에 먼저 보내 놓고 저장 확인을 합쳐서 10초까지 기다리며, 한쪽만 실패해도 예외라 다시 받을 때 두 토픽에 모두 다시 나갑니다. 환불·정산이 옮기면 옛 이름 발행을 지웁니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
 - 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
 - 넘긴 메시지는 건너뛰지 않고 지갑 DB의 `wallet_message_failure`에 원문·가장 안쪽 원인과 함께 대기(`PENDING`)로 남기고 `[WALLET_MESSAGE_FAILED]` ERROR 로그를 한 번 남깁니다. 같은 메시지(토픽·파티션·오프셋)는 한 번만 남습니다. 기록마저 실패하면 오프셋을 옮기지 않아 같은 메시지를 다시 받습니다.
