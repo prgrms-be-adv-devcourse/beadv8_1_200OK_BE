@@ -15,6 +15,7 @@ import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.application.service.ShipmentService;
 import com.ok.delivery.application.dto.ShipmentDispatchCommand;
 import com.ok.testsupport.FakeCarrierClient;
+import com.ok.testsupport.KafkaTestcontainersConfiguration;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
@@ -27,6 +28,7 @@ import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
@@ -39,7 +41,11 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 지역 판정 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
 // 통합 테스트와 같이 test 프로필로 띄워 가짜 택배사(MockCarrierClient)를 빼고, 아무 일도 하지 않는 FakeCarrierClient를 쓴다
 @ActiveProfiles("test")
-@Import({JpaConfig.class, TestcontainersConfiguration.class, TestClockConfiguration.class, FakeCarrierClient.class})
+// 배송 Kafka 설정(토픽 선언, 리스너)이 함께 뜨므로 테스트용 브로커에 붙인다. 붙이지 않으면 내 PC의 Kafka(localhost)로 붙으려 한다.
+// 리스너는 켜지 않는다. 통합 테스트 컨텍스트와 같은 그룹을 쓰므로 켜면 출고지 우편번호 메시지를 이 컨텍스트가 가져갈 수 있다
+@Import({JpaConfig.class, TestcontainersConfiguration.class, KafkaTestcontainersConfiguration.class, TestClockConfiguration.class,
+        FakeCarrierClient.class})
+@TestPropertySource(properties = "spring.kafka.listener.auto-startup=false")
 class DeliveryModuleTest {
 
     // 모듈 테스트는 배송 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.

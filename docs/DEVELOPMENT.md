@@ -639,6 +639,15 @@ com.ok.delivery
 - 컨트롤러와 이벤트 리스너는 `port.in`의 유스케이스 인터페이스만 압니다. 서비스 구현체, `port.out`, `domain`을 직접 쓰지 않습니다. 기본 배송지는 재시도를 맡는 `DefaultShippingAddressFacade`가, 택배사 추적 요청은 트랜잭션 없는 `CarrierTrackingFacade`가 유스케이스를 구현합니다.
 - 출력 포트 이름은 `*Repository`(조회 전용은 `*QueryRepository`)이고, 구현은 `adapter/out/persistence`에 있습니다. Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로이고, 잠금·트랜잭션·쿼리 동작은 서비스가 JPA 저장소를 직접 쓸 때와 같습니다. 포트에는 Spring Data `Repository` 상속과 JPA 어노테이션을 두지 않고, 잠금 조회(`@Lock`, `@Query`)는 JPA 저장소에서 다시 선언합니다. 포트는 Spring Data의 `Page`, `Pageable`은 씁니다.
 - 모듈 간 연동은 지금처럼 Spring 이벤트와 `/internal` 호출입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
+- **Kafka로 받는 메시지:** 배송이 Kafka로 받는 이벤트는 아래 표와 같습니다. 이벤트는 하나씩 Kafka로 옮기고 있어서(#558이 첫 번째) 표는 옮길 때마다 한 줄씩 늘립니다.
+
+| 방향 | 토픽 | 키 | 값 | 실패 |
+|---|---|---|---|---|
+| 회원 → 배송 | `member.seller-origin-postal-code.v1` | `sellerId` | `sellerId`, `postalCode`, `occurredAt` | 1·2·4초 재시도 뒤 `member.seller-origin-postal-code.v1.delivery.seller-origin-sync.DLT` |
+
+- **받기 설정:** 접속·직렬화는 `common-kafka.yaml`을 그대로 쓰고, 오류 처리만 배송 전용 `DeliveryKafkaConsumerConfig`(컨테이너 팩토리 `deliveryKafkaListenerContainerFactory`)가 정합니다. 배송 리스너만 이 팩토리를 쓰므로 다른 모듈은 Spring Boot 기본 설정 그대로입니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 재시도 없이 DLT로 옮기고, 그 밖의 예외는 1·2·4초 간격으로 3번 다시 시도한 뒤 DLT로 옮깁니다. DLT에는 받은 값이 그대로(읽지 못한 메시지는 원본 바이트로) 남고 ERROR 로그를 남깁니다. DLT와 받는 토픽은 배송이 선언합니다.
+- **컨슈머 그룹:** 리스너마다 그룹을 하나씩 두고 이름은 `<모듈>.<용도>`입니다. DLT는 `<받은 토픽>.<그룹>.DLT`이고, 오류 처리기가 실패한 리스너의 그룹으로 이름을 만듭니다. 오프셋이 그룹마다 따로라 한 리스너만 다시 받거나 오프셋을 옮겨도 다른 리스너는 그대로입니다. 서버 이름은 넣지 않습니다. 리스너가 다른 서버로 옮겨 가면 그룹 이름이 바뀌어 처음부터 다시 읽게 되기 때문입니다.
+- **판매자 출고지 우편번호(#558):** `SellerOriginPostalCodeKafkaListener`(그룹 `delivery.seller-origin-sync`)가 받아 판매자당 한 행인 `seller_origin_postal_code`에 덮어씁니다. 원본은 회원이고, 판매자 배송 설정(`seller_shipping_profile`)과 소유자가 달라 테이블을 나눴습니다. 반영한 메시지의 `occurredAt`을 `source_occurred_at`에 함께 저장해, 그보다 오래된 메시지는 버리고 같은 시각의 메시지(중복 수신)는 같은 값으로 다시 덮어씁니다. `occurredAt`은 한국 시간에 시간대 표기가 없고 마이크로초까지 옵니다. 우편번호가 숫자 5자리가 아니거나 `sellerId`·`occurredAt`이 빠진 메시지는 재시도 없이 DLT로 옮깁니다. 아직 배송비·도착 예정일 계산에는 쓰지 않습니다. 계산에 쓰게 되면 행이 없는 판매자(이 기능 전에 승인돼 아직 메시지가 오지 않은 판매자)는 배송 설정처럼 기본값으로 다룹니다.
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
 
 ### refund 모듈 구조(헥사고날)
