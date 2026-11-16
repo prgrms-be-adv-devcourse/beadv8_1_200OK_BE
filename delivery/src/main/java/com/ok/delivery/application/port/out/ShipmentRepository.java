@@ -1,5 +1,6 @@
 package com.ok.delivery.application.port.out;
 
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentStatus;
 
@@ -18,6 +19,11 @@ public interface ShipmentRepository {
     List<Shipment> findAllByStatus(ShipmentStatus status);
 
     Optional<Shipment> findById(Long id);
+
+    /**
+     * 택배사와 송장번호로 shipment를 조회한다. 같은 택배사의 송장번호는 유일하다({@code uk_shipment_carrier_tracking_number}).
+     */
+    Optional<Shipment> findByCarrierAndTrackingNumber(Carrier carrier, String trackingNumber);
 
     /**
      * shipment 행을 쓰기 잠금({@code SELECT ... FOR UPDATE})으로 조회한다.

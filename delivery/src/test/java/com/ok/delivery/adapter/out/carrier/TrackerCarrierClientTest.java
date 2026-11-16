@@ -14,6 +14,7 @@ import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,9 +57,9 @@ class TrackerCarrierClientTest {
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(false).build();
         TrackerProperties properties = new TrackerProperties(GRAPHQL_URL, AUTH_URL, "client-id", "client-secret",
-                pollInterval, Duration.ofSeconds(1), Duration.ofSeconds(1));
+                pollInterval, "", Duration.ofHours(48), Duration.ofSeconds(1), Duration.ofSeconds(1));
         ApplicationEventPublisher publisher = publishedEvents::add;
-        return new TrackerCarrierClient(builder.build(), properties, publisher);
+        return new TrackerCarrierClient(builder.build(), properties, publisher, Clock.systemUTC());
     }
 
     // 상태 판단
@@ -145,8 +146,8 @@ class TrackerCarrierClientTest {
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         TrackerProperties properties = new TrackerProperties(GRAPHQL_URL, AUTH_URL, "client-id", "client-secret",
-                Duration.ofHours(1), Duration.ofSeconds(1), Duration.ofSeconds(1));
-        TrackerCarrierClient failing = new TrackerCarrierClient(builder.build(), properties, failingPublisher);
+                Duration.ofHours(1), "", Duration.ofHours(48), Duration.ofSeconds(1), Duration.ofSeconds(1));
+        TrackerCarrierClient failing = new TrackerCarrierClient(builder.build(), properties, failingPublisher, Clock.systemUTC());
         expectToken("token-1");
         expectTrack("token-1", trackResponse("DELIVERED"));
 
@@ -305,7 +306,7 @@ class TrackerCarrierClientTest {
     void 설정을_문자열로_바꿀_때_client_secret을_가린다() {
         // given
         TrackerProperties sut = new TrackerProperties(GRAPHQL_URL, AUTH_URL, "client-id", "super-secret",
-                Duration.ofMinutes(5), Duration.ofSeconds(3), Duration.ofSeconds(15));
+                Duration.ofMinutes(5), "", Duration.ofHours(48), Duration.ofSeconds(3), Duration.ofSeconds(15));
 
         // when
         String text = sut.toString();
@@ -319,7 +320,7 @@ class TrackerCarrierClientTest {
     void 인증_정보가_비어_있으면_만들_수_없다(String clientId, String clientSecret) {
         // when & then
         assertThatThrownBy(() -> new TrackerProperties(GRAPHQL_URL, AUTH_URL, clientId, clientSecret,
-                Duration.ofMinutes(5), Duration.ofSeconds(3), Duration.ofSeconds(15)))
+                Duration.ofMinutes(5), "", Duration.ofHours(48), Duration.ofSeconds(3), Duration.ofSeconds(15)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

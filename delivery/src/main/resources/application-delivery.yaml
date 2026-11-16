@@ -75,8 +75,15 @@ delivery:
       client-secret: ${DELIVERY_TRACKER_CLIENT_SECRET:}
       # 무료 플랜은 웹훅이 없어 조회로 확인한다. 호출 제한이 확인되기 전까지 넉넉하게 둔다
       poll-interval: ${DELIVERY_TRACKER_POLL_INTERVAL:5m}
+      # 택배사가 배송 상태 변경을 알려 올 우리 주소. 끝 경로가 아래 webhook.secret과 같아야 한다
+      # (예: https://<공개 주소>/api/v1/carrier-notifications/<secret>). 비어 있으면 알림을 등록하지 않고 조회만 한다 (#668)
+      callback-url: ${DELIVERY_TRACKER_CALLBACK_URL:}
+      webhook-expiration: ${DELIVERY_TRACKER_WEBHOOK_EXPIRATION:48h}
       connect-timeout: 3s
       read-timeout: 15s
+    webhook:
+      # 택배사 알림 주소의 끝 경로 비밀값. 비어 있으면 모든 알림을 거절한다. 환경 변수로만 주입하고 저장소에 두지 않는다
+      secret: ${DELIVERY_CARRIER_WEBHOOK_SECRET:}
   # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
   default-shipping:
     base-shipping-fee: 3000

@@ -17,6 +17,9 @@ public interface ShipmentJpaRepository extends JpaRepository<Shipment, Long>, Sh
     @Override
     Optional<Shipment> findById(Long id);
 
+    @Override
+    Optional<Shipment> findByCarrierAndTrackingNumber(Carrier carrier, String trackingNumber);
+
     boolean existsByCarrierAndTrackingNumber(Carrier carrier, String trackingNumber);
 
     // 잠금 조회의 계약(첫 쿼리로 호출)은 포트 메서드에 적혀 있다
