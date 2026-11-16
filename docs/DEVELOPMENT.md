@@ -554,6 +554,18 @@ DELIVERY_TRACKER_CLIENT_SECRET=any
 DELIVERY_TRACKER_POLL_INTERVAL=2s
 ```
 
+택배사가 배송 상태가 바뀔 때 알려 오게 하려면(#668) 알림 받을 주소와 비밀값을 더 줍니다. delivery는 추적을 요청할 때 이 주소를 택배사에 등록하고, 알림이 오면 택배사에 다시 조회해 배송 완료일 때만 반영합니다. 주소를 비우면 등록하지 않고 조회만 합니다. 조회(`DELIVERY_TRACKER_POLL_INTERVAL`)는 알림이 유실되거나 등록이 실패했을 때를 대비해 계속 돕니다.
+
+```bash
+DELIVERY_CARRIER_WEBHOOK_SECRET=<길고 무작위인 값>
+DELIVERY_TRACKER_CALLBACK_URL=http://localhost:8086/api/v1/carrier-notifications/<위 비밀값>
+DELIVERY_TRACKER_WEBHOOK_EXPIRATION=48h
+```
+
+- 알림 API는 `POST /api/v1/carrier-notifications/{secret}`이고 로그인 없이 열립니다. 택배사가 인증 헤더를 보내지 못해 경로의 비밀값으로 확인하며, 틀리면 403입니다. 비밀값이 비어 있으면 모든 알림을 거절합니다.
+- 비밀값은 주소에 들어가므로 앞단 프록시의 접근 로그에 남을 수 있습니다. 운영 값은 로그 보존 정책을 확인하고 정기적으로 바꿉니다.
+- 운영에서 택배사가 이 주소에 닿으려면 nginx(`/api/v1/`)와 프론트 BFF가 이 경로를 delivery로 넘겨야 합니다.
+
 위 이름은 `:delivery:bootRun`(단독 실행)에서만 먹습니다. `application-delivery.yaml`이 이 이름을 `delivery.carrier.tracker.*`에 연결해 주기 때문입니다. `:monolith:bootRun`에는 그 연결과 기본값(`connect-timeout`, `read-timeout`)이 없어서, 같은 설정을 Spring이 직접 바인딩하는 이름으로 모두 줘야 합니다. 하나라도 빠지면 기동이 실패합니다.
 
 ```bash
