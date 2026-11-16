@@ -76,12 +76,23 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
     @Query("""
             select o.id from Order o
             where o.status = :status
-              and ((o.paymentRequestedAt is null and o.createdAt <= :creatingDeadline)
-                or o.paymentRequestedAt <= :paymentDeadline)
+              and o.paymentRequestedAt is null
+              and o.createdAt <= :creatingDeadline
             """)
     List<Long> findStalePaymentPendingOrderIds(
             @Param("status") OrderStatus status,
-            @Param("creatingDeadline") LocalDateTime creatingDeadline,
+            @Param("creatingDeadline") LocalDateTime creatingDeadline
+    );
+
+    @Override
+    @Query("""
+            select o.id from Order o
+            where o.status = :status
+              and o.paymentRequestedAt <= :paymentDeadline
+            order by o.id
+            """)
+    List<Long> findPaymentExpireDueOrderIds(
+            @Param("status") OrderStatus status,
             @Param("paymentDeadline") LocalDateTime paymentDeadline
     );
 

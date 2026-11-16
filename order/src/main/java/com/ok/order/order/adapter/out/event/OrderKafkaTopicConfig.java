@@ -29,4 +29,9 @@ class OrderKafkaTopicConfig {
     NewTopic orderOrderPaidTopic() {
         return TopicBuilder.name(OrderTopics.ORDER_PAID).build();
     }
+
+    @Bean
+    NewTopic orderOrderPaymentExpireRequestedTopic() {
+        return TopicBuilder.name(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED).build();
+    }
 }

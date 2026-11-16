@@ -262,9 +262,9 @@ class OrderTest {
     }
 
     @ParameterizedTest
-    @MethodSource("결제_대기_정리_기준")
-    void 결제_요청_전이면_생성_시각을_요청_뒤면_요청_시각을_기준과_비교한다(
-            LocalDateTime paymentRequestedAt, LocalDateTime creatingDeadline, LocalDateTime paymentDeadline, boolean stale) {
+    @MethodSource("결제_요청_전_정리_기준")
+    void 결제_요청_전에_생성_시각이_기준_이전이면_정리_대상이다(
+            LocalDateTime paymentRequestedAt, LocalDateTime creatingDeadline, boolean stale) {
         // given
         Order sut = pendingOrderCreatedAt(CREATED_AT);
         if (paymentRequestedAt != null) {
@@ -272,30 +272,56 @@ class OrderTest {
         }
 
         // when & then
-        assertThat(sut.isStalePaymentPending(creatingDeadline, paymentDeadline)).isEqualTo(stale);
+        assertThat(sut.isStaleBeforePaymentRequest(creatingDeadline)).isEqualTo(stale);
     }
 
-    static Stream<Arguments> 결제_대기_정리_기준() {
+    static Stream<Arguments> 결제_요청_전_정리_기준() {
+        return Stream.of(
+                // 생성 시각이 기준 이전(같음 포함)이면 정리 대상
+                Arguments.of(null, CREATED_AT, true),
+                Arguments.of(null, CREATED_AT.minusSeconds(1), false),
+                // 결제를 요청한 주문은 오래돼도 정리(취소) 대상이 아니다. 지갑이 결제했을 수 있다(#656)
+                Arguments.of(CREATED_AT, CREATED_AT.plusDays(1), false)
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("결제_만료_요청_기준")
+    void 결제를_요청하고_요청_시각이_기준_이전이면_결제_만료_요청_대상이다(
+            LocalDateTime paymentRequestedAt, LocalDateTime paymentDeadline, boolean due) {
+        // given
+        Order sut = pendingOrderCreatedAt(CREATED_AT);
+        if (paymentRequestedAt != null) {
+            sut.markPaymentRequested(paymentRequestedAt);
+        }
+
+        // when & then
+        assertThat(sut.isPaymentExpireDue(paymentDeadline)).isEqualTo(due);
+    }
+
+    static Stream<Arguments> 결제_만료_요청_기준() {
         LocalDateTime requestedAt = CREATED_AT.plusSeconds(1);
         return Stream.of(
-                // 결제 요청 전: 생성 시각이 기준 이전(같음 포함)이면 정리 대상, 요청 기준은 보지 않는다
-                Arguments.of(null, CREATED_AT, CREATED_AT.minusDays(1), true),
-                Arguments.of(null, CREATED_AT.minusSeconds(1), CREATED_AT.plusDays(1), false),
-                // 결제 요청 뒤: 요청 시각이 기준 이전(같음 포함)이면 정리 대상, 생성 기준은 보지 않는다
-                Arguments.of(requestedAt, CREATED_AT.minusDays(1), requestedAt, true),
-                Arguments.of(requestedAt, CREATED_AT.plusDays(1), requestedAt.minusSeconds(1), false)
+                // 요청 시각이 기준 이전(같음 포함)이면 대상
+                Arguments.of(requestedAt, requestedAt, true),
+                Arguments.of(requestedAt, requestedAt.minusSeconds(1), false),
+                // 결제를 요청하지 않은 주문은 지갑이 모르므로 만료를 요청하지 않는다
+                Arguments.of(null, CREATED_AT.plusDays(1), false)
         );
     }
 
     @Test
-    void 결제_대기가_아닌_주문은_오래돼도_정리_대상이_아니다() {
+    void 결제_대기가_아닌_주문은_오래돼도_정리나_만료_요청_대상이_아니다() {
         // given
         Order sut = pendingOrderCreatedAt(CREATED_AT);
         sut.markPaymentRequested(CREATED_AT);
         sut.markPaid();
 
         // when & then
-        assertThat(sut.isStalePaymentPending(CREATED_AT.plusDays(1), CREATED_AT.plusDays(1))).isFalse();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isStaleBeforePaymentRequest(CREATED_AT.plusDays(1))).isFalse();
+            softly.assertThat(sut.isPaymentExpireDue(CREATED_AT.plusDays(1))).isFalse();
+        });
     }
 
     // ---------- 재고 해제 확인 (#657) ----------

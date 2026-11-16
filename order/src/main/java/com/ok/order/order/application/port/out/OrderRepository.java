@@ -57,11 +57,16 @@ public interface OrderRepository {
     List<Long> findOrderIdsToAutoConfirm(OrderItemStatus status, LocalDateTime deadline);
 
     /**
-     * 결제 대기로 기준보다 오래 남은 주문 ID를 조회한다 (결제 대기 정리 대상, #402).
-     * 결제 요청 전인 주문은 생성 시각을 {@code creatingDeadline}과, 요청한 주문은 요청 시각을 {@code paymentDeadline}과 비교한다.
+     * 결제를 요청하기 전에 기준보다 오래 멈춘 결제 대기 주문 ID를 조회한다 (결제 대기 정리 대상, #402).
+     * 결제 요청 시각이 비어 있고 생성 시각이 {@code creatingDeadline} 이전(같음 포함)인 주문이다.
      */
-    List<Long> findStalePaymentPendingOrderIds(OrderStatus status, LocalDateTime creatingDeadline,
-                                               LocalDateTime paymentDeadline);
+    List<Long> findStalePaymentPendingOrderIds(OrderStatus status, LocalDateTime creatingDeadline);
+
+    /**
+     * 결제를 요청하고 기준보다 오래 결과가 없는 결제 대기 주문 ID를 조회한다 (결제 만료 요청 대상, #656).
+     * 결제 요청 시각이 {@code paymentDeadline} 이전(같음 포함)인 주문이다.
+     */
+    List<Long> findPaymentExpireDueOrderIds(OrderStatus status, LocalDateTime paymentDeadline);
 
     /**
      * 재고 해제를 확인하지 못한 주문 ID를 오래된 주문부터 조회한다 (재고 해제 재처리 대상, #657).

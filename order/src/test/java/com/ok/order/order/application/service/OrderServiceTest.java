@@ -150,13 +150,21 @@ class OrderServiceTest {
     }
 
     @Test
-    void 결제_대기_정리_대상은_결제_요청_전은_5분_요청_뒤는_30분_전을_기준으로_찾는다() {
+    void 결제_대기_정리_대상은_결제_요청_전에_5분_넘게_멈춘_주문에서_찾는다() {
         // when
         sut.findStalePaymentPendingOrderIds();
 
         // then
-        then(orderRepository).should().findStalePaymentPendingOrderIds(
-                OrderStatus.PAYMENT_PENDING, NOW.minusMinutes(5), NOW.minusMinutes(30));
+        then(orderRepository).should().findStalePaymentPendingOrderIds(OrderStatus.PAYMENT_PENDING, NOW.minusMinutes(5));
+    }
+
+    @Test
+    void 결제_만료_요청_대상은_결제_요청_뒤_30분이_지난_주문에서_찾는다() {
+        // when
+        sut.findPaymentExpireDueOrderIds();
+
+        // then
+        then(orderRepository).should().findPaymentExpireDueOrderIds(OrderStatus.PAYMENT_PENDING, NOW.minusMinutes(30));
     }
 
     @Test
@@ -177,8 +185,8 @@ class OrderServiceTest {
     }
 
     @Test
-    void 결제를_요청하고_30분이_지나도_결과가_없으면_취소하고_재고를_풀어야_한다() {
-        // given
+    void 결제를_요청한_주문은_30분이_지나도_정리로_취소하지_않는다() {
+        // given: 지갑이 결제했을 수 있어 취소 대신 결제 만료를 요청한다(#656)
         Order order = savedOrder(10L);
         ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(30));
         order.markPaymentRequested(NOW.minusMinutes(30));
@@ -189,13 +197,75 @@ class OrderServiceTest {
 
         // then
         assertSoftly(softly -> {
-            softly.assertThat(shouldReleaseStock).isTrue();
-            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+            softly.assertThat(shouldReleaseStock).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
         });
     }
 
     @Test
-    void 조회_뒤_결제를_요청해_기준이_다시_시작된_주문은_취소하지_않는다() {
+    void 결제를_요청하고_30분이_지나도_결과가_없으면_주문은_그대로_두고_결제_만료를_요청한다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentRequested(NOW.minusMinutes(30));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean requested = sut.requestPaymentExpire(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(requested).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        });
+        then(orderEventPublisher).should().publishPaymentExpireRequested(10L, 1L);
+    }
+
+    @Test
+    void 결제_요청_뒤_30분이_안_됐으면_결제_만료를_요청하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentRequested(NOW.minusMinutes(29));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean requested = sut.requestPaymentExpire(10L);
+
+        // then
+        assertThat(requested).isFalse();
+        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong());
+    }
+
+    @Test
+    void 조회_뒤_결제_결과가_먼저_왔으면_결제_만료를_요청하지_않는다() {
+        // given
+        Order order = savedOrder(10L);
+        order.markPaymentRequested(NOW.minusHours(1));
+        order.markPaid();
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean requested = sut.requestPaymentExpire(10L);
+
+        // then
+        assertThat(requested).isFalse();
+        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong());
+    }
+
+    @Test
+    void 결제_만료를_요청할_주문이_없으면_예외_없이_요청하지_않는다() {
+        // given
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
+
+        // when
+        boolean requested = sut.requestPaymentExpire(10L);
+
+        // then
+        assertThat(requested).isFalse();
+        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong());
+    }
+
+    @Test
+    void 조회_뒤_결제를_요청한_주문은_취소하지_않는다() {
         // given: 생성은 5분 전이지만 방금 결제를 요청했다
         Order order = savedOrder(10L);
         ReflectionTestUtils.setField(order, "createdAt", NOW.minusMinutes(5));

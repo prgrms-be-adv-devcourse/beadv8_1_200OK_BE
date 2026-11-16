@@ -11,4 +11,10 @@ public interface OrderEventPublisher {
     void publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount, String orderSummary);
     void publishOrderProductConfirmedEvent(Long orderId, Long orderItemId, Long sellerId, Long totalItemPrice, Long sellerShippingPrice);
     void publishOrderPaidEvent(PaidOrderMessage message);
+
+    /**
+     * 결제를 요청하고 오래 결과가 없는 주문의 결제 만료를 지갑에 요청한다(#656). 지갑은 결제했으면 결제 완료를,
+     * 아니면 결제 실패(PAYMENT_EXPIRED)를 보낸다. 트랜잭션 안에서 부른다.
+     */
+    void publishPaymentExpireRequested(Long orderId, Long buyerId);
 }

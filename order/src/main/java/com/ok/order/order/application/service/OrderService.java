@@ -21,6 +21,7 @@ import com.ok.order.order.application.port.in.GetOrderItemForRefundUseCase;
 import com.ok.order.order.application.port.in.GetOrderUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
 import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
+import com.ok.order.order.application.port.in.RequestPaymentExpireUseCase;
 import com.ok.order.order.application.port.in.UpdateShippingStatusUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import com.ok.order.order.application.port.out.OrderRepository;
@@ -45,7 +46,7 @@ import java.util.Optional;
 @Transactional(readOnly = true)
 public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, UpdateShippingStatusUseCase,
         GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, GetOrderItemForRefundUseCase,
-        RecordOrderItemRefundUseCase {
+        RecordOrderItemRefundUseCase, RequestPaymentExpireUseCase {
 
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
@@ -56,8 +57,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
 
     // 결제 요청 전에 멈춘 주문의 정리 기준. 주문 생성은 외부 호출 타임아웃을 합쳐도 몇 초 안에 끝나므로 넉넉히 잡는다(#402)
     private static final Duration CREATING_TIMEOUT = Duration.ofMinutes(5);
-    // 결제 요청 뒤 결과가 없는 주문의 정리 기준. 지갑 결제는 이벤트를 받는 즉시 끝나므로,
-    // 이만큼 지나면 지갑 처리가 실패해 재시작 재발행만 기다리는 상태로 보고 재고를 먼저 푼다(#402)
+    // 결제 요청 뒤 결과가 없는 주문에 지갑의 결론을 묻는 기준. 지갑 결제는 요청을 받는 즉시 끝나므로,
+    // 이만큼 지나면 지갑 처리나 결과 전달이 막힌 것으로 보고 결제 만료를 요청한다(#656). 지갑이 결과 보내기를 다시 시도하는 시간(최대 30분)과 맞춘다
     private static final Duration PAYMENT_TIMEOUT = Duration.ofMinutes(30);
 
     // 재고 해제 재처리 대상에서 방금 상태가 바뀐 주문을 빼는 시간(#657). 원래 경로(취소·결제 실패 직후)가 아직 해제 중일 수 있다.
@@ -144,14 +145,13 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
                 PageRequest.of(0, STOCK_RELEASE_BATCH_SIZE));
     }
 
-    // 결제 대기 정리 대상 주문 ID(#402)
+    // 결제 대기 정리 대상 주문 ID(#402). 결제를 요청하기 전에 멈춘 주문만 고른다. 요청한 주문은 결제 만료 요청 대상이다(#656)
     public List<Long> findStalePaymentPendingOrderIds() {
-        LocalDateTime now = LocalDateTime.now(clock);
         return orderRepository.findStalePaymentPendingOrderIds(
-                OrderStatus.PAYMENT_PENDING, now.minus(CREATING_TIMEOUT), now.minus(PAYMENT_TIMEOUT));
+                OrderStatus.PAYMENT_PENDING, LocalDateTime.now(clock).minus(CREATING_TIMEOUT));
     }
 
-    // 결제 대기로 오래 남은 주문 취소(#402). 재고를 풀어야 하면(취소했으면) true
+    // 결제 요청 전에 멈춘 주문 취소(#402). 재고를 풀어야 하면(취소했으면) true
     @Transactional
     public boolean cancelStalePaymentPending(Long orderId) {
         // 결제 완료·실패, 결제 요청과 같은 잠금으로 줄을 세운다. 조회한 뒤 결제 결과가 먼저 커밋됐으면 바뀐 상태를 읽고 넘어간다
@@ -162,18 +162,44 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         }
         Order order = found.get();
 
-        // 조회와 잠금 사이에 결제를 요청했으면 기준 시각이 다시 시작되므로, 잠근 뒤 최신 값으로 다시 확인한다
-        LocalDateTime now = LocalDateTime.now(clock);
-        if (!order.isStalePaymentPending(now.minus(CREATING_TIMEOUT), now.minus(PAYMENT_TIMEOUT))) {
+        // 조회와 잠금 사이에 결제를 요청했으면 지갑이 아는 주문이 되므로, 잠근 뒤 최신 값으로 다시 확인한다
+        if (!order.isStaleBeforePaymentRequest(LocalDateTime.now(clock).minus(CREATING_TIMEOUT))) {
             log.info("[ORDER_STALE_CANCEL_SKIPPED] 정리 대상이 아니게 된 주문입니다. orderId={}, status={}",
                     orderId, order.getStatus());
             return false;
         }
 
-        // 결제를 요청한 주문은 지갑이 나중에 결제할 수 있다. 그때 completePayment가 ERROR로 남기므로 여기서는 기록만 구분한다
-        log.warn("[ORDER_STALE_CANCELED] 결제 대기로 오래 남은 주문을 취소합니다. orderId={}, paymentRequestedAt={}",
-                orderId, order.getPaymentRequestedAt());
+        log.warn("[ORDER_STALE_CANCELED] 결제를 요청하기 전에 멈춘 주문을 취소합니다. orderId={}", orderId);
         order.cancel();
+        return true;
+    }
+
+    // 결제 만료 요청 대상 주문 ID(#656). 결과가 올 때까지 정리 스케줄러가 돌 때마다 다시 대상이 된다
+    @Override
+    public List<Long> findPaymentExpireDueOrderIds() {
+        return orderRepository.findPaymentExpireDueOrderIds(
+                OrderStatus.PAYMENT_PENDING, LocalDateTime.now(clock).minus(PAYMENT_TIMEOUT));
+    }
+
+    // 결제 만료 요청(#656). 주문은 바꾸지 않고 요청만 outbox에 남긴다. 결제 완료·실패와 같은 잠금으로 줄을 세워,
+    // 조회 뒤 결과가 먼저 커밋됐으면 요청하지 않는다(요청해도 지갑은 처음 결과를 다시 보내지만 쓸데없는 메시지다)
+    @Transactional
+    @Override
+    public boolean requestPaymentExpire(Long orderId) {
+        Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
+        if (found.isEmpty()) {
+            log.warn("[ORDER_PAYMENT_EXPIRE_ORDER_NOT_FOUND] 결제 만료를 요청할 주문이 없습니다. orderId={}", orderId);
+            return false;
+        }
+        Order order = found.get();
+        if (!order.isPaymentExpireDue(LocalDateTime.now(clock).minus(PAYMENT_TIMEOUT))) {
+            log.info("[ORDER_PAYMENT_EXPIRE_SKIPPED] 결제 만료 요청 대상이 아니게 된 주문입니다. orderId={}, status={}",
+                    orderId, order.getStatus());
+            return false;
+        }
+        log.warn("[ORDER_PAYMENT_EXPIRE_REQUESTED] 결제 요청 뒤 결과가 없어 지갑에 결제 만료를 요청합니다. orderId={}, paymentRequestedAt={}",
+                orderId, order.getPaymentRequestedAt());
+        orderEventPublisher.publishPaymentExpireRequested(order.getId(), order.getBuyerId());
         return true;
     }
 

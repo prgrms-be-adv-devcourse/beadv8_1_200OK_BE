@@ -267,16 +267,15 @@ public class Order extends BaseTime {
         this.paymentRequestedAt = requestedAt;
     }
 
-    // 결제 대기로 기준보다 오래 남았는지(#402).
-    // 결제 요청 전이면 생성 시각을, 요청 뒤면 요청 시각을 기준과 비교한다. 두 경우의 기준은 위험이 달라 따로 받는다
-    public boolean isStalePaymentPending(LocalDateTime creatingDeadline, LocalDateTime paymentDeadline) {
-        if (status != OrderStatus.PAYMENT_PENDING) {
-            return false;
-        }
-        if (paymentRequestedAt == null) {
-            return !getCreatedAt().isAfter(creatingDeadline);
-        }
-        return !paymentRequestedAt.isAfter(paymentDeadline);
+    // 결제를 요청하기 전에 기준보다 오래 멈췄는지(#402). 지갑이 모르는 주문이라 주문이 혼자 취소해도 된다
+    public boolean isStaleBeforePaymentRequest(LocalDateTime creatingDeadline) {
+        return isBeingCreated() && !getCreatedAt().isAfter(creatingDeadline);
+    }
+
+    // 결제를 요청하고 기준보다 오래 결과가 없는지(#656). 돈이 움직였는지는 지갑만 알아서, 주문은 취소하지 않고 지갑에 결제 만료를 요청한다
+    public boolean isPaymentExpireDue(LocalDateTime paymentDeadline) {
+        return status == OrderStatus.PAYMENT_PENDING && paymentRequestedAt != null
+                && !paymentRequestedAt.isAfter(paymentDeadline);
     }
 
     // 결제 완료
