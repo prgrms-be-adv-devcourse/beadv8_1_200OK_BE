@@ -381,24 +381,29 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 한_글자_검색어는_대표_품목이_그_글자인_상품만_찾고_그_글자로_시작하는_다른_품목은_찾지_않는다() throws Exception {
+	void 한_글자_검색어는_그_글자로_정해_둔_품목의_상품만_찾고_그_글자로_시작하는_다른_품목은_찾지_않는다() throws Exception {
 		// given
 		Long pear = create("나주 신고배 7.5kg", ProductCategoryCode.FRUIT, ProductRegionCode.JEONNAM, "선물용");
 		Long cabbage = create("해남 절임배추 10kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.JEONNAM, "10kg");
 		Long pearJuice = create("나주 배즙 30포", ProductCategoryCode.PROCESSED_AGRI, ProductRegionCode.JEONNAM, "30포");
 		Long mandarin = create("제주 하우스 귤 3kg", ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, "3kg");
+		Long sweetPersimmon = create("청도 단감 5kg", ProductCategoryCode.FRUIT, ProductRegionCode.GYEONGBUK, "5kg");
+		Long potato = create("강원 감자 5kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.GANGWON, "5kg");
 
 		// when & then
 		mockMvc.perform(get("/api/v1/products").param("keyword", "배"))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.content[*].productId").value(contains(pear.intValue(), bruisedPear.intValue())))
 			.andExpect(jsonPath("$.totalElements").value(2));
-		// "하우스감귤"의 대표 품목은 가장 긴 "감귤"이라 "귤"로는 찾지 않는다
+		// "하우스감귤"의 가장 긴 품목은 "감귤"이지만 "귤"로 찾도록 정해 두어 함께 나온다
 		mockMvc.perform(get("/api/v1/products").param("keyword", "귤"))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.content[*].productId").value(contains(mandarin.intValue())))
-			.andExpect(jsonPath("$.totalElements").value(1));
+			.andExpect(jsonPath("$.content[*].productId").value(
+				contains(mandarin.intValue(), jeonnamTangerine.intValue(), tangerine.intValue())))
+			.andExpect(jsonPath("$.totalElements").value(3));
+		assertThat(search("감")).containsExactly(sweetPersimmon);
 		assertThat(search("배")).doesNotContain(cabbage, pearJuice);
+		assertThat(search("감")).doesNotContain(potato);
 	}
 
 	@ParameterizedTest

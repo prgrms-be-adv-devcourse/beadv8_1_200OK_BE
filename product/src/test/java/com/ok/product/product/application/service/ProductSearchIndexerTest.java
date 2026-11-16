@@ -7,6 +7,7 @@ import static org.mockito.BDDMockito.then;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -37,7 +38,8 @@ class ProductSearchIndexerTest {
 
 	@BeforeEach
 	void setUp() {
-		sut = new ProductSearchIndexer(productSearchRepository, new ProductItemDictionary(List.of("귤", "감귤", "한라봉")));
+		sut = new ProductSearchIndexer(productSearchRepository, new ProductItemDictionary(
+			List.of("귤", "감귤", "한라봉", "배", "배추"), Map.of("귤", List.of("귤", "감귤"), "배", List.of("배"))));
 	}
 
 	@Test
@@ -61,7 +63,8 @@ class ProductSearchIndexerTest {
 			// 카테고리는 한글명(과일)으로 넣고, 설명의 "제주 직송"은 넣지 않는다
 			softly.assertThat(saved.getSearchBody()).isEqualTo("가정용 3kg 선물용 과일");
 			softly.assertThat(saved.getKeywords()).isEmpty();
-			softly.assertThat(saved.getSearchItem()).isEqualTo("감귤");
+			// 가장 긴 품목은 "감귤"이지만 1글자 검색어 "귤"로 찾히도록 "귤"을 저장한다
+			softly.assertThat(saved.getSearchItem()).isEqualTo("귤");
 			softly.assertThat(saved.getNormalizerVersion()).isEqualTo(SearchTextNormalizer.VERSION);
 		});
 	}
@@ -99,6 +102,20 @@ class ProductSearchIndexerTest {
 	}
 
 	@Test
+	void 가장_긴_품목이_한_글자_품목_표에_없으면_search_item은_null이다() {
+		// given
+		Product product = product("해남 배추 10kg", "<p>설명</p>", ProductCategory.VEGETABLE,
+			List.of(ProductOptionSpec.newOption("10kg", null, 30_000L, 10)));
+		given(productSearchRepository.findById(PRODUCT_ID)).willReturn(Optional.empty());
+
+		// when
+		sut.index(product);
+
+		// then
+		assertThat(savedProductSearch().getSearchItem()).isNull();
+	}
+
+	@Test
 	void 검색_행이_있으면_다시_계산하고_keywords는_그대로_둔다() {
 		// given
 		ProductSearch existing = ProductSearch.create(PRODUCT_ID, "옛이름", "ㅇㅖㅅ", "옛 옵션", "귤", 0);
@@ -116,7 +133,7 @@ class ProductSearchIndexerTest {
 			softly.assertThat(existing.getNameCompact()).isEqualTo("제주한라봉3kg");
 			softly.assertThat(existing.getNameJamo()).isEqualTo("ㅈㅔㅈㅜㅎㅏㄴㄹㅏㅂㅗㅇ3kg");
 			softly.assertThat(existing.getSearchBody()).isEqualTo("특대 과일");
-			softly.assertThat(existing.getSearchItem()).isEqualTo("한라봉");
+			softly.assertThat(existing.getSearchItem()).isNull();
 			softly.assertThat(existing.getNormalizerVersion()).isEqualTo(SearchTextNormalizer.VERSION);
 			softly.assertThat(existing.getKeywords()).isEqualTo("새콤 달콤");
 		});

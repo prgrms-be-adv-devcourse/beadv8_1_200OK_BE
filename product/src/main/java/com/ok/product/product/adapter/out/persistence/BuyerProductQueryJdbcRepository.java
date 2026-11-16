@@ -136,7 +136,7 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 	private enum Match {
 		NONE,
 		// ngram FULLTEXT는 두 글자 조각만 인덱싱해 한 글자 검색어("배")는 어떤 상품과도 겹치지 않는다.
-		// 그래서 등록할 때 정해 둔 대표 품목과 정확히 같은 상품을 찾는다. LIKE는 상품명이 산지로 시작해 맞지 않는다
+		// 그래서 등록할 때 정해 둔 한 글자 품목(search_item)과 정확히 같은 상품을 찾는다. LIKE는 상품명이 산지로 시작해 맞지 않는다
 		ITEM,
 		FULLTEXT;
 

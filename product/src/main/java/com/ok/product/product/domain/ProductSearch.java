@@ -43,6 +43,7 @@ public class ProductSearch extends BaseTime implements Persistable<Long> {
 	@Column(nullable = false, columnDefinition = "TEXT")
 	private String keywords;
 
+	// 1글자 검색어로 이 상품을 찾을 한 글자 품목이다("제주감귤"이면 "귤"). 고르는 규칙은 ProductItemDictionary에 있다
 	@Column(name = "search_item", length = 20)
 	private String searchItem;
 

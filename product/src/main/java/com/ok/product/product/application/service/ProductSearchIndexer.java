@@ -34,7 +34,7 @@ public class ProductSearchIndexer {
 		String nameCompact = SearchTextNormalizer.compact(name);
 		String nameJamo = SearchTextNormalizer.jamo(name);
 		String searchBody = SearchTextNormalizer.text(searchBodySource(product));
-		String searchItem = productItemDictionary.findLongestItem(name).orElse(null);
+		String searchItem = productItemDictionary.findSingleCharItem(name).orElse(null);
 
 		productSearchRepository.findById(product.getId())
 			.ifPresentOrElse(

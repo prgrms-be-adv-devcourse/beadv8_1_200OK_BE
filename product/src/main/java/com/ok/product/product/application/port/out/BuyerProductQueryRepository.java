@@ -19,7 +19,7 @@ public interface BuyerProductQueryRepository {
 	/**
 	 * 구매자에게 보이는 상품의 ID 한 페이지를 정렬 순서대로 읽는다. 어떤 정렬이든 품절 상품이 뒤에 온다.
 	 * 필터와 검색어는 null이면 거르지 않는다. 검색어가 있으면 점수가 하한 이상인 상품만 결과와 전체 개수에 든다.
-	 * 검색어가 한 글자({@link ProductSearchKeyword#isSingleCharacter()})면 점수 대신 대표 품목이 그 글자와 같은 상품만 찾는다.
+	 * 검색어가 한 글자({@link ProductSearchKeyword#isSingleCharacter()})면 점수 대신 한 글자 품목({@code search_item})이 그 글자와 같은 상품만 찾는다.
 	 *
 	 * @param keyword  정규화한 검색어. 없으면 null
 	 * @param sort     {@link ProductSort#RELEVANCE}는 검색어가 있을 때만 쓴다. 한 글자 검색어면 보정 평점, 그다음 id 순이다

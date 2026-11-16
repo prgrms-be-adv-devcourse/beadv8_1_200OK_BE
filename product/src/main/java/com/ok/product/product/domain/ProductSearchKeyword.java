@@ -26,7 +26,7 @@ public record ProductSearchKeyword(String text, String compact, String jamo) {
 	}
 
 	/**
-	 * 공백·기호를 뺀 검색어가 한 글자인지 알려 준다. 한 글자면 FULLTEXT 대신 대표 품목({@code search_item})과 정확히 같은 상품을 찾는다.
+	 * 공백·기호를 뺀 검색어가 한 글자인지 알려 준다. 한 글자면 FULLTEXT 대신 한 글자 품목({@code search_item})과 정확히 같은 상품을 찾는다.
 	 */
 	public boolean isSingleCharacter() {
 		return compact.codePointCount(0, compact.length()) == 1;

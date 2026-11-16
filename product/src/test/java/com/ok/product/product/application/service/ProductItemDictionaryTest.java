@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -50,11 +51,83 @@ class ProductItemDictionaryTest {
 		assertThat(sut).isEmpty();
 	}
 
+	@ParameterizedTest
+	@MethodSource("상품명과_한_글자_품목")
+	void 가장_긴_품목이_한_글자_품목_표에_있으면_그_한_글자_품목을_고른다(String productName, String expected) {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary();
+
+		// when
+		Optional<String> sut = dictionary.findSingleCharItem(productName);
+
+		// then
+		assertThat(sut).hasValue(expected);
+	}
+
+	static Stream<Arguments> 상품명과_한_글자_품목() {
+		return Stream.of(
+			Arguments.of("제주감귤", "귤"),
+			Arguments.of("서귀포 하우스감귤", "귤"),
+			Arguments.of("나주배5kg", "배"),
+			Arguments.of("신고배선물세트", "배"),
+			Arguments.of("청도 단감", "감"),
+			Arguments.of("대파 1단", "파"),
+			Arguments.of("찹쌀 4kg", "쌀")
+		);
+	}
+
+	@ParameterizedTest
+	@MethodSource("한_글자_품목_표에_없는_품목의_상품명")
+	void 가장_긴_품목이_한_글자_품목_표에_없으면_빈_값이다(String productName) {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary();
+
+		// when
+		Optional<String> sut = dictionary.findSingleCharItem(productName);
+
+		// then
+		assertThat(sut).isEmpty();
+	}
+
+	static Stream<String> 한_글자_품목_표에_없는_품목의_상품명() {
+		return Stream.of("해남배추3kg", "강원 감자", "상주 곶감", "제주 한라봉", "도라지배즙", "한우 등심 1kg");
+	}
+
 	@Test
 	void 품목이_하나도_없으면_만들지_못한다() {
 		// when & then
-		assertThatThrownBy(() -> new ProductItemDictionary(List.of(" ", "·")))
+		assertThatThrownBy(() -> new ProductItemDictionary(List.of(" ", "·"), Map.of()))
 			.isInstanceOf(IllegalStateException.class)
 			.hasMessage("품목 사전에 품목이 없습니다. location=product-search/items.json");
+	}
+
+	@Test
+	void 한_글자_품목_표의_키가_한_글자가_아니면_만들지_못한다() {
+		// when & then
+		assertThatThrownBy(() -> new ProductItemDictionary(List.of("감귤"), Map.of("감귤", List.of("감귤"))))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessage("한 글자 품목 표의 키가 한 글자가 아닙니다. key=감귤, location=product-search/single-char-items.json");
+	}
+
+	@Test
+	void 한_글자_품목_표에_품목_사전에_없는_품목이_있으면_만들지_못한다() {
+		// when & then
+		assertThatThrownBy(() -> new ProductItemDictionary(List.of("귤"), Map.of("귤", List.of("귤", "감귤"))))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessage("한 글자 품목 표에 품목 사전에 없는 품목이 있습니다. item=감귤, "
+				+ "location=product-search/single-char-items.json");
+	}
+
+	@Test
+	void 한_품목이_두_한_글자_품목에_들어_있으면_만들지_못한다() {
+		// given
+		List<String> items = List.of("귤", "감", "감귤");
+		Map<String, List<String>> singleCharItems = Map.of("귤", List.of("감귤"), "감", List.of("감귤"));
+
+		// when & then
+		assertThatThrownBy(() -> new ProductItemDictionary(items, singleCharItems))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessage("한 글자 품목 표에 같은 품목이 두 번 있습니다. item=감귤, "
+				+ "location=product-search/single-char-items.json");
 	}
 }

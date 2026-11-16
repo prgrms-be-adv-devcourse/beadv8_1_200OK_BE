@@ -69,7 +69,7 @@ class ProductSearchIndexIntegrationTest extends AbstractIntegrationTest {
 			softly.assertThat(sut.getNameJamo()).isEqualTo("ㅅㅓㄱㅟㅍㅗㄷㅏㅇㅇㅣㄹㅅㅜㅎㅘㄱㅎㅏㅇㅜㅅㅡㄱㅏㅁㄱㅠㄹ5kg");
 			softly.assertThat(sut.getSearchBody()).isEqualTo("가정용 3kg 과일");
 			softly.assertThat(sut.getKeywords()).isEmpty();
-			softly.assertThat(sut.getSearchItem()).isEqualTo("감귤");
+			softly.assertThat(sut.getSearchItem()).isEqualTo("귤");
 			softly.assertThat(sut.getNormalizerVersion()).isEqualTo(SearchTextNormalizer.VERSION);
 		});
 	}
@@ -90,7 +90,7 @@ class ProductSearchIndexIntegrationTest extends AbstractIntegrationTest {
 		assertSoftly(softly -> {
 			softly.assertThat(sut.getNameCompact()).isEqualTo("한라봉3kg");
 			softly.assertThat(sut.getNameJamo()).isEqualTo("ㅎㅏㄴㄹㅏㅂㅗㅇ3kg");
-			softly.assertThat(sut.getSearchItem()).isEqualTo("한라봉");
+			softly.assertThat(sut.getSearchItem()).isNull();
 			softly.assertThat(sut.getSearchBody()).isEqualTo("가정용 3kg 과일");
 		});
 	}

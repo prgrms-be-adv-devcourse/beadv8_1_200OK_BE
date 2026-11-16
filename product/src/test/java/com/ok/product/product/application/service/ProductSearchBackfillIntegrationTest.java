@@ -113,6 +113,22 @@ class ProductSearchBackfillIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 옛_품목_규칙으로_저장된_search_item도_다시_계산한다() {
+		// given
+		Long productId = saveProduct(ProductStatus.ON_SALE, ProductVisibility.VISIBLE);
+		insertSearchRow(productId, "서귀포당일수확하우스감귤5kg", 1);
+		// 버전 1은 가장 긴 품목을 그대로 저장했다
+		jdbcTemplate.update("UPDATE " + SEARCH_TABLE + " SET search_item = '감귤' WHERE product_id = ?", productId);
+
+		// when
+		ProductSearchBackfillResult sut = productSearchBackfillService.backfill();
+
+		// then
+		assertThat(sut).isEqualTo(new ProductSearchBackfillResult(1, 0));
+		assertThat(productSearchRepository.findById(productId).orElseThrow().getSearchItem()).isEqualTo("귤");
+	}
+
+	@Test
 	void 최신_버전_행은_건드리지_않는다() {
 		// given
 		Long productId = saveProduct(ProductStatus.ON_SALE, ProductVisibility.VISIBLE);
