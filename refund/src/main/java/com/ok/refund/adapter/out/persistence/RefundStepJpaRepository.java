@@ -50,7 +50,8 @@ public interface RefundStepJpaRepository extends JpaRepository<RefundStepJpaEnti
     //    새로 잡으므로, 처음부터 얼마나 기다렸는지는 결과를 처음 기다리기 시작한 시각(awaiting_since)으로 본다.
     //    발행 뒤 "결과 대기" 기록이 실패해 시도 중으로만 남은 줄은 그 값이 없어 줄을 만든 시각으로 대신 본다
     // 할 차례 줄은 넣지 않는다. 알람이 다시 시도하는 중이고, 횟수를 다 쓰면 멈춤이 되어 1번에 걸린다(#577 결정).
-    // 한 시간에 한 번 도는 조회라 처리 중 환불을 훑는다. 하위 조회는 유일 제약 (refund_id, step)의 인덱스로 찾는다
+    // 한 시간에 한 번 도는 조회라 훑는 것을 받아들인다. refund.status로 시작하는 인덱스가 없어 끝난 환불까지 환불 표 전체를 훑는다.
+    // 환불 이력이 커져 이 조회가 느려지면 refund(status) 인덱스를 더한다. 하위 조회는 유일 제약 (refund_id, step)의 인덱스로 찾는다
     @Query("""
             SELECT r.id FROM RefundJpaEntity r
             WHERE r.status = :processing AND (
