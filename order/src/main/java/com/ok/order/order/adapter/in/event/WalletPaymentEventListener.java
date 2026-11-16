@@ -10,6 +10,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+// 지갑이 Kafka로 옮기는 동안 함께 두는 Spring 수신부다. Kafka 수신부는 WalletPaymentKafkaListener.
+// TODO(#602): 지갑이 Kafka로만 보내면(#640 머지 뒤) 이 리스너를 지운다
 @Component
 @RequiredArgsConstructor
 public class WalletPaymentEventListener {
