@@ -66,6 +66,7 @@ class KafkaDeliveryMessageSender implements DeliveryMessageSender {
 
     private static String topicOf(DeliveryOutboxEventType eventType) {
         return switch (eventType) {
+            case SHIPMENT_CREATED -> DeliveryTopics.SHIPMENT_CREATED;
             case SHIPMENT_DISPATCHED -> DeliveryTopics.SHIPMENT_DISPATCHED;
             case SHIPMENT_DELIVERED -> DeliveryTopics.SHIPMENT_DELIVERED;
         };

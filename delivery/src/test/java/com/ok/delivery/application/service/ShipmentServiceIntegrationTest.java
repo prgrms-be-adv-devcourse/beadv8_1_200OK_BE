@@ -54,6 +54,7 @@ class ShipmentServiceIntegrationTest extends AbstractIntegrationTest {
     void tearDown() {
         jdbcTemplate.update("DELETE FROM shipment_item");
         jdbcTemplate.update("DELETE FROM shipment");
+        jdbcTemplate.update("DELETE FROM delivery_outbox");
         jdbcTemplate.update("DELETE FROM remote_area_postal_code WHERE postal_code = ?", TEST_POSTAL_CODE);
     }
 

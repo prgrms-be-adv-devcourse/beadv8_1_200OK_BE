@@ -6,6 +6,9 @@ package com.ok.delivery.adapter.out.event;
  */
 public final class DeliveryTopics {
 
+    /** 배송 → 주문: 판매자 묶음 배송이 만들어짐. 키는 orderId */
+    public static final String SHIPMENT_CREATED = "delivery.shipment-created.v1";
+
     /** 배송 → 주문: 송장 등록으로 배송이 시작됨. 키는 orderId */
     public static final String SHIPMENT_DISPATCHED = "delivery.shipment-dispatched.v1";
 

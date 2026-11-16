@@ -5,6 +5,9 @@ package com.ok.delivery.domain;
  */
 public enum DeliveryOutboxEventType {
 
+    /** 결제된 주문의 판매자별 배송이 만들어짐 (토픽 delivery.shipment-created.v1) */
+    SHIPMENT_CREATED,
+
     /** 송장 등록으로 배송이 시작됨 (토픽 delivery.shipment-dispatched.v1) */
     SHIPMENT_DISPATCHED,
 

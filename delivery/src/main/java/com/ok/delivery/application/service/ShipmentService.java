@@ -84,6 +84,10 @@ public class ShipmentService implements ShipmentUseCase {
                 .map(seller -> toShipment(command, address, region, seller, settings.get(seller.sellerId()).cutoffTime()))
                 .toList();
         shipmentRepository.saveAll(shipments);
+        // ID는 IDENTITY라 저장하면서, 생성 시각은 Auditing이 저장 직전에 채운다. 메시지가 DB에 남은 생성 시각과 같도록 저장한 값을 보낸다
+        shipments.forEach(shipment -> deliveryEventPublisher.publishShipmentCreated(
+                shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
+                shipment.getItems().stream().map(ShipmentItem::getOrderItemId).toList(), shipment.getCreatedAt()));
     }
 
     @Override

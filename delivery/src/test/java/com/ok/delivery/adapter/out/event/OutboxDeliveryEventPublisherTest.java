@@ -18,6 +18,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,6 +42,45 @@ class OutboxDeliveryEventPublisherTest {
     @BeforeEach
     void setUp() {
         sut = new OutboxDeliveryEventPublisher(deliveryOutboxRepository, applicationEventPublisher, JSON_MAPPER);
+    }
+
+    @Test
+    void 배송_생성을_알리면_orderId를_키로_본문을_outbox에_남기고_스프링_이벤트는_내지_않는다() {
+        // given
+        LocalDateTime createdAt = LocalDateTime.of(2026, 10, 19, 10, 0, 0, 123_456_000);
+
+        // when
+        sut.publishShipmentCreated(1L, 2L, 10L, List.of(101L, 102L), createdAt);
+
+        // then
+        DeliveryOutbox outbox = savedOutbox();
+        assertThat(outbox).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(outbox.getEventType()).isEqualTo(DeliveryOutboxEventType.SHIPMENT_CREATED);
+            softly.assertThat(outbox.getMessageKey()).isEqualTo("2");
+            softly.assertThat(outbox.getStatus()).isEqualTo(DeliveryOutboxStatus.PENDING);
+        });
+        JsonNode payload = JSON_MAPPER.readTree(outbox.getPayload());
+        assertThat(payload).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(payload.propertyNames()).containsExactlyInAnyOrder(
+                    "shipmentId", "orderId", "sellerId", "orderItemIds", "createdAt");
+            softly.assertThat(payload.get("shipmentId").asLong()).isEqualTo(1L);
+            softly.assertThat(payload.get("orderId").asLong()).isEqualTo(2L);
+            softly.assertThat(payload.get("sellerId").asLong()).isEqualTo(10L);
+            softly.assertThat(payload.get("orderItemIds").toString()).isEqualTo("[101,102]");
+            softly.assertThat(payload.get("createdAt").asString()).isEqualTo("2026-10-19T10:00:00.123456");
+        });
+        then(applicationEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 배송_생성_시각이_null이면_예외가_발생하고_outbox에_남기지_않는다() {
+        // when & then
+        assertThatThrownBy(() -> sut.publishShipmentCreated(1L, 2L, 10L, List.of(101L), null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("createdAt은 필수입니다.");
+        then(deliveryOutboxRepository).shouldHaveNoInteractions();
     }
 
     @Test

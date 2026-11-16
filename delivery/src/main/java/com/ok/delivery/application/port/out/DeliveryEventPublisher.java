@@ -1,6 +1,7 @@
 package com.ok.delivery.application.port.out;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 배송의 이벤트 발행 인터페이스. 서비스는 이 인터페이스로만 이벤트를 발행한다.
@@ -8,6 +9,15 @@ import java.time.LocalDateTime;
  * <p>발행 방식(스프링 이벤트, 메시지 브로커 등)은 구현체({@code event} 패키지)가 맡고, 이벤트 클래스는 구현체 안에서만 만들도록 값을 받는다.
  */
 public interface DeliveryEventPublisher {
+
+    /**
+     * 결제된 주문의 판매자 묶음 배송이 만들어졌음을 알린다. 판매자 묶음마다 한 번 부른다.
+     *
+     * @param orderItemIds 이 배송에 담긴 주문 상품 ID 목록
+     * @param createdAt    배송이 만들어진 시각
+     */
+    void publishShipmentCreated(Long shipmentId, Long orderId, Long sellerId, List<Long> orderItemIds,
+                                LocalDateTime createdAt);
 
     /**
      * 송장 등록으로 배송이 시작되었음을 알린다. 주문은 이 이벤트로 판매자 묶음을 배송 중으로 바꾼다.

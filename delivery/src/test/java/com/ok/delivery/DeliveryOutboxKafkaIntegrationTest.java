@@ -4,7 +4,11 @@ import com.ok.delivery.adapter.out.event.DeliveryTopics;
 import com.ok.delivery.adapter.out.event.FailableDeliveryMessageSender;
 import com.ok.delivery.adapter.out.persistence.DeliveryOutboxJpaRepository;
 import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
+import com.ok.delivery.application.dto.AddressCommand;
+import com.ok.delivery.application.dto.SellerShipmentCommand;
+import com.ok.delivery.application.dto.ShipmentCreateCommand;
 import com.ok.delivery.application.dto.ShipmentDispatchCommand;
+import com.ok.delivery.application.dto.ShipmentItemCommand;
 import com.ok.delivery.application.port.in.DeliveryOutboxRelayUseCase;
 import com.ok.delivery.application.port.in.ShipmentUseCase;
 import com.ok.delivery.domain.Carrier;
@@ -30,6 +34,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -39,7 +44,7 @@ import static org.assertj.core.api.Assertions.within;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.awaitility.Awaitility.await;
 
-// 통합 테스트: 출고·배송 완료가 커밋되면 outbox 줄이 남고, 발송 작업이 실제 Kafka 토픽에 orderId를 키로 한 메시지를 한 건 보내는지 확인 (#644)
+// 통합 테스트: 배송 생성·출고·배송 완료가 커밋되면 outbox 줄이 남고, 발송 작업이 실제 Kafka 토픽에 orderId를 키로 한 메시지를 한 건 보내는지 확인 (#644)
 // - 발송 스케줄러는 테스트에서 꺼져 있어(module-test.yml) 발송 유스케이스를 직접 부른다
 // - 다른 테스트의 메시지와 섞이지 않게 테스트마다 다른 주문 번호를 쓰고 토픽을 키(orderId)로 골라 센다
 class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
@@ -81,6 +86,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     KafkaConnectionDetails kafkaConnectionDetails;
 
+    private DeliveryTopicReader createdReader;
     private DeliveryTopicReader dispatchedReader;
     private DeliveryTopicReader deliveredReader;
 
@@ -88,6 +94,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     @BeforeEach
     void setUp() {
         jdbcTemplate.update("DELETE FROM delivery_outbox");
+        createdReader = new DeliveryTopicReader(kafkaConnectionDetails.getBootstrapServers(), DeliveryTopics.SHIPMENT_CREATED);
         dispatchedReader = new DeliveryTopicReader(kafkaConnectionDetails.getBootstrapServers(), DeliveryTopics.SHIPMENT_DISPATCHED);
         deliveredReader = new DeliveryTopicReader(kafkaConnectionDetails.getBootstrapServers(), DeliveryTopics.SHIPMENT_DELIVERED);
     }
@@ -96,11 +103,88 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     @AfterEach
     void tearDown() {
         failableDeliveryMessageSender.reset();
+        createdReader.close();
         dispatchedReader.close();
         deliveredReader.close();
         jdbcTemplate.update("DELETE FROM delivery_outbox");
         jdbcTemplate.update("DELETE FROM shipment_item");
         jdbcTemplate.update("DELETE FROM shipment");
+    }
+
+    @Test
+    void 판매자_둘의_배송이_만들어지고_발송_작업이_돌면_판매자마다_배송_생성_메시지가_orderId를_키로_나간다() {
+        // given
+        long orderId = SEQ.incrementAndGet();
+        shipmentUseCase.create(createCommand(orderId));
+        assertThat(deliveryOutboxRepository.findAll())
+                .extracting(DeliveryOutbox::getEventType, DeliveryOutbox::getMessageKey)
+                .containsExactly(
+                        tuple(DeliveryOutboxEventType.SHIPMENT_CREATED, String.valueOf(orderId)),
+                        tuple(DeliveryOutboxEventType.SHIPMENT_CREATED, String.valueOf(orderId)));
+
+        // when
+        int sent = deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE);
+
+        // then: 받는 쪽(주문)과 약속한 JSON 필드 그대로. 판매자 순으로 맞춰 본다
+        assertThat(sent).isEqualTo(2);
+        List<JsonNode> sut = createdReader.readValuesFor(String.valueOf(orderId), READ_DURATION).stream()
+                .map(jsonMapper::readTree)
+                .sorted(Comparator.comparingLong(message -> message.get("sellerId").asLong()))
+                .toList();
+        assertThat(sut).hasSize(2);
+        List<Shipment> shipments = shipmentsOf(orderId);
+        assertThat(shipments).hasSize(2);
+        assertSoftly(softly -> {
+            for (int i = 0; i < 2; i++) {
+                JsonNode message = sut.get(i);
+                Shipment shipment = shipments.get(i);
+                softly.assertThat(message.propertyNames()).containsExactlyInAnyOrder(
+                        "shipmentId", "orderId", "sellerId", "orderItemIds", "createdAt");
+                softly.assertThat(message.get("shipmentId").asLong()).isEqualTo(shipment.getId());
+                softly.assertThat(message.get("orderId").asLong()).isEqualTo(orderId);
+                softly.assertThat(message.get("sellerId").asLong()).isEqualTo(shipment.getSellerId());
+                // 저장된 배송 생성 시각과 같아야 한다. DB는 마이크로초까지만 저장해 그 차이만 허용한다
+                softly.assertThat(LocalDateTime.parse(message.get("createdAt").asString()))
+                        .isCloseTo(shipment.getCreatedAt(), within(1, ChronoUnit.MICROS));
+            }
+            softly.assertThat(sut.get(0).get("orderItemIds").toString()).isEqualTo("[%d]".formatted(orderId * 10 + 1));
+            softly.assertThat(sut.get(1).get("orderItemIds").toString())
+                    .isEqualTo("[%d,%d]".formatted(orderId * 10 + 2, orderId * 10 + 3));
+        });
+        assertThat(deliveryOutboxRepository.findAll()).extracting(DeliveryOutbox::getStatus)
+                .containsOnly(DeliveryOutboxStatus.SENT);
+    }
+
+    @Test
+    void 같은_결제_완료를_두_번_처리해도_배송_생성_줄은_판매자마다_한_건이다() {
+        // given
+        long orderId = SEQ.incrementAndGet();
+        shipmentUseCase.create(createCommand(orderId));
+
+        // when
+        shipmentUseCase.create(createCommand(orderId));
+
+        // then
+        assertThat(deliveryOutboxRepository.findAll()).hasSize(2);
+    }
+
+    @Test
+    void 배송_생성_트랜잭션이_롤백되면_메시지가_나가지_않는다() {
+        // given
+        long orderId = SEQ.incrementAndGet();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            shipmentUseCase.create(createCommand(orderId));
+            status.setRollbackOnly();
+        });
+
+        // when
+        int sent = deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE);
+
+        // then
+        assertThat(sent).isZero();
+        assertThat(deliveryOutboxRepository.findAll()).isEmpty();
+        assertThat(shipmentsOf(orderId)).isEmpty();
+        assertThat(createdReader.readValuesFor(String.valueOf(orderId), READ_DURATION)).isEmpty();
     }
 
     @Test
@@ -296,6 +380,26 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
         // then: 요청은 커밋 뒤 다른 스레드에서 가므로 기다린다. 롤백된 출고의 요청은 먼저 일어났더라도 이때까지 오지 않았어야 한다
         await().atMost(Duration.ofSeconds(10)).until(() -> fakeCarrierClient.isRequested(committed.getId()));
         assertThat(fakeCarrierClient.isRequested(rolledBack.getId())).isFalse();
+    }
+
+    // 판매자 10은 주문 상품 1개, 판매자 20은 2개. 주문 상품 번호는 유니크라 주문 번호로 만든다
+    private static ShipmentCreateCommand createCommand(long orderId) {
+        AddressCommand address = new AddressCommand("홍길동", "010-1234-5678", "06236", "주소", "상세 주소", null);
+        return new ShipmentCreateCommand(orderId, 100L, ShipmentFixture.NOW, address, List.of(
+                new SellerShipmentCommand(10L, 3_000L, 50_000L, 0L, List.of(itemCommand(orderId * 10 + 1))),
+                new SellerShipmentCommand(20L, 3_000L, 50_000L, 0L,
+                        List.of(itemCommand(orderId * 10 + 2), itemCommand(orderId * 10 + 3)))));
+    }
+
+    private static ShipmentItemCommand itemCommand(long orderItemId) {
+        return new ShipmentItemCommand(orderItemId, "상품", null, 1, 10_000L);
+    }
+
+    private List<Shipment> shipmentsOf(long orderId) {
+        List<Long> ids = jdbcTemplate.queryForList("SELECT id FROM shipment WHERE order_id = ?", Long.class, orderId);
+        return shipmentRepository.findAllById(ids).stream()
+                .sorted(Comparator.comparing(Shipment::getSellerId))
+                .toList();
     }
 
     private Shipment savePreparing() {

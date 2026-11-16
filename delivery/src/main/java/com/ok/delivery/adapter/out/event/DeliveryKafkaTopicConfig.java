@@ -14,6 +14,11 @@ class DeliveryKafkaTopicConfig {
 
     // 빈 이름에 delivery를 넣는다. 한 앱(monolith)에서 다른 모듈의 같은 이름 빈과 겹치면 앱이 시작되지 않는다
     @Bean
+    NewTopic deliveryShipmentCreatedTopic() {
+        return TopicBuilder.name(DeliveryTopics.SHIPMENT_CREATED).build();
+    }
+
+    @Bean
     NewTopic deliveryShipmentDispatchedTopic() {
         return TopicBuilder.name(DeliveryTopics.SHIPMENT_DISPATCHED).build();
     }

@@ -46,9 +46,12 @@ import static com.ok.delivery.fixture.ShipmentFixture.withId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
 class ShipmentServiceTest {
@@ -205,6 +208,42 @@ class ShipmentServiceTest {
         // then
         then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
         assertThat(shipmentsCaptor.getValue().get(0).getChargedShippingFee()).isZero();
+    }
+
+    @Test
+    void 판매자마다_자기_주문_상품으로_배송_생성을_알린다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L, 20L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0)),
+                20L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0))));
+        SellerShipmentCommand twoItemSeller = new SellerShipmentCommand(20L, 3_000L, 50_000L, 0L, List.of(
+                new ShipmentItemCommand(201L, "상품", null, 1, 10_000L),
+                new ShipmentItemCommand(202L, "상품", null, 1, 10_000L)));
+        ShipmentCreateCommand command = new ShipmentCreateCommand(1L, 100L, FRIDAY_NOON,
+                new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null),
+                List.of(seller(10L, 101L), twoItemSeller));
+
+        // when
+        shipmentService.create(command);
+
+        // then: ID와 생성 시각은 저장소가 채우므로 목 저장소에서는 비어 있다. 실제 값은 DeliveryOutboxKafkaIntegrationTest가 본다
+        then(deliveryEventPublisher).should().publishShipmentCreated(any(), eq(1L), eq(10L), eq(List.of(101L)), any());
+        then(deliveryEventPublisher).should().publishShipmentCreated(any(), eq(1L), eq(20L), eq(List.of(201L, 202L)), any());
+        then(deliveryEventPublisher).shouldHaveNoMoreInteractions();
+    }
+
+    @Test
+    void 이미_처리한_주문이면_shipment를_만들지_않고_배송_생성도_알리지_않는다() {
+        // given
+        given(shipmentRepository.existsByOrderId(1L)).willReturn(true);
+
+        // when
+        shipmentService.create(command(seller(10L, 101L)));
+
+        // then
+        then(shipmentRepository).should(never()).saveAll(any());
+        then(deliveryEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
