@@ -10,8 +10,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 배송 outbox 줄을 읽고 발송 결과를 저장한다 (#644).
@@ -26,17 +28,29 @@ public class DeliveryOutboxService {
     private final DeliveryOutboxRepository deliveryOutboxRepository;
     private final Clock clock;
 
-    List<DeliveryOutboxMessage> findPending(int limit) {
-        return deliveryOutboxRepository.findByStatusOrderByIdAsc(DeliveryOutboxStatus.PENDING, PageRequest.ofSize(limit))
+    List<DeliveryOutboxMessage> findPending(int limit, Duration minAge) {
+        LocalDateTime createdBefore = LocalDateTime.now(clock).minus(minAge);
+        return deliveryOutboxRepository.findByStatusAndCreatedAtBeforeOrderByIdAsc(
+                        DeliveryOutboxStatus.PENDING, createdBefore, PageRequest.ofSize(limit))
                 .stream()
-                .map(outbox -> new DeliveryOutboxMessage(outbox.getId(), outbox.getEventType(), outbox.getMessageKey(),
-                        outbox.getPayload(), outbox.getAttemptCount()))
+                .map(DeliveryOutboxService::toMessage)
                 .toList();
     }
 
+    Optional<DeliveryOutboxMessage> findPendingById(Long outboxId) {
+        return deliveryOutboxRepository.findById(outboxId)
+                .filter(outbox -> outbox.getStatus() == DeliveryOutboxStatus.PENDING)
+                .map(DeliveryOutboxService::toMessage);
+    }
+
+    /**
+     * 줄을 "보냄"으로 바꾼다.
+     *
+     * @return 다른 발송이 먼저 "보냄"으로 바꿨으면 false. 이때 메시지는 두 번 나간 것이다
+     */
     @Transactional
-    void markSent(Long outboxId) {
-        get(outboxId).markSent(LocalDateTime.now(clock));
+    boolean markSent(Long outboxId) {
+        return deliveryOutboxRepository.markSentIfPending(outboxId, LocalDateTime.now(clock)) == 1;
     }
 
     @Transactional
@@ -48,6 +62,11 @@ public class DeliveryOutboxService {
     private DeliveryOutbox get(Long outboxId) {
         return deliveryOutboxRepository.findById(outboxId)
                 .orElseThrow(() -> new IllegalStateException("배송 outbox 줄이 없습니다. outboxId=" + outboxId));
+    }
+
+    private static DeliveryOutboxMessage toMessage(DeliveryOutbox outbox) {
+        return new DeliveryOutboxMessage(outbox.getId(), outbox.getEventType(), outbox.getMessageKey(),
+                outbox.getPayload(), outbox.getAttemptCount());
     }
 
 }

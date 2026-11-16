@@ -6,7 +6,11 @@ import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.common.event.payload.PaidOrderItem;
 import com.ok.common.event.payload.PaidSellerOrder;
 import com.ok.common.event.payload.ShippingAddress;
+import com.ok.common.config.AsyncExecutorFactory;
+import com.ok.common.config.AsyncProperties;
 import com.ok.common.config.JpaConfig;
+import com.ok.common.config.MdcTaskDecorator;
+import com.ok.delivery.config.DeliveryAsyncConfig;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.fixture.ShipmentFixture;
@@ -21,7 +25,10 @@ import com.ok.testsupport.TestcontainersConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.modulith.events.EventPublication;
@@ -31,8 +38,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -40,13 +49,33 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 @ApplicationModuleTest
 // 지역 판정 서비스가 Clock을 주입받으므로 테스트용 Clock을 불러온다 (이유는 TestClockConfiguration 참고)
 // 통합 테스트와 같이 test 프로필로 띄워 가짜 택배사(MockCarrierClient)를 빼고, 아무 일도 하지 않는 FakeCarrierClient를 쓴다
-@ActiveProfiles("test")
+@ActiveProfiles({"test", DeliveryModuleTest.MODULE_TEST_PROFILE})
 // 배송 Kafka 설정(토픽 선언, 리스너)이 함께 뜨므로 테스트용 브로커에 붙인다. 붙이지 않으면 내 PC의 Kafka(localhost)로 붙으려 한다.
 // 리스너는 켜지 않는다. 통합 테스트 컨텍스트와 같은 그룹을 쓰므로 켜면 배송 Kafka 메시지(출고지 우편번호, 결제 완료)를 이 컨텍스트가 가져갈 수 있다
-@Import({JpaConfig.class, TestcontainersConfiguration.class, KafkaTestcontainersConfiguration.class, TestClockConfiguration.class,
+@Import({JpaConfig.class, DeliveryModuleTest.AsyncExecutorFactoryConfiguration.class, TestcontainersConfiguration.class, KafkaTestcontainersConfiguration.class, TestClockConfiguration.class,
         FakeCarrierClient.class})
 @TestPropertySource(properties = "spring.kafka.listener.auto-startup=false")
 class DeliveryModuleTest {
+
+    static final String MODULE_TEST_PROFILE = "delivery-module-test";
+
+    // 배송 outbox 즉시 발송 실행기(DeliveryAsyncConfig)는 공용 실행기 팩토리로 만든다. 운영 AsyncConfig(com.ok.common.config)는
+    // 다른 모듈이라 모듈 테스트에서 걸러지므로 팩토리만 앱 yml과 같은 이름으로 만든다.
+    // 모듈 테스트는 다른 모듈 타입의 빈을 @TestConfiguration이 만든 것만 남긴다. 그런데 @TestConfiguration은 통합 테스트의 컴포넌트 스캔(com.ok)에도
+    // 잡혀 팩토리 빈이 둘이 되므로, 이 테스트만 켜는 프로필에서만 등록한다
+    @TestConfiguration(proxyBeanMethods = false)
+    @Profile(MODULE_TEST_PROFILE)
+    static class AsyncExecutorFactoryConfiguration {
+
+        @Bean
+        AsyncExecutorFactory asyncExecutorFactory() {
+            AsyncProperties.ExecutorProperties outboxSend = new AsyncProperties.ExecutorProperties(
+                    AsyncProperties.ExecutorType.PLATFORM, 1, 2, 1000, Duration.ofSeconds(10), null);
+            return new AsyncExecutorFactory(
+                    new AsyncProperties(AsyncProperties.EVENT_EXECUTOR, Map.of(DeliveryAsyncConfig.OUTBOX_SEND_EXECUTOR, outboxSend)),
+                    new MdcTaskDecorator());
+        }
+    }
 
     // 모듈 테스트는 배송 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.
     // 이 테스트는 이벤트 수신·발행 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다

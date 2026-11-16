@@ -12,6 +12,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -23,9 +24,12 @@ import static jakarta.persistence.GenerationType.IDENTITY;
  * 배송 생성·출고·배송 완료와 같은 트랜잭션에서 저장해, 커밋되면 반드시 보내고 롤백되면 보내지 않는다.
  * 회원 outbox와 달리 메시지 본문(JSON)을 저장한다. 송장번호·시각 같은 그때의 값을 담아 보낼 때 다시 만들 수 없기 때문이다.
  * 보낸 줄은 지우지 않는다(무엇을 언제 보냈는지 남김, 회원·정산 outbox와 같음).
+ * "보냄" 기록은 즉시 발송과 발송 작업이 겹쳐도 한쪽만 바꾸도록 저장소의 조건부 UPDATE({@code markSentIfPending})로 한다.
  */
 @Entity
 @Table(name = "delivery_outbox", catalog = DeliverySchema.NAME)
+// 실패 기록이 읽은 뒤 다른 발송이 "보냄"으로 바꿀 수 있다. 바뀐 열만 UPDATE해야 실패 기록이 status를 PENDING으로 되돌리지 않는다
+@DynamicUpdate
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class DeliveryOutbox extends BaseTime {
@@ -74,11 +78,6 @@ public class DeliveryOutbox extends BaseTime {
      */
     public static DeliveryOutbox pending(DeliveryOutboxEventType eventType, String messageKey, String payload) {
         return new DeliveryOutbox(eventType, messageKey, payload);
-    }
-
-    public void markSent(LocalDateTime sentAt) {
-        this.status = DeliveryOutboxStatus.SENT;
-        this.sentAt = sentAt;
     }
 
     /**

@@ -2,8 +2,6 @@ package com.ok.delivery.domain;
 
 import org.junit.jupiter.api.Test;
 
-import java.time.LocalDateTime;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
@@ -36,22 +34,5 @@ class DeliveryOutboxTest {
 
         // then
         assertThat(sut.getLastError()).hasSize(DeliveryOutbox.MAX_ERROR_LENGTH);
-    }
-
-    @Test
-    void 보냄으로_바꾸면_상태와_보낸_시각을_남긴다() {
-        // given
-        DeliveryOutbox sut = DeliveryOutbox.pending(DeliveryOutboxEventType.SHIPMENT_DISPATCHED, "2", "{}");
-        LocalDateTime sentAt = LocalDateTime.of(2026, 11, 16, 10, 0);
-
-        // when
-        sut.markSent(sentAt);
-
-        // then
-        assertThat(sut).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(sut.getStatus()).isEqualTo(DeliveryOutboxStatus.SENT);
-            softly.assertThat(sut.getSentAt()).isEqualTo(sentAt);
-        });
     }
 }

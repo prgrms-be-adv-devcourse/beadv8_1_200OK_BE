@@ -18,6 +18,7 @@ public class FailableDeliveryMessageSender implements DeliveryMessageSender {
 
     private final KafkaDeliveryMessageSender delegate;
     private final AtomicReference<RuntimeException> nextFailure = new AtomicReference<>();
+    private final AtomicReference<String> lastSendThreadName = new AtomicReference<>();
 
     FailableDeliveryMessageSender(KafkaDeliveryMessageSender delegate) {
         this.delegate = delegate;
@@ -35,10 +36,19 @@ public class FailableDeliveryMessageSender implements DeliveryMessageSender {
      */
     public void reset() {
         nextFailure.set(null);
+        lastSendThreadName.set(null);
+    }
+
+    /**
+     * 마지막으로 발송을 시도한 스레드 이름. 즉시 발송이 요청 스레드가 아니라 배송 전용 실행기에서 도는지 확인하는 데 쓴다.
+     */
+    public String lastSendThreadName() {
+        return lastSendThreadName.get();
     }
 
     @Override
     public void send(DeliveryOutboxEventType eventType, String messageKey, String payload) {
+        lastSendThreadName.set(Thread.currentThread().getName());
         RuntimeException failure = nextFailure.getAndSet(null);
         if (failure != null) {
             throw failure;

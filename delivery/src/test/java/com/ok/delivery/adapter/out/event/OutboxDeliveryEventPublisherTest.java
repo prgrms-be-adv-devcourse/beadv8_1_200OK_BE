@@ -3,6 +3,7 @@ package com.ok.delivery.adapter.out.event;
 import com.ok.common.event.ShipmentDeliveredEvent;
 import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.delivery.application.dto.CarrierTrackingRequestedEvent;
+import com.ok.delivery.application.dto.DeliveryOutboxRecordedEvent;
 import com.ok.delivery.application.port.out.DeliveryOutboxRepository;
 import com.ok.delivery.domain.DeliveryOutbox;
 import com.ok.delivery.domain.DeliveryOutboxEventType;
@@ -14,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -23,13 +25,16 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.lenient;
 
 // 실제 Kafka로 나간 메시지는 DeliveryOutboxKafkaIntegrationTest가 본다. 여기서는 outbox에 남기는 값과 함께 내는 스프링 이벤트를 본다
 @ExtendWith(MockitoExtension.class)
 class OutboxDeliveryEventPublisherTest {
 
     private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
+    private static final Long OUTBOX_ID = 7L;
 
     @Mock
     DeliveryOutboxRepository deliveryOutboxRepository;
@@ -42,10 +47,16 @@ class OutboxDeliveryEventPublisherTest {
     @BeforeEach
     void setUp() {
         sut = new OutboxDeliveryEventPublisher(deliveryOutboxRepository, applicationEventPublisher, JSON_MAPPER);
+        // 저장하면 DB가 id를 채우는 것을 흉내 낸다. 값 검사에서 실패하는 테스트는 저장까지 가지 않아 lenient로 둔다
+        lenient().when(deliveryOutboxRepository.save(any())).thenAnswer(invocation -> {
+            DeliveryOutbox outbox = invocation.getArgument(0);
+            ReflectionTestUtils.setField(outbox, "id", OUTBOX_ID);
+            return outbox;
+        });
     }
 
     @Test
-    void 배송_생성을_알리면_orderId를_키로_본문을_outbox에_남기고_스프링_이벤트는_내지_않는다() {
+    void 배송_생성을_알리면_orderId를_키로_본문을_outbox에_남기고_주문용_스프링_이벤트는_내지_않는다() {
         // given
         LocalDateTime createdAt = LocalDateTime.of(2026, 10, 19, 10, 0, 0, 123_456_000);
 
@@ -71,7 +82,8 @@ class OutboxDeliveryEventPublisherTest {
             softly.assertThat(payload.get("orderItemIds").toString()).isEqualTo("[101,102]");
             softly.assertThat(payload.get("createdAt").asString()).isEqualTo("2026-10-19T10:00:00.123456");
         });
-        then(applicationEventPublisher).shouldHaveNoInteractions();
+        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
+        then(applicationEventPublisher).shouldHaveNoMoreInteractions();
     }
 
     @Test
@@ -112,7 +124,7 @@ class OutboxDeliveryEventPublisherTest {
     }
 
     @Test
-    void 배송_시작을_알리면_주문용_스프링_이벤트와_택배사_추적_요청_이벤트를_발행한다() {
+    void 배송_시작을_알리면_주문용_스프링_이벤트와_택배사_추적_요청_이벤트와_즉시_발송_이벤트를_발행한다() {
         // given
         LocalDateTime shippedAt = LocalDateTime.of(2026, 10, 21, 10, 0);
 
@@ -124,6 +136,7 @@ class OutboxDeliveryEventPublisherTest {
                 .publishEvent(new ShipmentDispatchedEvent(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", shippedAt));
         then(applicationEventPublisher).should()
                 .publishEvent(new CarrierTrackingRequestedEvent(1L, "CJ_LOGISTICS", "1234567890"));
+        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
     }
 
     @Test
@@ -165,7 +178,7 @@ class OutboxDeliveryEventPublisherTest {
     }
 
     @Test
-    void 배송_완료를_알리면_주문용_스프링_이벤트도_발행한다() {
+    void 배송_완료를_알리면_주문용_스프링_이벤트와_즉시_발송_이벤트를_발행한다() {
         // given
         LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 23, 15, 0);
 
@@ -174,6 +187,7 @@ class OutboxDeliveryEventPublisherTest {
 
         // then
         then(applicationEventPublisher).should().publishEvent(new ShipmentDeliveredEvent(1L, 2L, 10L, deliveredAt));
+        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
     }
 
     @Test
