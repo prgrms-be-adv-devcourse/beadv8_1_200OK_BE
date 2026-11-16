@@ -55,3 +55,7 @@ related: [535, 309]
 
 - 판매자 승인 스프링 이벤트(`SellerApprovedEvent`)는 #587에서 지웠다. 위 "배경"에 적은 "발행을 그대로 둔다"를 바꾼 것이다. 분리 뒤에는 스프링 이벤트가 member 앱 밖으로 나가지 않아 남겨 둬도 지갑이 받을 수 없고, 팀이 스프링 이벤트를 모두 걷어 내기로 해서다. 지갑 담당과 합의했고, 지갑 출금 작업 때 필요해지면 메시지 약속을 정해 이 outbox로 보낸다.
 - 출고지 우편번호(#587)도 이 outbox를 쓴다. 바뀌는 값을 보내야 해서 `member_outbox`에 본문(`payload`) 칸을 더했다. 위 "본문 저장: 저장하지 않음"은 회원가입 메시지에만 해당한다. 판매자 하위 도메인은 `MemberOutboxRecordUseCase`로 줄을 남긴다. 자세한 이유는 `docs/decisions/member/587-seller-origin-postal-code.md`에 있다.
+
+## 후속 (2026-11-16)
+
+- 토픽 이름 끝에 버전을 붙였다(#651, #648 규칙): `member.member-registered` → `member.member-registered.v1`. 받는 장바구니(#601)가 아직 머지 전이라 옛 이름에 함께 보내지 않고 이름만 바꿨다.
