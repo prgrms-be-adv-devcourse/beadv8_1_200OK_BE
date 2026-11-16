@@ -46,8 +46,9 @@ public interface RefundStepJpaRepository extends JpaRepository<RefundStepJpaEnti
     // 3. 앞 단계는 성공했는데 다음 줄이 없음. 다음 줄은 앞 단계 성공과 같은 구간에서 만들므로 정상 흐름에서는 생기지 않는다(RefundSagaPlan.fromSteps).
     //    주문 성공 뒤에는 지갑이나 재고 줄 중 하나가 있어야 한다(돈이 있으면 지갑, 0원이면 재고). 돌려줄 금액은 칸이 아니라 계산 값이라
     //    금액을 보지 않고 "둘 다 없음"으로 본다. 지갑 성공 뒤에는 재고 줄이 있어야 한다
-    // 4. 지갑 줄이 결과 대기(다시 보내는 중이면 잠깐 시도 중)인 채로 만든 지 오래됨. 결과 대기는 시간이 지나면 다시 보내며 기다리는 시각을
-    //    새로 잡으므로, 처음부터 얼마나 기다렸는지는 줄을 만든 시각(created_at)으로 본다
+    // 4. 지갑 줄이 결과 대기(다시 보내는 중이면 잠깐 시도 중)인 채로 오래됨. 결과 대기는 시간이 지나면 다시 보내며 기다리는 시각을
+    //    새로 잡으므로, 처음부터 얼마나 기다렸는지는 결과를 처음 기다리기 시작한 시각(awaiting_since)으로 본다.
+    //    발행 뒤 "결과 대기" 기록이 실패해 시도 중으로만 남은 줄은 그 값이 없어 줄을 만든 시각으로 대신 본다
     // 할 차례 줄은 넣지 않는다. 알람이 다시 시도하는 중이고, 횟수를 다 쓰면 멈춤이 되어 1번에 걸린다(#577 결정).
     // 한 시간에 한 번 도는 조회라 처리 중 환불을 훑는다. 하위 조회는 유일 제약 (refund_id, step)의 인덱스로 찾는다
     @Query("""
@@ -64,7 +65,7 @@ public interface RefundStepJpaRepository extends JpaRepository<RefundStepJpaEnti
                     AND NOT EXISTS (SELECT 1 FROM RefundStepJpaEntity s WHERE s.refundId = r.id AND s.step = :product))
                 OR EXISTS (SELECT 1 FROM RefundStepJpaEntity s
                            WHERE s.refundId = r.id AND s.step = :wallet AND s.status IN :waiting
-                             AND s.createdAt <= :awaitingSince)
+                             AND COALESCE(s.awaitingSince, s.createdAt) <= :awaitingSince)
             )
             ORDER BY r.id
             """)

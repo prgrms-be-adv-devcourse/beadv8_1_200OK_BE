@@ -44,7 +44,7 @@ public interface RefundStepPersistencePort {
 
     /**
      * 사람이 봐야 하는 처리 중 환불 ID를 오름차순으로 모두 돌려준다(#577 멈춘 환불 찾기). 잠그지 않는 읽기다.
-     * 멈춘 단계 줄이 있음, 단계 줄이 없음, 앞 단계는 성공했는데 다음 줄이 없음, 지갑 결과 대기 줄을 {@code awaitingSince} 이전에 만듦 중 하나에 해당하는 환불이다.
+     * 멈춘 단계 줄이 있음, 단계 줄이 없음, 앞 단계는 성공했는데 다음 줄이 없음, 지갑 결과를 {@code awaitingSince} 이전부터 기다림(처음 기다리기 시작한 시각, 없으면 줄을 만든 시각) 중 하나에 해당하는 환불이다.
      * 할 차례 줄만 있는 환불은 넣지 않는다(알람이 다시 시도하는 중).
      */
     List<Long> findRefundIdsNeedingAttention(LocalDateTime awaitingSince);

@@ -298,6 +298,36 @@ class RefundStepTest {
         });
     }
 
+    // 찾기 알람(#577)이 "처음부터 얼마나 기다렸나"를 재는 기준이라, 다시 보낸 뒤 다시 결과 대기가 돼도 처음 시각을 지킨다
+    @Test
+    void 처음_결과_대기가_될_때의_시각을_다시_보낸_뒤에도_유지한다() {
+        // given
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+        sut.awaitResult(NOW);
+        LocalDateTime resentAt = NOW.plusMinutes(5);
+
+        // when
+        sut.resendAfterResultTimeout(resentAt);
+        sut.awaitResult(resentAt.plusSeconds(1));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getAwaitingSince()).isEqualTo(NOW);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(resentAt.plusSeconds(1).plusMinutes(5));
+        });
+    }
+
+    @Test
+    void 결과_대기가_된_적_없으면_처음_기다린_시각이_없다() {
+        // when
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+
+        // then
+        assertThat(sut.getAwaitingSince()).isNull();
+    }
+
     // 시간 초과 다시 요청은 시도 횟수를 쓰지 않는다(#577 결정). 횟수를 다 쓴 줄이어도 멈추지 않고 다시 보낸다
     @Test
     void 결과_대기_시간이_지나면_횟수를_올리지_않고_시도_중으로_바꾼다() {

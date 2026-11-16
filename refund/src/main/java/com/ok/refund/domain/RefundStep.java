@@ -55,11 +55,14 @@ public class RefundStep {
     private int attemptCount;
     private LocalDateTime nextCheckAt;
     private String lastReason;
+    // 결과를 처음 기다리기 시작한 시각. 다시 보내도(resendAfterResultTimeout) 바꾸지 않는다(#577).
+    // nextCheckAt은 다시 보낼 때마다 밀려 처음부터 기다린 시간을 알 수 없어서 따로 둔다. 결과 대기가 된 적 없으면 null
+    private LocalDateTime awaitingSince;
     private final LocalDateTime createdAt;
 
     private RefundStep(Long id, Long refundId, RefundStepType type, RefundStepStatus status,
                        int attemptCount, LocalDateTime nextCheckAt, String lastReason,
-                       LocalDateTime createdAt) {
+                       LocalDateTime awaitingSince, LocalDateTime createdAt) {
         this.id = id;
         this.refundId = refundId;
         this.type = type;
@@ -67,21 +70,30 @@ public class RefundStep {
         this.attemptCount = attemptCount;
         this.nextCheckAt = nextCheckAt;
         this.lastReason = lastReason;
+        this.awaitingSince = awaitingSince;
         this.createdAt = createdAt;
     }
 
     /** 단계 차례가 되어 첫 시도를 시작하며 만든다. */
     public static RefundStep start(Long refundId, RefundStepType type, LocalDateTime now) {
         return new RefundStep(null, refundId, type, RefundStepStatus.IN_PROGRESS, 1,
-                now.plus(IN_PROGRESS_EXPIRY), null, now);
+                now.plus(IN_PROGRESS_EXPIRY), null, null, now);
     }
 
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
                                      RefundStepStatus status, int attemptCount,
                                      LocalDateTime nextCheckAt, String lastReason,
                                      LocalDateTime createdAt) {
+        return restore(id, refundId, type, status, attemptCount, nextCheckAt, lastReason, null, createdAt);
+    }
+
+    /** 결과를 처음 기다리기 시작한 시각까지 되살린다. 영속 어댑터가 쓴다. */
+    public static RefundStep restore(Long id, Long refundId, RefundStepType type,
+                                     RefundStepStatus status, int attemptCount,
+                                     LocalDateTime nextCheckAt, String lastReason,
+                                     LocalDateTime awaitingSince, LocalDateTime createdAt) {
         return new RefundStep(id, refundId, type, status, attemptCount, nextCheckAt,
-                lastReason, createdAt);
+                lastReason, awaitingSince, createdAt);
     }
 
     /** 다시 시도를 시작한다. READY일 때만 되고, 이미 시도 중이면 다른 곳이 하고 있으므로 false. */
@@ -102,6 +114,10 @@ public class RefundStep {
         }
         status = RefundStepStatus.AWAITING_RESULT;
         nextCheckAt = now.plus(RESULT_WAIT);
+        // 처음 결과 대기가 될 때만 채운다. 다시 보낸 뒤 다시 결과 대기가 돼도 처음 시각을 유지한다
+        if (awaitingSince == null) {
+            awaitingSince = now;
+        }
         return true;
     }
 

@@ -59,6 +59,9 @@ public class RefundStepJpaEntity extends BaseTime {
     @Column(name = "last_reason", length = 100)
     private String lastReason;
 
+    @Column(name = "awaiting_since")
+    private LocalDateTime awaitingSince;
+
     // 새 행 저장용. ID와 생성·수정 시각은 DB(IDENTITY)와 감사 리스너가 채우므로 받지 않는다.
     // 바뀌는 칸은 changeMutableState로 따로 채운다(매퍼가 새 행과 수정에 같은 규칙을 쓰게 하려고)
     RefundStepJpaEntity(Long refundId, RefundStepType step) {
@@ -72,11 +75,13 @@ public class RefundStepJpaEntity extends BaseTime {
             RefundStepStatus status,
             int attemptCount,
             LocalDateTime nextCheckAt,
-            String lastReason
+            String lastReason,
+            LocalDateTime awaitingSince
     ) {
         this.status = status;
         this.attemptCount = attemptCount;
         this.nextCheckAt = nextCheckAt;
         this.lastReason = lastReason;
+        this.awaitingSince = awaitingSince;
     }
 }

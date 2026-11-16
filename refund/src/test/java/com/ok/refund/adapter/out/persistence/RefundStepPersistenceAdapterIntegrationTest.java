@@ -85,7 +85,7 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
     }
 
     // 멈춘 환불 찾기(#577)가 사람이 볼 처리 중 환불만 고르는지 본다. 고르는 넷: 멈춘 줄, 줄 없음, 앞 단계 성공 + 다음 줄 없음, 오래된 지갑 결과 대기.
-    // 만든 시각(created_at)은 저장할 때 실제 시각으로 채워지므로, 기준 시각을 실제 시각보다 하루 뒤로 넘겨 "오래된 결과 대기"를 만든다
+    // 결과 대기가 오래됐는지는 결과를 처음 기다리기 시작한 시각(awaiting_since)으로 본다. 기준은 "지금(10:00)보다 30분 전"이다
     @Test
     void 사람이_봐야_하는_처리_중_환불만_고른다() {
         // given
@@ -95,11 +95,13 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         Long noStepAfterWallet = newRefundWith(824L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
                 step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, null));
         Long awaitingLong = newRefundWith(825L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
-                step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, NOW.plusMinutes(5)));
+                waitingWallet(RefundStepStatus.AWAITING_RESULT, NOW.minusMinutes(31)));
         // 다시 보내는 중이라 잠깐 시도 중인 지갑 줄도 결과 대기와 같이 본다
         Long resendingLong = newRefundWith(826L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
-                step(RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS, NOW.plusMinutes(2)));
-        // 고르지 않음: 할 차례(알람이 다시 시도 중), 재고 시도 중, 끝난 환불의 멈춘 줄, 처리 중이 아닌 환불
+                waitingWallet(RefundStepStatus.IN_PROGRESS, NOW.minusMinutes(30)));
+        // 고르지 않음: 결과를 기다린 지 29분, 할 차례(알람이 다시 시도 중), 재고 시도 중, 끝난 환불의 멈춘 줄, 처리 중이 아닌 환불
+        newRefundWith(830L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                waitingWallet(RefundStepStatus.AWAITING_RESULT, NOW.minusMinutes(29)));
         newRefundWith(827L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
                 step(RefundStepType.WALLET, RefundStepStatus.READY, NOW));
         newRefundWith(828L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
@@ -108,23 +110,42 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         newRefundWith(829L, false, step(RefundStepType.ORDER, RefundStepStatus.STOPPED, null));
 
         // when
-        List<Long> sut = refundStepPersistencePort.findRefundIdsNeedingAttention(LocalDateTime.now().plusDays(1));
+        List<Long> sut = refundStepPersistencePort.findRefundIdsNeedingAttention(NOW.minusMinutes(30));
 
         // then
         assertThat(sut).containsExactly(stopped, noSteps, noStepAfterOrder, noStepAfterWallet, awaitingLong, resendingLong);
     }
 
+    // 줄은 오래전에 만들었어도(예: 처음 발행이 여러 번 실패) 결과를 기다리기 시작한 지 오래되지 않았으면 고르지 않는다.
+    // 만든 시각(created_at)은 저장할 때 실제 시각으로 채워지므로, 기준을 실제 시각보다 하루 뒤로 두어 만든 시각만 보면 고르게 만든다
     @Test
-    void 지갑_결과_대기가_기준_시각_뒤에_만들어졌으면_고르지_않는다() {
+    void 지갑_결과를_기다린_시간은_줄을_만든_시각이_아니라_처음_기다린_시각으로_잰다() {
         // given
+        LocalDateTime threshold = LocalDateTime.now().plusDays(1);
         newRefundWith(831L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
-                step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, NOW.plusMinutes(5)));
+                waitingWallet(RefundStepStatus.AWAITING_RESULT, threshold.plusMinutes(1)));
 
         // when
-        List<Long> sut = refundStepPersistencePort.findRefundIdsNeedingAttention(LocalDateTime.now().minusDays(1));
+        List<Long> sut = refundStepPersistencePort.findRefundIdsNeedingAttention(threshold);
 
         // then
         assertThat(sut).isEmpty();
+    }
+
+    // 발행 뒤 "결과 대기" 기록이 실패해 시도 중으로만 남은 지갑 줄은 처음 기다린 시각이 없다. 그때는 줄을 만든 시각으로 잰다
+    @Test
+    void 처음_기다린_시각이_없는_지갑_줄은_만든_시각으로_잰다() {
+        // given
+        Long resendingWithoutStart = newRefundWith(832L, step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                step(RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS, NOW.plusMinutes(2)));
+
+        // when
+        List<Long> picked = refundStepPersistencePort.findRefundIdsNeedingAttention(LocalDateTime.now().plusDays(1));
+        List<Long> notYet = refundStepPersistencePort.findRefundIdsNeedingAttention(LocalDateTime.now().minusDays(1));
+
+        // then
+        assertThat(picked).containsExactly(resendingWithoutStart);
+        assertThat(notYet).isEmpty();
     }
 
     @Test
@@ -155,10 +176,15 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
             refundPersistencePort.findByIdForUpdate(id);
             for (RefundStep step : steps) {
                 refundStepPersistencePort.saveNew(RefundStep.restore(null, id, step.getType(), step.getStatus(),
-                        step.getAttemptCount(), step.getNextCheckAt(), step.getLastReason(), NOW));
+                        step.getAttemptCount(), step.getNextCheckAt(), step.getLastReason(), step.getAwaitingSince(), NOW));
             }
             return id;
         });
+    }
+
+    // 결과를 기다리는 지갑 줄(다시 보내는 중이면 시도 중). awaitingSince는 처음 기다리기 시작한 시각
+    private static RefundStep waitingWallet(RefundStepStatus status, LocalDateTime awaitingSince) {
+        return RefundStep.restore(null, null, RefundStepType.WALLET, status, 1, NOW.plusMinutes(2), null, awaitingSince, NOW);
     }
 
     private static RefundStep step(RefundStepType type, RefundStepStatus status, LocalDateTime nextCheckAt) {
@@ -195,6 +221,34 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         });
         List<RefundStep> all = inTransaction(() -> refundStepPersistencePort.findAllByRefundId(refundId));
         assertThat(all).extracting(RefundStep::getType).containsExactly(RefundStepType.ORDER, RefundStepType.WALLET);
+    }
+
+    // 처음 기다리기 시작한 시각(#577)이 수정 저장으로 들어가고 다시 읽힌다(매퍼가 바뀌는 칸에 넣었는지)
+    @Test
+    void 결과_대기로_바꾸면_처음_기다린_시각이_저장된다() {
+        // given
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            return refundStepPersistencePort.saveNew(RefundStep.start(refundId, RefundStepType.WALLET, NOW));
+        });
+
+        // when
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+            wallet.awaitResult(NOW.plusSeconds(3));
+            refundStepPersistencePort.update(wallet);
+            return wallet;
+        });
+
+        // then
+        RefundStep sut = inTransaction(() ->
+                refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET)).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getAwaitingSince()).isEqualTo(NOW.plusSeconds(3));
+        });
     }
 
     // 경우 3: 환불 행을 잠그지 않고 단계 행을 만들면, 같은 환불을 다른 곳이 처리하는 중에도 끼어들 수 있어 막는다
