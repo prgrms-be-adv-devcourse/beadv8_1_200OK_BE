@@ -130,7 +130,8 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.get("topic")).isEqualTo(WalletKafkaTopics.ORDER_CREATED);
             softly.assertThat(sut.get("message_key")).isEqualTo(String.valueOf(orderId));
             // 실패 기록은 지갑 DTO로 읽은 값을 다시 JSON으로 바꿔 남겨, 빠진 필드는 null로 보인다
-            softly.assertThat((String) sut.get("payload")).contains("\"orderId\":" + orderId, "\"buyerId\":null");
+            softly.assertThat((String) sut.get("payload"))
+                    .contains("\"orderId\":" + orderId, "\"buyerId\":null", "\"orderSummary\":\"사과 외 2건\"");
             softly.assertThat((String) sut.get("failure_reason")).contains("IllegalArgumentException", "구매자 ID");
         });
     }
@@ -140,7 +141,8 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
         return Map.of(
                 "orderId", orderId,
                 "buyerId", buyerId,
-                "totalAmount", totalAmount);
+                "totalAmount", totalAmount,
+                "orderSummary", "사과 외 2건");
     }
 
     // 주문처럼 키를 orderId로 보낸다
