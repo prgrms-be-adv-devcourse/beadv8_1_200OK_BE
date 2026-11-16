@@ -159,7 +159,7 @@ Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
 - Kafka 상태는 앱 헬스체크(`/actuator/health`, 관리 포트 18080)에 들어가지 않습니다. 앱은 메시지를 보내거나 받을 때 처음 브로커에 접속하므로, 브로커가 꺼져 있어도 기동은 됩니다.
-- 메시지 키는 문자열, 값은 JSON입니다. 접속 주소와 직렬화·역직렬화 설정은 `common`의 [`common-kafka.yaml`](../common/src/main/resources/common-kafka.yaml) 한 곳에 있고, Kafka를 쓰는 앱(`monolith`, `refund`, `payout`, `wallet`)이 `spring.config.import`로 가져옵니다(#538).
+- 메시지 키는 문자열, 값은 JSON입니다. 접속 주소와 직렬화·역직렬화 설정은 `common`의 [`common-kafka.yaml`](../common/src/main/resources/common-kafka.yaml) 한 곳에 있고, Kafka를 쓰는 앱(`monolith`, `refund`, `payout`, `wallet`, `delivery`)이 `spring.config.import`로 가져옵니다(#538).
   - **JSON 모양:** 날짜·시간은 ISO-8601 문자열(`"2026-10-30T14:00:00"`), 금액은 JSON 숫자이고, 값이 없는 필드도 이름을 남기고 `null`입니다. 보내는 쪽 클래스 이름(타입 헤더)은 싣지 않습니다.
   - **필드가 달라질 때:** 받는 쪽은 모르는 필드가 와도 읽고 빠진 필드는 `null`로 읽습니다. 그래서 보내는 쪽이 필드를 더해도 받는 쪽이 멈추지 않습니다. 필드 이름 변경·삭제나 타입 변경은 받는 쪽이 읽지 못하므로 두 모듈을 함께 바꿉니다.
   - **읽을 타입:** 타입 헤더가 없어 받는 쪽이 리스너(토픽)마다 정합니다(`@KafkaListener`의 `properties = "spring.json.value.default.type=..."`).
@@ -629,7 +629,7 @@ com.ok.delivery
 │   └── dto/              *Command, *Query, *Result
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
-    ├── in/event/         이벤트 리스너, 택배사 알림 이벤트(CarrierDeliveredEvent)
+    ├── in/event/         이벤트 리스너(Spring 이벤트, Kafka), 받는 메시지 DTO(dto/), Kafka 수신 설정(재시도·DLT), 택배사 알림 이벤트(CarrierDeliveredEvent)
     ├── out/persistence/  Spring Data JPA 저장소, Querydsl 조회
     ├── out/event/        스프링 이벤트 발행 구현체
     └── out/carrier/      가짜 택배사(MockCarrierClient)
@@ -638,16 +638,19 @@ com.ok.delivery
 - 의존 방향은 `adapter.in` → `application`(`port.in`, `dto`) → `domain`, `adapter.out` → `application.port.out`, `domain`입니다. 서비스는 JPA 저장소를 모르고 `port.out` 인터페이스에만 의존합니다.
 - 컨트롤러와 이벤트 리스너는 `port.in`의 유스케이스 인터페이스만 압니다. 서비스 구현체, `port.out`, `domain`을 직접 쓰지 않습니다. 기본 배송지는 재시도를 맡는 `DefaultShippingAddressFacade`가, 택배사 추적 요청은 트랜잭션 없는 `CarrierTrackingFacade`가 유스케이스를 구현합니다.
 - 출력 포트 이름은 `*Repository`(조회 전용은 `*QueryRepository`)이고, 구현은 `adapter/out/persistence`에 있습니다. Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로이고, 잠금·트랜잭션·쿼리 동작은 서비스가 JPA 저장소를 직접 쓸 때와 같습니다. 포트에는 Spring Data `Repository` 상속과 JPA 어노테이션을 두지 않고, 잠금 조회(`@Lock`, `@Query`)는 JPA 저장소에서 다시 선언합니다. 포트는 Spring Data의 `Page`, `Pageable`은 씁니다.
-- 모듈 간 연동은 지금처럼 Spring 이벤트와 `/internal` 호출입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
+- 모듈 간 연동은 Kafka, Spring 이벤트와 `/internal` 호출입니다. 판매자 출고지 우편번호는 Kafka로(#558), 결제 완료는 Kafka와 Spring 이벤트로 함께 받고(#644), 발행은 아직 Spring 이벤트입니다. 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
 - **Kafka로 받는 메시지:** 배송이 Kafka로 받는 이벤트는 아래 표와 같습니다. 이벤트는 하나씩 Kafka로 옮기고 있어서(#558이 첫 번째) 표는 옮길 때마다 한 줄씩 늘립니다.
 
 | 방향 | 토픽 | 키 | 값 | 실패 |
 |---|---|---|---|---|
 | 회원 → 배송 | `member.seller-origin-postal-code.v1` | `sellerId` | `sellerId`, `postalCode`, `occurredAt` | 1·2·4초 재시도 뒤 `member.seller-origin-postal-code.v1.delivery.seller-origin-sync.DLT` |
+| 주문 → 배송 | `order.order-paid.v1` | `orderId` | `orderId`, `buyerId`, `paidAt`, `shippingAddress`, `sellerOrders[]`(`items[]`) | 1·2·4초 재시도 뒤 `order.order-paid.v1.delivery.shipment-create.DLT` |
 
 - **받기 설정:** 접속·직렬화는 `common-kafka.yaml`을 그대로 쓰고, 오류 처리만 배송 전용 `DeliveryKafkaConsumerConfig`(컨테이너 팩토리 `deliveryKafkaListenerContainerFactory`)가 정합니다. 배송 리스너만 이 팩토리를 쓰므로 다른 모듈은 Spring Boot 기본 설정 그대로입니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 재시도 없이 DLT로 옮기고, 그 밖의 예외는 1·2·4초 간격으로 3번 다시 시도한 뒤 DLT로 옮깁니다. DLT에는 받은 값이 그대로(읽지 못한 메시지는 원본 바이트로) 남고 ERROR 로그를 남깁니다. DLT와 받는 토픽은 배송이 선언합니다.
-- **컨슈머 그룹:** 리스너마다 그룹을 하나씩 두고 이름은 `<모듈>.<용도>`입니다. DLT는 `<받은 토픽>.<그룹>.DLT`이고, 오류 처리기가 실패한 리스너의 그룹으로 이름을 만듭니다. 오프셋이 그룹마다 따로라 한 리스너만 다시 받거나 오프셋을 옮겨도 다른 리스너는 그대로입니다. 서버 이름은 넣지 않습니다. 리스너가 다른 서버로 옮겨 가면 그룹 이름이 바뀌어 처음부터 다시 읽게 되기 때문입니다.
+- **컨슈머 그룹:** 리스너마다 그룹을 하나씩 두고 이름은 `<모듈>.<용도>`입니다. DLT는 `<받은 토픽>.<그룹>.DLT`이고, 오류 처리기가 실패한 리스너의 그룹으로 이름을 만듭니다. 오프셋이 그룹마다 따로라 한 리스너만 다시 받거나 오프셋을 옮겨도 다른 리스너는 그대로이고, 한 리스너의 리밸런스가 다른 리스너를 멈추지 않으며, 랙 지표에서 어떤 일이 밀렸는지 보입니다. 서버 이름은 넣지 않습니다. 리스너가 다른 서버로 옮겨 가면 그룹 이름이 바뀌어 처음부터 다시 읽게 되기 때문입니다.
 - **판매자 출고지 우편번호(#558):** `SellerOriginPostalCodeKafkaListener`(그룹 `delivery.seller-origin-sync`)가 받아 판매자당 한 행인 `seller_origin_postal_code`에 덮어씁니다. 원본은 회원이고, 판매자 배송 설정(`seller_shipping_profile`)과 소유자가 달라 테이블을 나눴습니다. 반영한 메시지의 `occurredAt`을 `source_occurred_at`에 함께 저장해, 그보다 오래된 메시지는 버리고 같은 시각의 메시지(중복 수신)는 같은 값으로 다시 덮어씁니다. `occurredAt`은 한국 시간에 시간대 표기가 없고 마이크로초까지 옵니다. 우편번호가 숫자 5자리가 아니거나 `sellerId`·`occurredAt`이 빠진 메시지는 재시도 없이 DLT로 옮깁니다. 아직 배송비·도착 예정일 계산에는 쓰지 않습니다. 계산에 쓰게 되면 행이 없는 판매자(이 기능 전에 승인돼 아직 메시지가 오지 않은 판매자)는 배송 설정처럼 기본값으로 다룹니다.
+- **결제 완료 받기(#644):** `DeliveryOrderPaidKafkaListener`(그룹 `delivery.shipment-create`)가 받아 값을 검사한 뒤 `ShipmentUseCase.create`를 부릅니다. 같은 주문이 다시 와도 주문 ID로 한 번만 만듭니다.
+- **이중 경로(#603 머지 전까지):** 주문이 아직 Spring 이벤트로 결제 완료를 보내므로 `OrderPaidEventListener`(Spring 이벤트 수신)를 Kafka 리스너와 함께 둡니다. 주문이 Kafka로만 보내게 되면 지웁니다(`TODO(#603)`).
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
 
 ### refund 모듈 구조(헥사고날)
