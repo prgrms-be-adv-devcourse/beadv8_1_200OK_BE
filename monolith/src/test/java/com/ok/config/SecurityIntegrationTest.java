@@ -382,6 +382,7 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 Arguments.of(HttpMethod.POST, "/api/v1/auth/login"),
                 Arguments.of(HttpMethod.POST, "/api/v1/members/signup"),
                 Arguments.of(HttpMethod.POST, "/api/v1/auth/reissue"),
+                Arguments.of(HttpMethod.POST, "/api/v1/auth/logout"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products/999999"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products/categories"),

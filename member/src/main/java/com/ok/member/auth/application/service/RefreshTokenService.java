@@ -29,7 +29,7 @@ import java.util.Objects;
  *
  * <p><b>저장 방식</b>: 로그인 세션마다 행 하나를 두고, 재발급하면 같은 행의 해시를 바꾼다({@link RefreshToken#rotate}).
  *
- * <p>로그아웃(삭제)은 별도 이슈에서 이 서비스에 추가한다.
+ * <p>로그아웃하면 그 세션의 행을 지운다({@link #revoke}). 같은 회원의 다른 세션(다른 행)은 남는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -113,6 +113,32 @@ public class RefreshTokenService {
                 toClockZone(now.truncatedTo(ChronoUnit.MICROS)), toClockZone(expiresAt));
 
         return new RotatedRefreshToken(refreshToken.getMemberId(), new IssuedRefreshToken(newTokenValue, expiresAt));
+    }
+
+    /**
+     * Refresh Token의 세션(행)을 지운다. 없거나 만료되었거나 이미 지운 토큰이어도 예외 없이 끝난다.
+     * 로그아웃의 목적(그 세션이 끝난 상태)은 이미 이뤄져 있고, 응답으로 토큰의 유효 여부를 드러내지 않기 위해서다.
+     *
+     * <p>만료된 행은 지우지 않고 정리 스케줄러에 맡긴다. 만료된 행은 이미 재발급에 쓸 수 없어 남겨도 세션이 살아나지 않는다.
+     * 정리는 만료 일시 인덱스 → 기본 키 순서로, 로그아웃은 기본 키 → 인덱스 순서로 잠가, 같은 만료 행을 함께 지우면 교착 상태가 생길 수 있다.
+     *
+     * <p>{@link #rotate}와 같은 이유로 해시로는 잠금 없이 id만 찾고, 기본 키로 지운다.
+     * 같은 토큰의 재발급이 행을 잠그고 있으면 DELETE가 그 커밋을 기다렸다가, 해시가 바뀌었어도 행을 지운다.
+     * id를 찾았다는 것이 그 토큰이 방금까지 이 세션에서 유효했다는 증거이므로, 회전된 새 토큰의 세션도 함께 끝내는 것이 맞다.
+     *
+     * <p>한계: 재발급이 이미 커밋된 뒤 옛 토큰으로 로그아웃하면 행을 찾지 못해 새 토큰의 세션이 남는다.
+     * 막으려면 이전 해시를 저장해야 해서 재사용 탐지(#562)에서 함께 다룬다.
+     *
+     * @param tokenValue 클라이언트가 보낸 토큰 원문
+     */
+    @Transactional
+    public void revoke(String tokenValue) {
+        Objects.requireNonNull(tokenValue, "tokenValue는 null일 수 없습니다.");
+
+        // 저장할 때와 같은 Clock의 시간대로 비교한다 (toClockZone 참고)
+        LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), clock.getZone());
+        refreshTokenRepository.findUnexpiredIdByTokenHash(TokenHasher.sha256Hex(tokenValue), now)
+                .ifPresent(refreshTokenRepository::deleteDirectlyById);
     }
 
     /**

@@ -1,14 +1,18 @@
 package com.ok.member.auth;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.adapter.out.persistence.RefreshTokenJpaRepository;
 import com.ok.member.auth.application.dto.LoginCommand;
+import com.ok.member.auth.application.dto.LogoutCommand;
 import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.dto.TokenResult;
 import com.ok.member.auth.application.port.in.LoginUseCase;
+import com.ok.member.auth.application.port.in.LogoutUseCase;
 import com.ok.member.auth.application.port.in.RefreshTokenCleanupUseCase;
 import com.ok.member.auth.application.port.in.TokenReissueUseCase;
 import com.ok.member.auth.application.service.TokenHasher;
 import com.ok.member.auth.domain.RefreshToken;
+import com.ok.member.auth.exception.AuthErrorCode;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -16,6 +20,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -23,13 +29,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 /**
@@ -44,11 +53,21 @@ class RefreshTokenSessionIntegrationTest extends AbstractIntegrationTest {
     // 교착 상태나 잠금 대기가 생기면 innodb_lock_wait_timeout(기본 50초)까지 멈추므로, 그보다 짧게 잡아 바로 실패시킨다
     private static final long TIMEOUT_SECONDS = 20;
 
+    // 뒤따르는 요청이 잠금 대기에 들어갈 때까지 기다리는 시간. 테스트 계정에 PROCESS 권한이 없어 INNODB_TRX로 대기를 확인할 수 없다.
+    // 느린 CI에서도 대기에 들어가도록 넉넉히 잡는다. 대기에 들어가지 못했을 때의 결과는 테스트마다 주석에 적었다
+    private static final long LOCK_WAIT_PAUSE_MILLIS = 1_000;
+
     @Autowired
     LoginUseCase loginUseCase;
 
     @Autowired
     TokenReissueUseCase tokenReissueUseCase;
+
+    @Autowired
+    LogoutUseCase logoutUseCase;
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
 
     @Autowired
     RefreshTokenCleanupUseCase refreshTokenCleanup;
@@ -165,6 +184,86 @@ class RefreshTokenSessionIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    @Test
+    void 로그아웃이_먼저_행을_지우면_같은_토큰의_재발급은_기다렸다가_실패한다() throws Exception {
+        // given
+        Member member = saveMember();
+        String refreshToken = login().refreshToken();
+        CountDownLatch deleted = new CountDownLatch(1);
+        CountDownLatch commit = new CountDownLatch(1);
+
+        Future<TokenResult> reissue;
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            try {
+                // when
+                // 로그아웃이 행을 지운 채 커밋을 미뤄, 재발급이 그 행의 잠금을 기다리게 한다
+                Future<?> logout = executor.submit(() -> inTransaction(() -> {
+                    logoutUseCase.logout(new LogoutCommand(refreshToken));
+                    deleted.countDown();
+                    await(commit);
+                    return null;
+                }));
+                await(deleted);
+                reissue = executor.submit(() -> tokenReissueUseCase.reissue(new TokenReissueCommand(refreshToken)));
+                // 재발급이 이 시간 안에 대기에 들어가지 못하면 로그아웃 커밋 뒤에 시작해 같은 결과(실패)가 나므로,
+                // 대기 경로를 거쳤는지는 보장하지 못한다. 교착 없이 끝나고 세션이 살아나지 않는 것을 확인한다
+                Thread.sleep(LOCK_WAIT_PAUSE_MILLIS);
+                commit.countDown();
+                logout.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } finally {
+                commit.countDown();
+            }
+
+            // then
+            // 재발급의 잠금 조회는 커밋된 최신 상태를 읽어 행이 없으므로 실패한다
+            assertThatThrownBy(() -> reissue.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .cause()
+                    .isInstanceOfSatisfying(RestApiException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
+        }
+        assertThat(sessionsOf(member)).isEmpty();
+    }
+
+    @Test
+    void 재발급이_행을_잠근_사이_로그아웃이_행을_찾았으면_재발급이_커밋된_뒤에도_세션이_지워진다() throws Exception {
+        // given
+        Member member = saveMember();
+        String refreshToken = login().refreshToken();
+        CountDownLatch rotated = new CountDownLatch(1);
+        CountDownLatch commit = new CountDownLatch(1);
+
+        TokenResult reissued;
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            try {
+                // when
+                // 재발급이 해시를 바꾼 채 커밋을 미룬다. 로그아웃은 커밋 전 상태를 읽어 옛 해시로 id를 찾고, DELETE에서 잠금을 기다린다
+                Future<TokenResult> reissue = executor.submit(() -> inTransaction(() -> {
+                    TokenResult result = tokenReissueUseCase.reissue(new TokenReissueCommand(refreshToken));
+                    rotated.countDown();
+                    await(commit);
+                    return result;
+                }));
+                await(rotated);
+                Future<?> logout = executor.submit(() -> logoutUseCase.logout(new LogoutCommand(refreshToken)));
+                // 로그아웃이 재발급 커밋 전에 id를 찾아야 하는 순서다. 늦으면 행이 남아 아래 검증에서 실패한다
+                Thread.sleep(LOCK_WAIT_PAUSE_MILLIS);
+                commit.countDown();
+                reissued = reissue.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                logout.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } finally {
+                commit.countDown();
+            }
+        }
+
+        // then
+        // 해시가 바뀌었어도 같은 id의 행을 지워, 재발급으로 받은 새 토큰의 세션도 남지 않는다
+        assertThat(sessionsOf(member)).isEmpty();
+        assertThatThrownBy(() -> tokenReissueUseCase.reissue(new TokenReissueCommand(reissued.refreshToken())))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
+    }
+
     private Member saveMember() {
         return memberRepository.saveAndFlush(Member.createUser(LOGIN_ID, passwordEncoder.encode(PASSWORD),
                 "session01@example.com", "홍길동", "길동이", LocalDateTime.of(2026, 10, 1, 12, 0)));
@@ -209,6 +308,22 @@ class RefreshTokenSessionIntegrationTest extends AbstractIntegrationTest {
             }
         }
         return results;
+    }
+
+    // 유스케이스를 바깥 트랜잭션 안에서 실행해, 작업이 끝난 뒤 커밋 시점을 테스트가 정할 수 있게 한다
+    private <T> T inTransaction(Supplier<T> work) {
+        return new TransactionTemplate(transactionManager).execute(status -> work.get());
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("제한 시간 안에 신호가 오지 않았다");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 
     @FunctionalInterface

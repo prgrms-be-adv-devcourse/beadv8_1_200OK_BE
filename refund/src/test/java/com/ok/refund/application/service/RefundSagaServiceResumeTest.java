@@ -228,6 +228,84 @@ class RefundSagaServiceResumeTest {
         then(refundStepPersistencePort).should(never()).update(any());
     }
 
+    // 지갑 결과를 기다리는 시각이 지났다(결과 메시지가 늦거나 버려짐). 잠근 뒤에도 그대로면 같은 요청을 한 번 다시 보낸다(#577).
+    // 시도 횟수는 그대로이고, 보낸 뒤 다시 결과 대기(5분 뒤)로 돌아간다
+    @Test
+    void 결과를_기다리는_시각이_지난_지갑_줄은_같은_요청을_다시_보낸다() {
+        // given: 기다리는 시각이 지금(10:00)인 결과 대기 지갑 줄, 시도 횟수 3
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID))
+                .willReturn(List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED), overdueAwaitingWallet()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(overdueAwaitingWallet()));
+
+        // when
+        RefundResult sut = saga.resume(REFUND_ID);
+
+        // then
+        assertThat(sut.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should().requestRefund(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should(atLeastOnce()).update(captor.capture());
+        RefundStep resent = captor.getAllValues().getLast();
+        assertThat(resent).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(resent.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(resent.getAttemptCount()).isEqualTo(3);
+            softly.assertThat(resent.getNextCheckAt()).isEqualTo(NOW.plusMinutes(5));
+        });
+    }
+
+    // 읽을 때는 기다리는 시각이 지났지만, 잠그기 전에 늦게 온 지갑 완료가 먼저 지갑 줄을 성공으로 바꿨다. 다시 보내지 않는다(#577)
+    @Test
+    void 읽은_뒤_늦은_지갑_완료가_먼저_반영됐으면_다시_보내지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID))
+                .willReturn(List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED), overdueAwaitingWallet()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED)));
+
+        // when
+        RefundResult sut = saga.resume(REFUND_ID);
+
+        // then
+        assertThat(sut.status()).isEqualTo("PROCESSING");
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+    }
+
+    // 주문 줄이 없는(있을 수 없는 상태) 환불에 기다리는 시각이 지난 지갑 결과 대기 줄이 남았다. 계획은 멈춤을 정한다.
+    // 그대로 두면 알람이 매 회차 맨 앞에 다시 뽑으므로 멈춤으로 바꾼다(#577)
+    @Test
+    void 다시_진행할_수_없는_환불의_기다리는_시각이_지난_결과_대기_줄은_멈춤으로_바꾼다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(overdueAwaitingWallet()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+
+        // when
+        saga.resume(REFUND_ID);
+
+        // then
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep stopped = captor.getValue();
+        assertThat(stopped).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(stopped.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(stopped.getLastReason()).isEqualTo(RefundSagaService.BLOCKED_BY_STOPPED_STEP);
+        });
+    }
+
+    private static RefundStep overdueAwaitingWallet() {
+        return RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                3, NOW, null, NOW.minusMinutes(10));
+    }
+
     private static Refund refund(RefundStatus status) {
         return Refund.restore(REFUND_ID, 1_000L, 101L, 2, 2_000L, 5L, 55L, "감자", "1kg", 10_000L, 20_000L,
                 0L, 0L, 0L, null, status, null, null, null, null, null);

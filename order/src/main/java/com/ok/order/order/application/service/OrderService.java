@@ -60,6 +60,15 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     // 이만큼 지나면 지갑 처리가 실패해 재시작 재발행만 기다리는 상태로 보고 재고를 먼저 푼다(#402)
     private static final Duration PAYMENT_TIMEOUT = Duration.ofMinutes(30);
 
+    // 재고 해제 재처리 대상에서 방금 상태가 바뀐 주문을 빼는 시간(#657). 원래 경로(취소·결제 실패 직후)가 아직 해제 중일 수 있다.
+    // 겹쳐 불러도 상품의 해제는 결과가 같으므로(#605) 겹침을 줄이려는 값일 뿐이다
+    private static final Duration STOCK_RELEASE_RETRY_DELAY = Duration.ofMinutes(1);
+    // 이만큼 지나도 해제를 확인하지 못하면 상품 배포·재시작 같은 잠깐의 장애가 아니라 사람이 볼 문제로 본다(#657)
+    private static final Duration STOCK_RELEASE_STUCK_AFTER = Duration.ofHours(1);
+    // 정리 스케줄러는 다른 정기 작업과 스레드 하나를 같이 쓴다. 상품이 응답하지 않으면 건마다 최대 약 5초(연결 2초 + 응답 3초)라
+    // 한 번에 다시 부르는 수를 제한한다. 남은 주문은 다음 실행이 이어서 부른다
+    private static final int STOCK_RELEASE_BATCH_SIZE = 100;
+
     // 주문 저장
     @Transactional
     public Long create(Order order) {
@@ -91,21 +100,47 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         orderEventPublisher.publishOrderCreatedEvent(order.getId(), order.getBuyerId(), order.getTotalAmount());
     }
 
-    // 보상용 취소: 주문 생성 중 재고 선점·이벤트 발행이 실패한 주문을 지우지 않고 취소로 남긴다(#401)
+    // 보상용 취소: 주문 생성 중 재고 선점·이벤트 발행이 실패한 주문을 지우지 않고 취소로 남긴다(#401).
+    // 취소했으면 true. 취소하지 못한 주문의 재고를 풀면 결제될 주문의 재고가 풀리므로, 부르는 쪽은 true일 때만 재고를 푼다(#657)
     @Transactional
-    public void cancel(Long orderId) {
+    public boolean cancel(Long orderId) {
         // 결제 완료·실패와 같은 잠금으로 줄을 세운다(#398). 지금 호출하는 주문 생성 중 취소는 지갑이 주문을 모르는 상태라
         // 겹칠 결제 결과가 없지만, 결제 대기 주문 정리(#402)에서 재사용하면 늦게 온 결제 완료와 겹칠 수 있다
         Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.warn("[ORDER_CANCEL_ORDER_NOT_FOUND] 취소할 주문이 없습니다. orderId={}", orderId);
-            return;
+            return false;
         }
         Order order = found.get();
         if (!order.cancel()) {
             log.warn("[ORDER_CANCEL_IGNORED] 결제 대기가 아닌 주문은 취소하지 않습니다. orderId={}, status={}",
                     orderId, order.getStatus());
+            return false;
         }
+        return true;
+    }
+
+    // 재고 해제를 확인했다고 기록한다(#657). 취소·결제 실패는 더 바뀌지 않는 상태라 잠그지 않는다
+    @Transactional
+    public void markStockReleased(Long orderId) {
+        orderRepository.findById(orderId)
+                .ifPresent(order -> order.markStockReleased(LocalDateTime.now(clock)));
+    }
+
+    // 재고 해제 재처리 대상 주문 ID(#657)
+    public List<Long> findStockReleasePendingOrderIds() {
+        return findStockReleasePendingOrderIdsChangedBefore(LocalDateTime.now(clock).minus(STOCK_RELEASE_RETRY_DELAY));
+    }
+
+    // 오래 지나도 재고 해제를 확인하지 못한 주문 ID(#657)
+    public List<Long> findStuckStockReleaseOrderIds() {
+        return findStockReleasePendingOrderIdsChangedBefore(LocalDateTime.now(clock).minus(STOCK_RELEASE_STUCK_AFTER));
+    }
+
+    private List<Long> findStockReleasePendingOrderIdsChangedBefore(LocalDateTime changedBefore) {
+        return orderRepository.findStockReleasePendingOrderIds(
+                List.of(OrderStatus.CANCELED, OrderStatus.PAYMENT_FAILED), changedBefore,
+                PageRequest.of(0, STOCK_RELEASE_BATCH_SIZE));
     }
 
     // 결제 대기 정리 대상 주문 ID(#402)

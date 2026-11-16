@@ -55,6 +55,7 @@ import java.util.Properties;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.is;
@@ -318,7 +319,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         assertThat(readMessagesOf(refundId, before)).hasSize(1);
     }
 
-    // 지갑 결과를 기다리는 환불은 다시 진행해도 아무것도 보내지 않는다(결과 대기 시간 초과는 #577)
+    // 지갑 결과를 기다리는 환불은 기다리는 시각(5분) 전이면 다시 진행해도 아무것도 보내지 않는다
     @Test
     void 지갑_결과를_기다리는_환불을_다시_진행하면_아무것도_보내지_않는다() throws Exception {
         // given
@@ -338,6 +339,57 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                         tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, 1),
                         tuple(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1));
         assertThat(readMessagesOf(refundId, before)).isEmpty();
+    }
+
+    // 지갑 결과를 기다리는 시각이 지났는데 결과가 오지 않으면(메시지가 늦거나 버려짐) 같은 refundId로 반환 요청을 한 번 다시 보낸다(#577).
+    // 시도 횟수는 그대로이고, 보낸 뒤 다시 결과 대기가 된다
+    @Test
+    void 지갑_결과를_기다리는_시각이_지난_환불을_다시_진행하면_같은_요청을_한_번_다시_보낸다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId)
+                .andExpect(status().isOk());
+        makeWalletResultOverdue(refundId);
+        Map<TopicPartition, Long> before = endOffsets();
+
+        // when
+        RefundResult result = refundSagaUseCase.resume(refundId);
+
+        // then
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+        assertThat(wallet).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(wallet.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(wallet.getNextCheckAt()).isAfter(LocalDateTime.now(clock));
+        });
+        assertThat(readMessagesOf(refundId, before)).hasSize(1);
+    }
+
+    // 이미 한 번 보낸 요청을 다시 보내다 발행이 실패해도 멈추지 않고 결과 대기로 돌아간다(#577 판단 2).
+    // 멈추면 늦게 온 진짜 지갑 답을 기록하지 못한다. 시도 횟수도 그대로다
+    @Test
+    void 지갑_결과를_다시_보내다_발행이_실패해도_멈추지_않고_결과_대기로_돌아간다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId)
+                .andExpect(status().isOk());
+        makeWalletResultOverdue(refundId);
+        walletRefundRequestPort.fail();
+
+        // when & then
+        assertThatThrownBy(() -> refundSagaUseCase.resume(refundId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("지갑 반환 요청 발행에 실패했습니다(테스트). refundId=" + refundId);
+        RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+        assertThat(wallet).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(wallet.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(wallet.getAwaitingSince()).isNotNull();
+            softly.assertThat(wallet.getNextCheckAt()).isAfter(LocalDateTime.now(clock));
+        });
     }
 
     // 단계 줄이 없는 처리 중 환불은 있을 수 없는 상태라 다시 진행하지 않는다(#616 결정 13)
@@ -423,6 +475,17 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                 .extracting(RefundStep::getType, RefundStep::getStatus)
                 .containsExactly(tuple(RefundStepType.ORDER, RefundStepStatus.IN_PROGRESS));
         assertThat(readMessagesOf(refundId, before)).isEmpty();
+    }
+
+    // 지갑 결과 대기 줄의 기다리는 시각을 1분 전으로 옮긴다. 5분을 실제로 기다릴 수 없어 같은 줄을 시각만 바꿔 저장한다(잠근 행에만 update)
+    private void makeWalletResultOverdue(Long refundId) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
+            RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+            refundStepPersistencePort.update(RefundStep.restore(wallet.getId(), refundId, RefundStepType.WALLET,
+                    wallet.getStatus(), wallet.getAttemptCount(), LocalDateTime.now(clock).minusMinutes(1),
+                    wallet.getLastReason(), wallet.getAwaitingSince(), wallet.getCreatedAt()));
+        });
     }
 
     // 다른 결정처럼 행을 잠그고 바꾼 뒤 저장한다(잠근 행에만 update, refund/CLAUDE.md 4절)

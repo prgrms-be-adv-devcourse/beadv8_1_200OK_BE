@@ -43,6 +43,10 @@ public class Order extends BaseTime {
     @Column(name = "payment_requested_at")
     private LocalDateTime paymentRequestedAt;
 
+    // 재고 해제를 확인한 시각(#657). 취소·결제 실패인데 비어 있으면 정리 스케줄러가 재고 해제를 다시 부른다
+    @Column(name = "stock_released_at")
+    private LocalDateTime stockReleasedAt;
+
     // 수령인 이름
     @Column(nullable = false, length = 50)
     private String recipientName;
@@ -286,6 +290,19 @@ public class Order extends BaseTime {
             item.cancel();
         }
         return true;
+    }
+
+    // 재고를 풀어야 하는데 아직 해제를 확인하지 못했는지(#657).
+    // 취소와 결제 실패는 더 바뀌지 않는 상태라, 한 번 대상이 되면 해제를 확인할 때까지 대상으로 남는다
+    public boolean needsStockRelease() {
+        return (status == OrderStatus.CANCELED || status == OrderStatus.PAYMENT_FAILED) && stockReleasedAt == null;
+    }
+
+    // 재고 해제를 확인했다고 기록한다(#657). 이미 기록했거나 재고를 풀 상태가 아니면 그대로 둔다(처음 확인한 시각을 남긴다)
+    public void markStockReleased(LocalDateTime releasedAt) {
+        if (needsStockRelease()) {
+            this.stockReleasedAt = releasedAt;
+        }
     }
 
     // 판매자 묶음의 상품들을 '배송 중'으로 변경

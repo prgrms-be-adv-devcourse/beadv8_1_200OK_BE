@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * {@code wallet.payout-deposit-checked} 토픽에 보내는 메시지. 필드 이름·타입이 정산과의 약속이다(정산 대사 #308).
+ * {@code wallet.payout-deposit-checked.v1} 토픽(옮기는 동안 옛 이름에도)에 보내는 메시지. 필드 이름·타입이 정산과의 약속이다(정산 대사 #308).
  * 정산은 이 클래스가 아니라 JSON 모양으로 읽는다(타입 헤더를 싣지 않음). 필드를 바꾸면 정산 쪽도 같이 바꿔야 한다.
  *
  * @param checkId 정산이 보낸 묶음 번호 그대로

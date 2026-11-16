@@ -86,6 +86,8 @@ class RefundSagaPlanTest {
                         List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.WALLET, RefundStepStatus.READY)), Action.CALL_WALLET),
                 Arguments.of("지갑 결과 대기 → 기다림", 20_000L,
                         List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT)), Action.WAIT),
+                Arguments.of("지갑 결과 대기인데 기다리는 시각 지남(#577) → 지갑 다시 요청", 20_000L,
+                        List.of(succeeded(RefundStepType.ORDER), overdueAwaiting()), Action.CALL_WALLET),
                 Arguments.of("지갑 멈춤 → 멈춤", 20_000L,
                         List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.WALLET, RefundStepStatus.STOPPED)), Action.STOP),
                 Arguments.of("지갑 성공인데 재고 줄 없음(같은 구간에서 만들어 있을 수 없음) → 멈춤", 20_000L,
@@ -135,6 +137,12 @@ class RefundSagaPlanTest {
     // 시도 중인데 만료 시각이 지금인 줄(시도하던 쪽이 멈춤)
     private static RefundStep expired(RefundStepType type) {
         return RefundStep.restore(type.ordinal() + 1L, REFUND_ID, type, RefundStepStatus.IN_PROGRESS, 1, NOW, null, NOW.minusMinutes(2));
+    }
+
+    // 지갑 결과 대기인데 기다리는 시각이 지금인 줄(결과 메시지가 늦거나 버려짐)
+    private static RefundStep overdueAwaiting() {
+        return RefundStep.restore(RefundStepType.WALLET.ordinal() + 1L, REFUND_ID, RefundStepType.WALLET,
+                RefundStepStatus.AWAITING_RESULT, 1, NOW, null, NOW.minusMinutes(5));
     }
 
     private static RefundStep succeeded(RefundStepType type) {

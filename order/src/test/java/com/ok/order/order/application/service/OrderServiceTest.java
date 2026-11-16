@@ -277,10 +277,13 @@ class OrderServiceTest {
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
-        sut.cancel(10L);
+        boolean canceled = sut.cancel(10L);
 
         // then
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        assertSoftly(softly -> {
+            softly.assertThat(canceled).isTrue();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELED);
+        });
     }
 
     @Test
@@ -291,19 +294,41 @@ class OrderServiceTest {
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
-        sut.cancel(10L);
+        boolean canceled = sut.cancel(10L);
 
         // then
-        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+        assertSoftly(softly -> {
+            softly.assertThat(canceled).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
+        });
     }
 
     @Test
-    void 취소할_주문이_없으면_예외_없이_넘어간다() {
+    void 취소할_주문이_없으면_예외_없이_취소하지_않았다고_알린다() {
         // given
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
-        // when & then
-        sut.cancel(10L);
+        // when
+        boolean canceled = sut.cancel(10L);
+
+        // then
+        assertThat(canceled).isFalse();
+    }
+
+    // ---------- 재고 해제 기록 (#657) ----------
+
+    @Test
+    void 취소된_주문의_재고_해제를_기록한다() {
+        // given
+        Order order = savedOrder(10L);
+        order.cancel();
+        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+
+        // when
+        sut.markStockReleased(10L);
+
+        // then
+        assertThat(order.needsStockRelease()).isFalse();
     }
 
     @Test

@@ -85,6 +85,28 @@ class RefreshTokenIntegrationTest extends AbstractIntegrationTest {
                 .hasMessageContaining("uk_refresh_token_token_hash");
     }
 
+    @Test
+    void 만료되지_않은_기록만_해시로_id를_조회하고_만료_일시와_같은_순간부터는_만료로_본다() {
+        // given
+        LocalDateTime now = LocalDateTime.of(2026, 11, 15, 12, 0);
+        RefreshToken valid = refreshTokenRepository.save(
+                RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("valid"), now.plusNanos(1_000)));
+        refreshTokenRepository.save(RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("at-expiry"), now));
+        refreshTokenRepository.save(RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("expired"), now.minusDays(1)));
+        refreshTokenRepository.flush();
+
+        // when & then
+        // RefreshToken.isExpired와 같은 기준이어야, 재발급에서 거절되는 토큰을 로그아웃이 지우려 하지 않는다
+        assertSoftly(softly -> {
+            softly.assertThat(refreshTokenRepository.findUnexpiredIdByTokenHash(TokenHasher.sha256Hex("valid"), now))
+                    .contains(valid.getId());
+            softly.assertThat(refreshTokenRepository.findUnexpiredIdByTokenHash(TokenHasher.sha256Hex("at-expiry"), now))
+                    .isEmpty();
+            softly.assertThat(refreshTokenRepository.findUnexpiredIdByTokenHash(TokenHasher.sha256Hex("expired"), now))
+                    .isEmpty();
+        });
+    }
+
     private RefreshToken token(Long memberId, String rawValue) {
         LocalDateTime expiresAt = LocalDateTime.now().plusDays(14).truncatedTo(ChronoUnit.MICROS);
         return RefreshToken.create(memberId, TokenHasher.sha256Hex(rawValue), expiresAt);

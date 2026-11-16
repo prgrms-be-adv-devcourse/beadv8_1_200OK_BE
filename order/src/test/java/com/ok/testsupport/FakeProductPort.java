@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /**
  * 상품 모듈 대신 메모리에 넣어 둔 옵션을 돌려주고, 재고 선점·해제를 받은 주문 ID를 기록하는 Fake 출력 포트.
@@ -30,6 +31,8 @@ public class FakeProductPort implements ProductPort {
     private final List<Long> allocatedOrderIds = new CopyOnWriteArrayList<>();
     private final List<Long> releasedOrderIds = new CopyOnWriteArrayList<>();
     private volatile OrderErrorCode allocationFailure;
+    private volatile OrderErrorCode releaseFailure;
+    private volatile Consumer<Long> beforeRelease = orderId -> { };
 
     public void register(ProductOption option) {
         options.put(option.optionId(), option);
@@ -38,6 +41,16 @@ public class FakeProductPort implements ProductPort {
     // 다음 재고 선점부터 이 에러 코드로 실패한다 (상품 모듈의 409 응답을 어댑터가 주문 에러 코드로 바꾼 결과와 같다)
     public void failAllocationWith(OrderErrorCode errorCode) {
         this.allocationFailure = errorCode;
+    }
+
+    // 다음 재고 해제부터 이 에러 코드로 실패한다. null을 넣으면 다시 성공한다 (상품 재시작·응답 지연을 흉내 낸다, #657)
+    public void failReleaseWith(OrderErrorCode errorCode) {
+        this.releaseFailure = errorCode;
+    }
+
+    // 재고 해제를 받는 순간 할 일을 넣는다. 해제를 부를 때 주문 쪽 트랜잭션이 이미 커밋됐는지 볼 때 쓴다(#657)
+    public void beforeRelease(Consumer<Long> hook) {
+        this.beforeRelease = hook;
     }
 
     public List<Long> allocatedOrderIds() {
@@ -53,6 +66,8 @@ public class FakeProductPort implements ProductPort {
         allocatedOrderIds.clear();
         releasedOrderIds.clear();
         allocationFailure = null;
+        releaseFailure = null;
+        beforeRelease = orderId -> { };
     }
 
     // 상품 모듈은 없는 옵션을 응답에서 빼고 돌려준다
@@ -74,6 +89,10 @@ public class FakeProductPort implements ProductPort {
 
     @Override
     public void releaseStock(Long orderId) {
+        beforeRelease.accept(orderId);
+        if (releaseFailure != null) {
+            throw new RestApiException(releaseFailure);
+        }
         releasedOrderIds.add(orderId);
     }
 }

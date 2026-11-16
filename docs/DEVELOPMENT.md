@@ -689,7 +689,8 @@ com.ok.wallet
 **Kafka 수신과 실패 기록**
 
 - 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested`, 키 `checkId`, #613)입니다. 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
-- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 환불·정산이 `.v1`로 옮길 때까지 세 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#669). 두 토픽에 먼저 보내 놓고 저장 확인을 합쳐서 10초까지 기다리며, 한쪽만 실패해도 예외라 다시 받을 때 두 토픽에 모두 다시 나갑니다. 환불·정산이 옮기면 옛 이름 발행을 지웁니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
 - 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
 - 넘긴 메시지는 건너뛰지 않고 지갑 DB의 `wallet_message_failure`에 원문·가장 안쪽 원인과 함께 대기(`PENDING`)로 남기고 `[WALLET_MESSAGE_FAILED]` ERROR 로그를 한 번 남깁니다. 같은 메시지(토픽·파티션·오프셋)는 한 번만 남습니다. 기록마저 실패하면 오프셋을 옮기지 않아 같은 메시지를 다시 받습니다.
@@ -779,7 +780,7 @@ com.ok.member.member
 com.ok.member.auth
 ├── config/               JWT 서명 키 설정, 비밀번호 인코더
 ├── application/
-│   ├── port/in/          LoginUseCase, TokenReissueUseCase, RefreshTokenCleanupUseCase
+│   ├── port/in/          LoginUseCase, TokenReissueUseCase, LogoutUseCase, RefreshTokenCleanupUseCase
 │   ├── port/out/         RefreshTokenRepository, AccessTokenIssuer, MemberCredentialReader, SellerApprovalReader
 │   └── service/          LoginFacade(트랜잭션 밖 비밀번호 확인), AuthService(트랜잭션), RefreshTokenService, RefreshTokenCleanupService
 └── adapter/
@@ -1114,6 +1115,17 @@ Access Token(30분)이 만료되면 로그인 때 받은 Refresh Token으로 새
 - 재발급 요청은 Access Token 없이 보냅니다. 만료된 토큰이 붙어 있어도 무시됩니다.
 - 401의 `type`으로 다음 행동을 정합니다: `token-expired`는 재발급, `invalid-token`·`unauthorized`는 재로그인.
 - 503 `auth-key-unavailable`은 토큰 문제가 아니므로 재발급도 재로그인도 하지 않고, 토큰을 그대로 두고 잠시 후 다시 보냅니다.
+
+### 로그아웃
+
+`POST /api/v1/auth/logout`에 재발급과 같은 형식(`{"refreshToken": "..."}`)으로 보내면 그 기기의 세션(Refresh Token 행)을 지우고 204를 반환합니다.
+
+- 같은 회원이 다른 기기에서 로그인한 세션은 그대로 남습니다. 모든 기기 로그아웃은 아직 없습니다(#561 이후).
+- 없거나 만료되었거나 이미 로그아웃한 토큰이어도 204입니다. 응답으로 토큰의 유효 여부를 드러내지 않고, 같은 요청을 다시 보내도 됩니다. 형식이 틀리면 422입니다.
+- Access Token 없이 보냅니다. Access Token이 만료된 뒤에도 로그아웃할 수 있도록 공개 API로 열었고, 붙어 있어도 무시합니다.
+- 이미 발급된 Access Token은 만료(30분)까지 유효하므로 클라이언트가 두 토큰을 함께 지웁니다.
+- 진행 중인 재발급 요청이 있으면 그 응답을 기다렸다가, 응답으로 받은 **새 Refresh Token으로** 로그아웃합니다. 재발급이 실패했으면 가지고 있던 토큰으로 보냅니다.
+  옛 Refresh Token으로 보내면, 서버에서 재발급이 먼저 끝난 경우 행을 찾지 못해 새 토큰의 세션이 남습니다. 재발급 응답만 버려서는 이 세션이 끝나지 않습니다. 재발급 응답이 네트워크에서 사라진 경우처럼 클라이언트가 새 토큰을 모르는 경우는 이전 토큰을 기억해야 막을 수 있어 재사용 탐지(#562)에서 다룹니다.
 
 ### 컨트롤러에서 로그인 회원 받기
 

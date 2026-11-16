@@ -72,6 +72,11 @@ public class FakeRefundStepPersistencePort implements RefundStepPersistencePort 
         return persistenceAdapter.findRefundIdsDueForResume(now, limit);
     }
 
+    @Override
+    public List<Long> findRefundIdsNeedingAttention(LocalDateTime awaitingSince) {
+        return persistenceAdapter.findRefundIdsNeedingAttention(awaitingSince);
+    }
+
     // 고른 저장과 맞으면 한 번만 실패시키고 지운다. DB 연결 끊김 같은 일시적 오류를 흉내 내 표준 예외를 던진다
     // 새 줄 저장은 단계만 맞으면, 고쳐 저장은 단계와 바꾼 뒤 상태까지 맞아야 고른 저장이다
     private void failIfChosen(SaveKind kind, RefundStep step) {

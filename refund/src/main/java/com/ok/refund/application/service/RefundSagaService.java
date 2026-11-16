@@ -271,7 +271,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             });
             case COMPLETE -> completeInRequest(refundId, "다시 진행에서 완료");
             case WAIT -> {
-                log.info("다시 진행할 단계가 시도 중이거나 지갑 결과를 기다리는 중이라 넘김. refundId={}", refundId);
+                log.info("다시 진행할 단계가 시도 중이거나 지갑 결과를 기다리는 중(기다리는 시각 전)이라 넘김. refundId={}", refundId);
                 yield RefundResult.from(refund);
             }
             case STOP -> {
@@ -284,8 +284,8 @@ public class RefundSagaService implements RefundSagaUseCase {
         };
     }
 
-    // 다시 진행할 수 없다고 판단한 처리 중 환불(예: 주문 줄은 멈췄는데 재고 줄이 할 차례)에서, 알람이 다시 집을 줄(할 차례, 만료된 시도 중)을
-    // 멈춤으로 바꾼다(PR #628 검수). 그대로 두면 그 줄의 시각이 바뀌지 않아 알람 매 회차 맨 앞에 다시 뽑히고, 쌓이면 다른 환불을 밀어낸다.
+    // 다시 진행할 수 없다고 판단한 처리 중 환불(예: 주문 줄은 멈췄는데 재고 줄이 할 차례)에서,
+    // 알람이 다시 집을 줄을 멈춤으로 바꾼다(PR #628 검수). 다시 집을 줄은 할 차례, 만료된 시도 중, 기다리는 시각이 지난 결과 대기(#577)다. 그대로 두면 그 줄의 시각이 바뀌지 않아 알람 매 회차 맨 앞에 다시 뽑히고, 쌓이면 다른 환불을 밀어낸다.
     // 멈춤으로 바꾸면 사람이 볼 환불로 드러난다. 만료되지 않은 시도 중 줄은 누군가 하는 중이라 건드리지 않는다.
     // 잠근 뒤 처리 중이 아니면 쓰지 않는다(#616 결정 15). 끝난 환불은 알람이 고르지도 않는다
     private void stopBlockedSteps(Long refundId) {
@@ -296,7 +296,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             }
             LocalDateTime now = LocalDateTime.now(clock);
             for (RefundStep step : refundStepPersistencePort.findAllByRefundId(refundId)) {
-                boolean blocked = step.getStatus() == RefundStepStatus.READY || step.isExpired(now);
+                boolean blocked = step.getStatus() == RefundStepStatus.READY || step.isExpired(now) || step.isResultOverdue(now);
                 if (blocked && step.stop(BLOCKED_BY_STOPPED_STEP)) {
                     refundStepPersistencePort.update(step);
                     log.warn("다시 진행할 수 없는 환불의 남은 단계를 멈춤(확인 필요). refundId={}, step={}", refundId, step.getType());
@@ -469,6 +469,7 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 다른 모듈을 부르기 전에 그 단계 줄을 준비한다(#616 결정 14). 환불 행을 잠근 구간 안에서만 부른다.
     // 없음 → 시도 중으로 새로 만듦, 할 차례 → 다시 시작(시도 횟수 +1). 둘 다 CALL이다.
     // 시도 중·결과 대기는 누군가 하는 중이거나 답을 기다리는 중이라 다시 보내지 않고(BUSY), 끝 상태는 진행하지 않는다(ENDED).
+    // 단, 만료된 시도 중(#576)과 기다리는 시각이 지난 결과 대기(#577)는 다시 부른다(CALL).
     // 확인 없이 새로 저장하면 같은 단계를 다시 진행할 때 (refund_id, step) 유일 제약에 걸린다
     private StepPrep prepareStep(Long refundId, RefundStepType type, LocalDateTime now) {
         return prepareStep(refundId, type, refundStepPersistencePort.findByRefundIdAndType(refundId, type), now);
@@ -497,6 +498,18 @@ public class RefundSagaService implements RefundSagaUseCase {
             }
             log.warn("시도 중인 채로 만료된 단계 줄을 다시 집음. refundId={}, step={}, attemptCount={}",
                     refundId, type, step.getAttemptCount());
+            return StepPrep.CALL;
+        }
+        // 결과 대기인데 기다리는 시각이 지났으면 결과 메시지가 늦거나 버려진 것이라 같은 refundId로 다시 보낸다(#577).
+        // 잠근 구간 안에서 판단하므로 늦게 온 지갑 결과나 다른 서버와 겹쳐도 한 번만 시작한다(먼저 잠근 쪽이 줄을 바꾼다).
+        // 시도 횟수에 넣지 않고 멈추지도 않는다(RefundStep.resendAfterResultTimeout).
+        // INFO인 이유: 정해 둔 자동 회복 동작이고 끝이 없어(답이 끝내 안 오면 환불 1건에 하루 288줄) WARN이면 다른 이상 신호를 덮는다.
+        // 사람에게 알리는 일은 멈춘 환불 찾기(30분 넘게 기다림, WARN)가 한 시간에 한 줄로 맡는다.
+        // 위의 만료 다시 집기는 5번에서 끝나 쌓이지 않으므로 WARN 그대로 둔다
+        if (step.resendAfterResultTimeout(now)) {
+            refundStepPersistencePort.update(step);
+            log.info("결과를 기다리는 시간이 지나 같은 요청을 다시 보냄. refundId={}, step={}, awaitingSince={}",
+                    refundId, type, step.getAwaitingSince());
             return StepPrep.CALL;
         }
         return step.getStatus().isFinished() ? StepPrep.ENDED : StepPrep.BUSY;
