@@ -26,6 +26,7 @@ public class OrderPaidEventListener {
      * 이벤트를 서비스 입력으로 바꿔 넘긴다. 같은 이벤트가 다시 와도 서비스가 주문 ID로 한 번만 만든다.
      * 배송지 검증 실패나 DB 오류는 예외를 그대로 전파해 처리되지 않은 이벤트로 남긴다.
      */
+    // TODO(#603): 주문이 Kafka(order.order-paid.v1)로 보내게 되면 이 리스너를 지운다. 그때까지 Kafka 리스너와 함께 받는다(이중 경로, #644 결정 ④)
     @ApplicationModuleListener
     void on(OrderPaidEvent event) {
         shipmentUseCase.create(new ShipmentCreateCommand(

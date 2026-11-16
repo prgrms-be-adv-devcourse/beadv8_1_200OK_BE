@@ -25,9 +25,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 배송이 Kafka로 받는 메시지의 오류 처리 규칙을 정한다 (#558).
+ * 배송이 Kafka로 받는 메시지의 오류 처리 규칙을 정한다 (#558, #644 결정 ②).
  * 배송 리스너만 이 설정({@link #LISTENER_CONTAINER_FACTORY})을 쓰고, 다른 모듈은 자기 설정이나 Spring Boot 기본 설정을 그대로 쓴다.
- * 출고지 우편번호를 받지 못하면 배송 쪽 사본이 회원과 어긋나므로 로그만 남기고 건너뛰지 않고 DLT({@code <토픽>.<그룹>.DLT})에 옮겨 둔다.
+ * 출고지 우편번호를 받지 못하면 배송 쪽 사본이 회원과 어긋나고, 결제 완료를 받지 못하면 결제된 주문이 배송되지 않으므로
+ * 로그만 남기고 건너뛰지 않고 DLT({@code <토픽>.<그룹>.DLT})에 옮겨 둔다.
  * - {@link IllegalArgumentException}(값이 틀림)과 JSON을 읽지 못한 메시지는 다시 해도 같으므로 바로 DLT로 보낸다.
  * - 그 밖의 예외는 1초부터 두 배씩 3번(1·2·4초) 다시 시도한 뒤 DLT로 보낸다.
  * - DLT로 보내지 못하면 오프셋을 옮기지 않아 같은 메시지를 다시 받는다.
@@ -69,6 +70,16 @@ public class DeliveryKafkaConsumerConfig {
     @Bean
     NewTopic deliverySellerOriginPostalCodeDltTopic() {
         return TopicBuilder.name(DeliveryInboundTopics.SELLER_ORIGIN_POSTAL_CODE_DLT).build();
+    }
+
+    @Bean
+    NewTopic deliveryOrderPaidTopic() {
+        return TopicBuilder.name(DeliveryInboundTopics.ORDER_PAID).build();
+    }
+
+    @Bean
+    NewTopic deliveryOrderPaidDltTopic() {
+        return TopicBuilder.name(DeliveryInboundTopics.ORDER_PAID_DLT).build();
     }
 
     // 테스트에서 규칙을 Kafka 없이 확인할 수 있게 빈 메서드와 나눠 둔다

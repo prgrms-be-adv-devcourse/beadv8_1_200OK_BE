@@ -42,7 +42,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 통합 테스트와 같이 test 프로필로 띄워 가짜 택배사(MockCarrierClient)를 빼고, 아무 일도 하지 않는 FakeCarrierClient를 쓴다
 @ActiveProfiles("test")
 // 배송 Kafka 설정(토픽 선언, 리스너)이 함께 뜨므로 테스트용 브로커에 붙인다. 붙이지 않으면 내 PC의 Kafka(localhost)로 붙으려 한다.
-// 리스너는 켜지 않는다. 통합 테스트 컨텍스트와 같은 그룹을 쓰므로 켜면 출고지 우편번호 메시지를 이 컨텍스트가 가져갈 수 있다
+// 리스너는 켜지 않는다. 통합 테스트 컨텍스트와 같은 그룹을 쓰므로 켜면 배송 Kafka 메시지(출고지 우편번호, 결제 완료)를 이 컨텍스트가 가져갈 수 있다
 @Import({JpaConfig.class, TestcontainersConfiguration.class, KafkaTestcontainersConfiguration.class, TestClockConfiguration.class,
         FakeCarrierClient.class})
 @TestPropertySource(properties = "spring.kafka.listener.auto-startup=false")

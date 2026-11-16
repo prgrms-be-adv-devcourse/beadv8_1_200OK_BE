@@ -10,7 +10,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// 단위 테스트: 배송 Kafka 오류 처리 규칙. DLT로 실제로 옮겨지는지는 SellerOriginPostalCodeKafkaIntegrationTest가 본다
+// 단위 테스트: 배송 Kafka 오류 처리 규칙. DLT로 실제로 옮겨지는지는 SellerOriginPostalCodeKafkaIntegrationTest와 DeliveryOrderPaidKafkaIntegrationTest가 본다
 class DeliveryKafkaConsumerConfigTest {
 
     @Test
