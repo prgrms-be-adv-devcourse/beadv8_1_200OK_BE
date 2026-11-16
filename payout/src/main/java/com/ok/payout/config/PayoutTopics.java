@@ -9,10 +9,19 @@ package com.ok.payout.config;
 public final class PayoutTopics {
 
     /** 정산 → 지갑: 판매자에게 줄 정산금이 확정됨. 지갑이 받아 판매자 지갑에 입금한다. 키는 payoutId, 값은 {@link com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage} */
-    public static final String SELLER_PAYOUT_CREATED = "payout.seller-payout-created";
+    public static final String SELLER_PAYOUT_CREATED = "payout.seller-payout-created.v1";
 
     /** 정산 → 지갑: 대사 질문 묶음("이 정산들, 입금됐나요?", #619). 키는 checkId, 값은 {@link com.ok.payout.adapter.out.event.dto.PayoutDepositCheckRequestedMessage} */
-    public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED = "payout.payout-deposit-check-requested";
+    public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED = "payout.payout-deposit-check-requested.v1";
+
+    // 옛 이름. 지갑이 아직 이 이름으로 받아서(WalletKafkaTopics), 지갑이 .v1로 옮길 때까지 같은 메시지를 .v1과 함께 보낸다 (#653)
+    // 지갑이 옮긴 뒤 이 두 줄과 쓰는 곳을 지운다 (#653 PR 3)
+
+    /** {@link #SELLER_PAYOUT_CREATED}의 옛 이름. 키·값은 같다 */
+    public static final String SELLER_PAYOUT_CREATED_OLD = "payout.seller-payout-created";
+
+    /** {@link #PAYOUT_DEPOSIT_CHECK_REQUESTED}의 옛 이름. 키·값은 같다 */
+    public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED_OLD = "payout.payout-deposit-check-requested";
 
     // 정산이 받는 토픽. 이름은 보내는 모듈(주문·지갑)의 것이라 보내는 쪽과 같은 값이어야 받는다(#339 합의)
 

@@ -17,11 +17,22 @@ public class PayoutKafkaTopicConfig {
 
     @Bean
     public NewTopic sellerPayoutCreatedTopic() {
-        return TopicBuilder.name(PayoutTopics.SELLER_PAYOUT_CREATED).build();
+        return TopicBuilder.name(PayoutTopics.SELLER_PAYOUT_CREATED_OLD).build();
     }
 
     @Bean
     public NewTopic payoutDepositCheckRequestedTopic() {
+        return TopicBuilder.name(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED_OLD).build();
+    }
+
+    // .v1 토픽(#653). 빈 이름에 payout을 넣는다. 지갑이 .v1로 옮기며 같은 토픽을 선언해도 한 앱(monolith)에서 빈 이름이 겹치지 않게
+    @Bean
+    public NewTopic payoutSellerPayoutCreatedV1Topic() {
+        return TopicBuilder.name(PayoutTopics.SELLER_PAYOUT_CREATED).build();
+    }
+
+    @Bean
+    public NewTopic payoutDepositCheckRequestedV1Topic() {
         return TopicBuilder.name(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED).build();
     }
 

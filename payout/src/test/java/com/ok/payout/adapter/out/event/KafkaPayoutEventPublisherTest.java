@@ -1,6 +1,7 @@
 package com.ok.payout.adapter.out.event;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import org.apache.kafka.common.errors.SerializationException;
@@ -15,6 +16,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
 import com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage;
+import com.ok.payout.application.port.out.PayoutDepositCheckRequested;
 import com.ok.payout.application.port.out.SellerPayoutCreated;
 import com.ok.payout.config.PayoutTopics;
 
@@ -55,6 +57,49 @@ class KafkaPayoutEventPublisherTest {
     }
 
     @Test
+    void 지갑이_옮기기_전까지_옛_이름_토픽에도_같은_키와_값을_보낸다() {
+        // given
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
+
+        // when
+        sut.publishSellerPayoutCreated(created);
+
+        // then: 지갑은 아직 옛 이름으로 받는다 (#653)
+        then(kafkaTemplate).should().send(PayoutTopics.SELLER_PAYOUT_CREATED_OLD, "12",
+                new SellerPayoutCreatedMessage(12L, 5L, 9_700L, CREATED_AT));
+    }
+
+    @Test
+    void 대사_질문도_v1과_옛_이름_토픽에_함께_보낸다() {
+        // given
+        PayoutDepositCheckRequested requested = new PayoutDepositCheckRequested(3L, List.of());
+        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
+
+        // when
+        sut.publishDepositCheckRequested(requested);
+
+        // then
+        then(kafkaTemplate).should().send(eq(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED), eq("3"), any());
+        then(kafkaTemplate).should().send(eq(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED_OLD), eq("3"), any());
+    }
+
+    @Test
+    void 한쪽_토픽만_실패해도_실패한_토픽을_담은_예외를_던진다() {
+        // given: .v1은 저장됐고 옛 이름만 실패. 부른 쪽이 다시 보낼 때 두 토픽에 모두 다시 나가고, 지갑이 중복을 거른다
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        given(kafkaTemplate.send(eq(PayoutTopics.SELLER_PAYOUT_CREATED), anyString(), any()))
+                .willReturn(CompletableFuture.completedFuture(null));
+        given(kafkaTemplate.send(eq(PayoutTopics.SELLER_PAYOUT_CREATED_OLD), anyString(), any()))
+                .willReturn(CompletableFuture.failedFuture(new KafkaException("브로커 저장 실패")));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED_OLD);
+    }
+
+    @Test
     void 브로커_저장에_실패하면_payoutId를_담은_예외를_던진다() {
         // given
         SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
@@ -65,7 +110,7 @@ class KafkaPayoutEventPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED);
     }
 
     @Test
@@ -79,7 +124,7 @@ class KafkaPayoutEventPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED);
     }
 
     @Test
@@ -94,7 +139,7 @@ class KafkaPayoutEventPublisherTest {
             // when & then: PayoutService가 이 표시를 보고 남은 줄을 시도하지 않고 멈춤
             assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12");
+                    .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED);
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
         } finally {
             // 다른 테스트로 중단 표시가 새지 않게 지움

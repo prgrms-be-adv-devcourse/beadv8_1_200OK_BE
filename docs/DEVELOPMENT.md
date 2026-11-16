@@ -835,8 +835,9 @@ com.ok.order
 **Kafka 송수신**
 
 - 정산이 보내는 메시지
-  - 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309). 못 보낸 줄과 대사에서 "입금 없음"으로 답한 정산은 짧은 간격 재발송이 다시 보냅니다(#620).
-  - 대사 질문 묶음(`payout.payout-deposit-check-requested`, 키 `checkId`, 한 묶음 최대 500건): 매일 대사가 지갑에 입금됐는지 묻습니다(#619).
+  - 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309). 못 보낸 줄과 대사에서 "입금 없음"으로 답한 정산은 짧은 간격 재발송이 다시 보냅니다(#620).
+  - 대사 질문 묶음(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 한 묶음 최대 500건): 매일 대사가 지갑에 입금됐는지 묻습니다(#619).
+  - 지갑이 `.v1`로 옮길 때까지 두 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#653). 지갑이 옮기면 옛 이름 발행을 지웁니다.
 - 정산이 받는 메시지
   - 구매확정(`order.order-product-confirmed.v1`, 키 `orderItemId`, 그룹 `payout.candidate-create`, #661)
   - 결제 완료(`wallet.wallet-payment-completed`, 키 `orderId`)
