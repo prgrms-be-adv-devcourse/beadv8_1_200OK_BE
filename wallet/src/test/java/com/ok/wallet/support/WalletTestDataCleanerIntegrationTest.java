@@ -1,14 +1,18 @@
 package com.ok.wallet.support;
 
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.wallet.domain.BuyerWalletLedgerType;
+import com.ok.wallet.domain.SellerWalletLedgerType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -135,6 +139,29 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 .extracting(row -> row.get("wallet_type"), row -> row.get("check_item"), row -> row.get("ledger_id"),
                         row -> row.get("actual"))
                 .containsExactly(tuple(kind.name(), "UNKNOWN_LEDGER_TYPE", ledgerId, "WITHDRAW"));
+    }
+
+    // 위 시험은 빠뜨린 유형이 원장에 실제로 들어가야 잡는다. 코드의 유형 목록을 직접 돌면 유형을 더한 순간 잡는다
+    @ParameterizedTest
+    @MethodSource("코드에_있는_원장_유형")
+    void 코드에_있는_원장_유형은_모두_검사_SQL에_증감_방향이_있다(WalletKind kind, String type) {
+        // given
+        long walletId = insertWallet(kind, 1L, 1_000);
+        insertLedger(kind, walletId, type, 1_000, 1_000, type + "-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then: 짝이 없어 다른 어긋남은 나오므로 유형 검사 결과만 본다
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"))
+                .doesNotContain("UNKNOWN_LEDGER_TYPE");
+    }
+
+    static Stream<Arguments> 코드에_있는_원장_유형() {
+        return Stream.concat(
+                Arrays.stream(BuyerWalletLedgerType.values()).map(type -> Arguments.of(WalletKind.BUYER, type.name())),
+                Arrays.stream(SellerWalletLedgerType.values()).map(type -> Arguments.of(WalletKind.SELLER, type.name())));
     }
 
     @Test
