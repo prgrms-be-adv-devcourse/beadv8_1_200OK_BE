@@ -361,6 +361,53 @@ class RefundStepTest {
         });
     }
 
+    // 진행할 수 없는 환불에서 이미 보낸 줄은 멈추지 않고 늦은 결과만 기다린다(#546). 다시 볼 시각을 비워 알람이 다시 뽑지 않게 한다
+    @Test
+    void 이미_보낸_줄은_늦은_결과만_기다리게_다시_볼_시각을_비운다() {
+        // given: 기다리는 시각이 지난 결과 대기 줄
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                1, NOW, null, NOW.minusMinutes(10), NOW.minusMinutes(20));
+
+        // when
+        boolean changed = sut.holdForLateResult();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getNextCheckAt()).isNull();
+            softly.assertThat(sut.isResultOverdue(NOW.plusDays(1))).isFalse();
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("늦은_결과를_기다리게_하지_않는_줄")
+    void 보낸_적_없거나_끝난_줄은_늦은_결과를_기다리게_바꾸지_않는다(RefundStepStatus status, LocalDateTime awaitingSince) {
+        // given
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, status, 1,
+                status.isFinished() ? null : NOW, status == RefundStepStatus.STOPPED ? "멈춤" : null, awaitingSince, NOW.minusMinutes(20));
+
+        // when
+        boolean changed = sut.holdForLateResult();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(status);
+        });
+    }
+
+    static Stream<Arguments> 늦은_결과를_기다리게_하지_않는_줄() {
+        return Stream.of(
+                Arguments.of(RefundStepStatus.READY, null),
+                Arguments.of(RefundStepStatus.IN_PROGRESS, null),
+                Arguments.of(RefundStepStatus.READY, NOW.minusMinutes(10)),
+                Arguments.of(RefundStepStatus.SUCCEEDED, NOW.minusMinutes(10)),
+                Arguments.of(RefundStepStatus.STOPPED, NOW.minusMinutes(10)));
+    }
+
     @Test
     void 결과_대기가_된_적_없으면_처음_기다린_시각이_없다() {
         // when

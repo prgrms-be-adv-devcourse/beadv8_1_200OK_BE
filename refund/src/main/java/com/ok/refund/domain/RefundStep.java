@@ -189,6 +189,22 @@ public class RefundStep {
         return true;
     }
 
+    /**
+     * 진행할 수 없는 환불에서 이미 보낸 줄을 다시 보내지 않고 늦은 결과만 기다리게 한다(#546, PR #654 리뷰).
+     * 결과 대기로 두고 다시 볼 시각을 비운다. 끝 상태가 아니라 늦게 온 지갑 답은 기록되고, 다시 볼 시각이 없어 알람이 다시 뽑지 않는다.
+     * 멈추면 늦게 온 진짜 지갑 답을 기록하지 못한다는 이유는 {@link #resendAfterResultTimeout}과 같다.
+     * 한 번도 보내지 않은 줄(awaitingSince 없음)이나 시도 중·결과 대기가 아닌 줄은 바꾸지 않는다.
+     */
+    public boolean holdForLateResult() {
+        if (awaitingSince == null
+                || (status != RefundStepStatus.AWAITING_RESULT && status != RefundStepStatus.IN_PROGRESS)) {
+            return false;
+        }
+        status = RefundStepStatus.AWAITING_RESULT;
+        nextCheckAt = null;
+        return true;
+    }
+
     /** 시도 중인데 만료 시각이 지났는지(시도하던 쪽이 끝내지 못하고 멈춘 줄) 확인한다. */
     public boolean isExpired(LocalDateTime now) {
         return status == RefundStepStatus.IN_PROGRESS && nextCheckAt != null && !nextCheckAt.isAfter(now);

@@ -301,6 +301,33 @@ class RefundSagaServiceResumeTest {
         });
     }
 
+    // 같은 상황에서 이미 보낸 줄(처음 기다린 시각 있음)은 멈추지 않고 늦은 결과만 기다린다(#546, PR #654 2차 봇 리뷰 1번).
+    // 지금은 이 조합이 생기지 않지만, 되돌리기 줄(#546-2)이 생기기 전에 먼저 맞춰 둔다
+    @Test
+    void 다시_진행할_수_없는_환불의_이미_보낸_줄은_멈추지_않고_늦은_결과만_기다린다() {
+        // given
+        RefundStep sentWallet = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                3, NOW, null, NOW.minusMinutes(30), NOW.minusMinutes(40));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(sentWallet));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+
+        // when
+        saga.resume(REFUND_ID);
+
+        // then
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep held = captor.getValue();
+        assertThat(held).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(held.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(held.getNextCheckAt()).isNull();
+            softly.assertThat(held.getAwaitingSince()).isEqualTo(NOW.minusMinutes(30));
+        });
+    }
+
     private static RefundStep overdueAwaitingWallet() {
         return RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
                 3, NOW, null, NOW.minusMinutes(10));

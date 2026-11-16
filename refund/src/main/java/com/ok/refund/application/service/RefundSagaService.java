@@ -287,6 +287,9 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 다시 진행할 수 없다고 판단한 처리 중 환불(예: 주문 줄은 멈췄는데 재고 줄이 할 차례)에서,
     // 알람이 다시 집을 줄을 멈춤으로 바꾼다(PR #628 검수). 다시 집을 줄은 할 차례, 만료된 시도 중, 기다리는 시각이 지난 결과 대기(#577)다. 그대로 두면 그 줄의 시각이 바뀌지 않아 알람 매 회차 맨 앞에 다시 뽑히고, 쌓이면 다른 환불을 밀어낸다.
     // 멈춤으로 바꾸면 사람이 볼 환불로 드러난다. 만료되지 않은 시도 중 줄은 누군가 하는 중이라 건드리지 않는다.
+    // 단, 이미 보낸 줄(awaitingSince 있음)은 멈추지 않고 결과 대기로 두되 다시 볼 시각을 비운다(#546, PR #654 2차 봇 리뷰 1번).
+    // 멈추면 늦게 온 진짜 지갑 답을 기록하지 못한다(#577 결정 3). 다시 볼 시각이 없으면 알람이 더 뽑지 않아 위의 문제도 생기지 않는다.
+    // 지금은 이 경우가 생기지 않는다(결과 대기 지갑 줄이 있으면 재고 줄이 아직 없어 계획이 멈춤을 정하지 않음). 되돌리기 줄(#546-2)이 생기기 전에 먼저 맞춰 둔다
     // 잠근 뒤 처리 중이 아니면 쓰지 않는다(#616 결정 15). 끝난 환불은 알람이 고르지도 않는다
     private void stopBlockedSteps(Long refundId) {
         transaction.executeWithoutResult(status -> {
@@ -297,7 +300,16 @@ public class RefundSagaService implements RefundSagaUseCase {
             LocalDateTime now = LocalDateTime.now(clock);
             for (RefundStep step : refundStepPersistencePort.findAllByRefundId(refundId)) {
                 boolean blocked = step.getStatus() == RefundStepStatus.READY || step.isExpired(now) || step.isResultOverdue(now);
-                if (blocked && step.stop(BLOCKED_BY_STOPPED_STEP)) {
+                if (!blocked) {
+                    continue;
+                }
+                if (step.holdForLateResult()) {
+                    refundStepPersistencePort.update(step);
+                    log.warn("다시 진행할 수 없는 환불의 이미 보낸 단계는 멈추지 않고 늦은 결과만 기다림(확인 필요). refundId={}, step={}",
+                            refundId, step.getType());
+                    continue;
+                }
+                if (step.stop(BLOCKED_BY_STOPPED_STEP)) {
                     refundStepPersistencePort.update(step);
                     log.warn("다시 진행할 수 없는 환불의 남은 단계를 멈춤(확인 필요). refundId={}, step={}", refundId, step.getType());
                 }
