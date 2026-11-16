@@ -32,7 +32,7 @@ record TrackerProperties(
         Duration readTimeout
 ) {
     private static final Duration DEFAULT_WEBHOOK_EXPIRATION = Duration.ofHours(48);
-    // 인증 없이 열린 주소라 비밀값이 짧으면 무차별로 추측당할 수 있다. 권장 생성 방식(openssl rand -hex 24)은 48자다
+    // 인증 없이 열린 주소라 비밀값이 짧으면 무차별로 추측당할 수 있다
     private static final int MIN_WEBHOOK_SECRET_LENGTH = 32;
 
     TrackerProperties {
@@ -61,9 +61,7 @@ record TrackerProperties(
     /**
      * 알림 주소와 알림 비밀값이 서로 맞는지 기동할 때 확인한다.
      * 어긋나면 택배사에는 알림을 등록하는데 알림 API는 모두 403으로 거절해, 조회로만 조용히 동작하게 된다.
-     * 주소가 비어 있으면 알림을 등록하지 않으므로 확인하지 않는다. 오류 메시지에는 주소와 비밀값을 싣지 않는다.
-     *
-     * @param webhookSecret 알림 API가 경로에서 비교하는 비밀값(delivery.carrier.webhook.secret)
+     * 오류 메시지에는 주소와 비밀값을 싣지 않는다.
      */
     void requireMatchingWebhookSecret(String webhookSecret) {
         if (!webhookEnabled()) {

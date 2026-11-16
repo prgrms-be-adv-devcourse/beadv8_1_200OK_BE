@@ -16,7 +16,6 @@ import java.net.http.HttpClient;
 @EnableConfigurationProperties(TrackerProperties.class)
 class TrackerConfig {
 
-    // 알림 주소와 비밀값이 어긋나면 알림이 모두 거절되는데 조회 덕에 겉으로는 정상처럼 보이므로 기동 때 막는다.
     // 비밀값은 알림 API가 읽는 delivery.carrier.webhook.secret이라 속성 클래스가 아니라 여기서 맞춰 본다
     @Bean
     InitializingBean trackerWebhookSecretCheck(TrackerProperties properties,

@@ -100,7 +100,6 @@ class TrackerPropertiesWebhookSecretTest {
                 CALLBACK_URL + "/",
                 // 쿼리에 비밀값이 있어도 경로가 아니므로 맞지 않는다
                 "https://delivery.example.com/api/v1/carrier-notifications?secret=" + SECRET,
-                // URI로 읽을 수 없는 주소
                 "https://delivery example.com/" + SECRET);
     }
 
