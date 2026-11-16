@@ -59,8 +59,9 @@ class RefundReturnIntegrationTest extends AbstractIntegrationTest {
         // when: 환불이 판매자 승인 뒤에 부르는 것과 같은 보내기로 7,000원 반환을 요청한다
         walletRefundRequestPort.requestRefund(new WalletRefundRequest(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 7_000));
 
-        // then: 지갑이 받아 돌려주고 처리 기록을 남긴다
-        await().atMost(Duration.ofSeconds(20)).until(() -> refundStatus().equals(List.of("COMPLETED")));
+        // then: 지갑이 받아 돌려주고 처리 기록을 남긴다. 실패하면 마지막으로 본 처리 기록이 메시지에 남는다
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(refundStatus()).as("지갑의 반환 처리 기록(refundId=%d)", REFUND_ID).containsExactly("COMPLETED"));
         assertThat(buyerWalletService.getBalance(BUYER_ID)).isEqualTo(22_000L);
     }
 
@@ -81,7 +82,7 @@ class RefundReturnIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update(q("DELETE FROM buyer_wallet WHERE member_id = ?"), BUYER_ID);
     }
 
-    // 접속 기본 DB는 기본 스키마라서 지갑 테이블 이름을 지갑 스키마로 한정한다
+    // 접속 기본 DB는 기본 스키마라서 지갑 테이블 이름을 지갑 스키마로 한정한다. 쓰는 테이블이 늘면 정규식에도 더한다
     private static String q(String sql) {
         return sql.replaceAll("\\b(buyer_wallet(?:_ledger)?|wallet_order_(?:refund|payment))\\b", WalletSchema.NAME + ".$1");
     }
