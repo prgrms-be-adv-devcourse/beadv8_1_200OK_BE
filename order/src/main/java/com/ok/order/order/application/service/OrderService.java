@@ -233,11 +233,13 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         return optionIds;
     }
 
-    // 배송 시작: 해당 판매자 묶음의 배송 준비 상품을 배송 중으로
+    // 배송 시작: 해당 판매자 묶음의 배송 준비 상품을 배송 중으로.
+    // 환불 기록(recordRefund)과 같은 주문 잠금으로 줄을 세운다. 잠그지 않으면 환불이 "배송 준비"를 확인한 뒤
+    // 커밋하기 전에 배송 시작이 상품을 바꿔, 출고된 상품에 환불이 기록된다(#658)
     @Transactional
     @Override
     public void startShipping(Long orderId, Long sellerId) {
-        Optional<Order> order = orderRepository.findById(orderId);
+        Optional<Order> order = orderRepository.findByIdForUpdate(orderId);
         if (order.isEmpty()) {
             // 예외를 던지면 이벤트가 계속 재처리되므로 로그만 남김
             log.warn("[ORDER_SHIPPING_ORDER_NOT_FOUND] 배송 시작 대상 주문이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
@@ -254,7 +256,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     @Transactional
     @Override
     public void completeDelivery(Long orderId, Long sellerId, LocalDateTime deliveredAt) {
-        Optional<Order> order = orderRepository.findById(orderId);
+        // 배송 시작 없이 배송 준비에서 바로 완료될 수 있어 배송 시작과 같은 이유로 잠근다(#658)
+        Optional<Order> order = orderRepository.findByIdForUpdate(orderId);
         if (order.isEmpty()) {
             log.warn("[ORDER_DELIVERY_ORDER_NOT_FOUND] 배송 완료 대상 주문이 없습니다. orderId={}, sellerId={}", orderId, sellerId);
             return;
@@ -303,7 +306,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     // 구매확정 이벤트 발행
     // 환불 반영된 수량은 상품 금액에서 빼고, 환불에서 뺀 배송비는 판매자 몫 배송비에 더한다(#28)
     private void publishConfirmed(Order order, OrderItem item) {
-        // 모두 환불된 상품은 정산할 금액이 없다. 0원 정산 후보를 만들지 않도록 보내지 않는다
+        // 모두 환불된 상품은 정산할 금액이 없다. 0원 정산 후보를 만들지 않도록 보내지 않는다.
+        // #658부터 모두 환불된 상품은 배송 완료가 되지 않아 여기 오지 않지만, 그 전에 배송 완료된 상품이 남아 있어 지운다면 데이터부터 확인한다
         if (item.isFullyRefunded()) {
             log.info("[ORDER_CONFIRM_SKIPPED_FULLY_REFUNDED] 모두 환불된 주문 상품이라 구매확정 이벤트를 보내지 않습니다. orderId={}, orderItemId={}",
                     order.getId(), item.getId());

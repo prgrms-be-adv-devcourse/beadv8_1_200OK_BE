@@ -479,7 +479,7 @@ class OrderServiceTest {
         // given
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.startShipping(10L, 100L);
@@ -494,7 +494,7 @@ class OrderServiceTest {
         LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 20, 15, 0);
         Order order = savedOrder(10L);
         order.markPaid();
-        given(orderRepository.findById(10L)).willReturn(Optional.of(order));
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
         sut.completeDelivery(10L, 100L, deliveredAt);
@@ -509,7 +509,7 @@ class OrderServiceTest {
     @Test
     void 배송_이벤트의_주문이_없으면_예외_없이_넘어간다() {
         // given
-        given(orderRepository.findById(10L)).willReturn(Optional.empty());
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when & then
         assertThatCode(() -> sut.startShipping(10L, 100L)).doesNotThrowAnyException();
@@ -760,8 +760,12 @@ class OrderServiceTest {
 
     @Test
     void 모두_환불된_상품은_구매확정해도_정산용_이벤트를_발행하지_않는다() {
-        // given
-        Order order = deliveredOrderAfterRefund(2, 0L);
+        // given: #658 전에는 모두 환불된 상품도 묶음과 함께 배송 완료가 됐다. 그때 배송 완료된 상품을 상태로 직접 만든다
+        Order order = savedOrder(10L);
+        order.markPaid();
+        order.getAllItems().get(0).recordRefund(7L, 2, 0L);
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "status", OrderItemStatus.DELIVERED);
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
         given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
 
         // when

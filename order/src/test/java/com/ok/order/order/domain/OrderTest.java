@@ -656,6 +656,60 @@ class OrderTest {
     }
 
     @Test
+    void 모두_환불된_상품은_묶음_배송이_시작돼도_배송_준비로_남고_나머지만_배송_중이_된다() {
+        // given: 같은 판매자 묶음에 감자 3개와 양파 1개, 감자는 모두 환불됨
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3), line(2L, 100L, 5_000L, 1)));
+        sut.markPaid();
+        OrderItem refunded = sut.getAllItems().get(0);
+        refunded.recordRefund(7L, 3, 0L);
+
+        // when
+        int changed = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isEqualTo(1);
+            softly.assertThat(refunded.getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+            softly.assertThat(sut.getAllItems().get(1).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+        });
+    }
+
+    @Test
+    void 일부만_환불된_상품은_배송이_시작되면_배송_중이_된다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        sut.markPaid();
+        sut.getAllItems().get(0).recordRefund(7L, 1, 0L);
+
+        // when
+        int changed = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isEqualTo(1);
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+        });
+    }
+
+    @Test
+    void 모두_환불된_상품은_배송_완료가_먼저_와도_배송_준비로_남는다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        sut.markPaid();
+        sut.getAllItems().get(0).recordRefund(7L, 3, 0L);
+
+        // when
+        int changed = sut.markDelivered(100L, NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+            softly.assertThat(sut.getAllItems().get(0).getDeliveredAt()).isNull();
+        });
+    }
+
+    @Test
     void 판매자_몫_배송비는_묶음_배송비에_묶음_안_환불에서_뺀_배송비를_더한다() {
         // given: 무료배송 묶음(구매자 배송비 0원)에서 일부 환불로 기준 아래가 되어 환불이 기본 배송비 3,000원을 뺐다
         Order order = Order.create(1L, List.of(line(1L, 100L, 30_000L, 1), line(2L, 100L, 20_000L, 1)));
