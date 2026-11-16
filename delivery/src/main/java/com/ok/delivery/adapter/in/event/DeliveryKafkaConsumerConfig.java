@@ -18,6 +18,7 @@ import org.springframework.kafka.listener.ConsumerAwareRecordRecoverer;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
+import org.springframework.kafka.support.KafkaUtils;
 import org.springframework.util.backoff.BackOff;
 
 import java.util.LinkedHashMap;
@@ -26,7 +27,7 @@ import java.util.Map;
 /**
  * 배송이 Kafka로 받는 메시지의 오류 처리 규칙을 정한다 (#644 결정 ②).
  * 배송 리스너만 이 설정({@link #LISTENER_CONTAINER_FACTORY})을 쓰고, 다른 모듈은 자기 설정이나 Spring Boot 기본 설정을 그대로 쓴다.
- * 결제 완료를 받지 못하면 결제된 주문이 배송되지 않으므로 로그만 남기고 건너뛰지 않고 DLT({@code <토픽>.delivery.DLT})에 옮겨 둔다.
+ * 결제 완료를 받지 못하면 결제된 주문이 배송되지 않으므로 로그만 남기고 건너뛰지 않고 DLT({@code <토픽>.<그룹>.DLT})에 옮겨 둔다.
  * - {@link IllegalArgumentException}(값이 틀림)과 JSON을 읽지 못한 메시지는 다시 해도 같으므로 바로 DLT로 보낸다.
  * - 그 밖의 예외는 1초부터 두 배씩 3번(1·2·4초) 다시 시도한 뒤 DLT로 보낸다.
  * - DLT로 보내지 못하면 오프셋을 옮기지 않아 같은 메시지를 다시 받는다.
@@ -95,8 +96,11 @@ public class DeliveryKafkaConsumerConfig {
         templates.put(byte[].class, new KafkaTemplate<>(producerFactory,
                 Map.of(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class)));
         templates.put(Object.class, kafkaTemplate);
+        // 그룹이 리스너마다 달라서 실패한 리스너의 그룹을 DLT 이름에 넣는다.
+        // 리스너 컨테이너가 컨슈머 스레드를 시작할 때 자기 그룹을 KafkaUtils에 담아 두고, 오류 처리기도 그 스레드에서 돈다
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(templates,
-                (record, exception) -> new TopicPartition(record.topic() + "." + DeliveryInboundTopics.CONSUMER_GROUP + ".DLT", -1));
+                (record, exception) -> new TopicPartition(
+                        record.topic() + "." + KafkaUtils.getConsumerGroupId() + ".DLT", -1));
         return (record, consumer, exception) -> {
             // 사람이 DLT를 보고 다시 넣어야 하는 일이라 ERROR로 남긴다. 값에는 배송지(개인정보)가 있어 키와 위치만 남긴다
             log.error("배송이 처리하지 못한 메시지를 DLT로 보냄. topic={}, partition={}, offset={}, key={}",

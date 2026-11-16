@@ -21,7 +21,7 @@ public class DeliveryOrderPaidKafkaListener {
     // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 간격을 늘려 다시 시도하게 한다
     @KafkaListener(
             topics = DeliveryInboundTopics.ORDER_PAID,
-            groupId = DeliveryInboundTopics.CONSUMER_GROUP,
+            groupId = DeliveryInboundTopics.SHIPMENT_CREATE_GROUP,
             containerFactory = DeliveryKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.delivery.adapter.in.event.dto.OrderPaidMessage")
     void onOrderPaid(OrderPaidMessage message) {
