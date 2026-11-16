@@ -632,7 +632,7 @@ com.ok.delivery
 | 방향 | 토픽 | 키 | 값 | 실패 |
 |---|---|---|---|---|
 | 주문 → 배송 | `order.order-paid` | `orderId` | `orderId`, `buyerId`, `paidAt`, `shippingAddress`, `sellerOrders[]`(`items[]`) | 1·2·4초 재시도 뒤 `order.order-paid.delivery.shipment-create.DLT` |
-| 회원 → 배송 | `member.seller-origin-postal-code` | `sellerId` | `sellerId`, `postalCode`, `occurredAt` | 1·2·4초 재시도 뒤 `member.seller-origin-postal-code.delivery.seller-origin-sync.DLT` |
+| 회원 → 배송 | `member.seller-origin-postal-code.v1` | `sellerId` | `sellerId`, `postalCode`, `occurredAt` | 1·2·4초 재시도 뒤 `member.seller-origin-postal-code.v1.delivery.seller-origin-sync.DLT` |
 | 배송 → 주문 | `delivery.shipment-dispatched` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `carrier`, `trackingNumber`, `shippedAt` | outbox에 남아 다음 발송 때 다시 보냄 |
 | 배송 → 주문 | `delivery.shipment-delivered` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `deliveredAt` | outbox에 남아 다음 발송 때 다시 보냄 |
 

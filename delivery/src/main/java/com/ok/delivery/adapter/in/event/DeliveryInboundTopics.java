@@ -10,7 +10,7 @@ public final class DeliveryInboundTopics {
     public static final String ORDER_PAID = "order.order-paid";
 
     /** 회원 → 배송: 판매자 출고지 우편번호가 바뀜. 키는 sellerId (#558, #587 메시지 약속) */
-    public static final String SELLER_ORIGIN_POSTAL_CODE = "member.seller-origin-postal-code";
+    public static final String SELLER_ORIGIN_POSTAL_CODE = "member.seller-origin-postal-code.v1";
 
     // 그룹은 리스너마다 하나씩, 이름은 <모듈>.<용도>로 둔다.
     // 오프셋이 그룹마다 따로라 한 리스너만 처음부터 다시 받거나 오프셋을 옮겨도 다른 리스너는 그대로이고,
