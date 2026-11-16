@@ -142,6 +142,10 @@ public class RefundStep {
 
     /**
      * 실패해서 다음 시도를 기다린다. 시도 횟수를 다 썼으면 기다리지 않고 멈춘다(이유는 이번 실패 그대로, #576).
+     * 단, 이미 한 번 보내고 결과를 기다린 적 있는 줄(결과 대기 시간 초과로 다시 보내다 실패함)은 횟수와 관계없이 멈추지 않고
+     * 결과 대기로 되돌린다(#577). 멈춘 줄은 뒤늦게 온 진짜 지갑 답(잔액 부족 등)을 기록하지 못해, 되돌리기(#546)가
+     * "지갑이 거절함"과 "돈이 나갔는지 모름"을 가를 수 없기 때문이다. 지갑은 처음 요청을 이미 받았을 수 있고, 같은 refundId는 한 번만 처리한다.
+     * 오래 걸리는 환불은 멈춘 환불 찾기(30분)가 사람에게 알린다.
      * 멈췄는지는 바뀐 뒤 {@link #getStatus()}로 본다.
      */
     public boolean failForRetry(String reason, LocalDateTime now) {
@@ -149,6 +153,11 @@ public class RefundStep {
             return false;
         }
         lastReason = normalizeReason(reason);
+        if (awaitingSince != null) {
+            status = RefundStepStatus.AWAITING_RESULT;
+            nextCheckAt = now.plus(RESULT_WAIT);
+            return true;
+        }
         if (attemptCount >= MAX_ATTEMPTS) {
             status = RefundStepStatus.STOPPED;
             nextCheckAt = null;

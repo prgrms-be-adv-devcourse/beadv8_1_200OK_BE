@@ -3,6 +3,7 @@ package com.ok.refund.adapter.out.persistence;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundSagaPlan;
 import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
@@ -11,6 +12,9 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -19,6 +23,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -146,6 +151,48 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         // then
         assertThat(picked).containsExactly(resendingWithoutStart);
         assertThat(notYet).isEmpty();
+    }
+
+    // "다음 줄 없음"·"멈춘 줄"·"줄 없음" 규칙은 계획(RefundSagaPlan.fromSteps)과 찾기 쿼리 두 곳에 있다(판단 4).
+    // 한쪽만 고쳐 어긋나지 않게, 같은 단계 줄 조합에서 계획이 멈춤을 정하는지와 쿼리가 고르는지가 같은지 본다
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("계획과_찾기가_같아야_하는_단계_줄")
+    void 계획이_멈춤을_정하는_환불과_찾기가_고르는_환불이_같다(String 경우, List<RefundStep> steps, boolean expected) {
+        // given
+        Long id = newRefundWith(841L, steps.toArray(RefundStep[]::new));
+        Refund refund = inTransaction(() -> refundPersistencePort.findById(id)).orElseThrow();
+        List<RefundStep> saved = inTransaction(() -> refundStepPersistencePort.findAllByRefundId(id));
+
+        // when
+        boolean planStops = RefundSagaPlan.fromSteps(refund, saved, NOW) == RefundSagaPlan.Action.STOP;
+        boolean picked = refundStepPersistencePort.findRefundIdsNeedingAttention(NOW.minusMinutes(30)).contains(id);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(planStops).isEqualTo(expected);
+            softly.assertThat(picked).isEqualTo(expected);
+        });
+    }
+
+    static Stream<Arguments> 계획과_찾기가_같아야_하는_단계_줄() {
+        return Stream.of(
+                Arguments.of("줄 없음 → 둘 다 멈춤", List.of(), true),
+                Arguments.of("주문 멈춤 → 둘 다 멈춤", List.of(step(RefundStepType.ORDER, RefundStepStatus.STOPPED, null)), true),
+                Arguments.of("주문 성공, 다음 줄 없음 → 둘 다 멈춤",
+                        List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null)), true),
+                Arguments.of("지갑 성공, 재고 줄 없음 → 둘 다 멈춤",
+                        List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                                step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, null)), true),
+                Arguments.of("지갑 할 차례 → 둘 다 아님",
+                        List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                                step(RefundStepType.WALLET, RefundStepStatus.READY, NOW.plusMinutes(1))), false),
+                Arguments.of("지갑 결과 대기 1분째 → 둘 다 아님",
+                        List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                                waitingWallet(RefundStepStatus.AWAITING_RESULT, NOW.minusMinutes(1))), false),
+                Arguments.of("재고 할 차례 → 둘 다 아님",
+                        List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                                step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED, null),
+                                step(RefundStepType.PRODUCT, RefundStepStatus.READY, NOW.plusMinutes(1))), false));
     }
 
     @Test

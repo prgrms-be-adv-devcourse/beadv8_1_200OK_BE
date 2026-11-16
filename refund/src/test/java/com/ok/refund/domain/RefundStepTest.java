@@ -319,6 +319,28 @@ class RefundStepTest {
         });
     }
 
+    // 결과를 기다린 적 있는 줄을 다시 보내다 실패하면 횟수를 다 썼어도 멈추지 않고 결과 대기로 돌아간다(#577 판단 2)
+    @Test
+    void 이미_보낸_줄은_다시_보내다_실패해도_멈추지_않고_결과_대기로_돌아간다() {
+        // given: 처음 발행을 5번째 시도에 성공했고, 결과 대기 시간이 지나 다시 보내는 중
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS, NOW.plusMinutes(2), null, NOW.minusMinutes(10), NOW.minusMinutes(20));
+
+        // when
+        boolean changed = sut.failForRetry("WALLET_PUBLISH_FAILED", NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(5));
+            softly.assertThat(sut.getAwaitingSince()).isEqualTo(NOW.minusMinutes(10));
+            softly.assertThat(sut.getLastReason()).isEqualTo("WALLET_PUBLISH_FAILED");
+        });
+    }
+
     @Test
     void 결과_대기가_된_적_없으면_처음_기다린_시각이_없다() {
         // when

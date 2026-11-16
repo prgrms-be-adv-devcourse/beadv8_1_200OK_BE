@@ -503,10 +503,14 @@ public class RefundSagaService implements RefundSagaUseCase {
         }
         // 결과 대기인데 기다리는 시각이 지났으면 결과 메시지가 늦거나 버려진 것이라 같은 refundId로 다시 보낸다(#577).
         // 잠근 구간 안에서 판단하므로 늦게 온 지갑 결과나 다른 서버와 겹쳐도 한 번만 시작한다(먼저 잠근 쪽이 줄을 바꾼다).
-        // 시도 횟수에 넣지 않고 멈추지도 않는다(RefundStep.resendAfterResultTimeout). 결과가 오지 않는 것은 확인이 필요한 이상이라 WARN이다
+        // 시도 횟수에 넣지 않고 멈추지도 않는다(RefundStep.resendAfterResultTimeout).
+        // INFO인 이유: 정해 둔 자동 회복 동작이고 끝이 없어(답이 끝내 안 오면 환불 1건에 하루 288줄) WARN이면 다른 이상 신호를 덮는다.
+        // 사람에게 알리는 일은 멈춘 환불 찾기(30분 넘게 기다림, WARN)가 한 시간에 한 줄로 맡는다.
+        // 위의 만료 다시 집기는 5번에서 끝나 쌓이지 않으므로 WARN 그대로 둔다
         if (step.resendAfterResultTimeout(now)) {
             refundStepPersistencePort.update(step);
-            log.warn("결과를 기다리는 시간이 지나 같은 요청을 다시 보냄. refundId={}, step={}", refundId, type);
+            log.info("결과를 기다리는 시간이 지나 같은 요청을 다시 보냄. refundId={}, step={}, awaitingSince={}",
+                    refundId, type, step.getAwaitingSince());
             return StepPrep.CALL;
         }
         return step.getStatus().isFinished() ? StepPrep.ENDED : StepPrep.BUSY;

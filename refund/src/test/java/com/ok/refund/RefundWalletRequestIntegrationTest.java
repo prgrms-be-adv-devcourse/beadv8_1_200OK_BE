@@ -55,6 +55,7 @@ import java.util.Properties;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.is;
@@ -357,6 +358,31 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         assertThat(readMessagesOf(refundId, before)).hasSize(1);
     }
 
+    // 이미 한 번 보낸 요청을 다시 보내다 발행이 실패해도 멈추지 않고 결과 대기로 돌아간다(#577 판단 2).
+    // 멈추면 늦게 온 진짜 지갑 답을 기록하지 못한다. 시도 횟수도 그대로다
+    @Test
+    void 지갑_결과를_다시_보내다_발행이_실패해도_멈추지_않고_결과_대기로_돌아간다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId)
+                .andExpect(status().isOk());
+        makeWalletResultOverdue(refundId);
+        walletRefundRequestPort.fail();
+
+        // when & then
+        assertThatThrownBy(() -> refundSagaUseCase.resume(refundId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("지갑 반환 요청 발행에 실패했습니다(테스트). refundId=" + refundId);
+        RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+        assertThat(wallet).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(wallet.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(wallet.getAwaitingSince()).isNotNull();
+            softly.assertThat(wallet.getNextCheckAt()).isAfter(LocalDateTime.now(clock));
+        });
+    }
+
     // 단계 줄이 없는 처리 중 환불은 있을 수 없는 상태라 다시 진행하지 않는다(#616 결정 13)
     @Test
     void 단계_줄이_없는_처리_중_환불은_다시_진행하지_않는다() throws Exception {
@@ -449,7 +475,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
             RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
             refundStepPersistencePort.update(RefundStep.restore(wallet.getId(), refundId, RefundStepType.WALLET,
                     wallet.getStatus(), wallet.getAttemptCount(), LocalDateTime.now(clock).minusMinutes(1),
-                    wallet.getLastReason(), wallet.getCreatedAt()));
+                    wallet.getLastReason(), wallet.getAwaitingSince(), wallet.getCreatedAt()));
         });
     }
 
