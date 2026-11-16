@@ -206,6 +206,34 @@ class SellerOriginPostalCodeKafkaIntegrationTest extends AbstractIntegrationTest
     }
 
     @Test
+    void 두_탭이_동시에_저장할_때_나중_쪽이_아무것도_고치지_않았어도_409로_막아_옛_우편번호를_보내지_않는다() {
+        // given: 탭 B가 출고지 37421인 프로필을 먼저 읽어 둔다
+        sellerProfileUseCase.register(sellerId, command("37421"));
+        memberOutboxRepository.deleteAllInBatch();
+        TransactionTemplate tabB = new TransactionTemplate(transactionManager);
+        TransactionTemplate tabA = new TransactionTemplate(transactionManager);
+        tabA.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        // when & then: 탭 A가 06236으로 바꿔 커밋한 뒤, B는 읽어 둔 값 그대로 저장한다.
+        // 바뀐 칸이 없어도 저장 시각이 바뀌어 UPDATE와 버전 검사를 거친다(#651)
+        assertThatThrownBy(() -> tabB.executeWithoutResult(status -> {
+            sellerProfileRepository.findByMemberId(sellerId).orElseThrow();
+            tabA.executeWithoutResult(inner -> sellerProfileUseCase.update(sellerId, command("06236")));
+            sellerProfileUseCase.update(sellerId, command("37421"));
+        })).isInstanceOfSatisfying(RestApiException.class, e -> assertThat(e.getErrorCode())
+                .isEqualTo(SellerErrorCode.SELLER_PROFILE_CONCURRENT_MODIFICATION));
+
+        // then: B의 옛 값 37421은 outbox에 남지 않아, delivery 사본이 member와 같은 06236으로 남는다
+        List<MemberOutbox> outbox = memberOutboxRepository.findAll();
+        assertThat(outbox).hasSize(1);
+        assertSoftly(softly -> {
+            softly.assertThat(sellerProfileRepository.findByMemberId(sellerId).orElseThrow().getOriginPostalCode())
+                    .isEqualTo("06236");
+            softly.assertThat(outbox.getFirst().getPayload()).contains("\"postalCode\":\"06236\"");
+        });
+    }
+
+    @Test
     void 출고지_우편번호를_그대로_두고_수정해도_현재_값을_다시_보낸다() {
         // given
         sellerProfileUseCase.register(sellerId, command("37421"));

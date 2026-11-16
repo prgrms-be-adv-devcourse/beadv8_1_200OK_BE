@@ -7,6 +7,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.time.LocalDateTime;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -16,6 +17,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 class SellerProfileTest {
 
     private static final String IMAGE_KEY = "seller_profile/3f2a9c1e-7b4d-4e8a-9f0c-1d2e3f4a5b6c.jpg";
+    private static final LocalDateTime SAVED_AT = LocalDateTime.of(2026, 11, 16, 14, 0);
 
     @ParameterizedTest
     @MethodSource("잘못된_프로필_항목")
@@ -88,7 +90,7 @@ class SellerProfileTest {
                 1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", "소개", IMAGE_KEY);
 
         // when: 앞쪽 값(상호명)은 맞고 뒤쪽 값(연락처)이 틀렸다
-        assertThatThrownBy(() -> profile.update("청송 사과농원", "이영희", "고객센터", "37421", "새 소개", null))
+        assertThatThrownBy(() -> profile.update("청송 사과농원", "이영희", "고객센터", "37421", "새 소개", null, SAVED_AT))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_CUSTOMER_SERVICE_PHONE));
 
@@ -98,6 +100,7 @@ class SellerProfileTest {
             softly.assertThat(profile.getRepresentativeName()).isEqualTo("김영수");
             softly.assertThat(profile.getIntroduction()).isEqualTo("소개");
             softly.assertThat(profile.getProfileImageKey()).isEqualTo(IMAGE_KEY);
+            softly.assertThat(profile.getProfileSavedAt()).isNull();
         });
     }
 
@@ -120,7 +123,7 @@ class SellerProfileTest {
         SellerProfile sut = SellerProfile.register(1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
 
         // when
-        sut.update("청송 사과농원", "김영수", "054-873-2210", " 06236 ", null, null);
+        sut.update("청송 사과농원", "김영수", "054-873-2210", " 06236 ", null, null, SAVED_AT);
 
         // then
         assertThat(sut).isNotNull();
@@ -128,6 +131,19 @@ class SellerProfileTest {
             softly.assertThat(sut.getStoreName()).isEqualTo("청송 사과농원");
             softly.assertThat(sut.getOriginPostalCode()).isEqualTo("06236");
         });
+    }
+
+    @Test
+    void 값을_그대로_두고_수정해도_저장_시각은_새로_남긴다() {
+        // given: 바뀐 칸이 없는 저장도 UPDATE와 버전 검사를 거치도록 저장 시각을 바꾼다(#651)
+        SellerProfile sut = SellerProfile.register(1L, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        sut.update("청송 햇살농원", "김영수", "054-873-2210", "37421", null, null, SAVED_AT);
+
+        // when
+        sut.update("청송 햇살농원", "김영수", "054-873-2210", "37421", null, null, SAVED_AT.plusSeconds(1));
+
+        // then
+        assertThat(sut.getProfileSavedAt()).isEqualTo(SAVED_AT.plusSeconds(1));
     }
 
 }

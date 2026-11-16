@@ -100,8 +100,9 @@ class SellerProfileServiceTest {
         // when
         sellerProfileService.update(MEMBER_ID, command(null, "37421"));
 
-        // then
+        // then: 메시지의 발생 시각은 프로필에 남긴 저장 시각과 같다
         then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "37421", NOW_MICROS);
+        assertThat(profile.getProfileSavedAt()).isEqualTo(NOW_MICROS);
     }
 
     @Test

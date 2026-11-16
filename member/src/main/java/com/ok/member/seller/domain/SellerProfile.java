@@ -14,6 +14,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 
 import static jakarta.persistence.GenerationType.IDENTITY;
@@ -65,6 +66,12 @@ public class SellerProfile extends BaseTime {
     @Column(name = "profile_image_key", length = PROFILE_IMAGE_KEY_MAX_LENGTH)
     private String profileImageKey;
 
+    // 수정을 저장한 시각. 수정마다 새 값으로 바꿔, 바뀐 칸이 없는 저장도 UPDATE와 버전 검사를 거치게 한다(#651).
+    // 이 칸이 없으면 두 저장이 겹칠 때 나중 쪽이 아무것도 고치지 않았으면 409 없이 통과해, 읽어 둔 옛 우편번호를 더 늦은 시각으로 보낸다.
+    // BaseTime.updatedAt은 바뀐 칸이 있어야 갱신되고 주입한 Clock을 쓰지 않아, 이 용도로 쓰지 않는다
+    @Column(name = "profile_saved_at")
+    private LocalDateTime profileSavedAt;
+
     // 수정은 모든 칸을 덮어써서, 판매자가 두 탭에서 동시에 저장하면 나중 요청이 먼저 바꾼 출고지를 되돌리고
     // 바뀌지 않았다고 보아 메시지도 남기지 않는다(delivery 사본과 어긋남). 나중에 커밋하는 쪽을 낙관적 락 예외로 실패시킨다
     @Version
@@ -104,10 +111,16 @@ public class SellerProfile extends BaseTime {
      * 검증 규칙은 {@link #register}와 같다.
      *
      * @param profileImageKey 프로필 사진 object key. {@code null}이면 사진을 지운다
+     * @param savedAt         이 수정을 저장하는 시각. 값이 그대로인 저장도 이 시각이 바뀌어 버전 검사를 거친다
      */
     public void update(String storeName, String representativeName, String customerServicePhone,
-                       String originPostalCode, String introduction, String profileImageKey) {
+                       String originPostalCode, String introduction, String profileImageKey,
+                       LocalDateTime savedAt) {
+        if (savedAt == null) {
+            throw new IllegalArgumentException("savedAt은 필수입니다.");
+        }
         change(storeName, representativeName, customerServicePhone, originPostalCode, introduction, profileImageKey);
+        this.profileSavedAt = savedAt;
     }
 
     // 등록과 수정이 같은 검증을 거치도록 값 변경을 한곳에 모은다.
