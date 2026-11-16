@@ -265,6 +265,23 @@ class OrderServiceTest {
     }
 
     @Test
+    void 결제를_요청한_뒤에는_주문_생성_보상으로도_취소하지_않는다() {
+        // given: 결제 요청을 커밋한 뒤 예외가 나 보상 취소가 불렸다. 지갑이 이미 결제했을 수 있다
+        Order order = savedOrder(10L);
+        order.markPaymentRequested(NOW);
+        given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+
+        // when
+        boolean canceled = sut.cancel(10L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(canceled).isFalse();
+            softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+        });
+    }
+
+    @Test
     void 조회_뒤_결제를_요청한_주문은_취소하지_않는다() {
         // given: 생성은 5분 전이지만 방금 결제를 요청했다
         Order order = savedOrder(10L);

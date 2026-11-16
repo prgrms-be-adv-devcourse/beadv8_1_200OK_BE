@@ -205,7 +205,8 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         try {
             canceled = orderService.cancel(orderId);
         } catch (RuntimeException e) {
-            // 결제 대기로 남지만 지갑에 결제 요청이 가지 않은 주문이라 돈은 오가지 않는다. 5분 뒤 결제 대기 정리가 취소하고 재고를 푼다
+            // 결제 대기로 남는다. 결제 요청 전이면 5분 뒤 결제 대기 정리가 취소하고 재고를 풀고,
+            // 결제 요청 뒤면 30분 뒤 결제 만료를 요청해 지갑의 결론으로 끝낸다(#656)
             log.error("[ORDER_CANCEL_FAILED] 주문 생성 중 실패한 주문을 취소하지 못했습니다. orderId={}", orderId, e);
             return;
         }

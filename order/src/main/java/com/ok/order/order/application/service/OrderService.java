@@ -114,6 +114,13 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             return false;
         }
         Order order = found.get();
+        // 결제 요청을 커밋한 뒤 예외가 났으면 지갑이 이미 결제했을 수 있다. 여기서 취소하면 돈은 빠졌는데 주문은 취소로 남으므로
+        // 결제 대기로 두고, 결과가 없으면 정리 스케줄러가 결제 만료를 요청해 지갑의 결론으로 끝낸다(#656)
+        if (order.getPaymentRequestedAt() != null) {
+            log.warn("[ORDER_CANCEL_SKIPPED_PAYMENT_REQUESTED] 결제를 요청한 주문은 취소하지 않고 지갑 결과를 기다립니다. orderId={}",
+                    orderId);
+            return false;
+        }
         if (!order.cancel()) {
             log.warn("[ORDER_CANCEL_IGNORED] 결제 대기가 아닌 주문은 취소하지 않습니다. orderId={}, status={}",
                     orderId, order.getStatus());
