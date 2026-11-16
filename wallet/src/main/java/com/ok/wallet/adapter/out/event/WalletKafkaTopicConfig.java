@@ -19,13 +19,28 @@ class WalletKafkaTopicConfig {
     }
 
     @Bean
+    NewTopic walletRefundCompletedOldTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_COMPLETED_OLD).build();
+    }
+
+    @Bean
     NewTopic walletRefundFailedTopic() {
         return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_FAILED).build();
+    }
+
+    @Bean
+    NewTopic walletRefundFailedOldTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_FAILED_OLD).build();
     }
 
     // 정산이 같은 토픽을 받으려고 미리 만드는 빈 이름이 walletPayoutDepositCheckedTopic이라 겹치지 않게 한 단어를 더한다
     @Bean
     NewTopic walletOutboundPayoutDepositCheckedTopic() {
         return TopicBuilder.name(WalletOutboundTopics.PAYOUT_DEPOSIT_CHECKED).build();
+    }
+
+    @Bean
+    NewTopic walletOutboundPayoutDepositCheckedOldTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.PAYOUT_DEPOSIT_CHECKED_OLD).build();
     }
 }
