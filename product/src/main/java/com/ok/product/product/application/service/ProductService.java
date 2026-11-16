@@ -49,6 +49,7 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	private final ProductImageUrlValidator productImageUrlValidator;
 	private final ProductOptionRepository productOptionRepository;
 	private final ProductQueryRepository productQueryRepository;
+	private final ProductSearchIndexer productSearchIndexer;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
 	private final MediaUrlResolver mediaUrlResolver;
 	// 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
@@ -71,7 +72,9 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		if (command.visibility() != null) {
 			product.changeVisibility(command.visibility().toDomain());
 		}
-		return productRepository.save(product).getId();
+		Product saved = productRepository.save(product);
+		productSearchIndexer.index(saved);
+		return saved.getId();
 	}
 
 	@Override
@@ -111,6 +114,9 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 						throw new RestApiException(ProductErrorCode.STOCK_BELOW_ALLOCATED);
 					}
 				});
+
+		// 가격·재고만 바뀌어도 다시 계산한다. 바뀐 필드를 가리는 조건이 계산 비용보다 버그를 만들기 쉽다
+		productSearchIndexer.index(product);
 	}
 
 	@Override

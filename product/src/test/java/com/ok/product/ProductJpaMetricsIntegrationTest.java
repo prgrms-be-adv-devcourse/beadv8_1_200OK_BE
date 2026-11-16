@@ -31,6 +31,7 @@ import org.springframework.web.context.WebApplicationContext;
 import com.ok.common.jpa.QueryCountContext;
 import com.ok.common.jpa.QueryCountFilter;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
 import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.product.product.application.service.ProductService;
 import com.ok.product.product.domain.Product;
@@ -63,6 +64,9 @@ class ProductJpaMetricsIntegrationTest extends AbstractIntegrationTest {
 	ProductJpaRepository productRepository;
 
 	@Autowired
+	ProductSearchJpaRepository productSearchRepository;
+
+	@Autowired
 	ProductService productService;
 
 	@Autowired
@@ -86,6 +90,8 @@ class ProductJpaMetricsIntegrationTest extends AbstractIntegrationTest {
 
 	@AfterEach
 	void tearDown() {
+		// 검색 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productSearchRepository.deleteAll();
 		productRepository.deleteAll();
 	}
 

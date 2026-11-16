@@ -32,6 +32,7 @@ import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 
@@ -56,6 +57,9 @@ class ProductCreateIntegrationTest extends AbstractIntegrationTest {
 	ProductJpaRepository productRepository;
 
 	@Autowired
+	ProductSearchJpaRepository productSearchRepository;
+
+	@Autowired
 	TransactionTemplate transactionTemplate;
 
 	private MockMvc mockMvc;
@@ -67,6 +71,8 @@ class ProductCreateIntegrationTest extends AbstractIntegrationTest {
 
 	@AfterEach
 	void tearDown() {
+		// 검색 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productSearchRepository.deleteAll();
 		productRepository.deleteAll();
 	}
 

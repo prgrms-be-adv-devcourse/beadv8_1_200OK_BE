@@ -37,6 +37,7 @@ import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
 import com.ok.product.product.application.service.ProductService;
 import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -62,6 +63,9 @@ class ProductUpdateIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ProductJpaRepository productRepository;
+
+	@Autowired
+	ProductSearchJpaRepository productSearchRepository;
 
 	@Autowired
 	ProductOptionJpaRepository productOptionRepository;
@@ -91,6 +95,8 @@ class ProductUpdateIntegrationTest extends AbstractIntegrationTest {
 
 	@AfterEach
 	void tearDown() {
+		// 검색 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productSearchRepository.deleteAll();
 		productRepository.deleteAll();
 	}
 
