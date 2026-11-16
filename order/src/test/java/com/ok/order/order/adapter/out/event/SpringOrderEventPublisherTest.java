@@ -55,6 +55,26 @@ class SpringOrderEventPublisherTest {
     }
 
     @Test
+    void 구매확정은_Spring_이벤트_없이_Kafka_outbox로만_보낸다() {
+        // when
+        sut.publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 3_000L);
+
+        // then
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        then(outboxRecorder).should().record(eq("order.order-product-confirmed.v1"), eq("1"), payload.capture());
+        then(applicationEventPublisher).shouldHaveNoInteractions();
+        JsonNode json = jsonMapper.readTree(payload.getValue());
+        assertSoftly(softly -> {
+            softly.assertThat(json.get("orderId").asLong()).isEqualTo(10L);
+            softly.assertThat(json.get("orderItemId").asLong()).isEqualTo(1L);
+            softly.assertThat(json.get("sellerId").asLong()).isEqualTo(100L);
+            softly.assertThat(json.get("totalItemPrice").asLong()).isEqualTo(20_000L);
+            softly.assertThat(json.get("sellerShippingPrice").asLong()).isEqualTo(3_000L);
+            softly.assertThat(json.size()).isEqualTo(5);
+        });
+    }
+
+    @Test
     void 결제_완료_메시지를_배송이_받는_결제_완료_이벤트로_바꿔_발행한다() {
         // given
         LocalDateTime paidAt = LocalDateTime.of(2026, 10, 21, 10, 0);
