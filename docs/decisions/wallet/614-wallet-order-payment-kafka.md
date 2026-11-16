@@ -28,7 +28,8 @@ related: [34, 360, 579, 602, 612, 613, 637, 638]
 | 실패 사유 | `OrderPaymentResult.failureReason()` 한 곳. 지금은 기록된 실패면 잔액 부족 | Spring·Kafka 길, 처음·다시 보낼 때 같은 사유가 나가게 한다. 결제 만료가 실패 기록에 들어오면 여기만 기록된 사유를 읽게 바꾼다 (사용자 결정) |
 | 출구 포트 | Spring 출구(`WalletEventPublisher`)와 나눈 `OrderPaymentResultPublisher` | 보내는 시점(트랜잭션 안·커밋 뒤)과 실패 처리(저장·예외로 다시 받기)가 다르다. 2단계에서 Spring 출구만 지우면 된다 |
 | 값 확인 위치 | 수신부가 아니라 서비스 | 금액이 틀린 주문도 결제 대기로 멈추지 않게 `INVALID_PAYMENT_REQUEST` 결과를 보내야 한다. 주문·구매자 ID가 없으면 서비스가 `IllegalArgumentException`을 던져 실패 기록에 남는다 |
-| 키·그룹 | 받기·보내기 모두 `orderId`, 그룹 `wallet` | #602 약속. 한 주문의 완료와 실패가 같은 파티션에 들어간다. 지갑 잠금으로 같은 구매자의 동시 결제도 맞게 처리된다 |
+| 키·그룹 | 받기·보내기 모두 `orderId`, 그룹 `wallet.order-payment` | #602 약속. 한 주문의 완료와 실패가 같은 파티션에 들어간다. 지갑 잠금으로 같은 구매자의 동시 결제도 맞게 처리된다. 그룹은 #648 규칙(`<모듈>.<용도>`)으로 처음부터 리스너 전용 |
+| 결과 토픽 이름 | `wallet.wallet-payment-completed.v1`, `wallet.wallet-payment-failed.v1`. 옛 이름으로는 보내지 않음 | #648 규칙. 아직 한 번도 보낸 적 없는 토픽이라 이중 발행이 필요 없다. 주문(#602)과 정산(#653)이 `.v1`로 받는다 |
 | 토픽 생성 빈 이름 | `walletOutboundPaymentCompletedTopic` 등 | 정산이 같은 토픽을 받으려고 미리 만드는 빈 이름이 `walletPaymentCompletedTopic`이라, 같으면 monolith가 뜨지 않는다 |
 
 ## 버린 대안

@@ -25,8 +25,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // 약속한 모양(#602)으로 나가는지 확인한다. 받는 쪽 코드는 쓰지 않고, 토픽에 나간 JSON을 문자열 그대로 읽어 필드 이름과 값을 본다.
 // 결제가 커밋되어야 하므로 테스트에 @Transactional을 붙이지 않는다
 class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
-    private static final String COMPLETED_TOPIC = "wallet.wallet-payment-completed";
-    private static final String FAILED_TOPIC = "wallet.wallet-payment-failed";
+    private static final String COMPLETED_TOPIC = "wallet.wallet-payment-completed.v1";
+    private static final String FAILED_TOPIC = "wallet.wallet-payment-failed.v1";
     // 결제 시각은 실행마다 달라 따로 꺼내 본다. 오프셋(Z, +09:00)이 붙으면 맞지 않는다
     private static final Pattern COMPLETED_JSON = Pattern.compile(
             "\\{\"orderId\":(\\d+),\"buyerId\":(\\d+),\"amount\":(\\d+),\"paidAt\":\"([0-9T:.\\-]+)\"}");

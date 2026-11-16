@@ -76,7 +76,7 @@ class KafkaOrderPaymentResultPublisherTest {
         // when & then: 예외가 수신부까지 올라가야 같은 주문을 다시 받아 결과를 다시 보낸다
         assertThatThrownBy(() -> sut.publishPaymentCompleted(10L, 1L, 3_000, PAID_AT))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("주문 결제 결과를 보내지 못했습니다. topic=wallet.wallet-payment-completed, orderId=10")
+                .hasMessage("주문 결제 결과를 보내지 못했습니다. topic=wallet.wallet-payment-completed.v1, orderId=10")
                 .hasCause(rejected);
     }
 }

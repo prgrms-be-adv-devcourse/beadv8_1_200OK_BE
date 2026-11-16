@@ -2,7 +2,8 @@ package com.ok.wallet.adapter.in.event;
 
 /**
  * 지갑이 받는 Kafka 토픽 이름과 지갑 리스너의 컨슈머 그룹을 한곳에 둔다.
- * 토픽 이름은 보내는 모듈과의 약속이라 보내는 쪽과 같은 값이어야 받는다. 이름 규칙은 {@code <보내는 모듈>.<이벤트>}이다(#339).
+ * 토픽 이름은 보내는 모듈과의 약속이라 보내는 쪽과 같은 값이어야 받는다. 이름 규칙은 토픽 {@code <보내는 모듈>.<이벤트>.v<버전>},
+ * 그룹 {@code <모듈>.<용도>}이다. 버전이 없는 토픽과 공용 그룹은 보내는 쪽이 새 이름으로 옮긴 뒤 바꾼다.
  */
 public final class WalletKafkaTopics {
 
@@ -21,6 +22,10 @@ public final class WalletKafkaTopics {
     // 공통 설정의 기본 그룹은 앱 이름이라 monolith에서는 모든 모듈이 같은 그룹이 되어 메시지를 나눠 갖는다.
     // 같은 토픽을 받는 다른 모듈과 따로 받도록 모듈 이름으로 정해 둔다(#339 합의)
     public static final String CONSUMER_GROUP = "wallet";
+
+    // 리스너마다 그룹을 따로 둔다(<모듈>.<용도>). 한 리스너만 다시 읽거나 밀린 메시지를 리스너별로 볼 수 있게 하려는 것으로,
+    // 주문 생성은 새로 받는 토픽이라 처음부터 이 규칙을 쓴다. 위 공용 그룹을 쓰는 리스너는 지갑 그룹 옮기기에서 함께 나눈다
+    public static final String ORDER_PAYMENT_GROUP = "wallet.order-payment";
 
     private WalletKafkaTopics() {
     }
