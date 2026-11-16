@@ -9,10 +9,12 @@ import com.ok.common.event.payload.ShippingAddress;
 import com.ok.order.order.application.dto.PaidItemMessage;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.PaidSellerGroupMessage;
+import com.ok.order.order.application.port.in.OrderOutboxRecordUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +24,11 @@ import java.util.List;
 public class SpringOrderEventPublisher implements OrderEventPublisher {
 
     private final ApplicationEventPublisher applicationEventPublisher;
+
+    // Kafka로 보낼 메시지를 outbox에 남기고(#666), 메시지 DTO를 JSON으로 바꾼다.
+    // 토픽별 전환(#600, #602, #603)이 각자 자기 메서드만 고치도록 의존성을 먼저 둔다
+    private final OrderOutboxRecordUseCase outboxRecorder;
+    private final JsonMapper jsonMapper;
 
     @Override
     public void publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount) {
