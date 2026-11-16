@@ -341,6 +341,26 @@ class RefundStepTest {
         });
     }
 
+    // 다시 보내는 중 서버가 죽어 시도 중으로 만료된 줄도 이미 보낸 줄이면 횟수를 다 썼어도 멈추지 않고 다시 집는다(#577)
+    @Test
+    void 이미_보낸_줄은_만료돼도_횟수를_올리지_않고_다시_집는다() {
+        // given: 처음 발행을 5번째 시도에 성공했고, 다시 보내다 시도 중인 채로 만료됨
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS, NOW, null, NOW.minusMinutes(10), NOW.minusMinutes(20));
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
+        });
+    }
+
     @Test
     void 결과_대기가_된_적_없으면_처음_기다린_시각이_없다() {
         // when

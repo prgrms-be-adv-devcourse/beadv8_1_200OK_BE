@@ -197,11 +197,17 @@ public class RefundStep {
     /**
      * 만료된 시도 중 줄을 다시 집는다(#576). 시도 횟수를 올리고 만료 시각을 새로 잡는다.
      * 횟수를 다 썼으면 다시 집지 않고 멈춘다(이유 {@link #IN_PROGRESS_EXPIRED}). 만료되지 않았으면 다른 쪽이 하는 중이라 바꾸지 않는다.
+     * 단, 이미 한 번 보내고 결과를 기다린 적 있는 줄(다시 보내는 중 서버가 죽었거나 "결과 대기" 기록이 실패함)은 횟수를 올리지 않고
+     * 멈추지도 않는다(#577). 멈추면 늦게 온 진짜 지갑 답을 기록하지 못하는 이유가 {@link #failForRetry}와 같다.
      * 다시 집었는지 멈췄는지는 바뀐 뒤 {@link #getStatus()}로 본다.
      */
     public boolean restartExpired(LocalDateTime now) {
         if (!isExpired(now)) {
             return false;
+        }
+        if (awaitingSince != null) {
+            nextCheckAt = now.plus(IN_PROGRESS_EXPIRY);
+            return true;
         }
         if (attemptCount >= MAX_ATTEMPTS) {
             lastReason = IN_PROGRESS_EXPIRED;
