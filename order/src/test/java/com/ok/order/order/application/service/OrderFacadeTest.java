@@ -21,6 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -32,6 +33,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
@@ -42,6 +44,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
@@ -240,7 +243,7 @@ class OrderFacadeTest {
     }
 
     @Test
-    void 재고_선점에_실패하면_선점을_해제하고_주문을_취소한다() {
+    void 재고_선점에_실패하면_주문을_먼저_취소하고_선점을_해제한_뒤_해제를_기록한다() {
         // given: 주문 저장까지 성공, 재고 선점에서 실패
         given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
@@ -249,18 +252,22 @@ class OrderFacadeTest {
         given(orderService.create(any(Order.class))).willReturn(10L);
         willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
                 .given(productPort).allocateStock(eq(10L), anyList());
+        given(orderService.cancel(10L)).willReturn(true);
 
         // when & then
         assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
                 .isInstanceOfSatisfying(RestApiException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
-        then(productPort).should().releaseStock(10L);
-        then(orderService).should().cancel(10L);
+        // 해제 확인은 취소된 주문에만 기록할 수 있어 취소가 먼저다(#657)
+        InOrder inOrder = inOrder(orderService, productPort);
+        inOrder.verify(orderService).cancel(10L);
+        inOrder.verify(productPort).releaseStock(10L);
+        inOrder.verify(orderService).markStockReleased(10L);
         then(orderService).should(never()).publishCreated(anyLong());
     }
 
     @Test
-    void 생성_이벤트_발행에_실패하면_선점을_해제하고_주문을_취소한다() {
+    void 생성_이벤트_발행에_실패하면_주문을_취소하고_선점을_해제한다() {
         // given: 재고 선점까지 성공, 이벤트 발행에서 실패
         given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
         given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
@@ -269,6 +276,7 @@ class OrderFacadeTest {
         given(orderService.create(any(Order.class))).willReturn(10L);
         willThrow(new IllegalStateException("이벤트 기록 실패"))
                 .given(orderService).publishCreated(10L);
+        given(orderService.cancel(10L)).willReturn(true);
 
         // when & then
         assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
@@ -290,10 +298,49 @@ class OrderFacadeTest {
                 .given(productPort).allocateStock(eq(10L), anyList());
         willThrow(new IllegalStateException("DB 오류")).given(orderService).cancel(10L);
 
+        // when & then: 취소하지 못한 주문은 결제 대기로 남아 결제 대기 정리가 취소하고 재고를 푼다
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    @Test
+    void 결제_대기가_아니라_취소하지_못한_주문은_재고를_풀지_않는다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new IllegalStateException("이벤트 기록 실패"))
+                .given(orderService).publishCreated(10L);
+        given(orderService.cancel(10L)).willReturn(false);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOf(IllegalStateException.class);
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    @Test
+    void 생성_실패한_주문의_재고_해제가_실패해도_원래_예외를_던지고_해제는_기록하지_않는다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
+                .given(productPort).allocateStock(eq(10L), anyList());
+        given(orderService.cancel(10L)).willReturn(true);
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
         // when & then
         assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
                 .isInstanceOfSatisfying(RestApiException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
+        then(orderService).should(never()).markStockReleased(anyLong());
     }
 
     @Test
@@ -443,7 +490,19 @@ class OrderFacadeTest {
 
         // then
         then(productPort).should().releaseStock(10L);
+        then(orderService).should().markStockReleased(10L);
         then(getSelectedCartItems).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 결제_실패_처리_중_재고_해제가_실패해도_예외를_던지지_않고_해제는_기록하지_않는다() {
+        // given: 결제 실패는 이미 커밋됐다. 해제는 정리 스케줄러가 다시 부른다(#657)
+        given(orderService.failPayment(10L)).willReturn(true);
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when & then
+        assertThatCode(() -> sut.failPayment(10L, "INSUFFICIENT_BALANCE")).doesNotThrowAnyException();
+        then(orderService).should(never()).markStockReleased(anyLong());
     }
 
     @Test
@@ -471,6 +530,7 @@ class OrderFacadeTest {
         // then
         assertThat(canceled).isTrue();
         then(productPort).should().releaseStock(10L);
+        then(orderService).should().markStockReleased(10L);
     }
 
     @Test
@@ -497,5 +557,28 @@ class OrderFacadeTest {
 
         // then
         assertThat(canceled).isTrue();
+        then(orderService).should(never()).markStockReleased(anyLong());
+    }
+
+    // ---------- 재고 해제 재처리 (#657) ----------
+
+    @Test
+    void 재처리로_재고를_풀면_해제를_기록한다() {
+        // when
+        sut.retryStockRelease(10L);
+
+        // then
+        then(productPort).should().releaseStock(10L);
+        then(orderService).should().markStockReleased(10L);
+    }
+
+    @Test
+    void 재처리에서도_해제가_실패하면_예외를_던지지_않고_기록하지_않는다() {
+        // given
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when & then
+        assertThatCode(() -> sut.retryStockRelease(10L)).doesNotThrowAnyException();
+        then(orderService).should(never()).markStockReleased(anyLong());
     }
 }

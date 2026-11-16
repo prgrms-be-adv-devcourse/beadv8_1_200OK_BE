@@ -62,4 +62,10 @@ public interface OrderRepository {
      */
     List<Long> findStalePaymentPendingOrderIds(OrderStatus status, LocalDateTime creatingDeadline,
                                                LocalDateTime paymentDeadline);
+
+    /**
+     * 재고 해제를 확인하지 못한 주문 ID를 오래된 주문부터 조회한다 (재고 해제 재처리 대상, #657).
+     * 상태가 {@code statuses} 중 하나이고, 해제 확인 시각이 비어 있으며, 마지막으로 바뀐 시각이 {@code changedBefore} 이전인 주문이다.
+     */
+    List<Long> findStockReleasePendingOrderIds(List<OrderStatus> statuses, LocalDateTime changedBefore, Pageable pageable);
 }

@@ -298,6 +298,66 @@ class OrderTest {
         assertThat(sut.isStalePaymentPending(CREATED_AT.plusDays(1), CREATED_AT.plusDays(1))).isFalse();
     }
 
+    // ---------- 재고 해제 확인 (#657) ----------
+
+    @ParameterizedTest
+    @MethodSource("재고를_풀어야_하는_주문")
+    void 취소나_결제_실패된_주문은_해제를_확인할_때까지_재고를_풀어야_한다(Consumer<Order> end) {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        end.accept(sut);
+        boolean beforeRelease = sut.needsStockRelease();
+
+        // when
+        sut.markStockReleased(NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(beforeRelease).isTrue();
+            softly.assertThat(sut.needsStockRelease()).isFalse();
+            softly.assertThat(sut.getStockReleasedAt()).isEqualTo(NOW);
+        });
+    }
+
+    static Stream<Consumer<Order>> 재고를_풀어야_하는_주문() {
+        return Stream.of(Order::cancel, Order::markPaymentFailed);
+    }
+
+    @ParameterizedTest
+    @MethodSource("재고를_풀_상태가_아닌_주문")
+    void 결제_대기나_결제_완료_주문은_재고를_풀_대상이_아니고_해제_기록도_남지_않는다(Consumer<Order> progress) {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        progress.accept(sut);
+
+        // when
+        sut.markStockReleased(NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.needsStockRelease()).isFalse();
+            softly.assertThat(sut.getStockReleasedAt()).isNull();
+        });
+    }
+
+    static Stream<Consumer<Order>> 재고를_풀_상태가_아닌_주문() {
+        return Stream.of(order -> { }, Order::markPaid);
+    }
+
+    @Test
+    void 재고_해제를_다시_기록해도_처음_확인한_시각이_남는다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.cancel();
+        sut.markStockReleased(NOW);
+
+        // when
+        sut.markStockReleased(NOW.plusMinutes(5));
+
+        // then
+        assertThat(sut.getStockReleasedAt()).isEqualTo(NOW);
+    }
+
     // ---------- 배송 상태 반영 ----------
 
     @Test
