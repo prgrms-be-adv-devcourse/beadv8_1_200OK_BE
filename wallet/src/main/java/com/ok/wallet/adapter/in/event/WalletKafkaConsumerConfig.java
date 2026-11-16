@@ -48,8 +48,10 @@ public class WalletKafkaConsumerConfig {
 
     // 결과 보내기가 잠깐 실패했을 때의 간격. 1초부터 두 배씩 늘려 1분에서 멈추고, 간격의 합이 30분이 되면 기록한다
     // 30분까지인 이유: 그 뒤에는 주문이 결제 만료를 요청해 지갑이 처음 결과를 다시 보내므로 더 붙잡을 까닭이 없다
-    // 최대 1분인 이유: 오류 처리기는 소비자 스레드에서 간격만큼 잠든다. 간격과 보내기 대기(10초)의 합이
-    // max.poll.interval.ms(기본 5분)를 넘으면 소비자가 그룹에서 빠졌다 다시 들어와 같은 메시지를 다시 처리한다
+    // 최대 1분인 이유: 오류 처리기는 소비자 스레드에서 간격만큼 잠든다. 간격과 한 번 보내는 데 걸리는 시간의 합이
+    // max.poll.interval.ms(기본 5분)를 넘으면 소비자가 그룹에서 빠졌다 다시 들어와 같은 메시지를 다시 처리한다.
+    // 한 번 보내기는 토픽 정보를 모르면 토픽마다 max.block.ms(기본 1분)까지 멈춘 뒤 저장 확인을 10초까지 기다려,
+    // 두 토픽에 보내는 동안 합은 1분 + 1분 × 2 + 10초 = 약 3분이다
     static final long TRANSIENT_SEND_MAX_INTERVAL_MILLIS = 60_000L;
     static final long TRANSIENT_SEND_MAX_ELAPSED_MILLIS = 30 * 60_000L;
 
@@ -112,7 +114,8 @@ public class WalletKafkaConsumerConfig {
     static ExponentialBackOff transientSendFailureBackOff() {
         ExponentialBackOff backOff = new ExponentialBackOff(INITIAL_INTERVAL_MILLIS, MULTIPLIER);
         backOff.setMaxInterval(TRANSIENT_SEND_MAX_INTERVAL_MILLIS);
-        // 간격의 합으로 센다. 시도마다 보내기 대기(최대 10초)가 더해져 실제로는 30분보다 몇 분 더 걸릴 수 있다
+        // 간격의 합으로 센다. 시도마다 보내기에 걸린 시간(보통 최대 10초, 토픽 정보를 모르면 더 길게)이 더해져
+        // 실제로는 30분보다 더 걸린다
         backOff.setMaxElapsedTime(TRANSIENT_SEND_MAX_ELAPSED_MILLIS);
         return backOff;
     }
