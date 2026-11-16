@@ -4,7 +4,7 @@ import com.ok.delivery.domain.DeliveryOutboxEventType;
 
 /**
  * 배송 outbox에 쌓인 메시지를 메시지 브로커로 보내는 인터페이스 (#644).
- * {@link DeliveryEventPublisher}는 출고 트랜잭션 안에서 "보낼 것"을 남기고, 이쪽은 커밋된 뒤 발송 작업이 실제로 보낸다.
+ * {@link DeliveryEventPublisher}는 출고·배송 완료 트랜잭션 안에서 "보낼 것"을 남기고, 이쪽은 커밋된 뒤 발송 작업이 실제로 보낸다.
  */
 public interface DeliveryMessageSender {
 

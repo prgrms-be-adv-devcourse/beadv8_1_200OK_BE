@@ -97,7 +97,35 @@ class OutboxDeliveryEventPublisherTest {
     }
 
     @Test
-    void 배송_완료를_알리면_outbox에_남기지_않고_주문용_스프링_이벤트만_발행한다() {
+    void 배송_완료를_알리면_orderId를_키로_본문을_outbox에_남긴다() {
+        // given
+        LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 23, 15, 0, 0, 123_456_000);
+
+        // when
+        sut.publishShipmentDelivered(1L, 2L, 10L, deliveredAt);
+
+        // then
+        DeliveryOutbox outbox = savedOutbox();
+        assertThat(outbox).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(outbox.getEventType()).isEqualTo(DeliveryOutboxEventType.SHIPMENT_DELIVERED);
+            softly.assertThat(outbox.getMessageKey()).isEqualTo("2");
+            softly.assertThat(outbox.getStatus()).isEqualTo(DeliveryOutboxStatus.PENDING);
+        });
+        JsonNode payload = JSON_MAPPER.readTree(outbox.getPayload());
+        assertThat(payload).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(payload.propertyNames()).containsExactlyInAnyOrder("shipmentId", "orderId", "sellerId", "deliveredAt");
+            softly.assertThat(payload.get("shipmentId").asLong()).isEqualTo(1L);
+            softly.assertThat(payload.get("orderId").asLong()).isEqualTo(2L);
+            softly.assertThat(payload.get("sellerId").asLong()).isEqualTo(10L);
+            // 주문의 자동 구매확정 기준 시각이라 소수점 아래까지 그대로 나가야 한다
+            softly.assertThat(payload.get("deliveredAt").asString()).isEqualTo("2026-10-23T15:00:00.123456");
+        });
+    }
+
+    @Test
+    void 배송_완료를_알리면_주문용_스프링_이벤트도_발행한다() {
         // given
         LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 23, 15, 0);
 
@@ -106,15 +134,15 @@ class OutboxDeliveryEventPublisherTest {
 
         // then
         then(applicationEventPublisher).should().publishEvent(new ShipmentDeliveredEvent(1L, 2L, 10L, deliveredAt));
-        then(deliveryOutboxRepository).shouldHaveNoInteractions();
     }
 
     @Test
-    void 배송_완료_시각이_null이면_예외가_발생하고_이벤트를_발행하지_않는다() {
+    void 배송_완료_시각이_null이면_예외가_발생하고_outbox에_남기지도_이벤트를_발행하지도_않는다() {
         // when & then
         assertThatThrownBy(() -> sut.publishShipmentDelivered(1L, 2L, 10L, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("deliveredAt은 필수입니다.");
+        then(deliveryOutboxRepository).shouldHaveNoInteractions();
         then(applicationEventPublisher).shouldHaveNoInteractions();
     }
 

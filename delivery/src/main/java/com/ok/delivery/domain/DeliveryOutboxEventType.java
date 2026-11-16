@@ -6,6 +6,9 @@ package com.ok.delivery.domain;
 public enum DeliveryOutboxEventType {
 
     /** 송장 등록으로 배송이 시작됨 (토픽 delivery.shipment-dispatched.v1) */
-    SHIPMENT_DISPATCHED
+    SHIPMENT_DISPATCHED,
+
+    /** 배송 완료 (토픽 delivery.shipment-delivered.v1) */
+    SHIPMENT_DELIVERED
 
 }

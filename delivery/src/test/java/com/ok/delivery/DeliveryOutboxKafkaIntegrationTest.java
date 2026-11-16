@@ -7,6 +7,7 @@ import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
 import com.ok.delivery.application.dto.ShipmentDispatchCommand;
 import com.ok.delivery.application.port.in.DeliveryOutboxRelayUseCase;
 import com.ok.delivery.application.port.in.ShipmentUseCase;
+import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.DeliveryOutbox;
 import com.ok.delivery.domain.DeliveryOutboxEventType;
 import com.ok.delivery.domain.DeliveryOutboxStatus;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -26,14 +28,18 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.Assertions.within;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.awaitility.Awaitility.await;
 
-// 통합 테스트: 출고가 커밋되면 outbox 줄이 남고, 발송 작업이 실제 Kafka 토픽에 orderId를 키로 한 메시지를 한 건 보내는지 확인 (#644)
+// 통합 테스트: 출고·배송 완료가 커밋되면 outbox 줄이 남고, 발송 작업이 실제 Kafka 토픽에 orderId를 키로 한 메시지를 한 건 보내는지 확인 (#644)
 // - 발송 스케줄러는 테스트에서 꺼져 있어(module-test.yml) 발송 유스케이스를 직접 부른다
 // - 다른 테스트의 메시지와 섞이지 않게 테스트마다 다른 주문 번호를 쓰고 토픽을 키(orderId)로 골라 센다
 class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
@@ -76,12 +82,14 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     KafkaConnectionDetails kafkaConnectionDetails;
 
     private DeliveryTopicReader dispatchedReader;
+    private DeliveryTopicReader deliveredReader;
 
     // 다른 테스트가 출고하며 남긴 줄이 이 테스트의 발송 건수에 섞이지 않게 비우고 시작한다
     @BeforeEach
     void setUp() {
         jdbcTemplate.update("DELETE FROM delivery_outbox");
         dispatchedReader = new DeliveryTopicReader(kafkaConnectionDetails.getBootstrapServers(), DeliveryTopics.SHIPMENT_DISPATCHED);
+        deliveredReader = new DeliveryTopicReader(kafkaConnectionDetails.getBootstrapServers(), DeliveryTopics.SHIPMENT_DELIVERED);
     }
 
     // 걸어 둔 실패가 다른 테스트로 넘어가지 않게 지운다
@@ -89,6 +97,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     void tearDown() {
         failableDeliveryMessageSender.reset();
         dispatchedReader.close();
+        deliveredReader.close();
         jdbcTemplate.update("DELETE FROM delivery_outbox");
         jdbcTemplate.update("DELETE FROM shipment_item");
         jdbcTemplate.update("DELETE FROM shipment");
@@ -142,6 +151,74 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.get("shippedAt").asString()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?");
         });
         assertThat(deliveryOutboxRepository.findAll().getFirst().getStatus()).isEqualTo(DeliveryOutboxStatus.SENT);
+    }
+
+    @Test
+    void 배송_완료가_커밋되고_발송_작업이_돌면_orderId를_키로_한_배송_완료_메시지가_한_건_나간다() {
+        // given
+        Shipment shipment = saveShipping();
+        shipmentUseCase.deliver(shipment.getId());
+
+        // when
+        int sent = deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE);
+
+        // then: 받는 쪽(주문)과 약속한 JSON 필드 그대로
+        assertThat(sent).isEqualTo(1);
+        List<String> values = deliveredReader.readValuesFor(String.valueOf(shipment.getOrderId()), READ_DURATION);
+        assertThat(values).hasSize(1);
+        JsonNode sut = jsonMapper.readTree(values.getFirst());
+        assertThat(sut.isObject()).isTrue();
+        LocalDateTime deliveredAt = shipmentRepository.findById(shipment.getId()).orElseThrow().getDeliveredAt();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.propertyNames()).containsExactlyInAnyOrder("shipmentId", "orderId", "sellerId", "deliveredAt");
+            softly.assertThat(sut.get("shipmentId").asLong()).isEqualTo(shipment.getId());
+            softly.assertThat(sut.get("orderId").asLong()).isEqualTo(shipment.getOrderId());
+            softly.assertThat(sut.get("sellerId").asLong()).isEqualTo(SELLER_ID);
+            // 주문의 자동 구매확정 기준이라 저장된 배송 완료 시각과 같아야 한다. DB는 마이크로초까지만 저장해 그 차이만 허용한다
+            softly.assertThat(LocalDateTime.parse(sut.get("deliveredAt").asString()))
+                    .isCloseTo(deliveredAt, within(1, ChronoUnit.MICROS));
+        });
+        assertThat(deliveryOutboxRepository.findAll().getFirst().getStatus()).isEqualTo(DeliveryOutboxStatus.SENT);
+    }
+
+    @Test
+    void 배송_완료_트랜잭션이_롤백되면_메시지가_나가지_않는다() {
+        // given
+        Shipment shipment = saveShipping();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            shipmentUseCase.deliver(shipment.getId());
+            status.setRollbackOnly();
+        });
+
+        // when
+        int sent = deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE);
+
+        // then
+        assertThat(sent).isZero();
+        assertThat(deliveryOutboxRepository.findAll()).isEmpty();
+        assertThat(deliveredReader.readValuesFor(String.valueOf(shipment.getOrderId()), READ_DURATION)).isEmpty();
+    }
+
+    @Test
+    void 같은_주문의_출고와_배송_완료는_남긴_순서대로_한_번의_실행에서_모두_나간다() {
+        // given
+        Shipment shipment = savePreparing();
+        shipmentUseCase.dispatch(dispatchCommand(shipment));
+        shipmentUseCase.deliver(shipment.getId());
+
+        // when
+        int sent = deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE);
+
+        // then: 발송 작업은 id 순서로 보내므로 남긴 순서가 곧 보낸 순서다
+        assertThat(sent).isEqualTo(2);
+        assertThat(deliveryOutboxRepository.findAll(Sort.by("id")))
+                .extracting(DeliveryOutbox::getEventType, DeliveryOutbox::getStatus)
+                .containsExactly(
+                        tuple(DeliveryOutboxEventType.SHIPMENT_DISPATCHED, DeliveryOutboxStatus.SENT),
+                        tuple(DeliveryOutboxEventType.SHIPMENT_DELIVERED, DeliveryOutboxStatus.SENT));
+        String orderKey = String.valueOf(shipment.getOrderId());
+        assertThat(dispatchedReader.readValuesFor(orderKey, READ_DURATION)).hasSize(1);
+        assertThat(deliveredReader.readValuesFor(orderKey, READ_DURATION)).hasSize(1);
     }
 
     @Test
@@ -224,6 +301,13 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     private Shipment savePreparing() {
         long orderId = SEQ.incrementAndGet();
         return shipmentRepository.save(ShipmentFixture.shipment(orderId, SELLER_ID, ShipmentFixture.item(orderId)));
+    }
+
+    private Shipment saveShipping() {
+        long orderId = SEQ.incrementAndGet();
+        Shipment shipment = ShipmentFixture.shipment(orderId, SELLER_ID, ShipmentFixture.item(orderId));
+        shipment.dispatch(Carrier.CJ_LOGISTICS, trackingNumber(orderId), ShipmentFixture.NOW);
+        return shipmentRepository.save(shipment);
     }
 
     private static ShipmentDispatchCommand dispatchCommand(Shipment shipment) {

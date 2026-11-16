@@ -1,6 +1,9 @@
 package com.ok.delivery;
 
+import com.ok.delivery.adapter.out.persistence.DeliveryOutboxJpaRepository;
 import com.ok.delivery.adapter.out.persistence.ShipmentJpaRepository;
+import com.ok.delivery.domain.DeliveryOutbox;
+import com.ok.delivery.domain.DeliveryOutboxEventType;
 import com.ok.delivery.domain.Shipment;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -15,9 +18,16 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 import static com.ok.delivery.fixture.ShipmentFixture.shipmentIn;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -42,18 +52,27 @@ class CarrierNotificationApiIntegrationTest extends AbstractIntegrationTest {
     FakeCarrierClient carrierClient;
 
     @Autowired
+    DeliveryOutboxJpaRepository deliveryOutboxRepository;
+
+    @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    JsonMapper jsonMapper;
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        // 다른 테스트가 남긴 줄이 이 테스트의 outbox 건수에 섞이지 않게 비우고 시작한다
+        jdbcTemplate.update("DELETE FROM delivery_outbox");
     }
 
     @AfterEach
     void tearDown() {
         carrierClient.reset();
+        jdbcTemplate.update("DELETE FROM delivery_outbox");
         jdbcTemplate.update("DELETE FROM shipment_item");
         jdbcTemplate.update("DELETE FROM shipment");
     }
@@ -94,6 +113,33 @@ class CarrierNotificationApiIntegrationTest extends AbstractIntegrationTest {
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.DELIVERED);
             softly.assertThat(sut.getDeliveredAt()).isEqualTo(deliveredAt);
+        });
+    }
+
+    @Test
+    void 알림으로_배송_완료가_되면_배송_완료를_보낼_줄이_반복_알림에도_한_줄만_남는다() throws Exception {
+        // given
+        Long shipmentId = saveShippingShipment();
+        carrierClient.markDelivered(TRACKING_NUMBER);
+
+        // when
+        notify(SECRET, "CJ_LOGISTICS", TRACKING_NUMBER).andExpect(status().isNoContent());
+        notify(SECRET, "CJ_LOGISTICS", TRACKING_NUMBER).andExpect(status().isNoContent());
+
+        // then
+        Shipment shipment = shipmentRepository.findById(shipmentId).orElseThrow();
+        List<DeliveryOutbox> outboxes = deliveryOutboxRepository.findAll();
+        assertThat(outboxes).hasSize(1);
+        DeliveryOutbox sut = outboxes.getFirst();
+        assertThat(sut).isNotNull();
+        JsonNode payload = jsonMapper.readTree(sut.getPayload());
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getEventType()).isEqualTo(DeliveryOutboxEventType.SHIPMENT_DELIVERED);
+            softly.assertThat(sut.getMessageKey()).isEqualTo(String.valueOf(shipment.getOrderId()));
+            softly.assertThat(payload.get("shipmentId").asLong()).isEqualTo(shipmentId);
+            // DB는 마이크로초까지만 저장해 그 차이만 허용한다
+            softly.assertThat(LocalDateTime.parse(payload.get("deliveredAt").asString()))
+                    .isCloseTo(shipment.getDeliveredAt(), within(1, ChronoUnit.MICROS));
         });
     }
 

@@ -17,4 +17,9 @@ class DeliveryKafkaTopicConfig {
     NewTopic deliveryShipmentDispatchedTopic() {
         return TopicBuilder.name(DeliveryTopics.SHIPMENT_DISPATCHED).build();
     }
+
+    @Bean
+    NewTopic deliveryShipmentDeliveredTopic() {
+        return TopicBuilder.name(DeliveryTopics.SHIPMENT_DELIVERED).build();
+    }
 }

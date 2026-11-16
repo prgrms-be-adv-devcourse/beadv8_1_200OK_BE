@@ -9,6 +9,9 @@ public final class DeliveryTopics {
     /** 배송 → 주문: 송장 등록으로 배송이 시작됨. 키는 orderId */
     public static final String SHIPMENT_DISPATCHED = "delivery.shipment-dispatched.v1";
 
+    /** 배송 → 주문: 판매자 묶음 배송 완료. 키는 orderId */
+    public static final String SHIPMENT_DELIVERED = "delivery.shipment-delivered.v1";
+
     private DeliveryTopics() {
     }
 }
