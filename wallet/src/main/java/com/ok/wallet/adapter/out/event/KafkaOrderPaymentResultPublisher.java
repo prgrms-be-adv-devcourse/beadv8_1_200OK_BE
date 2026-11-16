@@ -31,7 +31,7 @@ class KafkaOrderPaymentResultPublisher implements OrderPaymentResultPublisher {
                 new WalletPaymentFailedMessage(orderId, buyerId, reason.name()));
     }
 
-    // 키를 orderId로 두면 한 주문의 완료와 실패가 같은 파티션으로 가 보낸 순서대로 받는다. 받는 요청(order.order-created)의 키와 같다
+    // 키를 orderId로 두면 한 주문의 완료와 실패가 같은 파티션으로 가 보낸 순서대로 받는다. 받는 요청(order.order-created.v1)의 키와 같다
     private void send(String topic, Long orderId, Object message) {
         walletKafkaSender.send(topic, String.valueOf(orderId), message,
                 "주문 결제 결과를 보내지 못했습니다. topic=" + topic + ", orderId=" + orderId);
