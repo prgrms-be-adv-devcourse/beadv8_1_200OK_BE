@@ -20,6 +20,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -46,6 +48,8 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
     private static final Long NOT_ORDERED_OPTION_ID = 9_602_602L;
     // 다시 시도(1·2·4초)를 다 쓰고 기록될 때까지 넉넉히 기다린다
     private static final Duration WAIT_TIMEOUT = Duration.ofSeconds(30);
+    // 배송이 받는 결제 완료 메시지 토픽(#603). 결제 완료와 같은 트랜잭션에서 outbox에 남는다
+    private static final String ORDER_PAID_TOPIC = "order.order-paid.v1";
 
     @Autowired
     KafkaTemplate<String, Object> kafkaTemplate;
@@ -61,6 +65,9 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     CartService cartService;
+
+    @Autowired
+    JsonMapper jsonMapper;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -80,6 +87,8 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_message_failure WHERE message_key = ?",
                 missingOrderKey);
         String orders = "SELECT id FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?";
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_outbox WHERE topic = ? AND message_key IN ("
+                + "SELECT CAST(id AS CHAR) FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?)", ORDER_PAID_TOPIC, BUYER_ID);
         jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_third_party_consent WHERE order_id IN ("
                 + orders + ")", BUYER_ID);
         jdbcTemplate.update("DELETE oi FROM " + OrderSchema.NAME + ".order_item oi JOIN " + OrderSchema.NAME
@@ -93,7 +102,7 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 결제_완료를_Kafka로_받으면_주문이_결제_완료되고_주문한_옵션만_장바구니에서_빠진다() {
+    void 결제_완료를_Kafka로_받으면_주문이_결제_완료되고_주문한_옵션만_장바구니에서_빠지고_배송용_메시지가_남는다() {
         // given
         cartService.addItem(BUYER_ID, OPTION_ID, 1);
         cartService.addItem(BUYER_ID, NOT_ORDERED_OPTION_ID, 1);
@@ -102,11 +111,24 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         // when
         send(WalletTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(orderId), completed(orderId));
 
-        // then: 장바구니 정리는 결제 완료와 한 트랜잭션이라 PAID가 보이면 함께 끝나 있다
+        // then: 장바구니 정리와 배송용 메시지는 결제 완료와 한 트랜잭션이라 PAID가 보이면 함께 끝나 있다
         assertThat(waitFor(() -> "PAID".equals(statusOf(orderId)))).isTrue();
+        List<String> paidMessages = orderPaidMessages(orderId);
+        assertThat(paidMessages).hasSize(1);
+        JsonNode message = jsonMapper.readTree(paidMessages.getFirst());
+        JsonNode sellerOrder = message.get("sellerOrders").get(0);
+        JsonNode item = sellerOrder.get("items").get(0);
         assertSoftly(softly -> {
             softly.assertThat(itemStatuses(orderId)).containsOnly("PREPARING");
             softly.assertThat(cartOptionIds()).containsExactly(NOT_ORDERED_OPTION_ID);
+            softly.assertThat(message.get("orderId").asLong()).isEqualTo(orderId);
+            softly.assertThat(message.get("buyerId").asLong()).isEqualTo(BUYER_ID);
+            softly.assertThat(message.get("shippingAddress").get("postalCode").asString()).isEqualTo("06236");
+            softly.assertThat(message.get("sellerOrders").size()).isEqualTo(1);
+            softly.assertThat(sellerOrder.get("sellerId").asLong()).isEqualTo(SELLER_ID);
+            softly.assertThat(sellerOrder.get("baseShippingFee").asLong()).isEqualTo(3_000L);
+            softly.assertThat(item.get("productName").asString()).isEqualTo("감자");
+            softly.assertThat(item.get("quantity").asInt()).isEqualTo(1);
         });
     }
 
@@ -200,11 +222,12 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         // when
         RecordMetadata sent = send(WalletTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(orderId), completed(orderId));
 
-        // then: 두 번째 결과를 처리하고 오프셋까지 넘겼지만 주문은 다시 바뀌지 않았다(결제 완료 이벤트도 다시 나가지 않는다)
+        // then: 두 번째 결과를 처리하고 오프셋까지 넘겼지만 주문은 다시 바뀌지 않았고 배송용 메시지도 하나다
         assertThat(waitFor(() -> consumedPast(sent))).isTrue();
         assertSoftly(softly -> {
             softly.assertThat(statusOf(orderId)).isEqualTo("PAID");
             softly.assertThat(updatedAtOf(orderId)).isEqualTo(paidUpdatedAt);
+            softly.assertThat(orderPaidMessages(orderId)).hasSize(1);
         });
     }
 
@@ -250,6 +273,12 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
     private List<Long> cartOptionIds() {
         return jdbcTemplate.queryForList("SELECT ci.product_option_id FROM " + OrderSchema.NAME + ".cart_item ci JOIN "
                 + OrderSchema.NAME + ".cart c ON ci.cart_id = c.id WHERE c.member_id = ?", Long.class, BUYER_ID);
+    }
+
+    // 이 주문의 결제 완료 메시지 본문(JSON). outbox 줄은 보낸 뒤에도 지우지 않아 남은 줄 수가 남긴 메시지 수다
+    private List<String> orderPaidMessages(Long orderId) {
+        return jdbcTemplate.queryForList("SELECT payload FROM " + OrderSchema.NAME
+                + ".order_outbox WHERE topic = ? AND message_key = ?", String.class, ORDER_PAID_TOPIC, String.valueOf(orderId));
     }
 
     private LocalDateTime updatedAtOf(Long orderId) {

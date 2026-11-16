@@ -1,10 +1,7 @@
 package com.ok.order.order.adapter.out.event;
 
-import com.ok.common.event.OrderPaidEvent;
-import com.ok.common.event.payload.PaidOrderItem;
-import com.ok.common.event.payload.PaidSellerOrder;
-import com.ok.common.event.payload.ShippingAddress;
 import com.ok.order.order.adapter.out.event.dto.OrderCreatedMessage;
+import com.ok.order.order.adapter.out.event.dto.OrderPaidMessage;
 import com.ok.order.order.adapter.out.event.dto.OrderPaymentExpireRequestedMessage;
 import com.ok.order.order.adapter.out.event.dto.OrderProductConfirmedMessage;
 import com.ok.order.order.application.dto.PaidItemMessage;
@@ -13,7 +10,6 @@ import com.ok.order.order.application.dto.PaidSellerGroupMessage;
 import com.ok.order.order.application.port.in.OrderOutboxRecordUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -23,8 +19,6 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 public class SpringOrderEventPublisher implements OrderEventPublisher {
-
-    private final ApplicationEventPublisher applicationEventPublisher;
 
     // Kafka로 보낼 메시지를 outbox에 남기고(#666), 메시지 DTO를 JSON으로 바꾼다.
     // 토픽별 전환(#600, #602, #603)이 각자 자기 메서드만 고치도록 의존성을 먼저 둔다
@@ -48,9 +42,11 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
                         orderId, orderItemId, sellerId, totalItemPrice, sellerShippingPrice)));
     }
 
+    // 배송은 Kafka로 받는다(배송 #644). 배송이 (주문, 판매자)로 중복을 막으므로 다시 보내져도 배송은 판매자마다 하나다(#603).
+    // 키를 orderId로 둬 같은 주문의 메시지가 같은 파티션에 순서대로 쌓인다
     @Override
     public void publishOrderPaidEvent(PaidOrderMessage message) {
-        ShippingAddress shippingAddress = new ShippingAddress(
+        OrderPaidMessage.ShippingAddress shippingAddress = new OrderPaidMessage.ShippingAddress(
                 message.recipientName(),
                 message.recipientPhone(),
                 message.zipCode(),
@@ -59,19 +55,20 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
                 message.deliveryNote()
         );
 
-        List<PaidSellerOrder> sellerOrders = new ArrayList<>();
+        List<OrderPaidMessage.SellerOrder> sellerOrders = new ArrayList<>();
         for (PaidSellerGroupMessage group : message.sellerGroups()) {
-            List<PaidOrderItem> items = new ArrayList<>();
+            List<OrderPaidMessage.Item> items = new ArrayList<>();
             for (PaidItemMessage item : group.items()) {
-                items.add(new PaidOrderItem(
+                items.add(new OrderPaidMessage.Item(
                         item.orderItemId(), item.productName(), item.optionName(), item.quantity(), item.unitPrice()));
             }
-            sellerOrders.add(new PaidSellerOrder(
+            sellerOrders.add(new OrderPaidMessage.SellerOrder(
                     group.sellerId(), group.baseShippingFee(), group.freeShippingThreshold(), group.regionSurcharge(), items));
         }
 
-        applicationEventPublisher.publishEvent(new OrderPaidEvent(
-                message.orderId(), message.buyerId(), message.paidAt(), shippingAddress, sellerOrders));
+        outboxRecorder.record(OrderTopics.ORDER_PAID, String.valueOf(message.orderId()),
+                jsonMapper.writeValueAsString(new OrderPaidMessage(
+                        message.orderId(), message.buyerId(), message.paidAt(), shippingAddress, sellerOrders)));
     }
 
     // 지갑이 Kafka로만 받는다(#656). 전환 전에 없던 메시지라 Spring 이벤트로는 보내지 않는다.
