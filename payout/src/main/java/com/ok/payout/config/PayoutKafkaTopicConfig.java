@@ -28,8 +28,9 @@ public class PayoutKafkaTopicConfig {
     // 받는 토픽도 선언한다. 보내는 쪽(주문·지갑)이 아직 Kafka로 보내지 않아 토픽이 없으면, 리스너가 "토픽 없음" 경고를 계속 찍기 때문(#339)
     // NewTopic은 있으면 그대로라, 나중에 주문·지갑이 같은 선언을 해도 충돌하지 않는다
 
+    // 빈 이름에 payout을 넣는다. 주문도 같은 토픽을 선언할 때(#600) 한 앱(monolith)에서 같은 이름 빈과 겹치면 앱이 시작되지 않는다
     @Bean
-    public NewTopic orderProductConfirmedTopic() {
+    public NewTopic payoutOrderProductConfirmedTopic() {
         return TopicBuilder.name(PayoutTopics.ORDER_PRODUCT_CONFIRMED).build();
     }
 

@@ -22,11 +22,12 @@ public class PayoutCandidateKafkaListener {
 
     // Kafka로 받는 길. 주문이 아직 Kafka로 보내지 않아도 미리 열어 둔다(#339)
     // 받는 타입은 정산 DTO. 메시지에 보내는 쪽 클래스 이름이 없어서(타입 헤더 없음) 리스너마다 읽을 타입을 정한다
-    // 그룹을 payout으로 정해 두는 이유: 기본값이 앱 이름이라 monolith에서는 다른 모듈과 같은 그룹이 되어 메시지가 한쪽에만 간다
+    // 그룹을 따로 정하는 이유: 기본값이 앱 이름이라 monolith에서는 다른 모듈과 같은 그룹이 되어 메시지가 한쪽에만 간다
+    // 정산 리스너끼리도 그룹을 나눠, 이 리스너만 읽은 위치를 되돌리거나 다시 붙어도 다른 정산 리스너가 멈추지 않게 한다 (#648)
     // Spring 이벤트와 Kafka로 같은 구매확정이 두 번 와도 서비스가 orderItemId로 중복을 막는다
     @KafkaListener(
             topics = PayoutTopics.ORDER_PRODUCT_CONFIRMED,
-            groupId = PayoutTopics.CONSUMER_GROUP,
+            groupId = PayoutTopics.CANDIDATE_CREATE_GROUP,
             containerFactory = PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage")
     void onKafka(OrderProductConfirmedMessage message) {

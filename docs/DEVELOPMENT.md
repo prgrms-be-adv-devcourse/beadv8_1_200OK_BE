@@ -838,10 +838,10 @@ com.ok.order
   - 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309). 못 보낸 줄과 대사에서 "입금 없음"으로 답한 정산은 짧은 간격 재발송이 다시 보냅니다(#620).
   - 대사 질문 묶음(`payout.payout-deposit-check-requested`, 키 `checkId`, 한 묶음 최대 500건): 매일 대사가 지갑에 입금됐는지 묻습니다(#619).
 - 정산이 받는 메시지
-  - 구매확정(`order.order-product-confirmed`, 키 `orderItemId`)
+  - 구매확정(`order.order-product-confirmed.v1`, 키 `orderItemId`, 그룹 `payout.candidate-create`, #661)
   - 결제 완료(`wallet.wallet-payment-completed`, 키 `orderId`)
   - 대사 답 묶음(`wallet.payout-deposit-checked`, 키 `checkId`): 지갑이 원장을 읽고 답합니다(#619, 지갑 #613).
-- 토픽 이름과 컨슈머 그룹(`payout`)은 `PayoutTopics`에 있습니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
+- 토픽 이름과 컨슈머 그룹은 `PayoutTopics`에 있습니다. 그룹은 리스너마다 `<모듈>.<용도>`로 나누는 중이고(#648), 결제 완료·대사 답은 #653까지 `payout`을 씁니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
 - 대사는 매일 `payout.deposit-check.cron`(기본 `0 0 12 * * *`, Asia/Seoul)에 돕니다. 메시지 모양은 PR #548 문서 4절과 지갑 #613의 합의를 따릅니다.
 - 재발송은 `payout.outbox-resend.fixed-delay`(기본 `PT5M`, 앞 실행이 끝난 뒤부터 셈) 간격으로 돕니다. 정산 Job 발행 단계와 같은 잠금(`payoutOutboxSend`)을 써서 같은 줄을 동시에 보내지 않습니다.
 

@@ -212,17 +212,24 @@ class PayoutKafkaReceiveIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 정산_Kafka_리스너는_정산_오류_처리기를_쓴다() {
-        // given: 정산 그룹으로 받는 리스너 (구매확정, 결제 완료, 대사 답 #619)
+        // given: 정산 그룹으로 받는 리스너 (구매확정은 payout.candidate-create #661, 결제 완료·대사 답 #619는 #653까지 payout)
         List<MessageListenerContainer> payoutContainers = new ArrayList<>();
+        int candidateCreateGroupCount = 0;
         for (MessageListenerContainer container : listenerRegistry.getListenerContainers()) {
-            if (PayoutTopics.CONSUMER_GROUP.equals(container.getGroupId())) {
+            String groupId = container.getGroupId();
+            if (PayoutTopics.CONSUMER_GROUP.equals(groupId) || PayoutTopics.CANDIDATE_CREATE_GROUP.equals(groupId)) {
                 payoutContainers.add(container);
+            }
+            if (PayoutTopics.CANDIDATE_CREATE_GROUP.equals(groupId)) {
+                candidateCreateGroupCount++;
             }
         }
 
         // when & then: 기본 설정(오류 처리기 없음 → 간격 0으로 10번)이 아니라 정산 설정의 오류 처리기가 붙어 있다
         // 규칙 내용(다시 시도하지 않는 예외, 간격)은 PayoutKafkaConsumerConfigTest가 확인한다
+        // 구매확정 리스너 하나만 새 그룹으로 옮겼는지도 함께 본다. 그룹을 리스너마다 나누는 것이 #648 규칙이다
         assertThat(payoutContainers).hasSize(3);
+        assertThat(candidateCreateGroupCount).isEqualTo(1);
         for (MessageListenerContainer container : payoutContainers) {
             assertThat(((AbstractMessageListenerContainer<?, ?>) container).getCommonErrorHandler())
                     .isInstanceOf(DefaultErrorHandler.class);
