@@ -1,11 +1,14 @@
 package com.ok.product;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -16,9 +19,12 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.jayway.jsonpath.JsonPath;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
@@ -27,6 +33,7 @@ import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 @AutoConfigureMockMvc
@@ -44,7 +51,13 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 	ProductOptionJpaRepository productOptionRepository;
 
 	@Autowired
+	ProductSearchJpaRepository productSearchRepository;
+
+	@Autowired
 	TransactionTemplate transactionTemplate;
+
+	@Autowired
+	JdbcTemplate jdbcTemplate;
 
 	// 목록 테스트는 다른 테스트가 남긴 상품이 섞이면 깨지므로 시작 전에 비운다
 	@BeforeEach
@@ -122,6 +135,70 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 		mockMvc.perform(get("/api/v1/products/{productId}", allAllocated))
 			.andExpect(jsonPath("$.soldOut").value(true))
 			.andExpect(jsonPath("$.options[0].soldOut").value(true));
+	}
+
+	@Test
+	void 목록의_품절_순서는_상세의_품절_판정과_같다() throws Exception {
+		// given
+		Long allSoldOut = save(visible("모든 옵션 품절", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 0),
+				ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 0))));
+		Long partlySoldOut = save(visible("일부 옵션만 품절", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 0),
+				ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 5))));
+		Long stockOnlyInDeleted = save(visible("삭제된 옵션에만 재고", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+			List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 0),
+				ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 10))));
+		jdbcTemplate.update("UPDATE " + ProductSchema.NAME + ".product_option SET deleted_at = NOW(6)"
+			+ " WHERE product_id = ? AND name = '5kg'", stockOnlyInDeleted);
+		Long allAllocated = save(visible("배정으로 가용 재고 0", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(5)));
+		Long optionId = transactionTemplate.execute(
+			status -> productRepository.findById(allAllocated).orElseThrow().getOptions().getFirst().getId());
+		transactionTemplate.executeWithoutResult(status -> productOptionRepository.allocate(optionId, 5));
+
+		// when & then
+		// soldOut 값은 Product.isSoldOut()이 정하고 순서는 SQL이 정한다. 두 판정이 다르면 soldOut이 섞여 나온다
+		mockMvc.perform(get("/api/v1/products"))
+			.andExpect(jsonPath("$.content[*].productId").value(contains(partlySoldOut.intValue(),
+				allAllocated.intValue(), stockOnlyInDeleted.intValue(), allSoldOut.intValue())))
+			.andExpect(jsonPath("$.content[*].soldOut").value(contains(false, true, true, true)));
+	}
+
+	@Test
+	void 검색_행이_없는_상품도_검색어_없는_목록에는_나온다() throws Exception {
+		// given
+		Long withoutSearchRow = save(visible("청송 꿀사과", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10)));
+
+		// when & then
+		assertThat(productSearchRepository.findById(withoutSearchRow)).isEmpty();
+		mockMvc.perform(get("/api/v1/products"))
+			.andExpect(jsonPath("$.content[*].productId").value(contains(withoutSearchRow.intValue())));
+	}
+
+	@Test
+	void 가격과_평점이_모두_같아도_페이지를_넘기면_중복_누락_없이_모두_나오고_마지막_페이지를_넘으면_빈_목록이다()
+		throws Exception {
+		// given
+		List<Long> saved = new ArrayList<>();
+		for (int i = 0; i < 25; i++) {
+			saved.add(save(visible("같은 가격 " + i, ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10))));
+		}
+		List<Long> paged = new ArrayList<>();
+
+		// when
+		for (int page = 0; page < 3; page++) {
+			paged.addAll(productIdsOf(mockMvc.perform(get("/api/v1/products")
+					.param("sort", "PRICE_ASC").param("page", String.valueOf(page)).param("size", "10"))
+				.andExpect(status().isOk())
+				.andReturn()));
+		}
+
+		// then
+		assertThat(paged).containsExactlyElementsOf(saved.stream().sorted(Comparator.reverseOrder()).toList());
+		mockMvc.perform(get("/api/v1/products").param("sort", "PRICE_ASC").param("page", "3").param("size", "10"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content").isEmpty())
+			.andExpect(jsonPath("$.totalElements").value(25));
 	}
 
 	@Test
@@ -219,6 +296,12 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(jsonPath("$[0].categories.length()").value(ProductCategory.values().length))
 			.andExpect(jsonPath("$[0].categories[0].code").value("GRAIN"))
 			.andExpect(jsonPath("$[0].categories[0].description").value("쌀·잡곡"));
+	}
+
+	private List<Long> productIdsOf(MvcResult result) throws Exception {
+		List<Integer> ids = JsonPath.read(result.getResponse().getContentAsString(),
+			"$.content[*].productId");
+		return ids.stream().map(Long::valueOf).toList();
 	}
 
 	private Long save(Product product) {

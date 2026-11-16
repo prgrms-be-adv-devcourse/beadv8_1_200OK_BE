@@ -12,6 +12,7 @@ import com.ok.product.product.adapter.in.web.dto.ProductSummaryResponse;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCategoryGroupCode;
 import com.ok.product.product.application.dto.ProductRegionCode;
+import com.ok.product.product.application.dto.ProductSortCode;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -30,8 +31,10 @@ interface BuyerProductControllerSpec {
 	@SecurityRequirements
 	@Operation(summary = "상품 목록 조회", description = """
 		노출(VISIBLE)된 상품을 조회합니다. 판매 상태와 관계없이 나오므로 화면은 status로 판매 예정·일시 중지·판매 종료를 표시합니다.
-		keyword가 있으면 상품명·옵션명·카테고리 이름으로 찾아 정확도순으로, 없으면 최신순으로 나옵니다.
-		검색어와 관계가 낮은 상품은 결과와 totalElements에서 빠지고, 맞는 상품이 없으면 빈 목록입니다.
+		keyword가 있으면 상품명·옵션명·카테고리 이름으로 찾습니다.
+		검색어와 관계가 낮은 상품은 정렬과 관계없이 결과와 totalElements에서 빠지고, 맞는 상품이 없으면 빈 목록입니다.
+		sort를 보내지 않으면 keyword가 있을 때 정확도순, 없을 때 최신순입니다. keyword 없이 RELEVANCE를 보내면 최신순으로 나옵니다.
+		어떤 정렬이든 품절 상품(soldOut)은 판매 가능한 상품 뒤에 옵니다. 품절 상품도 목록에서 빠지지는 않습니다.
 		검색어와 필터는 모두 선택이고, 함께 보내면 모두 만족하는 상품만 나옵니다.
 		""")
 	@ApiResponses({
@@ -47,6 +50,10 @@ interface BuyerProductControllerSpec {
 		@Parameter(description = "상위 카테고리", example = "AGRICULTURE") ProductCategoryGroupCode categoryGroup,
 		@Parameter(description = "하위 카테고리", example = "FRUIT") ProductCategoryCode category,
 		@Parameter(description = "산지 (시·도)", example = "GYEONGBUK") ProductRegionCode region,
+		@Parameter(description = """
+			정렬. RELEVANCE(정확도순), PRICE_ASC(낮은 가격순), PRICE_DESC(높은 가격순), LATEST(최신순).
+			가격은 minSalePrice 기준입니다. 정확도·가격이 같으면 리뷰 수로 보정한 평점이 높은 순, 그다음 최신순입니다""",
+			example = "PRICE_ASC") ProductSortCode sort,
 		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
 		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size
 	);

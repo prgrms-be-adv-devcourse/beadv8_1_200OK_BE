@@ -7,12 +7,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -20,9 +22,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
-import com.ok.product.product.adapter.out.persistence.ProductKeywordSearchJdbcRepository;
+import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
+import com.ok.product.product.adapter.out.persistence.BuyerProductQueryJdbcRepository;
 import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCategoryGroupCode;
@@ -30,11 +34,13 @@ import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductOptionCommand;
 import com.ok.product.product.application.dto.ProductRegionCode;
 import com.ok.product.product.application.dto.ProductSearchQuery;
+import com.ok.product.product.application.dto.ProductSortCode;
 import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.product.product.application.dto.ProductSummaryResult;
 import com.ok.product.product.application.dto.ProductVisibilityCode;
 import com.ok.product.product.application.service.ProductService;
 import com.ok.product.product.domain.ProductSearchKeyword;
+import com.ok.product.product.domain.ProductSort;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 // FULLTEXT 인덱스는 커밋된 행만 찾으므로 테스트 메서드에 @Transactional을 붙이지 않는다.
@@ -54,13 +60,19 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	ProductService productService;
 
 	@Autowired
-	ProductKeywordSearchJdbcRepository productKeywordSearchRepository;
+	BuyerProductQueryJdbcRepository buyerProductQueryRepository;
 
 	@Autowired
 	ProductJpaRepository productRepository;
 
 	@Autowired
+	ProductOptionJpaRepository productOptionRepository;
+
+	@Autowired
 	ProductSearchJpaRepository productSearchRepository;
+
+	@Autowired
+	TransactionTemplate transactionTemplate;
 
 	@Autowired
 	JdbcTemplate jdbcTemplate;
@@ -174,11 +186,12 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		ProductSearchKeyword keyword = ProductSearchKeyword.from("시레기").orElseThrow();
 		// 한 페이지를 1개로 해야 첫 페이지가 다 차서 전체 개수를 따로 센다
 		PageRequest pageable = PageRequest.of(0, 1);
-		Page<Long> lowFloor = productKeywordSearchRepository.findVisibleProductIds(keyword, null, null, null, 0.1,
-			pageable);
+		Page<Long> lowFloor = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
+			ProductSort.RELEVANCE, 0.1, pageable);
 
 		// when
-		Page<Long> sut = productKeywordSearchRepository.findVisibleProductIds(keyword, null, null, null, 0.5, pageable);
+		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
+			ProductSort.RELEVANCE, 0.5, pageable);
 
 		// then
 		// 하한이 낮으면 자모 조각 하나만 겹친 상품(샤인머스캣, 시금치)까지 개수에 든다
@@ -238,8 +251,9 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		Long deleted = create(name, ProductCategoryCode.GRAIN, ProductRegionCode.CHUNGBUK, "10개");
 		productService.delete(SELLER_ID, deleted);
 		List<Long> sameName = List.of(onSale, ready, hidden, deleted);
-		// 노출 조건이 기존 목록(ProductQuerydslRepository)과 같은지 보려고 그 결과를 기준으로 삼는다
-		List<Long> listed = productService.searchVisibleProducts(new ProductSearchQuery(null, null, null, null, 0, 100))
+		// 검색어가 있을 때와 없을 때 노출 조건이 같은지 보려고 검색어 없는 목록을 기준으로 삼는다
+		List<Long> listed = productService.searchVisibleProducts(
+				new ProductSearchQuery(null, null, null, null, null, 0, 100))
 			.map(ProductSummaryResult::productId).filter(sameName::contains).toList();
 
 		// when
@@ -267,19 +281,115 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 	@ParameterizedTest
 	@MethodSource("검색어가_없는_것으로_보는_값")
-	void 검색어가_없거나_공백_기호뿐이면_기존_목록과_같은_결과와_순서다(String keyword) throws Exception {
+	void 검색어가_없거나_공백_기호뿐이면_전체_목록이_최신순이고_품절_상품만_뒤로_간다(String keyword) throws Exception {
+		// given
+		sellOut(apple);
+
 		// when & then
 		mockMvc.perform(get("/api/v1/products").param("keyword", keyword))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.content[*].productId").value(contains(
-				bruisedOptionPeach.intValue(), bruisedPear.intValue(), apple.intValue(), shiitake.intValue(),
-				spinach.intValue(), siraegi.intValue(), jeonnamTangerine.intValue(), tangerine.intValue(),
-				shineMuscat.intValue())))
+				bruisedOptionPeach.intValue(), bruisedPear.intValue(), shiitake.intValue(), spinach.intValue(),
+				siraegi.intValue(), jeonnamTangerine.intValue(), tangerine.intValue(), shineMuscat.intValue(),
+				apple.intValue())))
 			.andExpect(jsonPath("$.totalElements").value(9));
 	}
 
 	static Stream<String> 검색어가_없는_것으로_보는_값() {
 		return Stream.of("", "   ", "@@@", "!!!");
+	}
+
+	@ParameterizedTest
+	@MethodSource("정확도순이_아닌_정렬")
+	void 가격순과_최신순에서도_점수가_하한보다_낮은_상품은_결과와_전체_개수에서_빠진다(ProductSortCode sort) {
+		// given
+		ProductSearchKeyword keyword = ProductSearchKeyword.from("시레기").orElseThrow();
+		// 하한이 낮으면 자모 조각 하나만 겹친 상품(샤인머스캣, 시금치)까지 나온다
+		Page<Long> lowFloor = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
+			sort.toDomain(), 0.1, PageRequest.of(0, 20));
+
+		// when
+		Page<ProductSummaryResult> sut = productService.searchVisibleProducts(
+			new ProductSearchQuery("시레기", null, null, null, sort, 0, 1));
+
+		// then
+		assertThat(lowFloor.getContent()).containsExactlyInAnyOrder(siraegi, shineMuscat, spinach);
+		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(siraegi);
+		assertThat(sut.getTotalElements()).isEqualTo(1);
+	}
+
+	static Stream<ProductSortCode> 정확도순이_아닌_정렬() {
+		return Stream.of(ProductSortCode.PRICE_ASC, ProductSortCode.PRICE_DESC, ProductSortCode.LATEST);
+	}
+
+	@ParameterizedTest
+	@MethodSource("정렬별_기대_순서")
+	void 품절_상품은_점수가_더_높아도_어떤_정렬에서든_판매_가능_상품_뒤에_온다(ProductSortCode sort,
+		List<String> beforeSoldOut, List<String> afterSoldOut) {
+		// given
+		String name = "부여 방울토마토 2kg";
+		Long cheap = create(name, "가정용", 10_000L);
+		Long expensive = create(name, "가정용", 50_000L);
+		// 옵션명에도 검색어가 들어가 가장 점수가 높고, 가격은 가운데, id는 가장 크다
+		Long soldOut = create(name, name, 30_000L);
+		Map<String, Long> ids = Map.of("cheap", cheap, "expensive", expensive, "soldOut", soldOut);
+		List<Long> before = search("방울토마토", sort);
+		sellOut(soldOut);
+
+		// when
+		List<Long> sut = search("방울토마토", sort);
+
+		// then
+		assertThat(before).containsExactlyElementsOf(beforeSoldOut.stream().map(ids::get).toList());
+		assertThat(sut).containsExactlyElementsOf(afterSoldOut.stream().map(ids::get).toList());
+	}
+
+	static Stream<Arguments> 정렬별_기대_순서() {
+		// cheap과 expensive는 점수와 평점이 같아 정확도순에서는 id가 큰 expensive가 먼저다
+		return Stream.of(
+			Arguments.of(ProductSortCode.RELEVANCE, List.of("soldOut", "expensive", "cheap"),
+				List.of("expensive", "cheap", "soldOut")),
+			Arguments.of(ProductSortCode.PRICE_ASC, List.of("cheap", "soldOut", "expensive"),
+				List.of("cheap", "expensive", "soldOut")),
+			Arguments.of(ProductSortCode.PRICE_DESC, List.of("expensive", "soldOut", "cheap"),
+				List.of("expensive", "cheap", "soldOut")),
+			Arguments.of(ProductSortCode.LATEST, List.of("soldOut", "expensive", "cheap"),
+				List.of("expensive", "cheap", "soldOut")));
+	}
+
+	@Test
+	void 점수가_같으면_리뷰_수로_보정한_평점이_높은_상품이_먼저이고_평점까지_같으면_id가_큰_상품이_먼저다() {
+		// given
+		String name = "무안 햇양파 3kg";
+		Long oneFiveStar = create(name, "가정용", 20_000L);
+		Long manyFourEight = create(name, "가정용", 20_000L);
+		Long noReviewOld = create(name, "가정용", 20_000L);
+		Long noReviewNew = create(name, "가정용", 20_000L);
+		// rating_sum은 별 0.5 단위의 1~10 척도다. 별 5.0 한 개는 10, 별 4.8 평균 100개는 960이다
+		transactionTemplate.executeWithoutResult(status -> {
+			productRepository.addReviewStats(oneFiveStar, 1, 10);
+			productRepository.addReviewStats(manyFourEight, 100, 960);
+		});
+
+		// when
+		List<Long> relevance = search("햇양파", ProductSortCode.RELEVANCE);
+		List<Long> priceAsc = search("햇양파", ProductSortCode.PRICE_ASC);
+
+		// then
+		assertThat(relevance).containsExactly(manyFourEight, oneFiveStar, noReviewNew, noReviewOld);
+		assertThat(priceAsc).containsExactly(manyFourEight, oneFiveStar, noReviewNew, noReviewOld);
+	}
+
+	private List<Long> search(String keyword, ProductSortCode sort) {
+		return productService.searchVisibleProducts(new ProductSearchQuery(keyword, null, null, null, sort, 0, 20))
+			.map(ProductSummaryResult::productId)
+			.getContent();
+	}
+
+	// 주문 배정으로 모든 재고를 잡아 판매 가능 수량을 0으로 만든다
+	private void sellOut(Long productId) {
+		transactionTemplate.executeWithoutResult(status -> productRepository.findById(productId).orElseThrow()
+			.getOptions().forEach(option -> productOptionRepository.allocate(option.getId(), option.getTotalStock())));
 	}
 
 	private List<Long> search(String keyword) {
@@ -288,7 +398,8 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 	private List<Long> search(String keyword, ProductCategoryGroupCode categoryGroup, ProductCategoryCode category,
 		ProductRegionCode region) {
-		return productService.searchVisibleProducts(new ProductSearchQuery(keyword, categoryGroup, category, region, 0, 20))
+		return productService.searchVisibleProducts(
+				new ProductSearchQuery(keyword, categoryGroup, category, region, null, 0, 20))
 			.map(ProductSummaryResult::productId)
 			.getContent();
 	}
@@ -299,8 +410,18 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 	private Long create(String name, ProductCategoryCode category, ProductRegionCode region, String optionName,
 		ProductStatusCode status, ProductVisibilityCode visibility) {
+		return create(name, category, region, optionName, status, visibility, 20_000L);
+	}
+
+	private Long create(String name, String optionName, long salePrice) {
+		return create(name, ProductCategoryCode.VEGETABLE, ProductRegionCode.CHUNGNAM, optionName,
+			ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE, salePrice);
+	}
+
+	private Long create(String name, ProductCategoryCode category, ProductRegionCode region, String optionName,
+		ProductStatusCode status, ProductVisibilityCode visibility, long salePrice) {
 		return productService.create(SELLER_ID, new ProductCreateCommand(name, "<p>설명</p>", category, region, status,
-			visibility, List.of(IMAGE), List.of(new ProductOptionCommand(null, optionName, null, 20_000L, 10))));
+			visibility, List.of(IMAGE), List.of(new ProductOptionCommand(null, optionName, null, salePrice, 10))));
 	}
 
 	private void deleteAll() {

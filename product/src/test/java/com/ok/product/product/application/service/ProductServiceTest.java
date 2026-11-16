@@ -39,10 +39,11 @@ import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductSearchKeyword;
+import com.ok.product.product.domain.ProductSort;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.application.port.out.ProductKeywordSearchRepository;
+import com.ok.product.product.application.port.out.BuyerProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductOptionRepository;
 import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductRepository;
@@ -51,6 +52,7 @@ import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductOptionCommand;
 import com.ok.product.product.application.dto.ProductRegionCode;
 import com.ok.product.product.application.dto.ProductSearchQuery;
+import com.ok.product.product.application.dto.ProductSortCode;
 import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.product.product.application.dto.ProductSummaryResult;
 import com.ok.product.product.application.dto.ProductUpdateCommand;
@@ -74,7 +76,7 @@ class ProductServiceTest {
 	ProductQueryRepository productQueryRepository;
 
 	@Mock
-	ProductKeywordSearchRepository productKeywordSearchRepository;
+	BuyerProductQueryRepository buyerProductQueryRepository;
 
 	@Mock
 	ProductSearchIndexer productSearchIndexer;
@@ -86,7 +88,7 @@ class ProductServiceTest {
 		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
 		// ProductService가 Clock을 주입받으므로 생성자에 넣는다 (#93). 시각을 검증하는 테스트가 없어 실제 시계를 그대로 쓴다
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
-			productQueryRepository, productKeywordSearchRepository, new ProductSearchPolicy(MIN_SCORE), productSearchIndexer, new ProductDescriptionSanitizer(imageUrlValidator),
+			productQueryRepository, buyerProductQueryRepository, new ProductSearchPolicy(MIN_SCORE), productSearchIndexer, new ProductDescriptionSanitizer(imageUrlValidator),
 			new MediaUrlResolver("bucket", "ap-northeast-2"), Clock.systemDefaultZone());
 	}
 
@@ -235,18 +237,19 @@ class ProductServiceTest {
 
 	@ParameterizedTest
 	@MethodSource("검색어가_없는_것으로_보는_값")
-	void 검색어가_비었거나_기호뿐이면_기존_목록으로_조회한다(String keyword) {
+	void 검색어가_비었거나_기호뿐이면_검색어_없이_최신순으로_찾는다(String keyword) {
 		// given
-		Product product = productWithId(PRODUCT_ID);
-		given(productQueryRepository.findVisibleProducts(null, null, null, PageRequest.of(0, 20)))
-			.willReturn(new PageImpl<>(List.of(product), PageRequest.of(0, 20), 1));
+		PageRequest pageable = PageRequest.of(0, 20);
+		given(buyerProductQueryRepository.findVisibleProductIds(null, null, null, null, ProductSort.LATEST, MIN_SCORE,
+			pageable)).willReturn(new PageImpl<>(List.of(PRODUCT_ID), pageable, 1));
+		given(productRepository.findAllById(List.of(PRODUCT_ID))).willReturn(List.of(productWithId(PRODUCT_ID)));
 
 		// when
-		Page<ProductSummaryResult> sut = service.searchVisibleProducts(new ProductSearchQuery(keyword, null, null, null, 0, 20));
+		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
+			new ProductSearchQuery(keyword, null, null, null, null, 0, 20));
 
 		// then
 		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(PRODUCT_ID);
-		then(productKeywordSearchRepository).shouldHaveNoInteractions();
 	}
 
 	static Stream<String> 검색어가_없는_것으로_보는_값() {
@@ -254,11 +257,26 @@ class ProductServiceTest {
 	}
 
 	@Test
-	void 검색어가_있으면_정규화한_검색어와_하한으로_찾고_검색_결과의_순서대로_돌려준다() {
+	void 검색어_없이_정확도순을_요청하면_최신순으로_찾는다() {
+		// given
+		PageRequest pageable = PageRequest.of(0, 20);
+		given(buyerProductQueryRepository.findVisibleProductIds(null, null, null, null, ProductSort.LATEST, MIN_SCORE,
+			pageable)).willReturn(new PageImpl<>(List.of(), pageable, 0));
+
+		// when
+		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
+			new ProductSearchQuery(null, null, null, null, ProductSortCode.RELEVANCE, 0, 20));
+
+		// then
+		assertThat(sut.getContent()).isEmpty();
+	}
+
+	@Test
+	void 검색어가_있으면_정규화한_검색어와_정렬과_하한으로_찾고_검색_결과의_순서대로_돌려준다() {
 		// given
 		PageRequest pageable = PageRequest.of(1, 3);
-		given(productKeywordSearchRepository.findVisibleProductIds(any(), eq(null), eq(ProductCategory.FRUIT),
-			eq(ProductRegion.JEJU), eq(MIN_SCORE), eq(pageable)))
+		given(buyerProductQueryRepository.findVisibleProductIds(any(), eq(null), eq(ProductCategory.FRUIT),
+			eq(ProductRegion.JEJU), eq(ProductSort.PRICE_ASC), eq(MIN_SCORE), eq(pageable)))
 			.willReturn(new PageImpl<>(List.of(30L, 10L, 20L), pageable, 7));
 		// 저장소는 ID 순서를 지키지 않는다
 		given(productRepository.findAllById(List.of(30L, 10L, 20L)))
@@ -266,16 +284,30 @@ class ProductServiceTest {
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(new ProductSearchQuery("샤인 머스캣!", null,
-			ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, 1, 3));
+			ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, ProductSortCode.PRICE_ASC, 1, 3));
 
 		// then
 		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(30L, 10L, 20L);
 		assertThat(sut.getTotalElements()).isEqualTo(7);
 		ArgumentCaptor<ProductSearchKeyword> captor = ArgumentCaptor.forClass(ProductSearchKeyword.class);
-		then(productKeywordSearchRepository).should()
-			.findVisibleProductIds(captor.capture(), any(), any(), any(), anyDouble(), any());
+		then(buyerProductQueryRepository).should()
+			.findVisibleProductIds(captor.capture(), any(), any(), any(), any(), anyDouble(), any());
 		assertThat(captor.getValue()).isEqualTo(new ProductSearchKeyword("샤인 머스캣", "샤인머스캣", "ㅅㅑㅇㅣㄴㅁㅓㅅㅡㅋㅐㅅ"));
-		then(productQueryRepository).shouldHaveNoInteractions();
+	}
+
+	@Test
+	void 검색어가_있고_정렬을_고르지_않으면_정확도순으로_찾는다() {
+		// given
+		PageRequest pageable = PageRequest.of(0, 20);
+		given(buyerProductQueryRepository.findVisibleProductIds(any(), eq(null), eq(null), eq(null),
+			eq(ProductSort.RELEVANCE), eq(MIN_SCORE), eq(pageable))).willReturn(new PageImpl<>(List.of(), pageable, 0));
+
+		// when
+		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
+			new ProductSearchQuery("사과", null, null, null, null, 0, 20));
+
+		// then
+		assertThat(sut.getContent()).isEmpty();
 	}
 
 	// id·version이 채워진 저장된 상품처럼 만들어 수정용 조회가 돌려주게 한다
