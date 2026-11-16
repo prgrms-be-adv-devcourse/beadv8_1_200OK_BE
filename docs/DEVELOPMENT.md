@@ -200,6 +200,25 @@ docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single �
 - Kafka: 브로커 연결과 클러스터 조회, `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(`single`과 `cluster` 모두 통과). 연결만 확인하므로 값은 문자열로 보내고, 앱의 JSON 직렬화는 따로 검증한다
 - 접속 주소는 앱과 같이 `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS` 환경변수로 바꿉니다. 인프라가 꺼져 있으면 실패합니다(Redis는 2초, Kafka는 10초 안에).
 
+### JPA 지표 (#509)
+
+앱이 `/actuator/prometheus`로 JPA 지표를 함께 내놓습니다(대시보드 패널은 이후 PR에서 추가).
+
+| 지표 | 의미 |
+|---|---|
+| `jpa_queries_per_request` (`_count` `_sum` `_max` `_bucket`) | HTTP 요청 하나가 Hibernate로 실행한 SQL 문 수. `method`, `uri`(템플릿) 태그로 엔드포인트별 분포 |
+| `jpa_optimistic_lock_failures_total` | `@Version` 낙관적 락 충돌 횟수. `entity` 태그(`Product` 등) |
+| `hibernate_*` (`statements`, `transactions`, `query_executions_max` 등) | Hibernate 통계(`hibernate.generate_statistics`). 앱 전체 합계. 카운터에는 Prometheus가 `_total`을 붙임 |
+
+- 엔드포인트별 평균 쿼리 수: `sum by (method, uri) (rate(jpa_queries_per_request_sum[5m])) / sum by (method, uri) (rate(jpa_queries_per_request_count[5m]))`
+- 엔드포인트별 p95: `histogram_quantile(0.95, sum by (le, method, uri) (rate(jpa_queries_per_request_bucket[5m])))`. 버킷 경계는 1·3·5·10·20·50·100입니다.
+- N+1 의심: 같은 엔드포인트에서 목록 건수나 데이터가 늘수록 요청당 쿼리 수가 따라 늘면 의심합니다. 시작값으로 p95가 20을 넘는 엔드포인트를 먼저 봅니다. 서비스의 평소 값에 맞춰 조정합니다.
+- 쿼리 수는 Hibernate가 준비한 SQL 문 수입니다. 네이티브 쿼리(`nativeQuery = true`, `createNativeQuery`)와 벌크 UPDATE·DELETE도 센다는 것을 통합 테스트로 확인했습니다. JDBC 배치로 나가는 INSERT·UPDATE는 한 번으로 세고, Hibernate를 거치지 않는 JDBC 호출은 세지 않습니다(애플리케이션 코드에는 `JdbcTemplate` 사용이 없습니다). 핸들러가 없어 Security에서 끝난 요청(401 등)은 기록하지 않고, 인증된 요청의 없는 경로는 `uri="/**"` 하나로 묶여 기록됩니다. 관리 포트(actuator) 요청은 기록하지 않습니다.
+- 요청 스레드 밖에서 실행한 쿼리는 세지 않아 과소 집계됩니다: 스케줄러, 비동기 이벤트 리스너(`@ApplicationModuleListener`), `@Async`, `CompletableFuture`, 가상 스레드 위임, `Callable`·`DeferredResult`를 반환하는 컨트롤러(필터는 최초 디스패치만 기록)입니다. 이런 엔드포인트는 값이 작게 나오는 것을 N+1이 없다는 뜻으로 읽지 않습니다.
+- `app.metrics.jpa.enabled=false`(환경변수 `APP_METRICS_JPA_ENABLED=false`)로 이 절의 지표 수집(Hibernate 통계, SQL 카운터, 충돌 카운터)을 끌 수 있습니다. 기본은 켜짐이며, 끄면 `hibernate_*`는 0으로 나옵니다. Hibernate 통계의 운영 오버헤드는 부하테스트에서 확인합니다.
+- `hibernate_optimistic_failures`는 이 프로젝트의 충돌에서 오르지 않아(통합 테스트로 확인) 쓰지 않고, 항상 0으로 나옵니다. 충돌 횟수는 `jpa_optimistic_lock_failures_total`을 봅니다.
+- 낙관적 락 충돌의 행 id는 태그로 달지 않습니다(값이 끝없이 늘어 시계열이 폭증).
+
 ### 로컬 Kafka 지표 확인 (#396)
 
 `monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
@@ -657,8 +676,8 @@ com.ok.wallet
 
 **Kafka 수신과 실패 기록**
 
-- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34)입니다. 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
-- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`, #579)과 환불 반환 요청(`refund.refund-approved`, 키 `orderId`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested`, 키 `checkId`, #613)입니다. 주문 생성은 아직 Spring 이벤트로 받습니다. 토픽 이름과 컨슈머 그룹(`wallet`)은 `WalletKafkaTopics`에 있습니다.
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed` / `wallet.wallet-refund-failed`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked`, 키 `checkId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 아직 Spring 이벤트로 보냅니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
 - 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
 - 넘긴 메시지는 건너뛰지 않고 지갑 DB의 `wallet_message_failure`에 원문·가장 안쪽 원인과 함께 대기(`PENDING`)로 남기고 `[WALLET_MESSAGE_FAILED]` ERROR 로그를 한 번 남깁니다. 같은 메시지(토픽·파티션·오프셋)는 한 번만 남습니다. 기록마저 실패하면 오프셋을 옮기지 않아 같은 메시지를 다시 받습니다.
@@ -672,9 +691,16 @@ com.ok.wallet
 - 반환 합계는 지갑을 잠근 뒤 잠금 조회로 읽습니다. 일반 조회는 잠금을 기다리기 전의 스냅샷을 봐서 방금 끝난 반환을 빼고 셉니다. 반환 트랜잭션은 READ COMMITTED로 돕니다. 기본 격리 수준에서는 반환 기록이 없는 주문을 잠금 조회할 때 빈 구간까지 잠겨, 이웃한 주문의 첫 반환끼리 교착이 납니다.
 - 결과는 반환이 커밋된 뒤, 메시지를 읽음 처리하기 전에 보내고 브로커 저장 확인을 기다립니다(`OrderRefundService`는 트랜잭션 없음). 보내기가 실패하면 예외로 같은 요청을 다시 받아 처음 결과를 다시 보내므로 outbox를 두지 않습니다.
 
+**정산금 입금 확인**
+
+- 정산이 매일 "이 정산들이 지갑에 입금됐는지"를 묶음(최대 500건)으로 묻고, 지갑은 판매자 원장에서 `PAYOUT:{payoutId}`를 찾아 있는지, 판매자 회원 ID, 금액, 입금 시각(원장 `created_at`)을 답합니다. 맞는지 판정하고 다시 묻는 일은 정산이 합니다.
+- 원장을 읽기만 합니다. 같은 묶음이 다시 와도 같은 답을 보내고 잔액은 바뀌지 않습니다. 묶음의 원장은 근거 키 목록으로 한 번에 읽습니다(500건씩 나눠 읽음).
+- 묶음 번호나 항목이 없는 묶음은 답할 곳을 몰라 실패 기록에 남깁니다. 정산 ID가 없는 항목만 로그를 남기고 답에서 빼고, 정산은 답이 없는 정산을 다음 날 다시 묻습니다.
+- 답은 환불 반환 결과와 같이 메시지를 읽음 처리하기 전에 보내고 브로커 저장 확인을 기다립니다(`WalletPayoutDepositCheckService`는 트랜잭션 없음). 보내기와 저장 확인 대기는 두 결과가 `adapter/out/event`의 `WalletKafkaSender`를 함께 씁니다.
+
 **잔액을 바꾸는 테스트**
 
-- 잔액이나 원장을 바꾸는 테스트는 공통 정리 도우미(테스트 코드의 `support/WalletTestDataCleaner`)로 정리합니다. 시작 전에는 `deleteAll()`, 끝난 뒤에는 `verifyAndDeleteAll()`을 부릅니다.
+- 잔액이나 원장을 바꾸는 테스트는 공통 정리 도우미(테스트 코드의 `support/WalletTestDataCleaner`)로 정리합니다. 시작 전에는 `deleteAll()`, 끝난 뒤에는 `verifyAndDeleteAll()`을 부릅니다. 입금 시각을 정하려고 원장을 SQL로 직접 넣는 테스트는 잔액과 맞지 않으므로 끝난 뒤에도 `deleteAll()`을 부릅니다.
 - `verifyAndDeleteAll()`은 `sql/wallet-balance-check.sql`로 잔액과 원장이 맞는지(원장 이어짐, 마지막 원장 = 잔액, 충전·결제·반환과 원장의 짝) 검사합니다. 어긋나도 데이터를 먼저 지운 뒤 실패해 다음 테스트로 번지지 않습니다. 같은 SQL을 로컬 DB 도구에서 그대로 실행해도 됩니다.
 - 충전 짝은 충전 건 쪽에서만 봅니다. 충전 건 없이 생긴 충전 원장(`CHARGE:`)은 잡지 않습니다. 테스트들이 `chargeByPayment`를 직접 불러 충전 건 없이 원장을 만들기 때문입니다. 충전 원장을 만드는 새 길은 충전 건이 함께 생기는지 그 테스트에서 직접 확인합니다.
 - 원장을 SQL로 직접 넣는 테스트(이용 내역 조회, 저장소 테스트)는 잔액과 일부러 맞지 않으므로 검사하지 않습니다.
@@ -691,31 +717,42 @@ com.ok.member.seller
 ├── exception/            SellerErrorCode
 ├── application/
 │   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
-│   ├── port/out/         출력 포트: 저장소, 이벤트 발행
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행(SellerEventPublisher)
 │   ├── service/          유스케이스 구현 (*Service), 검증기 (*Validator)
 │   └── dto/              *Command, *Query, *Result
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
     ├── out/persistence/  Spring Data JPA 저장소 (*JpaRepository)
-    └── out/event/        스프링 이벤트 발행 구현체
+    └── out/member/       MemberOutboxAdapter (이벤트를 회원 하위 도메인의 outbox에 기록)
 ```
 
 `member` 하위 도메인은 여기에 `adapter/in/bootstrap`(앱이 시작될 때 설정값으로 최초 관리자 계정을 만드는 설정·실행기)이 더 있습니다. 앱 시작이라는 외부 입력의 진입점이라 컨트롤러처럼 유스케이스만 부릅니다.
 
-회원가입은 Kafka 토픽 `member.member-registered`로도 나갑니다(#560). 키는 `memberId`, 값은 `{"memberId": 1}`입니다.
+member가 Kafka로 보내는 메시지는 모두 `member` 하위 도메인의 outbox(`member_outbox`)를 거칩니다.
+
+| 토픽 | 언제 | 키 | 값 |
+|---|---|---|---|
+| `member.member-registered` (#560) | 회원가입이 커밋됨 | `memberId` | `{"memberId": 1}` |
+| `member.seller-origin-postal-code` (#587) | 판매자 승인(신청서의 처음 값), 판매자 프로필 등록, 수정으로 출고지 우편번호가 바뀜 | `sellerId` | `{"sellerId": 1, "postalCode": "37421", "occurredAt": "2026-11-15T10:00:00"}` |
+
+`sellerId`는 판매자인 회원의 ID(`memberId`)와 같은 값입니다. 출고지 우편번호는 판매자 신청 때 필수로 받아 승인 때 보내고(상품 등록은 SELLER 권한만 보므로 프로필 등록 전에도 판매할 수 있어서), 이후 변경은 프로필에서 합니다. "판매자가 승인됐다"는 사실 자체를 알리는 메시지는 받는 모듈이 없어 보내지 않습니다(#587에서 스프링 이벤트도 지움).
 
 ```
 com.ok.member.member
 ├── domain/               MemberOutbox (보낼 메시지 1건의 발송 대기 기록), MemberOutboxStatus, MemberOutboxEventType
 ├── application/
-│   ├── port/in/          MemberOutboxRelayUseCase (쌓인 메시지 보내기)
-│   ├── port/out/         MemberOutboxRepository, MemberMessageSender (메시지 브로커로 보냄)
-│   └── service/          MemberOutboxRelayFacade (트랜잭션 없이 보냄), MemberOutboxService (줄 읽기·결과 저장)
+│   ├── port/in/          MemberOutboxRelayUseCase (쌓인 메시지 보내기), MemberOutboxRecordUseCase (다른 하위 도메인이 줄을 남김)
+│   ├── port/out/         MemberOutboxRepository, MemberMessageSender (메시지 브로커로 보냄), MemberMessagePayloadWriter (본문 JSON 만들기)
+│   └── service/          MemberOutboxRelayFacade (트랜잭션 없이 보냄), MemberOutboxService (줄 기록·읽기·결과 저장)
 └── adapter/
     ├── in/scheduler/     MemberOutboxRelayScheduler (30초마다 발송)
     ├── out/persistence/  MemberOutboxJpaRepository
-    └── out/event/        OutboxMemberEventPublisher (outbox 줄 기록), KafkaMemberMessageSender, MemberTopics, MemberRegisteredMessage, MemberKafkaTopicConfig
+    └── out/event/        OutboxMemberEventPublisher (회원가입 줄 기록), KafkaMemberMessageSender, MemberMessagePayloadJson,
+                          MemberTopics, MemberRegisteredMessage, SellerOriginPostalCodeMessage, MemberKafkaTopicConfig
 ```
+
+- 판매자 하위 도메인은 outbox를 직접 쓰지 않고, 자기 출력 어댑터(`seller/adapter/out/member/MemberOutboxAdapter`)에서 `MemberOutboxRecordUseCase`를 부릅니다(하위 도메인 간 호출 규칙). 이 유스케이스는 `Propagation.MANDATORY`라 부른 쪽 트랜잭션 없이는 실패합니다. 프로필 저장과 outbox 줄이 반드시 함께 커밋·롤백되게 하려는 것입니다.
+- 회원가입 줄은 본문 없이 회원 ID만 두고, 출고지 우편번호 줄은 기록한 시점의 값을 `payload`(JSON)로 저장합니다. 보낼 때 그 JSON을 메시지 객체로 다시 읽어 Kafka 공통 직렬화로 보내므로, 실제로 나가는 JSON 모양(시각 형식 등)은 다른 모듈의 메시지와 같습니다.
 
 - 가입 서비스는 그대로 `MemberEventPublisher`를 부르고, 구현체 `OutboxMemberEventPublisher`가 같은 트랜잭션에서 `member_outbox`에 PENDING 줄을 남깁니다. 그래서 롤백되면 보내지 않고 커밋되면 반드시 한 번은 보냅니다. Spring Modulith의 이벤트 발행 기록(`event_publication`)에 기대지 않는 이유는 팀이 Modulith를 걷어 내기로 해서입니다.
 - `MemberOutboxRelayScheduler`가 30초마다(`member.outbox.relay.cron`, 한 번에 `batch-size` 100줄) PENDING 줄을 쌓인 순서대로 보냅니다. 보내기는 브로커의 저장 확인을 10초까지 기다리고, 그동안 DB 커넥션을 잡지 않도록 `MemberOutboxRelayFacade`는 트랜잭션 없이 돌며 줄마다 결과를 따로 저장합니다.
@@ -798,7 +835,7 @@ com.ok.order
 **Kafka 송수신**
 
 - 정산이 보내는 메시지
-  - 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309).
+  - 정산금 확정(`payout.seller-payout-created`, 키 `payoutId`): 정산 확정 때 outbox에 남기고 정산 Job의 발행 단계가 보냅니다(#309). 못 보낸 줄과 대사에서 "입금 없음"으로 답한 정산은 짧은 간격 재발송이 다시 보냅니다(#620).
   - 대사 질문 묶음(`payout.payout-deposit-check-requested`, 키 `checkId`, 한 묶음 최대 500건): 매일 대사가 지갑에 입금됐는지 묻습니다(#619).
 - 정산이 받는 메시지
   - 구매확정(`order.order-product-confirmed`, 키 `orderItemId`)
@@ -806,6 +843,7 @@ com.ok.order
   - 대사 답 묶음(`wallet.payout-deposit-checked`, 키 `checkId`): 지갑이 원장을 읽고 답합니다(#619, 지갑 #613).
 - 토픽 이름과 컨슈머 그룹(`payout`)은 `PayoutTopics`에 있습니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
 - 대사는 매일 `payout.deposit-check.cron`(기본 `0 0 12 * * *`, Asia/Seoul)에 돕니다. 메시지 모양은 PR #548 문서 4절과 지갑 #613의 합의를 따릅니다.
+- 재발송은 `payout.outbox-resend.fixed-delay`(기본 `PT5M`, 앞 실행이 끝난 뒤부터 셈) 간격으로 돕니다. 정산 Job 발행 단계와 같은 잠금(`payoutOutboxSend`)을 써서 같은 줄을 동시에 보내지 않습니다.
 
 ### product 모듈 구조(헥사고날)
 

@@ -4,14 +4,13 @@ import com.ok.payout.application.port.in.PayoutDepositCheckAnswerCommand;
 import com.ok.payout.application.port.out.PayoutDepositCheckBatchRepository;
 import com.ok.payout.application.port.out.PayoutDepositCheckRepository;
 import com.ok.payout.application.port.out.PayoutDepositCheckRequested;
-import com.ok.payout.application.port.out.PayoutRepository;
-import com.ok.payout.application.port.out.SellerPayoutCreated;
-import com.ok.payout.domain.Payout;
+import com.ok.payout.application.port.out.PayoutOutboxRepository;
 import com.ok.payout.domain.PayoutDepositAnswerOutcome;
 import com.ok.payout.domain.PayoutDepositCheck;
 import com.ok.payout.domain.PayoutDepositCheckBatch;
 import com.ok.payout.domain.PayoutDepositCheckStatus;
 import com.ok.payout.domain.PayoutDepositMismatchReason;
+import com.ok.payout.domain.PayoutOutbox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,7 +26,8 @@ import java.util.Optional;
 
 /**
  * 정산·지갑 대사의 DB 작업을 짧은 트랜잭션 단위로 한다 (#619).
- * Kafka 보내기는 트랜잭션 밖({@link PayoutDepositCheckService})에서 한다. 보내기가 오래 걸려도(최대 120초) DB 연결을 잡고 있지 않게 하려고서다.
+ * 질문 Kafka 보내기는 트랜잭션 밖({@link PayoutDepositCheckService})에서 한다. 보내기가 오래 걸려도(최대 120초) DB 연결을 잡고 있지 않게 하려고서다.
+ * "입금 없음" 답의 입금 메시지는 직접 보내지 않고 outbox 줄을 되돌려 짧은 간격 재발송에 맡긴다(#620).
  * {@link PayoutDepositCheckService}와 빈을 나눈 이유는 {@link PayoutOutboxService}와 같다(같은 클래스 안 호출은 {@code @Transactional}이 무시됨).
  * <p>
  * 관리자 확인 필요가 되면 {@code ERROR}로 남긴다. 팀 로그 규칙({@code ERROR}는 처리되지 못한 예외)과 다르게 쓰는 이유:
@@ -42,10 +42,11 @@ import java.util.Optional;
 public class PayoutDepositCheckRecordService {
 
     private static final String MISMATCH_TAG = "[정산-대사불일치]";
+    private static final String SYSTEM_PROBLEM_TAG = "[정산-시스템문제]";
 
     private final PayoutDepositCheckRepository payoutDepositCheckRepository;
     private final PayoutDepositCheckBatchRepository payoutDepositCheckBatchRepository;
-    private final PayoutRepository payoutRepository;
+    private final PayoutOutboxRepository payoutOutboxRepository;
     private final Clock clock;
 
     // 3번을 다 물었는데 마지막 질문의 답까지 오지 않은 줄을 관리자 확인 필요로 넘김
@@ -99,9 +100,11 @@ public class PayoutDepositCheckRecordService {
         }
     }
 
-    // 답 묶음 하나를 반영하고, 입금 메시지를 다시 보낼 정산을 돌려줌 (보내기는 트랜잭션 밖에서 호출하는 쪽이 함)
+    // 답 묶음 하나를 반영함. "입금 없음"이라 다시 보낼 정산은 같은 트랜잭션에서 outbox 줄을 다시 보낼 것(PENDING)으로 되돌림 (#620)
+    // 여기서 Kafka로 바로 보내지 않는 이유: 건마다 Kafka 저장 확인을 기다리면(최대 120초) 답 처리가 Kafka 기본 max.poll.interval(5분)을 넘을 수 있음
+    // 답 반영과 되돌림이 함께 커밋되므로, 커밋 직후 서버가 죽어도 짧은 간격 재발송(PayoutOutboxResendScheduler)이 그 줄을 보냄
     @Transactional
-    public List<SellerPayoutCreated> applyAnswer(PayoutDepositCheckAnswerCommand command) {
+    public void applyAnswer(PayoutDepositCheckAnswerCommand command) {
         // 지갑은 질문 묶음 하나(최대 500건)에 답 묶음 하나를 보내기로 함(#613). 넘으면 지갑 쪽 버그라 큰 IN 조회를 하지 않고 거절함
         // IllegalArgumentException은 정산 오류 처리기가 다시 시도하지 않고 넘김(PayoutKafkaConsumerConfig). 그 묶음의 줄은 확인 대기로 남아 다음 날 다시 물음(3번째 질문의 답이었다면 다음 날 대사가 닫아 관리자 확인으로 넘어감)
         if (command.items().size() > PayoutDepositCheckBatch.MAX_ITEM_COUNT) {
@@ -144,18 +147,34 @@ public class PayoutDepositCheckRecordService {
                         MISMATCH_TAG, item.payoutId(), reasonBefore, command.checkId());
             }
         }
-        return toSellerPayoutCreated(resendPayoutIds);
+        markOutboxPendingAgain(command.checkId(), resendPayoutIds);
     }
 
-    private List<SellerPayoutCreated> toSellerPayoutCreated(List<Long> payoutIds) {
+    // 같은 정산이 두 번 가도 지갑은 payoutId로 한 번만 입금함(#584). 그래서 이미 보낸 줄을 다시 보내도 됨
+    // 아직 못 보낸 줄(이미 PENDING)도 되돌리면 그대로 PENDING이라 따로 거르지 않음
+    // 재발송과 겹쳐도 되돌림이 덮어써지지 않음(@Version 없이 둠): 재발송은 PENDING 줄만 읽어 보내고, 보내는 동안 그 줄을 SENT로 바꾸는 곳은 없음(같은 잠금)
+    //   그래서 그 사이의 되돌림은 바뀌는 값이 없고(UPDATE 안 나감), 재발송의 메시지는 이 답 뒤에 나감. PR #631 리뷰에서 실행으로 확인
+    private void markOutboxPendingAgain(Long checkId, List<Long> payoutIds) {
         if (payoutIds.isEmpty()) {
-            return List.of();
+            return;
         }
-        List<SellerPayoutCreated> created = new ArrayList<>();
-        for (Payout payout : payoutRepository.findAllByIdIn(payoutIds)) {
-            created.add(new SellerPayoutCreated(payout.getId(), payout.getPayeeId(), payout.getAmount(), payout.getCreatedAt()));
+        Map<Long, PayoutOutbox> outboxByPayoutId = new HashMap<>();
+        for (PayoutOutbox outbox : payoutOutboxRepository.findAllByPayoutIdIn(payoutIds)) {
+            outboxByPayoutId.put(outbox.getPayoutId(), outbox);
         }
-        return created;
+        for (Long payoutId : payoutIds) {
+            PayoutOutbox outbox = outboxByPayoutId.get(payoutId);
+            if (outbox == null) {
+                // 대사 줄과 outbox 줄은 정산 확정 때 같은 조건으로 함께 만들고, outbox 줄을 지우는 길은 없음(PayoutService.commit)
+                // 그래서 없으면 코드가 틀린 것이라 시스템 문제로 남기고 나머지 정산은 계속 되돌림. 이 정산은 다음 날 대사가 다시 "없음"을 받음
+                log.error("{} 대사 줄은 있는데 outbox 줄이 없어 입금 메시지를 다시 보낼 수 없음. checkId={}, payoutId={}",
+                        SYSTEM_PROBLEM_TAG, checkId, payoutId);
+                continue;
+            }
+            outbox.markPendingAgain();
+            log.info("대사에서 지갑 입금이 없어 입금 메시지를 다시 보낼 것으로 되돌림. checkId={}, payoutId={}, outboxId={}",
+                    checkId, payoutId, outbox.getId());
+        }
     }
 
     // 이 로그는 트랜잭션 커밋 전에 남음. 커밋 때 낙관적 잠금으로 저장이 거절되면 판정은 롤백되지만 로그는 남음

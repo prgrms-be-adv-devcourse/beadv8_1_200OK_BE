@@ -9,6 +9,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -52,6 +53,11 @@ public class SellerProfile extends BaseTime {
     @Column(name = "customer_service_phone", nullable = false, length = 20)
     private String customerServicePhone;
 
+    // 출고지(상품을 보내는 곳)의 우편번호. delivery가 배송비 계산용 사본을 갖도록 바뀔 때마다 Kafka로 보낸다(#587).
+    // 이 컬럼 전에 만든 프로필은 값이 없다(null). 등록·수정 때는 필수라 다음 수정 때 채워진다
+    @Column(name = "origin_postal_code", length = OriginPostalCode.LENGTH)
+    private String originPostalCode;
+
     @Column(name = "introduction", length = INTRODUCTION_MAX_LENGTH)
     private String introduction;
 
@@ -59,13 +65,19 @@ public class SellerProfile extends BaseTime {
     @Column(name = "profile_image_key", length = PROFILE_IMAGE_KEY_MAX_LENGTH)
     private String profileImageKey;
 
-    private SellerProfile(Long memberId, String storeName, String representativeName,
-                          String customerServicePhone, String introduction, String profileImageKey) {
+    // 수정은 모든 칸을 덮어써서, 판매자가 두 탭에서 동시에 저장하면 나중 요청이 먼저 바꾼 출고지를 되돌리고
+    // 바뀌지 않았다고 보아 메시지도 남기지 않는다(delivery 사본과 어긋남). 나중에 커밋하는 쪽을 낙관적 락 예외로 실패시킨다
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
+
+    private SellerProfile(Long memberId, String storeName, String representativeName, String customerServicePhone,
+                          String originPostalCode, String introduction, String profileImageKey) {
         if (memberId == null) {
             throw new IllegalArgumentException("memberId는 필수입니다.");
         }
         this.memberId = memberId;
-        change(storeName, representativeName, customerServicePhone, introduction, profileImageKey);
+        change(storeName, representativeName, customerServicePhone, originPostalCode, introduction, profileImageKey);
     }
 
     /**
@@ -73,15 +85,18 @@ public class SellerProfile extends BaseTime {
      *
      * <p>요청 DTO가 먼저 같은 규칙으로 422를 낸다. 이 검증은 DTO를 거치지 않는 경로를 위한 마지막 방어선이다.
      *
-     * @param introduction    상점 소개. 없으면 {@code null}
-     * @param profileImageKey 프로필 사진 object key. 없으면 {@code null}
+     * @param originPostalCode 출고지 우편번호 (5자리 숫자)
+     * @param introduction     상점 소개. 없으면 {@code null}
+     * @param profileImageKey  프로필 사진 object key. 없으면 {@code null}
      * @throws RestApiException 상호명·대표자명이 비었거나 너무 길거나 상점 소개가 너무 길면 {@code INVALID_SELLER_PROFILE_FIELD},
-     *                          고객센터 연락처 형식이 틀리면 {@code INVALID_CUSTOMER_SERVICE_PHONE}
+     *                          고객센터 연락처 형식이 틀리면 {@code INVALID_CUSTOMER_SERVICE_PHONE},
+     *                          출고지 우편번호가 5자리 숫자가 아니면 {@code INVALID_ORIGIN_POSTAL_CODE}
      */
     public static SellerProfile register(Long memberId, String storeName, String representativeName,
-                                         String customerServicePhone, String introduction, String profileImageKey) {
+                                         String customerServicePhone, String originPostalCode,
+                                         String introduction, String profileImageKey) {
         return new SellerProfile(memberId, storeName, representativeName,
-                customerServicePhone, introduction, profileImageKey);
+                customerServicePhone, originPostalCode, introduction, profileImageKey);
     }
 
     /**
@@ -89,27 +104,32 @@ public class SellerProfile extends BaseTime {
      * 검증 규칙은 {@link #register}와 같다.
      *
      * @param profileImageKey 프로필 사진 object key. {@code null}이면 사진을 지운다
+     * @return 출고지 우편번호가 바뀌었으면(비어 있다가 처음 채워진 경우 포함) {@code true}. 바뀔 때만 delivery에 알리는 데 쓴다
      */
-    public void update(String storeName, String representativeName,
-                       String customerServicePhone, String introduction, String profileImageKey) {
-        change(storeName, representativeName, customerServicePhone, introduction, profileImageKey);
+    public boolean update(String storeName, String representativeName, String customerServicePhone,
+                          String originPostalCode, String introduction, String profileImageKey) {
+        String before = this.originPostalCode;
+        change(storeName, representativeName, customerServicePhone, originPostalCode, introduction, profileImageKey);
+        return !this.originPostalCode.equals(before);
     }
 
     // 등록과 수정이 같은 검증을 거치도록 값 변경을 한곳에 모은다.
     // 모든 값을 먼저 검증한 뒤 대입한다.
-    private void change(String storeName, String representativeName,
-                        String customerServicePhone, String introduction, String profileImageKey) {
+    private void change(String storeName, String representativeName, String customerServicePhone,
+                        String originPostalCode, String introduction, String profileImageKey) {
         String validStoreName = requireText(storeName, NAME_MAX_LENGTH,
                 "상호명은 필수입니다.", "상호명은 50자 이하여야 합니다.");
         String validRepresentativeName = requireText(representativeName, NAME_MAX_LENGTH,
                 "대표자명은 필수입니다.", "대표자명은 50자 이하여야 합니다.");
         String validPhone = requireCustomerServicePhone(customerServicePhone);
+        String validPostalCode = OriginPostalCode.require(originPostalCode);
         String validIntroduction = requireIntroductionLength(introduction);
         String validImageKey = requireImageKeyLength(profileImageKey);
 
         this.storeName = validStoreName;
         this.representativeName = validRepresentativeName;
         this.customerServicePhone = validPhone;
+        this.originPostalCode = validPostalCode;
         this.introduction = validIntroduction;
         this.profileImageKey = validImageKey;
     }

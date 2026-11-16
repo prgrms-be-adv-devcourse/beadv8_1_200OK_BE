@@ -7,6 +7,7 @@ import com.ok.refund.domain.CancelledQuantity;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.domain.RefundStep;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.exception.RefundErrorCode;
 import jakarta.persistence.EntityManager;
@@ -23,6 +24,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -249,6 +251,13 @@ public class RefundPersistenceAdapter implements RefundPersistencePort, RefundSt
         return refundStepJpaRepository.findAllByRefundIdOrderByIdAsc(refundId).stream()
                 .map(RefundStepMapper::toDomain)
                 .toList();
+    }
+
+    // 결과 대기(AWAITING_RESULT)는 시간이 지나도 이 알람으로 다시 보내지 않는다(시간 초과는 #577)
+    @Override
+    public List<Long> findRefundIdsDueForResume(LocalDateTime now, int limit) {
+        return refundStepJpaRepository.findRefundIdsDue(RefundStatus.PROCESSING,
+                List.of(RefundStepStatus.READY, RefundStepStatus.IN_PROGRESS), now, PageRequest.of(0, limit));
     }
 
     // findByIdForUpdate가 적어 둔 이 트랜잭션의 잠근 환불 ID 목록으로 확인한다. 같은 목록을 쓰므로 REQUIRES_NEW 안쪽 트랜잭션이 잠근 환불은

@@ -74,6 +74,11 @@ class RefundSagaPlanTest {
                 Arguments.of("옛 재고 멈춤 줄만 있음 → 멈춤", 20_000L, List.of(step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED)), Action.STOP),
                 Arguments.of("주문 할 차례 → 주문", 20_000L, List.of(step(RefundStepType.ORDER, RefundStepStatus.READY)), Action.CALL_ORDER),
                 Arguments.of("주문 시도 중 → 기다림", 20_000L, List.of(step(RefundStepType.ORDER, RefundStepStatus.IN_PROGRESS)), Action.WAIT),
+                Arguments.of("주문 시도 중인데 만료 지남(#576) → 주문", 20_000L, List.of(expired(RefundStepType.ORDER)), Action.CALL_ORDER),
+                Arguments.of("주문 성공, 지갑 시도 중인데 만료 지남 → 지갑", 20_000L,
+                        List.of(succeeded(RefundStepType.ORDER), expired(RefundStepType.WALLET)), Action.CALL_WALLET),
+                Arguments.of("지갑 성공, 재고 시도 중인데 만료 지남 → 재고", 20_000L,
+                        List.of(succeeded(RefundStepType.ORDER), succeeded(RefundStepType.WALLET), expired(RefundStepType.PRODUCT)), Action.CALL_PRODUCT),
                 Arguments.of("주문 거절됨인데 처리 중 → 멈춤", 20_000L, List.of(step(RefundStepType.ORDER, RefundStepStatus.REFUSED)), Action.STOP),
                 Arguments.of("주문 성공인데 지갑 줄 없음(같은 구간에서 만들어 있을 수 없음) → 멈춤", 20_000L,
                         List.of(succeeded(RefundStepType.ORDER)), Action.STOP),
@@ -125,6 +130,11 @@ class RefundSagaPlanTest {
     private static RefundStep step(RefundStepType type, RefundStepStatus status) {
         LocalDateTime nextCheckAt = status.isFinished() ? null : NOW.plusMinutes(1);
         return RefundStep.restore(type.ordinal() + 1L, REFUND_ID, type, status, 1, nextCheckAt, null, NOW);
+    }
+
+    // 시도 중인데 만료 시각이 지금인 줄(시도하던 쪽이 멈춤)
+    private static RefundStep expired(RefundStepType type) {
+        return RefundStep.restore(type.ordinal() + 1L, REFUND_ID, type, RefundStepStatus.IN_PROGRESS, 1, NOW, null, NOW.minusMinutes(2));
     }
 
     private static RefundStep succeeded(RefundStepType type) {

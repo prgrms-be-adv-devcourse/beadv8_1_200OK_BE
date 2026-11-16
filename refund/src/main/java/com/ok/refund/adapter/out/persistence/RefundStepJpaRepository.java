@@ -1,8 +1,15 @@
 package com.ok.refund.adapter.out.persistence;
 
+import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,4 +24,19 @@ public interface RefundStepJpaRepository extends JpaRepository<RefundStepJpaEnti
     Optional<RefundStepJpaEntity> findByRefundIdAndStep(Long refundId, RefundStepType step);
 
     List<RefundStepJpaEntity> findAllByRefundIdOrderByIdAsc(Long refundId);
+
+    // 환불 하나에 줄이 여럿이어도 한 번만 돌려주려고 환불로 묶고, 가장 오래 기다린 줄의 시각 순으로 정렬한다.
+    // 조건 (status IN, next_check_at <=)은 인덱스 idx_refund_step_status_next_check_at으로 찾는다(#576).
+    // 처리 중인 환불만 고른다. 끝난 환불은 다시 진행할 일이 없고 줄에 쓰지도 않으므로(#616 결정 15), 고르면 시각이 바뀌지 않아
+    // 매 회차 맨 앞에 다시 뽑혀 다른 환불을 밀어낸다(PR #628 검수)
+    @Query("""
+            SELECT s.refundId FROM RefundStepJpaEntity s, RefundJpaEntity r
+            WHERE r.id = s.refundId AND r.status = :refundStatus
+              AND s.status IN :statuses AND s.nextCheckAt <= :now
+            GROUP BY s.refundId
+            ORDER BY MIN(s.nextCheckAt), s.refundId
+            """)
+    List<Long> findRefundIdsDue(@Param("refundStatus") RefundStatus refundStatus,
+                                @Param("statuses") Collection<RefundStepStatus> statuses, @Param("now") LocalDateTime now,
+                                Pageable pageable);
 }

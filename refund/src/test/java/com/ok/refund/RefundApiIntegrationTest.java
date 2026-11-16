@@ -1017,6 +1017,30 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                         tuple(RefundStepType.PRODUCT, RefundStepStatus.READY, "PRODUCT_API_FAILED"));
     }
 
+    // 상품이 다시 해도 같은 이유로 거절하면(재고 기록 없음 등) 다시 눌러도 소용없어 "관리자에게 문의"인 409로 답하고,
+    // 재고 줄은 다시 시도하지 않게 멈춘다(#576). 잠깐 실패(503)와 같은 배추 0원 상황이다
+    @Test
+    void 돌려줄_금액이_0원일_때_상품이_다시_해도_같은_이유로_거절하면_409이고_재고_줄은_멈춘다() throws Exception {
+        // given
+        BundleShipping bundle = new BundleShipping(0, 0, 3_000L, 30_000L, List.of(
+                new BundleItem(301L, 3_000L, 1), new BundleItem(302L, 27_000L, 1)));
+        orderQueryPort.put(orderItem(30L, 301L, 8L, 3_000L, 1, bundle));
+        orderQueryPort.put(orderItem(30L, 302L, 8L, 27_000L, 1, bundle));
+        Long refundId = requestedRefundId(30L, 301L);
+        productStockReleasePort.refuse();
+
+        // when & then
+        approve(8L, refundId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/product-release-refused")));
+        assertThat(onlyRefund().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getLastReason)
+                .containsExactly(
+                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
+                        tuple(RefundStepType.PRODUCT, RefundStepStatus.STOPPED, "PRODUCT_RELEASE_REFUSED"));
+    }
+
     @Test
     void 승인_때_주문에_상품이_없으면_404이고_요청됨으로_남는다() throws Exception {
         // given

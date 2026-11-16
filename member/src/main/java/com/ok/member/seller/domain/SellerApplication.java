@@ -61,6 +61,12 @@ public class SellerApplication extends BaseTime {
     @Column(name = "mail_order_number", nullable = false, length = MAIL_ORDER_NUMBER_MAX_LENGTH)
     private String mailOrderNumber;
 
+    // 출고지 우편번호의 처음 값. 승인 때 delivery에 보내 판매자가 되자마자 출고지가 있게 한다(#587).
+    // 승인 뒤 변경은 판매자 프로필에서 하고 이 값은 고치지 않는다(상호명과 같은 구조).
+    // 이 컬럼 전에 한 신청은 값이 없다(null)
+    @Column(name = "origin_postal_code", length = OriginPostalCode.LENGTH)
+    private String originPostalCode;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private SellerApplicationStatus status;
@@ -89,8 +95,8 @@ public class SellerApplication extends BaseTime {
     @Column(name = "version", nullable = false)
     private Long version;
 
-    private SellerApplication(Long memberId, String storeName, String representativeName,
-                              String businessNumber, String mailOrderNumber, LocalDateTime appliedAt) {
+    private SellerApplication(Long memberId, String storeName, String representativeName, String businessNumber,
+                              String mailOrderNumber, String originPostalCode, LocalDateTime appliedAt) {
         // 회원 id와 신청 일시는 토큰과 서버 시계에서 오는 값이라 사용자 입력 오류가 아니다
         if (memberId == null) {
             throw new IllegalArgumentException("memberId는 필수입니다.");
@@ -106,6 +112,7 @@ public class SellerApplication extends BaseTime {
         this.businessNumber = requireBusinessNumber(businessNumber);
         this.mailOrderNumber = requireText(mailOrderNumber, MAIL_ORDER_NUMBER_MAX_LENGTH,
                 "통신판매업 신고번호는 필수입니다.", "통신판매업 신고번호는 50자 이하여야 합니다.");
+        this.originPostalCode = OriginPostalCode.require(originPostalCode);
         this.status = SellerApplicationStatus.PENDING;
         this.appliedAt = appliedAt;
     }
@@ -116,14 +123,17 @@ public class SellerApplication extends BaseTime {
      *
      * <p>요청 DTO가 먼저 같은 규칙으로 422를 낸다. 이 검증은 DTO를 거치지 않는 경로(관리자 기능, 데이터 이관)를 위한 마지막 방어선이다.
      *
-     * @param businessNumber 정규화된 사업자등록번호 ({@code 000-00-00000})
+     * @param businessNumber   정규화된 사업자등록번호 ({@code 000-00-00000})
+     * @param originPostalCode 출고지 우편번호 (5자리 숫자). 승인 때 delivery에 보내는 처음 값
      * @throws RestApiException 상호명·대표자명·통신판매업 신고번호가 비었거나 너무 길면 {@code INVALID_SELLER_APPLICATION_FIELD},
-     *                          사업자등록번호 형식이 틀리면 {@code INVALID_BUSINESS_NUMBER}
+     *                          사업자등록번호 형식이 틀리면 {@code INVALID_BUSINESS_NUMBER},
+     *                          출고지 우편번호가 5자리 숫자가 아니면 {@code INVALID_ORIGIN_POSTAL_CODE}
      */
     public static SellerApplication apply(Long memberId, String storeName, String representativeName,
-                                          String businessNumber, String mailOrderNumber, LocalDateTime appliedAt) {
+                                          String businessNumber, String mailOrderNumber, String originPostalCode,
+                                          LocalDateTime appliedAt) {
         return new SellerApplication(memberId, storeName, representativeName,
-                businessNumber, mailOrderNumber, appliedAt);
+                businessNumber, mailOrderNumber, originPostalCode, appliedAt);
     }
 
     /**

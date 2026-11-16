@@ -12,6 +12,9 @@ public final class WalletKafkaTopics {
     /** 환불 → 지갑: 예치금 반환 요청. 키는 orderId, 값은 {@link com.ok.wallet.adapter.in.event.dto.RefundApprovedMessage} */
     public static final String REFUND_APPROVED = "refund.refund-approved";
 
+    /** 정산 → 지갑: 정산금 입금 확인 요청 묶음. 키는 checkId, 값은 {@link com.ok.wallet.adapter.in.event.dto.PayoutDepositCheckRequestedMessage} */
+    public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED = "payout.payout-deposit-check-requested";
+
     // 공통 설정의 기본 그룹은 앱 이름이라 monolith에서는 모든 모듈이 같은 그룹이 되어 메시지를 나눠 갖는다.
     // 같은 토픽을 받는 다른 모듈과 따로 받도록 모듈 이름으로 정해 둔다(#339 합의)
     public static final String CONSUMER_GROUP = "wallet";

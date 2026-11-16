@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -20,16 +21,26 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.in.batch.PayoutOutboxResendScheduler;
 import com.ok.payout.adapter.out.persistence.PayoutDepositCheckJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutOutboxJpaRepository;
 import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
 import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
@@ -40,8 +51,11 @@ import com.ok.payout.domain.PayoutDepositCheck;
 import com.ok.payout.domain.PayoutDepositCheckStatus;
 import com.ok.payout.domain.PayoutDepositMismatchReason;
 import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutOutbox;
+import com.ok.payout.domain.PayoutOutboxStatus;
 import com.ok.payout.domain.PayoutWalletDeduction;
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -49,8 +63,14 @@ import tools.jackson.databind.json.JsonMapper;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.nullValue;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 통합 테스트: 정산·지갑 대사 (#619)
+// 통합 테스트: 정산·지갑 대사 (#619)와 관리자 확인 목록 API (#621)
 // - 정산 Job으로 정산을 실제로 확정해 대사 줄을 만들고, 대사를 돌려 질문이 실제 Kafka 토픽으로 나가는지 본다
 // - 지갑 코드는 쓰지 않고, 지갑이 보낼 답 JSON(PR #548 문서 4-3절, 지갑 #613)을 테스트가 답 토픽에 직접 넣는다
 // - 리스너는 별도 스레드에서 받으므로 결과는 await()로 기다린 뒤 리포지토리로 확인한다
@@ -63,6 +83,8 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     private static final AtomicLong ORDER_ID_SEQ = new AtomicLong(ORDER_ID_START);
 
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
+
+    private static final long ADMIN_ID = 1L;
 
     @Autowired
     private PayoutJobRunner payoutJobRunner;
@@ -81,6 +103,12 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     private PayoutJpaRepository payoutRepository;
 
     @Autowired
+    private PayoutOutboxJpaRepository outboxRepository;
+
+    @Autowired
+    private PayoutOutboxResendScheduler payoutOutboxResendScheduler;
+
+    @Autowired
     private PayoutWalletDeductionJpaRepository payoutWalletDeductionRepository;
 
     @Autowired
@@ -95,9 +123,18 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private WebApplicationContext context;
+
+    @Autowired
+    private TestAccessTokens tokens;
+
+    private MockMvc mockMvc;
+
     @BeforeEach
     void setUp() {
         cleanUp();
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
     }
 
     @AfterEach
@@ -203,7 +240,7 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 지갑이_없다고_답하면_입금_메시지를_다시_보내고_같은_답이_두_번_와도_한_번만_센다() throws Exception {
+    void 지갑이_없다고_답하면_outbox_줄을_되돌려_재발송이_다시_보내고_같은_답이_두_번_와도_한_번만_센다() throws Exception {
         // given: 판매자 10·20의 정산 2건을 한 묶음으로 물음
         Map<Long, Long> payoutIdBySeller = settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L));
         Long payoutA = payoutIdBySeller.get(10L);
@@ -228,7 +265,20 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
         });
 
-        // then: A의 입금 메시지(같은 payoutId)가 다시 나감
+        // then: 답 처리는 A의 outbox 줄만 다시 보낼 것(PENDING)으로 되돌리고 보낸 시각을 비움 (#620). 일치한 B는 보냄 그대로
+        PayoutOutbox outboxA = outboxOf(payoutA);
+        assertThat(outboxA).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(outboxA.getStatus()).isEqualTo(PayoutOutboxStatus.PENDING);
+            softly.assertThat(outboxA.getSentAt()).isNull();
+            softly.assertThat(outboxOf(payoutB).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
+        });
+
+        // when: 짧은 간격 재발송이 돎 (실제로는 5분마다, 여기서는 직접 부름)
+        payoutOutboxResendScheduler.resendPending();
+
+        // then: A의 입금 메시지(같은 payoutId)가 다시 나가고 줄은 보냄이 됨
+        assertThat(outboxOf(payoutA).getStatus()).isEqualTo(PayoutOutboxStatus.SENT);
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED, String.valueOf(payoutA), before)).isNotNull());
     }
@@ -406,7 +456,188 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // ---------- 관리자 확인 목록 API (#621) ----------
+
+    @Test
+    void 관리자_목록은_판매자_다름_정산을_지갑이_답한_판매자_금액과_함께_보여_준다() throws Exception {
+        // given: 판매자 10의 9,700원 정산을 물었는데 지갑이 판매자 99에게 9,600원 입금이 있다고 답함
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        Long checkId = checkOf(payoutId).getLastCheckId();
+        sendAnswer(checkId, payoutId, true, 99L, 9_600L, "2026-11-15T02:05:00");
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.NEEDS_REVIEW));
+
+        // when
+        String body = mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andReturn().getResponse().getContentAsString();
+
+        // then: 정산이 기대한 값과 지갑이 답한 값을 나란히 보여 줌. 물은 시각은 대사 줄의 마지막으로 물은 시각
+        JsonNode sut = jsonMapper.readTree(body).get("content").get(0);
+        assertThat(sut).isNotNull();
+        LocalDateTime askedAt = checkOf(payoutId).getLastCheckedAt();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.get("payoutId").asLong()).isEqualTo(payoutId);
+            softly.assertThat(sut.get("payeeId").asLong()).isEqualTo(10L);
+            softly.assertThat(sut.get("amount").asLong()).isEqualTo(9_700L);
+            softly.assertThat(sut.get("walletPayeeId").asLong()).isEqualTo(99L);
+            softly.assertThat(sut.get("walletAmount").asLong()).isEqualTo(9_600L);
+            softly.assertThat(sut.get("reason").asString()).isEqualTo("PAYEE_MISMATCH");
+            softly.assertThat(sut.get("attemptCount").asInt()).isEqualTo(1);
+            softly.assertThat(sut.get("notFoundCount").asInt()).isZero();
+            softly.assertThat(LocalDateTime.parse(sut.get("lastAskedAt").asString())).isEqualTo(askedAt);
+        });
+    }
+
+    @Test
+    void 관리자_목록은_지갑_답_없음_정산의_지갑_값을_null로_보여_준다() throws Exception {
+        // given: 세 번 물었는데 답이 없어 네 번째 대사에서 지갑 답 없음으로 닫힘
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+
+        // when & then: "있음" 답을 받지 못해 지갑 값이 없음
+        mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].payoutId").value(payoutId))
+                .andExpect(jsonPath("$.content[0].walletPayeeId").value(nullValue()))
+                .andExpect(jsonPath("$.content[0].walletAmount").value(nullValue()))
+                .andExpect(jsonPath("$.content[0].reason").value("NO_RESPONSE"))
+                .andExpect(jsonPath("$.content[0].attemptCount").value(PayoutDepositCheck.MAX_ATTEMPTS))
+                .andExpect(jsonPath("$.content[0].notFoundCount").value(0));
+    }
+
+    @Test
+    void 관리자_목록은_입금_없음_정산의_없음_답_횟수를_보여_준다() throws Exception {
+        // given: 첫 질문에 지갑이 "없음"으로 답하고, 두·세 번째 질문에는 답이 없어 네 번째 대사에서 입금 없음으로 닫힘
+        //   이유만 보면 3번 다 "없음"인지 알 수 없어, 없음 답 횟수(1)와 시도 횟수(3)를 함께 보여 줌 (#621 사용자 결정)
+        Long payoutId = settleOnePayout(10L, 9_700L);
+        payoutDepositCheckUseCase.runCheck();
+        Long firstCheckId = checkOf(payoutId).getLastCheckId();
+        sendAnswer(firstCheckId, payoutId, false, null, null, null);
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(checkOf(payoutId).getNotFoundCount()).isEqualTo(1));
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+
+        // when & then
+        mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].payoutId").value(payoutId))
+                .andExpect(jsonPath("$.content[0].reason").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.content[0].attemptCount").value(PayoutDepositCheck.MAX_ATTEMPTS))
+                .andExpect(jsonPath("$.content[0].notFoundCount").value(1));
+    }
+
+    @Test
+    void 관리자_목록에는_확인_대기와_일치_정산이_나오지_않는다() throws Exception {
+        // given: 판매자 10은 금액 다름(관리자 확인), 20은 일치, 30은 답이 오지 않아 확인 대기
+        Map<Long, Long> payoutIdBySeller = settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L, 30L, 3_000L));
+        Long review = payoutIdBySeller.get(10L);
+        Long matched = payoutIdBySeller.get(20L);
+        Long waiting = payoutIdBySeller.get(30L);
+        payoutDepositCheckUseCase.runCheck();
+        Long checkId = checkOf(review).getLastCheckId();
+        sendAnswer(checkId, review, true, 10L, 9_000L, "2026-11-15T02:05:00");
+        sendAnswer(checkId, matched, true, 20L, 5_000L, "2026-11-15T02:05:00");
+        await().atMost(TIMEOUT).untilAsserted(() -> {
+            assertThat(checkOf(review).getStatus()).isEqualTo(PayoutDepositCheckStatus.NEEDS_REVIEW);
+            assertThat(checkOf(matched).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED);
+        });
+        assertThat(checkOf(waiting).getStatus()).isEqualTo(PayoutDepositCheckStatus.WAITING);
+
+        // when & then: 관리자 확인 필요 1건만 (개수에서도 다른 상태는 빠짐)
+        //   크기 1로 부름: 첫 쪽이 크기보다 적게 차면 PageableExecutionUtils가 개수 쿼리를 건너뛰어 개수 쿼리의 상태 조건을 확인하지 못함
+        mockMvc.perform(depositChecksRequest().param("size", "1").header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.content[*].payoutId").value(contains(review.intValue())))
+                .andExpect(jsonPath("$.content[0].reason").value("AMOUNT_MISMATCH"))
+                .andExpect(jsonPath("$.content[0].walletAmount").value(9_000L));
+    }
+
+    @Test
+    void 관리자_목록은_대사_줄_id_내림차순이고_페이지로_나눈다() throws Exception {
+        // given: 정산 3건이 모두 지갑 답 없음으로 닫힘
+        settlePayouts(Map.of(10L, 9_700L, 20L, 5_000L, 30L, 3_000L));
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        payoutDepositCheckUseCase.runCheck();
+        List<Integer> payoutIdsInCheckOrder = new ArrayList<>();
+        for (PayoutDepositCheck check : depositCheckRepository.findAll(Sort.by("id"))) {
+            payoutIdsInCheckOrder.add(check.getPayoutId().intValue());
+        }
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 새 대사 줄 먼저, 크기 2면 2쪽
+        mockMvc.perform(depositChecksRequest().param("page", "0").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[*].payoutId")
+                        .value(contains(payoutIdsInCheckOrder.get(2), payoutIdsInCheckOrder.get(1))));
+        mockMvc.perform(depositChecksRequest().param("page", "1").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].payoutId").value(contains(payoutIdsInCheckOrder.get(0))));
+    }
+
+    @Test
+    void 관리자_목록은_관리자_확인_필요_정산이_없으면_빈_목록이다() throws Exception {
+        // when & then
+        mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())                                               // 정산 상세(/{payoutId})로 잘못 들어가면 400
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content").isEmpty());
+    }
+
+    @Test
+    void 관리자_목록은_토큰이_없으면_401이다() throws Exception {
+        // when & then
+        mockMvc.perform(depositChecksRequest())
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 관리자_목록은_관리자가_아니면_403이다() throws Exception {
+        // when & then
+        mockMvc.perform(depositChecksRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(10L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());
+    }
+
+    @ParameterizedTest
+    @MethodSource("범위_밖_페이지_크기")
+    void 관리자_목록은_페이지_크기가_1에서_100_밖이면_422다(String size) throws Exception {
+        // when & then
+        mockMvc.perform(depositChecksRequest().param("size", size)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    // 아래·위 경계 바로 밖. 0은 하한 검사가 빠지면 쪽을 만드는 PageRequest가 거절해 422가 아닌 응답이 됨
+    static Stream<String> 범위_밖_페이지_크기() {
+        return Stream.of("0", "101");
+    }
+
+    @Test
+    void 관리자_목록은_페이지_번호가_음수면_422다() throws Exception {
+        // when & then
+        mockMvc.perform(depositChecksRequest().param("page", "-1")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
     // ---------- 도우미 ----------
+
+    private MockHttpServletRequestBuilder depositChecksRequest() {
+        return get("/api/v1/admin/payouts/deposit-checks");
+    }
 
     // 정산 1건을 확정하고 그 정산 ID를 돌려줌 (지갑 입금 메시지도 이때 나감)
     private Long settleOnePayout(Long sellerId, Long amount) throws Exception {
@@ -428,6 +659,12 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
             payoutIdBySeller.put(check.getPayeeId(), check.getPayoutId());
         }
         return payoutIdBySeller;
+    }
+
+    private PayoutOutbox outboxOf(Long payoutId) {
+        List<PayoutOutbox> found = outboxRepository.findAllByPayoutIdIn(List.of(payoutId));
+        assertThat(found).hasSize(1);
+        return found.get(0);
     }
 
     private PayoutDepositCheck checkOf(Long payoutId) {

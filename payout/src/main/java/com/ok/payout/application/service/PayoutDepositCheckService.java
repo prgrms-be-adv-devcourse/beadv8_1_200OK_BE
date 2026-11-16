@@ -1,16 +1,21 @@
 package com.ok.payout.application.service;
 
 import com.ok.payout.application.port.in.PayoutDepositCheckAnswerCommand;
+import com.ok.payout.application.port.in.PayoutDepositCheckReviewResult;
+import com.ok.payout.application.port.in.PayoutDepositCheckReviewSearchQuery;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
 import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
+import com.ok.payout.application.port.out.DepositCheckReviewRow;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
-import com.ok.payout.application.port.out.SellerPayoutCreated;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -18,6 +23,7 @@ import java.util.function.Supplier;
  * 정산·지갑 대사 유스케이스 구현 (#619, 상위 #308). 지갑과의 약속은 PR #548 문서 4절과 #308 11/15 댓글이다.
  * 이 클래스는 트랜잭션을 만들지 않고 순서만 정한다. DB 작업은 줄마다·묶음마다 짧은 트랜잭션({@link PayoutDepositCheckRecordService})으로 하고,
  * Kafka 보내기는 그 사이 트랜잭션 밖에서 한다 ({@link PayoutService#publishPending()}과 같은 방식).
+ * 예외로 관리자 목록 조회(#621)는 읽기만 하는 한 메서드라 그 메서드에만 읽기 전용 트랜잭션을 둔다.
  */
 @Slf4j
 @Service
@@ -26,6 +32,7 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
 
     private final PayoutDepositCheckRecordService payoutDepositCheckRecordService;
     private final PayoutEventPublisher payoutEventPublisher;
+    private final PayoutQueryRepository payoutQueryRepository;
 
     @Override
     public PayoutDepositCheckRunResult runCheck() {
@@ -60,22 +67,20 @@ public class PayoutDepositCheckService implements PayoutDepositCheckUseCase {
         return new PayoutDepositCheckRunResult(closed, asked, batches, stopped);
     }
 
-    // TODO(#620): 재발송을 바로 보내지 말고 답 처리와 같은 트랜잭션에서 outbox 줄을 다시 "보낼 것(PENDING)"으로 돌려, #620의 짧은 간격 재발송이 보내게 바꾼다
-    //   지금은 건마다 Kafka 저장 확인을 기다려(최대 120초) 브로커가 느리면 답 처리가 Kafka 기본 max.poll.interval(5분)을 넘을 수 있음
-    //   outbox로 넘기면 답 처리는 DB만 고치고 끝나고, 서버가 죽어도 재발송이 사라지지 않음. #620 전에는 outbox를 정산 Job만 보내서 지금은 바로 보냄
+    // 답 처리는 DB만 고치고 끝남. "입금 없음" 정산의 입금 메시지는 outbox 줄을 되돌려 짧은 간격 재발송이 보냄 (#620, applyAnswer 주석)
     @Override
     public void handleAnswer(PayoutDepositCheckAnswerCommand command) {
-        List<SellerPayoutCreated> resend = payoutDepositCheckRecordService.applyAnswer(command);
-        for (SellerPayoutCreated created : resend) {
-            try {
-                // 같은 정산이 두 번 가도 지갑은 payoutId로 한 번만 입금함(#584). 그래서 outbox를 거치지 않고 바로 보냄
-                payoutEventPublisher.publishSellerPayoutCreated(created);
-                log.info("대사에서 지갑 입금이 없어 입금 메시지를 다시 보냄. payoutId={}", created.payoutId());
-            } catch (RuntimeException e) {
-                // 못 보내도 다음 날 대사가 다시 "없음"을 받고 또 보냄. 답 처리는 이미 커밋돼 되돌리지 않음
-                log.warn("대사에서 입금 메시지를 다시 보내지 못함. 다음 대사에서 다시 보냄. payoutId={}", created.payoutId(), e);
-            }
-        }
+        payoutDepositCheckRecordService.applyAnswer(command);
+    }
+
+    // 관리자 대사 확인 목록 (#621). 목록과 개수 두 질의를 같은 읽기 전용 트랜잭션에서 읽음 (막힌 주문 목록 #569와 같은 방식)
+    // 클래스에 트랜잭션을 두지 않은 이유는 클래스 주석: 대사는 줄마다 짧은 트랜잭션과 트랜잭션 밖 Kafka 보내기를 섞어 씀
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutDepositCheckReviewResult> getReviewItems(PayoutDepositCheckReviewSearchQuery query) {
+        Page<DepositCheckReviewRow> page = payoutQueryRepository.findDepositChecksNeedingReview(
+                PageRequest.of(query.page(), query.size()));
+        return page.map(PayoutQueryResultMapper::toDepositCheckReviewResult);
     }
 
     // 닫기가 두 번 다 거절돼도 묻기는 그대로 함. 닫기 때문에 그날 다른 정산의 질문이 통째로 빠지지 않게

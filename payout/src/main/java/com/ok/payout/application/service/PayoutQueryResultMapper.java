@@ -4,12 +4,14 @@ import com.ok.payout.application.port.in.PayoutAdjustmentResult;
 import com.ok.payout.application.port.in.PayoutBlockedOrderCauseResult;
 import com.ok.payout.application.port.in.PayoutBlockedOrderResult;
 import com.ok.payout.application.port.in.PayoutCandidateResult;
+import com.ok.payout.application.port.in.PayoutDepositCheckReviewResult;
 import com.ok.payout.application.port.in.PayoutItemResult;
 import com.ok.payout.application.port.in.PayoutOverchargeEvidenceResult;
 import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
 import com.ok.payout.application.port.in.PayoutResolutionResult;
 import com.ok.payout.application.port.out.BlockedOrderRow;
 import com.ok.payout.application.port.out.CandidateRow;
+import com.ok.payout.application.port.out.DepositCheckReviewRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
 import com.ok.payout.application.port.out.PayoutResolutionRequestRow;
 import com.ok.payout.application.port.out.PayoutResolutionRow;
@@ -88,6 +90,14 @@ final class PayoutQueryResultMapper {
         return new PayoutBlockedOrderResult(row.orderId(), row.status().name(), row.failedRunCount(),
                 row.lastFailedAt(), new ArrayList<>(sellerIds), new ArrayList<>(reasons), new ArrayList<>(categories),
                 causeResults, toEvidenceResult(row.overchargeEvidence()), toEvidenceResult(evidenceNow));
+    }
+
+    // 관리자 대사 확인 목록 1줄 (#621). 이유는 입구가 domain enum을 모르게 이름 문자열로 바꿈
+    // 엔티티 칸 이름 lastCheckedAt은 "물은 시각"이라 결과에서는 뜻이 드러나게 lastAskedAt으로 옮김 (답 받은 시각으로 오해하지 않게)
+    static PayoutDepositCheckReviewResult toDepositCheckReviewResult(DepositCheckReviewRow row) {
+        return new PayoutDepositCheckReviewResult(row.payoutId(), row.payeeId(), row.amount(), row.walletPayeeId(),
+                row.walletAmount(), row.mismatchReason().name(), row.attemptCount(), row.notFoundCount(),
+                row.lastCheckedAt());
     }
 
     private static PayoutOverchargeEvidenceResult toEvidenceResult(PayoutOverchargeEvidence evidence) {

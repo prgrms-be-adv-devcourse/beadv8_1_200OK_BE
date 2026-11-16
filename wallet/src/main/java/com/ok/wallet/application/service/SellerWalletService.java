@@ -17,8 +17,6 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 public class SellerWalletService implements SellerWalletUseCase {
-    private static final String PAYOUT_REFERENCE_PREFIX = "PAYOUT:";
-
     private final SellerWalletRepository sellerWalletRepository;
     private final SellerWalletLedgerRepository sellerWalletLedgerRepository;
     // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
@@ -54,7 +52,7 @@ public class SellerWalletService implements SellerWalletUseCase {
         if (payoutId == null) {
             throw new IllegalArgumentException("payoutId는 필수입니다.");
         }
-        String referenceKey = PAYOUT_REFERENCE_PREFIX + payoutId;
+        String referenceKey = PayoutReferenceKey.of(payoutId);
 
         SellerWallet wallet = getOrCreate(sellerId);
         // 이 지갑에 이미 입금한 정산이면 넘어간다. 지갑을 잠근 뒤 확인하므로 같은 지갑의 요청은 순서대로 이 확인을 거친다.

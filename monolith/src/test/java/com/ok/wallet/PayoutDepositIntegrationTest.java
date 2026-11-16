@@ -6,6 +6,7 @@ import com.ok.wallet.WalletSchema;
 import org.springframework.boot.test.context.SpringBootTest;
 import com.ok.common.event.OrderProductConfirmedEvent;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,13 +21,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.awaitility.Awaitility.await;
 
 // 구매확정 이벤트 → 정산 후보 → 정산 배치 → 정산 생성 이벤트 → 판매자 지갑 입금까지 실제로 이어지는지 확인한다.
 // - 정산은 구매확정 15일 뒤가 대상이라, 후보가 만들어진 뒤 생성 시각을 과거로 옮긴다 (PayoutSettleIntegrationTest와 같은 방식)
 // - 정산 범위의 하한이 마지막 정산일이므로 정산 데이터는 테스트 전후로 전부 비운다
+// - 정산·지갑 대사는 두 모듈이 각자 JSON 모양만 시험하므로, 여기서 실제 Kafka로 묻고 답해 판정까지 이어지는지 본다
 @SpringBootTest(classes = PaldoGotganApplication.class)
 class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     // 이 클래스 전용 번호 (정산 테스트는 주문항목 8_000_000~, 9_000_000~ 사용)
@@ -45,6 +49,9 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
     PayoutJobRunner payoutJobRunner;
 
     @Autowired
+    PayoutDepositCheckUseCase payoutDepositCheckUseCase;
+
+    @Autowired
     JdbcTemplate jdbcTemplate;
 
     @BeforeEach
@@ -59,7 +66,45 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 구매확정부터_정산까지_진행되면_판매자_지갑에_정산금이_입금된다() throws Exception {
-        // Given: 상품 10,000원, 배송비 3,000원 구매확정
+        // given
+        readyForPayout();
+
+        // when: 스케줄러와 같은 경로로 정산 배치 실행
+        JobExecution execution = payoutJobRunner.runScheduled();
+
+        // then
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        // 판매자 몫 = 판매 대금(10,000 - 수수료 300) + 배송비 3,000
+        await().atMost(Duration.ofSeconds(10)).until(() -> sellerBalance() == 12_700L);
+        assertThat(countSellerLedgers()).isEqualTo(1);
+        assertThat(latestReferenceKey()).isEqualTo("PAYOUT:" + sellerPayoutId());
+    }
+
+    @Test
+    void 입금된_정산을_대사로_물으면_지갑의_답으로_일치가_된다() throws Exception {
+        // given: 정산금이 판매자 지갑에 입금될 때까지 진행
+        readyForPayout();
+        assertThat(payoutJobRunner.runScheduled().getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        await().atMost(Duration.ofSeconds(10)).until(() -> sellerBalance() == 12_700L);
+
+        // when: 정산이 지갑에 묻고(payout.payout-deposit-check-requested), 지갑이 원장을 읽어 답함(wallet.payout-deposit-checked)
+        payoutDepositCheckUseCase.runCheck();
+
+        // then: 지갑이 답한 판매자·금액·입금 시각이 정산 대사 줄에 그대로 남는다
+        await().atMost(Duration.ofSeconds(20)).until(() -> "MATCHED".equals(sellerDepositCheck().get("status")));
+        Map<String, Object> sut = sellerDepositCheck();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.get("attempt_count")).isEqualTo(1);
+            softly.assertThat(sut.get("wallet_payee_id")).isEqualTo(SELLER_ID);
+            softly.assertThat(sut.get("wallet_amount")).isEqualTo(12_700L);
+            softly.assertThat(sut.get("wallet_deposited_at")).isEqualTo(latestLedgerCreatedAt());
+        });
+        assertThat(sellerBalance()).isEqualTo(12_700L);
+    }
+
+    // 상품 10,000원, 배송비 3,000원 구매확정 후보를 15일이 지난 정산 대상으로 만든다
+    private void readyForPayout() {
         // 정산은 지갑 차감 기록이 없는 주문을 정산에서 빼므로(정산 #194), 이 주문의 결제 금액(13,000원) 차감 기록을 먼저 넣는다
         givenWalletDeduction(13_000L);
         // 정산 후보 리스너는 커밋 후 실행되므로 트랜잭션 안에서 발행한다
@@ -69,16 +114,6 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         await().atMost(Duration.ofSeconds(10)).until(() -> countCandidates() == 3);
         // 정산은 구매확정 15일 뒤가 대상이므로 후보 생성 시각을 20일 전으로 옮긴다
         backdateCandidates(LocalDateTime.now().minusDays(20));
-
-        // When: 스케줄러와 같은 경로로 정산 배치 실행
-        JobExecution execution = payoutJobRunner.runScheduled();
-
-        // Then
-        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
-        // 판매자 몫 = 판매 대금(10,000 - 수수료 300) + 배송비 3,000
-        await().atMost(Duration.ofSeconds(10)).until(() -> sellerBalance() == 12_700L);
-        assertThat(countSellerLedgers()).isEqualTo(1);
-        assertThat(latestReferenceKey()).isEqualTo("PAYOUT:" + sellerPayoutId());
     }
 
     // 정산의 지갑 차감 기록을 직접 넣는다
@@ -128,6 +163,23 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
                 """), String.class, SELLER_ID);
     }
 
+    // q()가 payout으로 시작하는 단어를 정산 스키마 테이블로 바꾸므로 payout_id 열 대신 payee_id로 찾는다
+    private Map<String, Object> sellerDepositCheck() {
+        return jdbcTemplate.queryForMap(q("""
+                SELECT status, attempt_count, wallet_payee_id, wallet_amount, wallet_deposited_at
+                FROM payout_deposit_check WHERE payee_id = ?
+                """), SELLER_ID);
+    }
+
+    private LocalDateTime latestLedgerCreatedAt() {
+        return jdbcTemplate.queryForObject(q("""
+                SELECT l.created_at FROM seller_wallet_ledger l
+                JOIN seller_wallet w ON l.seller_wallet_id = w.id
+                WHERE w.member_id = ?
+                ORDER BY l.id DESC LIMIT 1
+                """), LocalDateTime.class, SELLER_ID);
+    }
+
     // 판매자 몫 정산 ID (시스템 몫은 payee_id가 없음)
     private long sellerPayoutId() {
         return jdbcTemplate.queryForObject(
@@ -143,6 +195,8 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
                 """), SELLER_ID);
         jdbcTemplate.update(q("DELETE FROM seller_wallet WHERE member_id = ?"), SELLER_ID);
         jdbcTemplate.update(q("DELETE FROM payout_deposit_check"));
+        // 대사 줄이 가리키는 질문 묶음이라 대사 줄 다음에 지운다
+        jdbcTemplate.update(q("DELETE FROM payout_deposit_check_batch"));
         jdbcTemplate.update(q("DELETE FROM payout_outbox"));
         jdbcTemplate.update(q("DELETE FROM payout_item"));
         jdbcTemplate.update(q("DELETE FROM payout"));

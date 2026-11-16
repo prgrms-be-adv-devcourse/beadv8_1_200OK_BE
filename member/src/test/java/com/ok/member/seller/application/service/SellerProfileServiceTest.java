@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.member.seller.domain.SellerProfile;
 import com.ok.member.seller.exception.SellerErrorCode;
+import com.ok.member.seller.application.port.out.SellerEventPublisher;
 import com.ok.member.seller.application.port.out.SellerProfileRepository;
 import com.ok.member.seller.application.dto.SellerProfileCommand;
 import com.ok.member.seller.application.dto.SellerProfileResult;
@@ -14,8 +15,13 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.sql.SQLIntegrityConstraintViolationException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,6 +30,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,8 +40,15 @@ class SellerProfileServiceTest {
     private static final String BASE_URL = "https://bucket.s3.ap-northeast-2.amazonaws.com/";
     private static final String IMAGE_KEY = "seller_profile/3f2a9c1e-7b4d-4e8a-9f0c-1d2e3f4a5b6c.jpg";
 
+    // 출고지 변경 시각은 고정 시계로 만든다. 나노초는 마이크로초로 잘려 메시지에 실려야 한다
+    private static final Instant NOW = Instant.parse("2026-11-15T01:00:00.123456789Z");
+    private static final LocalDateTime NOW_MICROS = LocalDateTime.of(2026, 11, 15, 10, 0, 0, 123_456_000);
+
     @Mock
     SellerProfileRepository sellerProfileRepository;
+
+    @Mock
+    SellerEventPublisher sellerEventPublisher;
 
     SellerProfileService sellerProfileService;
 
@@ -45,7 +59,59 @@ class SellerProfileServiceTest {
         // 중복 검증기는 목 리포지토리를 그대로 쓰므로 실제 객체로 둔다 (변환 규칙 자체는 SellerProfileDuplicateValidatorTest가 확인)
         sellerProfileService = new SellerProfileService(sellerProfileRepository,
                 new SellerProfileDuplicateValidator(sellerProfileRepository),
-                new SellerProfileImageUrlValidator(mediaUrlResolver), mediaUrlResolver);
+                new SellerProfileImageUrlValidator(mediaUrlResolver), mediaUrlResolver,
+                sellerEventPublisher, Clock.fixed(NOW, ZoneId.of("Asia/Seoul")));
+    }
+
+    @Test
+    void 등록하면_출고지_우편번호를_변경_시각과_함께_알린다() {
+        // given
+        given(sellerProfileRepository.saveAndFlush(any(SellerProfile.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        sellerProfileService.register(MEMBER_ID, command(null, "37421"));
+
+        // then: 판매자 ID는 회원 ID와 같은 값이다
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "37421", NOW_MICROS);
+    }
+
+    @Test
+    void 수정으로_출고지_우편번호가_바뀌면_알린다() {
+        // given
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+
+        // when
+        sellerProfileService.update(MEMBER_ID, command(null, "06236"));
+
+        // then
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "06236", NOW_MICROS);
+    }
+
+    @Test
+    void 출고지_우편번호를_그대로_두고_수정하면_알리지_않는다() {
+        // given: 상호명·소개만 바뀌는 수정
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "옛 상호", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+
+        // when
+        sellerProfileService.update(MEMBER_ID, command(null, "37421"));
+
+        // then
+        then(sellerEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 출고지_우편번호_형식이_틀리면_저장도_알림도_하지_않는다() {
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.register(MEMBER_ID, command(null, "3742")))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_ORIGIN_POSTAL_CODE));
+        then(sellerProfileRepository).should(never()).saveAndFlush(any());
+        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
@@ -109,7 +175,7 @@ class SellerProfileServiceTest {
     void 수정할_때_사진_URL이_없으면_사진을_지운다() {
         // given
         SellerProfile profile = SellerProfile.register(
-                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", null, IMAGE_KEY);
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, IMAGE_KEY);
         given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
 
         // when
@@ -120,6 +186,22 @@ class SellerProfileServiceTest {
             softly.assertThat(profile.getProfileImageKey()).isNull();
             softly.assertThat(result.profileImageUrl()).isNull();
         });
+    }
+
+    @Test
+    void 다른_탭이_먼저_수정해_버전이_맞지_않으면_409로_막고_출고지_메시지를_남기지_않는다() {
+        // given: 출고지를 바꾸는 수정인데, 다른 탭이 먼저 커밋해 버전 검사에서 걸린다
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+        willThrow(new ObjectOptimisticLockingFailureException(SellerProfile.class, 1L))
+                .given(sellerProfileRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.update(MEMBER_ID, command(null, "06236")))
+                .isInstanceOfSatisfying(RestApiException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(SellerErrorCode.SELLER_PROFILE_CONCURRENT_MODIFICATION));
+        then(sellerEventPublisher).shouldHaveNoInteractions();
     }
 
     @Test
@@ -134,7 +216,11 @@ class SellerProfileServiceTest {
     }
 
     private static SellerProfileCommand command(String profileImageUrl) {
-        return new SellerProfileCommand("청송 햇살농원", "김영수", "054-873-2210",
+        return command(profileImageUrl, "37421");
+    }
+
+    private static SellerProfileCommand command(String profileImageUrl, String originPostalCode) {
+        return new SellerProfileCommand("청송 햇살농원", "김영수", "054-873-2210", originPostalCode,
                 "3대째 사과만 키우는 청송 부남면 과수원입니다.", profileImageUrl);
     }
 

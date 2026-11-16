@@ -16,7 +16,7 @@ import lombok.Getter;
  *       "결과 대기"를 써도 성공을 덮어쓰지 못하게 하기 위해서다.
  *       멈춘 단계는 이유도 그대로 둔다(결과 불일치 표시를 지키려고, 결정 9).</li>
  *   <li>nextCheckAt 의 뜻은 상태마다 다르다(결정 7).
- *       IN_PROGRESS는 시도 중 만료 시각, READY는 다음 시도 시각,
+ *       IN_PROGRESS는 시도 중 만료 시각(지나면 다시 집음, #576), READY는 다음 시도 시각,
  *       AWAITING_RESULT는 결과를 기다리는 한도 시각이고, 끝 상태는 null이다.</li>
  * </ul>
  *
@@ -29,10 +29,19 @@ public class RefundStep {
     /** 이유 최대 길이. 환불 실패 기록의 기존 규칙과 같다 */
     public static final int MAX_REASON_LENGTH = 100;
 
-    // TODO(#576): 다시 시도 간격 정책을 정한다
+    /** 시도 중 만료가 반복돼 횟수를 다 쓰고 멈출 때 남기는 이유 */
+    public static final String IN_PROGRESS_EXPIRED = "IN_PROGRESS_EXPIRED";
+
+    // TODO(#577): 설정 파일로 뺄지 정한다. 지금은 알람 간격(1분)과 맞춘 임시 값이다
     private static final Duration RETRY_DELAY = Duration.ofMinutes(1);
-    /** 시도 중인 채로 이 시간이 지나면 멈춘 시도로 본다 */
-    private static final Duration IN_PROGRESS_EXPIRY = Duration.ofMinutes(1);
+    // 시도 중인 채로 이 시간이 지나면 멈춘 시도(시도하던 서버가 죽었거나 실패 기록마저 실패함)로 보고 다시 집는다(#576).
+    // 지갑 발행이 최대로 기다리는 시간(주소 찾기 max.block.ms 60초 + 저장 확인 10초, 약 70초)보다 길어야 한다.
+    // 짧으면 아직 보내는 중인 줄을 다른 서버가 집어 같은 요청을 한 번 더 보낸다(지갑이 refundId로 걸러 돈은 한 번이지만 그 약속에만 기대게 된다)
+    private static final Duration IN_PROGRESS_EXPIRY = Duration.ofMinutes(2);
+    // 한 단계를 자동으로 시도하는 최대 횟수. 다 쓰면 멈춤으로 남겨 사람이 본다(#576).
+    // TODO(#577): 설정 파일로 뺄지 정한다. 다시 시도 간격(1분)과 알람이 끝난 뒤 쉬는 시간(1분)이 겹쳐 시도 사이가 1~2분이라,
+    // 처음 시도부터 약 4~8분 동안 다시 시도한다
+    static final int MAX_ATTEMPTS = 5;
     // TODO(#577): 결과를 기다리는 시간 정책을 정한다
     private static final Duration RESULT_WAIT = Duration.ofMinutes(30);
 
@@ -112,14 +121,47 @@ public class RefundStep {
         return true;
     }
 
-    /** 실패해서 다음 시도를 기다린다. */
+    /**
+     * 실패해서 다음 시도를 기다린다. 시도 횟수를 다 썼으면 기다리지 않고 멈춘다(이유는 이번 실패 그대로, #576).
+     * 멈췄는지는 바뀐 뒤 {@link #getStatus()}로 본다.
+     */
     public boolean failForRetry(String reason, LocalDateTime now) {
         if (status != RefundStepStatus.IN_PROGRESS && status != RefundStepStatus.READY) {
             return false;
         }
         lastReason = normalizeReason(reason);
+        if (attemptCount >= MAX_ATTEMPTS) {
+            status = RefundStepStatus.STOPPED;
+            nextCheckAt = null;
+            return true;
+        }
         status = RefundStepStatus.READY;
         nextCheckAt = now.plus(RETRY_DELAY);
+        return true;
+    }
+
+    /** 시도 중인데 만료 시각이 지났는지(시도하던 쪽이 끝내지 못하고 멈춘 줄) 확인한다. */
+    public boolean isExpired(LocalDateTime now) {
+        return status == RefundStepStatus.IN_PROGRESS && nextCheckAt != null && !nextCheckAt.isAfter(now);
+    }
+
+    /**
+     * 만료된 시도 중 줄을 다시 집는다(#576). 시도 횟수를 올리고 만료 시각을 새로 잡는다.
+     * 횟수를 다 썼으면 다시 집지 않고 멈춘다(이유 {@link #IN_PROGRESS_EXPIRED}). 만료되지 않았으면 다른 쪽이 하는 중이라 바꾸지 않는다.
+     * 다시 집었는지 멈췄는지는 바뀐 뒤 {@link #getStatus()}로 본다.
+     */
+    public boolean restartExpired(LocalDateTime now) {
+        if (!isExpired(now)) {
+            return false;
+        }
+        if (attemptCount >= MAX_ATTEMPTS) {
+            lastReason = IN_PROGRESS_EXPIRED;
+            status = RefundStepStatus.STOPPED;
+            nextCheckAt = null;
+            return true;
+        }
+        attemptCount++;
+        nextCheckAt = now.plus(IN_PROGRESS_EXPIRY);
         return true;
     }
 

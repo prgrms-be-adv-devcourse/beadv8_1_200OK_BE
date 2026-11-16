@@ -3,6 +3,7 @@ package com.ok.refund.application.port.out;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepType;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -34,4 +35,10 @@ public interface RefundStepPersistencePort {
 
     /** 한 환불의 단계 행을 만든 순서(ID 오름차순)로 돌려준다. */
     List<RefundStep> findAllByRefundId(Long refundId);
+
+    /**
+     * 다시 볼 시각이 지난 단계 줄(할 차례, 시도 중)이 있는 처리 중 환불 ID를 오래 기다린 순서로 최대 {@code limit}개 돌려준다(#576 다시 진행 알람).
+     * 결과 대기 줄은 넣지 않는다(시간 초과는 #577). 잠그지 않는 읽기라, 실제로 다시 진행할지는 지휘자가 환불 행을 잠근 뒤 다시 본다.
+     */
+    List<Long> findRefundIdsDueForResume(LocalDateTime now, int limit);
 }

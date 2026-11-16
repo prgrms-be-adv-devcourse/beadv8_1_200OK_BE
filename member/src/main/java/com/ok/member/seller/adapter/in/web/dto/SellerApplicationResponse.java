@@ -24,6 +24,10 @@ public record SellerApplicationResponse(
         @Schema(description = "사업자등록번호", example = "512-81-04273")
         String businessNumber,
 
+        @Schema(description = "출고지 우편번호 (5자리 숫자, 신청 당시 값). 판매자 프로필을 처음 등록할 때 기본값으로 쓴다. 이 항목이 생기기 전 신청은 null",
+                example = "37421", nullable = true)
+        String originPostalCode,
+
         @Schema(description = "신청 일시", example = "2026-10-18T14:30:00")
         LocalDateTime appliedAt
 ) {
@@ -35,6 +39,7 @@ public record SellerApplicationResponse(
                 result.storeName(),
                 result.representativeName(),
                 result.businessNumber(),
+                result.originPostalCode(),
                 result.appliedAt()
         );
     }

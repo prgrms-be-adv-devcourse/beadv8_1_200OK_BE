@@ -6,6 +6,8 @@ import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
@@ -20,6 +22,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutSummaryResponse;
 import com.ok.payout.adapter.in.batch.PayoutJobRunner;
 import com.ok.payout.application.port.in.PayoutBlockedOrderUseCase;
+import com.ok.payout.application.port.in.PayoutDepositCheckUseCase;
 import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutUseCase;
 import jakarta.validation.Valid;
@@ -49,6 +52,7 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     private final PayoutUseCase payoutUseCase;
     private final PayoutFailureResolutionUseCase payoutFailureResolutionUseCase;
     private final PayoutBlockedOrderUseCase payoutBlockedOrderUseCase;
+    private final PayoutDepositCheckUseCase payoutDepositCheckUseCase;
 
     // 정산 목록 조회 (모든 정산. payeeId·system으로 거를 수 있음)
     @Override
@@ -175,5 +179,17 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutBlockedOrderUseCase.getBlockedOrders(request.toQuery()).map(PayoutBlockedOrderResponse::from)));
+    }
+
+    // 대사 관리자 확인 목록 (#621): 지갑 입금 확인에서 관리자 확인 필요가 된 정산만, 이유와 지갑이 답한 값과 함께
+    // 목록에서 바로 고치는 기능(다시 보내기·완료 표시)은 이슈 범위 밖이라 조회만 둠
+    // 경로 /deposit-checks는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음 (/blocked-orders와 같음)
+    @Override
+    @GetMapping("/deposit-checks")
+    public ResponseEntity<PayoutPageResponse<PayoutDepositCheckReviewResponse>> getDepositCheckReviews(
+            @Valid @ModelAttribute PayoutDepositCheckReviewSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutDepositCheckUseCase.getReviewItems(request.toQuery()).map(PayoutDepositCheckReviewResponse::from)));
     }
 }

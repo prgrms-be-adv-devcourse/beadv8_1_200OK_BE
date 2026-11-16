@@ -20,7 +20,9 @@ import static jakarta.persistence.GenerationType.IDENTITY;
 /**
  * 다른 서비스로 보낼 회원 메시지 1건의 발송 대기 기록(outbox)을 나타낸다 (#560).
  * 회원 변경과 같은 트랜잭션에서 저장해, 커밋되면 반드시 보내고 롤백되면 보내지 않는다.
- * 메시지 본문은 저장하지 않는다. 지금 보내는 회원가입 메시지는 회원 ID만 담아 보낼 때 만들면 된다.
+ * 회원가입처럼 회원 ID만 보내는 메시지는 본문을 저장하지 않고 보낼 때 만든다. 출고지 우편번호처럼 바뀌는 값을 보내는 메시지는
+ * 기록한 시점의 값이 나가야 해서 본문(JSON)을 저장한다(#587).
+ * 판매자 하위 도메인의 메시지도 이 표를 쓴다. 판매자 ID가 회원 ID와 같은 값이라 {@code memberId}에 담는다.
  * 보낸 줄은 지우지 않는다(무엇을 언제 보냈는지 남김, 정산 outbox와 같음).
  */
 @Entity
@@ -31,6 +33,9 @@ public class MemberOutbox extends BaseTime {
 
     // 마지막 오류 최대 길이 (DB last_error VARCHAR(500)과 맞춤)
     public static final int MAX_ERROR_LENGTH = 500;
+
+    // 본문 최대 길이 (DB payload VARCHAR(1000)과 맞춤)
+    public static final int MAX_PAYLOAD_LENGTH = 1000;
 
     @Id
     @GeneratedValue(strategy = IDENTITY)
@@ -44,6 +49,10 @@ public class MemberOutbox extends BaseTime {
     @Column(nullable = false)
     private Long memberId;
 
+    // 보낼 메시지 본문(JSON). 회원 ID만 보내는 메시지는 null. 길이는 DB payload VARCHAR(1000)과 맞춘다
+    @Column(length = MAX_PAYLOAD_LENGTH)
+    private String payload;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private MemberOutboxStatus status;
@@ -56,9 +65,10 @@ public class MemberOutbox extends BaseTime {
 
     private LocalDateTime sentAt;
 
-    private MemberOutbox(MemberOutboxEventType eventType, Long memberId) {
+    private MemberOutbox(MemberOutboxEventType eventType, Long memberId, String payload) {
         this.eventType = eventType;
         this.memberId = memberId;
+        this.payload = payload;
         this.status = MemberOutboxStatus.PENDING;
     }
 
@@ -66,7 +76,24 @@ public class MemberOutbox extends BaseTime {
      * 회원가입 메시지를 보낼 대기 줄을 만든다.
      */
     public static MemberOutbox memberRegistered(Long memberId) {
-        return new MemberOutbox(MemberOutboxEventType.MEMBER_REGISTERED, memberId);
+        return new MemberOutbox(MemberOutboxEventType.MEMBER_REGISTERED, memberId, null);
+    }
+
+    /**
+     * 출고지 우편번호 변경 메시지를 보낼 대기 줄을 만든다.
+     * 본문은 시스템이 만든 JSON이라, 비었거나 너무 길면 사용자 입력 오류가 아니라 버그로 본다.
+     *
+     * @param sellerId 판매자인 회원의 ID
+     * @param payload  보낼 메시지 본문(JSON)
+     */
+    public static MemberOutbox sellerOriginPostalCodeChanged(Long sellerId, String payload) {
+        if (payload == null || payload.isBlank()) {
+            throw new IllegalArgumentException("출고지 우편번호 메시지 본문은 필수입니다.");
+        }
+        if (payload.length() > MAX_PAYLOAD_LENGTH) {
+            throw new IllegalArgumentException("outbox 본문은 " + MAX_PAYLOAD_LENGTH + "자 이하여야 합니다.");
+        }
+        return new MemberOutbox(MemberOutboxEventType.SELLER_ORIGIN_POSTAL_CODE_CHANGED, sellerId, payload);
     }
 
     public void markSent(LocalDateTime sentAt) {

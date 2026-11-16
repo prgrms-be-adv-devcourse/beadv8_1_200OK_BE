@@ -62,6 +62,14 @@ public class PayoutOutbox extends BaseTime {
         this.sentAt = sentAt;
     }
 
+    // 대사에서 지갑이 "입금 없음"으로 답한 정산을 다시 보낼 것으로 되돌림 (#620). 짧은 간격 재발송이 다시 보냄
+    // sentAt은 비움: PENDING인데 보낸 시각이 남아 있으면 "보냈는데 왜 대기인지" 헷갈림
+    // attemptCount는 그대로 둠: 실패한 발송 시도의 기록이고, 보내는 순서(덜 시도한 줄부터)에만 쓰여 되돌려도 해가 없음
+    public void markPendingAgain() {
+        this.status = PayoutOutboxStatus.PENDING;
+        this.sentAt = null;
+    }
+
     // 예외 메시지 길이는 예측할 수 없어, 500자를 넘으면 잘라 저장 실패(같은 줄이 매번 실패)를 막음
     public void recordFailure(String error) {
         this.attemptCount++;

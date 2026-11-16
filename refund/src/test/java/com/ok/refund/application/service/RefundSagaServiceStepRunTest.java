@@ -135,6 +135,49 @@ class RefundSagaServiceStepRunTest {
         then(refundPersistencePort).should(never()).update(any());
     }
 
+    // 상품이 다시 해도 같은 이유로 거절하면 알람이 다시 시도하지 않게 바로 멈춘다(#576). 다음 시도 시각이 없어 알람이 집지 않는다
+    @Test
+    void 다시_해도_같은_실패면_할_차례가_아니라_멈춤으로_남긴다() {
+        // given
+        givenRecordable(RefundStepType.PRODUCT);
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_RELEASE_REFUSED));
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep updated = captor.getValue();
+        assertThat(updated).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(updated.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(updated.getLastReason()).isEqualTo("PRODUCT_RELEASE_REFUSED");
+            softly.assertThat(updated.getNextCheckAt()).isNull();
+        });
+    }
+
+    // 다시 시도할 실패라도 시도 횟수를 다 썼으면 멈춘다(#576). 사람이 보게 WARN을 남긴다
+    @Test
+    void 시도_횟수를_다_쓴_뒤_실패하면_멈추고_WARN을_남긴다() {
+        // given: 다섯 번째 시도 중인 재고 줄
+        givenProcessingRefund();
+        RefundStep lastTry = RefundStep.restore(3L, REFUND_ID, RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS,
+                5, NOW.plusMinutes(1), "PRODUCT_API_FAILED", NOW.minusMinutes(5));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(lastTry));
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+        assertThat(logAppender.list)
+                .anyMatch(event -> event.getLevel() == Level.WARN && event.getFormattedMessage().contains("단계를 멈춤"));
+    }
+
     // 서비스는 다른 모듈을 부르기 전에 단계 줄을 만든다. 줄이 없으면 그 순서를 어긴 버그라 기록 실패로 드러나되,
     // 응답은 진짜 원인(원래 예외)이어야 한다
     @Test

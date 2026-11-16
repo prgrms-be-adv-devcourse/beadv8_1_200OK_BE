@@ -41,7 +41,8 @@ interface SellerRefundControllerSpec {
             @ApiResponse(responseCode = "404", description = "없거나 남의 상품 요청 (REFUND_NOT_FOUND), "
                     + "승인 때 주문에 그 상품이 없음 (ORDER_ITEM_NOT_FOUND)"),
             @ApiResponse(responseCode = "409", description = "요청됨이 아님. 이미 승인·거절됐거나 구매자가 철회함 (INVALID_REFUND_STATE). "
-                    + "요청됨이 아니면서 출고도 됐으면 INVALID_REFUND_STATE다"),
+                    + "요청됨이 아니면서 출고도 됐으면 INVALID_REFUND_STATE다. "
+                    + "0원 환불 승인 뒤 상품이 다시 해도 같은 이유로 재고 복구를 거절함 (PRODUCT_RELEASE_REFUSED). 처리 중으로 남고 관리자가 본다"),
             @ApiResponse(responseCode = "422", description = "거절 사유 없음 (REJECT_REASON_REQUIRED). 사유를 상태보다 먼저 보므로 "
                     + "이미 처리된 요청이어도 사유 없이 거절하면 409가 아니라 이 응답이다. "
                     + "요청 값 검증 실패 (VALIDATION_FAILED). 결정 값 오류, 사유 255자 초과 등"),

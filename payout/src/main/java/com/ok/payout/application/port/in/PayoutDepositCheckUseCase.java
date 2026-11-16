@@ -1,5 +1,7 @@
 package com.ok.payout.application.port.in;
 
+import org.springframework.data.domain.Page;
+
 /**
  * 정산·지갑 대사 입력 포트 (#619, 상위 #308).
  * 정산이 매일 지갑에 "이 정산들, 입금됐나요?"를 묻고, 지갑의 답으로 정산마다 일치·다시 보냄·관리자 확인 필요를 판정한다.
@@ -15,7 +17,14 @@ public interface PayoutDepositCheckUseCase {
 
     /**
      * 지갑의 답 묶음 하나를 반영한다.
-     * 가장 최근 질문의 처음 온 답만 반영하고, "없음"이고 물을 횟수가 남은 정산은 입금 메시지를 다시 보낸다.
+     * 가장 최근 질문의 처음 온 답만 반영하고, "없음"이고 물을 횟수가 남은 정산은 같은 트랜잭션에서 outbox 줄을 다시 보낼 것으로 되돌린다.
+     * 입금 메시지는 짧은 간격 재발송이 보낸다(#620).
      */
     void handleAnswer(PayoutDepositCheckAnswerCommand command);
+
+    /**
+     * 관리자 확인 필요가 된 정산을 이유·지갑이 답한 값과 함께 페이지로 조회한다 (#621).
+     * 대사 줄 id 내림차순(새 정산 먼저)이고, 확인 대기·일치 줄은 나오지 않는다. 해당 건이 없으면 빈 페이지다.
+     */
+    Page<PayoutDepositCheckReviewResult> getReviewItems(PayoutDepositCheckReviewSearchQuery query);
 }

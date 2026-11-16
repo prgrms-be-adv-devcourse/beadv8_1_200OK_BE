@@ -24,7 +24,7 @@ class RefundStepTest {
     }
 
     @Test
-    void 시작하면_시도_중이고_다음_볼_시각은_1분_뒤다() {
+    void 시작하면_시도_중이고_다음_볼_시각은_2분_뒤다() {
         // given
         // when
         RefundStep sut = RefundStep.start(10L, RefundStepType.ORDER, NOW);
@@ -37,7 +37,7 @@ class RefundStepTest {
             softly.assertThat(sut.getType()).isEqualTo(RefundStepType.ORDER);
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
             softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
-            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(1));
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
             softly.assertThat(sut.getCreatedAt()).isEqualTo(NOW);
         });
     }
@@ -173,8 +173,119 @@ class RefundStepTest {
             softly.assertThat(beganAgain).isFalse();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
             softly.assertThat(sut.getAttemptCount()).isEqualTo(2);
-            softly.assertThat(sut.getNextCheckAt()).isEqualTo(retryAt.plusMinutes(1));
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(retryAt.plusMinutes(2));
         });
+    }
+
+    @Test
+    void 시도_횟수를_다_쓰고_실패하면_멈추고_이유는_이번_실패다() {
+        // given: 다섯 번째 시도 중
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS, NOW.plusMinutes(2), null, NOW);
+
+        // when
+        boolean changed = sut.failForRetry("PRODUCT_API_FAILED", NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(sut.getLastReason()).isEqualTo("PRODUCT_API_FAILED");
+            softly.assertThat(sut.getNextCheckAt()).isNull();
+        });
+    }
+
+    @Test
+    void 시도_횟수가_남았으면_실패해도_할_차례로_돌아간다() {
+        // given: 네 번째 시도 중
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS - 1, NOW.plusMinutes(2), null, NOW);
+
+        // when
+        sut.failForRetry("PRODUCT_API_FAILED", NOW);
+
+        // then
+        assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.READY);
+    }
+
+    @Test
+    void 만료된_시도_중_줄을_다시_집으면_횟수가_늘고_만료_시각을_새로_잡는다() {
+        // given: 만료 시각이 지금인 시도 중 줄
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                1, NOW, null, NOW.minusMinutes(2));
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(2);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
+        });
+    }
+
+    @Test
+    void 만료되지_않은_시도_중_줄은_다시_집지_않는다() {
+        // given: 만료까지 1초 남음
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                1, NOW.plusSeconds(1), null, NOW);
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusSeconds(1));
+        });
+    }
+
+    @Test
+    void 만료된_줄이_횟수를_다_썼으면_다시_집지_않고_멈춘다() {
+        // given
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS, NOW, null, NOW.minusMinutes(10));
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(sut.getLastReason()).isEqualTo(RefundStep.IN_PROGRESS_EXPIRED);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("시도_중이_아닌_상태")
+    void 시도_중이_아니면_만료로_보지_않는다(RefundStepStatus status) {
+        // given: 다시 볼 시각이 지났어도
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, status, 1,
+                status.isFinished() ? null : NOW.minusMinutes(1), null, NOW.minusMinutes(5));
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(status);
+        });
+    }
+
+    static Stream<RefundStepStatus> 시도_중이_아닌_상태() {
+        return Stream.of(RefundStepStatus.READY, RefundStepStatus.AWAITING_RESULT,
+                RefundStepStatus.SUCCEEDED, RefundStepStatus.REFUSED, RefundStepStatus.STOPPED);
     }
 
     @ParameterizedTest

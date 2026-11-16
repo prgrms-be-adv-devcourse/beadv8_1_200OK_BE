@@ -614,10 +614,11 @@ public class PayoutService implements PayoutUseCase {
     }
 
     // outbox의 PENDING 줄을 덜 시도한 줄부터 한 줄씩 Kafka로 보냄. 이전 실행에서 못 보낸 줄도 함께 보냄 (#309)
+    // 부르는 곳은 정산 Job 발행 단계와 짧은 간격 재발송(PayoutOutboxResendScheduler) 두 곳 (#620)
+    //   둘은 같은 잠금(payoutOutboxSend, PayoutOutboxSendLock)을 잡고 부르므로 같은 줄을 동시에 보내지 않음. 잠금은 입구(adapter.in.batch)에서 잡음
     // 이 메서드는 트랜잭션을 더 만들지 않고, 보냄·실패 기록만 줄마다 짧은 별도 트랜잭션(PayoutOutboxService)에 남김
     // 그래서 한 줄의 실패가 앞 줄의 보냄 기록을 되돌리지 않음
-    // 실패해도 멈추지 않음: 정산은 이미 끝났고 남은 줄은 다음 실행이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음
-    //   단 지갑은 Kafka 메시지가 도착해야 입금하므로(#584), 못 보낸 줄의 판매자 입금은 다음 실행까지 늦어짐 (짧은 간격 재발송은 #308)
+    // 실패해도 멈추지 않음: 정산은 이미 끝났고 남은 줄은 다음 실행(짧은 간격 재발송, 기본 5분 뒤)이 보냄. 같은 정산이 두 번 가도 지갑은 payoutId로 막음
     // Kafka 발송이든 보냄·실패 기록(DB)이든 예외를 밖으로 내지 않음: 정산이 끝났는데 발송 단계 문제로 Job이 FAILED가 되지 않게
     // 단 연속으로 실패하면 브로커·DB 장애로 보고 이번 발송을 멈춤 (줄마다 최대 120초씩 기다리지 않게)
     @Override

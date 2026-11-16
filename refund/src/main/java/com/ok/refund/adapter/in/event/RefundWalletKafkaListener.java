@@ -32,7 +32,8 @@ public class RefundWalletKafkaListener {
             properties = "spring.json.value.default.type=com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage")
     void onWalletRefundCompleted(WalletRefundCompletedMessage message) {
         requireIds(message.refundId(), message.orderId(), message.buyerId(), message.amount(), message);
-        // DB·상품 HTTP 오류 같은 일시적 실패는 예외를 그대로 전파해 오류 처리기가 간격을 늘려 다시 시도하게 한다
+        // DB 오류 같은 일시적 실패는 예외를 그대로 전파해 오류 처리기가 간격을 늘려 다시 시도하게 한다.
+        // 상품 HTTP 실패는 지휘자가 재고 줄에 기록하고 삼킨다. 다시 시도는 알람이 맡는다(#576)
         refundSagaUseCase.completeAfterWalletRefund(message.toCommand());
     }
 

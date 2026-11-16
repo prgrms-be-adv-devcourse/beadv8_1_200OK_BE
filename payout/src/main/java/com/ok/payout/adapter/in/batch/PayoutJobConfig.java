@@ -7,6 +7,7 @@ import com.ok.payout.application.port.in.PayoutDraftResult;
 import com.ok.payout.application.port.in.PayoutPublishResult;
 import com.ok.payout.application.port.in.PayoutVerifyResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
@@ -23,7 +24,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
+@Slf4j
 @Configuration
 @RequiredArgsConstructor
 public class PayoutJobConfig {
@@ -32,6 +35,7 @@ public class PayoutJobConfig {
     public static final String SNAPSHOT_ID_KEY = "snapshotId";
 
     private final PayoutUseCase payoutUseCase;
+    private final PayoutOutboxSendLock payoutOutboxSendLock;
 
     // 정산 배치 (Write-Audit-Publish): 스냅샷 → 입력 검증 → 임시 정산 → 검증 → 확정 → 발행
     //   snapshot : 이번 정산 대상을 스냅샷 목록으로 고정 (단일 트랜잭션, 잠긴 주문의 후보 제외)
@@ -208,6 +212,11 @@ public class PayoutJobConfig {
     }
 
     // 발송 실패로 Step을 실패시키지 않음 (WRITE_COUNT = 보낸 수, WRITE_SKIP_COUNT = 실패 수)
+    // 짧은 간격 재발송과 같은 잠금(PayoutOutboxSendLock)을 잡고 보냄 (#620). 못 잡으면 재발송이 지금 PENDING 줄을 보내는 중이라
+    // 기다리지 않고 0건으로 끝냄. Step·Job은 실패하지 않음
+    //   재발송이 이번 commit보다 먼저 목록을 읽었다면 이번 Job이 만든 줄은 그 목록에 없음. 이 줄들은 다음 재발송(최대 5분 + 실행 시간 뒤)이 보냄
+    // 잠금 표(shedlock)를 다루다 DB 오류가 나도 Job을 실패시키지 않음: 정산은 이미 확정됐고 줄은 PENDING이라 다음 재발송이 보냄
+    //   publishPending이 예외를 밖으로 내지 않는 것과 같은 이유 (PayoutService.publishPending 주석)
     @Bean
     public Step payoutPublishStep(JobRepository jobRepository, PlatformTransactionManager transactionManager,
                                   Tasklet payoutPublishTasklet) {
@@ -219,7 +228,18 @@ public class PayoutJobConfig {
     @Bean
     public Tasklet payoutPublishTasklet() {
         return (contribution, chunkContext) -> {
-            PayoutPublishResult result = payoutUseCase.publishPending();
+            Optional<PayoutPublishResult> locked;
+            try {
+                locked = payoutOutboxSendLock.publishPending();
+            } catch (RuntimeException e) {
+                log.warn("정산 outbox 발송 잠금을 다루지 못해 발행 단계는 보내지 않고 넘어감. 남은 줄은 짧은 간격 재발송이 보냄", e);
+                return RepeatStatus.FINISHED;
+            }
+            if (locked.isEmpty()) {
+                log.info("짧은 간격 재발송이 정산 outbox를 보내는 중이라 발행 단계는 보내지 않고 넘어감");
+                return RepeatStatus.FINISHED;
+            }
+            PayoutPublishResult result = locked.get();
             contribution.incrementWriteCount(result.sent());
             contribution.incrementWriteSkipCount(result.failed());
             return RepeatStatus.FINISHED;

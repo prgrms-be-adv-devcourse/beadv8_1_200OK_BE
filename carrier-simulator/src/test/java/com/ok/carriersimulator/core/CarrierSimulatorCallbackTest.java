@@ -285,6 +285,33 @@ class CarrierSimulatorCallbackTest {
     }
 
     @ParameterizedTest
+    @MethodSource("끝난_알림의_결과")
+    void 모두_지운_뒤에_끝난_알림은_기록과_통계에_남기지_않고_다시_보내지도_않는다(CallbackOutcome outcome) {
+        // given: 보내는 동안 모두 지웠다
+        CarrierSimulator sut = newSimulator();
+        sut.registerWebhook(NORMAL, URL, FAR, START);
+        CallbackAttempt attempt = sut.pollDueCallbacks(START).getFirst();
+        sut.clearAll();
+
+        // when
+        sut.completeCallback(attempt, outcome, after(1));
+
+        // then
+        StatsSnapshot stats = sut.stats(after(1));
+        assertSoftly(softly -> {
+            softly.assertThat(sut.callbackRecords(null, 10)).isEmpty();
+            softly.assertThat(stats.total(Metric.CALLBACK_OK)).isZero();
+            softly.assertThat(stats.total(Metric.CALLBACK_FAIL)).isZero();
+            softly.assertThat(stats.pendingCallbacks()).isZero();
+        });
+    }
+
+    static Stream<CallbackOutcome> 끝난_알림의_결과() {
+        return Stream.of(CallbackOutcome.responded(200, 5), CallbackOutcome.responded(500, 12),
+                CallbackOutcome.failed("시간 초과", 1000));
+    }
+
+    @ParameterizedTest
     @MethodSource("시도_번호와_재전송_간격")
     void 재전송_간격은_두_배씩_늘고_5분을_넘지_않는다(int attemptNo, long delaySeconds) {
         // given
