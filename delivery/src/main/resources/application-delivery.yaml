@@ -85,6 +85,12 @@ delivery:
     webhook:
       # 택배사 알림 주소의 끝 경로 비밀값. 비어 있으면 모든 알림을 거절한다. 환경 변수로만 주입하고 저장소에 두지 않는다
       secret: ${DELIVERY_CARRIER_WEBHOOK_SECRET:}
+  outbox:
+    # 배송 outbox에 쌓인 메시지를 Kafka로 보내는 주기와 한 번에 보낼 줄 수(DeliveryOutboxRelayScheduler, #644).
+    # 값을 빼면 스케줄러의 기본값(30초마다, 100줄)을 쓴다. cron을 "-"로 두면 보내지 않는다
+    relay:
+      cron: "*/30 * * * * *"
+      batch-size: 100
   # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
   default-shipping:
     base-shipping-fee: 3000

@@ -70,6 +70,7 @@ class DeliveryModuleTest {
         // @ApplicationModuleTest는 롤백되지 않으므로 테스트마다 데이터를 정리한다
         jdbcTemplate.update("DELETE FROM shipment_item");
         jdbcTemplate.update("DELETE FROM shipment");
+        jdbcTemplate.update("DELETE FROM delivery_outbox");
     }
 
     @Test

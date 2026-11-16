@@ -10,7 +10,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 통합 테스트에서 택배사 연동을 대신한다. 추적 요청을 받아도 아무 일도 하지 않아 배송 완료를 알리지 않는다.
+ * 통합 테스트에서 택배사 연동을 대신한다. 추적 요청을 받은 shipment만 기억하고 배송 완료는 알리지 않는다.
  * 알림 수신 테스트는 {@link #markDelivered}로 택배사가 배송 완료로 답할 송장을 정하고, 끝나면 {@link #reset}으로 비운다.
  * 택배사 식별자는 {@link Carrier} 이름 그대로 쓴다. 실제 식별자 매핑은 TrackerCarrierClientTest가 확인한다.
  *
@@ -24,9 +24,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public class FakeCarrierClient implements CarrierClient {
 
     private final Set<String> deliveredTrackingNumbers = ConcurrentHashMap.newKeySet();
+    private final Set<Long> requestedShipmentIds = ConcurrentHashMap.newKeySet();
 
     @Override
     public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
+        requestedShipmentIds.add(shipmentId);
+    }
+
+    // 컨텍스트를 함께 쓰는 다른 테스트와 섞이지 않게 shipment로 골라 본다
+    public boolean isRequested(Long shipmentId) {
+        return requestedShipmentIds.contains(shipmentId);
     }
 
     @Override
