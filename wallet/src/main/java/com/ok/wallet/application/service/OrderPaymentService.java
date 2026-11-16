@@ -51,8 +51,7 @@ public class OrderPaymentService implements OrderPaymentUseCase {
                 command.buyerId(), command.orderId(), command.amount());
         // 처음 처리할 때 결과 이벤트를 보냈으므로 다시 보내지 않는다
         if (result.alreadyProcessed()) {
-            log.info("이미 처리된 주문이라 결과 이벤트를 다시 보내지 않습니다. orderId={}, status={}",
-                    result.orderId(), result.status());
+            logAlreadyProcessed(command, result, "결과 이벤트를 다시 보내지 않습니다.");
             return;
         }
         if (result.paid()) {
@@ -82,8 +81,7 @@ public class OrderPaymentService implements OrderPaymentUseCase {
         OrderPaymentResult result = buyerWalletService.payForOrder(
                 command.buyerId(), command.orderId(), command.amount());
         if (result.alreadyProcessed()) {
-            log.info("이미 처리한 주문이라 처음 결과를 다시 보냅니다. orderId={}, status={}, requestedAmount={}, recordedAmount={}",
-                    result.orderId(), result.status(), command.amount(), result.amount());
+            logAlreadyProcessed(command, result, "처음 결과를 다시 보냅니다.");
         }
         if (result.paid()) {
             orderPaymentResultPublisher.publishPaymentCompleted(
@@ -91,5 +89,18 @@ public class OrderPaymentService implements OrderPaymentUseCase {
             return;
         }
         orderPaymentResultPublisher.publishPaymentFailed(result.orderId(), result.buyerId(), result.failureReason());
+    }
+
+    // 같은 주문이 처음과 다른 구매자·금액으로 오면 주문 쪽 이상일 수 있어 사람이 보도록 WARN으로 남긴다.
+    // 어느 쪽이든 결과는 처음 기록이 기준이다
+    private static void logAlreadyProcessed(OrderPaymentCommand command, OrderPaymentResult result, String action) {
+        if (result.sameRequest(command.buyerId(), command.amount())) {
+            log.info("이미 처리한 주문입니다. {} orderId={}, status={}", action, result.orderId(), result.status());
+            return;
+        }
+        log.warn("[ORDER_PAYMENT_MISMATCH] 이미 처리한 주문이 처음과 다른 값으로 왔습니다. {} orderId={}, status={}, "
+                        + "requestedBuyerId={}, recordedBuyerId={}, requestedAmount={}, recordedAmount={}",
+                action, result.orderId(), result.status(),
+                command.buyerId(), result.buyerId(), command.amount(), result.amount());
     }
 }

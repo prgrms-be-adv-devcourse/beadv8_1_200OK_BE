@@ -36,15 +36,23 @@ public record OrderPaymentResult(
     }
 
     /**
+     * 이번 요청의 구매자·금액이 처리 기록과 같은지 본다. 이미 처리한 주문이 다른 값으로 왔는지 가리는 데 쓴다.
+     */
+    public boolean sameRequest(Long requestedBuyerId, long requestedAmount) {
+        return buyerId.equals(requestedBuyerId) && amount == requestedAmount;
+    }
+
+    /**
      * 실패한 결제를 주문에 알릴 사유를 돌려준다. 처음 처리할 때와 다시 보낼 때 같은 사유가 나가도록 사유는 여기서만 정한다.
      *
      * @throws IllegalStateException 결제된 결과면. 실패 사유가 없다
      */
     public OrderPaymentFailureReason failureReason() {
-        if (paid()) {
-            throw new IllegalStateException("결제된 주문에는 실패 사유가 없습니다. orderId=" + orderId);
-        }
-        // 지금 처리 기록에 남는 실패는 잔액 부족뿐이다. 결제 만료가 들어오면 기록된 사유를 읽게 바꾼다
-        return OrderPaymentFailureReason.INSUFFICIENT_BALANCE;
+        // 상태를 모두 나열해, 처리 기록 상태가 늘면 사유를 정하지 않은 채 넘어가지 않도록 컴파일 오류로 드러낸다
+        return switch (status) {
+            case PAID -> throw new IllegalStateException("결제된 주문에는 실패 사유가 없습니다. orderId=" + orderId);
+            // 지금 처리 기록에 남는 실패는 잔액 부족뿐이다. 결제 만료가 들어오면 기록된 사유를 읽게 바꾼다
+            case FAILED -> OrderPaymentFailureReason.INSUFFICIENT_BALANCE;
+        };
     }
 }

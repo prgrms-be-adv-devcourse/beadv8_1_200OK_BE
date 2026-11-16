@@ -36,4 +36,25 @@ class OrderPaymentResultTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("결제된 주문에는 실패 사유가 없습니다. orderId=10");
     }
+
+    @Test
+    void 구매자와_금액이_처리_기록과_같으면_같은_요청이다() {
+        // given
+        OrderPaymentResult sut = OrderPaymentResult.processed(
+                10L, 1L, 3_000, WalletOrderPaymentStatus.PAID, PROCESSED_AT);
+
+        // when & then
+        assertThat(sut.sameRequest(1L, 3_000)).isTrue();
+    }
+
+    @Test
+    void 구매자나_금액이_처리_기록과_다르면_다른_요청이다() {
+        // given
+        OrderPaymentResult sut = OrderPaymentResult.processed(
+                10L, 1L, 3_000, WalletOrderPaymentStatus.PAID, PROCESSED_AT);
+
+        // when & then: 어느 하나만 달라도 주문 쪽 이상일 수 있어 경고 대상이다
+        assertThat(sut.sameRequest(2L, 3_000)).isFalse();
+        assertThat(sut.sameRequest(1L, 5_000)).isFalse();
+    }
 }
