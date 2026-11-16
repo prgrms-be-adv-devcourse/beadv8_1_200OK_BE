@@ -841,9 +841,9 @@ com.ok.order
   - 지갑이 `.v1`로 옮길 때까지 두 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#653). 지갑이 옮기면 옛 이름 발행을 지웁니다.
 - 정산이 받는 메시지
   - 구매확정(`order.order-product-confirmed.v1`, 키 `orderItemId`, 그룹 `payout.candidate-create`, #661)
-  - 결제 완료(`wallet.wallet-payment-completed`, 키 `orderId`)
-  - 대사 답 묶음(`wallet.payout-deposit-checked`, 키 `checkId`): 지갑이 원장을 읽고 답합니다(#619, 지갑 #613).
-- 토픽 이름과 컨슈머 그룹은 `PayoutTopics`에 있습니다. 그룹은 리스너마다 `<모듈>.<용도>`로 나누는 중이고(#648), 결제 완료·대사 답은 #653까지 `payout`을 씁니다. 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
+  - 결제 완료(`wallet.wallet-payment-completed.v1`, 키 `orderId`, 그룹 `payout.payment-record`, #653)
+  - 대사 답 묶음(`wallet.payout-deposit-checked.v1`, 키 `checkId`, 그룹 `payout.deposit-check`, #653): 지갑이 원장을 읽고 답합니다(#619, 지갑 #613).
+- 토픽 이름과 컨슈머 그룹은 `PayoutTopics`에 있습니다. 그룹은 리스너마다 `<모듈>.<용도>`로 하나씩 둡니다(#648). 정산 리스너는 정산 전용 수신 설정(`PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다.
 - 대사는 매일 `payout.deposit-check.cron`(기본 `0 0 12 * * *`, Asia/Seoul)에 돕니다. 메시지 모양은 PR #548 문서 4절과 지갑 #613의 합의를 따릅니다.
 - 재발송은 `payout.outbox-resend.fixed-delay`(기본 `PT5M`, 앞 실행이 끝난 뒤부터 셈) 간격으로 돕니다. 정산 Job 발행 단계와 같은 잠금(`payoutOutboxSend`)을 써서 같은 줄을 동시에 보내지 않습니다.
 

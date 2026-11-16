@@ -3,7 +3,7 @@ package com.ok.payout.config;
 /**
  * 정산이 보내고 받는 Kafka 토픽 이름과 정산 리스너의 컨슈머 그룹을 한곳에 둔다.
  * 토픽 이름은 다른 모듈과의 약속이라, 발행·수신 코드와 토픽 생성 설정(config)이 같은 값을 쓰도록 상수로 둔다.
- * 토픽 이름 규칙은 {@code <보내는 모듈>.<이벤트>.v<버전>}이다 (#648). 버전이 없는 이름은 아직 옮기기 전인 토픽이다 (#653).
+ * 토픽 이름 규칙은 {@code <보내는 모듈>.<이벤트>.v<버전>}이다 (#648). 버전이 없는 이름({@code *_OLD})은 지갑이 .v1로 옮길 때까지 함께 보내는 옛 이름이다 (#653).
  * 컨슈머 그룹 규칙은 {@code <모듈>.<용도>}로 리스너마다 하나다 (#648).
  */
 public final class PayoutTopics {
@@ -30,19 +30,24 @@ public final class PayoutTopics {
     public static final String ORDER_PRODUCT_CONFIRMED = "order.order-product-confirmed.v1";
 
     /** 지갑 → 정산: 결제 완료(예치금 차감). 정산이 받아 차감 기록을 남긴다. 키는 orderId, 값은 {@link com.ok.payout.adapter.in.event.dto.WalletPaymentCompletedMessage} */
-    public static final String WALLET_PAYMENT_COMPLETED = "wallet.wallet-payment-completed";
+    // 지갑은 처음부터 .v1로만 보낸다(지갑 #640). 아직 Kafka로 보내는 곳이 없어 옛 이름에는 흐르는 메시지가 없다 (#653)
+    public static final String WALLET_PAYMENT_COMPLETED = "wallet.wallet-payment-completed.v1";
 
     /** 지갑 → 정산: 대사 답 묶음(#619, 지갑 #613). 키는 checkId, 값은 {@link com.ok.payout.adapter.in.event.dto.PayoutDepositCheckedMessage} */
-    public static final String WALLET_PAYOUT_DEPOSIT_CHECKED = "wallet.payout-deposit-checked";
+    // 지갑이 옛 이름과 .v1에 함께 보낸 뒤(#671) .v1로 옮긴다. 옛 이름은 받지 않는다 (#653)
+    public static final String WALLET_PAYOUT_DEPOSIT_CHECKED = "wallet.payout-deposit-checked.v1";
 
-    /** 구매확정 리스너의 컨슈머 그룹. 이 리스너만 읽은 위치를 되돌리거나 다시 붙어도 다른 정산 리스너가 멈추지 않게 따로 둔다 (#648, #661) */
+    // 컨슈머 그룹은 리스너마다 하나다(#648). 한 리스너의 읽은 위치를 되돌리거나 다시 붙어도 다른 정산 리스너가 멈추지 않는다.
+    // 모듈마다 다른 그룹이어야 같은 메시지를 모듈마다 받는다(#339 합의). 주문도 같은 결제 완료를 받는다
+
+    /** 구매확정 리스너의 컨슈머 그룹 (#648, #661) */
     public static final String CANDIDATE_CREATE_GROUP = "payout.candidate-create";
 
-    /**
-     * 결제 완료·대사 답 리스너가 함께 쓰는 컨슈머 그룹. 모듈마다 나눠야 같은 메시지를 모듈마다 받는다(#339 합의).
-     * 두 리스너는 받는 지갑 토픽이 .v1로 바뀔 때 리스너마다 새 그룹으로 옮긴다 (#653).
-     */
-    public static final String CONSUMER_GROUP = "payout";
+    /** 결제 완료 리스너의 컨슈머 그룹. 지갑 결제 완료로 차감 기록을 남긴다 (#653) */
+    public static final String PAYMENT_RECORD_GROUP = "payout.payment-record";
+
+    /** 대사 답 리스너의 컨슈머 그룹 (#653) */
+    public static final String DEPOSIT_CHECK_GROUP = "payout.deposit-check";
 
     private PayoutTopics() {
     }
