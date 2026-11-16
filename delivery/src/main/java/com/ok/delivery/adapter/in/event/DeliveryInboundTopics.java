@@ -12,15 +12,24 @@ public final class DeliveryInboundTopics {
     /** 회원 → 배송: 판매자 출고지 우편번호가 바뀜. 키는 sellerId (#558, #587 메시지 약속) */
     public static final String SELLER_ORIGIN_POSTAL_CODE = "member.seller-origin-postal-code";
 
+    // 그룹은 리스너마다 하나씩, 이름은 <모듈>.<용도>로 둔다.
+    // 오프셋이 그룹마다 따로라 한 리스너만 처음부터 다시 받거나 오프셋을 옮겨도 다른 리스너는 그대로이고,
+    // 한 리스너의 리밸런스가 다른 리스너를 멈추지 않으며, 랙 지표에서 누가 무슨 일로 밀렸는지 바로 보인다.
+    // 서버 이름은 넣지 않는다: 리스너가 다른 서버로 옮겨 가도 그룹 이름이 같아야 오프셋을 이어 받는다(이름이 바뀌면 처음부터 다시 읽는다).
+    // 같은 그룹 안에서는 배송 서버가 여러 대여도 한 메시지를 한 대만 처리한다
+
+    /** 결제 완료를 받아 shipment를 만드는 리스너의 그룹 */
+    public static final String SHIPMENT_CREATE_GROUP = "delivery.shipment-create";
+
     // 그룹을 delivery로 고정하는 이유: 같은 토픽을 다른 모듈이 받더라도 그룹이 다르면 메시지가 각자에게 모두 간다.
     // 배송 서버가 여러 대여도 같은 그룹이라 한 메시지는 한 대만 처리한다
     public static final String CONSUMER_GROUP = "delivery";
 
     /**
      * 처리하지 못한 결제 완료 메시지를 옮겨 두는 토픽(DLT). {@code <받은 토픽>.<그룹>.DLT} 형식이다.
-     * 그룹 이름을 넣는 이유: 같은 토픽을 받는 다른 모듈의 실패와 섞이지 않고, 다시 넣을 때 배송만 다시 받게 하려는 것이다.
+     * 그룹 이름을 넣는 이유: 같은 토픽을 받는 다른 그룹의 실패와 섞이지 않고, 다시 넣을 때 그 그룹만 다시 받게 하려는 것이다.
      */
-    public static final String ORDER_PAID_DLT = ORDER_PAID + "." + CONSUMER_GROUP + ".DLT";
+    public static final String ORDER_PAID_DLT = ORDER_PAID + "." + SHIPMENT_CREATE_GROUP + ".DLT";
 
     /** 처리하지 못한 출고지 우편번호 메시지를 옮겨 두는 토픽(DLT). 형식과 이유는 {@link #ORDER_PAID_DLT}와 같다 */
     public static final String SELLER_ORIGIN_POSTAL_CODE_DLT = SELLER_ORIGIN_POSTAL_CODE + "." + CONSUMER_GROUP + ".DLT";
