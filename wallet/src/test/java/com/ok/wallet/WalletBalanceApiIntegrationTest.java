@@ -3,6 +3,7 @@ package com.ok.wallet;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 import com.ok.wallet.application.service.BuyerWalletService;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,8 +40,11 @@ class WalletBalanceApiIntegrationTest extends AbstractIntegrationTest {
 
     private MockMvc mockMvc;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
@@ -83,7 +87,7 @@ class WalletBalanceApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 충전한_만큼의_잔액을_응답한다() throws Exception {
         // Given
-        buyerWalletService.chargeByPayment(MEMBER_ID, "pay-balance-1", 30_000);
+        charger.charge(MEMBER_ID, "pay-balance-1", 30_000);
 
         // When & Then
         mockMvc.perform(get(BALANCE_URL)
@@ -96,8 +100,8 @@ class WalletBalanceApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 다른_회원의_잔액이_아니라_토큰의_회원_잔액을_응답한다() throws Exception {
         // Given: 두 회원의 잔액이 다름
-        buyerWalletService.chargeByPayment(MEMBER_ID, "pay-balance-1", 30_000);
-        buyerWalletService.chargeByPayment(OTHER_MEMBER_ID, "pay-balance-2", 10_000);
+        charger.charge(MEMBER_ID, "pay-balance-1", 30_000);
+        charger.charge(OTHER_MEMBER_ID, "pay-balance-2", 10_000);
 
         // When & Then: 토큰의 회원 잔액만 보인다
         mockMvc.perform(get(BALANCE_URL)

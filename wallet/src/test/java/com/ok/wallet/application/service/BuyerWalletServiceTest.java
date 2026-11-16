@@ -4,8 +4,10 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.adapter.out.persistence.BuyerWalletJpaRepository;
 import com.ok.wallet.application.dto.OrderPaymentResult;
 import com.ok.wallet.domain.BuyerWallet;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -38,6 +40,13 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
 
     @Autowired
     TransactionTemplate transactionTemplate;
+
+    private WalletTestCharger charger;
+
+    @BeforeEach
+    void setUpCharger() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
+    }
 
     @AfterEach
     void tearDown() {
@@ -123,6 +132,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Given
         Long memberId = 10L;
         buyerWalletService.getOrCreate(memberId);
+        charger.recordCompletedCharge(memberId, "payment-key-1", 10_000);
 
         // When
         buyerWalletService.chargeByPayment(memberId, "payment-key-1", 10_000);
@@ -138,7 +148,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_결제로_다시_충전하면_예외_없이_한_번만_반영된다() {
         // Given
         Long memberId = 11L;
-        buyerWalletService.chargeByPayment(memberId, "payment-key-1", 10_000);
+        charger.charge(memberId, "payment-key-1", 10_000);
 
         // When: 같은 결제 건으로 재요청
         buyerWalletService.chargeByPayment(memberId, "payment-key-1", 10_000);
@@ -152,6 +162,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 지갑이_없으면_생성한_뒤_충전한다() {
         // Given
         Long memberId = 12L;
+        charger.recordCompletedCharge(memberId, "payment-key-1", 10_000);
 
         // When
         buyerWalletService.chargeByPayment(memberId, "payment-key-1", 10_000);
@@ -167,6 +178,9 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         Long memberId = 13L;
         buyerWalletService.getOrCreate(memberId);
         int threadCount = 10;
+        for (int i = 0; i < threadCount; i++) {
+            charger.recordCompletedCharge(memberId, "pay-" + i, 1_000);
+        }
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch ready = new CountDownLatch(threadCount);
         CountDownLatch start = new CountDownLatch(1);
@@ -204,6 +218,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Given
         Long memberId = 14L;
         buyerWalletService.getOrCreate(memberId);
+        charger.recordCompletedCharge(memberId, "payment-key-1", 10_000);
         int threadCount = 2;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch ready = new CountDownLatch(threadCount);
@@ -244,7 +259,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     @Test
     void 다른_지갑에_이미_반영된_결제로_충전하면_무시하지_않고_실패한다() {
         // Given
-        buyerWalletService.chargeByPayment(20L, "pay-1", 10_000);
+        charger.charge(20L, "pay-1", 10_000);
 
         // When & Then: 조용히 넘어가지 않고 오류로 드러난다
         assertThatThrownBy(() -> buyerWalletService.chargeByPayment(21L, "pay-1", 10_000))
@@ -258,7 +273,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 잔액이_충분하면_주문_금액만큼_차감하고_원장에_기록한다() {
         // Given
         Long memberId = 30L;
-        buyerWalletService.chargeByPayment(memberId, "pay-30", 10_000);
+        charger.charge(memberId, "pay-30", 10_000);
 
         // When
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_001L, 3_000);
@@ -274,7 +289,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 잔액이_부족하면_차감하지_않고_잔액_부족을_반환한다() {
         // Given
         Long memberId = 31L;
-        buyerWalletService.chargeByPayment(memberId, "pay-31", 10_000);
+        charger.charge(memberId, "pay-31", 10_000);
 
         // When
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_002L, 20_000);
@@ -303,7 +318,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_주문으로_다시_결제하면_차감하지_않고_이미_결제됨을_반환한다() {
         // Given
         Long memberId = 33L;
-        buyerWalletService.chargeByPayment(memberId, "pay-33", 10_000);
+        charger.charge(memberId, "pay-33", 10_000);
         buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
 
         // When: 주문 생성 이벤트가 재발행됨
@@ -319,7 +334,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_주문의_결제가_동시에_와도_한_번만_차감된다() throws Exception {
         // Given
         Long memberId = 34L;
-        buyerWalletService.chargeByPayment(memberId, "pay-34", 10_000);
+        charger.charge(memberId, "pay-34", 10_000);
         int threadCount = 5;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch ready = new CountDownLatch(threadCount);
@@ -356,7 +371,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_주문의_결제가_이미_열린_트랜잭션_안에서_동시에_와도_예외_없이_한_번만_차감된다() throws Exception {
         // Given
         Long memberId = 37L;
-        buyerWalletService.chargeByPayment(memberId, "pay-37", 10_000);
+        charger.charge(memberId, "pay-37", 10_000);
         int threadCount = 10;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch ready = new CountDownLatch(threadCount);
@@ -401,7 +416,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         for (int i = 0; i < memberCount; i++) {
             Long memberId = 600L + i;
             memberIds.add(memberId);
-            buyerWalletService.chargeByPayment(memberId, "pay-600-" + i, 10_000);
+            charger.charge(memberId, "pay-600-" + i, 10_000);
             buyerWalletService.payForOrder(memberId, paidOrderId(i), 3_000);
         }
         List<Callable<OrderPaymentResult>> payments = new ArrayList<>();
@@ -470,7 +485,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_회원의_결제와_충전이_동시에_와도_잔액이_어긋나지_않는다() throws Exception {
         // Given: 잔액 10,000원
         Long memberId = 35L;
-        buyerWalletService.chargeByPayment(memberId, "pay-35", 10_000);
+        charger.charge(memberId, "pay-35", 10_000);
         int pairCount = 5;
         ExecutorService executor = Executors.newFixedThreadPool(pairCount * 2);
         CountDownLatch start = new CountDownLatch(1);
@@ -488,7 +503,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
                 }));
                 results.add(executor.submit(() -> {
                     start.await();
-                    buyerWalletService.chargeByPayment(memberId, paymentKey, 1_000);
+                    charger.charge(memberId, paymentKey, 1_000);
                     return null;
                 }));
             }
@@ -511,7 +526,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Given: 잔액 부족으로 실패한 뒤 충전함
         Long memberId = 36L;
         buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
-        buyerWalletService.chargeByPayment(memberId, "pay-36", 10_000);
+        charger.charge(memberId, "pay-36", 10_000);
 
         // When: 같은 주문이 재전달됨
         OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
