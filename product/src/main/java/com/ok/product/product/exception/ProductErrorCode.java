@@ -15,6 +15,7 @@ public enum ProductErrorCode implements ErrorCode {
 	INVALID_IMAGE_URL(HttpStatus.UNPROCESSABLE_ENTITY, "Invalid image url", "업로드한 상품 이미지 주소가 아닙니다."),
 	DESCRIPTION_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, "Description too long", "상세설명이 너무 깁니다."),
 	PRODUCT_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT,"Product concurrent modification", "다른 사용자가 이미 정보를 수정했습니다. 새로고침 후 다시 시도해주세요."),
+	PRODUCT_SEARCH_TIMEOUT(HttpStatus.SERVICE_UNAVAILABLE, "Product search timeout", "상품 목록을 불러오는 데 시간이 너무 오래 걸립니다. 잠시 후 다시 시도해 주세요."),
 
 	// 옵션
 	OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Option not found", "상품의 옵션을 찾을 수 없습니다."),

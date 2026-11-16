@@ -69,6 +69,8 @@ product:
     # 키워드 검색 점수 하한(product ProductSearchPolicy). 값을 정한 근거는 application-product.yaml에 있다(#659).
     # monolith는 application-product.yaml을 읽지 않으므로 같은 값을 여기에도 둔다
     min-score: 1.0
+    # 구매자 목록 SQL의 시간 제한(product BuyerProductQueryJdbcConfig). 근거는 application-product.yaml에 있다(#659)
+    query-timeout: 2s
 
 # 앱 시작 시 만들 최초 관리자 계정 (member.member.adapter.in.bootstrap.AdminBootstrapConfig)
 # - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)

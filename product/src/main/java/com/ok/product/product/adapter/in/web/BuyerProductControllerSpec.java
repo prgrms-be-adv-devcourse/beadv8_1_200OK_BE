@@ -24,6 +24,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 
 @Tag(name = "Product (Buyer)", description = "구매자 상품 조회 API")
 interface BuyerProductControllerSpec {
@@ -32,6 +33,7 @@ interface BuyerProductControllerSpec {
 	@Operation(summary = "상품 목록 조회", description = """
 		노출(VISIBLE)된 상품을 조회합니다. 판매 상태와 관계없이 나오므로 화면은 status로 판매 예정·일시 중지·판매 종료를 표시합니다.
 		keyword가 있으면 상품명·옵션명·카테고리 이름으로 찾습니다.
+		공백·기호를 빼고 한 글자인 keyword(예: 배)는 그 글자가 대표 품목인 상품만 찾습니다. 배추·배즙 상품은 나오지 않습니다.
 		검색어와 관계가 낮은 상품은 정렬과 관계없이 결과와 totalElements에서 빠지고, 맞는 상품이 없으면 빈 목록입니다.
 		sort를 보내지 않으면 keyword가 있을 때 정확도순, 없을 때 최신순입니다. keyword 없이 RELEVANCE를 보내면 최신순으로 나옵니다.
 		어떤 정렬이든 품절 상품(soldOut)은 판매 가능한 상품 뒤에 옵니다. 품절 상품도 목록에서 빠지지는 않습니다.
@@ -40,13 +42,17 @@ interface BuyerProductControllerSpec {
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "성공"),
 		@ApiResponse(
-			responseCode = "400", description = "없는 카테고리·산지 값, 범위를 벗어난 page·size",
+			responseCode = "400", description = "50자를 넘는 keyword, 없는 카테고리·산지·정렬 값, 범위를 벗어난 page·size",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "503", description = "조회가 시간 제한을 넘음(product-search-timeout). 잠시 뒤 다시 시도합니다",
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
 		)
 	})
 	ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
-		@Parameter(description = "검색어. 띄어쓰기가 달라도 찾습니다. 비우거나 공백·기호만 보내면 검색어 없이 조회합니다",
-			example = "샤인머스캣") String keyword,
+		@Parameter(description = "검색어 (50자 이하, 앞뒤 공백 포함). 띄어쓰기가 달라도 찾습니다. 비우거나 공백·기호만 보내면 검색어 없이 조회합니다",
+			example = "샤인머스캣") @Size(max = 50) String keyword,
 		@Parameter(description = "상위 카테고리", example = "AGRICULTURE") ProductCategoryGroupCode categoryGroup,
 		@Parameter(description = "하위 카테고리", example = "FRUIT") ProductCategoryCode category,
 		@Parameter(description = "산지 (시·도)", example = "GYEONGBUK") ProductRegionCode region,

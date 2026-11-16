@@ -380,6 +380,80 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		assertThat(priceAsc).containsExactly(manyFourEight, oneFiveStar, noReviewNew, noReviewOld);
 	}
 
+	@Test
+	void 한_글자_검색어는_대표_품목이_그_글자인_상품만_찾고_그_글자로_시작하는_다른_품목은_찾지_않는다() throws Exception {
+		// given
+		Long pear = create("나주 신고배 7.5kg", ProductCategoryCode.FRUIT, ProductRegionCode.JEONNAM, "선물용");
+		Long cabbage = create("해남 절임배추 10kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.JEONNAM, "10kg");
+		Long pearJuice = create("나주 배즙 30포", ProductCategoryCode.PROCESSED_AGRI, ProductRegionCode.JEONNAM, "30포");
+		Long mandarin = create("제주 하우스 귤 3kg", ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, "3kg");
+
+		// when & then
+		mockMvc.perform(get("/api/v1/products").param("keyword", "배"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content[*].productId").value(contains(pear.intValue(), bruisedPear.intValue())))
+			.andExpect(jsonPath("$.totalElements").value(2));
+		// "하우스감귤"의 대표 품목은 가장 긴 "감귤"이라 "귤"로는 찾지 않는다
+		mockMvc.perform(get("/api/v1/products").param("keyword", "귤"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content[*].productId").value(contains(mandarin.intValue())))
+			.andExpect(jsonPath("$.totalElements").value(1));
+		assertThat(search("배")).doesNotContain(cabbage, pearJuice);
+	}
+
+	@ParameterizedTest
+	@MethodSource("공백_기호를_빼면_한_글자인_검색어")
+	void 공백_기호를_빼면_한_글자인_검색어도_한_글자_규칙으로_찾는다(String keyword) {
+		// given
+		create("해남 절임배추 10kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.JEONNAM, "10kg");
+
+		// when
+		List<Long> sut = search(keyword);
+
+		// then
+		assertThat(sut).containsExactly(bruisedPear);
+	}
+
+	static Stream<String> 공백_기호를_빼면_한_글자인_검색어() {
+		return Stream.of(" 배 ", "배!", "(배)");
+	}
+
+	@Test
+	void 한_글자_검색에서도_필터_정렬_품절_순서_페이지와_전체_개수가_맞다() {
+		// given
+		// 대표 품목이 "배"인 상품만 쓴다. 기본 상품 중 "나주 흠과 배 7kg"(전남, 2만 원)도 함께 걸린다
+		Long cheap = create("나주 신고배 5kg", ProductCategoryCode.FRUIT, ProductRegionCode.JEONNAM, "가정용",
+			ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE, 10_000L);
+		Long expensive = create("상주 원황배 7kg", ProductCategoryCode.FRUIT, ProductRegionCode.GYEONGBUK, "선물용",
+			ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE, 50_000L);
+		Long soldOut = create("천안 배 5kg", ProductCategoryCode.FRUIT, ProductRegionCode.CHUNGNAM, "가정용",
+			ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE, 5_000L);
+		Long reviewed = create("안성 배 3kg", ProductCategoryCode.FRUIT, ProductRegionCode.GYEONGGI, "가정용",
+			ProductStatusCode.ON_SALE, ProductVisibilityCode.VISIBLE, 30_000L);
+		sellOut(soldOut);
+		transactionTemplate.executeWithoutResult(status -> productRepository.addReviewStats(reviewed, 10, 100));
+
+		// when
+		List<Long> relevance = search("배", ProductSortCode.RELEVANCE);
+		List<Long> priceAsc = search("배", ProductSortCode.PRICE_ASC);
+		List<Long> priceDesc = search("배", ProductSortCode.PRICE_DESC);
+		List<Long> latest = search("배", ProductSortCode.LATEST);
+		List<Long> jeonnam = search("배", null, null, ProductRegionCode.JEONNAM);
+		Page<ProductSummaryResult> secondPage = productService.searchVisibleProducts(
+			new ProductSearchQuery("배", null, null, null, ProductSortCode.PRICE_ASC, 1, 2));
+
+		// then
+		// 한 글자 검색은 점수가 모두 같아 정확도순이 보정 평점, 그다음 id 순이다
+		assertThat(relevance).containsExactly(reviewed, expensive, cheap, bruisedPear, soldOut);
+		assertThat(priceAsc).containsExactly(cheap, bruisedPear, reviewed, expensive, soldOut);
+		assertThat(priceDesc).containsExactly(expensive, reviewed, bruisedPear, cheap, soldOut);
+		assertThat(latest).containsExactly(reviewed, expensive, cheap, bruisedPear, soldOut);
+		assertThat(jeonnam).containsExactly(cheap, bruisedPear);
+		assertThat(secondPage.getContent()).extracting(ProductSummaryResult::productId)
+			.containsExactly(reviewed, expensive);
+		assertThat(secondPage.getTotalElements()).isEqualTo(5);
+	}
+
 	private List<Long> search(String keyword, ProductSortCode sort) {
 		return productService.searchVisibleProducts(new ProductSearchQuery(keyword, null, null, null, sort, 0, 20))
 			.map(ProductSummaryResult::productId)

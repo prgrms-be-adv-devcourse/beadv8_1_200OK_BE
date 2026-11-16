@@ -3,6 +3,7 @@ package com.ok.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -19,6 +20,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -220,17 +222,45 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 
 	@ParameterizedTest
 	@MethodSource("잘못된_목록_조회_파라미터")
-	void 없는_필터_값이나_범위를_벗어난_페이지는_400(String name, String value) throws Exception {
+	void 없는_필터_정렬_값이나_범위를_벗어난_페이지는_400_ProblemDetail이다(String name, String value, String type)
+		throws Exception {
 		mockMvc.perform(get("/api/v1/products").param(name, value))
-			.andExpect(status().isBadRequest());
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.type").value("https://api.example.com/problems/" + type))
+			.andExpect(jsonPath("$.status").value(400));
 	}
 
+	// 없는 enum 값은 타입 변환 오류(invalid-query-parameter), 범위 위반은 메서드 검증 오류(bad-request)로 간다
 	static Stream<Arguments> 잘못된_목록_조회_파라미터() {
 		return Stream.of(
-			Arguments.of("category", "APPLE"),
-			Arguments.of("page", "-1"),
-			Arguments.of("size", "0"),
-			Arguments.of("size", "101"));
+			Arguments.of("category", "APPLE", "invalid-query-parameter"),
+			Arguments.of("sort", "POPULAR", "invalid-query-parameter"),
+			Arguments.of("page", "-1", "bad-request"),
+			Arguments.of("size", "0", "bad-request"),
+			Arguments.of("size", "101", "bad-request"));
+	}
+
+	@Test
+	void 검색어는_50자까지_받고_51자면_page_size와_같은_400_ProblemDetail이다() throws Exception {
+		// when & then
+		mockMvc.perform(get("/api/v1/products").param("keyword", "가".repeat(50)))
+			.andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/products").param("keyword", "가".repeat(51)))
+			.andExpect(status().isBadRequest())
+			.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+			.andExpect(jsonPath("$.type").value("https://api.example.com/problems/bad-request"))
+			.andExpect(jsonPath("$.status").value(400));
+	}
+
+	@Test
+	void 검색어_길이는_받은_그대로_재므로_앞뒤_공백까지_51자면_400이다() throws Exception {
+		// 설계 5.2대로 Spec에서 다듬기 전 값을 잰다. 시나리오 S24의 "다듬은 뒤 길이"와 다르다
+		// when & then
+		mockMvc.perform(get("/api/v1/products").param("keyword", " " + "가".repeat(49)))
+			.andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/products").param("keyword", " " + "가".repeat(49) + " "))
+			.andExpect(status().isBadRequest());
 	}
 
 	@Test

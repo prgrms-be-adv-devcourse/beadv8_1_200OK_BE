@@ -77,3 +77,6 @@ product:
     # 키워드 검색 점수 하한(ProductSearchPolicy). E0 평가셋(상품 300개)에서 recall@10을 0.7%p만 잃고 평균 결과 수를 178건에서 30건으로 줄인 값이다(#659).
     # FULLTEXT 점수는 상품 수에 따라 달라지므로 상품이 크게 늘면 다시 잰다. monolith/application.yaml에도 같은 값을 둔다
     min-score: 1.0
+    # 구매자 목록 SQL의 시간 제한(BuyerProductQueryJdbcConfig). 넘으면 503 PRODUCT_SEARCH_TIMEOUT이다. 잠정 값이라 S28 측정 뒤 다시 정한다(#659).
+    # JDBC queryTimeout은 초 단위라 1초 이상이어야 한다. monolith/application.yaml에도 같은 값을 둔다
+    query-timeout: 2s

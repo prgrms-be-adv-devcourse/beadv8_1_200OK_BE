@@ -26,6 +26,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -308,6 +311,24 @@ class ProductServiceTest {
 
 		// then
 		assertThat(sut.getContent()).isEmpty();
+	}
+
+	@Test
+	@ExtendWith(OutputCaptureExtension.class)
+	void 목록_SQL이_시간_제한을_넘으면_PRODUCT_SEARCH_TIMEOUT이고_로그에_검색어_원문을_남기지_않는다(CapturedOutput output) {
+		// given
+		String keyword = "제주 하우스감귤";
+		given(buyerProductQueryRepository.findVisibleProductIds(any(), any(), any(), any(), any(), anyDouble(), any()))
+			.willThrow(new QueryTimeoutException("Statement cancelled due to timeout"));
+
+		// when & then
+		assertThatThrownBy(() -> service.searchVisibleProducts(
+			new ProductSearchQuery(keyword, null, ProductCategoryCode.FRUIT, null, ProductSortCode.PRICE_ASC, 0, 20)))
+			.isInstanceOfSatisfying(RestApiException.class,
+				e -> assertThat(e.getErrorCode()).isEqualTo(ProductErrorCode.PRODUCT_SEARCH_TIMEOUT));
+		assertThat(output).contains("keywordLength=8", "sort=PRICE_ASC", "category=true", "region=false")
+			.doesNotContain(keyword, "하우스감귤");
+		then(productRepository).should(never()).findAllById(any());
 	}
 
 	// id·version이 채워진 저장된 상품처럼 만들어 수정용 조회가 돌려주게 한다

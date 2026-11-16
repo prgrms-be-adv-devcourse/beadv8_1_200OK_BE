@@ -32,6 +32,8 @@ import com.ok.product.product.application.dto.SellerProductDetailResult;
 import com.ok.product.product.application.dto.SellerProductSearchQuery;
 import com.ok.product.product.application.dto.SellerProductSummaryResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -45,6 +47,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -163,8 +166,18 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 
 		// 검색 SQL은 순서만 정해 ID 한 페이지를 주고, 상품은 엔티티로 다시 불러온다. 응답 값을 상세와 같은 코드
 		// (Product, ProductSummaryResult)로 만들어야 카드 값이 어긋나지 않는다
-		Page<Long> productIds = buyerProductQueryRepository.findVisibleProductIds(keyword, categoryGroup, category,
-			region, sort, productSearchPolicy.minScore(), pageable);
+		Page<Long> productIds;
+		try {
+			productIds = buyerProductQueryRepository.findVisibleProductIds(keyword, categoryGroup, category, region, sort,
+				productSearchPolicy.minScore(), pageable);
+		} catch (QueryTimeoutException e) {
+			// RestApiException은 공통 핸들러가 로그를 남기지 않아 여기서 남긴다. 느린 조건을 찾을 수 있게 모양만 남기고,
+			// 검색어 원문은 개인정보가 섞일 수 있어 남기지 않는다
+			log.warn("상품 목록 조회가 시간 제한을 넘었습니다. keywordLength={}, sort={}, categoryGroup={}, category={}, region={}",
+				query.keyword() == null ? 0 : query.keyword().length(), sort, categoryGroup != null, category != null,
+				region != null);
+			throw new RestApiException(ProductErrorCode.PRODUCT_SEARCH_TIMEOUT);
+		}
 		Map<Long, Product> productsById = productRepository.findAllById(productIds.getContent()).stream()
 			.collect(Collectors.toMap(Product::getId, Function.identity()));
 		// 저장소는 ID 순서를 지키지 않으므로 검색 SQL이 정한 순서로 다시 맞춘다.

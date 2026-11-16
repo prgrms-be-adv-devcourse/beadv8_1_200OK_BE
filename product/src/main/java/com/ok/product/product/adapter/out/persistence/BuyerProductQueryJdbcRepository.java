@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.support.PageableExecutionUtils;
@@ -18,15 +19,12 @@ import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductSearchKeyword;
 import com.ok.product.product.domain.ProductSort;
 
-import lombok.RequiredArgsConstructor;
-
 /**
  * {@link BuyerProductQueryRepository}의 JdbcClient 구현.
  * Querydsl은 {@code MATCH ... AGAINST}를 쓰려면 Hibernate {@code FunctionContributor}로 함수를 등록하는 전역 설정이 더 필요하고,
  * {@code @Query} 네이티브 쿼리는 정렬을 바꾸려면 CASE를 겹겹이 써야 한다. 그래서 코드에 고정된 SQL 조각만 이어 붙이고 값은 모두 바인딩한다.
  */
 @Repository
-@RequiredArgsConstructor
 public class BuyerProductQueryJdbcRepository implements BuyerProductQueryRepository {
 
 	// 가중치(3, 1, 1, 0.5)는 E2 실험 값이다. 오타용 자모 일치는 다른 품목과도 잘 겹쳐 가장 작게 둔다
@@ -57,23 +55,36 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 
 	private final JdbcClient jdbcClient;
 
+	// 시간 제한이 걸린 전용 JdbcClient만 쓴다(BuyerProductQueryJdbcConfig). 기본 빈은 다른 모듈도 쓰므로 바꾸지 않는다
+	public BuyerProductQueryJdbcRepository(
+		@Qualifier(BuyerProductQueryJdbcConfig.JDBC_CLIENT) JdbcClient jdbcClient) {
+		this.jdbcClient = jdbcClient;
+	}
+
 	@Override
 	public Page<Long> findVisibleProductIds(ProductSearchKeyword keyword, ProductCategoryGroup categoryGroup,
 		ProductCategory category, ProductRegion region, ProductSort sort, double minScore, Pageable pageable) {
 		if (keyword == null && sort == ProductSort.RELEVANCE) {
 			throw new IllegalArgumentException("검색어 없이 정확도순으로 정렬할 수 없습니다.");
 		}
+		Match match = Match.of(keyword);
 		Map<String, Object> params = new HashMap<>();
-		// 검색어가 없으면 product_search를 JOIN하지 않는다. JOIN하면 검색 행이 아직 없는 상품(백필 전, 백필 실패)이 목록에서 사라진다
 		StringBuilder from = new StringBuilder(PRODUCTS);
-		if (keyword != null) {
-			from.append(SEARCH_ROWS);
-			params.put("compact", keyword.compact());
-			params.put("text", keyword.text());
-			params.put("jamo", keyword.jamo());
-			params.put("minScore", minScore);
+		switch (match) {
+			// 검색어가 없으면 product_search를 JOIN하지 않는다. JOIN하면 검색 행이 아직 없는 상품(백필 전, 백필 실패)이 목록에서 사라진다
+			case NONE -> from.append(VISIBLE);
+			case ITEM -> {
+				from.append(SEARCH_ROWS).append(VISIBLE).append(" AND s.search_item = :item");
+				params.put("item", keyword.compact());
+			}
+			case FULLTEXT -> {
+				from.append(SEARCH_ROWS).append(VISIBLE);
+				params.put("compact", keyword.compact());
+				params.put("text", keyword.text());
+				params.put("jamo", keyword.jamo());
+				params.put("minScore", minScore);
+			}
 		}
-		from.append(VISIBLE);
 		if (categoryGroup != null) {
 			from.append(" AND p.category IN (:categories)");
 			params.put("categories", ProductCategory.findAllByGroup(categoryGroup).stream().map(Enum::name).toList());
@@ -87,9 +98,13 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 			params.put("region", region.name());
 		}
 
-		String content = keyword == null
-			? "SELECT p.id, " + SOLD_OUT_AND_RATING + from
-			: "SELECT p.id, " + SCORE + " AS score, " + SOLD_OUT_AND_RATING + from + SCORE_FLOOR;
+		// 품목 모드는 점수를 계산하지 않고 모두 같은 점수(0)로 둔다. 정확도순은 보정 평점, 그다음 id 순이 된다.
+		// 하한도 붙이지 않는다. 붙이면 점수 0인 상품이 모두 빠진다
+		String content = switch (match) {
+			case NONE -> "SELECT p.id, " + SOLD_OUT_AND_RATING + from;
+			case ITEM -> "SELECT p.id, 0 AS score, " + SOLD_OUT_AND_RATING + from;
+			case FULLTEXT -> "SELECT p.id, " + SCORE + " AS score, " + SOLD_OUT_AND_RATING + from + SCORE_FLOOR;
+		};
 		List<Long> productIds = jdbcClient.sql(content + " ORDER BY " + orderBy(sort) + " LIMIT :size OFFSET :offset")
 			.params(params)
 			.param("size", pageable.getPageSize())
@@ -97,10 +112,11 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 			.query((rs, rowNum) -> rs.getLong("id"))
 			.list();
 
-		// 하한 미만 상품이 개수에 들지 않도록 검색어가 있으면 같은 조건을 감싸서 센다
-		String count = keyword == null
-			? "SELECT COUNT(*)" + from
-			: "SELECT COUNT(*) FROM (SELECT " + SCORE + " AS score" + from + SCORE_FLOOR + ") t";
+		// 하한 미만 상품이 개수에 들지 않도록 FULLTEXT 모드는 같은 조건을 감싸서 센다
+		String count = switch (match) {
+			case NONE, ITEM -> "SELECT COUNT(*)" + from;
+			case FULLTEXT -> "SELECT COUNT(*) FROM (SELECT " + SCORE + " AS score" + from + SCORE_FLOOR + ") t";
+		};
 		return PageableExecutionUtils.getPage(productIds, pageable, () -> jdbcClient.sql(count)
 			.params(params)
 			.query(Long.class)
@@ -115,5 +131,20 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 			case PRICE_DESC -> "sold_out, p.min_sale_price DESC, rating_score DESC, p.id DESC";
 			case LATEST -> "sold_out, p.id DESC";
 		};
+	}
+
+	private enum Match {
+		NONE,
+		// ngram FULLTEXT는 두 글자 조각만 인덱싱해 한 글자 검색어("배")는 어떤 상품과도 겹치지 않는다.
+		// 그래서 등록할 때 정해 둔 대표 품목과 정확히 같은 상품을 찾는다. LIKE는 상품명이 산지로 시작해 맞지 않는다
+		ITEM,
+		FULLTEXT;
+
+		static Match of(ProductSearchKeyword keyword) {
+			if (keyword == null) {
+				return NONE;
+			}
+			return keyword.isSingleCharacter() ? ITEM : FULLTEXT;
+		}
 	}
 }

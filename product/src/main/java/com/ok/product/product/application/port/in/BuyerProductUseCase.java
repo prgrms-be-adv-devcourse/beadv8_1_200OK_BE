@@ -14,6 +14,11 @@ import com.ok.product.product.application.dto.ProductSummaryResult;
  */
 public interface BuyerProductUseCase {
 
+	/**
+	 * 구매자에게 보이는 상품 한 페이지를 검색어·필터·정렬대로 찾는다.
+	 *
+	 * @throws com.ok.common.exception.RestApiException 목록 SQL이 시간 제한을 넘으면 {@code PRODUCT_SEARCH_TIMEOUT}
+	 */
 	Page<ProductSummaryResult> searchVisibleProducts(ProductSearchQuery query);
 
 	ProductDetailResult getVisibleProduct(Long productId);
