@@ -30,14 +30,14 @@ import org.springframework.web.context.WebApplicationContext;
 
 import com.ok.common.jpa.QueryCountContext;
 import com.ok.common.jpa.QueryCountFilter;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.application.dto.ProductStatusCode;
+import com.ok.product.product.application.service.ProductService;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.repository.ProductRepository;
-import com.ok.product.product.service.ProductService;
-import com.ok.product.product.service.dto.ProductStatusCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 
@@ -60,7 +60,7 @@ class ProductJpaMetricsIntegrationTest extends AbstractIntegrationTest {
 	EntityManager entityManager;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
 	ProductService productService;
