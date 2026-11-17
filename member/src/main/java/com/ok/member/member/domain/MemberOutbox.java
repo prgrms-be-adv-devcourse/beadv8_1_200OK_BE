@@ -66,6 +66,10 @@ public class MemberOutbox extends BaseTime {
     private LocalDateTime sentAt;
 
     private MemberOutbox(MemberOutboxEventType eventType, Long memberId, String payload) {
+        // 회원 ID는 메시지 키라 없으면 받는 쪽이 처리할 수 없다. 저장 때 DB 오류로 알기 전에 만들 때 막는다
+        if (memberId == null) {
+            throw new IllegalArgumentException("outbox 회원 ID는 필수입니다.");
+        }
         this.eventType = eventType;
         this.memberId = memberId;
         this.payload = payload;

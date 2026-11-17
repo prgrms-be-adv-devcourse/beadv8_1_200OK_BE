@@ -87,6 +87,17 @@ class MemberOutboxTest {
     }
 
     @Test
+    void 회원_ID가_없으면_줄을_만들지_않는다() {
+        // when & then: 회원 ID는 메시지 키라 없으면 받는 쪽이 처리할 수 없다
+        assertThatThrownBy(() -> MemberOutbox.memberRegistered(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("outbox 회원 ID는 필수입니다.");
+        assertThatThrownBy(() -> MemberOutbox.sellerOriginPostalCodeChanged(null, "{}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("outbox 회원 ID는 필수입니다.");
+    }
+
+    @Test
     void 출고지_우편번호_줄의_본문이_비면_만들지_않는다() {
         // when & then: 본문은 시스템이 만든 JSON이라 비면 버그다
         assertThatThrownBy(() -> MemberOutbox.sellerOriginPostalCodeChanged(7L, " "))

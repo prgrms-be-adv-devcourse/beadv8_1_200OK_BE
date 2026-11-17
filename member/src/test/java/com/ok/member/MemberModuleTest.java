@@ -2,12 +2,14 @@ package com.ok.member;
 
 import com.ok.common.config.JpaConfig;
 import com.ok.common.config.JwtProperties;
-import com.ok.common.event.MemberRegisteredEvent;
 import com.ok.common.media.MediaUrlResolver;
 import com.ok.member.auth.adapter.in.web.JwksController;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
 import com.ok.member.member.application.dto.SignupCommand;
+import com.ok.member.member.domain.MemberOutbox;
+import com.ok.member.member.domain.MemberOutboxEventType;
+import com.ok.member.member.domain.MemberOutboxStatus;
 import com.ok.member.member.application.port.in.MemberSignupUseCase;
 import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
@@ -16,12 +18,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.modulith.test.ApplicationModuleTest;
-import org.springframework.modulith.test.Scenario;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 @ApplicationModuleTest
 // auth의 토큰 발급·재발급 서비스가 Clock을 주입받으므로 Clock 빈이 필요하다.
@@ -45,7 +49,7 @@ public class MemberModuleTest {
     MemberOutboxJpaRepository memberOutboxRepository;
 
     // 모듈 테스트는 member 밖(common 모듈)의 MediaUrlResolver를 걸러 내, 판매자 프로필 서비스를 만들 수 없다.
-    // 이 테스트는 이벤트 발행만 확인하고 프로필 사진 URL 변환은 쓰지 않으므로 가짜로 둔다
+    // 이 테스트는 가입 때 남는 outbox 줄만 확인하고 프로필 사진 URL 변환은 쓰지 않으므로 가짜로 둔다
     @MockitoBean
     MediaUrlResolver mediaUrlResolver;
 
@@ -68,18 +72,27 @@ public class MemberModuleTest {
         memberRepository.deleteAll();
     }
 
+    // 회원가입은 스프링 이벤트 대신 outbox 줄로 다른 모듈에 알린다(#683). 실제 Kafka 발송은 MemberRegisteredKafkaIntegrationTest가 본다
     @Test
-    void 회원가입이_완료되면_MemberRegisteredEvent를_발행한다(Scenario scenario) {
+    void 회원가입이_완료되면_보낼_회원가입_메시지를_outbox에_남긴다() {
         // given
         SignupCommand command = new SignupCommand(
                 "tester01", "password1!", "tester@example.com",
                 "홍길동", "길동이"
         );
 
-        // when & then
-        scenario.stimulate(() -> memberSignupUseCase.signup(command))
-                .andWaitForEventOfType(MemberRegisteredEvent.class)
-                .toArriveAndVerify(event -> assertThat(event.memberId()).isNotNull());
+        // when
+        Long memberId = memberSignupUseCase.signup(command);
+
+        // then
+        List<MemberOutbox> outboxes = memberOutboxRepository.findAll();
+        assertThat(outboxes).hasSize(1);
+        MemberOutbox sut = outboxes.getFirst();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getEventType()).isEqualTo(MemberOutboxEventType.MEMBER_REGISTERED);
+            softly.assertThat(sut.getMemberId()).isEqualTo(memberId);
+            softly.assertThat(sut.getStatus()).isEqualTo(MemberOutboxStatus.PENDING);
+        });
     }
 
 }
