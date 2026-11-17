@@ -78,7 +78,7 @@ class AuthServiceTest {
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         Instant accessExpiresAt = NOW.plus(Duration.ofMinutes(30));
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
-        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER), 0L))
                 .willReturn(new AccessToken("access-token", accessExpiresAt));
         given(refreshTokenService.issue(MEMBER_ID, 0L))
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));
@@ -101,7 +101,7 @@ class AuthServiceTest {
         // given
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalReader.isApprovedSeller(MEMBER_ID)).willReturn(true);
-        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER), 0L))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID, 0L))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
@@ -117,7 +117,7 @@ class AuthServiceTest {
     void 관리자가_로그인하면_관리자_권한으로만_Access_Token을_발급한다() {
         // given: TokenRoleMapper는 boolean 두 개를 받아 순서가 바뀌어도 컴파일되므로, 관리자 여부를 제자리에 넘기는지 확인한다
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ADMIN));
-        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.ADMIN)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.ADMIN), 0L))
                 .willReturn(new AccessToken("admin-access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID, 0L))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
@@ -184,7 +184,7 @@ class AuthServiceTest {
         given(refreshTokenService.rotate("old-refresh-token"))
                 .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", refreshExpiresAt)));
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
-        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER), 0L))
                 .willReturn(new AccessToken("new-access-token", accessExpiresAt));
 
         // when
@@ -209,7 +209,7 @@ class AuthServiceTest {
                 .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14)))));
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ACTIVE));
         given(sellerApprovalReader.isApprovedSeller(MEMBER_ID)).willReturn(true);
-        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER), 0L))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
 
         // when
@@ -231,15 +231,15 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
-        then(accessTokenIssuer).should(never()).issue(any(), any());
+        then(accessTokenIssuer).should(never()).issue(any(), any(), anyLong());
     }
 
     @Test
-    void 로그인하면_회원의_지금_토큰_버전으로_세션을_연다() {
+    void 로그인하면_회원의_지금_토큰_버전으로_Access_Token을_발급하고_세션을_연다() {
         // given
         AuthAccount account = new AuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD, 3L);
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(account));
-        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER), 3L))
                 .willReturn(new AccessToken("access-token", NOW.plus(Duration.ofMinutes(30))));
         given(refreshTokenService.issue(MEMBER_ID, 3L))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
@@ -263,7 +263,7 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
-        then(accessTokenIssuer).should(never()).issue(any(), any());
+        then(accessTokenIssuer).should(never()).issue(any(), any(), anyLong());
     }
 
     @ParameterizedTest
@@ -279,7 +279,7 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(expected));
-        then(accessTokenIssuer).should(never()).issue(any(), any());
+        then(accessTokenIssuer).should(never()).issue(any(), any(), anyLong());
     }
 
     static Stream<Arguments> 재발급할_수_없는_회원_상태() {

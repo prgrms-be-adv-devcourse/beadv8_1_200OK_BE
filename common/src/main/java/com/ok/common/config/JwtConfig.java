@@ -21,7 +21,12 @@ import com.nimbusds.jose.jwk.source.JWKSourceBuilder;
 import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jose.util.DefaultResourceRetriever;
+import com.ok.common.security.TokenVersionStore;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -108,6 +113,7 @@ public class JwtConfig {
      *   <li>만료(exp): 필수이며, 허용 오차 없이 검증 ({@link #CLOCK_SKEW})</li>
      *   <li>발급자(iss): 우리 서비스가 발급한 토큰인지</li>
      *   <li>대상(aud): 이 서비스를 위한 토큰인지</li>
+     *   <li>토큰 버전(ver): 비밀번호 변경 등으로 폐기되지 않았는지 ({@link TokenVersionValidator}, 위 항목을 모두 통과한 토큰만)</li>
      * </ul>
      *
      * <p>활성 시작(nbf)은 우리가 발급하는 토큰에 넣지 않으므로 검증하지 않는다.
@@ -117,7 +123,8 @@ public class JwtConfig {
      * HS256 토큰(알고리즘 혼동 공격)이 통과할 수 있다. 공개키는 이름 그대로 공개된 값이라 누구나 그런 토큰을 만들 수 있다.
      */
     @Bean
-    public JwtDecoder jwtDecoder(JwtProperties properties, Clock clock) {
+    public JwtDecoder jwtDecoder(JwtProperties properties, Clock clock,
+                                 ObjectProvider<TokenVersionValidator> tokenVersionValidator) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSource(keySource(properties))
                 .jwsAlgorithm(SIGNING_ALGORITHM)
                 // 기본 설정은 typ가 없거나 JWT인 토큰만 받는다. Access Token 타입만 받도록 바꾼다.
@@ -136,8 +143,38 @@ public class JwtConfig {
                 new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
                         audience -> audience != null && audience.contains(properties.audience()))
         );
-        decoder.setJwtValidator(validator);
+        // 토큰 버전 검사는 저장소를 부르므로 다른 검증을 모두 통과한 토큰에만 한다. 만료되었거나 다른 발급자의 토큰으로는 저장소를 부르지 않는다.
+        // DelegatingOAuth2TokenValidator는 앞이 실패해도 모두 부르므로 목록에 넣지 않고 감싼다
+        TokenVersionValidator versionValidator = tokenVersionValidator.getIfAvailable();
+        decoder.setJwtValidator(versionValidator == null ? validator : new DependentValidator(validator, versionValidator));
         return decoder;
+    }
+
+    /**
+     * 토큰 버전 검사를 켤지 정한다. 기본은 켜짐이고, 끄려면 {@code jwt.token-version-check.enabled=false}를 직접 적는다.
+     * 끄면 비밀번호를 바꿔도 기존 Access Token이 만료될 때까지 통과하므로, 꺼진 채 배포되는 일이 없게 기본값을 켜 둔다.
+     */
+    @Bean
+    @ConditionalOnProperty(name = "jwt.token-version-check.enabled", havingValue = "true", matchIfMissing = true)
+    TokenVersionValidator tokenVersionValidator(TokenVersionStore tokenVersionStore, Clock clock,
+                                                ObjectProvider<MeterRegistry> meterRegistry) {
+        // 지표 설정이 없는 테스트 컨텍스트에서도 뜨도록 메모리 레지스트리로 대신한다
+        return new TokenVersionValidator(tokenVersionStore, clock,
+                meterRegistry.getIfAvailable(SimpleMeterRegistry::new));
+    }
+
+    /**
+     * 앞의 검증을 모두 통과한 토큰만 뒤의 검증기로 넘긴다. 실패하면 앞의 실패 결과를 그대로 돌려준다.
+     */
+    private record DependentValidator(OAuth2TokenValidator<Jwt> first, OAuth2TokenValidator<Jwt> then)
+            implements OAuth2TokenValidator<Jwt> {
+
+        @Override
+        public OAuth2TokenValidatorResult validate(Jwt jwt) {
+            OAuth2TokenValidatorResult result = first.validate(jwt);
+            return result.hasErrors() ? result : then.validate(jwt);
+        }
+
     }
 
     /**

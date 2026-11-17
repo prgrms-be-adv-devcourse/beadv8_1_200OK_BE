@@ -13,6 +13,12 @@ public final class TokenClaims {
      */
     public static final String ROLES = "roles";
 
+    /**
+     * 토큰을 발급할 때의 회원 토큰 버전(숫자). 회원이 비밀번호를 바꾸면 버전이 올라, 이 값이 {@link TokenVersionStore}의 최소 버전보다
+     * 낮은 토큰은 만료 전이라도 거부된다(#561). 이 클레임이 없는 토큰(배포 전에 발급됨)은 버전 0으로 본다.
+     */
+    public static final String TOKEN_VERSION = "ver";
+
     private TokenClaims() {
     }
 

@@ -138,7 +138,7 @@ public class AuthService implements TokenReissueUseCase, LogoutUseCase {
     private TokenResult createTokens(AuthAccount account, IssuedRefreshToken refreshToken) {
         boolean approvedSeller = sellerApprovalReader.isApprovedSeller(account.memberId());
         List<String> roles = TokenRoleMapper.toTokenRoles(account.admin(), approvedSeller);
-        AccessToken accessToken = accessTokenIssuer.issue(account.memberId(), roles);
+        AccessToken accessToken = accessTokenIssuer.issue(account.memberId(), roles, account.tokenVersion());
 
         return new TokenResult(accessToken.value(), accessToken.expiresAt(),
                 refreshToken.value(), refreshToken.expiresAt());

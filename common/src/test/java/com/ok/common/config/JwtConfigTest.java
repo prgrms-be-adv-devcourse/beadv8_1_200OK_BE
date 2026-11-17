@@ -10,6 +10,8 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.security.oauth2.jwt.BadJwtException;
 import org.springframework.security.oauth2.jwt.JwsHeader;
@@ -56,6 +58,10 @@ class JwtConfigTest {
     private static final Duration ACCESS_EXPIRATION = Duration.ofMinutes(30);
     private static final Duration REFRESH_EXPIRATION = Duration.ofDays(14);
 
+    // 이 테스트는 키 조회와 서명 검증을 본다. 토큰 버전 검사(저장소 필요)는 TokenVersionValidatorTest가 맡는다
+    private static final ObjectProvider<TokenVersionValidator> NO_TOKEN_VERSION_CHECK =
+            new StaticListableBeanFactory().getBeanProvider(TokenVersionValidator.class);
+
     private final JwtConfig jwtConfig = new JwtConfig();
     private final Clock clock = Clock.systemUTC();
     private final AtomicInteger jwksRequests = new AtomicInteger();
@@ -99,7 +105,7 @@ class JwtConfigTest {
         // given
         RSAKey v1 = rsaKey("rs256-v1");
         publishedKeys = List.of(v1.toPublicJWK());
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock, NO_TOKEN_VERSION_CHECK);
 
         // when
         Jwt sut = decoder.decode(sign(v1));
@@ -113,7 +119,7 @@ class JwtConfigTest {
         // given
         RSAKey v1 = rsaKey("rs256-v1");
         publishedKeys = List.of(v1.toPublicJWK());
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock, NO_TOKEN_VERSION_CHECK);
         String token = sign(v1);
 
         // when
@@ -131,7 +137,7 @@ class JwtConfigTest {
         RSAKey v1 = rsaKey("rs256-v1");
         publishedKeys = List.of(v1.toPublicJWK());
         JwtProperties.JwkSet shortTtl = new JwtProperties.JwkSet(Duration.ofMillis(300), null, null);
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(shortTtl), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(shortTtl), clock, NO_TOKEN_VERSION_CHECK);
         String token = sign(v1);
         decoder.decode(token);
         Thread.sleep(500);
@@ -150,7 +156,7 @@ class JwtConfigTest {
         RSAKey v1 = rsaKey("rs256-v1");
         RSAKey v2 = rsaKey("rs256-v2");
         publishedKeys = List.of(v1.toPublicJWK());
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock, NO_TOKEN_VERSION_CHECK);
         decoder.decode(sign(v1));
         publishedKeys = List.of(v1.toPublicJWK(), v2.toPublicJWK());
 
@@ -168,7 +174,7 @@ class JwtConfigTest {
         RSAKey v1 = rsaKey("rs256-v1");
         RSAKey unknown = rsaKey("rs256-unknown");
         publishedKeys = List.of(v1.toPublicJWK());
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock, NO_TOKEN_VERSION_CHECK);
 
         // when & then
         // 토큰 오류(BadJwtException)는 401로 응답된다
@@ -183,7 +189,7 @@ class JwtConfigTest {
         server.stop(0);
 
         // when & then
-        assertThatCode(() -> jwtConfig.jwtDecoder(remoteProperties(), clock))
+        assertThatCode(() -> jwtConfig.jwtDecoder(remoteProperties(), clock, NO_TOKEN_VERSION_CHECK))
                 .doesNotThrowAnyException();
     }
 
@@ -191,7 +197,7 @@ class JwtConfigTest {
     void JWKS를_받을_수_없으면_토큰_오류가_아닌_예외가_발생한다() throws Exception {
         // given
         RSAKey v1 = rsaKey("rs256-v1");
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(), clock, NO_TOKEN_VERSION_CHECK);
         String token = sign(v1);
         server.stop(0);
 
@@ -209,7 +215,7 @@ class JwtConfigTest {
         publishedKeys = List.of(v1.toPublicJWK());
         responseDelay = Duration.ofSeconds(5);
         JwtProperties.JwkSet shortTimeout = new JwtProperties.JwkSet(null, Duration.ofMillis(200), Duration.ofMillis(200));
-        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(shortTimeout), clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(remoteProperties(shortTimeout), clock, NO_TOKEN_VERSION_CHECK);
         String token = sign(v1);
         Instant start = Instant.now();
 
@@ -231,7 +237,7 @@ class JwtConfigTest {
                 null, ACCESS_EXPIRATION, REFRESH_EXPIRATION);
 
         // when
-        JwtDecoder decoder = jwtConfig.jwtDecoder(properties, clock);
+        JwtDecoder decoder = jwtConfig.jwtDecoder(properties, clock, NO_TOKEN_VERSION_CHECK);
 
         // then
         assertThat(decoder.decode(sign(v1)).getSubject()).isEqualTo("1");

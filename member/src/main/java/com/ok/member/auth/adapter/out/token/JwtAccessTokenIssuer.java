@@ -39,6 +39,7 @@ import java.util.UUID;
  *   <li>iat(발급 시각): 추적용, 특정 시점 이전 토큰을 일괄 무효화할 때 기준</li>
  *   <li>exp(만료 시각)</li>
  *   <li>roles: 권한 목록. 인가 규칙에서 ROLE_BUYER 같은 권한으로 변환해 사용한다.</li>
+ *   <li>ver: 발급할 때의 회원 토큰 버전. 비밀번호를 바꾸면 그보다 낮은 버전의 토큰은 거부된다(#561).</li>
  * </ul>
  *
  * <p>nbf(사용 시작 시각)는 넣지 않는다. 발급 즉시 유효한 토큰이라 iat와 같은 값이 되고,
@@ -63,13 +64,14 @@ public class JwtAccessTokenIssuer implements AccessTokenIssuer {
      *
      * @param memberId 회원 id (sub claim)
      * @param roles    토큰 권한 목록 (roles claim, {@code TokenRoles}의 값)
+     * @param tokenVersion 회원 토큰 버전 (ver claim)
      * @return 토큰 문자열과 만료 시각
      * @throws NullPointerException     memberId 또는 roles가 null인 경우.
      *                                  null을 그대로 두면 subject가 문자열 "null"인 잘못된 토큰이 발급되므로 즉시 실패시킨다.
      * @throws IllegalArgumentException roles가 비어 있는 경우. 권한이 없는 토큰은 쓸 곳이 없어 발급하지 않는다.
      */
     @Override
-    public AccessToken issue(Long memberId, List<String> roles) {
+    public AccessToken issue(Long memberId, List<String> roles, long tokenVersion) {
         Objects.requireNonNull(memberId, "memberId는 null일 수 없습니다.");
         Objects.requireNonNull(roles, "roles는 null일 수 없습니다.");
         if (roles.isEmpty()) {
@@ -90,6 +92,7 @@ public class JwtAccessTokenIssuer implements AccessTokenIssuer {
                 .issuedAt(issuedAt)
                 .expiresAt(expiresAt)
                 .claim(TokenClaims.ROLES, List.copyOf(roles))
+                .claim(TokenClaims.TOKEN_VERSION, tokenVersion)
                 .build();
 
         // 알고리즘은 검증 쪽과 같은 상수를 쓴다. (JwtConfig 참고)

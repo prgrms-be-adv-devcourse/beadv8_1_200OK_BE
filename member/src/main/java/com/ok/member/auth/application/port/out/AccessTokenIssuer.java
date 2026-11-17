@@ -14,9 +14,10 @@ public interface AccessTokenIssuer {
      * Access Token을 발급한다.
      * 어떤 권한을 담을지는 호출하는 쪽(로그인·재발급)이 회원 정보로 계산해 넘긴다. 구현은 받은 권한을 담기만 한다.
      *
-     * @param roles 토큰 권한 목록 ({@code TokenRoles}의 값). 비어 있으면 발급하지 않는다
+     * @param roles        토큰 권한 목록 ({@code TokenRoles}의 값). 비어 있으면 발급하지 않는다
+     * @param tokenVersion 발급할 때의 회원 토큰 버전. 이보다 높은 최소 버전이 기록되면 토큰이 거부된다
      * @return 토큰 문자열과 만료 시각
      */
-    AccessToken issue(Long memberId, List<String> roles);
+    AccessToken issue(Long memberId, List<String> roles, long tokenVersion);
 
 }
