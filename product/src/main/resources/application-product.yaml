@@ -35,6 +35,16 @@ spring:
     events:
       republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
 app:
+  async:
+    executors:
+      # 검색 행 백필 전용. 한 번에 하나만 돌리면 되고, 다음 기동 때 다시 하므로 대기열은 작게 둔다
+      product-search-backfill:
+        type: platform
+        pool-size: 1
+        queue-capacity: 1
+        # 백필 도중 종료돼도 묶음마다 별도 트랜잭션이라 안전하고 다음 기동이 이어서 채운다. 종료를 오래 붙잡지 않도록 짧게 둔다
+        task-termination-timeout: 2s
+        thread-name-prefix: product-search-backfill-
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
   s3:

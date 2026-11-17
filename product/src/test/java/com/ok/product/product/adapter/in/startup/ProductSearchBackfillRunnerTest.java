@@ -9,8 +9,6 @@ import static org.mockito.Mockito.never;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
@@ -57,25 +55,5 @@ class ProductSearchBackfillRunnerTest {
 
 		// when & then
 		assertThatCode(sut::backfill).doesNotThrowAnyException();
-	}
-
-	@Test
-	void 기본_실행기는_product_search_backfill_스레드에서_백필을_돌린다() throws InterruptedException {
-		// given
-		CountDownLatch done = new CountDownLatch(1);
-		AtomicReference<String> threadName = new AtomicReference<>();
-		given(productSearchBackfillUseCase.backfill()).willAnswer(invocation -> {
-			threadName.set(Thread.currentThread().getName());
-			done.countDown();
-			return new ProductSearchBackfillResult(0, 0);
-		});
-		ProductSearchBackfillRunner sut = new ProductSearchBackfillRunner(productSearchBackfillUseCase);
-
-		// when
-		sut.backfill();
-		done.await();
-
-		// then
-		assertThat(threadName.get()).isEqualTo("product-search-backfill");
 	}
 }

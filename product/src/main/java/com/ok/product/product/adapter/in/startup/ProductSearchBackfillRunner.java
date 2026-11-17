@@ -2,11 +2,12 @@ package com.ok.product.product.adapter.in.startup;
 
 import java.util.concurrent.Executor;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import com.ok.product.config.ProductAsyncConfig;
 import com.ok.product.product.application.port.in.ProductSearchBackfillUseCase;
 
 import lombok.extern.slf4j.Slf4j;
@@ -22,12 +23,8 @@ public class ProductSearchBackfillRunner {
 	private final ProductSearchBackfillUseCase productSearchBackfillUseCase;
 	private final Executor executor;
 
-	@Autowired
-	public ProductSearchBackfillRunner(ProductSearchBackfillUseCase productSearchBackfillUseCase) {
-		this(productSearchBackfillUseCase, task -> Thread.ofPlatform().daemon().name("product-search-backfill").start(task));
-	}
-
-	ProductSearchBackfillRunner(ProductSearchBackfillUseCase productSearchBackfillUseCase, Executor executor) {
+	public ProductSearchBackfillRunner(ProductSearchBackfillUseCase productSearchBackfillUseCase,
+		@Qualifier(ProductAsyncConfig.SEARCH_BACKFILL_EXECUTOR) Executor executor) {
 		this.productSearchBackfillUseCase = productSearchBackfillUseCase;
 		this.executor = executor;
 	}

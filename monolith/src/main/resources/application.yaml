@@ -41,6 +41,18 @@ spring:
           # JVM 시간대(Dockerfile, build-logic의 ok.java-conventions 플러그인의 -Duser.timezone)와 같아야 저장한 시각이 그대로 들어간다
           time_zone: ${APP_TIME_ZONE:Asia/Seoul}
 app:
+  async:
+    # product 모듈의 실행기. monolith는 application-product.yaml을 읽지 않으므로 여기에도 둔다. 없으면 기동이 실패한다
+    # 이름이 겹치지 않게 모듈 이름을 앞에 붙인다. 근거는 application-product.yaml
+    executors:
+      # 검색 행 백필 전용. 한 번에 하나만 돌리면 되고, 다음 기동 때 다시 하므로 대기열은 작게 둔다
+      product-search-backfill:
+        type: platform
+        pool-size: 1
+        queue-capacity: 1
+        # 백필 도중 종료돼도 묶음마다 별도 트랜잭션이라 안전하고 다음 기동이 이어서 채운다. 종료를 오래 붙잡지 않도록 짧게 둔다
+        task-termination-timeout: 2s
+        thread-name-prefix: product-search-backfill-
   problem:
     base-uri: ${PROBLEM_BASE_URI:about:blank}
   s3:
