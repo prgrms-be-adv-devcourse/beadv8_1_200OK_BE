@@ -3,6 +3,7 @@ package com.ok.refund.application.service;
 import com.ok.refund.application.port.in.OrderRefundRevertFailedCommand;
 import com.ok.refund.application.port.in.OrderRefundRevertedCommand;
 import com.ok.refund.application.port.in.RefundResult;
+import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
 import com.ok.refund.application.port.in.WalletRevertCompletedCommand;
 import com.ok.refund.application.port.in.WalletRevertFailedCommand;
@@ -104,6 +105,7 @@ class RefundSagaServiceOrderRevertTest {
         ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
         then(refundStepPersistencePort).should(atLeastOnce()).update(updated.capture());
         RefundStep wallet = updated.getAllValues().getFirst();
+        assertThat(wallet).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(wallet.getType()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
@@ -171,6 +173,7 @@ class RefundSagaServiceOrderRevertTest {
         saga.recordWalletRefundFailure(new WalletRefundFailedCommand(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT, "PAYMENT_NOT_FOUND"));
 
         // then
+        assertThat(orderRevert).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(orderRevert.getStatus()).isEqualTo(RefundStepStatus.READY);
             softly.assertThat(orderRevert.getLastReason()).isEqualTo("IllegalStateException");
@@ -207,6 +210,29 @@ class RefundSagaServiceOrderRevertTest {
         // then
         then(orderRevertRequestPort).should(never()).requestRevert(any());
         then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
+    // 지갑은 같은 요청에 처음 결과만 다시 보내기로 약속했다. 어겨 완료가 늦게 와도, 주문을 되돌리는 중에 재고·완료로 가면
+    // 상품은 배송되는데 돈까지 나가므로 재고를 부르지 않고 사람이 보게 한다(#622 검토)
+    @Test
+    void 지갑_실패로_되돌리기를_시작한_뒤_같은_환불의_지갑_완료가_오면_재고를_부르지_않는다() {
+        // given
+        RefundStep stoppedByFailure = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, null,
+                "PAYMENT_NOT_FOUND", NOW.minusMinutes(3));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.empty());
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET)).willReturn(Optional.of(stoppedByFailure));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
+                .willReturn(Optional.of(awaiting(RefundStepType.ORDER_REVERT)));
+
+        // when
+        saga.completeAfterWalletRefund(new WalletRefundCompletedCommand(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundPersistencePort).should(never()).update(any());
     }
 
     // ---- 알람이 깨운 다시 보내기 ----

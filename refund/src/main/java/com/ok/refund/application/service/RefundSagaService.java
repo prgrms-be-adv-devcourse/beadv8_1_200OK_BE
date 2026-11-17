@@ -111,7 +111,9 @@ public class RefundSagaService implements RefundSagaUseCase {
         CHANGED,
         NO_WALLET_STEP,
         PRODUCT_BUSY,
-        PRODUCT_ENDED
+        PRODUCT_ENDED,
+        // 지갑 실패를 받아 주문 되돌리기를 이미 시작한 환불(#622). 늦게 온 완료로 재고·완료까지 가면 돈과 상품이 함께 나간다
+        ORDER_REVERTING
     }
 
     // 주문 성공을 기록한 결과. 다음 단계를 부를지(call)와 지금 환불 상태
@@ -737,7 +739,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             } else if (kind == OrderRevertResultPolicy.Kind.REVERTED) {
                 requireNext(locked, RefundSagaPlan.Event.ORDER_REVERTED, RefundSagaPlan.Action.FAIL);
                 step.succeed();
-                // 되돌리기 줄 성공과 환불 실패를 같은 구간에서 함께 저장한다(결정 5). 따로 저장하면 하나만 남아 표와 환불이 어긋날 수 있다
+                // 되돌리기 줄 성공과 환불 실패를 같은 구간에서 함께 저장한다(#574 결정 5, 완료·거절과 같은 규칙). 따로 저장하면 하나만 남아 표와 환불이 어긋날 수 있다
                 locked.failAfterApproval();
                 refundPersistencePort.update(locked);
             } else {
@@ -899,11 +901,13 @@ public class RefundSagaService implements RefundSagaUseCase {
                     .orElseThrow(() -> new IllegalStateException("지갑 발행을 기록할 환불이 없습니다. refundId=" + refundId + ", step=" + type));
             // 그사이 처리 중에서 벗어났으면 쓰지 않는다(#616 결정 15). 지갑 완료 메시지가 이 기록보다 먼저 처리돼 완료된 것은
             // 정상 경쟁이라 INFO, 그 밖의 상태는 확인이 필요해 WARN이다
+            // 주문 되돌리기(#622)는 주문이 빨리 답하면 이 기록보다 먼저 실패로 끝나는 것이 같은 정상 경쟁이라 INFO다
             if (refund.getStatus() != RefundStatus.PROCESSING) {
-                if (refund.getStatus() == RefundStatus.COMPLETED) {
-                    log.info("지갑 발행 뒤 결과가 먼저 처리돼 이미 완료라 결과 대기를 기록하지 않음. refundId={}, step={}", refundId, type);
+                if (refund.getStatus() == RefundStatus.COMPLETED || refund.getStatus() == RefundStatus.FAILED) {
+                    log.info("발행 뒤 결과가 먼저 처리돼 환불이 이미 끝나 결과 대기를 기록하지 않음. refundId={}, step={}, status={}",
+                            refundId, type, refund.getStatus());
                 } else {
-                    log.warn("지갑 발행 뒤 환불이 처리 중이 아니라 결과 대기를 기록하지 않음. refundId={}, step={}, status={}",
+                    log.warn("발행 뒤 환불이 처리 중이 아니라 결과 대기를 기록하지 않음. refundId={}, step={}, status={}",
                             refundId, type, refund.getStatus());
                 }
                 return;
@@ -913,7 +917,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             // 줄은 발행 전에 다른 구간이 만들어 커밋했으므로 없으면 버그다. 발행은 이미 됐으니
             // 응답은 바꾸지 않고 확인할 수 있게 WARN만 남긴다
             if (sentStep.isEmpty()) {
-                log.warn("지갑 발행 뒤 결과 대기로 바꿀 단계 줄이 없음. refundId={}, step={}", refundId, type);
+                log.warn("발행 뒤 결과 대기로 바꿀 단계 줄이 없음. refundId={}, step={}", refundId, type);
                 return;
             }
             if (sentStep.get().awaitResult(now)) {
@@ -1167,6 +1171,12 @@ public class RefundSagaService implements RefundSagaUseCase {
             if (walletStep.isEmpty()) {
                 return ProductStart.NO_WALLET_STEP;
             }
+            // 지갑 실패를 받아 주문 되돌리기를 시작했으면 같은 refundId의 완료가 늦게 와도 재고로 가지 않는다(#622 검토).
+            // 지갑은 같은 요청에 처음 결과만 다시 보내기로 약속해 정상이면 오지 않는다. 그래도 받으면 주문은 되돌려 상품이 배송되는데
+            // 환불은 완료로 돈까지 나가, 되돌릴 수 없는 손해라 막고 사람이 보게 한다(지갑 결과가 서로 다른 이상)
+            if (refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER_REVERT).isPresent()) {
+                return ProductStart.ORDER_REVERTING;
+            }
             if (walletStep.get().succeed()) {
                 refundStepPersistencePort.update(walletStep.get());
             }
@@ -1188,6 +1198,8 @@ public class RefundSagaService implements RefundSagaUseCase {
             case PRODUCT_BUSY -> log.info("재고 단계가 이미 시도 중이라 다시 부르지 않고 넘김. refundId={}", refundId);
             case NO_WALLET_STEP -> log.warn("지갑 완료를 받았지만 지갑 단계 줄이 없어 재고를 부르지 않음(있을 수 없는 상태, 확인 필요). refundId={}", refundId);
             case PRODUCT_ENDED -> log.warn("지갑 완료를 받았지만 재고 단계 줄이 끝 상태라 재고를 부르지 않음(확인 필요). refundId={}", refundId);
+            case ORDER_REVERTING -> log.warn("지갑 실패로 주문 되돌리기를 시작한 환불에 지갑 완료가 와 재고를 부르지 않음(지갑 결과가 서로 다름, 돈이 나갔는지 확인 필요). refundId={}",
+                    refundId);
             case STARTED -> throw new IllegalArgumentException("시작한 경우는 넘기지 않는다");
         }
     }
@@ -1321,7 +1333,7 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 돌려준 돈이 없으면(0원) 가져올 것이 없어 만들지 않는다(계획이 정함). 회수 줄이 이미 있으면 다시 만들지 않는다((refund_id, step) 유일 제약)
     private boolean startWalletRevert(Long refundId, Refund refund, LocalDateTime now) {
         if (RefundSagaPlan.afterEvent(refund, RefundSagaPlan.Event.PRODUCT_REFUSED) != RefundSagaPlan.Action.CALL_WALLET_REVERT) {
-            log.warn("재고가 다시 해도 거절됐지만 돌려준 돈이 없어 회수하지 않음(주문 되돌리기 #622 전까지 확인 필요). refundId={}", refundId);
+            log.warn("재고가 다시 해도 거절됐지만 돌려준 돈이 없어 회수하지 않음. 주문도 되돌리지 않고 사람이 봄(#622 결정 D1, 확인 필요). refundId={}", refundId);
             return false;
         }
         if (refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT).isPresent()) {

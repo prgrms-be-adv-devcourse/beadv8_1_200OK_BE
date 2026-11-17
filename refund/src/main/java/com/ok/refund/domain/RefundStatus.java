@@ -4,7 +4,8 @@ package com.ok.refund.domain;
  * 환불 요청 상태.
  *
  * <p>{@code REQUESTED → PROCESSING | REJECTED | WITHDRAWN}, {@code PROCESSING → COMPLETED | REJECTED | FAILED}. 처리 중에서 요청됨으로 돌아가는 길은 두지 않는다.
- * 승인한 뒤에는 주문 취소 반영·지갑 반환 요청·재고 복구가 차례로 진행되어(#413~#414), 되돌리면 이미 움직인 돈·재고와 어긋난다.
+ * 승인한 뒤에는 주문 취소 반영·지갑 반환 요청·재고 복구가 차례로 진행되어(#413~#414), 요청됨으로 되돌리면 이미 움직인 돈·재고와 어긋난다.
+ * 끝내 실패하면 요청됨으로 돌아가는 대신, 움직인 지갑·주문을 되돌린 뒤 실패({@code FAILED})로 끝낸다(#622).
  * {@code PROCESSING → REJECTED}는 승인 뒤 주문이 취소 반영을 거절했을 때만 쓴다. 이때는 돈·재고가 움직이기 전이라 되돌릴 것이 없어,
  * 요청됨으로 되돌리는 것이 아니라 거절로 끝낸다. 같은 묶음의 배송비 집계에서는 빠진다(위 정책 주석 참고,
  * {@link RefundShippingFeePolicy#CANCELLING_STATUSES}).

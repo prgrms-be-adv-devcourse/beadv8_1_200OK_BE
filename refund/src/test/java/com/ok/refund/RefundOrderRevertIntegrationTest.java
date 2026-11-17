@@ -160,6 +160,7 @@ class RefundOrderRevertIntegrationTest extends AbstractIntegrationTest {
         orderResultSender.sendReverted(refundId);
 
         // then: 환불은 실패로 끝나고 되돌리기 줄은 성공. 진행 중 칸이 비어 같은 상품을 다시 요청할 수 있다
+        // 환불 상태를 기다리는 도우미는 지갑 결과 도우미에 하나만 둬 함께 쓴다(상태 확인은 결과를 보낸 쪽과 상관없다)
         walletResultSender.awaitStatus(refundId, RefundStatus.FAILED);
         assertThat(stepOf(refundId, RefundStepType.ORDER_REVERT).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
         assertThat(refundPersistencePort.findById(refundId).map(Refund::getActiveOrderItemId)).isEmpty();

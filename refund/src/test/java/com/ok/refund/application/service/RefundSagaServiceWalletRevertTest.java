@@ -183,6 +183,9 @@ class RefundSagaServiceWalletRevertTest {
             softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
             softly.assertThat(revert.getLastReason()).isEqualTo(RefundSagaService.RESULT_MISMATCH);
         });
+        // 회수 결과를 믿을 수 없어 주문은 되돌리지 않는다(#622)
+        then(orderRevertRequestPort).should(never()).requestRevert(any());
+        then(refundStepPersistencePort).should(never()).saveNew(any());
     }
 
     // 지갑은 같은 refundId에 첫 결과를 다시 보낸다. 끝난 회수 줄은 바꾸지 않는다
