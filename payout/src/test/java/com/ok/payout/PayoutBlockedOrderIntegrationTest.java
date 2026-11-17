@@ -678,27 +678,20 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].evidenceNow").isEmpty());
     }
 
+    // #291부터 원래 후보 없는 조정은 스냅샷에 넣지 않고 [정산-시스템문제] ERROR만 남김(PayoutService.createSnapshot 4))
+    //   예전에는 금액 검사가 "판정 불가" 초과 청구로 3번 실패시켜 막힌 주문 목록에 올렸으나, 지금은 정산 대상이 아니라 목록에 오르지 않음
     @Test
-    void 조정_후보만_있어_근거를_계산할_수_없는_주문은_근거가_비어_있다() throws Exception {
-        // given: 결제 기록은 있는데 원래 후보 없이 조정 후보만 있는 주문 → 금액 검사가 "판정 불가" 초과 청구로 3번 실패해 멈춤
+    void 조정_후보만_있는_주문은_정산_대상에서_빠져_막힌_주문_목록에_오르지_않는다() throws Exception {
+        // given: 결제 기록은 있는데 원래 후보 없이 조정 후보만 있는 주문
         long order = nextOrderId();
         insertAdjustmentCandidate(order, ORDER_ITEM_ID_SEQ.incrementAndGet(), 5_000L);
         givenDeduction(order, 30_000L);
-        runCompleted(3);
 
         // when
-        ResultActions sut = mockMvc.perform(
-                blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")));
+        runCompleted(3);
 
-        // then: 원인은 초과 청구지만 합계가 없어 막힌 순간·지금 근거 모두 없음
-        PayoutBlockedOrder blockedOrder = blockedOrderRepository.findById(order).orElseThrow();
-        assertThat(blockedOrder.getStatus()).isEqualTo(PayoutBlockedStatus.STOPPED);
-        assertThat(blockedOrder.getOverchargeEvidence()).isNull();
-        sut.andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].orderId").value(order))
-                .andExpect(jsonPath("$.content[0].reasons").value(contains("AMOUNT_MISMATCH")))
-                .andExpect(jsonPath("$.content[0].evidenceAtBlock").isEmpty())
-                .andExpect(jsonPath("$.content[0].evidenceNow").isEmpty());
+        // then
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
     }
 
     // ---------- 도우미 ----------

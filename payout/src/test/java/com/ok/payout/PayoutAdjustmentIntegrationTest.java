@@ -16,6 +16,7 @@ import com.ok.payout.application.port.in.PayoutUseCase;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.domain.PayoutFailure;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutPolicy;
@@ -49,9 +50,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
-import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -60,7 +59,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 // 통합 테스트: 관리자 조정(#291)을 API와 실제 정산 Job으로 확인
 //
-// [확인하는 것] (괄호는 #291 결정 번호, 근거는 my-notes/reviews/2026-11-16-291-타당성검토.md)
+// [확인하는 것] (괄호는 #291 결정 번호, 근거는 docs/decisions/payout/291-payout-admin-adjustment.md)
 //   - 조정 생성: 번호 1, 2…, 같은 조정 재전송·동시 요청은 409(3), 배송비는 422(6), 원래 후보 없으면 422(7), 판매자는 원래 후보에서 가져옴(7)
 //   - 조정은 원래 후보를 따라 정산됨(1): 원래가 대기 중이면 함께 기다리고, 이미 정산됐으면 다음 배치
 //   - 판매자 합계가 0원 이하면 보류하고 다음 매출에서 상계(2), 보류된 원래 후보는 조회 하한 밖으로 밀려도 다시 들어감(2)
@@ -88,7 +87,6 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
     private static final long ITEM_WITHOUT_ORIGINAL = 2_500_199L;
 
     private static final long SELLER = 2_501L;
-    private static final long OTHER_SELLER = 2_502L;
     private static final long BUYER = 2_510L;
     private static final long ADMIN = 1L;
     private static final String REASON = "금액 오입력 정정";
@@ -455,7 +453,7 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
     }
 
-    // 해결한 뒤에 넣은 조정은 확인한 조정이 아님 → 다시 초과 청구로 실패 (순서를 거꾸로 하면 한 번 더 해결해야 함)
+    // 해결한 뒤에 넣은 조정은 확인한 조정이 아님 → 다시 초과 청구로 실패 (다시 해결해도 확인이 되지 않아, 반대 금액 조정으로 상쇄한 뒤 순서대로 다시 넣어야 함)
     @Test
     void 해결한_뒤에_넣은_조정은_검사에_들어가지_않아_다시_초과_청구로_실패한다() throws Exception {
         // given: 3번 실패해 멈춘 주문을 먼저 해결
@@ -580,6 +578,25 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(later)))
                 .extracting(Payout::getPayeeId, Payout::getAmount)
                 .containsExactlyInAnyOrder(tuple(SELLER, 19_400L), tuple(null, 600L));
+    }
+
+    // 원래 후보 없는 조정(생성 API가 422로 막아 정상이면 없음, 그 전 데이터·SQL로 넣은 것)은 정산 대상에서 뺌
+    // 같은 주문에 다른 상품의 원래 후보가 있으면 합계가 있어 "판정 불가"로 안 걸리고, 확인 안 한 조정이라 검사 없이 지급되던 구멍을 막음
+    @Test
+    void 원래_후보_없는_조정은_같은_주문에_다른_상품이_있어도_정산하지_않는다() throws Exception {
+        // given: 주문 A 상품 A 판매 10,000(정산 대상) + 원래 후보가 없는 주문 항목의 +5,000 조정 (리포지토리로 직접 저장)
+        givenSale(ORDER_A, ITEM_A, SELLER, 10_000L);
+        backdateOriginals(ORDER_A, 16);
+        candidateRepository.save(PayoutCandidateItem.manualAdjustment(PayoutEventType.SALE_AMOUNT, ORDER_A, ITEM_WITHOUT_ORIGINAL,
+                SELLER, 5_000L, 1L, ADMIN, REASON));
+
+        // when
+        JobExecution sut = payoutJobRunner.runScheduled();
+
+        // then: 상품 A만 판매자 9,700 / 시스템 300 (조정 +5,000은 나가지 않음)
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(sut)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 9_700L), tuple(null, 300L));
     }
 
     // 대금만 −10,000 줄이면 합계는 30,000으로 맞지만 수수료 짝이 28,800 / 1,200 (판매 30,000의 수수료는 900) → 수수료 불일치

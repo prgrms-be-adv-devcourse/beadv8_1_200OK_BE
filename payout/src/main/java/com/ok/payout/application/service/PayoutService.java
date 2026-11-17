@@ -195,7 +195,8 @@ public class PayoutService implements PayoutUseCase {
 
         // 3) 판매자 합계가 0원 이하라 보류된 후보(#291 결정 2번)를 후보 생성 시각 하한 없이 다시 넣음
         //    commit이 그 판매자의 정산을 만들지 않고 후보를 남겨 둠. 하한이 올라가 기간 밖으로 밀려도 새 매출이 생긴 배치에서 함께 정산되게 하려는 것
-        //    예) 이미 9,700 지급된 판매자에게 −2,000 조정, 새 매출 없음 → 보류. 3일 뒤 하한 밖이어도 다시 넣어, 새 매출 5,000이 들어온 날 3,000 지급
+        //    예) 판매 1,000(대금 970) + −2,000 조정이 같은 배치 → −1,030 보류. 원래 970이 하한 밖으로 밀려도 다시 넣어, 새 매출 5,000(대금 4,850)이 들어온 날 3,820 지급
+        //      (원래가 이미 정산된 뒤 넣은 조정은 이 길이 아니라 4)의 "원래 정산됨"으로 다시 들어옴)
         //    대신 최근 스냅샷(하한 기준일 − 대기 일수 × 2 뒤)의 draft에서만 찾음: 보류된 후보는 배치마다 draft에 다시 오르므로 그 창 안에 있음 (PayoutPolicy.HELD_LOOKBACK_DAYS)
         //    멈춘 주문은 뺌: 빼지 않으면 #549 3번 멈춤을 이 길로 우회함. 잠긴 주문은 조회가 뺌
         for (PayoutCandidateItem candidate : payoutQueryRepository.findHeldCandidates(PayoutPolicy.heldLookbackFrom(from), to)) {
@@ -211,16 +212,24 @@ public class PayoutService implements PayoutUseCase {
         //      (잠긴 주문은 조회가 빼고, 멈춘 주문은 여기서 뺌)
         //    Job 도중 들어온 조정은 이 스냅샷 목록에 없어 다음 배치로 넘어감 (금액 검사도 같은 범위만 봄, PayoutQuerydslRepository.checkedCandidate)
         //    조정 조회에 상한(to)을 걸지 않는 것은 의도: to는 "15일 대기를 채운" 기준이라, 걸면 원래가 정산된 뒤 넣은 조정도 15일을 기다림
-        //      스냅샷 조회 시점까지 들어온 조정이 기준이고, 금액 검사는 이 목록과 같은 범위(이번 스냅샷·정산됨)를 봐 검사한 돈과 지급하는 돈이 같음
+        //      스냅샷 조회 시점까지 들어온 조정이 기준이고, 금액 검사는 이 목록과 같은 범위(이번 스냅샷·정산됨·원래와 함께 대기 중)를 봐 검사한 돈과 지급할 돈이 같음
+        //      예외: 판매자 합계 ≤ 0이라 commit에서 보류된 음수는 검사에는 들어가고 이번 지급에서는 빠짐 (다음 매출에서 상계, 회수 전까지 그 판매자가 더 받은 상태)
         for (AdjustmentCandidateRow row : payoutQueryRepository.findUnsettledAdjustments()) {
             PayoutCandidateItem adjustment = row.adjustment();
             if (stoppedOrderIds.contains(adjustment.getOrderId())) {
                 continue;
             }
-            // 원래 후보가 없는 조정(생성이 막아 정상이면 없음, 그 전 데이터·코드 버그)은 넣음: 금액 검사의 "판정 불가" 안전망이 실패로 잡아
-            //   3번이면 멈추고 관리자 목록에 보임 (빼면 기록 없이 영영 정산되지 않아 아무도 모름, PayoutAmountValidator ADJUSTMENT_ONLY)
-            boolean noOriginal = row.originalCandidateId() == null;
-            if (noOriginal || row.originalSettled() || candidateIds.contains(row.originalCandidateId())) {
+            // 원래 후보가 없는 조정(생성이 422로 막아 정상이면 없음, 그 전 데이터·SQL로 넣은 것·코드 버그)은 넣지 않고 시스템 문제로 알림
+            //   넣으면 같은 주문의 다른 상품에 원래 후보가 있을 때 확인 안 한 조정이라 합계에서 빠진 채 검사 없이 지급됨
+            //     (금액 검사의 "판정 불가"(ADJUSTMENT_ONLY)는 주문에 원래 후보가 하나도 없을 때만 걸려 이 경우를 못 잡음)
+            //   미정산이라 배치마다 다시 조회되어 고칠 때까지 같은 ERROR가 남음 (기록 없이 사라지지 않음). 관리자 목록에는 안 보임
+            //   멈추거나 잠긴 주문이면 위에서·조회가 빼서 로그도 끊기지만, 그때는 지급도 되지 않음
+            if (row.originalCandidateId() == null) {
+                log.error("[정산-시스템문제] 원래 정산후보 없는 조정이라 정산 대상에서 뺌. candidateId={}, orderId={}, orderItemId={}, eventType={}, adjustmentId={}",
+                        adjustment.getId(), adjustment.getOrderId(), adjustment.getOrderItemId(), adjustment.getEventType(), adjustment.getAdjustmentId());
+                continue;
+            }
+            if (row.originalSettled() || candidateIds.contains(row.originalCandidateId())) {
                 candidateIds.add(adjustment.getId());
                 candidates.add(adjustment);
             }
@@ -621,7 +630,7 @@ public class PayoutService implements PayoutUseCase {
             //   전에는 0원 이하 정산도 장부에 남기고 지갑으로만 보내지 않았음(#106) → 음수가 다음 정산에서 빠지지 않아 회수되지 않았음
             //     예) 이미 9,700 지급된 판매자에게 −2,000 조정, 새 매출 없음 → 장부 −2,000, 지갑 0 → 판매자는 9,700을 그대로 가짐
             //   보류하면 후보가 미정산(payout_item 없음)으로 남아 다음 배치에 다시 들어가고(createSnapshot 3)·4)), 새 매출이 생긴 날 함께 정산됨
-            //     예) 새 매출 5,000이 들어온 배치에서 5,000 − 2,000 = 3,000 지급
+            //     예) 새 매출 5,000(대금 4,850)이 들어온 배치에서 4,850 − 2,000 = 2,850 지급
             //   실패 기록은 남기지 않음: 실패로 남기면 #549 횟수에 세어 3번 뒤 멈추는데, 판매자 잘못이 아니라 매출을 기다리는 것뿐임
             //   draft 단계에서 빼지 않는 이유: 결과 검증(verify)이 "draft에 없는 스냅샷 후보"를 draft 누락으로 보고 주문을 잠금
             //   대가: 판매자가 더 팔지 않으면 음수는 회수되지 않음 (장부에는 정산 없이 후보로만 남음, 알고 감)

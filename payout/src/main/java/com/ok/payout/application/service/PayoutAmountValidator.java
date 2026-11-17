@@ -125,7 +125,8 @@ final class PayoutAmountValidator {
             //   그대로 꺼내면 NPE → validate 롤백 → 주문 하나 때문에 Job 전체가 FAILED (#557 리뷰)
             //   합계 0으로 보고 통과시키지 않고 금액 불일치로 빼는 이유: 원래 후보 없는 조정은 정상 경로에서 생기지 않는 상태라,
             //   검사할 기준이 없는 돈을 내보내는 것보다 빼 두는 편이 안전함. 횟수에 세어 3번이면 멈추고 관리자 목록(#301)으로 감
-            //   #291부터 조정 생성이 원래 후보가 없으면 거절해 정상 경로에서는 생기지 않음. 그 전 데이터나 코드 버그에 대비한 안전망으로 둠
+            //   #291부터 조정 생성이 원래 후보가 없으면 거절하고, 스냅샷도 원래 후보 없는 조정을 넣지 않음(ERROR 알림, PayoutService.createSnapshot 4)). 그래서 지금은 도달하지 않음
+            //   스냅샷에 넣는 조건이 바뀌거나 코드 버그로 들어올 때를 대비한 안전망으로 둠 (주문에 원래 후보가 하나도 없을 때만 걸림)
             Long total = input.candidateTotalsByOrder().get(orderId);
             if (total == null) {
                 for (PayoutCandidateItem candidate : orderTargets) {

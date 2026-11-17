@@ -203,23 +203,32 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 결과 검증으로 빠진 항목(#290)도 draft는 있고 정산은 없지만, 그 주문은 잠겨 lockedOrder가 뺌 (해결하면 다시 들어오는 것이 맞음)
     //   FAILED로 끝난 실행의 draft 후보도 여기서 다시 들어옴: 아직 정산 안 된 후보라 들어오는 것이 맞고, 금액 검사를 다시 거침
     // draft 항목에서 출발함 (payout/CLAUDE.md 규모 전제): 후보 생성 시각 하한이 없어 후보 쪽에서 출발하면 운영 이후 쌓인 후보를 매번 다 읽음
-    //   heldFrom 뒤에 만든 스냅샷의 draft 항목만 봄: 스냅샷 표는 실행마다 1줄이라 작고, draft 항목은 UK(snapshot_id, candidate_id) 앞자리로 그 스냅샷들만 읽음
+    //   heldFrom 뒤에 만든 스냅샷의 판매자 draft만 봄: 스냅샷 표는 실행마다 1줄이라 작고, 판매자 draft는 UK(snapshot_id, seller_id) 앞자리로 그 스냅샷들만 읽음
+    //   그중 그 (스냅샷, 판매자)에 정산(payout)이 없는 draft의 항목만 봄: 정상 정산된 판매자의 항목까지 다 읽지 않으려고 (payout UK(snapshot_id, payee_id))
+    //     payout이 없는 draft = 보류(합계 ≤ 0), 항목이 모두 결과 검증으로 빠짐(그 주문은 잠겨 아래 lockedOrder가 뺌), commit 전에 FAILED로 끝난 실행
+    //     draft의 amount ≤ 0으로 거르지 않는 이유: amount는 결과 검증으로 뺄 항목까지 더한 값이라, 빼고 나서 ≤ 0이 되어 보류된 판매자를 놓침
     //   보류된 후보는 배치마다 다시 들어가 draft까지 가므로 창 안의 draft에 남아 있음 (창 길이와 기준은 PayoutPolicy.HELD_LOOKBACK_DAYS)
     @Override
     public List<PayoutCandidateItem> findHeldCandidates(LocalDateTime heldFrom, LocalDateTime to) {
-        BooleanBuilder draftedInWindow = new BooleanBuilder();
+        BooleanBuilder heldDraft = new BooleanBuilder();
         if (heldFrom != null) {
-            draftedInWindow.and(payoutSellerDraftItem.snapshotId.in(JPAExpressions
+            heldDraft.and(payoutSellerDraft.snapshotId.in(JPAExpressions
                     .select(payoutSnapshot.id)
                     .from(payoutSnapshot)
                     .where(payoutSnapshot.createdAt.goe(heldFrom))));
         }
+        heldDraft.and(JPAExpressions.selectOne()
+                .from(payout)
+                .where(payout.snapshotId.eq(payoutSellerDraft.snapshotId),
+                        payout.payeeId.eq(payoutSellerDraft.sellerId))
+                .notExists());
         return queryFactory
                 .selectFrom(payoutCandidateItem)
                 .where(payoutCandidateItem.id.in(JPAExpressions
                                 .select(payoutSellerDraftItem.candidateId)
                                 .from(payoutSellerDraftItem)
-                                .where(draftedInWindow)),
+                                .join(payoutSellerDraftItem.sellerDraft, payoutSellerDraft)
+                                .where(heldDraft)),
                         payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
                         unsettledInPeriod(null, to),
                         lockedOrder().not())
@@ -232,11 +241,12 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     //   (기간으로 거르면 원래 9,700이 먼저 나가고 -2,000 조정만 15일 뒤 혼자 남아 회수가 어려워짐)
     // 원래 후보 = 같은 주문상품·종류의 adjustment_id = 0 후보 (UK order_item_id·event_type·adjustment_id라 최대 1건)
     //   조정 생성이 원래 후보가 없으면 거절해서(PayoutService.createAdjustment) 정상이면 늘 있음
-    //   없으면 원래 후보 ID를 null로 돌려줌(LEFT JOIN): 부르는 쪽이 스냅샷에 넣어 금액 검사의 "판정 불가" 안전망이 잡고 3번이면 멈춰 관리자 목록에 보이게 함
+    //   없으면 원래 후보 ID를 null로 돌려줌(LEFT JOIN): 부르는 쪽이 스냅샷에서 빼고 [정산-시스템문제] ERROR를 남겨 개발자가 고치게 함
     //     (INNER JOIN으로 빼면 그 조정은 아무 기록 없이 영영 정산되지 않아 아무도 모름)
     // 원래가 정산됐는지는 원래 후보의 payout_item으로 봄 (LEFT JOIN, candidate_id 유니크라 줄이 늘지 않음)
     // 잠긴 주문은 뺌: 원래가 잠겨 빠지면 조정만 따로 정산되면 안 됨. 멈춘 주문은 부르는 쪽이 뺌 (스냅샷의 다른 조회와 같음)
-    // 미정산 조정만 보므로 보통 몇 건뿐임 (조정은 관리자가 손으로 넣음). adjustment_id 인덱스(V202611171437)로 조정만 읽음 (원래 후보 전체를 훑지 않음)
+    // adjustment_id 인덱스(V202611171437)로 조정만 읽음 (원래 후보 전체를 훑지 않음). 단 정산이 끝난 조정까지 지금까지 넣은 조정은 모두 읽고 미정산은 줄마다 거름
+    //   조정은 관리자가 손으로 넣어 쌓이는 속도가 느려 알고 감. 크게 쌓였을 때의 시간은 #304에서 잼
     @Override
     public List<AdjustmentCandidateRow> findUnsettledAdjustments() {
         QPayoutCandidateItem original = new QPayoutCandidateItem("original");
@@ -1161,7 +1171,8 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 하한(f 이후)을 두는 이유: 금액 불일치가 나기 전에 다른 이유로 넣어 둔 조정은 관리자가 그 불일치를 보고 넣은 것이 아님
     //   대가: 관리자가 불일치 전에 미리 넣은 조정은 확인으로 세지 않아, 다시 실패하면 한 번 더 넣고 해결해야 함 (돈은 덜 나가는 쪽)
     // 해결 뒤 넣은 조정은 빠짐(엄격 비교 <): #552가 막은 "확인 안 한 조정이 불일치를 가림"이 해결 뒤에 다시 열리지 않게
-    //   순서를 거꾸로(해결 → 조정) 하면 다시 실패해 한 번 더 해결해야 함 (Spec에 "조정 먼저, 그다음 다시 처리"로 안내)
+    //   순서를 거꾸로(해결 → 조정) 하면 그 조정은 다시 해결해도 확인한 조정이 되지 않음: 다음 실패는 조정 뒤에 생겨 f ≤ 조정을 채울 짝이 없음
+    //     미리 넣은 조정과 같음. 한 번 더 넣으면 두 번 빠지므로 반대 금액 조정으로 상쇄한 뒤 순서대로 다시 넣음 (Spec에 안내, 사용자 결정으로 관리자 책임)
     // 해결 방법은 거르지 않음: 지금은 REPROCESS(다시 처리)만 있음. 다른 방법이 생기면 REPROCESS만 골라야 함
     // 바깥 쿼리의 payoutFailure·payoutFailureResolution과 섞이지 않게 별칭을 따로 둠
     private BooleanExpression confirmedAdjustment() {
