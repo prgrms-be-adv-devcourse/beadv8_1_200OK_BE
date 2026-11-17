@@ -2,7 +2,9 @@ package com.ok.member.member.adapter.out.persistence;
 
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 
 import java.util.Optional;
 
@@ -15,6 +17,11 @@ public interface MemberJpaRepository extends JpaRepository<Member, Long>, Member
     // 여기서 다시 선언해 하나로 합친다. 구현은 그대로 Spring Data 기본 구현이다
     @Override
     Optional<Member> findById(Long id);
+
+    // 포트의 선언만으로도 쿼리가 만들어져, 여기서 다시 선언하지 않으면 잠금 없는 조회로 오류 없이 돈다
+    @Override
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Member> findForUpdateById(Long id);
 
     @Override
     <S extends Member> S save(S member);

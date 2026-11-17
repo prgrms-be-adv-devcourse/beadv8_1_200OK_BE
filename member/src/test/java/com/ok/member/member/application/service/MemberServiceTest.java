@@ -18,18 +18,23 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
 
 @ExtendWith(MockitoExtension.class)
 class MemberServiceTest {
 
     private static final Long MEMBER_ID = 1L;
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-17T03:00:00Z"), ZoneId.of("Asia/Seoul"));
 
     @Mock
     MemberRepository memberRepository;
@@ -38,7 +43,54 @@ class MemberServiceTest {
 
     @BeforeEach
     void setUp() {
-        memberService = new MemberService(memberRepository);
+        memberService = new MemberService(memberRepository, CLOCK);
+    }
+
+    @Test
+    void 확인한_해시가_그대로면_비밀번호를_바꾸고_토큰_버전을_올린다() {
+        // given
+        Member sut = member(MemberStatus.ACTIVE);
+        given(memberRepository.findForUpdateById(MEMBER_ID)).willReturn(Optional.of(sut));
+
+        // when
+        memberService.changePassword(MEMBER_ID, "{bcrypt}encoded", "{bcrypt}new");
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getPassword()).isEqualTo("{bcrypt}new");
+            softly.assertThat(sut.getTokenVersion()).isEqualTo(1L);
+            softly.assertThat(sut.getTokenVersionChangedAt()).isEqualTo(LocalDateTime.now(CLOCK));
+        });
+    }
+
+    @Test
+    void 확인한_뒤_다른_요청이_비밀번호를_먼저_바꿨으면_PASSWORD_CHANGED_CONCURRENTLY를_던지고_바꾸지_않는다() {
+        // given: 이 요청이 bcrypt로 확인한 해시와 잠근 뒤 읽은 해시가 다르다
+        Member member = member(MemberStatus.ACTIVE);
+        given(memberRepository.findForUpdateById(MEMBER_ID)).willReturn(Optional.of(member));
+
+        // when & then
+        assertThatThrownBy(() -> memberService.changePassword(MEMBER_ID, "{bcrypt}old", "{bcrypt}new"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.PASSWORD_CHANGED_CONCURRENTLY));
+        assertSoftly(softly -> {
+            softly.assertThat(member.getPassword()).isEqualTo("{bcrypt}encoded");
+            softly.assertThat(member.getTokenVersion()).isZero();
+        });
+    }
+
+    @Test
+    void 탈퇴한_회원이면_비밀번호를_바꾸지_않고_MEMBER_NOT_FOUND를_던진다() {
+        // given
+        Member member = member(MemberStatus.WITHDRAWN);
+        given(memberRepository.findForUpdateById(MEMBER_ID)).willReturn(Optional.of(member));
+
+        // when & then
+        assertThatThrownBy(() -> memberService.changePassword(MEMBER_ID, "{bcrypt}encoded", "{bcrypt}new"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.MEMBER_NOT_FOUND));
+        assertThat(member.getTokenVersion()).isZero();
     }
 
     @Test

@@ -8,6 +8,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 import static jakarta.persistence.GenerationType.IDENTITY;
 
@@ -50,6 +51,19 @@ public class Member extends BaseTime {
 
     @Column(nullable = false)
     private LocalDateTime privacyAgreedAt;
+
+    /**
+     * 토큰 버전. 이 값보다 낮은 버전으로 발급된 Access Token과 Refresh Token은 거부된다(#561).
+     * 토큰을 지우는 대신 비교할 값을 올려 폐기하므로, 회원 쪽에서 인증 쪽 저장소를 건드리지 않아도 된다.
+     */
+    @Column(nullable = false)
+    private long tokenVersion;
+
+    /**
+     * 토큰 버전을 마지막으로 올린 시각. 한 번도 올리지 않았으면 null이다.
+     * 폐기 정보를 담는 캐시가 비었을 때 최근에 올린 회원만 골라 다시 채우는 기준이다.
+     */
+    private LocalDateTime tokenVersionChangedAt;
 
     private Member(String loginId, String password, String email, String name,
                    String nickname, MemberType type, LocalDateTime agreedAt) {
@@ -119,6 +133,21 @@ public class Member extends BaseTime {
     public void updateInfo(String name, String nickname) {
         this.name = name;
         this.nickname = nickname;
+    }
+
+    /**
+     * 비밀번호를 바꾸고 토큰 버전을 1 올린다.
+     * 비밀번호를 바꾸면 그 전에 발급된 토큰(다른 기기, 탈취된 토큰, 바꾼 본인의 토큰 모두)을 쓸 수 없어야 하므로 두 값을 함께 바꾼다.
+     *
+     * @param encodedPassword 인코딩된 비밀번호 (평문 금지)
+     * @param changedAt       변경 시각
+     */
+    public void changePassword(String encodedPassword, LocalDateTime changedAt) {
+        Objects.requireNonNull(encodedPassword, "encodedPassword는 null일 수 없습니다.");
+        Objects.requireNonNull(changedAt, "changedAt은 null일 수 없습니다.");
+        this.password = encodedPassword;
+        this.tokenVersion++;
+        this.tokenVersionChangedAt = changedAt;
     }
 
 }

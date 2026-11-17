@@ -100,4 +100,38 @@ class MemberTest {
         });
     }
 
+    @Test
+    void 새_회원은_토큰_버전이_0이고_변경_시각이_없다() {
+        // when
+        Member sut = Member.createUser("tester01", "{bcrypt}encoded", "tester@example.com",
+                "홍길동", "길동이", LocalDateTime.of(2026, 10, 19, 12, 0));
+
+        // then: 배포 전에 발급된(ver 클레임이 없는) 토큰을 0으로 보므로 시작 값도 0이어야 그 토큰이 거부되지 않는다
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getTokenVersion()).isZero();
+            softly.assertThat(sut.getTokenVersionChangedAt()).isNull();
+        });
+    }
+
+    @Test
+    void 비밀번호를_바꿀_때마다_토큰_버전이_1씩_오르고_마지막_변경_시각을_남긴다() {
+        // given
+        Member sut = Member.createUser("tester01", "{bcrypt}encoded", "tester@example.com",
+                "홍길동", "길동이", LocalDateTime.of(2026, 10, 19, 12, 0));
+        LocalDateTime secondChangedAt = LocalDateTime.of(2026, 11, 17, 12, 30);
+
+        // when
+        sut.changePassword("{bcrypt}first", LocalDateTime.of(2026, 11, 17, 12, 0));
+        sut.changePassword("{bcrypt}second", secondChangedAt);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getPassword()).isEqualTo("{bcrypt}second");
+            softly.assertThat(sut.getTokenVersion()).isEqualTo(2L);
+            softly.assertThat(sut.getTokenVersionChangedAt()).isEqualTo(secondChangedAt);
+        });
+    }
+
 }

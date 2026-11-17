@@ -2,6 +2,7 @@ package com.ok.member.member.adapter.in.web;
 
 import com.ok.member.member.adapter.in.web.dto.MemberInfoResponse;
 import com.ok.member.member.adapter.in.web.dto.MemberInfoUpdateRequest;
+import com.ok.member.member.adapter.in.web.dto.PasswordChangeRequest;
 import com.ok.member.member.adapter.in.web.dto.SignupRequest;
 import com.ok.member.member.adapter.in.web.dto.SignupResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -78,5 +79,33 @@ interface MemberControllerSpec {
     @ApiResponse(responseCode = "404", description = "회원이 없거나 탈퇴함")
     @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
     ResponseEntity<MemberInfoResponse> updateMyInfo(Long memberId, MemberInfoUpdateRequest request);
+
+    @Operation(
+            summary = "비밀번호 변경",
+            description = """
+                    현재 비밀번호를 확인하고 새 비밀번호로 바꿉니다. 새 비밀번호는 회원가입과 같은 규칙을 따릅니다.
+                    비밀번호를 바꾸면 그 전에 발급된 Access Token과 Refresh Token은 이 요청에 쓴 토큰까지 모두 거부되므로,
+                    성공 응답을 받으면 다시 로그인해야 합니다.
+                    """
+    )
+    @ApiResponse(responseCode = "204", description = "변경 성공. 다시 로그인해야 함")
+    // 400 안에서 잘못된 JSON과 현재 비밀번호 불일치를 구분해야 하므로 예시를 둔다
+    @ApiResponse(responseCode = "400", description = "현재 비밀번호 불일치, 또는 요청 본문을 읽을 수 없음 (잘못된 JSON 형식)",
+            content = @Content(mediaType = "application/problem+json",
+                    schema = @Schema(implementation = ProblemDetail.class),
+                    examples = @ExampleObject(name = "현재 비밀번호 불일치", value = """
+                            {
+                              "type": "https://api.example.com/problems/member/invalid-current-password",
+                              "title": "Invalid current password",
+                              "status": 400,
+                              "detail": "현재 비밀번호가 올바르지 않습니다.",
+                              "instance": "/api/v1/members/me/password"
+                            }
+                            """)))
+    @ApiResponse(responseCode = "401", description = "로그인 필요")
+    @ApiResponse(responseCode = "404", description = "회원이 없거나 탈퇴함")
+    @ApiResponse(responseCode = "409", description = "같은 회원의 다른 요청이 비밀번호를 먼저 바꿈")
+    @ApiResponse(responseCode = "422", description = "요청 값 검증 실패")
+    ResponseEntity<Void> changePassword(Long memberId, PasswordChangeRequest request);
 
 }

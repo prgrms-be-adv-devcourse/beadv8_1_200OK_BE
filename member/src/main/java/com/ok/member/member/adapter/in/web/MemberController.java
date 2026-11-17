@@ -3,15 +3,18 @@ package com.ok.member.member.adapter.in.web;
 import com.ok.common.security.CurrentMemberId;
 import com.ok.member.member.adapter.in.web.dto.MemberInfoResponse;
 import com.ok.member.member.adapter.in.web.dto.MemberInfoUpdateRequest;
+import com.ok.member.member.adapter.in.web.dto.PasswordChangeRequest;
 import com.ok.member.member.adapter.in.web.dto.SignupRequest;
 import com.ok.member.member.adapter.in.web.dto.SignupResponse;
 import com.ok.member.member.application.port.in.MemberInfoUseCase;
+import com.ok.member.member.application.port.in.MemberPasswordChangeUseCase;
 import com.ok.member.member.application.port.in.MemberSignupUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,6 +28,7 @@ public class MemberController implements MemberControllerSpec {
 
     private final MemberSignupUseCase memberSignupUseCase;
     private final MemberInfoUseCase memberInfoUseCase;
+    private final MemberPasswordChangeUseCase memberPasswordChangeUseCase;
 
     @Override
     @PostMapping("/signup")
@@ -48,6 +52,16 @@ public class MemberController implements MemberControllerSpec {
             @Valid @RequestBody MemberInfoUpdateRequest request
     ) {
         return ResponseEntity.ok(MemberInfoResponse.from(memberInfoUseCase.updateMyInfo(memberId, request.toCommand())));
+    }
+
+    @Override
+    @PatchMapping("/me/password")
+    public ResponseEntity<Void> changePassword(
+            @CurrentMemberId Long memberId,
+            @Valid @RequestBody PasswordChangeRequest request
+    ) {
+        memberPasswordChangeUseCase.changePassword(memberId, request.toCommand());
+        return ResponseEntity.noContent().build();
     }
 
 }

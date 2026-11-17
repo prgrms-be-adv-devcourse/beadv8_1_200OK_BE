@@ -12,6 +12,12 @@ public interface MemberRepository {
 
     Optional<Member> findById(Long id);
 
+    /**
+     * 회원을 쓰기 잠금으로 조회한다. 잠금은 호출한 트랜잭션이 끝날 때까지 유지된다.
+     * 같은 회원의 비밀번호 변경이 동시에 들어오면 뒤 요청이 앞 요청의 커밋을 기다렸다가 바뀐 해시를 읽게 한다.
+     */
+    Optional<Member> findForUpdateById(Long id);
+
     boolean existsByLoginId(String loginId);
 
     boolean existsByEmail(String email);
