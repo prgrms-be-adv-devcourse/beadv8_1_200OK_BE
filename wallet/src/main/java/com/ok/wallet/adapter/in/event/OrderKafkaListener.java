@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
 /**
  * 주문이 Kafka로 보내는 주문 생성을 받아 예치금으로 결제하고 결과를 Kafka로 보낸다.
  * 같은 주문이 여러 번 와도 서비스가 주문 ID로 한 번만 차감하고, 올 때마다 처음 결과를 다시 보낸다.
- * 전환 기간에는 Spring 수신부({@link OrderEventListener})도 함께 있다. 같은 처리 기록을 써서 어느 길로 와도 한 번만 차감한다.
  */
 @Component
 @RequiredArgsConstructor

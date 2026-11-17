@@ -149,17 +149,17 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void Spring_길로_결제한_주문이_Kafka로_와도_다시_차감하지_않고_처음_결과를_보낸다() {
-        // given: 전환 기간에 같은 주문이 Spring 이벤트로 먼저 처리됨
+    void Kafka로_받기_전에_결제한_주문이_Kafka로_와도_다시_차감하지_않고_처음_결과를_보낸다() {
+        // given: 배포 전 Spring 이벤트로 결제한 주문. 주문은 같은 주문을 Kafka로도 보내 왔고, 지갑의 새 그룹은 토픽을 처음부터 읽어 다시 받는다
         long buyerId = nextId();
         long orderId = nextId();
         charger.charge(buyerId, "pay-" + orderId, 10_000);
-        orderPaymentUseCase.pay(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        buyerWalletService.payForOrder(buyerId, orderId, 3_000L);
 
         // when
         orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
 
-        // then: 두 길이 같은 처리 기록을 써서 한 번만 차감된다
+        // then: 같은 처리 기록을 써서 한 번만 차감되고 처음 결과가 나간다
         assertThat(messagesFor(COMPLETED_TOPIC, orderId, 1)).singleElement().asString().contains("\"amount\":3000");
         assertThat(balanceOf(buyerId)).isEqualTo(7_000);
     }

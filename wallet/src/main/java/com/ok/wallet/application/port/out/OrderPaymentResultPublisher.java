@@ -6,8 +6,7 @@ import java.time.LocalDateTime;
 
 /**
  * 주문 결제 결과를 Kafka로 주문·정산에 알리는 출력 포트. 구현은 {@code adapter.out.event}에 있다.
- * Spring 이벤트 발행({@link WalletEventPublisher})과 나눈 이유: Spring은 결제와 같은 트랜잭션에서 발행해 커밋과 함께 전달되지만,
- * 이쪽은 결제를 커밋한 뒤 보내고 실패하면 예외로 같은 요청을 다시 받는다. 보내는 시점과 실패 처리가 다르다.
+ * 결제를 커밋한 뒤 보내고, 실패하면 예외로 같은 요청을 다시 받는다.
  */
 public interface OrderPaymentResultPublisher {
 
