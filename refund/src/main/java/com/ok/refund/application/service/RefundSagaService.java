@@ -639,6 +639,12 @@ public class RefundSagaService implements RefundSagaUseCase {
                         refundId, type, step.getAttemptCount());
                 return StepPrep.ENDED;
             }
+            // 이미 보낸 줄인데 처음 기다린 지 24시간이 지나 다시 집지 않고 늦은 결과만 기다리게 됐다(RefundStep.RESEND_LIMIT, #546)
+            if (step.getStatus() == RefundStepStatus.AWAITING_RESULT) {
+                log.warn("만료된 시도 중 줄이 다시 보내는 한도를 넘어 더 보내지 않고 늦은 결과만 기다림(확인 필요). refundId={}, step={}, awaitingSince={}",
+                        refundId, type, step.getAwaitingSince());
+                return StepPrep.BUSY;
+            }
             log.warn("시도 중인 채로 만료된 단계 줄을 다시 집음. refundId={}, step={}, attemptCount={}",
                     refundId, type, step.getAttemptCount());
             return StepPrep.CALL;

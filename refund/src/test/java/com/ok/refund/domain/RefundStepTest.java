@@ -477,6 +477,26 @@ class RefundStepTest {
         });
     }
 
+    // 다시 보내는 중 "결과 대기" 기록이 실패해 시도 중으로 만료된 줄. 처음 기다린 지 24시간이 지났으면 다시 집지 않는다(한도 우회 막기)
+    @Test
+    void 처음_기다린_지_24시간이_지난_만료된_시도_중_줄은_다시_집지_않고_늦은_결과만_기다린다() {
+        // given
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET_REVERT, RefundStepStatus.IN_PROGRESS,
+                1, NOW, null, NOW.minusHours(24), NOW.minusHours(25));
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getNextCheckAt()).isNull();
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
+        });
+    }
+
     // 예: 처음 기다린 지 23시간 59분. 한도 안이라 그대로 다시 보낸다
     @Test
     void 처음_기다린_지_24시간이_안_됐으면_한도로_멈추지_않고_다시_보낸다() {
