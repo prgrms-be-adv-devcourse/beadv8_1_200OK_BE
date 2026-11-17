@@ -1,6 +1,5 @@
 package com.ok.order.order.adapter.out.event;
 
-import com.ok.common.event.OrderCreatedEvent;
 import com.ok.common.event.OrderPaidEvent;
 import com.ok.order.order.application.dto.PaidItemMessage;
 import com.ok.order.order.application.dto.PaidOrderMessage;
@@ -34,18 +33,16 @@ class SpringOrderEventPublisherTest {
     @InjectMocks SpringOrderEventPublisher sut;
 
     @Test
-    void 주문_생성은_Spring_이벤트와_Kafka_outbox로_함께_보낸다() {
+    void 주문_생성은_Spring_이벤트_없이_Kafka_outbox로만_보낸다() {
         // when
         sut.publishOrderCreatedEvent(10L, 1L, 23_000L, "사과 외 1건");
 
         // then
-        ArgumentCaptor<OrderCreatedEvent> event = ArgumentCaptor.forClass(OrderCreatedEvent.class);
-        then(applicationEventPublisher).should().publishEvent(event.capture());
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         then(outboxRecorder).should().record(eq("order.order-created.v1"), eq("10"), payload.capture());
+        then(applicationEventPublisher).shouldHaveNoInteractions();
         JsonNode json = jsonMapper.readTree(payload.getValue());
         assertSoftly(softly -> {
-            softly.assertThat(event.getValue()).isEqualTo(new OrderCreatedEvent(10L, 1L, 23_000L));
             softly.assertThat(json.get("orderId").asLong()).isEqualTo(10L);
             softly.assertThat(json.get("buyerId").asLong()).isEqualTo(1L);
             softly.assertThat(json.get("totalAmount").asLong()).isEqualTo(23_000L);

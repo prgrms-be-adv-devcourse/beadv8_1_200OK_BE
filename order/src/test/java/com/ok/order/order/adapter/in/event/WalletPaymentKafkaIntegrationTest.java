@@ -1,11 +1,12 @@
 package com.ok.order.order.adapter.in.event;
 
-import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.order.OrderSchema;
+import com.ok.order.cart.application.service.CartService;
 import com.ok.order.order.application.service.OrderService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.SellerShippingFee;
+import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeProductPort;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -16,11 +17,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -29,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,6 +42,8 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
     private static final Long BUYER_ID = 9_602_001L;
     private static final Long SELLER_ID = 9_602_901L;
     private static final Long OPTION_ID = 9_602_601L;
+    // 장바구니에 같이 담겨 있지만 주문하지 않은 옵션. 결제 완료 뒤에도 장바구니에 남아야 한다
+    private static final Long NOT_ORDERED_OPTION_ID = 9_602_602L;
     // 다시 시도(1·2·4초)를 다 쓰고 기록될 때까지 넉넉히 기다린다
     private static final Duration WAIT_TIMEOUT = Duration.ofSeconds(30);
 
@@ -58,10 +60,7 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
     FakeProductPort fakeProductPort;
 
     @Autowired
-    ApplicationEventPublisher applicationEventPublisher;
-
-    @Autowired
-    TransactionTemplate transactionTemplate;
+    CartService cartService;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -74,7 +73,7 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         missingOrderKey = "missing-" + UUID.randomUUID();
     }
 
-    // 통합 테스트는 롤백되지 않아 이 클래스가 만든 주문과 실패 기록을 지운다
+    // 통합 테스트는 롤백되지 않아 이 클래스가 만든 주문·장바구니와 실패 기록을 지운다
     @AfterEach
     void tearDown() {
         fakeProductPort.clear();
@@ -88,23 +87,33 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_seller_group WHERE order_id IN ("
                 + orders + ")", BUYER_ID);
         jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?", BUYER_ID);
+        jdbcTemplate.update("DELETE ci FROM " + OrderSchema.NAME + ".cart_item ci JOIN " + OrderSchema.NAME
+                + ".cart c ON ci.cart_id = c.id WHERE c.member_id = ?", BUYER_ID);
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".cart WHERE member_id = ?", BUYER_ID);
     }
 
     @Test
-    void 결제_완료를_Kafka로_받으면_주문이_결제_완료된다() {
+    void 결제_완료를_Kafka로_받으면_주문이_결제_완료되고_주문한_옵션만_장바구니에서_빠진다() {
         // given
+        cartService.addItem(BUYER_ID, OPTION_ID, 1);
+        cartService.addItem(BUYER_ID, NOT_ORDERED_OPTION_ID, 1);
         Long orderId = savedOrder();
 
         // when
         send(WalletTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(orderId), completed(orderId));
 
-        // then
+        // then: 장바구니 정리는 결제 완료와 한 트랜잭션이라 PAID가 보이면 함께 끝나 있다
         assertThat(waitFor(() -> "PAID".equals(statusOf(orderId)))).isTrue();
+        assertSoftly(softly -> {
+            softly.assertThat(itemStatuses(orderId)).containsOnly("PREPARING");
+            softly.assertThat(cartOptionIds()).containsExactly(NOT_ORDERED_OPTION_ID);
+        });
     }
 
     @Test
-    void 결제_실패를_Kafka로_받으면_결제_실패로_바뀌고_재고를_푼다() {
+    void 결제_실패를_Kafka로_받으면_결제_실패로_바뀌고_재고를_풀고_장바구니는_그대로다() {
         // given
+        cartService.addItem(BUYER_ID, OPTION_ID, 1);
         Long orderId = savedOrder();
 
         // when
@@ -115,7 +124,45 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         assertThat(waitFor(() -> fakeProductPort.releasedOrderIds().contains(orderId))).isTrue();
         assertSoftly(softly -> {
             softly.assertThat(statusOf(orderId)).isEqualTo("PAYMENT_FAILED");
+            softly.assertThat(itemStatuses(orderId)).containsOnly("PAYMENT_FAILED");
             softly.assertThat(stockReleasedAt(orderId)).isNotNull();
+            softly.assertThat(cartOptionIds()).containsExactly(OPTION_ID);
+        });
+    }
+
+    // 결제 실패와 재고 해제 HTTP가 한 트랜잭션에 묶이면 해제 응답을 기다리는 동안 주문 행 잠금과 커넥션을 쥔다.
+    // 해제를 받는 순간 다른 연결로 주문 상태를 읽어, 결제 실패가 이미 커밋된 뒤 해제를 부르는지 본다(#657)
+    @Test
+    void 결제_실패는_재고_해제를_부르기_전에_커밋된다() {
+        // given
+        Long orderId = savedOrder();
+        AtomicReference<String> statusAtRelease = new AtomicReference<>();
+        fakeProductPort.beforeRelease(released -> statusAtRelease.set(statusOf(released)));
+
+        // when
+        send(WalletTopics.WALLET_PAYMENT_FAILED, String.valueOf(orderId), failed(orderId));
+
+        // then
+        assertThat(waitFor(() -> fakeProductPort.releasedOrderIds().contains(orderId))).isTrue();
+        assertThat(statusAtRelease.get()).isEqualTo("PAYMENT_FAILED");
+    }
+
+    // 결제 실패를 먼저 커밋하므로 재고 해제가 실패해도 결제 실패는 남고, 해제는 정리 스케줄러가 다시 한다(#657)
+    @Test
+    void 결제_실패_처리_중_재고_해제가_실패해도_결제_실패는_남고_해제는_재처리_대상이_된다() {
+        // given
+        Long orderId = savedOrder();
+        fakeProductPort.failReleaseWith(OrderErrorCode.PRODUCT_API_FAILED);
+
+        // when
+        RecordMetadata sent = send(WalletTopics.WALLET_PAYMENT_FAILED, String.valueOf(orderId), failed(orderId));
+
+        // then
+        assertThat(waitFor(() -> consumedPast(sent))).isTrue();
+        assertSoftly(softly -> {
+            softly.assertThat(statusOf(orderId)).isEqualTo("PAYMENT_FAILED");
+            softly.assertThat(stockReleasedAt(orderId)).isNull();
+            softly.assertThat(fakeProductPort.releasedOrderIds()).doesNotContain(orderId);
         });
     }
 
@@ -140,19 +187,20 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    // 지갑은 결제 만료 요청의 답이나 재전달로 같은 결과를 다시 보낼 수 있다.
+    // 두 번이 동시에 오는 경우는 이 테스트 범위 밖이다(같은 키라 한 파티션에서 차례로 처리된다)
     @Test
-    void 같은_결제_완료를_Spring과_Kafka로_한_번씩_받아도_한_번만_반영한다() {
-        // given: 지갑 전환 기간에는 같은 결과가 Spring 이벤트로 먼저 와서 결제 완료된 상태다
+    void 같은_결제_완료를_Kafka로_두_번_받아도_한_번만_반영한다() {
+        // given
         Long orderId = savedOrder();
-        transactionTemplate.executeWithoutResult(status -> applicationEventPublisher.publishEvent(
-                new WalletPaymentCompletedEvent(orderId, BUYER_ID, 23_000L, LocalDateTime.of(2026, 11, 16, 10, 0))));
+        send(WalletTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(orderId), completed(orderId));
         assertThat(waitFor(() -> "PAID".equals(statusOf(orderId)))).isTrue();
         LocalDateTime paidUpdatedAt = updatedAtOf(orderId);
 
         // when
         RecordMetadata sent = send(WalletTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(orderId), completed(orderId));
 
-        // then: Kafka 결과를 처리하고 오프셋까지 넘겼지만 주문은 다시 바뀌지 않았다
+        // then: 두 번째 결과를 처리하고 오프셋까지 넘겼지만 주문은 다시 바뀌지 않았다(결제 완료 이벤트도 다시 나가지 않는다)
         assertThat(waitFor(() -> consumedPast(sent))).isTrue();
         assertSoftly(softly -> {
             softly.assertThat(statusOf(orderId)).isEqualTo("PAID");
@@ -162,6 +210,10 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
 
     private Map<String, Object> completed(Long orderId) {
         return Map.of("orderId", orderId, "buyerId", BUYER_ID, "amount", 23_000L, "paidAt", "2026-11-16T10:00:00");
+    }
+
+    private Map<String, Object> failed(Long orderId) {
+        return Map.of("orderId", orderId, "buyerId", BUYER_ID, "reason", "INSUFFICIENT_BALANCE");
     }
 
     private RecordMetadata send(String topic, String key, Map<String, Object> message) {
@@ -187,6 +239,17 @@ class WalletPaymentKafkaIntegrationTest extends AbstractIntegrationTest {
     private String statusOf(Long orderId) {
         return jdbcTemplate.queryForObject("SELECT status FROM " + OrderSchema.NAME + ".orders WHERE id = ?",
                 String.class, orderId);
+    }
+
+    private List<String> itemStatuses(Long orderId) {
+        return jdbcTemplate.queryForList("SELECT oi.status FROM " + OrderSchema.NAME + ".order_item oi JOIN "
+                + OrderSchema.NAME + ".order_seller_group g ON oi.seller_group_id = g.id WHERE g.order_id = ?",
+                String.class, orderId);
+    }
+
+    private List<Long> cartOptionIds() {
+        return jdbcTemplate.queryForList("SELECT ci.product_option_id FROM " + OrderSchema.NAME + ".cart_item ci JOIN "
+                + OrderSchema.NAME + ".cart c ON ci.cart_id = c.id WHERE c.member_id = ?", Long.class, BUYER_ID);
     }
 
     private LocalDateTime updatedAtOf(Long orderId) {

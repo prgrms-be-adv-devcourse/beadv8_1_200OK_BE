@@ -1,7 +1,6 @@
 package com.ok.order.order.adapter.in.web;
 
 import com.jayway.jsonpath.JsonPath;
-import com.ok.common.event.OrderCreatedEvent;
 import com.ok.order.OrderSchema;
 import com.ok.order.cart.application.service.CartService;
 import com.ok.order.order.application.dto.ProductOption;
@@ -21,8 +20,6 @@ import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.event.ApplicationEvents;
-import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -44,10 +41,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 주문 생성 API를 보안 필터부터 DB 저장, 주문 생성 이벤트 발행(Spring 이벤트와 Kafka, #602)까지 실제 경로로 확인한다.
-// 상품·배송·지갑 HTTP 호출은 testsupport의 Fake가 대신한다. 결제 결과를 받은 뒤의 흐름은 OrderModuleTest가 확인한다.
-// 헥사고날 구조 전환 전후에 같은 결과가 나오는지 보는 기준이 되도록 API 요청과 DB·이벤트 결과만 본다.
-@RecordApplicationEvents
+// 주문 생성 API를 보안 필터부터 DB 저장, 지갑에 보내는 주문 생성 메시지(Kafka, #602)까지 실제 경로로 확인한다.
+// 상품·배송·지갑 HTTP 호출은 testsupport의 Fake가 대신한다. 결제 결과를 받은 뒤의 흐름은 WalletPaymentKafkaIntegrationTest가 확인한다.
+// 헥사고날 구조 전환 전후에 같은 결과가 나오는지 보는 기준이 되도록 API 요청과 DB·메시지 결과만 본다.
 class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
 
     // 다른 테스트와 데이터가 겹치지 않게 이 클래스 전용 번호를 쓴다
@@ -74,9 +70,6 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
-
-    @Autowired
-    ApplicationEvents events;
 
     @Autowired
     CartService cartService;
@@ -125,7 +118,7 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 장바구니에_담은_상품으로_주문하면_결제_대기로_저장되고_주문_생성_이벤트와_메시지가_나간다() throws Exception {
+    void 장바구니에_담은_상품으로_주문하면_결제_대기로_저장되고_주문_생성_메시지가_나간다() throws Exception {
         // when
         Long orderId = orderId(createOrder("key-created").andExpect(status().isCreated()));
 
@@ -136,7 +129,6 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
         Map<String, Object> item = jdbcTemplate.queryForMap("SELECT oi.product_option_id, oi.quantity, oi.unit_price, "
                 + "oi.status, g.seller_id, g.shipping_fee, g.remote_area_fee FROM " + OrderSchema.NAME + ".order_item oi JOIN "
                 + OrderSchema.NAME + ".order_seller_group g ON oi.seller_group_id = g.id WHERE g.order_id = ?", orderId);
-        List<OrderCreatedEvent> createdEvents = events.stream(OrderCreatedEvent.class).toList();
         List<String> createdMessages = orderCreatedReader.readValuesFor(String.valueOf(orderId), READ_DURATION);
 
         assertThat(order).isNotNull();
@@ -159,7 +151,6 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(((Number) item.get("remote_area_fee")).longValue()).isEqualTo(REMOTE_AREA_FEE);
             softly.assertThat(countConsents(orderId)).isEqualTo(1);
             softly.assertThat(fakeProductPort.allocatedOrderIds()).containsExactly(orderId);
-            softly.assertThat(createdEvents).containsExactly(new OrderCreatedEvent(orderId, BUYER_ID, TOTAL_AMOUNT));
             softly.assertThat(createdMessages).hasSize(1);
         });
         JsonNode message = jsonMapper.readTree(createdMessages.get(0));
@@ -184,12 +175,12 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(secondOrderId).isEqualTo(firstOrderId);
             softly.assertThat(countOrders()).isEqualTo(1);
             softly.assertThat(fakeProductPort.allocatedOrderIds()).containsExactly(firstOrderId);
-            softly.assertThat(events.stream(OrderCreatedEvent.class).count()).isEqualTo(1);
+            softly.assertThat(countCreatedOutbox(firstOrderId)).isEqualTo(1);
         });
     }
 
     @Test
-    void 재고_선점이_실패하면_주문이_취소로_남고_주문_생성_이벤트와_메시지는_나가지_않는다() throws Exception {
+    void 재고_선점이_실패하면_주문이_취소로_남고_주문_생성_메시지는_나가지_않는다() throws Exception {
         // given
         fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
 
@@ -211,7 +202,6 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(order.get("idempotency_key")).isNull();
             softly.assertThat(itemStatuses).containsOnly("CANCELED");
             softly.assertThat(fakeProductPort.releasedOrderIds()).containsExactly(orderId);
-            softly.assertThat(events.stream(OrderCreatedEvent.class).count()).isZero();
             softly.assertThat(orderCreatedReader.readValuesFor(String.valueOf(orderId), READ_DURATION)).isEmpty();
         });
     }
@@ -275,6 +265,13 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     private Integer countOrders() {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?",
                 Integer.class, BUYER_ID);
+    }
+
+    // 커밋 직후 발송은 다른 스레드라 Kafka에서 건수를 세면 기다리는 시간에 흔들려, 저장된 outbox 줄 수로 센다
+    private Integer countCreatedOutbox(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + OrderSchema.NAME
+                + ".order_outbox WHERE topic = ? AND message_key = ?", Integer.class, ORDER_CREATED_TOPIC,
+                String.valueOf(orderId));
     }
 
     private Integer countConsents(Long orderId) {

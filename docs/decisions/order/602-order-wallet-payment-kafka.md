@@ -1,10 +1,10 @@
 ---
 issue: 602
 module: order
-summary: 주문 생성(결제 요청)을 Kafka로도 보내고(orderSummary 추가) 지갑의 결제 결과를 Kafka로도 받으며, 지갑이 Kafka로 옮길 때까지 Spring 길을 함께 둬 머지 순서와 관계없이 결제가 멈추지 않게 함
-status: 진행 중
+summary: 주문 생성(결제 요청)을 Kafka로 보내고(orderSummary 추가) 지갑의 결제 결과를 Kafka로 받음. 지갑이 옮길 때까지 Spring 길을 함께 뒀다가 지갑 #640 머지 뒤 지움
+status: 확정
 date: 2026-11-16
-paths: [order/src/main/java/com/ok/order/order/adapter/out/event/SpringOrderEventPublisher.java, order/src/main/java/com/ok/order/order/adapter/in/event/WalletPaymentKafkaListener.java, order/src/main/java/com/ok/order/order/adapter/in/event/WalletPaymentEventListener.java, order/src/main/java/com/ok/order/order/domain/Order.java]
+paths: [order/src/main/java/com/ok/order/order/adapter/out/event/SpringOrderEventPublisher.java, order/src/main/java/com/ok/order/order/adapter/in/event/WalletPaymentKafkaListener.java, order/src/main/java/com/ok/order/order/domain/Order.java]
 related: [666, 640, 648, 657, 656, 599, 343]
 ---
 
@@ -43,5 +43,16 @@ related: [666, 640, 648, 657, 656, 599, 343]
 
 - 지갑 #640이 머지되면 지갑은 쌓인 `order.order-created.v1`를 처음부터 읽는다. 이미 Spring으로 처리한 주문은 다시 차감하지 않고 처음 결과를 Kafka로 다시 보내고, 주문은 같은 결과라 무시한다. Spring으로 처리 못 한 주문이 그사이 정리로 취소됐다면 `[ORDER_PAID_AFTER_CANCELED]`가 남는다(지금도 있는 위험, #656에서 닫는다).
 - 같은 결제 실패가 두 길로 오면 재고 해제가 두 번 불린다. 상품의 해제는 여러 번 불러도 결과가 같다(#605, #657).
-- 후속 PR에서 지울 것: `SpringOrderEventPublisher.publishOrderCreatedEvent`의 Spring 발행, `WalletPaymentEventListener`(둘 다 `TODO(#602)`). 지우기 전에 지운 리스너 앞 `event_publication` 미완료가 0건인지 확인한다. `OrderModuleTest`의 Spring 결제 결과 시나리오는 Kafka 통합 테스트로 옮긴다.
+- 지운 리스너(`WalletPaymentEventListener`) 앞으로 남은 `event_publication` 미완료가 있으면 Modulith가 다시 보낼 곳이 없다. 배포 전에 0건인지 확인한다. 남았다면 그 주문은 결제 만료 요청(#656)으로 지갑에 결과를 다시 받는다.
 - 메시지 필드는 지갑과의 약속이다. 바꾸면 지갑 DTO(`OrderCreatedMessage`, `WalletPayment*Message`)도 같이 바꿔야 한다.
+
+## 후속: Spring 길 삭제
+
+지갑 #640(주문 생성을 Kafka로만 받고 결과를 Kafka로만 보냄)과 #705(결제 만료 요청 수신)가 머지돼, 주문의 Spring 길이 더는 쓰이지 않는다.
+
+| 결정 | 선택 | 이유 |
+|---|---|---|
+| 주문 생성 | Spring `OrderCreatedEvent` 발행을 지우고 outbox(Kafka)로만 보냄 | 받는 쪽이 없다. 남겨 두면 비동기 실행기에 할 일만 쌓는다(2차 부하테스트에서 대기열이 차 커넥션 풀이 멈춘 원인 중 하나) |
+| 결제 결과 | `WalletPaymentEventListener`를 지우고 `WalletPaymentKafkaListener`만 둠 | 지갑이 Spring 이벤트를 더 보내지 않는다 |
+| 결제 결과 이후 흐름 테스트 | `OrderModuleTest`(Spring 이벤트로 결과를 넣던 모듈 테스트)를 지우고 시나리오를 `WalletPaymentKafkaIntegrationTest`로 옮김 | 장바구니 정리, 결제 실패 커밋 뒤 재고 해제(#657), 해제 실패 시 재처리 대상, 같은 결과 두 번은 Kafka로도 그대로 확인된다. 결제 완료 이벤트(배송용)의 내용은 `SpringOrderEventPublisherTest`가 확인하고 #603에서 Kafka로 바뀐다 |
+| 공용 이벤트 클래스 | `OrderCreatedEvent`, `WalletPayment*Event`는 `common`에 그대로 둠 | 다른 모듈이 아직 참조할 수 있고, 삭제는 #343에서 한꺼번에 한다 |

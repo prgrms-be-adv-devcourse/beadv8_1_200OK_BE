@@ -10,8 +10,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 지갑이 Kafka로 보내는 결제 완료·실패를 받는다(#602).
- * 지갑이 Kafka로 옮기는 동안(#640 머지 전후)에는 Spring 수신부({@link WalletPaymentEventListener})도 함께 있다.
- * 같은 결과가 두 길로 와도 결제 완료·실패 처리가 주문 상태를 보고 두 번째는 무시하므로 한 번만 반영된다.
+ * 지갑은 같은 주문에 처음 결과를 다시 보낼 수 있다(재전달, 결제 만료 요청의 답).
+ * 결제 완료·실패 처리가 주문 상태를 보고 결제 대기가 아니면 무시하므로 한 번만 반영된다.
  * <p>
  * 리스너에 {@code @Transactional}을 붙이지 않는다. 결제 실패는 서비스가 자기 트랜잭션으로 먼저 커밋한 뒤 재고 해제 HTTP를 부른다(#657).
  * 처리 중 예외는 주문 오류 처리기({@link OrderKafkaConsumerConfig})가 다시 시도한 뒤 실패 기록 표에 남긴다.
