@@ -144,6 +144,14 @@ public class BuyerWalletService implements BuyerWalletUseCase {
     }
 
     /**
+     * 이미 처리한 주문 결제의 처음 결과를 찾는다. 처리 기록은 한 번 남으면 바뀌지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public Optional<OrderPaymentResult> findProcessedOrderPayment(Long orderId) {
+        return walletOrderPaymentRepository.findByOrderId(orderId).map(OrderPaymentResult::alreadyProcessed);
+    }
+
+    /**
      * 환불이 승인한 금액을 구매자 지갑에 돌려주고, 지갑의 반환 처리 결과를 기록한다.
      * 같은 환불이 다시 오면 처음 결과(돌려줌·거절)를 그대로 돌려주고 아무것도 바꾸지 않는다. 금액이 달라도 처음 기록이 기준이다.
      * 그 주문·구매자의 성공한 결제가 없거나, 같은 주문의 반환 합계가 결제 금액을 넘으면 돌려주지 않고 거절로 기록한다.

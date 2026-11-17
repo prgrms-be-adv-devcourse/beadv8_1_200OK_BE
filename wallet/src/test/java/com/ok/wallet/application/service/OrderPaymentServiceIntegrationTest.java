@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -43,6 +45,9 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    TransactionTemplate transactionTemplate;
 
     @Autowired
     ConsumerFactory<?, ?> consumerFactory;
@@ -175,6 +180,40 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("주문 ID와 구매자 ID는 필수입니다. command=" + command);
         assertThat(countPaymentRecords(orderId)).isZero();
+    }
+
+    @Test
+    void 이미_결제한_주문이_금액_0_이하로_다시_와도_차감하지_않고_처음_결과를_보낸다() {
+        // given
+        long buyerId = nextId();
+        long orderId = nextId();
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+
+        // when: 금액이 빠진 채 같은 주문이 다시 옴
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 0L));
+
+        // then: 처리할 수 없는 요청 실패가 아니라 처음 결과(결제 완료)를 다시 보낸다
+        List<String> messages = messagesFor(COMPLETED_TOPIC, orderId, 2);
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(1)).isEqualTo(messages.get(0));
+        assertThat(balanceOf(buyerId)).isEqualTo(7_000);
+    }
+
+    @Test
+    void 트랜잭션_안에서_부르면_결제하지_않고_예외가_난다() {
+        // given: 트랜잭션 안에서 부르면 커밋 전에 결과를 보내게 된다
+        long buyerId = nextId();
+        long orderId = nextId();
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
+        OrderPaymentCommand command = new OrderPaymentCommand(orderId, buyerId, 3_000L);
+
+        // when & then
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(
+                status -> orderPaymentUseCase.payAndSendResult(command)))
+                .isInstanceOf(IllegalTransactionStateException.class);
+        assertThat(countPaymentRecords(orderId)).isZero();
+        assertThat(balanceOf(buyerId)).isEqualTo(10_000);
     }
 
     private List<String> messagesFor(String topic, long orderId, int expectedCount) {
