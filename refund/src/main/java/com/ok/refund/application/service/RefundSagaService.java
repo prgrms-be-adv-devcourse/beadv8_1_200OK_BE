@@ -49,7 +49,8 @@ import java.util.function.Supplier;
  * 지갑 완료: 읽어서 거르기(읽기 구간) → 자기 행을 잠그고 지갑 줄 성공·재고 줄 시작(구간) → 재고 복구(구간 밖, 단계 실행 틀 {@link #runStep})
  * → 자기 행을 잠그고 재고 줄 성공과 완료(구간)로 나뉜다(#544).
  * 지갑 실패: 읽어서 거르기 → 자기 행을 잠그고 지갑 줄을 멈춤으로 기록(구간)이다. 거르는 판단은 단계 진행 표를 본다(#574).
- * 회수(#546): 재고가 다시 해도 같은 이유로 거절되면 재고 줄을 멈춘 구간에서 회수 줄을 할 차례로 만들고, 알람이 회수 요청을 보낸다.
+ * 회수(#546): 재고가 다시 해도 같은 이유로 거절되면 재고 줄을 멈춘 구간에서 회수 줄을 시도 중으로 만들고, 커밋 뒤 바로 Kafka로 회수를 요청한다.
+ * 발행이 실패하거나 답이 늦으면 알람이 다시 보낸다.
  * 회수 결과(다시 가져옴·실패)는 자기 행을 잠그고 회수 줄에 남긴다(구간 하나). 주문 되돌리기(#622) 전이라 환불은 처리 중으로 남고 사람이 본다.
  * 걸러 넘기는 경우는 예외를 던지지 않는다. 던지면 메시지 오류 처리기가 같은 메시지를 다시 시도해 줄만 막힌다.
  * 지갑 결과를 잠그지 않고 먼저 읽는 이유: 재고 복구(상품 HTTP) 동안 행 잠금을 쥐지 않으려는 것이고,
@@ -242,11 +243,18 @@ public class RefundSagaService implements RefundSagaUseCase {
         return current;
     }
 
-    // 지갑에 돈 다시 가져오기(회수) 요청을 발행하고 회수 줄을 결과 대기로 바꾼다(#546). 회수 줄은 부르는 쪽(resumeStep)이 이미 "시도 중"으로 준비해 두었다.
+    // 알람이 회수 줄을 다시 집었을 때(앞선 발행 실패, 결과 대기 시간 초과, 시도 중 만료) 회수 요청을 다시 보낸다
+    private RefundResult publishWalletRevert(Long refundId, Refund refund, RefundResult current) {
+        sendWalletRevert(refundId, refund);
+        return current;
+    }
+
+    // 지갑에 돈 다시 가져오기(회수) 요청을 Kafka로 발행하고 회수 줄을 결과 대기로 바꾼다(#546). 회수 줄은 부르는 쪽이 이미 "시도 중"으로 준비해 두었다
+    // (처음은 재고 거절을 기록한 구간이 만들고, 다시 보낼 때는 resumeStep이 준비한다).
     // 반환 요청 발행(publishWallet)과 같은 틀이다. 발행이 실패하면 틀(runStep)이 회수 줄을 할 차례로 돌려 알람이 다시 보내고(5번까지),
     // 결과를 5분 기다려도 오지 않으면 같은 refundId로 다시 보낸다(#577 규칙, 지갑이 refundId로 한 번만 가져옴).
     // 보내는 금액·구매자는 반환 요청과 같은 출처(환불 행)에서 꺼낸다. 지갑 완료는 이 값과 같을 때만 받았으므로 돌려준 금액과 같다
-    private RefundResult publishWalletRevert(Long refundId, Refund refund, RefundResult current) {
+    private void sendWalletRevert(Long refundId, Refund refund) {
         requireNext(refund, RefundSagaPlan.Event.WALLET_REVERT_PUBLISHED, RefundSagaPlan.Action.WAIT);
         runStep(refundId, RefundStepType.WALLET_REVERT, () -> {
             walletRefundRequestPort.requestRevert(new WalletRevertRequest(
@@ -263,7 +271,6 @@ public class RefundSagaService implements RefundSagaUseCase {
         // 사람에게 알리는 일은 멈춘 환불 찾기가 맡는다(멈춘 재고 줄)
         log.info("지갑에 돈 다시 가져오기를 요청함. refundId={}, orderId={}, amount={}",
                 refundId, refund.getOrderId(), refund.getRefundAmount());
-        return current;
     }
 
     // 재고를 되돌린다. 재고 줄은 부르는 쪽이 이미 "시도 중"으로 준비해 두었다. 다음 할 일(완료)은 계획에 확인한다
@@ -968,8 +975,23 @@ public class RefundSagaService implements RefundSagaUseCase {
         try {
             return call.get();
         } catch (RuntimeException e) {
-            recordFailureKeepingCause(refundId, step, e);
+            Refund revertTarget = recordFailureKeepingCause(refundId, step, e);
+            // 재고 거절로 회수 줄을 만들었으면 기록이 커밋된 뒤 바로 Kafka로 회수를 요청한다(#546).
+            // 재고 거절이 나는 두 입구(지갑 완료 수신, 알람)가 모두 이 틀을 거치므로 보내는 코드는 여기 한 곳이다
+            if (revertTarget != null) {
+                sendWalletRevertRightAway(refundId, revertTarget);
+            }
             throw e;
+        }
+    }
+
+    // 회수 요청을 바로 보낸다. 실패해도 원래 재고 실패를 그대로 올린다(부르는 쪽 응답·로그는 재고 실패 기준이라).
+    // 발행 실패는 회수 줄에 이미 기록됐다(할 차례 → 알람이 다시 보냄, 5번 다 쓰면 멈춤). 여기서는 WARN만 남긴다
+    private void sendWalletRevertRightAway(Long refundId, Refund refund) {
+        try {
+            sendWalletRevert(refundId, refund);
+        } catch (RuntimeException sendError) {
+            log.warn("재고 거절 뒤 회수 요청을 바로 보내지 못함. 회수 줄에 기록했고 알람이 다시 보냄. refundId={}", refundId, sendError);
         }
     }
 
@@ -988,14 +1010,16 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 대신 기록이 없으면 처리 중인 건과 멈춘 건이 구분되지 않아 운영자가 놓치므로, 기록 실패는 원래 예외에 붙이고 ERROR로 남긴다.
     // 원래 예외가 RestApiException(*_API_FAILED 등)이면 ApiControllerAdvice가 응답만 만들고 로그를 남기지 않아, 이 로그가 기록 실패의 유일한 흔적이다.
     // 원래 예외가 그 밖의 예외면 advice가 suppressed까지 함께 남겨 기록 실패가 두 번 찍히지만, 드문 경우라 놓치지 않는 쪽을 택한다
-    private void recordFailureKeepingCause(Long refundId, RefundStepType step, RuntimeException cause) {
+    // 회수 줄을 만들었으면 회수 요청에 쓸 환불(잠근 구간에서 읽은 값)을 돌려준다. 아니거나 기록이 실패하면 null
+    private Refund recordFailureKeepingCause(Long refundId, RefundStepType step, RuntimeException cause) {
         String failureCode = failureCodeOf(cause);
         try {
-            recordFailure(refundId, step, failureCode);
+            return recordFailure(refundId, step, failureCode);
         } catch (RuntimeException recordError) {
             cause.addSuppressed(recordError);
             log.error("환불 실패 단계 기록 실패. 멈춘 단계가 단계 줄에 남지 않음. refundId={}, step={}, failureCode={}",
                     refundId, step, failureCode, recordError);
+            return null;
         }
     }
 
@@ -1007,11 +1031,14 @@ public class RefundSagaService implements RefundSagaUseCase {
      *
      * 처리 중이 아니면(그사이 완료·거절 등) 기록하지 않고 WARN만 남긴다(#616 결정 15). 끝난 환불에 실패를 남기면 멈춘 것처럼 보이기 때문이다.
      *
+     * 재고가 다시 해도 같은 이유로 거절되면 같은 구간에서 회수 줄을 시도 중으로 만든다(#546). 보내기는 커밋 뒤 부르는 쪽이 한다.
+     *
      * @param failureCode 에러 코드 이름, 없으면 예외 클래스 이름
+     * @return 회수 줄을 만들었으면 회수 요청 값을 꺼낼 환불, 아니면 {@code null}
      * @throws IllegalStateException 환불이나 그 단계의 진행 줄이 없으면 (부르는 쪽 버그)
      */
-    void recordFailure(Long refundId, RefundStepType step, String failureCode) {
-        transaction.executeWithoutResult(status -> {
+    Refund recordFailure(Long refundId, RefundStepType step, String failureCode) {
+        return transaction.execute(status -> {
             // 같은 환불을 동시에 결정·기록하는 다른 트랜잭션과 섞이지 않게 다른 결정처럼 잠근 뒤 고친다.
             // refundId는 사용자가 아니라 승인을 마친 시스템이 넘긴 값이라, 없으면 사용자 잘못이 아닌 코드 버그로 보고 표준 예외(500)로 던진다(exception.md)
             Refund refund = refundPersistencePort.findByIdForUpdate(refundId)
@@ -1020,7 +1047,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             if (refund.getStatus() != RefundStatus.PROCESSING) {
                 log.warn("다른 모듈 호출이 실패했지만 환불이 처리 중이 아니라 실패를 기록하지 않음. refundId={}, step={}, status={}, failureCode={}",
                         refundId, step, refund.getStatus(), failureCode);
-                return;
+                return null;
             }
             // 다른 모듈을 부르기 전에 진행 줄을 만들어 커밋한다(결정 5). 없다면 그 순서를 어긴 코드 버그라 표준 예외로 던진다.
             // 이 예외는 runStep에서 원래 예외에 붙고 ERROR 로그로 남는다
@@ -1032,36 +1059,38 @@ public class RefundSagaService implements RefundSagaUseCase {
             boolean nonRetryable = NON_RETRYABLE_FAILURES.contains(failureCode);
             boolean changed = nonRetryable ? stepRow.stop(failureCode) : stepRow.failForRetry(failureCode, now);
             if (!changed) {
-                return;
+                return null;
             }
             refundStepPersistencePort.update(stepRow);
             if (stepRow.getStatus() != RefundStepStatus.STOPPED) {
-                return;
+                return null;
             }
             log.warn("다른 모듈 호출 실패로 단계를 멈춤(다시 해도 같은 실패이거나 시도 횟수를 다 씀, 확인 필요). refundId={}, step={}, failureCode={}, attemptCount={}",
                     refundId, step, failureCode, stepRow.getAttemptCount());
             // 재고가 다시 해도 같은 이유로 거절되면 돌려준 돈을 다시 가져온다(#546). 5번을 다 써서 멈춘 재고(일시 장애)는 회수하지 않는다(11/16 결정):
             // 몇 분짜리 장애만으로 돈을 가져가지 않으려고 멈춘 상태가 아니라 이유로 가른다
-            if (step == RefundStepType.PRODUCT && nonRetryable) {
-                startWalletRevert(refundId, refund, now);
+            if (step == RefundStepType.PRODUCT && nonRetryable && startWalletRevert(refundId, refund, now)) {
+                return refund;
             }
+            return null;
         });
     }
 
-    // 회수 줄을 할 차례로 만든다(#546). 재고 줄을 멈춘 같은 구간에서 만들어, 재고 멈춤만 남고 회수 줄이 빠지는 일이 없게 한다.
-    // 발행은 이 구간 밖에서 다시 진행 알람(#576)이 한다(먼저 기록하고 보내기, 다음 회차 1분 안). 여기서 바로 보내지 않는 이유:
-    // 재고 실패는 세 입구(지갑 완료 수신, 알람, 0원 승인)에서 나는데, 입구마다 보내는 코드를 두면 한 곳만 고쳐 갈라질 수 있다.
+    // 회수 줄을 시도 중으로 만든다(#546). 재고 줄을 멈춘 같은 구간에서 만들어, 재고 멈춤만 남고 회수 줄이 빠지는 일이 없게 한다.
+    // 발행은 이 구간이 커밋된 뒤 runStep이 바로 한다(먼저 기록하고 보내기). 시도 중으로 만드는 이유: 보내는 동안 알람이 같은 줄을 또 집지 않게 한다.
+    // 보내다 서버가 죽으면 2분 뒤 만료돼 알람이 다시 집는다(#576).
     // 돌려준 돈이 없으면(0원) 가져올 것이 없어 만들지 않는다(계획이 정함). 회수 줄이 이미 있으면 다시 만들지 않는다((refund_id, step) 유일 제약)
-    private void startWalletRevert(Long refundId, Refund refund, LocalDateTime now) {
+    private boolean startWalletRevert(Long refundId, Refund refund, LocalDateTime now) {
         if (RefundSagaPlan.afterEvent(refund, RefundSagaPlan.Event.PRODUCT_REFUSED) != RefundSagaPlan.Action.CALL_WALLET_REVERT) {
             log.warn("재고가 다시 해도 거절됐지만 돌려준 돈이 없어 회수하지 않음(주문 되돌리기 #622 전까지 확인 필요). refundId={}", refundId);
-            return;
+            return false;
         }
         if (refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT).isPresent()) {
-            return;
+            return false;
         }
-        refundStepPersistencePort.saveNew(RefundStep.ready(refundId, RefundStepType.WALLET_REVERT, now));
+        refundStepPersistencePort.saveNew(RefundStep.start(refundId, RefundStepType.WALLET_REVERT, now));
         log.warn("재고가 다시 해도 거절돼 지갑 돈 다시 가져오기를 시작함(확인 필요). refundId={}, amount={}", refundId, refund.getRefundAmount());
+        return true;
     }
 
     // 예외 메시지에는 다른 모듈의 응답 내용이 들어갈 수 있어 DB에 남기지 않고, 에러 코드 이름이나 예외 클래스 이름만 쓴다

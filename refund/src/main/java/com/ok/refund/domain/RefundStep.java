@@ -80,15 +80,6 @@ public class RefundStep {
                 now.plus(IN_PROGRESS_EXPIRY), null, null, now);
     }
 
-    /**
-     * 할 차례로 만든다. 지금 바로 부르지 않고 다시 진행 알람(#576)이 집게 할 때 쓴다(다시 볼 시각 = 지금).
-     * 회수 줄(#546)이 쓴다. 재고 실패를 기록하는 구간에서 회수 줄을 만들고, 발행은 그 구간 밖에서 알람이 한다(먼저 기록하고 보내기).
-     * 시도 횟수는 0이다. 알람이 다시 시작할 때(begin) 1이 된다
-     */
-    public static RefundStep ready(Long refundId, RefundStepType type, LocalDateTime now) {
-        return new RefundStep(null, refundId, type, RefundStepStatus.READY, 0, now, null, null, now);
-    }
-
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
                                      RefundStepStatus status, int attemptCount,
                                      LocalDateTime nextCheckAt, String lastReason,

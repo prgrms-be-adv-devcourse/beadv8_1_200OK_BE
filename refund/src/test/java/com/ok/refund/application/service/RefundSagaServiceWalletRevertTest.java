@@ -69,10 +69,12 @@ class RefundSagaServiceWalletRevertTest {
 
     // ---- 회수 요청 발행 (알람이 깨운 다시 진행) ----
 
+    // 처음 바로 보내기가 실패해 회수 줄이 할 차례로 남았다(첫 시도 1번 씀). 알람이 다시 집어 보낸다
     @Test
-    void 회수_줄이_할_차례면_환불_값으로_회수를_요청하고_결과를_기다린다() {
+    void 회수_줄이_할_차례면_알람이_환불_값으로_회수를_다시_요청하고_결과를_기다린다() {
         // given
-        givenResumable(RefundStep.ready(REFUND_ID, RefundStepType.WALLET_REVERT, NOW.minusMinutes(1)));
+        givenResumable(RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, RefundStepStatus.READY,
+                1, NOW.minusMinutes(1), "IllegalStateException", NOW.minusMinutes(2)));
 
         // when
         RefundResult sut = saga.resume(REFUND_ID);
@@ -89,7 +91,7 @@ class RefundSagaServiceWalletRevertTest {
         assertSoftly(softly -> {
             softly.assertThat(revert.getType()).isEqualTo(RefundStepType.WALLET_REVERT);
             softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
-            softly.assertThat(revert.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(revert.getAttemptCount()).isEqualTo(2);
             softly.assertThat(revert.getAwaitingSince()).isEqualTo(NOW);
         });
     }

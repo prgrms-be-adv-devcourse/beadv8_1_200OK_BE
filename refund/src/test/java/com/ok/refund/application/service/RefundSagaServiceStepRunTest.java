@@ -10,6 +10,7 @@ import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
+import com.ok.refund.application.port.out.WalletRevertRequest;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 
 // 기록 여부와 기록한 값이 이 클래스의 요구사항이라 영속 포트에 넘긴 값을 검증한다
@@ -157,43 +159,74 @@ class RefundSagaServiceStepRunTest {
         });
     }
 
-    // 예: 감자 1개 10,000원을 지갑이 돌려줬는데 상품이 재고 해제를 거절했다(409). 같은 구간에서 회수 줄을 할 차례로 만들어
-    // 알람이 다음 회차에 회수 요청을 보낸다(#546). 지금 바로 보내지 않는다
+    // 예: 감자를 지갑이 돌려줬는데 상품이 재고 해제를 거절했다(409). 같은 구간에서 회수 줄을 시도 중으로 만들고,
+    // 기록이 끝나면 바로 Kafka로 회수를 요청한다(#546). 부르는 쪽에는 원래 재고 실패가 그대로 올라간다
     @Test
-    void 재고가_다시_해도_거절되면_회수_줄을_할_차례로_만든다() {
+    void 재고가_다시_해도_거절되면_회수_줄을_만들고_바로_회수를_요청한다() {
         // given
         givenRecordable(RefundStepType.PRODUCT);
 
         // when & then
         assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
-        })).isInstanceOf(RestApiException.class);
-        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
-        then(refundStepPersistencePort).should().saveNew(captor.capture());
-        RefundStep revert = captor.getValue();
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_RELEASE_REFUSED));
+        ArgumentCaptor<RefundStep> stepCaptor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().saveNew(stepCaptor.capture());
+        RefundStep revert = stepCaptor.getValue();
         assertThat(revert).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(revert.getRefundId()).isEqualTo(REFUND_ID);
             softly.assertThat(revert.getType()).isEqualTo(RefundStepType.WALLET_REVERT);
-            softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.READY);
-            softly.assertThat(revert.getNextCheckAt()).isEqualTo(NOW);
+            softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(revert.getAttemptCount()).isEqualTo(1);
         });
-        then(walletRefundRequestPort).should(never()).requestRevert(any());
+        ArgumentCaptor<WalletRevertRequest> requestCaptor = ArgumentCaptor.forClass(WalletRevertRequest.class);
+        then(walletRefundRequestPort).should().requestRevert(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().refundId()).isEqualTo(REFUND_ID);
     }
 
-    // 같은 거절이 다시 기록돼도(예: 재고 줄이 다른 경로로 한 번 더 실패) 회수 줄은 하나다((refund_id, step) 유일 제약)
+    // 바로 보내기가 실패해도(Kafka 장애) 부르는 쪽에는 원래 재고 실패를 올리고, 회수 줄은 할 차례로 남아 알람이 다시 보낸다
+    @Test
+    void 회수_요청을_바로_보내지_못하면_회수_줄을_할_차례로_남기고_원래_재고_실패를_올린다() {
+        // given: 처음 조회(회수 줄 있나?)에는 없고, 보낸 뒤 실패를 기록할 때는 방금 만든 시도 중 줄이 있다
+        givenProcessingRefund();
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT))
+                .willReturn(Optional.of(RefundStep.start(REFUND_ID, RefundStepType.PRODUCT, NOW.minusMinutes(5))));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.empty(), Optional.of(RefundStep.start(REFUND_ID, RefundStepType.WALLET_REVERT, NOW)));
+        willThrow(new IllegalStateException("지갑 회수 요청 발행에 실패했습니다.")).given(walletRefundRequestPort).requestRevert(any());
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_RELEASE_REFUSED));
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should(atLeastOnce()).update(captor.capture());
+        RefundStep revert = captor.getAllValues().getLast();
+        assertThat(revert).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(revert.getType()).isEqualTo(RefundStepType.WALLET_REVERT);
+            softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(revert.getLastReason()).isEqualTo("IllegalStateException");
+        });
+    }
+
+    // 같은 거절이 다시 기록돼도(예: 재고 줄이 다른 경로로 한 번 더 실패) 회수 줄은 하나이고 다시 보내지 않는다((refund_id, step) 유일 제약)
     @Test
     void 회수_줄이_이미_있으면_다시_만들지_않는다() {
         // given
         givenRecordable(RefundStepType.PRODUCT);
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
-                .willReturn(Optional.of(RefundStep.ready(REFUND_ID, RefundStepType.WALLET_REVERT, NOW.minusMinutes(1))));
+                .willReturn(Optional.of(RefundStep.start(REFUND_ID, RefundStepType.WALLET_REVERT, NOW.minusMinutes(1))));
 
         // when & then
         assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
             throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
         })).isInstanceOf(RestApiException.class);
         then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
     }
 
     // 몇 분짜리 상품 장애로 5번을 다 써 멈춘 재고는 돈을 가져가지 않는다(11/16 결정). 사람이 본다

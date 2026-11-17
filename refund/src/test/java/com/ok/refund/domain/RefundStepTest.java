@@ -42,38 +42,6 @@ class RefundStepTest {
         });
     }
 
-    @Test
-    void 할_차례로_만들면_지금_다시_보고_다시_시작하면_첫_시도가_된다() {
-        // given
-        RefundStep sut = RefundStep.ready(10L, RefundStepType.WALLET_REVERT, NOW);
-
-        // when
-        boolean begun = sut.begin(NOW.plusMinutes(1));
-
-        // then
-        assertThat(begun).isTrue();
-        assertSoftly(softly -> {
-            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
-            softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
-            softly.assertThat(sut.getCreatedAt()).isEqualTo(NOW);
-        });
-    }
-
-    @Test
-    void 할_차례로_만든_줄은_지금이_다시_볼_시각이다() {
-        // when
-        RefundStep sut = RefundStep.ready(10L, RefundStepType.WALLET_REVERT, NOW);
-
-        // then
-        assertThat(sut).isNotNull();
-        assertSoftly(softly -> {
-            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.READY);
-            softly.assertThat(sut.getAttemptCount()).isZero();
-            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW);
-            softly.assertThat(sut.getAwaitingSince()).isNull();
-        });
-    }
-
     static Stream<Arguments> 끝난_단계와_전이() {
         Stream.Builder<Arguments> builder = Stream.builder();
         for (RefundStepStatus status : new RefundStepStatus[]{

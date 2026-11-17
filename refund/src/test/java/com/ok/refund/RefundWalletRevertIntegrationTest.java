@@ -61,7 +61,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // 통합 테스트: 재고가 다시 해도 거절되면 지갑 돈을 다시 가져오는(회수, #546) 흐름을 실제 Kafka(테스트 컨테이너)로 끝까지 본다.
-// 승인 → 지갑 완료 메시지 → 재고 거절(409) → 회수 줄 할 차례 → 알람(resume)이 회수 요청 발행 → 지갑 회수 결과 메시지 → 회수 줄 기록.
+// 승인 → 지갑 완료 메시지 → 재고 거절(409) → 회수 줄을 만들고 바로 회수 요청 발행 → 지갑 회수 결과 메시지 → 회수 줄 기록.
 // 지갑 코드는 쓰지 않는다. 회수 요청은 실제 토픽에서 읽어 약속한 JSON인지 보고, 지갑 결과는 RefundWalletResultSender가 직접 넣는다.
 // 예시: 구매자 1이 판매자 5의 감자(주문 상품 801) 3개를 주문 8000으로 샀다. 10,000원씩, 1개를 취소해 10,000원을 돌려줬는데 상품이 재고 해제를 거절한다
 class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
@@ -133,15 +133,14 @@ class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 재고가_거절되면_지갑에_약속한_JSON으로_회수를_요청하고_다시_가져오면_회수_줄을_성공으로_남긴다() throws Exception {
-        // given: 지갑이 10,000원을 돌려줬는데 상품이 재고 해제를 거절해 회수 줄이 할 차례가 됐다
-        Long refundId = refundRefusedByProduct();
+    void 재고가_거절되면_바로_지갑에_약속한_JSON으로_회수를_요청하고_다시_가져오면_회수_줄을_성공으로_남긴다() throws Exception {
+        // given
         Map<TopicPartition, Long> before = endOffsets(RefundTopics.REFUND_WALLET_REVERT_REQUESTED);
 
-        // when: 알람이 다음 회차에 깨운다
-        refundSagaUseCase.resume(refundId);
+        // when: 지갑이 10,000원을 돌려줬는데 상품이 재고 해제를 거절한다. 알람을 부르지 않는다
+        Long refundId = refundRefusedByProduct();
 
-        // then: 회수 요청이 한 건, 키는 orderId, 값은 PR #537에서 약속한 네 필드
+        // then: 회수 요청이 바로 한 건 나갔다. 키는 orderId, 값은 PR #537에서 약속한 네 필드
         List<ConsumerRecord<?, ?>> sent = readMessagesOf(RefundTopics.REFUND_WALLET_REVERT_REQUESTED, refundId, before);
         assertThat(sent).hasSize(1);
         ConsumerRecord<?, ?> record = sent.getFirst();
@@ -170,7 +169,6 @@ class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
     void 지갑이_잔액이_모자라_다시_가져오지_못하면_회수_줄을_그_이유로_멈춘다() throws Exception {
         // given
         Long refundId = refundRefusedByProduct();
-        refundSagaUseCase.resume(refundId);
 
         // when
         walletResultSender.sendRevertFailed(refundId, "INSUFFICIENT_BALANCE");
@@ -186,15 +184,17 @@ class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 회수를_시작한_환불은_지갑_반환을_다시_요청하지_않는다() throws Exception {
         // given
+        Map<TopicPartition, Long> revertBefore = endOffsets(RefundTopics.REFUND_WALLET_REVERT_REQUESTED);
         Long refundId = refundRefusedByProduct();
         Map<TopicPartition, Long> approvedBefore = endOffsets(RefundTopics.REFUND_APPROVED);
 
-        // when: 알람이 두 번 깨운다(두 번째는 회수 결과를 기다리는 중)
+        // when: 회수 결과를 기다리는 중에 알람이 두 번 깨운다
         refundSagaUseCase.resume(refundId);
         refundSagaUseCase.resume(refundId);
 
         // then
         assertThat(readMessagesOf(RefundTopics.REFUND_APPROVED, refundId, approvedBefore)).isEmpty();
+        assertThat(readMessagesOf(RefundTopics.REFUND_WALLET_REVERT_REQUESTED, refundId, revertBefore)).hasSize(1);
         assertThat(stepOf(refundId, RefundStepType.WALLET).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
         assertThat(stepOf(refundId, RefundStepType.WALLET_REVERT).getAttemptCount()).isEqualTo(1);
     }
@@ -214,14 +214,12 @@ class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
         assertThat(refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT)).isEmpty();
     }
 
-    // 승인 → 지갑 완료 → 재고 거절까지 간 환불. 회수 줄이 할 차례로 만들어질 때까지 기다린다
+    // 승인 → 지갑 완료 → 재고 거절까지 간 환불. 회수 요청을 바로 보내 회수 줄이 결과 대기가 될 때까지 기다린다
     private Long refundRefusedByProduct() throws Exception {
         Long refundId = approvedRefundId();
         productStockReleasePort.refuse();
         walletResultSender.sendCompleted(refundId);
-        RefundWalletResultSender.awaitUntil("회수 줄이 할 차례로 만들어지지 않았습니다",
-                () -> refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT)
-                        .map(step -> step.getStatus() == RefundStepStatus.READY).orElse(false));
+        awaitStepStatus(refundId, RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT);
         RefundStep product = stepOf(refundId, RefundStepType.PRODUCT);
         assertThat(product).isNotNull();
         assertSoftly(softly -> {
