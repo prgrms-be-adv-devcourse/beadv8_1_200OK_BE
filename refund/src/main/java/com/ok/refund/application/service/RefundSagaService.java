@@ -289,7 +289,7 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 멈춤으로 바꾸면 사람이 볼 환불로 드러난다. 만료되지 않은 시도 중 줄은 누군가 하는 중이라 건드리지 않는다.
     // 단, 이미 보낸 줄(awaitingSince 있음)은 멈추지 않고 결과 대기로 두되 다시 볼 시각을 비운다(#546, PR #654 2차 봇 리뷰 1번).
     // 멈추면 늦게 온 진짜 지갑 답을 기록하지 못한다(#577 결정 3). 다시 볼 시각이 없으면 알람이 더 뽑지 않아 위의 문제도 생기지 않는다.
-    // 지금은 이 경우가 생기지 않는다(결과 대기 지갑 줄이 있으면 재고 줄이 아직 없어 계획이 멈춤을 정하지 않음). 되돌리기 줄(#546-2)이 생기기 전에 먼저 맞춰 둔다
+    // 지금은 이 경우가 생기지 않는다(결과 대기 지갑 줄이 있으면 재고 줄이 아직 없어 계획이 멈춤을 정하지 않음). 되돌리기 줄(#706)이 생기기 전에 먼저 맞춰 둔다
     // 잠근 뒤 처리 중이 아니면 쓰지 않는다(#616 결정 15). 끝난 환불은 알람이 고르지도 않는다
     private void stopBlockedSteps(Long refundId) {
         transaction.executeWithoutResult(status -> {
@@ -572,7 +572,7 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 주문의 설명 문장은 로그에만 남기고 DB에는 저장하지 않는다. 예외를 던지지 않는 경로라 여기서 로그를 남긴다.
     // 로그는 거절 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "거절로 끝냄"이 남으면 실제와 어긋나기 때문이다.
     // 한계: 처리 중 → 거절은 같은 묶음의 배송비 집계를 바꾸는데도 자기 행만 잠근다. 그 사이 같은 묶음의 다른 환불이 이 환불을
-    // 취소된 것으로 보고 승인됐다면 그 환불의 배송비 판단이 틀린 채 남는다(RefundShippingFeePolicy.CANCELLING_STATUSES 주석, TODO(#546))
+    // 취소된 것으로 보고 승인됐다면 그 환불의 배송비 판단이 틀린 채 남는다(RefundShippingFeePolicy.CANCELLING_STATUSES 주석, TODO(#707))
     // 잠근 뒤 처리 중이 아니면(그사이 다른 경로가 끝냄) 쓰지 않고 지금 상태를 돌려준다(#616 결정 15).
     // 주문 줄이 없어도 환불 거절은 한다. 주문이 반영하지 않았으니 끝내는 것만 남았고, 줄이 없는 것은 WARN으로 남긴다(#616 결정 13)
     private RefundResult rejectAfterOrderRefused(Long refundId, Long orderItemId, String orderDetail) {
@@ -903,7 +903,7 @@ public class RefundSagaService implements RefundSagaUseCase {
             RefundStep stepRow = refundStepPersistencePort.findByRefundIdAndType(refundId, step)
                     .orElseThrow(() -> new IllegalStateException(
                             "실패를 기록할 단계 줄이 없습니다. refundId=" + refundId + ", step=" + step));
-            // 다시 해도 결과가 같은 실패는 다시 시도하지 않고 바로 멈춘다(#576). 실패 처리(되돌리기, #546)가 생기기 전까지는 사람이 본다
+            // 다시 해도 결과가 같은 실패는 다시 시도하지 않고 바로 멈춘다(#576). 실패 처리(되돌리기, #706)가 생기기 전까지는 사람이 본다
             boolean changed = NON_RETRYABLE_FAILURES.contains(failureCode)
                     ? stepRow.stop(failureCode)
                     : stepRow.failForRetry(failureCode, LocalDateTime.now(clock));
