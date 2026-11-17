@@ -77,7 +77,8 @@ public class ProductSearch extends BaseTime implements Persistable<Long> {
 		return productId;
 	}
 
-	// 생성 시각은 처음 저장할 때 채워진다. DB에서 읽은 행은 이미 값이 있다
+	// 생성 시각은 처음 저장할 때 채워진다. DB에서 읽은 행은 이미 값이 있다.
+	// JPA auditing(@CreatedDate)이 켜져 있다는 가정에 기댄다. 읽어 온 행을 save()로 다시 저장하는 경로를 만들 때 이 가정을 확인한다
 	@Override
 	public boolean isNew() {
 		return getCreatedAt() == null;

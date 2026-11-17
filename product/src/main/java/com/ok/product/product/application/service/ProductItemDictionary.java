@@ -23,12 +23,14 @@ import tools.jackson.databind.json.JsonMapper;
  * 고른 값은 {@code product_search.search_item}에 저장되고, 1글자 검색어("귤")는 이 값과의 정확 일치로 찾는다.
  * MySQL ngram FULLTEXT는 1글자 단어를 인덱싱하지 않아 FULLTEXT로는 1글자 검색어를 찾지 못하기 때문이다.
  * 품목 사전 파일에는 품목만 둔다. 오타 교정 제안(F7)도 같은 파일을 쓴다.
- * 파일이 없거나, 품목이 하나도 없거나, 한 글자 품목 표가 품목 사전과 맞지 않으면 앱이 뜨지 않는다.
+ * 파일이 없거나, 품목이 하나도 없거나, 품목이 20자를 넘거나, 한 글자 품목 표가 품목 사전과 맞지 않으면 앱이 뜨지 않는다.
  */
 @Component
 public class ProductItemDictionary {
 
 	private static final String LOCATION = "product-search/items.json";
+	// product_search.search_item 컬럼 길이다. 넘는 품목이 저장되면 INSERT가 실패해 상품 등록이 통째로 롤백되므로 기동 때 막는다
+	private static final int MAX_ITEM_LENGTH = 20;
 	// 한 글자 품목 표를 품목 사전과 따로 두는 이유는 F7이 품목 사전을 품목 목록으로만 읽기 때문이다.
 	// 글자를 포함하는지로 자동으로 묶지 않고 사람이 고른 표를 쓰는 이유는 배추가 "배"로, 감자가 "감"으로 찾히면 안 되기 때문이다
 	private static final String SINGLE_CHAR_LOCATION = "product-search/single-char-items.json";
@@ -54,6 +56,13 @@ public class ProductItemDictionary {
 		if (this.items.isEmpty()) {
 			throw new IllegalStateException("품목 사전에 품목이 없습니다. location=" + LOCATION);
 		}
+		this.items.stream()
+			.filter(item -> item.length() > MAX_ITEM_LENGTH)
+			.findFirst()
+			.ifPresent(item -> {
+				throw new IllegalStateException("품목이 search_item 컬럼 길이(" + MAX_ITEM_LENGTH + "자)를 넘습니다. item=" + item
+					+ ", location=" + LOCATION);
+			});
 		this.singleCharItemByItem = toSingleCharItemByItem(singleCharItems);
 	}
 

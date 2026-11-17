@@ -130,4 +130,15 @@ class ProductItemDictionaryTest {
 			.hasMessage("한 글자 품목 표에 같은 품목이 두 번 있습니다. item=감귤, "
 				+ "location=product-search/single-char-items.json");
 	}
+
+	@Test
+	void 품목이_검색_품목_컬럼_길이를_넘으면_사전을_만들_수_없다() {
+		// given
+		String tooLongItem = "가".repeat(21);
+
+		// when & then
+		assertThatThrownBy(() -> new ProductItemDictionary(List.of("귤", tooLongItem), Map.of()))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("search_item");
+	}
 }

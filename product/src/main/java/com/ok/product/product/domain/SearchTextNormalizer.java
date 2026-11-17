@@ -18,7 +18,8 @@ public final class SearchTextNormalizer {
 	private static final char FIRST_SYLLABLE = '가';
 	private static final char LAST_SYLLABLE = '힣';
 	private static final char FIRST_COMPATIBILITY_JAMO = 'ㄱ';
-	private static final char LAST_COMPATIBILITY_JAMO = 'ㆎ';
+	// 초성 검색에 쓰는 ㄱ~ㅣ까지만 남긴다. 그 뒤(U+3164~U+318E)는 옛 한글 자모와 채움 문자라 검색어로 쓰이지 않는다
+	private static final char LAST_COMPATIBILITY_JAMO = 'ㅣ';
 	private static final int SYLLABLES_PER_CHOSEONG = 588;
 	private static final int SYLLABLES_PER_JUNGSEONG = 28;
 
