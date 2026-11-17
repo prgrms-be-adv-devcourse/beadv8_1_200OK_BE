@@ -35,10 +35,10 @@ import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
-import com.ok.product.product.repository.ProductOptionRepository;
-import com.ok.product.product.repository.ProductRepository;
-import com.ok.product.product.service.ProductService;
-import com.ok.product.product.service.dto.ProductStatusCode;
+import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.application.service.ProductService;
+import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.TestAccessTokens;
 
@@ -61,10 +61,10 @@ class ProductUpdateIntegrationTest extends AbstractIntegrationTest {
 	TestAccessTokens tokens;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductOptionRepository productOptionRepository;
+	ProductOptionJpaRepository productOptionRepository;
 
 	@Autowired
 	TransactionTemplate transactionTemplate;

@@ -15,8 +15,13 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
+import java.time.Clock;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -30,6 +35,9 @@ import java.util.concurrent.TimeUnit;
  * {@code DELIVERED}가 되면 {@link CarrierDeliveredEvent}를 발행하고 조회를 멈춘다.
  * 조회는 메모리에서만 하므로 재시작하면 사라진다. 기동할 때 배송 중인 shipment를 다시 요청해 복구한다(CarrierEventListener).
  *
+ * <p>추적을 요청할 때 callback-url이 설정돼 있으면 택배사에 알림도 등록한다(#668). 알림을 받으면 {@code track}을 다시 조회해 배송 완료를 반영한다.
+ * 아래 조회 기반 확인은 알림이 유실되거나 등록이 실패했을 때를 대비한 레거시 경로라 그대로 둔다.
+ *
  * <p>인증은 OAuth2 client credentials다. 토큰은 만료되므로(응답 본문의 {@code UNAUTHENTICATED}) 새로 받아 한 번 다시 시도한다.
  */
 @Slf4j
@@ -39,6 +47,11 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
 
     private static final String DELIVERED = "DELIVERED";
     private static final String UNAUTHENTICATED = "UNAUTHENTICATED";
+    private static final String REGISTER_WEBHOOK_MUTATION = """
+            mutation RegisterTrackWebhook($input: RegisterTrackWebhookInput!) {
+              registerTrackWebhook(input: $input)
+            }
+            """;
     private static final String TRACK_QUERY = """
             query Track($carrierId: ID!, $trackingNumber: String!) {
               track(carrierId: $carrierId, trackingNumber: $trackingNumber) {
@@ -50,6 +63,7 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
     private final RestClient trackerRestClient;
     private final TrackerProperties properties;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final Clock clock;
 
     // 조회는 외부 호출이라 느릴 수 있어 요청 스레드와 분리한다. 스레드 하나로 순서대로 처리하므로 건수가 많아지면 간격을 늘리거나 풀을 키운다
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -62,18 +76,58 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
     private String accessToken;
 
     TrackerCarrierClient(RestClient trackerRestClient, TrackerProperties properties,
-                         ApplicationEventPublisher applicationEventPublisher) {
+                         ApplicationEventPublisher applicationEventPublisher, Clock clock) {
         this.trackerRestClient = trackerRestClient;
         this.properties = properties;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.clock = clock;
     }
 
     @Override
     public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
         String carrierId = trackerCarrierId(Carrier.from(carrier));
         long intervalMillis = properties.pollInterval().toMillis();
-        polling.computeIfAbsent(shipmentId, id -> scheduler.scheduleWithFixedDelay(
-                () -> poll(shipmentId, carrierId, trackingNumber), intervalMillis, intervalMillis, TimeUnit.MILLISECONDS));
+        polling.computeIfAbsent(shipmentId, id -> {
+            if (properties.webhookEnabled()) {
+                // 등록은 외부 호출이라 요청 스레드(출고 이벤트, 기동 복구)를 붙잡지 않도록 조회 스레드에서 한다
+                scheduler.execute(() -> registerWebhook(carrierId, trackingNumber));
+            }
+            return scheduler.scheduleWithFixedDelay(
+                    () -> poll(shipmentId, carrierId, trackingNumber), intervalMillis, intervalMillis, TimeUnit.MILLISECONDS);
+        });
+    }
+
+    @Override
+    public Optional<Carrier> findCarrier(String carrierId) {
+        return Arrays.stream(Carrier.values())
+                .filter(carrier -> trackerCarrierId(carrier).equals(carrierId))
+                .findFirst();
+    }
+
+    @Override
+    public boolean isDelivered(Carrier carrier, String trackingNumber) {
+        return isDelivered(trackerCarrierId(carrier), trackingNumber);
+    }
+
+    // 실패해도 출고와 추적은 이어져야 한다. 알림이 없어도 조회가 배송 완료를 확인한다
+    void registerWebhook(String carrierId, String trackingNumber) {
+        try {
+            String expirationTime = OffsetDateTime.now(clock)
+                    .plus(properties.webhookExpiration())
+                    .truncatedTo(ChronoUnit.SECONDS)
+                    .toString();
+            TrackResponse response = execute(REGISTER_WEBHOOK_MUTATION, Map.of("input", Map.of(
+                    "carrierId", carrierId,
+                    "trackingNumber", trackingNumber,
+                    "callbackUrl", properties.callbackUrl(),
+                    "expirationTime", expirationTime)));
+            if (response.hasErrors()) {
+                log.warn("Delivery Tracker 알림 등록 오류 응답. 조회로 대신 확인합니다. carrierId={}, errors={}",
+                        carrierId, response.errorSummaries());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Delivery Tracker 알림 등록 실패. 조회로 대신 확인합니다. carrierId={}", carrierId, e);
+        }
     }
 
     // 새 택배사를 enum에 추가하면 여기서 컴파일 오류가 나서 Delivery Tracker의 carrierId 매핑을 빠뜨리지 않는다
@@ -108,15 +162,10 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
     }
 
     private boolean isDelivered(String carrierId, String trackingNumber) {
-        TrackResponse response = track(carrierId, trackingNumber);
+        TrackResponse response = execute(TRACK_QUERY, Map.of("carrierId", carrierId, "trackingNumber", trackingNumber));
         if (response.hasErrorCode(UNAUTHENTICATED)) {
-            invalidateToken();
-            response = track(carrierId, trackingNumber);
-            if (response.hasErrorCode(UNAUTHENTICATED)) {
-                // 새 토큰으로도 인증이 안 되면 만료가 아니라 client secret 오류다. 반복 장애라 경고에 묻히지 않게 error로 남긴다
-                log.error("Delivery Tracker 인증 실패. 새 토큰으로도 거부됐습니다. client-id와 client-secret을 확인하세요.");
-                return false;
-            }
+            // 새 토큰으로도 거부된 경우다. 원인은 execute가 이미 남겼다
+            return false;
         }
         if (response.hasErrors()) {
             // NOT_FOUND 같은 오류는 message가 비어 올 수 있어 코드도 함께 남긴다
@@ -126,13 +175,26 @@ public class TrackerCarrierClient implements CarrierClient, DisposableBean {
         return DELIVERED.equals(response.lastStatusCode());
     }
 
-    private TrackResponse track(String carrierId, String trackingNumber) {
+    // 토큰이 만료됐으면 새로 받아 한 번 다시 보낸다. 조회와 알림 등록이 같이 쓴다
+    private TrackResponse execute(String query, Map<String, ?> variables) {
+        TrackResponse response = post(query, variables);
+        if (response.hasErrorCode(UNAUTHENTICATED)) {
+            invalidateToken();
+            response = post(query, variables);
+            if (response.hasErrorCode(UNAUTHENTICATED)) {
+                // 새 토큰으로도 인증이 안 되면 만료가 아니라 client secret 오류다. 반복 장애라 경고에 묻히지 않게 error로 남긴다
+                log.error("Delivery Tracker 인증 실패. 새 토큰으로도 거부됐습니다. client-id와 client-secret을 확인하세요.");
+            }
+        }
+        return response;
+    }
+
+    private TrackResponse post(String query, Map<String, ?> variables) {
         TrackResponse response = trackerRestClient.post()
                 .uri(properties.baseUrl())
                 .header("Authorization", "Bearer " + accessToken())
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("query", TRACK_QUERY,
-                        "variables", Map.of("carrierId", carrierId, "trackingNumber", trackingNumber)))
+                .body(Map.of("query", query, "variables", variables))
                 .retrieve()
                 .body(TrackResponse.class);
         return response == null ? new TrackResponse(null, List.of()) : response;

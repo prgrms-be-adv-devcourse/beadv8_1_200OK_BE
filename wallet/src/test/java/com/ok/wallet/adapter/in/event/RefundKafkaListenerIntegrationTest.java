@@ -3,6 +3,7 @@ package com.ok.wallet.adapter.in.event;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.service.BuyerWalletService;
 import com.ok.wallet.support.KafkaTopicReader;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,8 +28,8 @@ import static org.awaitility.Awaitility.await;
 // - 테스트 브로커는 파티션이 하나라 같은 키로 보낸 메시지는 보낸 순서대로 처리된다. 뒤 메시지가 처리됐으면 앞 메시지도 처리가 끝난 것이다
 class RefundKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
-    private static final String COMPLETED_TOPIC = "wallet.wallet-refund-completed";
-    private static final String FAILED_TOPIC = "wallet.wallet-refund-failed";
+    private static final String COMPLETED_TOPIC = "wallet.wallet-refund-completed.v1";
+    private static final String FAILED_TOPIC = "wallet.wallet-refund-failed.v1";
 
     // 이 클래스 전용 번호대. 토픽에는 앞 테스트의 메시지가 남으므로 테스트마다 겹치지 않는 번호를 쓴다
     private static final AtomicLong ID_SEQ = new AtomicLong(9_000_000L);
@@ -45,8 +46,11 @@ class RefundKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
         jdbcTemplate.update("DELETE FROM wallet_message_failure");
     }
@@ -161,7 +165,7 @@ class RefundKafkaListenerIntegrationTest extends AbstractIntegrationTest {
 
     // 50,000원을 충전하고 주문을 결제한다
     private void paidOrder(long buyerId, long orderId, long amount) {
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 50_000);
+        charger.charge(buyerId, "pay-" + orderId, 50_000);
         buyerWalletService.payForOrder(buyerId, orderId, amount);
     }
 

@@ -2,6 +2,7 @@ package com.ok.member.seller;
 
 import com.jayway.jsonpath.JsonPath;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
+import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.seller.adapter.out.persistence.SellerApplicationJpaRepository;
 import com.ok.member.seller.domain.SellerApplication;
@@ -60,6 +61,9 @@ class SellerApplicationAdminIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     SellerApplicationJpaRepository sellerApplicationRepository;
+
+    @Autowired
+    MemberOutboxJpaRepository memberOutboxRepository;
 
     private MockMvc mockMvc;
 
@@ -152,6 +156,7 @@ class SellerApplicationAdminIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.representativeName").value("김영수"))
                 .andExpect(jsonPath("$.businessNumber").value(BUSINESS_NUMBER))
                 .andExpect(jsonPath("$.mailOrderNumber").value("제2026-경북청송-0031호"))
+                .andExpect(jsonPath("$.originPostalCode").value("37421"))
                 .andExpect(jsonPath("$.reviewStartedAt").value(nullValue()))
                 .andExpect(jsonPath("$.reviewerId").value(nullValue()));
     }
@@ -328,7 +333,8 @@ class SellerApplicationAdminIntegrationTest extends AbstractIntegrationTest {
                 "storeName", "청송 햇살농원",
                 "representativeName", "김영수",
                 "businessNumber", BUSINESS_NUMBER,
-                "mailOrderNumber", "제2026-경북청송-0031호"));
+                "mailOrderNumber", "제2026-경북청송-0031호",
+                "originPostalCode", "37421"));
     }
 
     private Long saveMember(String loginId, String email) {
@@ -338,15 +344,16 @@ class SellerApplicationAdminIntegrationTest extends AbstractIntegrationTest {
 
     private SellerApplication pending(Long memberId, String businessNumber, LocalDateTime appliedAt) {
         return SellerApplication.apply(memberId, "청송 햇살농원", "김영수", businessNumber,
-                "제2026-경북청송-0031호", appliedAt);
+                "제2026-경북청송-0031호", "37421", appliedAt);
     }
 
     private Long saveApplication(Long memberId, String businessNumber, LocalDateTime appliedAt) {
         return sellerApplicationRepository.saveAndFlush(pending(memberId, businessNumber, appliedAt)).getId();
     }
 
-    // 판매자 신청이 member를 외래키로 참조하므로 신청을 먼저 지운다
+    // 판매자 신청과 승인 때 남는 출고지 outbox 줄(#587)이 member를 외래키로 참조하므로 먼저 지운다
     private void cleanUp() {
+        memberOutboxRepository.deleteAllInBatch();
         sellerApplicationRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();
     }

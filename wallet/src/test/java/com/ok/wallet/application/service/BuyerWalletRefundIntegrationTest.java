@@ -4,6 +4,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.dto.OrderRefundResult;
 import com.ok.wallet.domain.WalletOrderRefundFailureReason;
 import com.ok.wallet.domain.WalletOrderRefundStatus;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,8 +44,11 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     TransactionTemplate transactionTemplate;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
 
@@ -76,7 +80,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 결제_기록이_없는_주문은_돌려주지_않고_결제_없음으로_거절한다() {
         // given
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-1", 10_000);
+        charger.charge(BUYER_ID, "pay-1", 10_000);
 
         // when
         OrderRefundResult sut = buyerWalletService.refundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
@@ -89,7 +93,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 잔액_부족으로_결제에_실패한_주문은_결제_없음으로_거절한다() {
         // given
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-1", 1_000);
+        charger.charge(BUYER_ID, "pay-1", 1_000);
         buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000);
 
         // when
@@ -105,7 +109,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
         // given
         Long otherBuyerId = 7_002L;
         paidOrder(BUYER_ID, ORDER_ID, 35_000);
-        buyerWalletService.chargeByPayment(otherBuyerId, "pay-other", 1_000);
+        charger.charge(otherBuyerId, "pay-other", 1_000);
 
         // when
         OrderRefundResult sut = buyerWalletService.refundForOrder(1L, ORDER_ID, otherBuyerId, 7_000);
@@ -219,9 +223,9 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 보유_한도를_넘어도_돌려준다() {
         // given: 100,000원 결제 뒤 다시 충전해 잔액이 한도(500,000원)에 닿음
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-1", 500_000);
+        charger.charge(BUYER_ID, "pay-1", 500_000);
         buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 100_000);
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-2", 100_000);
+        charger.charge(BUYER_ID, "pay-2", 100_000);
 
         // when
         OrderRefundResult sut = buyerWalletService.refundForOrder(1L, ORDER_ID, BUYER_ID, 100_000);
@@ -320,7 +324,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
             long orderId = ORDER_ID + i;
             requests.add(() -> buyerWalletService.refundForOrder(refundId, ORDER_ID, BUYER_ID, 1_000));
             requests.add(() -> {
-                buyerWalletService.chargeByPayment(BUYER_ID, paymentKey, 1_000);
+                charger.charge(BUYER_ID, paymentKey, 1_000);
                 return null;
             });
             requests.add(() -> buyerWalletService.payForOrder(BUYER_ID, orderId, 1_000));
@@ -368,7 +372,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
 
     // 50,000원을 충전하고 주문을 결제한다. 충전 건 없이 충전 원장만 만드는 것은 정리 도우미가 허용한다(한 방향 검사)
     private void paidOrder(Long buyerId, Long orderId, long amount) {
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + buyerId + "-" + orderId, 50_000);
+        charger.charge(buyerId, "pay-" + buyerId + "-" + orderId, 50_000);
         buyerWalletService.payForOrder(buyerId, orderId, amount);
     }
 

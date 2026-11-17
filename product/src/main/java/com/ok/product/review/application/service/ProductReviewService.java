@@ -1,0 +1,231 @@
+package com.ok.product.review.application.service;
+
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.common.media.MediaUrlResolver;
+import com.ok.product.review.domain.ProductReview;
+import com.ok.product.review.domain.ProductReviewMedia;
+import com.ok.product.review.domain.ProductReviewMediaSpec;
+import com.ok.product.review.domain.ReviewAnalysisRequest;
+import com.ok.product.review.domain.ReviewAnalysisType;
+import com.ok.product.review.exception.ProductReviewErrorCode;
+import com.ok.product.review.application.port.out.ProductReviewRepository;
+import com.ok.product.review.application.port.out.ReviewAnalysisRequestRepository;
+import com.ok.product.review.application.port.out.ReviewKeywordRepository;
+import com.ok.product.review.application.dto.ProductReviewCreateCommand;
+import com.ok.product.review.application.dto.ProductReviewMediaResult;
+import com.ok.product.review.application.dto.ProductReviewResult;
+import com.ok.product.review.application.dto.ProductReviewUpdateCommand;
+import com.ok.product.review.application.dto.ReviewAnalysisSubjectResult;
+import com.ok.product.review.application.dto.ReviewablePurchase;
+import com.ok.product.review.application.port.in.ProductReviewUseCase;
+import com.ok.product.product.application.dto.ProductCategoryCode;
+import com.ok.product.product.application.dto.ReviewedProductResult;
+import com.ok.product.product.application.port.in.ReviewedProductUseCase;
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class ProductReviewService implements ProductReviewUseCase {
+
+	private final ProductReviewRepository productReviewRepository;
+	private final ReviewedProductUseCase reviewedProductUseCase;
+	private final ReviewAnalysisRequestRepository analysisRequestRepository;
+	private final ReviewKeywordRepository reviewKeywordRepository;
+	private final ReviewKeywordList keywordList;
+	private final ProductReviewMediaValidator mediaValidator;
+	private final MediaUrlResolver mediaUrlResolver;
+	private final Clock clock;
+
+	/**
+	 * 주문 모듈이 확인해 준 구매 건으로 리뷰를 작성하고 상품의 리뷰 집계에 더한다. 분석 종류(감성, 키워드)마다 분석 요청을 대기로 남긴다.
+	 * 작성 자격 확인은 {@link ProductReviewFacade}가 하므로 여기서는 구매 건을 믿고 저장만 한다.
+	 */
+	@Transactional
+	public Long create(Long memberId, Long productId, ReviewablePurchase purchase, ProductReviewCreateCommand command) {
+		// 구매 후 상품이 숨겨질 수 있어 노출 여부는 보지 않는다
+		reviewedProductUseCase.getActiveProduct(productId);
+		// 옵션이 이 상품의 것인지는 보지 않는다. 옵션 ID가 사용자 입력이 아니라 주문 기록에서 온 값이기 때문이다
+		validateNotReviewed(purchase.orderId(), productId);
+
+		ProductReview review = ProductReview.create(
+				productId, purchase.productOptionId(), purchase.orderId(), purchase.orderItemId(),
+				memberId, command.rating(), command.content(), toMediaSpecs(command.mediaUrls())
+		);
+		// 집계를 INSERT보다 먼저 더해 상품 행에 배타 락을 먼저 잡는다.
+		// INSERT를 먼저 하면 FK 때문에 상품 행에 공유 락이 걸리고, 같은 상품에 동시에 쓰면 서로 배타 락을 기다리다 데드락이 난다.
+		// 저장이 실패하면 트랜잭션이 롤백되어 더한 집계도 되돌아간다
+		reviewedProductUseCase.addReviewStats(productId, 1, command.rating());
+		Long reviewId = saveReview(review);
+		// 리뷰와 같은 트랜잭션에 남겨, 저장된 리뷰는 모두 분석되고 롤백된 리뷰의 요청은 남지 않게 한다
+		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
+			analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, analysisType, now()));
+		}
+		return reviewId;
+	}
+
+	@Transactional
+	@Override
+	public void update(Long memberId, Long reviewId, ProductReviewUpdateCommand command) {
+		ProductReview review = findOwnedReview(memberId, reviewId);
+		int previousRating = review.getRating();
+		String previousContent = review.getContent();
+
+		review.update(command.rating(), command.content(), toMediaSpecs(command.mediaUrls()));
+		applyRatingChange(review.getProductId(), previousRating, command.rating());
+		if (previousRating != command.rating() || !previousContent.equals(command.content())) {
+			requestReanalysis(reviewId);
+		}
+	}
+
+	// 내 리뷰를 삭제하고 상품의 리뷰 집계에서 뺀다
+	@Transactional
+	@Override
+	public void delete(Long memberId, Long reviewId) {
+		// 리뷰 행을 잠그고 삭제한 리뷰는 조회하지 않아, 동시에 두 번 지워도 집계가 두 번 빠지지 않는다
+		ProductReview review = findOwnedReview(memberId, reviewId);
+		review.delete(now());
+		reviewedProductUseCase.addReviewStats(review.getProductId(), -1, -review.getRating());
+	}
+
+	// 구매자에게 보이는 상품의 리뷰를 최신순으로 조회한다
+	@Override
+	public Page<ProductReviewResult> getProductReviews(Long productId, Pageable pageable) {
+		// 숨긴 상품의 리뷰가 상품 상세보다 먼저 새어 나가지 않게 상세와 같은 조건으로 막는다
+		reviewedProductUseCase.getVisibleProductCategory(productId);
+		return toResults(productReviewRepository.findByProductIdAndDeletedAtIsNullOrderByIdDesc(productId, pageable));
+	}
+
+	@Override
+	public Page<ProductReviewResult> getProductReviewsByKeyword(Long productId, String keywordId, Pageable pageable) {
+		ProductCategoryCode category = reviewedProductUseCase.getVisibleProductCategory(productId);
+		ReviewKeywordList.Keyword keyword = keywordList.find(keywordId)
+			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.REVIEW_KEYWORD_NOT_FOUND));
+		if (!keyword.appliesTo(category)) {
+			return Page.empty(pageable);
+		}
+		return toResults(reviewKeywordRepository.findAnalyzedByProductIdAndKeywordId(productId, keywordId, pageable));
+	}
+
+	// 내가 쓴 리뷰를 최신순으로 조회한다. 상품이 숨겨지거나 지워져도 내 리뷰는 보여 준다
+	@Override
+	public Page<ProductReviewResult> getMyReviews(Long memberId, Pageable pageable) {
+		return toResults(productReviewRepository.findByMemberIdAndDeletedAtIsNullOrderByIdDesc(memberId, pageable));
+	}
+
+	// 상품 상세 상단에 띄울 이 상품의 내 리뷰. 재구매하면 여러 건이다
+	@Override
+	public List<ProductReviewResult> getMyReviewsOfProduct(Long memberId, Long productId) {
+		List<ProductReview> reviews =
+			productReviewRepository.findByProductIdAndMemberIdAndDeletedAtIsNullOrderByIdDesc(productId, memberId);
+		Map<Long, String> optionNames = findOptionNames(reviews);
+		return reviews.stream()
+			.map(review -> toResult(review, optionNames))
+			.toList();
+	}
+
+	/**
+	 * 관리자 분석 테스트에 쓸 상품명·옵션명·분류를 읽는다. 숨긴 상품과 삭제된 옵션도 받는다.
+	 * 운영 작업자도 숨긴 상품과 삭제된 옵션의 리뷰를 분석하므로, 같은 상품을 테스트할 수 있게 한다.
+	 *
+	 * @throws RestApiException 상품이 없거나 삭제됐으면 {@code PRODUCT_NOT_FOUND}, 옵션이 그 상품의 것이 아니면 {@code INVALID_REVIEW_OPTION}
+	 */
+	public ReviewAnalysisSubjectResult getAnalysisSubject(Long productId, Long optionId) {
+		ReviewedProductResult product = reviewedProductUseCase.getActiveProduct(productId);
+		String optionName = reviewedProductUseCase.findOptionName(productId, optionId)
+			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.INVALID_REVIEW_OPTION));
+		return new ReviewAnalysisSubjectResult(product.name(), optionName, product.category());
+	}
+
+	// 삭제한 리뷰도 포함해서 본다. 지우고 다시 써서 같은 주문으로 리뷰를 여러 번 남기지 못하게 한다
+	private void validateNotReviewed(Long orderId, Long productId) {
+		if (productReviewRepository.existsByOrderIdAndProductId(orderId, productId)) {
+			throw new RestApiException(ProductReviewErrorCode.DUPLICATE_REVIEW);
+		}
+	}
+
+	// 동시에 중복 검사를 통과한 요청은 UNIQUE 위반이 나서 중복으로 바꾼다
+	private Long saveReview(ProductReview review) {
+		try {
+			return productReviewRepository.saveAndFlush(review).getId();
+		} catch (DataIntegrityViolationException e) {
+			throw new RestApiException(ProductReviewErrorCode.DUPLICATE_REVIEW);
+		}
+	}
+
+	// 요청이 없는 리뷰도 수정하면 분석되도록 새로 만든다. 요청은 (리뷰, 분석 종류)마다 하나라 연달아 수정해도 같은 행을 되돌린다
+	private void requestReanalysis(Long reviewId) {
+		for (ReviewAnalysisType analysisType : ReviewAnalysisType.values()) {
+			analysisRequestRepository.findByReviewIdAndAnalysisType(reviewId, analysisType)
+				.ifPresentOrElse(
+					request -> request.reset(now()),
+					() -> analysisRequestRepository.save(ReviewAnalysisRequest.pending(reviewId, analysisType, now())));
+		}
+	}
+
+	// 개수는 그대로 두고 별점 차이만 합계에 반영한다
+	private void applyRatingChange(Long productId, int previousRating, int newRating) {
+		if (previousRating == newRating) {
+			return;
+		}
+		reviewedProductUseCase.addReviewStats(productId, 0, (newRating - previousRating));
+	}
+
+	// 수정·삭제 전에 리뷰를 가져오고 내 리뷰인지 확인한다
+	private ProductReview findOwnedReview(Long memberId, Long reviewId) {
+		ProductReview review = productReviewRepository.findForUpdateByIdAndDeletedAtIsNull(reviewId)
+			.orElseThrow(() -> new RestApiException(ProductReviewErrorCode.REVIEW_NOT_FOUND));
+		if (!review.getMemberId().equals(memberId)) {
+			throw new RestApiException(ProductReviewErrorCode.REVIEW_ACCESS_DENIED);
+		}
+		return review;
+	}
+
+	private List<ProductReviewMediaSpec> toMediaSpecs(List<String> mediaUrls) {
+		return mediaUrls.stream()
+			.map(mediaValidator::toSpec)
+			.toList();
+	}
+
+	private Page<ProductReviewResult> toResults(Page<ProductReview> reviews) {
+		Map<Long, String> optionNames = findOptionNames(reviews.getContent());
+		return reviews.map(review -> toResult(review, optionNames));
+	}
+
+	// 리뷰마다 옵션을 조회하지 않도록 목록의 옵션 이름을 한 번에 가져온다
+	private Map<Long, String> findOptionNames(List<ProductReview> reviews) {
+		List<Long> optionIds = reviews.stream()
+			.map(ProductReview::getProductOptionId)
+			.distinct()
+			.toList();
+		return reviewedProductUseCase.findOptionNames(optionIds);
+	}
+
+	private ProductReviewResult toResult(ProductReview review, Map<Long, String> optionNames) {
+		List<ProductReviewMediaResult> media = review.getMedia().stream()
+			.map(this::toMediaResult)
+			.toList();
+		return new ProductReviewResult(review.getId(), review.getProductId(), review.getProductOptionId(),
+			optionNames.get(review.getProductOptionId()), review.getMemberId(), review.getRating(), review.getContent(),
+			media, review.getCreatedAt(), review.getUpdatedAt());
+	}
+
+	private ProductReviewMediaResult toMediaResult(ProductReviewMedia media) {
+		return new ProductReviewMediaResult(mediaUrlResolver.toUrl(media.getObjectKey()), media.getMediaType().name());
+	}
+
+	private LocalDateTime now() {
+		return LocalDateTime.now(clock);
+	}
+}

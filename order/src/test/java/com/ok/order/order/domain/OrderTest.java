@@ -298,6 +298,66 @@ class OrderTest {
         assertThat(sut.isStalePaymentPending(CREATED_AT.plusDays(1), CREATED_AT.plusDays(1))).isFalse();
     }
 
+    // ---------- 재고 해제 확인 (#657) ----------
+
+    @ParameterizedTest
+    @MethodSource("재고를_풀어야_하는_주문")
+    void 취소나_결제_실패된_주문은_해제를_확인할_때까지_재고를_풀어야_한다(Consumer<Order> end) {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        end.accept(sut);
+        boolean beforeRelease = sut.needsStockRelease();
+
+        // when
+        sut.markStockReleased(NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(beforeRelease).isTrue();
+            softly.assertThat(sut.needsStockRelease()).isFalse();
+            softly.assertThat(sut.getStockReleasedAt()).isEqualTo(NOW);
+        });
+    }
+
+    static Stream<Consumer<Order>> 재고를_풀어야_하는_주문() {
+        return Stream.of(Order::cancel, Order::markPaymentFailed);
+    }
+
+    @ParameterizedTest
+    @MethodSource("재고를_풀_상태가_아닌_주문")
+    void 결제_대기나_결제_완료_주문은_재고를_풀_대상이_아니고_해제_기록도_남지_않는다(Consumer<Order> progress) {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        progress.accept(sut);
+
+        // when
+        sut.markStockReleased(NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.needsStockRelease()).isFalse();
+            softly.assertThat(sut.getStockReleasedAt()).isNull();
+        });
+    }
+
+    static Stream<Consumer<Order>> 재고를_풀_상태가_아닌_주문() {
+        return Stream.of(order -> { }, Order::markPaid);
+    }
+
+    @Test
+    void 재고_해제를_다시_기록해도_처음_확인한_시각이_남는다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 1)));
+        sut.cancel();
+        sut.markStockReleased(NOW);
+
+        // when
+        sut.markStockReleased(NOW.plusMinutes(5));
+
+        // then
+        assertThat(sut.getStockReleasedAt()).isEqualTo(NOW);
+    }
+
     // ---------- 배송 상태 반영 ----------
 
     @Test
@@ -656,6 +716,60 @@ class OrderTest {
     }
 
     @Test
+    void 모두_환불된_상품은_묶음_배송이_시작돼도_배송_준비로_남고_나머지만_배송_중이_된다() {
+        // given: 같은 판매자 묶음에 감자 3개와 양파 1개, 감자는 모두 환불됨
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3), line(2L, 100L, 5_000L, 1)));
+        sut.markPaid();
+        OrderItem refunded = sut.getAllItems().get(0);
+        refunded.recordRefund(7L, 3, 0L);
+
+        // when
+        int changed = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isEqualTo(1);
+            softly.assertThat(refunded.getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+            softly.assertThat(sut.getAllItems().get(1).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+        });
+    }
+
+    @Test
+    void 일부만_환불된_상품은_배송이_시작되면_배송_중이_된다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        sut.markPaid();
+        sut.getAllItems().get(0).recordRefund(7L, 1, 0L);
+
+        // when
+        int changed = sut.markShipping(100L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isEqualTo(1);
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.SHIPPING);
+        });
+    }
+
+    @Test
+    void 모두_환불된_상품은_배송_완료가_먼저_와도_배송_준비로_남는다() {
+        // given
+        Order sut = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        sut.markPaid();
+        sut.getAllItems().get(0).recordRefund(7L, 3, 0L);
+
+        // when
+        int changed = sut.markDelivered(100L, NOW);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isZero();
+            softly.assertThat(sut.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+            softly.assertThat(sut.getAllItems().get(0).getDeliveredAt()).isNull();
+        });
+    }
+
+    @Test
     void 판매자_몫_배송비는_묶음_배송비에_묶음_안_환불에서_뺀_배송비를_더한다() {
         // given: 무료배송 묶음(구매자 배송비 0원)에서 일부 환불로 기준 아래가 되어 환불이 기본 배송비 3,000원을 뺐다
         Order order = Order.create(1L, List.of(line(1L, 100L, 30_000L, 1), line(2L, 100L, 20_000L, 1)));
@@ -685,5 +799,76 @@ class OrderTest {
 
         // then
         assertThat(sut).isEqualTo(3_000L);
+    }
+
+    @Test
+    void 주문_상품이_한_줄이면_주문_요약은_상품_이름만이다() {
+        // given
+        Order order = Order.create(1L, List.of(new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 2)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("사과");
+    }
+
+    @Test
+    void 주문_상품이_여러_줄이면_첫_상품_이름에_나머지_줄_수를_붙인다() {
+        // given: 판매자가 섞여 있어도 나머지 줄 수를 모두 센다
+        Order order = Order.create(1L, List.of(
+                new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 1),
+                new OrderLine(2L, 21L, 200L, "배", "2kg", 20_000L, 1),
+                new OrderLine(3L, 31L, 100L, "감", "1박스", 15_000L, 3),
+                new OrderLine(4L, 41L, 300L, "귤", "5kg", 12_000L, 1)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("사과 외 3건");
+    }
+
+    @Test
+    void 같은_상품이라도_옵션이_다르면_따로_센다() {
+        // given
+        Order order = Order.create(1L, List.of(
+                new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 1),
+                new OrderLine(1L, 12L, 100L, "사과", "2kg", 18_000L, 1)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("사과 외 1건");
+    }
+
+    @Test
+    void 저장된_주문은_목록_순서와_관계없이_ID가_가장_작은_주문_상품을_첫_상품으로_본다() {
+        // given: DB에서 읽은 목록 순서가 저장 순서와 달라도 요약이 바뀌지 않아야 한다
+        Order order = Order.create(1L, List.of(
+                new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 1),
+                new OrderLine(2L, 21L, 200L, "배", "2kg", 20_000L, 1)));
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 2L);
+        ReflectionTestUtils.setField(order.getAllItems().get(1), "id", 1L);
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("배 외 1건");
+    }
+
+    @Test
+    void 상품_이름이_길어도_자르지_않는다() {
+        // given: 주문 상품 이름의 최대 길이(100자)
+        String longName = "가".repeat(100);
+        Order order = Order.create(1L, List.of(new OrderLine(1L, 11L, 100L, longName, "1kg", 10_000L, 1)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo(longName);
     }
 }

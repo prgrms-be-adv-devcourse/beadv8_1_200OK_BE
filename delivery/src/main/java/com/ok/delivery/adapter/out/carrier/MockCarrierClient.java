@@ -2,6 +2,7 @@ package com.ok.delivery.adapter.out.carrier;
 
 import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.application.port.out.CarrierClient;
+import com.ok.delivery.domain.Carrier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -9,6 +10,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +41,17 @@ public class MockCarrierClient implements CarrierClient {
     @Override
     public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
         CompletableFuture.runAsync(() -> notifyDelivered(shipmentId), delayedExecutor);
+    }
+
+    // 가짜 택배사는 알림을 보내지 않고 상태를 조회할 곳도 없다. 알림 수신 경로(#668)는 tracker에서만 쓴다
+    @Override
+    public Optional<Carrier> findCarrier(String carrierId) {
+        return Optional.empty();
+    }
+
+    @Override
+    public boolean isDelivered(Carrier carrier, String trackingNumber) {
+        return false;
     }
 
     private void notifyDelivered(Long shipmentId) {

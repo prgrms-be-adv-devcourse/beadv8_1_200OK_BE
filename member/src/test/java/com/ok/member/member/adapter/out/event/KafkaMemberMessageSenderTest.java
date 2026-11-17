@@ -10,12 +10,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
+import tools.jackson.databind.json.JsonMapper;
+
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 
@@ -33,11 +38,14 @@ class KafkaMemberMessageSenderTest {
     @Mock
     KafkaTemplate<String, Object> kafkaTemplate;
 
+    // 본문 변환은 실제 JSON 변환기로 한다. outbox에 쓴 모양을 그대로 다시 읽는지까지 함께 본다
+    MemberMessagePayloadJson payloadJson = new MemberMessagePayloadJson(JsonMapper.builder().build());
+
     KafkaMemberMessageSender sut;
 
     @BeforeEach
     void setUp() {
-        sut = new KafkaMemberMessageSender(kafkaTemplate, SHORT_TIMEOUT);
+        sut = new KafkaMemberMessageSender(kafkaTemplate, payloadJson, SHORT_TIMEOUT);
     }
 
     // 중단 테스트가 남긴 중단 표시가 다른 테스트로 넘어가지 않게 지운다
@@ -98,6 +106,43 @@ class KafkaMemberMessageSenderTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage(FAILED_MESSAGE)
                 .hasCause(immediate);
+    }
+
+    @Test
+    void 출고지_우편번호는_저장해_둔_본문을_메시지로_읽어_판매자_키로_보낸다() {
+        // given: outbox에 저장할 때와 같은 변환기로 만든 본문
+        LocalDateTime occurredAt = LocalDateTime.of(2026, 11, 15, 10, 0, 0, 123_456_000);
+        String payload = payloadJson.writeSellerOriginPostalCode(MEMBER_ID, "37421", occurredAt);
+        SellerOriginPostalCodeMessage expected = new SellerOriginPostalCodeMessage(MEMBER_ID, "37421", occurredAt);
+        // 키는 sellerId(7), 값은 문자열이 아니라 메시지 객체여야 한다. 문자열이면 Kafka 직렬화가 따옴표로 한 번 더 감싼다
+        given(kafkaTemplate.send(eq(MemberTopics.SELLER_ORIGIN_POSTAL_CODE), eq("7"), eq(expected)))
+                .willReturn(CompletableFuture.completedFuture(null));
+
+        // when & then: given과 다른 토픽·키·값으로 보내면 결과가 null이라 예외가 난다
+        assertThatCode(() -> sut.sendSellerOriginPostalCodeChanged(MEMBER_ID, payload)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void 출고지_우편번호_발송이_실패하면_sellerId를_담은_예외를_던진다() {
+        // given
+        String payload = payloadJson.writeSellerOriginPostalCode(MEMBER_ID, "37421", LocalDateTime.of(2026, 11, 15, 10, 0));
+        KafkaException rejected = new KafkaException("브로커 거절");
+        given(kafkaTemplate.send(eq(MemberTopics.SELLER_ORIGIN_POSTAL_CODE), eq("7"), any()))
+                .willReturn(CompletableFuture.failedFuture(rejected));
+
+        // when & then
+        assertThatThrownBy(() -> sut.sendSellerOriginPostalCodeChanged(MEMBER_ID, payload))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("출고지 우편번호 Kafka 발행에 실패했습니다. sellerId=7")
+                .hasCause(rejected);
+    }
+
+    @Test
+    void 저장해_둔_본문을_읽지_못하면_발송하지_않고_예외를_던진다() {
+        // when & then: 시스템이 쓴 값이라 읽지 못하면 버그다. 줄은 실패로 기록되고 다음 실행에서 다시 시도된다
+        assertThatThrownBy(() -> sut.sendSellerOriginPostalCodeChanged(MEMBER_ID, "{깨진 JSON"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("출고지 우편번호 outbox 본문을 읽을 수 없습니다.");
     }
 
     // 키는 memberId(7)여야 같은 회원의 메시지가 같은 파티션으로 간다. 다른 키로 보내면 given이 맞지 않아 테스트가 실패한다

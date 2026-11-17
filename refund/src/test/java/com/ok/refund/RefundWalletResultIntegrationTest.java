@@ -417,6 +417,13 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
             }
         }
         assertThat(containers).hasSize(2);
+        // 리스너마다 그룹이 따로다(#648, #653). 한쪽의 읽은 위치를 되돌려도 다른 쪽이 멈추지 않는다
+        for (MessageListenerContainer container : containers) {
+            List<String> topicList = Arrays.asList(container.getContainerProperties().getTopics());
+            String expectedGroup = topicList.contains(RefundWalletResultSender.COMPLETED_TOPIC)
+                    ? "refund.return-completed" : "refund.return-failed";
+            assertThat(container.getGroupId()).isEqualTo(expectedGroup);
+        }
 
         for (MessageListenerContainer container : containers) {
             // when

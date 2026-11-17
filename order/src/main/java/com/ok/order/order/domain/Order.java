@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,10 @@ public class Order extends BaseTime {
     // 지갑에 결제를 요청한 시각(주문 생성 이벤트 발행 시각). 비어 있으면 아직 만드는 중이다(#402)
     @Column(name = "payment_requested_at")
     private LocalDateTime paymentRequestedAt;
+
+    // 재고 해제를 확인한 시각(#657). 취소·결제 실패인데 비어 있으면 정리 스케줄러가 재고 해제를 다시 부른다
+    @Column(name = "stock_released_at")
+    private LocalDateTime stockReleasedAt;
 
     // 수령인 이름
     @Column(nullable = false, length = 50)
@@ -216,6 +221,23 @@ public class Order extends BaseTime {
         return allItems;
     }
 
+    // 지갑 이용 내역에 보일 주문 요약(#602). 첫 주문 상품의 상품 이름에, 나머지가 있으면 " 외 N건"을 붙인다(예: "사과 외 3건").
+    // N은 나머지 주문 상품 줄 수다. 같은 상품도 옵션이 다르면 따로 센다.
+    // 상품 이름은 최대 100자라 자르지 않고 그대로 보낸다. 지갑은 120자까지 저장하고, 길면 화면에서 말줄임한다
+    public String orderSummary() {
+        List<OrderItem> items = getAllItems();
+        // 묶음과 주문 상품 목록은 DB에서 읽을 때 순서가 정해져 있지 않다. 주문서 순서대로 저장되므로 ID가 가장 작은 상품을 첫 상품으로 본다.
+        // 저장 전이라 ID가 없으면 담긴 순서의 첫 상품이다
+        OrderItem first = items.stream()
+                .min(Comparator.comparing(OrderItem::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElseThrow(() -> new IllegalStateException("주문 상품이 없는 주문입니다. orderId=" + id));
+        int others = items.size() - 1;
+        if (others == 0) {
+            return first.getProductName();
+        }
+        return first.getProductName() + " 외 " + others + "건";
+    }
+
     // 결제 대기 상태인지
     public boolean isPaymentPending() {
         return status == OrderStatus.PAYMENT_PENDING;
@@ -286,6 +308,19 @@ public class Order extends BaseTime {
             item.cancel();
         }
         return true;
+    }
+
+    // 재고를 풀어야 하는데 아직 해제를 확인하지 못했는지(#657).
+    // 취소와 결제 실패는 더 바뀌지 않는 상태라, 한 번 대상이 되면 해제를 확인할 때까지 대상으로 남는다
+    public boolean needsStockRelease() {
+        return (status == OrderStatus.CANCELED || status == OrderStatus.PAYMENT_FAILED) && stockReleasedAt == null;
+    }
+
+    // 재고 해제를 확인했다고 기록한다(#657). 이미 기록했거나 재고를 풀 상태가 아니면 그대로 둔다(처음 확인한 시각을 남긴다)
+    public void markStockReleased(LocalDateTime releasedAt) {
+        if (needsStockRelease()) {
+            this.stockReleasedAt = releasedAt;
+        }
     }
 
     // 판매자 묶음의 상품들을 '배송 중'으로 변경

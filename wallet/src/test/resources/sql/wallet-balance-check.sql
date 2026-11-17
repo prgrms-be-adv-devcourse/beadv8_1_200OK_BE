@@ -63,7 +63,6 @@ FROM seller_wallet w
 LEFT JOIN seller_ledger l ON l.wallet_id = w.id AND l.reverse_order = 1
 WHERE COALESCE(l.balance_after, 0) <> w.balance
 UNION ALL
--- 충전은 충전 건 쪽에서만 본다. 시험들이 chargeByPayment를 직접 불러 충전 건 없는 원장을 만들어서, 반대 방향은 시험 준비를 고친 뒤 켠다
 SELECT 'BUYER', w.id, 'CHARGE_WITHOUT_LEDGER', NULL,
        CONCAT('CHARGE:', c.payment_key), NULL
 FROM wallet_charge c
@@ -87,6 +86,16 @@ FROM wallet_charge c
 JOIN buyer_wallet_ledger l ON l.reference_key = CONCAT('CHARGE:', c.payment_key)
 JOIN buyer_wallet w ON w.id = l.buyer_wallet_id
 WHERE c.status = 'FAILED'
+UNION ALL
+-- 원장과 완료 처리는 한 트랜잭션에서 함께 들어가므로, 처리 중인 충전 건에 붙은 원장도 짝이 없는 것으로 본다.
+-- 실패 건에 붙은 원장은 바로 위에서 잡으므로 여기서는 빼, 같은 원장이 두 줄로 나오지 않게 한다
+SELECT 'BUYER', l.buyer_wallet_id, 'CHARGE_LEDGER_WITHOUT_RECORD', l.id,
+       NULL, l.reference_key
+FROM buyer_wallet_ledger l
+WHERE l.type = 'CHARGE'
+  AND NOT EXISTS (SELECT 1 FROM wallet_charge c
+                  WHERE CONCAT('CHARGE:', c.payment_key) = l.reference_key
+                    AND c.status IN ('COMPLETED', 'FAILED'))
 UNION ALL
 SELECT 'BUYER', w.id, 'PAID_WITHOUT_LEDGER', NULL,
        CONCAT('PAYMENT:', p.order_id), NULL

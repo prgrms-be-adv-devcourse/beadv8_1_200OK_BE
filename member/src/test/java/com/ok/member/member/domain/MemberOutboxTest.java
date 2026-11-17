@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class MemberOutboxTest {
@@ -68,5 +69,36 @@ class MemberOutboxTest {
 
         // then
         assertThat(sut.getLastError()).hasSize(MemberOutbox.MAX_ERROR_LENGTH);
+    }
+
+    @Test
+    void 출고지_우편번호_줄은_판매자_ID를_키로_본문과_함께_만들어진다() {
+        // when
+        MemberOutbox sut = MemberOutbox.sellerOriginPostalCodeChanged(7L, "{\"sellerId\":7}");
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getEventType()).isEqualTo(MemberOutboxEventType.SELLER_ORIGIN_POSTAL_CODE_CHANGED);
+            softly.assertThat(sut.getMemberId()).isEqualTo(7L);
+            softly.assertThat(sut.getPayload()).isEqualTo("{\"sellerId\":7}");
+            softly.assertThat(sut.getStatus()).isEqualTo(MemberOutboxStatus.PENDING);
+        });
+    }
+
+    @Test
+    void 출고지_우편번호_줄의_본문이_비면_만들지_않는다() {
+        // when & then: 본문은 시스템이 만든 JSON이라 비면 버그다
+        assertThatThrownBy(() -> MemberOutbox.sellerOriginPostalCodeChanged(7L, " "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("출고지 우편번호 메시지 본문은 필수입니다.");
+    }
+
+    @Test
+    void 본문이_DB_칸보다_길면_만들지_않는다() {
+        // when & then: 잘라 저장하면 깨진 JSON이 나가므로 자르지 않고 막는다
+        assertThatThrownBy(() -> MemberOutbox.sellerOriginPostalCodeChanged(7L, "가".repeat(MemberOutbox.MAX_PAYLOAD_LENGTH + 1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("outbox 본문은 1000자 이하여야 합니다.");
     }
 }

@@ -27,6 +27,7 @@ interface SellerApplicationControllerSpec {
                     한 회원은 상점을 하나만 가질 수 있어, 심사 대기·심사 중·승인된 신청이 있으면 새로 신청할 수 없습니다.
                     거절된 신청만 있으면 대기 기간 없이 바로 다시 신청할 수 있습니다.
                     한 사업자등록번호로는 한 번만 신청할 수 있습니다(거절된 신청은 제외).
+                    출고지 우편번호(originPostalCode)는 필수이며, 승인되면 배송비 계산을 위해 배송 모듈에 전달됩니다. 승인 뒤 변경은 판매자 프로필에서 합니다.
                     승인 전에도 구매는 그대로 할 수 있습니다.
                     """
     )
@@ -85,7 +86,7 @@ interface SellerApplicationControllerSpec {
 
     @Operation(
             summary = "내 판매자 신청 정보 조회",
-            description = "로그인한 회원 본인의 신청 한 건의 상호명, 대표자명, 사업자등록번호, 신청일을 반환합니다."
+            description = "로그인한 회원 본인의 신청 한 건의 상호명, 대표자명, 사업자등록번호, 출고지 우편번호, 신청일을 반환합니다. 판매자 프로필을 처음 등록할 때 출고지 우편번호의 기본값으로 쓸 수 있습니다."
     )
     @ApiResponse(responseCode = "200", description = "조회 성공")
     @ApiResponse(responseCode = "401", description = "로그인 필요")

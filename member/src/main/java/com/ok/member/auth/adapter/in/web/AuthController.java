@@ -1,10 +1,12 @@
 package com.ok.member.auth.adapter.in.web;
 
 import com.ok.member.auth.adapter.in.web.dto.LoginRequest;
+import com.ok.member.auth.adapter.in.web.dto.LogoutRequest;
 import com.ok.member.auth.adapter.in.web.dto.TokenReissueRequest;
 import com.ok.member.auth.adapter.in.web.dto.TokenResponse;
 import com.ok.member.auth.application.dto.TokenResult;
 import com.ok.member.auth.application.port.in.LoginUseCase;
+import com.ok.member.auth.application.port.in.LogoutUseCase;
 import com.ok.member.auth.application.port.in.TokenReissueUseCase;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ public class AuthController implements AuthControllerSpec {
 
     private final LoginUseCase loginUseCase;
     private final TokenReissueUseCase tokenReissueUseCase;
+    private final LogoutUseCase logoutUseCase;
 
     @Override
     @PostMapping("/login")
@@ -34,6 +37,13 @@ public class AuthController implements AuthControllerSpec {
     public ResponseEntity<TokenResponse> reissue(@Valid @RequestBody TokenReissueRequest request) {
         TokenResult result = tokenReissueUseCase.reissue(request.toCommand());
         return ResponseEntity.ok(TokenResponse.from(result));
+    }
+
+    @Override
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@Valid @RequestBody LogoutRequest request) {
+        logoutUseCase.logout(request.toCommand());
+        return ResponseEntity.noContent().build();
     }
 
 }

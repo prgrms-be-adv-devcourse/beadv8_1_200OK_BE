@@ -23,10 +23,21 @@ public interface RefreshTokenJpaRepository extends JpaRepository<RefreshToken, L
     @Query("SELECT r.id FROM RefreshToken r WHERE r.tokenHash = :tokenHash")
     Optional<Long> findIdByTokenHash(@Param("tokenHash") String tokenHash);
 
+    @Override
+    @Query("SELECT r.id FROM RefreshToken r WHERE r.tokenHash = :tokenHash AND r.expiresAt > :now")
+    Optional<Long> findUnexpiredIdByTokenHash(@Param("tokenHash") String tokenHash, @Param("now") LocalDateTime now);
+
     // 포트의 선언만으로도 쿼리가 만들어져, 여기서 다시 선언하지 않으면 잠금 없는 조회로 오류 없이 돈다
     @Override
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<RefreshToken> findForUpdateById(Long id);
+
+    // 이름만으로 만들면 Spring Data가 엔티티를 읽은 뒤 지워, 영속성 컨텍스트를 거치지 않는 벌크 DELETE로 직접 선언한다.
+    // 트랜잭션은 호출한 서비스가 연다
+    @Override
+    @Modifying
+    @Query("DELETE FROM RefreshToken r WHERE r.id = :id")
+    int deleteDirectlyById(@Param("id") Long id);
 
     // JPQL DELETE는 ORDER BY·LIMIT을 쓸 수 없어 네이티브 쿼리로 쓴다.
     // 네이티브 쿼리는 엔티티의 catalog 지정이 적용되지 않으므로 테이블 이름을 스키마로 직접 한정한다.

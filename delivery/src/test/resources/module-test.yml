@@ -1,0 +1,5 @@
+delivery:
+  carrier:
+    webhook:
+      # 택배사 알림 API 통합 테스트용 비밀값. 운영 값이 아니다
+      secret: test-webhook-secret

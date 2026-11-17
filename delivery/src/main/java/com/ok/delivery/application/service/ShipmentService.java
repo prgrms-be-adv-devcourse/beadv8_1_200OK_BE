@@ -42,6 +42,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -110,6 +111,16 @@ public class ShipmentService implements ShipmentUseCase {
         return shipmentRepository.findAllByStatus(ShipmentStatus.SHIPPING).stream()
                 .map(ShippingShipmentResult::from)
                 .toList();
+    }
+
+    /**
+     * 택배사 알림에 담긴 송장으로 배송 중({@code SHIPPING}) shipment를 찾는다.
+     * 없는 송장이거나 이미 배송 완료 이후 상태면 비어 있어, 알림이 반복돼도 택배사를 다시 조회하지 않는다.
+     */
+    public Optional<ShippingShipmentResult> findShippingShipment(Carrier carrier, String trackingNumber) {
+        return shipmentRepository.findByCarrierAndTrackingNumber(carrier, trackingNumber)
+                .filter(shipment -> shipment.getStatus() == ShipmentStatus.SHIPPING)
+                .map(ShippingShipmentResult::from);
     }
 
     @Override

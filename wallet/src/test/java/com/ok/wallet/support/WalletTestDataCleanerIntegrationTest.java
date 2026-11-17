@@ -1,14 +1,18 @@
 package com.ok.wallet.support;
 
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.wallet.domain.BuyerWalletLedgerType;
+import com.ok.wallet.domain.SellerWalletLedgerType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -137,6 +141,29 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(kind.name(), "UNKNOWN_LEDGER_TYPE", ledgerId, "WITHDRAW"));
     }
 
+    // 위 시험은 빠뜨린 유형이 원장에 실제로 들어가야 잡는다. 코드의 유형 목록을 직접 돌면 유형을 더한 순간 잡는다
+    @ParameterizedTest
+    @MethodSource("코드에_있는_원장_유형")
+    void 코드에_있는_원장_유형은_모두_검사_SQL에_증감_방향이_있다(WalletKind kind, String type) {
+        // given
+        long walletId = insertWallet(kind, 1L, 1_000);
+        insertLedger(kind, walletId, type, 1_000, 1_000, type + "-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then: 짝이 없어 다른 어긋남은 나오므로 유형 검사 결과만 본다
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"))
+                .doesNotContain("UNKNOWN_LEDGER_TYPE");
+    }
+
+    static Stream<Arguments> 코드에_있는_원장_유형() {
+        return Stream.concat(
+                Arrays.stream(BuyerWalletLedgerType.values()).map(type -> Arguments.of(WalletKind.BUYER, type.name())),
+                Arrays.stream(SellerWalletLedgerType.values()).map(type -> Arguments.of(WalletKind.SELLER, type.name())));
+    }
+
     @Test
     void 원장이_없는_완료_충전_건을_잡는다() {
         // given
@@ -169,18 +196,37 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple("FAILED_CHARGE_WITH_LEDGER", ledgerId));
     }
 
-    // 시험들이 충전 함수를 직접 불러 충전 건 없이 원장을 만들므로, 이 방향은 검사하지 않는다
+    // 토스 승인 없이 잔액이 오른 경우다
     @Test
-    void 충전_건이_없는_충전_원장은_어긋남이_아니다() {
+    void 충전_건이_없는_충전_원장을_잡는다() {
         // given
         long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
-        insertLedger(WalletKind.BUYER, walletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
 
         // when
         List<Map<String, Object>> mismatches = sut.findMismatches();
 
         // then
-        assertThat(mismatches).isEmpty();
+        assertThat(mismatches)
+                .extracting(row -> row.get("wallet_id"), row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple(walletId, "CHARGE_LEDGER_WITHOUT_RECORD", ledgerId));
+    }
+
+    // 처리 중 충전을 복구하는 작업이 잔액만 올리고 충전 건을 완료로 바꾸지 않은 경우다
+    @Test
+    void 처리_중인_충전_건에_붙은_충전_원장을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 5_000);
+        insertCharge(1L, 5_000, "IN_PROGRESS", "pay-1");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "CHARGE", 5_000, 5_000, "CHARGE:pay-1");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("CHARGE_LEDGER_WITHOUT_RECORD", ledgerId));
     }
 
     @Test
@@ -406,8 +452,16 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 "SELECT id FROM " + kind.walletTable() + " WHERE member_id = ?", Long.class, memberId);
     }
 
-    // 짝 맞추기와 상관없는 원장은 참조 키가 겹치지 않게 아무 값이나 붙인다
+    // 짝 맞추기와 상관없는 원장은 참조 키가 겹치지 않게 아무 값이나 붙인다.
+    // 다만 충전 원장은 완료 충전 건이 없으면 어긋남으로 잡히므로 짝이 되는 충전 건도 넣는다
     private long insertLedger(WalletKind kind, long walletId, String type, long amount, long balanceAfter) {
+        if (kind == WalletKind.BUYER && type.equals("CHARGE")) {
+            String paymentKey = "pay-" + walletId + "-" + System.nanoTime();
+            Long memberId = jdbcTemplate.queryForObject(
+                    "SELECT member_id FROM buyer_wallet WHERE id = ?", Long.class, walletId);
+            insertCharge(memberId, amount, "COMPLETED", paymentKey);
+            return insertLedger(kind, walletId, type, amount, balanceAfter, "CHARGE:" + paymentKey);
+        }
         return insertLedger(kind, walletId, type, amount, balanceAfter, type + "-" + walletId + "-" + System.nanoTime());
     }
 

@@ -4,6 +4,7 @@ import com.ok.common.event.WalletPaymentCompletedEvent;
 import com.ok.common.event.WalletPaymentFailedEvent;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.dto.OrderPaymentCommand;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,8 +40,11 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
 
@@ -52,7 +56,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     @Test
     void 잔액이_충분하면_차감하고_결제_완료_이벤트를_발행한다() {
         // given
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-40", 10_000);
+        charger.charge(BUYER_ID, "pay-40", 10_000);
         events.clear();
 
         // when
@@ -73,7 +77,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     @Test
     void 잔액이_부족하면_차감하지_않고_잔액_부족_실패_이벤트를_발행한다() {
         // given
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-40", 10_000);
+        charger.charge(BUYER_ID, "pay-40", 10_000);
         events.clear();
 
         // when
@@ -92,7 +96,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     @ValueSource(longs = {0, -1_000})
     void 결제_금액이_없거나_0_이하면_차감하지_않고_처리할_수_없는_요청_실패_이벤트를_발행한다(Long amount) {
         // given
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-40", 10_000);
+        charger.charge(BUYER_ID, "pay-40", 10_000);
         events.clear();
 
         // when
@@ -108,7 +112,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     @Test
     void 이미_결제된_주문이면_다시_차감하지_않고_결과_이벤트도_다시_보내지_않는다() {
         // given: 같은 주문을 한 번 결제함
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-40", 10_000);
+        charger.charge(BUYER_ID, "pay-40", 10_000);
         orderPaymentService.pay(new OrderPaymentCommand(ORDER_ID, BUYER_ID, 3_000L));
         events.clear();
 
@@ -124,7 +128,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     @Test
     void 주문_id가_없으면_차감하지_않고_이벤트도_보내지_않는다() {
         // given
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-40", 10_000);
+        charger.charge(BUYER_ID, "pay-40", 10_000);
         events.clear();
 
         // when: 실패를 알릴 주문이 없어 기록만 하고 끝낸다
@@ -140,7 +144,7 @@ class OrderPaymentServiceTest extends AbstractIntegrationTest {
     void 잔액_부족으로_실패한_주문이_충전_후_다시_와도_차감하지_않고_이벤트도_보내지_않는다() {
         // given: 잔액 부족으로 실패한 뒤 충전함
         orderPaymentService.pay(new OrderPaymentCommand(ORDER_ID, BUYER_ID, 3_000L));
-        buyerWalletService.chargeByPayment(BUYER_ID, "pay-40", 10_000);
+        charger.charge(BUYER_ID, "pay-40", 10_000);
         events.clear();
 
         // when: 같은 주문이 재전달됨

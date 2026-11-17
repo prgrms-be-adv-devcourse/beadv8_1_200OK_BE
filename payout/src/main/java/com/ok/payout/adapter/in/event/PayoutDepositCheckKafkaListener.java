@@ -27,7 +27,7 @@ public class PayoutDepositCheckKafkaListener {
     // 지갑이 아직 답을 보내지 않아도(#613 전) 미리 열어 둔다
     @KafkaListener(
             topics = PayoutTopics.WALLET_PAYOUT_DEPOSIT_CHECKED,
-            groupId = PayoutTopics.CONSUMER_GROUP,
+            groupId = PayoutTopics.DEPOSIT_CHECK_GROUP,
             containerFactory = PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.PayoutDepositCheckedMessage")
     void onKafka(PayoutDepositCheckedMessage message) {

@@ -18,7 +18,7 @@ public class PayoutKafkaListener {
     // 메시지에 보내는 쪽 클래스 이름(타입 헤더)이 없어서 읽을 타입을 리스너가 정한다
     @KafkaListener(
             topics = WalletKafkaTopics.SELLER_PAYOUT_CREATED,
-            groupId = WalletKafkaTopics.CONSUMER_GROUP,
+            groupId = WalletKafkaTopics.PAYOUT_DEPOSIT_GROUP,
             containerFactory = WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.wallet.adapter.in.event.dto.SellerPayoutCreatedMessage")
     void on(SellerPayoutCreatedMessage message) {

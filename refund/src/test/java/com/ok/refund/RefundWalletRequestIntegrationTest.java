@@ -55,6 +55,7 @@ import java.util.Properties;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.is;
@@ -64,7 +65,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 통합 테스트: 판매자가 승인하면 실제 Kafka(테스트 컨테이너)의 refund.refund-approved 토픽에 지갑 반환 요청이 나가는지 확인한다 (#512)
+// 통합 테스트: 판매자가 승인하면 실제 Kafka(테스트 컨테이너)의 refund.refund-approved.v1 토픽에 지갑 반환 요청이 나가는지 확인한다 (#512)
+// 지갑이 .v1로 옮기기 전까지 옛 이름 refund.refund-approved에도 함께 나가는지는 첫 테스트가 본다 (#653)
 // - 토픽 메시지는 테스트마다 지워지지 않는다(다른 승인 통합 테스트도 같은 토픽에 보냄). 그래서 승인 직전의 끝 위치부터 읽고,
 //   키(orderId)는 여러 환불이 같을 수 있어 값의 refundId로 이번 환불의 메시지를 걸러 본다
 // - 값은 문자열로 읽어 JSON 그대로 확인한다. 지갑은 환불 클래스가 아니라 이 JSON 모양으로 읽기 때문이다
@@ -141,6 +143,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         // given: 3개 중 1개를 취소한다. 2개(20,000원)가 남아 묶음이 그대로라 배송비는 돌려주지도 빼지도 않는다. 10,000원을 돌려준다
         Long refundId = requestedRefundId();
         Map<TopicPartition, Long> before = endOffsets();
+        Map<TopicPartition, Long> beforeOld = endOffsets(RefundTopics.REFUND_APPROVED_OLD);
 
         // when
         approve(refundId)
@@ -148,11 +151,18 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.refundAmount", is(10000)));
 
+        // then: 지갑이 .v1로 옮기기 전까지 옛 이름 토픽에도 같은 키·같은 JSON이 한 건 나간다 (#653)
+        List<ConsumerRecord<?, ?>> sentToOld = readMessagesOf(RefundTopics.REFUND_APPROVED_OLD, refundId, beforeOld);
+        assertThat(sentToOld).hasSize(1);
+        assertThat(sentToOld.getFirst().key()).isEqualTo(String.valueOf(ORDER_ID));
+        String sentToOldValue = (String) sentToOld.getFirst().value();
+
         // then: 이번 환불의 메시지가 정확히 한 건, 키는 orderId
         List<ConsumerRecord<?, ?>> sent = readMessagesOf(refundId, before);
         assertThat(sent).hasSize(1);
         ConsumerRecord<?, ?> record = sent.getFirst();
         assertThat(record.key()).isEqualTo(String.valueOf(ORDER_ID));
+        assertThat(record.value()).isEqualTo(sentToOldValue);
         // then: 값은 #413에 적은 약속 모양. 같은 Long 필드 넷이 서로 다른 값이라 뒤바뀌면 실패한다
         JsonNode message = jsonMapper.readTree((String) record.value());
         assertThat(message).isNotNull();
@@ -309,7 +319,7 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         assertThat(readMessagesOf(refundId, before)).hasSize(1);
     }
 
-    // 지갑 결과를 기다리는 환불은 다시 진행해도 아무것도 보내지 않는다(결과 대기 시간 초과는 #577)
+    // 지갑 결과를 기다리는 환불은 기다리는 시각(5분) 전이면 다시 진행해도 아무것도 보내지 않는다
     @Test
     void 지갑_결과를_기다리는_환불을_다시_진행하면_아무것도_보내지_않는다() throws Exception {
         // given
@@ -329,6 +339,57 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                         tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, 1),
                         tuple(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1));
         assertThat(readMessagesOf(refundId, before)).isEmpty();
+    }
+
+    // 지갑 결과를 기다리는 시각이 지났는데 결과가 오지 않으면(메시지가 늦거나 버려짐) 같은 refundId로 반환 요청을 한 번 다시 보낸다(#577).
+    // 시도 횟수는 그대로이고, 보낸 뒤 다시 결과 대기가 된다
+    @Test
+    void 지갑_결과를_기다리는_시각이_지난_환불을_다시_진행하면_같은_요청을_한_번_다시_보낸다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId)
+                .andExpect(status().isOk());
+        makeWalletResultOverdue(refundId);
+        Map<TopicPartition, Long> before = endOffsets();
+
+        // when
+        RefundResult result = refundSagaUseCase.resume(refundId);
+
+        // then
+        assertThat(result.status()).isEqualTo("PROCESSING");
+        RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+        assertThat(wallet).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(wallet.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(wallet.getNextCheckAt()).isAfter(LocalDateTime.now(clock));
+        });
+        assertThat(readMessagesOf(refundId, before)).hasSize(1);
+    }
+
+    // 이미 한 번 보낸 요청을 다시 보내다 발행이 실패해도 멈추지 않고 결과 대기로 돌아간다(#577 판단 2).
+    // 멈추면 늦게 온 진짜 지갑 답을 기록하지 못한다. 시도 횟수도 그대로다
+    @Test
+    void 지갑_결과를_다시_보내다_발행이_실패해도_멈추지_않고_결과_대기로_돌아간다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId)
+                .andExpect(status().isOk());
+        makeWalletResultOverdue(refundId);
+        walletRefundRequestPort.fail();
+
+        // when & then
+        assertThatThrownBy(() -> refundSagaUseCase.resume(refundId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("지갑 반환 요청 발행에 실패했습니다(테스트). refundId=" + refundId);
+        RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+        assertThat(wallet).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(wallet.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(wallet.getAwaitingSince()).isNotNull();
+            softly.assertThat(wallet.getNextCheckAt()).isAfter(LocalDateTime.now(clock));
+        });
     }
 
     // 단계 줄이 없는 처리 중 환불은 있을 수 없는 상태라 다시 진행하지 않는다(#616 결정 13)
@@ -416,6 +477,17 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         assertThat(readMessagesOf(refundId, before)).isEmpty();
     }
 
+    // 지갑 결과 대기 줄의 기다리는 시각을 1분 전으로 옮긴다. 5분을 실제로 기다릴 수 없어 같은 줄을 시각만 바꿔 저장한다(잠근 행에만 update)
+    private void makeWalletResultOverdue(Long refundId) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            refundPersistencePort.findByIdForUpdate(refundId).orElseThrow();
+            RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+            refundStepPersistencePort.update(RefundStep.restore(wallet.getId(), refundId, RefundStepType.WALLET,
+                    wallet.getStatus(), wallet.getAttemptCount(), LocalDateTime.now(clock).minusMinutes(1),
+                    wallet.getLastReason(), wallet.getAwaitingSince(), wallet.getCreatedAt()));
+        });
+    }
+
     // 다른 결정처럼 행을 잠그고 바꾼 뒤 저장한다(잠근 행에만 update, refund/CLAUDE.md 4절)
     private void completeRefund(Long refundId) {
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
@@ -459,8 +531,13 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
 
     // from 위치부터 토픽 끝까지 읽어, 값의 refundId가 이번 환불인 메시지만 모은다
     private List<ConsumerRecord<?, ?>> readMessagesOf(Long refundId, Map<TopicPartition, Long> from) throws Exception {
+        return readMessagesOf(RefundTopics.REFUND_APPROVED, refundId, from);
+    }
+
+    private List<ConsumerRecord<?, ?>> readMessagesOf(String topic, Long refundId, Map<TopicPartition, Long> from)
+            throws Exception {
         try (Consumer<?, ?> consumer = createConsumer()) {
-            List<TopicPartition> partitions = assignTopic(consumer);
+            List<TopicPartition> partitions = assignTopic(consumer, topic);
             consumer.seekToBeginning(partitions);
             for (Map.Entry<TopicPartition, Long> entry : from.entrySet()) {
                 consumer.seek(entry.getKey(), entry.getValue());
@@ -481,8 +558,12 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Map<TopicPartition, Long> endOffsets() {
+        return endOffsets(RefundTopics.REFUND_APPROVED);
+    }
+
+    private Map<TopicPartition, Long> endOffsets(String topic) {
         try (Consumer<?, ?> consumer = createConsumer()) {
-            return consumer.endOffsets(assignTopic(consumer));
+            return consumer.endOffsets(assignTopic(consumer, topic));
         }
     }
 
@@ -495,9 +576,9 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         return consumerFactory.createConsumer(groupId, null, null, overrides);
     }
 
-    private List<TopicPartition> assignTopic(Consumer<?, ?> consumer) {
+    private List<TopicPartition> assignTopic(Consumer<?, ?> consumer, String topic) {
         List<TopicPartition> partitions = new ArrayList<>();
-        for (PartitionInfo info : consumer.partitionsFor(RefundTopics.REFUND_APPROVED)) {
+        for (PartitionInfo info : consumer.partitionsFor(topic)) {
             partitions.add(new TopicPartition(info.topic(), info.partition()));
         }
         consumer.assign(partitions);

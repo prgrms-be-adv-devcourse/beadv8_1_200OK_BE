@@ -3,8 +3,10 @@ package com.ok.member.auth.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.member.auth.application.dto.AuthAccount;
 import com.ok.member.auth.application.dto.LoginCredential;
+import com.ok.member.auth.application.dto.LogoutCommand;
 import com.ok.member.auth.application.dto.TokenReissueCommand;
 import com.ok.member.auth.application.dto.TokenResult;
+import com.ok.member.auth.application.port.in.LogoutUseCase;
 import com.ok.member.auth.application.port.in.TokenReissueUseCase;
 import com.ok.member.auth.application.port.out.AccessTokenIssuer;
 import com.ok.member.auth.application.port.out.MemberCredentialReader;
@@ -21,12 +23,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * 로그인과 재발급에 필요한 회원 조회와 토큰 발급을 트랜잭션 안에서 처리한다.
+ * 로그인과 재발급에 필요한 회원 조회와 토큰 발급, 로그아웃을 트랜잭션 안에서 처리한다.
  * 비밀번호 비교처럼 커넥션을 잡으면 안 되는 로그인 흐름은 트랜잭션 밖의 {@link LoginFacade}가 맡는다.
  */
 @Service
 @Transactional(readOnly = true)
-public class AuthService implements TokenReissueUseCase {
+public class AuthService implements TokenReissueUseCase, LogoutUseCase {
 
     private final MemberCredentialReader memberCredentialReader;
     private final AccessTokenIssuer accessTokenIssuer;
@@ -111,6 +113,17 @@ public class AuthService implements TokenReissueUseCase {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
         }
         return createTokens(account, rotated.issued());
+    }
+
+    /**
+     * Refresh Token의 세션을 끝낸다. 회원 상태는 확인하지 않는다.
+     * 정지·탈퇴한 회원이어도 세션을 끝내는 것은 막을 이유가 없고, 회원을 조회하지 않아야 응답이 토큰 유효 여부와 무관하게 같다.
+     * 클래스 기본값이 읽기 전용이라 여기서 쓰기 트랜잭션을 연다. 그렇지 않으면 {@code RefreshTokenService}가 읽기 전용 트랜잭션에 참여한다.
+     */
+    @Override
+    @Transactional
+    public void logout(LogoutCommand command) {
+        refreshTokenService.revoke(command.refreshToken());
     }
 
     // 로그인과 재발급이 같은 규칙으로 토큰을 만든다. 권한은 발급할 때마다 회원 정보와 판매자 승인 상태로 계산한다.

@@ -43,8 +43,13 @@ public class RefundResumeScheduler {
 
     public RefundResumeScheduler(ResumeDueRefundsUseCase resumeDueRefundsUseCase, DataSource dataSource) {
         this.resumeDueRefundsUseCase = resumeDueRefundsUseCase;
-        // 표 이름에 스키마를 붙여야 한 앱(스키마 여러 개)에서도 환불 표를 찾는다. 서버 시계가 달라도 어긋나지 않게 잠금 시각은 DB 시각을 쓴다
-        this.lockingTaskExecutor = new DefaultLockingTaskExecutor(new JdbcTemplateLockProvider(
+        this.lockingTaskExecutor = lockingTaskExecutor(dataSource);
+    }
+
+    // 환불 알람들(다시 진행, 멈춘 환불 찾기 #577)이 같은 잠금 표를 쓰게 한 곳에서 만든다. 잠금 이름으로 알람끼리 구분한다.
+    // 표 이름에 스키마를 붙여야 한 앱(스키마 여러 개)에서도 환불 표를 찾는다. 서버 시계가 달라도 어긋나지 않게 잠금 시각은 DB 시각을 쓴다
+    static LockingTaskExecutor lockingTaskExecutor(DataSource dataSource) {
+        return new DefaultLockingTaskExecutor(new JdbcTemplateLockProvider(
                 JdbcTemplateLockProvider.Configuration.builder()
                         .withJdbcTemplate(new JdbcTemplate(dataSource))
                         .withTableName(RefundSchema.NAME + ".shedlock")

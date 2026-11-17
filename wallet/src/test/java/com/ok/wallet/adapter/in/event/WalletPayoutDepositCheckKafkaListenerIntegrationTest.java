@@ -30,7 +30,7 @@ import static org.awaitility.Awaitility.await;
 // - 테스트 브로커는 파티션이 하나라 같은 키로 보낸 메시지는 보낸 순서대로 처리된다
 class WalletPayoutDepositCheckKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
-    private static final String CHECKED_TOPIC = "wallet.payout-deposit-checked";
+    private static final String CHECKED_TOPIC = "wallet.payout-deposit-checked.v1";
     private static final Pattern PAYOUT_ID_FIELD = Pattern.compile("\"payoutId\":");
     private static final Pattern FOUND_TRUE = Pattern.compile("\"found\":true");
 

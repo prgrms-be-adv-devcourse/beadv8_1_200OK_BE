@@ -102,18 +102,23 @@ public class OrderItem extends BaseTime {
         this.status = OrderItemStatus.CANCELED;
     }
 
-    // 배송 시작
+    // 배송 시작. 모두 환불된 상품은 보낼 것이 없어 배송 준비로 둔다.
+    // 환불 기록은 상태를 바꾸지 않아(#28), 막지 않으면 같은 묶음 송장이 등록될 때 함께 배송 중이 된다(#658)
     boolean markShipping() {
-        if (status != OrderItemStatus.PREPARING) {
+        if (status != OrderItemStatus.PREPARING || isFullyRefunded()) {
             return false;
         }
         this.status = OrderItemStatus.SHIPPING;
         return true;
     }
 
-    // 배송 완료 (배송 준비, 배송 중 상태에서만 변경 가능)
+    // 배송 완료 (배송 준비, 배송 중 상태에서만 변경 가능). 배송 시작 없이 완료가 먼저 와도
+    // 모두 환불된 상품은 배송 시작과 같은 이유로 배송 준비로 둔다(#658)
     boolean markDelivered(LocalDateTime deliveredAt) {
         if (status != OrderItemStatus.PREPARING && status != OrderItemStatus.SHIPPING) {
+            return false;
+        }
+        if (isFullyRefunded()) {
             return false;
         }
         this.status = OrderItemStatus.DELIVERED;

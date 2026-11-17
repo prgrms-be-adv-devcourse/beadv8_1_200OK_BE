@@ -1,6 +1,8 @@
 package com.ok.member.member;
 
+import com.ok.member.KafkaTopicReader;
 import com.ok.member.member.adapter.out.event.FailableMemberMessageSender;
+import com.ok.member.member.adapter.out.event.MemberTopics;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
 import com.ok.member.member.application.dto.SignupCommand;
@@ -44,11 +46,11 @@ class MemberOutboxRetryIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     KafkaConnectionDetails kafkaConnectionDetails;
 
-    private MemberRegisteredTopicReader reader;
+    private KafkaTopicReader reader;
 
     @BeforeEach
     void setUp() {
-        reader = new MemberRegisteredTopicReader(kafkaConnectionDetails.getBootstrapServers());
+        reader = new KafkaTopicReader(kafkaConnectionDetails.getBootstrapServers(), MemberTopics.MEMBER_REGISTERED);
     }
 
     // outbox 줄이 회원을 외래키로 참조하므로 먼저 지운다. 걸어 둔 실패가 다른 테스트로 넘어가지 않게 지운다

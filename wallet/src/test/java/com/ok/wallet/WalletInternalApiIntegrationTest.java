@@ -2,6 +2,7 @@ package com.ok.wallet;
 
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.service.BuyerWalletService;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,8 +36,11 @@ class WalletInternalApiIntegrationTest extends AbstractIntegrationTest {
 
     private MockMvc mockMvc;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
     }
@@ -57,7 +61,7 @@ class WalletInternalApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 충전한_만큼의_잔액을_응답한다() throws Exception {
         // Given
-        buyerWalletService.chargeByPayment(MEMBER_ID, "pay-internal-1", 30_000);
+        charger.charge(MEMBER_ID, "pay-internal-1", 30_000);
 
         // When & Then
         mockMvc.perform(get(BALANCE_URL, MEMBER_ID))
@@ -69,8 +73,8 @@ class WalletInternalApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 요청한_회원의_잔액만_응답한다() throws Exception {
         // Given: 두 회원의 잔액이 다름
-        buyerWalletService.chargeByPayment(MEMBER_ID, "pay-internal-1", 30_000);
-        buyerWalletService.chargeByPayment(OTHER_MEMBER_ID, "pay-internal-2", 10_000);
+        charger.charge(MEMBER_ID, "pay-internal-1", 30_000);
+        charger.charge(OTHER_MEMBER_ID, "pay-internal-2", 10_000);
 
         // When & Then
         mockMvc.perform(get(BALANCE_URL, OTHER_MEMBER_ID))

@@ -9,6 +9,7 @@ import com.ok.wallet.application.dto.TossConfirmResult;
 import com.ok.wallet.application.port.out.TossPaymentsClient;
 import com.ok.wallet.domain.TermsType;
 import com.ok.wallet.exception.WalletErrorCode;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
@@ -59,8 +60,11 @@ class ChargeServiceTest extends AbstractIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
         deleteTermsAgreements();
     }
@@ -105,7 +109,7 @@ class ChargeServiceTest extends AbstractIntegrationTest {
     void 충전_후_잔액이_한도를_넘으면_충전을_요청할_수_없다() {
         // Given: 이미 45만원이 있음
         agreeAllTerms(MEMBER_ID);
-        buyerWalletService.chargeByPayment(MEMBER_ID, "seed-payment", 450_000);
+        charger.charge(MEMBER_ID, "seed-payment", 450_000);
 
         // When & Then: 6만원을 더하면 51만원
         assertErrorCode(() -> chargeService.request(MEMBER_ID, 60_000), WalletErrorCode.BALANCE_LIMIT_EXCEEDED);
@@ -420,7 +424,7 @@ class ChargeServiceTest extends AbstractIntegrationTest {
     void 같은_회원의_서로_다른_충전_건을_동시에_승인해도_한도를_넘지_않는다() throws Exception {
         // Given: 잔액 49만원에서 1만원 충전 두 건을 요청 (요청 시점에는 둘 다 통과)
         agreeAllTerms(MEMBER_ID);
-        buyerWalletService.chargeByPayment(MEMBER_ID, "seed-payment", 490_000);
+        charger.charge(MEMBER_ID, "seed-payment", 490_000);
         String first = chargeService.request(MEMBER_ID, 10_000).chargeNo();
         String second = chargeService.request(MEMBER_ID, 10_000).chargeNo();
         // 토스 승인을 잠깐 붙잡아, 한 건이 처리 중인 동안 다른 건이 한도를 확인하게 한다

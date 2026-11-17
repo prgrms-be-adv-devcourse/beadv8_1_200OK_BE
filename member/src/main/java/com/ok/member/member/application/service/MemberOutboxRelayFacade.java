@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 회원 outbox에 쌓인 메시지를 쌓인 순서대로 보낸다 (#560).
+ * 회원 outbox에 쌓인 메시지를 쌓인 순서대로 보낸다 (#560, #587).
  * 브로커 확인을 기다리는 동안(최대 10초) DB 커넥션을 잡지 않도록 트랜잭션 없이 실행하고,
  * 줄 읽기와 결과 저장은 {@link MemberOutboxService}의 짧은 트랜잭션에 맡긴다.
  *
@@ -18,7 +18,11 @@ import java.util.List;
  * 실패는 거의 브로커 장애라 뒤 줄도 줄마다 10초씩 기다리다 실패할 뿐이고,
  * 멈추면 앞 줄이 나가기 전에 같은 회원의 뒤 줄이 먼저 나가는 일이 없다(같은 회원의 메시지 순서를 지킴).
  * 대신 같은 줄이 계속 실패하면 뒤 줄이 모두 기다린다. 그래서 {@link #ESCALATE_ATTEMPT_COUNT}번을 넘게 실패하면 ERROR로 남겨 눈에 띄게 한다.
- * 지금 메시지는 회원 ID만 담아 브로커가 복구되면 나가므로, 본문이 있는 메시지를 더할 때 이 정책을 다시 본다.
+ *
+ * <p>본문이 있는 출고지 우편번호 메시지를 더하면서(#587) 이 정책을 다시 봤고 그대로 둔다. 본문은 검증된 값(5자리 숫자)으로
+ * 우리 직렬화기가 만든 JSON이라, 읽지 못하는 본문은 브로커가 복구돼도 풀리지 않는 버그다. 그런 줄을 건너뛰고 뒤 줄을 보내면
+ * 그 판매자의 출고지가 delivery에 조용히 빠지므로, 막힌 채로 ERROR를 남겨 사람이 고치게 한다.
+ * 메시지 필드를 바꾸면 이미 쌓인 줄의 본문을 읽지 못할 수 있어, 바꾸기 전에 PENDING 줄이 0건인지 확인한다.
  */
 @Slf4j
 @Component
@@ -56,6 +60,8 @@ public class MemberOutboxRelayFacade implements MemberOutboxRelayUseCase {
     private void send(MemberOutboxMessage message) {
         switch (message.eventType()) {
             case MEMBER_REGISTERED -> memberMessageSender.sendMemberRegistered(message.memberId());
+            case SELLER_ORIGIN_POSTAL_CODE_CHANGED ->
+                    memberMessageSender.sendSellerOriginPostalCodeChanged(message.memberId(), message.payload());
         }
     }
 

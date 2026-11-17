@@ -5,6 +5,8 @@ import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutBlockedOrderSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutCandidateSearchRequest;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutDepositCheckReviewSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutDetailResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutItemSearchRequest;
@@ -378,5 +380,35 @@ interface PayoutAdminControllerSpec {
     })
     ResponseEntity<PayoutPageResponse<PayoutBlockedOrderResponse>> getBlockedOrders(
             @ParameterObject PayoutBlockedOrderSearchRequest request
+    );
+
+    @Operation(summary = "대사 관리자 확인 목록", description = """
+            관리자 전용입니다. 정산·지갑 대사(매일 지갑에 정산 입금을 묻는 확인)에서 관리자 확인 필요가 된 정산을 이유와 함께 조회합니다.
+            확인 대기·일치인 정산은 나오지 않습니다. 정렬은 새 정산 먼저(대사 줄이 생긴 순서의 역순)입니다.
+            - NOT_FOUND: 3번 물을 때까지 입금이 확인되지 않았고, 그중 한 번 이상 지갑이 "없음"으로 답함(나머지는 답이 없었을 수 있음. notFoundCount로 확인)
+            - NO_RESPONSE: 3번 물을 때까지 지갑이 한 번도 답하지 않음(지갑 수신 장애일 수 있음)
+            - PAYEE_MISMATCH: 입금은 있는데 판매자가 다름(지갑이 답한 판매자·금액을 함께 보여 줍니다)
+            - AMOUNT_MISMATCH: 같은 판매자에게 입금은 있는데 금액이 다름(지갑이 답한 판매자·금액을 함께 보여 줍니다)
+            대사는 어긋난 건을 자동으로 고치지 않습니다. 이 목록은 조회만 하고, 다시 보내기·완료 표시 같은 처리는 없습니다.
+            NOT_FOUND·NO_RESPONSE로 닫힌 정산에 지갑 답이 늦게 와서 일치로 바뀌면 목록에서 빠집니다.
+            PAYEE_MISMATCH·AMOUNT_MISMATCH로 닫힌 정산은 늦은 답으로 바뀌지 않습니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공 (관리자 확인 필요인 정산이 없으면 빈 목록)"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutDepositCheckReviewResponse>> getDepositCheckReviews(
+            @ParameterObject PayoutDepositCheckReviewSearchRequest request
     );
 }

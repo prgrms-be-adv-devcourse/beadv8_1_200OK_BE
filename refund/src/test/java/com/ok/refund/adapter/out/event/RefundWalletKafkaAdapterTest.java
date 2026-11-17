@@ -101,8 +101,26 @@ class RefundWalletKafkaAdapterTest {
                 .hasCause(immediate);
     }
 
+    @Test
+    void 옛_이름_토픽만_거절해도_refundId를_담은_예외를_던지고_원인을_남긴다() {
+        // given: .v1은 저장됐고 옛 이름만 거절. 예외라 환불은 처리 중으로 남고, 다시 진행할 때 두 토픽에 모두 다시 나간다 (#653)
+        KafkaException rejected = new KafkaException("옛 토픽 거절");
+        given(kafkaTemplate.send(eq(RefundTopics.REFUND_APPROVED), eq("10"), any()))
+                .willReturn(CompletableFuture.completedFuture(null));
+        given(kafkaTemplate.send(eq(RefundTopics.REFUND_APPROVED_OLD), eq("10"), any()))
+                .willReturn(CompletableFuture.failedFuture(rejected));
+
+        // when & then
+        assertThatThrownBy(() -> sut.requestRefund(REQUEST))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(FAILED_MESSAGE)
+                .hasCause(rejected);
+    }
+
     // 키는 orderId(10)여야 같은 주문의 메시지가 같은 파티션으로 간다. 다른 키로 보내면 given이 맞지 않아 테스트가 실패한다
+    // 지갑이 .v1로 옮길 때까지 두 토픽에 함께 보내므로(#653) 두 토픽 모두 같은 결과를 돌려준다
     private void givenSendReturns(CompletableFuture<SendResult<String, Object>> result) {
         given(kafkaTemplate.send(eq(RefundTopics.REFUND_APPROVED), eq("10"), any())).willReturn(result);
+        given(kafkaTemplate.send(eq(RefundTopics.REFUND_APPROVED_OLD), eq("10"), any())).willReturn(result);
     }
 }

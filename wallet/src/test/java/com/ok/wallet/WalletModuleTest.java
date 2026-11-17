@@ -8,8 +8,10 @@ import com.ok.testsupport.TestClockConfiguration;
 import com.ok.testsupport.TestcontainersConfiguration;
 import com.ok.wallet.application.port.out.BuyerWalletLedgerQueryRepository;
 import com.ok.wallet.application.service.BuyerWalletService;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
@@ -41,6 +43,13 @@ class WalletModuleTest {
     @MockitoBean
     BuyerWalletLedgerQueryRepository buyerWalletLedgerQueryRepository;
 
+    private WalletTestCharger charger;
+
+    @BeforeEach
+    void setUpCharger() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
+    }
+
     // @ApplicationModuleTest는 롤백되지 않으므로 테스트마다 데이터를 정리한다
     @AfterEach
     void tearDown() {
@@ -52,7 +61,7 @@ class WalletModuleTest {
         // Given: 잔액 10,000원
         Long buyerId = 50L;
         Long orderId = 9_300_001L;
-        buyerWalletService.chargeByPayment(buyerId, "module-50", 10_000);
+        charger.charge(buyerId, "module-50", 10_000);
 
         // When & Then: 주문 생성 → 지갑 리스너가 차감 → 결제 완료 이벤트
         // 결제 완료 이벤트는 차감과 같은 트랜잭션 안에서 발행되어, 이벤트가 도착한 순간에는 차감이 아직 커밋되지 않았을 수 있다.
@@ -83,7 +92,7 @@ class WalletModuleTest {
         // Given: 잔액 10,000원
         Long buyerId = 51L;
         Long orderId = 9_300_002L;
-        buyerWalletService.chargeByPayment(buyerId, "module-51", 10_000);
+        charger.charge(buyerId, "module-51", 10_000);
 
         // When & Then
         scenario.publish(new OrderCreatedEvent(orderId, buyerId, 20_000L))

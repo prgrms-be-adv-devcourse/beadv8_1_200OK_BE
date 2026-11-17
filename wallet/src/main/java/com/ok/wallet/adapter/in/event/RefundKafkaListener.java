@@ -19,7 +19,7 @@ public class RefundKafkaListener {
     // 메시지에 보내는 쪽 클래스 이름(타입 헤더)이 없어서 읽을 타입을 리스너가 정한다
     @KafkaListener(
             topics = WalletKafkaTopics.REFUND_APPROVED,
-            groupId = WalletKafkaTopics.CONSUMER_GROUP,
+            groupId = WalletKafkaTopics.REFUND_RETURN_GROUP,
             containerFactory = WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.wallet.adapter.in.event.dto.RefundApprovedMessage")
     void on(RefundApprovedMessage message) {

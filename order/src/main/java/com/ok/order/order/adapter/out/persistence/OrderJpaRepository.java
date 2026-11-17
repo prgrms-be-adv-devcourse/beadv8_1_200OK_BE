@@ -6,6 +6,7 @@ import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderStatus;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -82,5 +83,19 @@ public interface OrderJpaRepository extends JpaRepository<Order, Long>, OrderRep
             @Param("status") OrderStatus status,
             @Param("creatingDeadline") LocalDateTime creatingDeadline,
             @Param("paymentDeadline") LocalDateTime paymentDeadline
+    );
+
+    @Override
+    @Query("""
+            select o.id from Order o
+            where o.status in :statuses
+              and o.stockReleasedAt is null
+              and o.updatedAt <= :changedBefore
+            order by o.id
+            """)
+    List<Long> findStockReleasePendingOrderIds(
+            @Param("statuses") List<OrderStatus> statuses,
+            @Param("changedBefore") LocalDateTime changedBefore,
+            Pageable pageable
     );
 }

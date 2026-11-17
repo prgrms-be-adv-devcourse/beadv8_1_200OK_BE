@@ -66,7 +66,7 @@ interface SellerApplicationAdminControllerSpec {
             summary = "판매자 신청 승인",
             description = """
                     심사 중(IN_REVIEW) 신청을 승인합니다(APPROVED). 심사를 시작하지 않은 신청은 승인할 수 없습니다.
-                    승인 일시와 승인한 관리자를 기록하고, 판매자 지갑이 만들어집니다. 처리 후의 상세를 반환합니다.
+                    승인 일시와 승인한 관리자를 기록하고, 신청서의 출고지 우편번호를 배송 모듈에 전달합니다. 처리 후의 상세를 반환합니다.
                     """
     )
     @ApiResponse(responseCode = "200", description = "승인 성공")

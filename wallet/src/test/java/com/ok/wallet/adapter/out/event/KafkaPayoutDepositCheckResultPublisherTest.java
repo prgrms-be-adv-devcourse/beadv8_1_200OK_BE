@@ -31,6 +31,8 @@ class KafkaPayoutDepositCheckResultPublisherTest {
         KafkaException rejected = new KafkaException("브로커 거절");
         given(kafkaTemplate.send(eq(WalletOutboundTopics.PAYOUT_DEPOSIT_CHECKED), eq("3"), any()))
                 .willReturn(CompletableFuture.failedFuture(rejected));
+        given(kafkaTemplate.send(eq(WalletOutboundTopics.PAYOUT_DEPOSIT_CHECKED_OLD), eq("3"), any()))
+                .willReturn(CompletableFuture.completedFuture(null));
         KafkaPayoutDepositCheckResultPublisher sut =
                 new KafkaPayoutDepositCheckResultPublisher(new WalletKafkaSender(kafkaTemplate, Duration.ofMillis(50)));
         PayoutDepositCheckResult result = new PayoutDepositCheckResult(3L, List.of(PayoutDepositCheckResult.Item.notFound(15L)));
@@ -38,7 +40,7 @@ class KafkaPayoutDepositCheckResultPublisherTest {
         // when & then
         assertThatThrownBy(() -> sut.publish(result))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 입금 확인 답을 보내지 못했습니다. checkId=3")
+                .hasMessage("정산 입금 확인 답을 보내지 못했습니다. checkId=3, topic=wallet.payout-deposit-checked.v1")
                 .hasCause(rejected);
     }
 }

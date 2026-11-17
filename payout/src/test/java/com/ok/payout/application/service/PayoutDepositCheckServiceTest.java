@@ -1,16 +1,25 @@
 package com.ok.payout.application.service;
 
 import com.ok.payout.application.port.in.PayoutDepositCheckAnswerCommand;
+import com.ok.payout.application.port.in.PayoutDepositCheckReviewResult;
+import com.ok.payout.application.port.in.PayoutDepositCheckReviewSearchQuery;
 import com.ok.payout.application.port.in.PayoutDepositCheckRunResult;
+import com.ok.payout.application.port.out.DepositCheckReviewRow;
 import com.ok.payout.application.port.out.PayoutDepositCheckRequested;
 import com.ok.payout.application.port.out.PayoutEventPublisher;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.domain.PayoutDepositMismatchReason;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -22,7 +31,7 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
-// 대사 순서 정하기 (#619): 묶음을 이어서 묻기, 보내기 실패 때 멈추고 되돌리기, 답 처리는 DB 반영만(#620)
+// 대사 순서 정하기 (#619): 묶음을 이어서 묻기, 보내기 실패 때 멈추고 되돌리기, 답 처리는 DB 반영만(#620), 관리자 확인 목록 변환(#621)
 @ExtendWith(MockitoExtension.class)
 class PayoutDepositCheckServiceTest {
 
@@ -31,6 +40,9 @@ class PayoutDepositCheckServiceTest {
 
     @Mock
     private PayoutEventPublisher payoutEventPublisher;
+
+    @Mock
+    private PayoutQueryRepository payoutQueryRepository;
 
     @InjectMocks
     private PayoutDepositCheckService sut;
@@ -131,6 +143,26 @@ class PayoutDepositCheckServiceTest {
         // then: 답 처리 중 Kafka를 기다리지 않음 (max.poll.interval을 넘지 않게)
         then(payoutDepositCheckRecordService).should().applyAnswer(command);
         then(payoutEventPublisher).should(never()).publishSellerPayoutCreated(any());
+    }
+
+    @Test
+    void 관리자_확인_목록은_요청한_페이지로_읽고_이유는_이름으로_물은_시각은_lastAskedAt으로_옮긴다() {
+        // given: 판매자 다름 1줄 (지갑이 답한 값 있음). 판매자·금액 칸(Long)과 시도·없음 답 횟수 칸(int)이 같은 타입이라 값을 모두 다르게 넣어 순서가 뒤바뀌면 잡히게 함
+        //   지갑 값이 null인 줄과 실제 조회·정렬은 통합 테스트(PayoutDepositCheckIntegrationTest)가 HTTP로 확인함
+        LocalDateTime askedAt = LocalDateTime.of(2026, 11, 15, 2, 0);
+        DepositCheckReviewRow row = new DepositCheckReviewRow(14L, 7L, 9_700L, 8L, 9_600L,
+                PayoutDepositMismatchReason.PAYEE_MISMATCH, 2, 1, askedAt);
+        PageRequest pageable = PageRequest.of(2, 5);
+        given(payoutQueryRepository.findDepositChecksNeedingReview(pageable))
+                .willReturn(new PageImpl<>(List.of(row), pageable, 11));
+
+        // when
+        Page<PayoutDepositCheckReviewResult> page = sut.getReviewItems(new PayoutDepositCheckReviewSearchQuery(2, 5));
+
+        // then
+        assertThat(page.getTotalElements()).isEqualTo(11);
+        assertThat(page.getContent()).containsExactly(
+                new PayoutDepositCheckReviewResult(14L, 7L, 9_700L, 8L, 9_600L, "PAYEE_MISMATCH", 2, 1, askedAt));
     }
 
     // 줄 ID 목록으로 묶음을 만듦. 마지막 줄 ID가 다음 묶음의 시작점

@@ -22,7 +22,8 @@ class RefundResumeSchedulerIntegrationTest extends AbstractIntegrationTest {
     @AfterEach
     void releaseLock() {
         new JdbcTemplate(dataSource).update(
-                "UPDATE paldogotgan_refund.shedlock SET lock_until = UTC_TIMESTAMP(3) WHERE name = ?", RefundResumeScheduler.LOCK_NAME);
+                "UPDATE paldogotgan_refund.shedlock SET lock_until = UTC_TIMESTAMP(3) WHERE name IN (?, ?)",
+                RefundResumeScheduler.LOCK_NAME, RefundAttentionScheduler.LOCK_NAME);
     }
 
     @Test
@@ -38,5 +39,36 @@ class RefundResumeSchedulerIntegrationTest extends AbstractIntegrationTest {
 
         // then
         assertThat(runs.get()).isEqualTo(1);
+    }
+
+    // 멈춘 환불 찾기 알람(#577)도 같은 잠금 표를 쓴다. 미리 넣은 잠금 행(마이그레이션)으로 한 서버만 돈다
+    @Test
+    void 멈춘_환불_찾기_알람도_한_서버만_돈다() {
+        // given
+        AtomicInteger runs = new AtomicInteger();
+        RefundAttentionScheduler serverA = new RefundAttentionScheduler(runs::incrementAndGet, dataSource);
+        RefundAttentionScheduler serverB = new RefundAttentionScheduler(runs::incrementAndGet, dataSource);
+
+        // when
+        serverA.run();
+        serverB.run();
+
+        // then
+        assertThat(runs.get()).isEqualTo(1);
+    }
+
+    // 다시 진행 알람이 잠금을 쥐고 있어도 멈춘 환불 찾기 알람은 돈다(잠금 이름이 다르다)
+    @Test
+    void 두_알람은_서로의_잠금에_막히지_않는다() {
+        // given
+        AtomicInteger resumeRuns = new AtomicInteger();
+        AtomicInteger attentionRuns = new AtomicInteger();
+
+        // when
+        new RefundResumeScheduler(resumeRuns::incrementAndGet, dataSource).run();
+        new RefundAttentionScheduler(attentionRuns::incrementAndGet, dataSource).run();
+
+        // then
+        assertThat(resumeRuns.get() + attentionRuns.get()).isEqualTo(2);
     }
 }

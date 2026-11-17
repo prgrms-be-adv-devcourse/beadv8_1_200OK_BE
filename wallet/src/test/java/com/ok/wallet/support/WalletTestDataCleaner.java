@@ -16,12 +16,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 시험 작성자가 무엇을 확인했든 같은 기준으로 검사하려고, 잔액을 바꾸는 시험은 정리 단계에서 이 클래스만 쓴다.
  * 통합 시험과 모듈 시험({@code @ApplicationModuleTest})이 함께 쓰도록 스프링 빈이 아니라 {@link JdbcTemplate}을 받는 보통 클래스로 둔다.
  * 약관 동의 데이터는 잔액과 관계가 없어 다루지 않는다. 약관을 쓰는 시험은 따로 지운다.
+ * 표를 조건 없이 통째로 지우므로, 지갑 시험이 차례로 돈다는 전제에서만 안전하다. 병렬로 돌리면 다른 시험이 쓰는 데이터를 지운다.
  */
 public class WalletTestDataCleaner {
 
     private static final String CHECK_SQL = loadCheckSql();
 
-    // 원장이 지갑을 외래 키로 참조하므로 원장을 먼저 지운다
+    // 원장이 지갑을 외래 키로 참조하므로 원장을 먼저 지운다.
+    // 검사 SQL이 짝을 맞춰 보는 새 표를 만들면 여기에도 넣는다. 빠지면 앞 시험의 기록이 남아 다음 시험의 검사가 엉뚱하게 실패한다
     private static final List<String> DELETE_SQLS = List.of(
             "DELETE FROM wallet_order_refund",
             "DELETE FROM wallet_order_payment",

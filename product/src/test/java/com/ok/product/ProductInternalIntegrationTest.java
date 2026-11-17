@@ -3,9 +3,11 @@ package com.ok.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -47,11 +49,11 @@ import com.ok.product.product.domain.ProductStockAllocation;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.domain.StockAllocationStatus;
 import com.ok.product.product.exception.ProductErrorCode;
-import com.ok.product.product.repository.ProductOptionRepository;
-import com.ok.product.product.repository.ProductRepository;
-import com.ok.product.product.repository.ProductStockAllocationRepository;
-import com.ok.product.product.service.ProductStockService;
-import com.ok.product.product.service.dto.StockChange;
+import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductStockAllocationJpaRepository;
+import com.ok.product.product.application.service.ProductStockService;
+import com.ok.product.product.application.dto.StockChange;
 import com.ok.testsupport.AbstractIntegrationTest;
 
 @AutoConfigureMockMvc
@@ -69,13 +71,13 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 	MockMvc mockMvc;
 
 	@Autowired
-	ProductRepository productRepository;
+	ProductJpaRepository productRepository;
 
 	@Autowired
-	ProductOptionRepository productOptionRepository;
+	ProductOptionJpaRepository productOptionRepository;
 
 	@Autowired
-	ProductStockAllocationRepository allocationRepository;
+	ProductStockAllocationJpaRepository allocationRepository;
 
 	@Autowired
 	ProductStockService productStockService;
@@ -239,6 +241,22 @@ class ProductInternalIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(status().isConflict());
 		allocate(ORDER_IDS.incrementAndGet(), item(noStock, 1))
 			.andExpect(status().isConflict());
+	}
+
+	// order의 ProductApiClient가 409 본문에 이 글자가 있는지로 원인을 나눈다. enum에서 계산하지 않고 글자 그대로 고정한다
+	@Test
+	void 배정_409_본문에는_order가_구분하는_slug가_들어_있다() throws Exception {
+		// given
+		Long paused = firstOptionId(save(withStatus(ProductStatus.PAUSED)));
+		Long noStock = firstOptionId(save(onSale(option(0))));
+
+		// when & then
+		allocate(ORDER_IDS.incrementAndGet(), item(paused, 1))
+			.andExpect(status().isConflict())
+			.andExpect(content().string(containsString("option-not-purchasable")));
+		allocate(ORDER_IDS.incrementAndGet(), item(noStock, 1))
+			.andExpect(status().isConflict())
+			.andExpect(content().string(containsString("insufficient-stock")));
 	}
 
 	@Test

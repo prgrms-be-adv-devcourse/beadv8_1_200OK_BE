@@ -24,7 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 정산 코드는 쓰지 않고, 토픽에 나간 JSON을 문자열 그대로 읽어 필드 이름과 값, 입금 시각의 글자 모양을 본다.
 // 입금 시각을 정해 두려고 원장을 SQL로 넣으므로 잔액과 맞지 않아, 끝난 뒤 잔액 검사 없이 지운다
 class WalletPayoutDepositCheckServiceIntegrationTest extends AbstractIntegrationTest {
-    private static final String CHECKED_TOPIC = "wallet.payout-deposit-checked";
+    private static final String CHECKED_TOPIC = "wallet.payout-deposit-checked.v1";
+    // 정산이 v1로 옮길 때까지 같은 답이 함께 나가는 옛 이름
+    private static final String CHECKED_TOPIC_OLD = "wallet.payout-deposit-checked";
 
     // 토픽에는 앞 테스트의 메시지가 남으므로 테스트마다 겹치지 않는 묶음·정산 번호를 쓴다
     private static final AtomicLong ID_SEQ = new AtomicLong(8_600_000L);
@@ -64,12 +66,14 @@ class WalletPayoutDepositCheckServiceIntegrationTest extends AbstractIntegration
         payoutDepositCheckUseCase.check(new PayoutDepositCheckCommand(checkId, List.of(depositedPayoutId, missingPayoutId)));
 
         // then
-        assertThat(new KafkaTopicReader(consumerFactory).valuesWithKey(CHECKED_TOPIC, String.valueOf(checkId), 1))
-                .containsExactly("{\"checkId\":" + checkId + ",\"items\":["
-                        + "{\"payoutId\":" + depositedPayoutId + ",\"found\":true,\"payeeId\":5,\"amount\":9700,"
-                        + "\"depositedAt\":\"2026-11-15T02:00:03.123456\"},"
-                        + "{\"payoutId\":" + missingPayoutId + ",\"found\":false,\"payeeId\":null,\"amount\":null,"
-                        + "\"depositedAt\":null}]}");
+        String answer = "{\"checkId\":" + checkId + ",\"items\":["
+                + "{\"payoutId\":" + depositedPayoutId + ",\"found\":true,\"payeeId\":5,\"amount\":9700,"
+                + "\"depositedAt\":\"2026-11-15T02:00:03.123456\"},"
+                + "{\"payoutId\":" + missingPayoutId + ",\"found\":false,\"payeeId\":null,\"amount\":null,"
+                + "\"depositedAt\":null}]}";
+        KafkaTopicReader reader = new KafkaTopicReader(consumerFactory);
+        assertThat(reader.valuesWithKey(CHECKED_TOPIC, String.valueOf(checkId), 1)).containsExactly(answer);
+        assertThat(reader.valuesWithKey(CHECKED_TOPIC_OLD, String.valueOf(checkId), 1)).containsExactly(answer);
     }
 
     private void insertPayoutLedger(Long sellerWalletId, long payoutId, long amount, LocalDateTime createdAt) {

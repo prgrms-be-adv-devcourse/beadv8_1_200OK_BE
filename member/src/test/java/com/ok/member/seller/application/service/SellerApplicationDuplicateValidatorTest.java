@@ -120,7 +120,7 @@ class SellerApplicationDuplicateValidatorTest {
 
     private static SellerApplication application() {
         return SellerApplication.apply(MEMBER_ID, "청송 햇살농원", "김영수", BUSINESS_NUMBER,
-                "제2026-경북청송-0031호", AT);
+                "제2026-경북청송-0031호", "37421", AT);
     }
 
     private static DataIntegrityViolationException violation(String constraintName) {

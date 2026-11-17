@@ -22,8 +22,9 @@ import java.util.function.BooleanSupplier;
 public class RefundWalletResultSender {
 
     // 토픽 이름은 보내는 쪽(지갑)과의 약속이다. 리스너의 상수를 가져다 쓰면 상수가 틀려도 테스트가 같이 틀려 못 잡으므로 약속한 글자를 그대로 적는다
-    public static final String COMPLETED_TOPIC = "wallet.wallet-refund-completed";
-    public static final String FAILED_TOPIC = "wallet.wallet-refund-failed";
+    // 지갑은 옛 이름과 .v1에 함께 보내고(#671), 환불은 .v1만 받는다 (#653)
+    public static final String COMPLETED_TOPIC = "wallet.wallet-refund-completed.v1";
+    public static final String FAILED_TOPIC = "wallet.wallet-refund-failed.v1";
 
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
     private static final Duration POLL_INTERVAL = Duration.ofMillis(100);

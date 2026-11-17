@@ -27,7 +27,7 @@ public class RefundWalletKafkaListener {
     // 다시 시도하지 않고 ERROR 로그를 남긴 뒤 다음 메시지로 넘어간다(다시 받아도 같은 값이라 결과가 같다)
     @KafkaListener(
             topics = RefundInboundTopics.WALLET_REFUND_COMPLETED,
-            groupId = RefundInboundTopics.CONSUMER_GROUP,
+            groupId = RefundInboundTopics.RETURN_COMPLETED_GROUP,
             containerFactory = RefundKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage")
     void onWalletRefundCompleted(WalletRefundCompletedMessage message) {
@@ -39,7 +39,7 @@ public class RefundWalletKafkaListener {
 
     @KafkaListener(
             topics = RefundInboundTopics.WALLET_REFUND_FAILED,
-            groupId = RefundInboundTopics.CONSUMER_GROUP,
+            groupId = RefundInboundTopics.RETURN_FAILED_GROUP,
             containerFactory = RefundKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage")
     void onWalletRefundFailed(WalletRefundFailedMessage message) {

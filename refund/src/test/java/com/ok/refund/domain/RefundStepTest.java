@@ -51,6 +51,8 @@ class RefundStepTest {
             builder.add(Arguments.of(status, "succeed", (Function<RefundStep, Boolean>) RefundStep::succeed));
             builder.add(Arguments.of(status, "refuse", (Function<RefundStep, Boolean>) s -> s.refuse("거절")));
             builder.add(Arguments.of(status, "failForRetry", (Function<RefundStep, Boolean>) s -> s.failForRetry("실패", NOW)));
+            builder.add(Arguments.of(status, "resendAfterResultTimeout",
+                    (Function<RefundStep, Boolean>) s -> s.resendAfterResultTimeout(NOW.plusDays(1))));
         }
         return builder.build();
     }
@@ -92,7 +94,7 @@ class RefundStepTest {
     }
 
     @Test
-    void 시도_중에_결과를_기다리면_30분_뒤에_다시_본다() {
+    void 시도_중에_결과를_기다리면_5분_뒤에_다시_본다() {
         // given
         RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
         LocalDateTime later = NOW.plusSeconds(5);
@@ -104,7 +106,7 @@ class RefundStepTest {
         assertSoftly(softly -> {
             softly.assertThat(changed).isTrue();
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
-            softly.assertThat(sut.getNextCheckAt()).isEqualTo(later.plusMinutes(30));
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(later.plusMinutes(5));
         });
     }
 
@@ -281,6 +283,152 @@ class RefundStepTest {
             softly.assertThat(changed).isFalse();
             softly.assertThat(sut.getStatus()).isEqualTo(status);
         });
+    }
+
+    @Test
+    void 결과_대기를_보내고_5분이_지나면_결과_대기_시간이_지난_것으로_본다() {
+        // given
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+        sut.awaitResult(NOW);
+
+        // when & then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.isResultOverdue(NOW.plusMinutes(5).minusSeconds(1))).isFalse();
+            softly.assertThat(sut.isResultOverdue(NOW.plusMinutes(5))).isTrue();
+        });
+    }
+
+    // 찾기 알람(#577)이 "처음부터 얼마나 기다렸나"를 재는 기준이라, 다시 보낸 뒤 다시 결과 대기가 돼도 처음 시각을 지킨다
+    @Test
+    void 처음_결과_대기가_될_때의_시각을_다시_보낸_뒤에도_유지한다() {
+        // given
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+        sut.awaitResult(NOW);
+        LocalDateTime resentAt = NOW.plusMinutes(5);
+
+        // when
+        sut.resendAfterResultTimeout(resentAt);
+        sut.awaitResult(resentAt.plusSeconds(1));
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getAwaitingSince()).isEqualTo(NOW);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(resentAt.plusSeconds(1).plusMinutes(5));
+        });
+    }
+
+    // 결과를 기다린 적 있는 줄을 다시 보내다 실패하면 횟수를 다 썼어도 멈추지 않고 결과 대기로 돌아간다(#577 판단 2)
+    @Test
+    void 이미_보낸_줄은_다시_보내다_실패해도_멈추지_않고_결과_대기로_돌아간다() {
+        // given: 처음 발행을 5번째 시도에 성공했고, 결과 대기 시간이 지나 다시 보내는 중
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS, NOW.plusMinutes(2), null, NOW.minusMinutes(10), NOW.minusMinutes(20));
+
+        // when
+        boolean changed = sut.failForRetry("WALLET_PUBLISH_FAILED", NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(5));
+            softly.assertThat(sut.getAwaitingSince()).isEqualTo(NOW.minusMinutes(10));
+            softly.assertThat(sut.getLastReason()).isEqualTo("WALLET_PUBLISH_FAILED");
+        });
+    }
+
+    // 다시 보내는 중 서버가 죽어 시도 중으로 만료된 줄도 이미 보낸 줄이면 횟수를 다 썼어도 멈추지 않고 다시 집는다(#577)
+    @Test
+    void 이미_보낸_줄은_만료돼도_횟수를_올리지_않고_다시_집는다() {
+        // given: 처음 발행을 5번째 시도에 성공했고, 다시 보내다 시도 중인 채로 만료됨
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.IN_PROGRESS,
+                RefundStep.MAX_ATTEMPTS, NOW, null, NOW.minusMinutes(10), NOW.minusMinutes(20));
+
+        // when
+        boolean changed = sut.restartExpired(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
+        });
+    }
+
+    @Test
+    void 결과_대기가_된_적_없으면_처음_기다린_시각이_없다() {
+        // when
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+
+        // then
+        assertThat(sut.getAwaitingSince()).isNull();
+    }
+
+    // 시간 초과 다시 요청은 시도 횟수를 쓰지 않는다(#577 결정). 횟수를 다 쓴 줄이어도 멈추지 않고 다시 보낸다
+    @Test
+    void 결과_대기_시간이_지나면_횟수를_올리지_않고_시도_중으로_바꾼다() {
+        // given
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                RefundStep.MAX_ATTEMPTS, NOW, null, NOW.minusMinutes(30));
+
+        // when
+        boolean changed = sut.resendAfterResultTimeout(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(RefundStep.MAX_ATTEMPTS);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
+        });
+    }
+
+    @Test
+    void 결과_대기_시간이_남았으면_다시_보내지_않는다() {
+        // given: 기다리는 시각까지 1초 남음
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                1, NOW.plusSeconds(1), null, NOW.minusMinutes(5));
+
+        // when
+        boolean changed = sut.resendAfterResultTimeout(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusSeconds(1));
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("결과_대기가_아닌_상태")
+    void 결과_대기가_아니면_결과_대기_시간이_지난_것으로_보지_않는다(RefundStepStatus status) {
+        // given: 다시 볼 시각이 지났어도
+        RefundStep sut = RefundStep.restore(1L, 10L, RefundStepType.WALLET, status, 1,
+                status.isFinished() ? null : NOW.minusMinutes(1), status == RefundStepStatus.STOPPED ? "멈춤" : null, NOW.minusMinutes(5));
+
+        // when
+        boolean changed = sut.resendAfterResultTimeout(NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getStatus()).isEqualTo(status);
+        });
+    }
+
+    static Stream<RefundStepStatus> 결과_대기가_아닌_상태() {
+        return Stream.of(RefundStepStatus.READY, RefundStepStatus.IN_PROGRESS,
+                RefundStepStatus.SUCCEEDED, RefundStepStatus.REFUSED, RefundStepStatus.STOPPED);
     }
 
     static Stream<RefundStepStatus> 시도_중이_아닌_상태() {

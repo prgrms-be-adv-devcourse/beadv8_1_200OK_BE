@@ -2,6 +2,7 @@ package com.ok.member.seller;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
+import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
 import com.ok.member.member.domain.Member;
 import com.ok.member.seller.adapter.out.persistence.SellerProfileJpaRepository;
 import com.ok.member.seller.application.service.SellerProfileDuplicateValidator;
@@ -63,6 +64,9 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     SellerProfileJpaRepository sellerProfileRepository;
 
     @Autowired
+    MemberOutboxJpaRepository memberOutboxRepository;
+
+    @Autowired
     SellerProfileDuplicateValidator duplicateValidator;
 
     private MockMvc mockMvc;
@@ -93,12 +97,28 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.storeName").value("청송 햇살농원"))
                 .andExpect(jsonPath("$.representativeName").value("김영수"))
                 .andExpect(jsonPath("$.customerServicePhone").value("054-873-2210"))
+                .andExpect(jsonPath("$.originPostalCode").value("37421"))
                 .andExpect(jsonPath("$.introduction").value("3대째 사과만 키우는 청송 부남면 과수원입니다."))
                 .andExpect(jsonPath("$.profileImageUrl").value(BASE_URL + IMAGE_KEY));
 
         SellerProfile sut = sellerProfileRepository.findByMemberId(memberId).orElse(null);
         assertThat(sut).isNotNull();
-        assertThat(sut.getProfileImageKey()).isEqualTo(IMAGE_KEY);
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getProfileImageKey()).isEqualTo(IMAGE_KEY);
+            softly.assertThat(sut.getOriginPostalCode()).isEqualTo("37421");
+        });
+    }
+
+    @Test
+    void 출고지_우편번호가_5자리_숫자가_아니면_422를_반환하고_프로필을_만들지_않는다() throws Exception {
+        // when
+        ResultActions result = mockMvc.perform(withToken(post(PROFILE_URL))
+                .content(profileBody("청송 햇살농원", "3742", null)));
+
+        // then
+        result.andExpect(status().is(422))
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+        assertThat(sellerProfileRepository.existsByMemberId(memberId)).isFalse();
     }
 
     @Test
@@ -152,9 +172,9 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     void 실제_MySQL의_유니크_제약_위반을_중복_등록_오류로_바꾼다() {
         // given: 등록 버튼 중복 클릭처럼, 사전 확인을 함께 통과한 두 요청이 같은 회원의 프로필을 저장한다
         sellerProfileRepository.saveAndFlush(SellerProfile.register(
-                memberId, "청송 햇살농원", "김영수", "054-873-2210", null, null));
+                memberId, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null));
         DataIntegrityViolationException violation = catchViolation(SellerProfile.register(
-                memberId, "청송 사과농원", "김영수", "054-873-2210", null, null));
+                memberId, "청송 사과농원", "김영수", "054-873-2210", "37421", null, null));
 
         // when
         RuntimeException sut = duplicateValidator.toDuplicateException(violation);
@@ -168,7 +188,7 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     void 프로필을_수정하면_전체_값을_바꾸고_사진_URL을_비우면_사진을_지운다() throws Exception {
         // given
         sellerProfileRepository.saveAndFlush(SellerProfile.register(
-                memberId, "청송 햇살농원", "김영수", "054-873-2210", "소개", IMAGE_KEY));
+                memberId, "청송 햇살농원", "김영수", "054-873-2210", "37421", "소개", IMAGE_KEY));
 
         // when
         ResultActions result = mockMvc.perform(withToken(put(PROFILE_URL))
@@ -214,7 +234,7 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     void 등록한_프로필을_조회한다() throws Exception {
         // given
         sellerProfileRepository.saveAndFlush(SellerProfile.register(
-                memberId, "청송 햇살농원", "김영수", "054-873-2210", null, null));
+                memberId, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null));
 
         // when
         ResultActions result = mockMvc.perform(withToken(get(PROFILE_URL)));
@@ -252,18 +272,24 @@ class SellerProfileIntegrationTest extends AbstractIntegrationTest {
     }
 
     private String profileBody(String storeName, String profileImageUrl) {
+        return profileBody(storeName, "37421", profileImageUrl);
+    }
+
+    private String profileBody(String storeName, String originPostalCode, String profileImageUrl) {
         // 사진 URL이 null인 경우를 보내야 해서 null을 허용하는 Map을 쓴다
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("storeName", storeName);
         body.put("representativeName", "김영수");
         body.put("customerServicePhone", "054-873-2210");
+        body.put("originPostalCode", originPostalCode);
         body.put("introduction", "3대째 사과만 키우는 청송 부남면 과수원입니다.");
         body.put("profileImageUrl", profileImageUrl);
         return jsonMapper.writeValueAsString(body);
     }
 
-    // 판매자 프로필이 member를 외래키로 참조하므로 먼저 지운다
+    // 판매자 프로필과 출고지 알림용 outbox 줄(#587)이 member를 외래키로 참조하므로 먼저 지운다
     private void cleanUp() {
+        memberOutboxRepository.deleteAllInBatch();
         sellerProfileRepository.deleteAllInBatch();
         memberRepository.deleteAllInBatch();
     }

@@ -11,6 +11,7 @@ import com.ok.order.order.application.port.in.CancelStalePaymentPendingOrderUseC
 import com.ok.order.order.application.port.in.CreateOrderUseCase;
 import com.ok.order.order.application.port.in.FailPaymentUseCase;
 import com.ok.order.order.application.port.in.GetCheckoutUseCase;
+import com.ok.order.order.application.port.in.RetryStockReleaseUseCase;
 import com.ok.order.order.application.port.out.DeliveryPort;
 import com.ok.order.order.application.port.out.ProductPort;
 import com.ok.order.order.application.port.out.WalletPort;
@@ -34,7 +35,7 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, FailPaymentUseCase,
-        CancelStalePaymentPendingOrderUseCase {
+        CancelStalePaymentPendingOrderUseCase, RetryStockReleaseUseCase {
 
     private final GetSelectedCartItemsUseCase getSelectedCartItems;
     private final OrderService orderService;
@@ -197,30 +198,31 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         return items;
     }
 
-    // 재고 선점 해제 + 주문 취소. 주문을 지우지 않고 취소로 남겨, 재고 해제가 실패해도 어떤 주문의 재고인지 추적할 수 있게 한다(#401)
+    // 주문 취소 + 재고 선점 해제. 주문을 지우지 않고 취소로 남겨, 재고 해제가 실패해도 어떤 주문의 재고인지 추적할 수 있게 한다(#401).
+    // 취소를 먼저 커밋한다. 해제 확인은 취소된 주문에만 기록할 수 있고, 취소하지 못한 주문의 재고를 풀면 결제될 주문의 재고가 풀린다(#657)
     private void cancelCreatedOrder(Long orderId) {
-        // 재고 선점 해제
+        boolean canceled;
         try {
-            productPort.releaseStock(orderId);
-        } catch(RuntimeException e) {
-            log.error("재고 선점 해제 실패, orderId={}", orderId, e);
+            canceled = orderService.cancel(orderId);
+        } catch (RuntimeException e) {
+            // 결제 대기로 남지만 지갑에 결제 요청이 가지 않은 주문이라 돈은 오가지 않는다. 5분 뒤 결제 대기 정리가 취소하고 재고를 푼다
+            log.error("[ORDER_CANCEL_FAILED] 주문 생성 중 실패한 주문을 취소하지 못했습니다. orderId={}", orderId, e);
+            return;
         }
-        // 주문 취소. 실패하면 결제 대기로 남지만 지갑에 결제 요청이 가지 않은 주문이라 돈은 오가지 않는다
-        try {
-            orderService.cancel(orderId);
-        } catch(RuntimeException e) {
-            log.error("주문 취소 실패, orderId={}", orderId, e);
+        if (canceled) {
+            releaseStockAndRecord(orderId);
         }
     }
 
-    // 결제 실패 : 주문 상태 변경 후 선점한 재고 해제 (장바구니는 유지)
+    // 결제 실패 : 주문 상태 변경 후 선점한 재고 해제 (장바구니는 유지).
+    // 결제 실패를 먼저 커밋하고 재고 해제는 트랜잭션 밖에서 부른다. 해제가 실패해도 결제 실패는 남고, 해제는 정리 스케줄러가 다시 부른다(#657)
     @Override
     public void failPayment(Long orderId, String reason) {
         log.info("[ORDER_PAYMENT_FAILED] orderId={}, reason={}", orderId, reason);
 
         boolean shouldReleaseStock = orderService.failPayment(orderId);
         if (shouldReleaseStock) {
-            productPort.releaseStock(orderId);
+            releaseStockAndRecord(orderId);
         }
     }
 
@@ -236,12 +238,40 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         if (!orderService.cancelStalePaymentPending(orderId)) {
             return false;
         }
+        releaseStockAndRecord(orderId);
+        return true;
+    }
+
+    @Override
+    public List<Long> findStockReleasePendingOrderIds() {
+        return orderService.findStockReleasePendingOrderIds();
+    }
+
+    @Override
+    public List<Long> findStuckStockReleaseOrderIds() {
+        return orderService.findStuckStockReleaseOrderIds();
+    }
+
+    @Override
+    public void retryStockRelease(Long orderId) {
+        releaseStockAndRecord(orderId);
+    }
+
+    // 취소·결제 실패를 커밋한 뒤 트랜잭션 밖에서 재고를 풀고, 성공하면 해제 확인을 기록한다(#657).
+    // 실패해도 예외를 던지지 않는다. 해제 확인이 비어 있는 주문은 정리 스케줄러가 다시 부르고,
+    // 주문 생성 실패 경로에서는 원래 실패를 그대로 응답해야 하기 때문이다
+    private void releaseStockAndRecord(Long orderId) {
         try {
             productPort.releaseStock(orderId);
         } catch (RuntimeException e) {
-            // 주문은 이미 취소로 남아 다음 실행 대상이 아니다. 어떤 주문의 재고인지 로그로 추적한다
-            log.warn("[ORDER_STALE_STOCK_RELEASE_FAILED] 정리한 주문의 재고 해제에 실패했습니다. orderId={}", orderId, e);
+            log.warn("[ORDER_STOCK_RELEASE_PENDING] 재고 해제에 실패해 다음 정리 때 다시 시도합니다. orderId={}", orderId, e);
+            return;
         }
-        return true;
+        try {
+            orderService.markStockReleased(orderId);
+        } catch (RuntimeException e) {
+            // 해제는 됐지만 기록하지 못했다. 다음 정리 때 한 번 더 해제를 부르지만 결과는 같다(#605)
+            log.warn("[ORDER_STOCK_RELEASE_RECORD_FAILED] 재고 해제 확인을 기록하지 못했습니다. orderId={}", orderId, e);
+        }
     }
 }
