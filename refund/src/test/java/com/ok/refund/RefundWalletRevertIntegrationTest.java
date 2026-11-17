@@ -180,9 +180,10 @@ class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
         assertThat(refundPersistencePort.findById(refundId).map(Refund::getStatus)).contains(RefundStatus.PROCESSING);
     }
 
-    // 회수를 시작한 환불은 앞으로 가지 않는다. 알람이 다시 깨워도 지갑 반환을 다시 요청하지 않고, 회수 요청만 한 번 나간다
+    // 회수 결과를 기다리는 중에 알람이 깨워도(결과 대기 시각 전) 지갑 반환도 회수도 다시 보내지 않는다.
+    // 계획이 회수 줄을 먼저 보는 순서 자체는 RefundSagaPlanTest와 RefundSagaServiceWalletRevertTest(회수 결과 대기 시간이 지나면 회수를 다시 요청)가 지킨다
     @Test
-    void 회수를_시작한_환불은_지갑_반환을_다시_요청하지_않는다() throws Exception {
+    void 회수_결과를_기다리는_중에_알람이_깨워도_지갑_반환과_회수를_다시_보내지_않는다() throws Exception {
         // given
         Map<TopicPartition, Long> revertBefore = endOffsets(RefundTopics.REFUND_WALLET_REVERT_REQUESTED);
         Long refundId = refundRefusedByProduct();

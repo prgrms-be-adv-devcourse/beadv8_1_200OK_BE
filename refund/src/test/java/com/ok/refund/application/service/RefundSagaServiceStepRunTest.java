@@ -12,6 +12,7 @@ import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.application.port.out.WalletRevertRequest;
 import com.ok.refund.domain.Refund;
+import com.ok.refund.domain.RefundStatus;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
@@ -266,6 +267,44 @@ class RefundSagaServiceStepRunTest {
             throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
         })).isInstanceOf(RestApiException.class);
         then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
+    // 상품 422가 다섯 번째 시도에서도 와 재고 줄이 멈춰도, 이유가 회수 대상(409)이 아니라 돈은 가져가지 않는다(PR #673)
+    @Test
+    void 상품_422로_시도_횟수를_다_써서_멈춰도_회수하지_않는다() {
+        // given: 다섯 번째 시도 중인 재고 줄
+        givenProcessingRefund();
+        RefundStep lastTry = RefundStep.restore(3L, REFUND_ID, RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS,
+                5, NOW.plusMinutes(1), "IllegalStateException", NOW.minusMinutes(5));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(lastTry));
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new IllegalStateException("상품이 422로 답함");
+        })).isInstanceOf(IllegalStateException.class);
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // 예: 취소 금액 3,000원에서 기본 배송비 3,000원을 빼 돌려줄 돈이 0원인 환불. 재고가 409로 거절돼도 가져올 돈이 없어 회수하지 않는다
+    @Test
+    void 돌려준_돈이_0원이면_재고가_거절돼도_회수하지_않는다() {
+        // given
+        Refund zeroRefund = Refund.restore(REFUND_ID, 10L, 101L, 1, 1L, 5L, 55L, "감자", "1kg", 3_000L, 0L,
+                0L, 0L, 0L, null, RefundStatus.PROCESSING, null, null, null, null, null);
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(zeroRefund));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT))
+                .willReturn(Optional.of(RefundStep.start(REFUND_ID, RefundStepType.PRODUCT, NOW.minusMinutes(5))));
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
+        })).isInstanceOf(RestApiException.class);
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
     }
 
     // 상품 422(환불이 보낸 값 오류)는 표준 예외로 와 다시 시도한다. 회수 대상이 아니다(PR #673)

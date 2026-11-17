@@ -110,6 +110,26 @@ class RefundSagaServiceWalletRevertTest {
         then(walletRefundRequestPort).should().requestRevert(new WalletRevertRequest(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT));
     }
 
+    // 처음 회수 결과를 기다린 지 24시간이 지났다(RefundStep.RESEND_LIMIT). 더 보내지 않고 늦은 결과만 기다린다
+    @Test
+    void 회수_결과를_처음_기다린_지_24시간이_지나면_다시_요청하지_않고_늦은_결과만_기다린다() {
+        // given
+        givenResumable(RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT,
+                1, NOW, null, NOW.minusHours(24), NOW.minusHours(25)));
+
+        // when
+        saga.resume(REFUND_ID);
+
+        // then
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+        RefundStep held = updatedStep();
+        assertThat(held).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(held.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(held.getNextCheckAt()).isNull();
+        });
+    }
+
     // ---- 지갑이 보낸 회수 결과 ----
 
     @Test

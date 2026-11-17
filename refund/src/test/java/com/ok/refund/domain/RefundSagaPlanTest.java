@@ -125,7 +125,7 @@ class RefundSagaPlanTest {
                         Action.STOP),
                 Arguments.of("회수 실패로 멈춤 → 멈춤", 20_000L, refusedWith(step(RefundStepType.WALLET_REVERT, RefundStepStatus.STOPPED)),
                         Action.STOP),
-                Arguments.of("회수 중이면 지갑 결과 대기 시각이 지나도 지갑 반환을 다시 요청하지 않음 → 기다림", 20_000L,
+                Arguments.of("회수 결과 대기 중이면 재고 멈춤이 아니라 회수 줄로 정함(지갑 결과 대기 시각이 지나도) → 기다림", 20_000L,
                         List.of(succeeded(RefundStepType.ORDER), overdueAwaiting(RefundStepType.WALLET),
                                 step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED),
                                 step(RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT)), Action.WAIT));
