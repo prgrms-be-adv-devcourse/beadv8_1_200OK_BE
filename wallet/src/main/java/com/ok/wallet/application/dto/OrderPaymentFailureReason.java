@@ -6,5 +6,6 @@ package com.ok.wallet.application.dto;
  */
 public enum OrderPaymentFailureReason {
     INSUFFICIENT_BALANCE,     // 잔액 부족
-    INVALID_PAYMENT_REQUEST   // 결제 금액이 0 이하 등 처리할 수 없는 요청
+    INVALID_PAYMENT_REQUEST,  // 결제 금액이 0 이하 등 처리할 수 없는 요청
+    PAYMENT_EXPIRED           // 주문이 결제 요청 뒤 결과를 오래 받지 못해 만료를 요청했고, 그때까지 결제하지 않았음
 }

@@ -35,6 +35,7 @@ class WalletKafkaListenerGroupIntegrationTest extends AbstractIntegrationTest {
                 "payout.seller-payout-created.v1", List.of("wallet.payout-deposit"),
                 "refund.refund-approved.v1", List.of("wallet.refund-return"),
                 "payout.payout-deposit-check-requested.v1", List.of("wallet.deposit-check-reply"),
-                "order.order-created.v1", List.of("wallet.order-payment")));
+                "order.order-created.v1", List.of("wallet.order-payment"),
+                "order.order-payment-expire-requested.v1", List.of("wallet.payment-expire")));
     }
 }

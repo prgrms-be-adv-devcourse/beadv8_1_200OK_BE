@@ -244,12 +244,13 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(walletId, "PAID_WITHOUT_LEDGER", "PAYMENT:100"));
     }
 
-    @Test
-    void 원장이_있는_결제_실패_기록을_잡는다() {
+    @ParameterizedTest
+    @MethodSource("차감하지_않기로_한_결제_상태")
+    void 원장이_있는_결제_실패_또는_만료_기록을_잡는다(String status) {
         // given
         long walletId = insertWallet(WalletKind.BUYER, 1L, 7_000);
         insertLedger(WalletKind.BUYER, walletId, "CHARGE", 10_000, 10_000);
-        insertOrderPayment(100L, 1L, 3_000, "FAILED");
+        insertOrderPayment(100L, 1L, 3_000, status);
         long ledgerId = insertLedger(WalletKind.BUYER, walletId, "PAYMENT", 3_000, 7_000, "PAYMENT:100");
 
         // when
@@ -259,6 +260,11 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
         assertThat(mismatches)
                 .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
                 .containsExactly(tuple("FAILED_PAYMENT_WITH_LEDGER", ledgerId));
+    }
+
+    // 잔액 부족과 결제 만료는 둘 다 차감하지 않기로 한 기록이다
+    static Stream<String> 차감하지_않기로_한_결제_상태() {
+        return Stream.of("FAILED", "EXPIRED");
     }
 
     @Test

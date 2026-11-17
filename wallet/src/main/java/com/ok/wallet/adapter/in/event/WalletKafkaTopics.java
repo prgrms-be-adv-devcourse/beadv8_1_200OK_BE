@@ -16,6 +16,9 @@ public final class WalletKafkaTopics {
     /** 주문 → 지갑: 주문 생성(결제 요청). 키는 orderId, 값은 {@link com.ok.wallet.adapter.in.event.dto.OrderCreatedMessage}. 주문은 처음부터 버전(v1)을 붙인 이름으로만 보낸다 */
     public static final String ORDER_CREATED = "order.order-created.v1";
 
+    /** 주문 → 지갑: 결제 만료 요청. 키는 orderId, 값은 {@link com.ok.wallet.adapter.in.event.dto.OrderPaymentExpireRequestedMessage} */
+    public static final String ORDER_PAYMENT_EXPIRE_REQUESTED = "order.order-payment-expire-requested.v1";
+
     /** 정산 → 지갑: 정산금 입금 확인 요청 묶음. 키는 checkId, 값은 {@link com.ok.wallet.adapter.in.event.dto.PayoutDepositCheckRequestedMessage} */
     public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED = "payout.payout-deposit-check-requested.v1";
 
@@ -32,6 +35,9 @@ public final class WalletKafkaTopics {
 
     /** 주문 생성을 받아 구매자 지갑에서 결제하는 리스너의 그룹 */
     public static final String ORDER_PAYMENT_GROUP = "wallet.order-payment";
+
+    /** 주문의 결제 만료 요청을 받아 결과를 정해 보내는 리스너의 그룹 */
+    public static final String PAYMENT_EXPIRE_GROUP = "wallet.payment-expire";
 
     private WalletKafkaTopics() {
     }

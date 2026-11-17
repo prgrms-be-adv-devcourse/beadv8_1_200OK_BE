@@ -118,7 +118,8 @@ SELECT 'BUYER', w.id, 'FAILED_PAYMENT_WITH_LEDGER', l.id,
 FROM wallet_order_payment p
 JOIN buyer_wallet_ledger l ON l.reference_key = CONCAT('PAYMENT:', p.order_id)
 JOIN buyer_wallet w ON w.id = l.buyer_wallet_id
-WHERE p.status = 'FAILED'
+-- 잔액 부족과 결제 만료는 둘 다 차감하지 않기로 한 기록이라 결제 원장이 붙으면 안 된다
+WHERE p.status IN ('FAILED', 'EXPIRED')
 UNION ALL
 SELECT 'BUYER', l.buyer_wallet_id, 'PAYMENT_LEDGER_WITHOUT_RECORD', l.id,
        NULL, l.reference_key

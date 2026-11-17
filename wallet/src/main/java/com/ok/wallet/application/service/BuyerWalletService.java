@@ -144,6 +144,38 @@ public class BuyerWalletService implements BuyerWalletUseCase {
     }
 
     /**
+     * 주문의 결제 만료 요청을 처리 기록에 남긴다. 처음 보는 주문이면 만료로 기록하고 돈은 움직이지 않는다.
+     * 이미 처리한 주문이면 아무것도 바꾸지 않고 처음 기록(결제됨·잔액 부족·만료)을 돌려준다.
+     * 만료로 기록된 주문에 결제 요청이 늦게 와도 처리 기록 넣기가 걸러 차감하지 않는다.
+     *
+     * <p>결제({@link #payForOrder})와 같은 순서로 구매자 지갑을 먼저 잠근 뒤 기록을 넣는다. 결제 요청과 만료 요청이 동시에 와도
+     * 먼저 잠근 쪽의 결과 하나만 남고, 잠그는 순서가 같아 서로 막혀 멈추지 않는다.
+     * 회원 ID·주문 ID는 null이 아니고 금액은 0보다 커야 한다. 아니면 IllegalArgumentException을 던진다.
+     */
+    @Transactional
+    public OrderPaymentResult expireOrderPayment(Long memberId, Long orderId, long amount) {
+        // 처리 기록 넣기(INSERT IGNORE)는 NULL·CHECK 위반도 오류 없이 넘기므로 잘못된 값이 기록되지 않게 먼저 막는다
+        if (memberId == null || orderId == null) {
+            throw new IllegalArgumentException("회원 ID와 주문 ID는 필수입니다. memberId=" + memberId + ", orderId=" + orderId);
+        }
+        if (amount <= 0) {
+            throw new IllegalArgumentException("결제 금액은 0보다 커야 합니다. amount=" + amount);
+        }
+        getOrCreate(memberId);
+        LocalDateTime processedAt = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
+        int inserted = walletOrderPaymentRepository.insertIfAbsent(
+                orderId, memberId, amount, WalletOrderPaymentStatus.EXPIRED.name(), processedAt);
+        if (inserted == 0) {
+            WalletOrderPayment processed = walletOrderPaymentRepository.findForShareByOrderId(orderId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "주문 결제 처리 기록 넣기 결과가 0건인데 기록이 없습니다. 중복이 아닌 이유로 넣기가 무시됐을 수 있습니다. orderId="
+                                    + orderId + ", memberId=" + memberId + ", amount=" + amount));
+            return OrderPaymentResult.alreadyProcessed(processed);
+        }
+        return OrderPaymentResult.processed(orderId, memberId, amount, WalletOrderPaymentStatus.EXPIRED, processedAt);
+    }
+
+    /**
      * 이미 처리한 주문 결제의 처음 결과를 찾는다. 처리 기록은 한 번 남으면 바뀌지 않는다.
      */
     @Transactional(readOnly = true)

@@ -51,8 +51,8 @@ public record OrderPaymentResult(
         // 상태를 모두 나열해, 처리 기록 상태가 늘면 사유를 정하지 않은 채 넘어가지 않도록 컴파일 오류로 드러낸다
         return switch (status) {
             case PAID -> throw new IllegalStateException("결제된 주문에는 실패 사유가 없습니다. orderId=" + orderId);
-            // 지금 처리 기록에 남는 실패는 잔액 부족뿐이다. 결제 만료가 들어오면 기록된 사유를 읽게 바꾼다
             case FAILED -> OrderPaymentFailureReason.INSUFFICIENT_BALANCE;
+            case EXPIRED -> OrderPaymentFailureReason.PAYMENT_EXPIRED;
         };
     }
 }
