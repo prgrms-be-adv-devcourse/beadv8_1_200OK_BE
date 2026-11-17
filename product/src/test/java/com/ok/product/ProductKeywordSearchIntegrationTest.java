@@ -224,6 +224,33 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 지역_조건을_걸어도_조건을_걸지_않았을_때_없던_상품이_나오지_않는다() {
+		// given
+		Long grape = create("김천 청포도 2kg", ProductCategoryCode.FRUIT, ProductRegionCode.GYEONGBUK, "2kg");
+		// 자모로만 걸리는 상품이 제주에만 있다. 조건 안에서 글자 일치를 찾으면 청포도가 빠져 자모 결과로 되돌아간다
+		Long jejuPeach = create("청도 복숭아 4kg", ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, "4kg");
+		// 하한을 낮춰 자모 조각 몇 개만 겹친 상품도 하한을 넘게 한다
+		double lowFloor = 0.1;
+		ProductSearchKeyword keyword = ProductSearchKeyword.from("청포도").orElseThrow();
+		PageRequest pageable = PageRequest.of(0, 20);
+
+		// when
+		Page<Long> unfiltered = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
+			ProductSort.RELEVANCE, lowFloor, pageable);
+		Page<Long> jeju = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null,
+			ProductRegionCode.JEJU.toDomain(), ProductSort.RELEVANCE, lowFloor, pageable);
+		Page<Long> gyeongbuk = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null,
+			ProductRegionCode.GYEONGBUK.toDomain(), ProductSort.RELEVANCE, lowFloor, pageable);
+
+		// then
+		assertThat(unfiltered.getContent()).containsExactly(grape);
+		assertThat(jeju.getContent()).isEmpty();
+		assertThat(jeju.getTotalElements()).isZero();
+		assertThat(gyeongbuk.getContent()).containsExactly(grape);
+		assertThat(unfiltered.getContent()).doesNotContain(jejuPeach);
+	}
+
+	@Test
 	void 맞는_상품이_없으면_빈_목록과_전체_개수_0이다() throws Exception {
 		// when & then
 		mockMvc.perform(get("/api/v1/products").param("keyword", "컴퓨터"))

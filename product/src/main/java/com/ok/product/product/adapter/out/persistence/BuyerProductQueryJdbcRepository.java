@@ -39,7 +39,7 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 	// 윈도 함수는 HAVING 뒤에 계산되므로 하한을 넘은 상품 중에서 글자 일치를 찾는다
 	private static final String SCORE_COLUMNS = SCORE + " AS score, " + TEXT_SCORE + " AS text_score, MAX("
 		+ TEXT_SCORE + ") OVER () AS best_text_score";
-	private static final String JAMO_FALLBACK = " t WHERE t.text_score > 0 OR t.best_text_score = 0";
+	private static final String JAMO_FALLBACK = " WHERE (p.text_score > 0 OR p.best_text_score = 0)";
 
 	// 품절 여부를 상품에 저장하지 않고 Product.isSoldOut()과 같은 기준(삭제되지 않은 옵션의 가용 재고 합 <= 0)으로 매번 계산한다.
 	// 저장하면 재고 배정·해제·일부 해제·재고 수정 경로가 모두 그 값을 함께 고쳐야 하고, 하나라도 빠지면 목록 순서만 조용히 틀어진다.
@@ -84,8 +84,13 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 				from.append(SEARCH_ROWS).append(VISIBLE).append(" AND s.search_item = :item");
 				params.put("item", keyword.compact());
 			}
+			// 점수와 "글자 일치가 있는가"는 노출 상품 전체로 구한 뒤에 지역·분류 조건을 건다. 조건을 안쪽에 두면 조건에 맞는
+			// 상품 중에 글자 일치가 없을 때 자모 결과로 되돌아가, 조건을 걸지 않았을 때 없던 상품이 나온다
 			case FULLTEXT -> {
-				from.append(SEARCH_ROWS).append(VISIBLE);
+				from.setLength(0);
+				from.append(" FROM (SELECT p.id, p.category, p.region, p.min_sale_price, p.rating_sum, p.review_count, ")
+					.append(SCORE_COLUMNS).append(PRODUCTS).append(SEARCH_ROWS).append(VISIBLE).append(SCORE_FLOOR)
+					.append(") p").append(JAMO_FALLBACK);
 				params.put("compact", keyword.compact());
 				params.put("text", keyword.text());
 				params.put("jamo", keyword.jamo());
@@ -110,8 +115,7 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 		String content = switch (match) {
 			case NONE -> "SELECT p.id, " + SOLD_OUT_AND_RATING + from;
 			case ITEM -> "SELECT p.id, 0 AS score, " + SOLD_OUT_AND_RATING + from;
-			case FULLTEXT -> "SELECT id FROM (SELECT p.id, p.min_sale_price, " + SCORE_COLUMNS + ", " + SOLD_OUT_AND_RATING
-				+ from + SCORE_FLOOR + ")" + JAMO_FALLBACK;
+			case FULLTEXT -> "SELECT p.id, p.score, " + SOLD_OUT_AND_RATING + from;
 		};
 		List<Long> productIds = jdbcClient.sql(content + " ORDER BY " + orderBy(sort) + " LIMIT :size OFFSET :offset")
 			.params(params)
@@ -120,25 +124,20 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 			.query((rs, rowNum) -> rs.getLong("id"))
 			.list();
 
-		// 결과에서 뺀 상품이 개수에 들지 않도록 FULLTEXT 모드는 하한과 자모 규칙을 같은 모양으로 감싸서 센다
-		String count = switch (match) {
-			case NONE, ITEM -> "SELECT COUNT(*)" + from;
-			case FULLTEXT -> "SELECT COUNT(*) FROM (SELECT " + SCORE_COLUMNS + from + SCORE_FLOOR + ")" + JAMO_FALLBACK;
-		};
-		return PageableExecutionUtils.getPage(productIds, pageable, () -> jdbcClient.sql(count)
+		// 목록과 같은 조건으로 세어, 결과에서 뺀 상품이 개수에 들지 않게 한다
+		return PageableExecutionUtils.getPage(productIds, pageable, () -> jdbcClient.sql("SELECT COUNT(*)" + from)
 			.params(params)
 			.query(Long.class)
 			.single());
 	}
 
-	// 마지막 키를 고유한 id로 두어 순서를 하나로 정한다. 앞 키가 같은 상품끼리 순서가 매번 달라지면 페이지를 넘길 때 중복·누락이 생긴다.
-	// FULLTEXT 모드는 바깥 쿼리에서 정렬하므로 p. 없이 열 이름만 쓴다
+	// 마지막 키를 고유한 p.id로 두어 순서를 하나로 정한다. 앞 키가 같은 상품끼리 순서가 매번 달라지면 페이지를 넘길 때 중복·누락이 생긴다
 	private static String orderBy(ProductSort sort) {
 		return switch (sort) {
-			case RELEVANCE -> "sold_out, score DESC, rating_score DESC, id DESC";
-			case PRICE_ASC -> "sold_out, min_sale_price, rating_score DESC, id DESC";
-			case PRICE_DESC -> "sold_out, min_sale_price DESC, rating_score DESC, id DESC";
-			case LATEST -> "sold_out, id DESC";
+			case RELEVANCE -> "sold_out, score DESC, rating_score DESC, p.id DESC";
+			case PRICE_ASC -> "sold_out, p.min_sale_price, rating_score DESC, p.id DESC";
+			case PRICE_DESC -> "sold_out, p.min_sale_price DESC, rating_score DESC, p.id DESC";
+			case LATEST -> "sold_out, p.id DESC";
 		};
 	}
 
