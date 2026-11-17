@@ -22,6 +22,7 @@ public class ProductSearchBackfillRunner {
 
 	// 예외를 다시 던지면 앱 전체가 뜨지 못한다. 검색 행은 다음 기동이나 상품 수정 때 다시 채워지므로
 	// 검색 색인 하나 때문에 모놀리스 전체를 멈추지 않는다
+	// TODO(#704): 동기 실행이라 상품이 많거나 VERSION을 올리면 readiness 전환이 늦어진다. 별도 스레드로 실행한다
 	@EventListener(ApplicationReadyEvent.class)
 	void backfill() {
 		try {

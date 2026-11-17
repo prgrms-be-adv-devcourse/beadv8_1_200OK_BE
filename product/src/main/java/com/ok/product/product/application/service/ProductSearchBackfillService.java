@@ -18,8 +18,9 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * 검색 행이 없거나 정규화 버전이 낮은 상품의 검색 행을 {@link ProductSearchIndexer}로 다시 계산한다.
- * 서버가 2대가 되면 ShedLock을 건다.
  */
+// TODO(#704): 서버가 2대가 되면 ShedLock을 건다. 현재는 두 인스턴스가 같은 상품을 INSERT하면 PK 중복으로 묶음이 실패해 ERROR 로그가 남는다.
+// 같은 이슈에서 묶음당 약 1,000회인 N+1 조회와 묶음 실패 시 건별 재시도도 다룬다
 @Slf4j
 @Service
 public class ProductSearchBackfillService implements ProductSearchBackfillUseCase {
