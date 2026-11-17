@@ -82,6 +82,8 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
     private static final long ORDER_B = 2_500_002L;
     private static final long ITEM_A = 2_500_101L;
     private static final long ITEM_B = 2_500_102L;
+    // 주문 A의 두 번째 주문 항목 (같은 주문에서 한 상품만 대기 중인 경우)
+    private static final long ITEM_A_SECOND = 2_500_103L;
     // 원래 후보가 없는 주문 항목 (생성 거절 확인용)
     private static final long ITEM_WITHOUT_ORIGINAL = 2_500_199L;
 
@@ -544,6 +546,40 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
 
         // then: 확인한 조정이지만 그 스냅샷 밖이라 원래 40,000만
         assertThat(sut).containsEntry(ORDER_A, 40_000L);
+    }
+
+    // 같은 주문의 다른 상품이 아직 15일 대기 중일 때: 초과 청구 합계에는 대기 중 원래 후보도 들어가므로(#195), 그 상품의 확인한 조정도 함께 셈
+    // 결제 30,000, 상품 A 10,000(대상) + 상품 A2 30,000(대기 중, 10,000 초과) → 40,000으로 3번 실패해 멈춤
+    // → A2에 −9,700 / −300 조정 → 해결 → 다음 배치는 30,000으로 통과해 A만 9,700, A2가 대기를 마친 배치에 A2와 조정이 함께 19,400
+    // 조정을 세지 않으면 A2가 대기를 마칠 때까지 계속 실패해 A의 9,700까지 묶임
+    @Test
+    void 같은_주문의_다른_상품이_대기_중이어도_그_상품의_확인한_조정을_검사에_넣어_대상_상품은_바로_정산된다() throws Exception {
+        // given: 상품 A는 16일 전, 상품 A2는 오늘 구매확정(대기 중). 3번 실패해 멈춤
+        givenDeduction(ORDER_A, 30_000L);
+        givenSale(ORDER_A, ITEM_A, SELLER, 10_000L);
+        backdateOriginals(ORDER_A, 16);
+        givenSale(ORDER_A, ITEM_A_SECOND, SELLER, 30_000L);
+        runUntilStopped(PayoutFailureReason.AMOUNT_MISMATCH);
+
+        // when: 대기 중인 상품 A2에 실패 → 조정 → 해결 순서로 맞춘 뒤 실행, 그다음 A2를 16일 전으로 옮겨 다시 실행
+        adjust(ITEM_A_SECOND, "SALE_AMOUNT", -9_700L, REASON);
+        adjust(ITEM_A_SECOND, "SALE_FEE", -300L, REASON);
+        resolve(ORDER_A);
+        JobExecution sut = payoutJobRunner.runScheduled();
+        jdbcTemplate.update("UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_item_id = ? AND adjustment_id = 0",
+                LocalDateTime.now().minusDays(16), LocalDateTime.now().minusDays(16), ITEM_A_SECOND);
+        JobExecution later = payoutJobRunner.runScheduled();
+
+        // then: 조정을 넣은 합계 30,000이라 통과, 상품 A만 판매자 9,700 / 시스템 300
+        Long snapshotId = snapshotIdOf(sut);
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 9_700L), tuple(null, 300L));
+        // then: A2가 대기를 마친 배치에 원래와 조정이 함께: 판매자 29,100 − 9,700 = 19,400, 시스템 900 − 300 = 600
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(later)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 19_400L), tuple(null, 600L));
     }
 
     // 대금만 −10,000 줄이면 합계는 30,000으로 맞지만 수수료 짝이 28,800 / 1,200 (판매 30,000의 수수료는 900) → 수수료 불일치

@@ -28,6 +28,7 @@ import com.ok.payout.domain.QPayoutCandidateItem;
 import com.ok.payout.domain.QPayoutFailure;
 import com.ok.payout.domain.QPayoutFailureResolution;
 import com.ok.payout.domain.QPayoutItem;
+import com.ok.payout.domain.QPayoutSnapshotItem;
 import com.ok.payout.application.port.out.AdjustmentCandidateRow;
 import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.Tuple;
@@ -1110,17 +1111,45 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // snapshotId가 있으면 확인한 조정 중 이번 스냅샷에 들었거나 이미 정산된 것만 넣음
     //   합계는 스냅샷 밖 후보까지 DB 전체에서 더하므로, 스냅샷을 만든 뒤(Job 도중) 넣은 조정이 검사에는 들어가고 지급에서는 빠질 수 있음
     //   예) 결제 30,000, 원래 40,000. 스냅샷 뒤 −10,000 조정·해결 → 검사 합계 30,000 통과, 그런데 이번 지급은 40,000 → 10,000이 샘
-    //   이번 스냅샷에 없는 아직 미정산인 확인한 조정은 다음 배치에서 원래와 함께 들어가 그때 검사됨
+    //   원래 후보도 이번 스냅샷에 없고 아직 미정산(15일 대기 중)이면 그 확인한 조정도 넣음: 원래 후보는 대기 중이어도 합계에 들어가므로(#195), 조정을 빼면 합계만 커짐
+    //     예) 결제 30,000, 상품 A 10,000(대상) + 상품 B 30,000(대기 중, 10,000 초과). B에 −10,000 확인한 조정 → 넣지 않으면 40,000으로 3번 실패해 멈추고 A 10,000까지 묶임
+    //     넣으면 30,000으로 통과해 A만 지급하고, B와 조정은 결정 1번대로 B가 대기를 마친 배치에 함께 들어감 → 검사한 돈과 지급하는 돈이 어긋나지 않음
+    //   원래 후보는 이번 스냅샷에 있는데 조정만 없으면(스냅샷 뒤에 넣음) 위 예처럼 새므로 계속 뺌
     // snapshotId가 null이면 범위를 걸지 않음 (관리자 목록의 "지금" 근거: 다음 배치에서 볼 값에 가깝게)
     private BooleanExpression checkedCandidate(Long snapshotId) {
         BooleanExpression confirmed = confirmedAdjustment();
         if (snapshotId != null) {
-            confirmed = confirmed.and(inSnapshot(snapshotId).or(JPAExpressions.selectOne()
-                    .from(payoutItem)
-                    .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
-                    .exists()));
+            confirmed = confirmed.and(inSnapshot(snapshotId)
+                    .or(JPAExpressions.selectOne()
+                            .from(payoutItem)
+                            .where(payoutItem.candidateId.eq(payoutCandidateItem.id))
+                            .exists())
+                    .or(originalWaitingOutsideSnapshot(snapshotId)));
         }
         return payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID).or(confirmed);
+    }
+
+    // 조정의 원래 후보(같은 주문상품·종류의 adjustment_id = 0)가 이번 스냅샷에 없고 아직 정산되지 않았는지 = 원래가 대기 중이라 조정도 같이 기다림
+    // 바깥 쿼리의 payoutCandidateItem·payoutItem·payoutSnapshotItem과 섞이지 않게 별칭을 따로 둠
+    private BooleanExpression originalWaitingOutsideSnapshot(Long snapshotId) {
+        QPayoutCandidateItem waitingOriginal = new QPayoutCandidateItem("waitingOriginal");
+        QPayoutItem waitingOriginalItem = new QPayoutItem("waitingOriginalItem");
+        QPayoutSnapshotItem waitingOriginalSnapshotItem = new QPayoutSnapshotItem("waitingOriginalSnapshotItem");
+        return JPAExpressions.selectOne()
+                .from(waitingOriginal)
+                .where(waitingOriginal.orderItemId.eq(payoutCandidateItem.orderItemId),
+                        waitingOriginal.eventType.eq(payoutCandidateItem.eventType),
+                        waitingOriginal.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        JPAExpressions.selectOne()
+                                .from(waitingOriginalSnapshotItem)
+                                .where(waitingOriginalSnapshotItem.snapshotId.eq(snapshotId),
+                                        waitingOriginalSnapshotItem.candidateId.eq(waitingOriginal.id))
+                                .notExists(),
+                        JPAExpressions.selectOne()
+                                .from(waitingOriginalItem)
+                                .where(waitingOriginalItem.candidateId.eq(waitingOriginal.id))
+                                .notExists())
+                .exists();
     }
 
     // 관리자가 확인한 조정인지 (#291 결정 4번): 아래를 모두 채우는 해결 기록 r과 실패 기록 f가 있음
