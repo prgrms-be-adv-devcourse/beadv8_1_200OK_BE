@@ -57,7 +57,7 @@ public record RefundResponse(
                 example = "REQUESTED")
         String status,
 
-        @Schema(description = "거절 사유 (거절일 때만). 판매자가 적은 사유이거나, 승인 때 배송비가 모자라 자동 거절됐으면 그 이유",
+        @Schema(description = "거절·실패 사유 (거절·실패일 때만). 판매자가 적은 사유, 승인 때 배송비가 모자라 자동 거절된 이유, 또는 승인 뒤 처리가 실패해 취소를 되돌린 이유(FAILED)",
                 example = "이미 포장을 마쳤습니다.")
         String rejectReason,
 

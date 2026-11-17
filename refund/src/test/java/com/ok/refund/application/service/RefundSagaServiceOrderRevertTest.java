@@ -277,6 +277,7 @@ class RefundSagaServiceOrderRevertTest {
         assertThat(refund.getValue()).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(refund.getValue().getStatus()).isEqualTo(RefundStatus.FAILED);
+            softly.assertThat(refund.getValue().getRejectReason()).isEqualTo(Refund.FAILED_REASON);
             softly.assertThat(refund.getValue().getActiveOrderItemId()).isNull();
         });
     }

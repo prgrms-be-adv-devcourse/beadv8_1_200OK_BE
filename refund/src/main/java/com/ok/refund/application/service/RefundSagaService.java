@@ -740,7 +740,7 @@ public class RefundSagaService implements RefundSagaUseCase {
                 requireNext(locked, RefundSagaPlan.Event.ORDER_REVERTED, RefundSagaPlan.Action.FAIL);
                 step.succeed();
                 // 되돌리기 줄 성공과 환불 실패를 같은 구간에서 함께 저장한다(#574 결정 5, 완료·거절과 같은 규칙). 따로 저장하면 하나만 남아 표와 환불이 어긋날 수 있다
-                locked.failAfterApproval();
+                locked.failAfterApproval(Refund.FAILED_REASON);
                 refundPersistencePort.update(locked);
             } else {
                 step.stop(orderReason);

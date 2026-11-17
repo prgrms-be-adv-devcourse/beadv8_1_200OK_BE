@@ -54,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -164,6 +165,12 @@ class RefundOrderRevertIntegrationTest extends AbstractIntegrationTest {
         walletResultSender.awaitStatus(refundId, RefundStatus.FAILED);
         assertThat(stepOf(refundId, RefundStepType.ORDER_REVERT).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
         assertThat(refundPersistencePort.findById(refundId).map(Refund::getActiveOrderItemId)).isEmpty();
+        // 구매자 목록에서 실패와 그 사유를 본다(#649 R3 보완 3, 거절 사유 칸을 같이 씀)
+        mockMvc.perform(get(BUYER_URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].refundId", is(refundId.intValue())))
+                .andExpect(jsonPath("$.content[0].status", is("FAILED")))
+                .andExpect(jsonPath("$.content[0].rejectReason", is(Refund.FAILED_REASON)));
         requestRefund();
     }
 

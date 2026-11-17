@@ -22,6 +22,11 @@ public class Refund {
     /** 출고됐거나 취소된 상품이라 취소할 수 없을 때 구매자에게 보이는 거절 사유. 승인 때 자동 거절과 승인 뒤 주문 거절이 같은 문구를 쓴다 */
     public static final String SHIPPED_REJECT_REASON = "이미 출고됐거나 취소된 상품이라 취소할 수 없습니다.";
 
+    /**
+     * 승인 뒤 처리가 끝내 실패해 취소를 되돌린 환불(#622)에 구매자에게 보이는 사유. 지갑 실패와 재고 실패(돈을 다시 가져감)가 같은 문구를 쓴다(11/17 결정)
+     */
+    public static final String FAILED_REASON = "환불 처리에 실패해 취소를 되돌렸습니다. 상품은 원래대로 배송됩니다.";
+
     // 저장 전(request로 막 만든 것)에는 null이다. 저장소가 저장한 뒤 restore로 채운 새 객체를 돌려준다(setter를 두지 않으려고)
     private final Long id;
     private final Long orderId;
@@ -48,7 +53,7 @@ public class Refund {
 
     private RefundStatus status;
 
-    // 거절일 때만 값이 있다. 요청됨·처리 중·철회에는 거절 사유가 없는 게 맞아 null을 허용한다
+    // 거절·실패일 때만 값이 있다(실패는 구매자에게 보일 사유를 같은 칸에 둔다, #622). 요청됨·처리 중·철회·완료에는 사유가 없는 게 맞아 null을 허용한다
     private String rejectReason;
 
     // 판매자가 승인·거절하거나 구매자가 철회한 시각. 요청됨인 동안에는 아직 정해지지 않아 null이다
@@ -311,11 +316,20 @@ public class Refund {
      * 배송비 세 칸은 그대로 둔다. 거절과 달리 승인 뒤 돈이 움직였다가 되돌아온 기록이라 무엇을 되돌렸는지 남기려는 것이고,
      * 실패는 배송비 집계({@link RefundShippingFeePolicy#CANCELLING_STATUSES})에 들지 않아 다른 요청의 판단에 쓰이지 않는다.
      * {@code decidedAt}(판매자 승인 시각)과 {@code completedAt}(완료 전이라 없음)은 바꾸지 않는다.
+     * 구매자에게 왜 실패했는지 보이려고 사유를 거절 사유 칸({@code rejectReason})에 함께 남긴다(#649 R3 보완 3, 11/17 결정).
+     * 칸을 새로 두지 않은 이유: 응답에 이미 나가는 칸이라 DB·응답 모양을 바꾸지 않고 구매자에게 보일 수 있다
      *
-     * @throws RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     * @param reason 구매자에게 보이는 실패 사유. 서비스가 {@link #FAILED_REASON}을 넘긴다
+     * @throws IllegalArgumentException 사유가 비었으면 (부르는 쪽 버그)
+     * @throws RestApiException         처리 중이 아니면 {@code INVALID_REFUND_STATE}
      */
-    public void failAfterApproval() {
+    public void failAfterApproval(String reason) {
+        // 승인 뒤 거절(rejectAfterApproval)과 같은 순서·같은 이유로 사유 검사가 먼저이고 표준 예외다(판매자 입력이 아닌 상수라 비면 버그)
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("승인 뒤 실패 사유는 필수입니다.");
+        }
         requireStatus(RefundStatus.PROCESSING);
+        this.rejectReason = reason;
         finish(RefundStatus.FAILED);
     }
 

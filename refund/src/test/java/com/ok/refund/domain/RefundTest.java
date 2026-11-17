@@ -495,17 +495,18 @@ class RefundTest {
 
     // 실패(#622): 주문이 취소 기록을 되돌린 처리 중 환불을 끝낸다. 같은 상품에 새 요청을 받고, 무엇을 되돌렸는지 알 수 있게 배송비 칸은 남긴다
     @Test
-    void 처리_중을_실패로_끝내면_진행_중_칸이_비워지고_배송비와_승인_시각은_그대로다() {
+    void 처리_중을_실패로_끝내면_사유가_남고_진행_중_칸이_비워지고_배송비와_승인_시각은_그대로다() {
         // given
         Refund sut = requested();
         sut.approve(NOW, RefundShippingFee.deduct(3_000L));
 
         // when
-        sut.failAfterApproval();
+        sut.failAfterApproval(Refund.FAILED_REASON);
 
         // then
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.FAILED);
+            softly.assertThat(sut.getRejectReason()).isEqualTo(Refund.FAILED_REASON);
             softly.assertThat(sut.getActiveOrderItemId()).isNull();
             softly.assertThat(sut.getDeductedShippingFeeAmount()).isEqualTo(3_000L);
             softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
@@ -517,9 +518,22 @@ class RefundTest {
     @MethodSource("처리_중이_아닌_환불")
     void 처리_중이_아니면_실패로_끝낼_수_없다(Refund refund) {
         // when & then
-        assertThatThrownBy(refund::failAfterApproval)
+        assertThatThrownBy(() -> refund.failAfterApproval(Refund.FAILED_REASON))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
+    // 사유는 구매자에게 보이는 문구라 서비스가 상수로 넘긴다. 비었다면 부르는 쪽 버그라 표준 예외다(승인 뒤 거절과 같음)
+    @Test
+    void 실패_사유가_비면_실패로_끝낼_수_없다() {
+        // given
+        Refund refund = requested();
+        refund.approve(NOW, RefundShippingFee.none());
+
+        // when & then
+        assertThatThrownBy(() -> refund.failAfterApproval(" "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("승인 뒤 실패 사유는 필수입니다.");
     }
 
     private static Refund requested() {
