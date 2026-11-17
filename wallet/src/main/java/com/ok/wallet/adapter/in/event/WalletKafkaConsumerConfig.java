@@ -50,8 +50,8 @@ public class WalletKafkaConsumerConfig {
     // 30분까지인 이유: 그 뒤에는 주문이 결제 만료를 요청해 지갑이 처음 결과를 다시 보내므로 더 붙잡을 까닭이 없다
     // 최대 1분인 이유: 오류 처리기는 소비자 스레드에서 간격만큼 잠든다. 간격과 한 번 보내는 데 걸리는 시간의 합이
     // max.poll.interval.ms(기본 5분)를 넘으면 소비자가 그룹에서 빠졌다 다시 들어와 같은 메시지를 다시 처리한다.
-    // 한 번 보내기는 토픽 정보를 모르면 토픽마다 max.block.ms(기본 1분)까지 멈춘 뒤 저장 확인을 10초까지 기다려,
-    // 두 토픽에 보내는 동안 합은 1분 + 1분 × 2 + 10초 = 약 3분이다
+    // 한 번 보내기는 토픽 정보를 모르면 max.block.ms(기본 1분)까지 멈춘 뒤 저장 확인을 10초까지 기다려,
+    // 합은 1분 + 1분 + 10초 = 약 2분 10초다
     static final long TRANSIENT_SEND_MAX_INTERVAL_MILLIS = 60_000L;
     static final long TRANSIENT_SEND_MAX_ELAPSED_MILLIS = 30 * 60_000L;
 

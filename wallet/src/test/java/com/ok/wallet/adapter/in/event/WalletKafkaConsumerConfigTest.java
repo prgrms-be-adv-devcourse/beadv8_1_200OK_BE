@@ -143,21 +143,19 @@ class WalletKafkaConsumerConfigTest {
     @Test
     void 가장_긴_간격과_보내기_대기를_합쳐도_소비자가_그룹에서_빠지는_기준보다_짧다() {
         // given: 오류 처리기는 소비자 스레드에서 간격만큼 잠들고, 다시 받은 메시지는 결과를 보내며 기다린다.
-        // 보내기는 토픽 정보를 모르면 저장 확인을 기다리기 전에 토픽마다 max.block.ms까지 멈춘다(앱을 띄운 뒤 그 토픽에
+        // 보내기는 토픽 정보를 모르면 저장 확인을 기다리기 전에 max.block.ms까지 멈춘다(앱을 띄운 뒤 그 토픽에
         // 처음 보낼 때 브로커가 없으면, 로컬에서 60초 멈춤을 확인). 그 뒤 저장 확인을 최대 10초 기다린다.
         // 10초는 WalletKafkaSender.SEND_TIMEOUT 값이다. 받는 쪽 패키지에서는 보내는 쪽 상수를 쓸 수 없어 값을 적는다
         Duration sendTimeout = Duration.ofSeconds(10);
-        // 옛 이름과 .v1에 함께 보내는 동안 한 메시지를 보내는 토픽 수
-        int topicsPerSend = 2;
         // 지갑은 max.block.ms와 max.poll.interval.ms를 바꾸지 않아(common-kafka.yaml) Kafka 기본값(1분, 5분)을 쓴다
         Duration maxBlock = Duration.ofMillis(((Number) ProducerConfig.configDef().defaultValues()
                 .get(ProducerConfig.MAX_BLOCK_MS_CONFIG)).longValue());
         Duration maxPollInterval = Duration.ofMillis(((Number) ConsumerConfig.configDef().defaultValues()
                 .get(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG)).longValue());
 
-        // when: 가장 긴 간격 + 토픽마다 토픽 정보 대기 + 저장 확인 대기
+        // when: 가장 긴 간격 + 토픽 정보 대기 + 저장 확인 대기. 한 메시지는 토픽 하나에 보낸다
         Duration sut = Duration.ofMillis(WalletKafkaConsumerConfig.TRANSIENT_SEND_MAX_INTERVAL_MILLIS)
-                .plus(maxBlock.multipliedBy(topicsPerSend))
+                .plus(maxBlock)
                 .plus(sendTimeout);
 
         // then: 넘으면 소비자가 그룹에서 빠졌다 다시 들어와 같은 메시지를 다시 처리한다

@@ -1,6 +1,5 @@
 package com.ok.wallet.adapter.out.event;
 
-import com.ok.wallet.adapter.out.event.dto.WalletRefundCompletedMessage;
 import com.ok.wallet.adapter.out.event.dto.WalletRefundFailedMessage;
 import com.ok.wallet.domain.WalletOrderRefundFailureReason;
 import org.junit.jupiter.api.AfterEach;
@@ -22,7 +21,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.BDDMockito.then;
 
 // 어댑터의 실패 경로를 본다. 성공 경로(실제 Kafka에 나간 JSON)는 OrderRefundServiceIntegrationTest가 본다.
 // 실제 브로커로는 거절·시간 초과·중단을 만들기 어려워 KafkaTemplate을 Mockito로 대신한다.
@@ -31,7 +29,7 @@ import static org.mockito.BDDMockito.then;
 class KafkaWalletRefundResultPublisherTest {
 
     private static final String FAILED_MESSAGE =
-            "환불 반환 결과를 보내지 못했습니다. refundId=7, topic=wallet.wallet-refund-completed.v1";
+            "환불 반환 결과를 보내지 못했습니다. topic=wallet.wallet-refund-completed.v1, refundId=7";
     // 시간 초과 경로를 빨리 확인하려는 짧은 대기 시간 (운영은 10초)
     private static final Duration SHORT_TIMEOUT = Duration.ofMillis(50);
 
@@ -112,38 +110,17 @@ class KafkaWalletRefundResultPublisherTest {
                 7L, 10L, 1L, 7_000, WalletOrderRefundFailureReason.PAYMENT_NOT_FOUND.name());
         given(kafkaTemplate.send(WalletOutboundTopics.WALLET_REFUND_FAILED, "10", message))
                 .willReturn(CompletableFuture.failedFuture(rejected));
-        given(kafkaTemplate.send(WalletOutboundTopics.WALLET_REFUND_FAILED_OLD, "10", message))
-                .willReturn(CompletableFuture.completedFuture(null));
 
         // when & then
         assertThatThrownBy(() -> sut.publishRefundFailed(7L, 10L, 1L, 7_000,
                 WalletOrderRefundFailureReason.PAYMENT_NOT_FOUND))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("환불 반환 결과를 보내지 못했습니다. refundId=7, topic=wallet.wallet-refund-failed.v1")
+                .hasMessage("환불 반환 결과를 보내지 못했습니다. topic=wallet.wallet-refund-failed.v1, refundId=7")
                 .hasCause(rejected);
     }
 
-    @Test
-    void 환불이_옮기기_전까지_옛_이름_토픽에도_같은_키와_값을_보낸다() {
-        // given
-        WalletRefundCompletedMessage message = new WalletRefundCompletedMessage(7L, 10L, 1L, 7_000);
-        given(kafkaTemplate.send(WalletOutboundTopics.WALLET_REFUND_COMPLETED, "10", message))
-                .willReturn(CompletableFuture.completedFuture(null));
-        given(kafkaTemplate.send(WalletOutboundTopics.WALLET_REFUND_COMPLETED_OLD, "10", message))
-                .willReturn(CompletableFuture.completedFuture(null));
-
-        // when
-        sut.publishRefundCompleted(7L, 10L, 1L, 7_000);
-
-        // then: 환불은 아직 옛 이름으로 받는다
-        then(kafkaTemplate).should().send(WalletOutboundTopics.WALLET_REFUND_COMPLETED_OLD, "10", message);
-    }
-
-    // 키는 orderId(10)여야 같은 주문의 결과가 같은 파티션으로 간다. 다른 키로 보내면 given이 맞지 않아 테스트가 실패한다.
-    // 옛 이름 토픽은 저장된 것으로 두고 v1 토픽의 결과만 바꿔 경로를 만든다
+    // 키는 orderId(10)여야 같은 주문의 결과가 같은 파티션으로 간다. 다른 키로 보내면 given이 맞지 않아 테스트가 실패한다
     private void givenCompletedSendReturns(CompletableFuture<SendResult<String, Object>> result) {
         given(kafkaTemplate.send(eq(WalletOutboundTopics.WALLET_REFUND_COMPLETED), eq("10"), any())).willReturn(result);
-        given(kafkaTemplate.send(eq(WalletOutboundTopics.WALLET_REFUND_COMPLETED_OLD), eq("10"), any()))
-                .willReturn(CompletableFuture.completedFuture(null));
     }
 }

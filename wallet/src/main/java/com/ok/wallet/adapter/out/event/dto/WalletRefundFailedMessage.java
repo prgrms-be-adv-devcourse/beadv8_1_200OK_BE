@@ -1,7 +1,7 @@
 package com.ok.wallet.adapter.out.event.dto;
 
 /**
- * {@code wallet.wallet-refund-failed.v1} 토픽(옮기는 동안 옛 이름에도)에 보내는 메시지. 필드 이름·타입이 환불과의 약속이다(#34, 환불 PR #555).
+ * {@code wallet.wallet-refund-failed.v1} 토픽에 보내는 메시지. 필드 이름·타입이 환불과의 약속이다(#34, 환불 PR #555).
  * 환불은 사유가 비었거나 100자를 넘으면 받지 않는다.
  *
  * @param amount 환불이 요청한 금액 그대로(원). 환불은 이 값을 자기 금액과 비교한다

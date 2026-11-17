@@ -24,9 +24,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class OrderRefundServiceIntegrationTest extends AbstractIntegrationTest {
     private static final String COMPLETED_TOPIC = "wallet.wallet-refund-completed.v1";
     private static final String FAILED_TOPIC = "wallet.wallet-refund-failed.v1";
-    // 환불이 v1로 옮길 때까지 같은 결과가 함께 나가는 옛 이름
-    private static final String COMPLETED_TOPIC_OLD = "wallet.wallet-refund-completed";
-    private static final String FAILED_TOPIC_OLD = "wallet.wallet-refund-failed";
 
     // 토픽에는 앞 테스트의 메시지가 남으므로 테스트마다 겹치지 않는 주문·환불 번호를 쓴다
     private static final AtomicLong ID_SEQ = new AtomicLong(8_000_000L);
@@ -71,7 +68,6 @@ class OrderRefundServiceIntegrationTest extends AbstractIntegrationTest {
         String completed = "{\"refundId\":" + refundId + ",\"orderId\":" + orderId
                 + ",\"buyerId\":" + buyerId + ",\"amount\":7000}";
         assertThat(messagesFor(COMPLETED_TOPIC, orderId, 1)).containsExactly(completed);
-        assertThat(messagesFor(COMPLETED_TOPIC_OLD, orderId, 1)).containsExactly(completed);
     }
 
     @Test
@@ -88,7 +84,6 @@ class OrderRefundServiceIntegrationTest extends AbstractIntegrationTest {
         String failed = "{\"refundId\":" + refundId + ",\"orderId\":" + orderId
                 + ",\"buyerId\":" + buyerId + ",\"amount\":7000,\"reason\":\"PAYMENT_NOT_FOUND\"}";
         assertThat(messagesFor(FAILED_TOPIC, orderId, 1)).containsExactly(failed);
-        assertThat(messagesFor(FAILED_TOPIC_OLD, orderId, 1)).containsExactly(failed);
     }
 
     @Test
