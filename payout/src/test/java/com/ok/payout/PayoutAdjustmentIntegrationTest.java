@@ -64,7 +64,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 //   - 조정 생성: 번호 1, 2…, 같은 조정 재전송·동시 요청은 409(3), 배송비는 422(6), 원래 후보 없으면 422(7), 판매자는 원래 후보에서 가져옴(7)
 //   - 조정은 원래 후보를 따라 정산됨(1): 원래가 대기 중이면 함께 기다리고, 이미 정산됐으면 다음 배치
 //   - 판매자 합계가 0원 이하면 보류하고 다음 매출에서 상계(2), 보류된 원래 후보는 조회 하한 밖으로 밀려도 다시 들어감(2)
+//     보류 후보는 최근 스냅샷(기준일 − 대기 일수 × 2 뒤)의 draft에서 찾음: 창 안이면 다시 들어가고 창 밖이면 안 찾음
 //   - 초과 청구는 "실패 → 조정 → 해결" 순서로 넣은 조정으로만 풀림(4), 수수료는 대금·수수료를 함께 맞춰야 풀림(5)
+//     확인한 조정의 세 조건(4): 실패 뒤에 넣음(미리 넣은 조정은 해결해도 안 셈), 금액 불일치 실패만(결제 기록 없음 실패는 안 셈),
+//     이번 스냅샷에 들었거나 이미 정산됨(스냅샷을 만든 뒤 넣은 조정은 그 검사 합계에 안 셈)
 //
 // [준비]
 // 후보·차감 기록은 리포지토리로 직접 저장하고, 생성 시각만 SQL로 과거로 옮김 (JPA 저장은 Auditing이 현재 시각으로 채움)
@@ -271,24 +274,29 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
 
     // ---------- 조정은 원래 후보를 따라 정산됨 (결정 1번) ----------
 
-    // 원래 9,700이 아직 15일 대기 중일 때 −2,000 조정을 넣음
-    // → 첫 배치: 원래도 조정도 안 들어감 (조정만 먼저 정산되면 −2,000은 지갑으로 못 보내 회수되지 않음)
-    // → 원래가 15일을 채운 배치: 둘이 함께 들어가 7,700 지급
+    // 원래 9,700(주문 A)이 아직 15일 대기 중일 때 −2,000 조정을 넣음. 같은 판매자의 주문 B 9,700은 1차에 바로 정산 대상
+    // → 1차: 주문 B만 9,700 (조정만 먼저 정산되면 B에서 −2,000이 빠져 7,700이 됨)
+    // → 주문 A가 15일을 채운 2차: 원래와 조정이 함께 들어가 7,700 지급
+    // 같은 판매자의 다른 매출을 두는 이유: 매출이 없으면 조정이 혼자 새어 들어가도 합계 −2,000으로 보류되어(결정 2번) 1차 결과가 "정산 없음"으로 같아 결정 1번을 확인하지 못함
     @Test
     void 원래_후보가_대기_중일_때_넣은_조정은_함께_기다렸다가_같은_배치에서_상계된다() throws Exception {
-        // given: 판매 10,000(오늘 생성, 대기 중) + −2,000 조정
+        // given: 주문 A 판매 10,000(오늘 생성, 대기 중) + −2,000 조정, 주문 B 판매 10,000(16일 전, 정산 대상)
         givenSale(ORDER_A, ITEM_A, SELLER, 10_000L);
         adjust(ITEM_A, "SALE_AMOUNT", -2_000L, REASON);
+        givenSale(ORDER_B, ITEM_B, SELLER, 10_000L);
+        backdateOriginals(ORDER_B, 16);
 
-        // when: 1차는 원래가 대기 중, 2차는 원래를 16일 전으로 옮긴 뒤
+        // when: 1차는 주문 A가 대기 중, 2차는 주문 A를 16일 전으로 옮긴 뒤
         JobExecution first = payoutJobRunner.runScheduled();
         backdateOriginals(ORDER_A, 16);
         JobExecution second = payoutJobRunner.runScheduled();
 
-        // then: 1차는 아무것도 정산되지 않음
+        // then: 1차는 주문 B만 (판매자 9,700, 시스템 몫 300), 조정은 아직 안 들어감
         assertThat(first.getStatus()).isEqualTo(BatchStatus.COMPLETED);
-        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(first))).isEmpty();
-        // then: 2차에 판매자 9,700 − 2,000 = 7,700, 시스템 몫 300
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(first)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 9_700L), tuple(null, 300L));
+        // then: 2차에 주문 A와 조정이 함께: 판매자 9,700 − 2,000 = 7,700, 시스템 몫 300
         assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
         assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(second)))
                 .extracting(Payout::getPayeeId, Payout::getAmount)
