@@ -35,6 +35,8 @@ public interface ShipmentRepository {
     /**
      * 주문 상품이 담긴 shipment를 쓰기 잠금으로 조회한다. 주문 상품은 한 shipment에만 담긴다({@code shipment_item.order_item_id} UNIQUE).
      * 잠금 계약은 {@link #findByIdForUpdate}와 같다.
+     * 주문 상품으로 shipment를 찾는 읽기까지 잠금 읽기여야 한다. 찾는 읽기가 일반 조회면 그 읽기가 스냅숏을 고정해,
+     * 같은 shipment의 다른 항목을 앞 트랜잭션이 확정해도 보이지 않는다. 그래서 그 항목 행도 함께 잠근다(항목 행 → shipment 행 순서).
      */
     Optional<Shipment> findByOrderItemIdForUpdate(Long orderItemId);
 
