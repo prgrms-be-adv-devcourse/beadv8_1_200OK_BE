@@ -670,9 +670,9 @@ com.ok.wallet
 │   └── dto/              *Command, *Query, *Result, 토스 승인 결과(TossConfirmResult)
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
-    ├── in/event/         이벤트 리스너(Spring 이벤트, Kafka), 받는 메시지 DTO(dto/), Kafka 수신 설정과 실패 기록 연결
+    ├── in/event/         Kafka 리스너, 받는 메시지 DTO(dto/), Kafka 수신 설정과 실패 기록 연결
     ├── out/persistence/  저장소 포트 구현(*RepositoryAdapter), Spring Data JPA 저장소, Querydsl 조회
-    ├── out/event/        발행 구현체(Spring 이벤트, Kafka), 보내는 메시지 DTO(dto/), 보내는 토픽 생성
+    ├── out/event/        Kafka 발행 구현체, 보내는 메시지 DTO(dto/), 보내는 토픽 생성
     └── out/toss/         토스 결제 승인 HTTP 구현, 토스 요청·응답 DTO, 설정
 ```
 
@@ -697,8 +697,8 @@ com.ok.wallet
 
 **Kafka 수신과 실패 기록**
 
-- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`, 그룹 `wallet.payout-deposit`, #579)과 환불 반환 요청(`refund.refund-approved.v1`, 키 `orderId`, 그룹 `wallet.refund-return`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 그룹 `wallet.deposit-check-reply`, #613), 주문 생성(`order.order-created.v1`, 키 `orderId`, 그룹 `wallet.order-payment`, #614)입니다. 주문 생성은 주문이 Kafka로 옮길 때(#602)까지 Spring 이벤트로도 받습니다. 토픽 이름과 그룹은 `WalletKafkaTopics`에 있고, 그룹은 리스너마다 하나입니다(#669).
-- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`), 주문 결제 결과(`wallet.wallet-payment-completed.v1` / `wallet.wallet-payment-failed.v1`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 주문 결제 결과는 Spring 이벤트로 받은 주문에는 Spring 이벤트로 보냅니다.
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`, 그룹 `wallet.payout-deposit`, #579)과 환불 반환 요청(`refund.refund-approved.v1`, 키 `orderId`, 그룹 `wallet.refund-return`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 그룹 `wallet.deposit-check-reply`, #613), 주문 생성(`order.order-created.v1`, 키 `orderId`, 그룹 `wallet.order-payment`, #614)입니다. 토픽 이름과 그룹은 `WalletKafkaTopics`에 있고, 그룹은 리스너마다 하나입니다(#669).
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`), 주문 결제 결과(`wallet.wallet-payment-completed.v1` / `wallet.wallet-payment-failed.v1`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 지갑은 다른 모듈과 Spring 이벤트를 주고받지 않습니다.
 - 환불·정산이 `.v1`로 옮길 때까지 세 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#669). 두 토픽에 먼저 보내 놓고 저장 확인을 합쳐서 10초까지 기다리며, 한쪽만 실패해도 예외라 다시 받을 때 두 토픽에 모두 다시 나갑니다. 환불·정산이 옮기면 옛 이름 발행을 지웁니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
 - 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
@@ -717,10 +717,11 @@ com.ok.wallet
 
 **주문 결제**
 
-- 받은 길로만 답합니다. Spring 이벤트로 받은 주문(`OrderEventListener` → `pay`)은 차감과 같은 트랜잭션에서 Spring 이벤트로, Kafka로 받은 주문(`OrderKafkaListener` → `payAndSendResult`)은 차감을 커밋한 뒤 Kafka로 보냅니다. Spring 수신부는 자기 트랜잭션 안에서 서비스를 부르므로, 거기서 Kafka로 보내면 커밋 전에 결과가 나가 롤백된 결제의 완료가 갈 수 있습니다. 두 길은 같은 처리 기록(`wallet_order_payment`)을 써서 어느 길로 와도 한 번만 차감합니다.
-- `OrderPaymentService`에는 클래스 단위 `@Transactional`을 두지 않습니다. 두면 Kafka 길도 트랜잭션 안에서 돌아 커밋 전에 보냅니다.
-- Kafka로 같은 주문이 다시 오면 돈은 다시 빼지 않고 처음 기록의 값(구매자, 금액, 처리 시각)으로 결과를 다시 보냅니다. Spring 길은 결과가 커밋과 함께 저장돼 다시 보내지 않습니다. 결제 시각(`paidAt`)은 처리 기록 시각이고, DB가 마이크로초까지 저장하므로 넣기 전에 마이크로초로 잘라 처음 결과와 다시 보낸 결과가 같게 합니다.
-- 실패 사유는 결과(`OrderPaymentResult.failureReason()`) 한 곳에서 정합니다. 금액이 0 이하이거나 없으면 처리 기록 없이 `INVALID_PAYMENT_REQUEST` 실패를 보내고, 주문·구매자 ID가 없으면 결과를 보낼 곳을 몰라 실패 기록에 남깁니다.
+- 주문 생성(`OrderKafkaListener` → `payAndSendResult`)을 받아 차감을 커밋한 뒤 결과를 Kafka로 보냅니다. 보내기가 실패하면 예외로 같은 주문을 다시 받아 처음 결과를 다시 보내므로 outbox를 두지 않습니다(환불 반환과 같은 방식).
+- `payAndSendResult`는 트랜잭션 밖에서만 돕니다(`Propagation.NEVER`). 트랜잭션 안에서 부르면 커밋 전에 결과가 나가 롤백된 결제의 완료가 갈 수 있어 바로 예외로 막습니다. `OrderPaymentService`에는 클래스 단위 `@Transactional`을 두지 않고 메서드마다 정합니다.
+- 같은 주문이 다시 오면 금액을 보기 전에 처리 기록(`wallet_order_payment`)부터 찾아, 돈은 다시 빼지 않고 처음 기록의 값(구매자, 금액, 처리 시각)으로 결과를 다시 보냅니다. 결제 시각(`paidAt`)은 처리 기록 시각이고, DB가 마이크로초까지 저장하므로 넣기 전에 마이크로초로 잘라 처음 결과와 다시 보낸 결과가 같게 합니다.
+- 실패 사유는 결과(`OrderPaymentResult.failureReason()`) 한 곳에서 정합니다. 처음 보는 주문의 금액이 0 이하이거나 없으면 처리 기록 없이 `INVALID_PAYMENT_REQUEST` 실패를 보내고, 주문·구매자 ID가 없으면 결과를 보낼 곳을 몰라 실패 기록에 남깁니다.
+- 결제는 커밋됐는데 결과를 끝내 보내지 못한 주문은 실패 기록(`wallet_message_failure`, `[WALLET_MESSAGE_FAILED]` ERROR 로그)에 남습니다. 결제 만료(#693)가 들어오면 주문이 30분 뒤 만료를 요청할 때 지갑이 처음 결과를 다시 보내 풀립니다.
 
 **정산금 입금 확인**
 
