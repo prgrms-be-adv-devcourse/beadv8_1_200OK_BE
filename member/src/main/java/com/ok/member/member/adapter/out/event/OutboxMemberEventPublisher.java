@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * <p>호출한 서비스의 트랜잭션 안에서 outbox 줄({@link MemberOutbox})을 저장한다. 그래서 회원 변경이 커밋되면 반드시 보내고,
  * 롤백되면 보내지 않는다. 실제 Kafka 발송은 {@code MemberOutboxRelayScheduler}가 커밋 뒤에 따로 한다.
  *
- * <p>장바구니가 Kafka로 받게 되어(#601) 스프링 이벤트는 내지 않는다(#683). 모듈을 나누면 스프링 이벤트는 member 앱 밖으로 나가지 않는다.
+ * <p>스프링 이벤트는 내지 않는다. 모듈을 나누면 스프링 이벤트는 member 앱 밖으로 나가지 않아 다른 모듈이 받을 수 없다.
  */
 @Component
 @RequiredArgsConstructor
