@@ -27,6 +27,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
 
+    // 커밋 직후 발송 전용 실행기 이름(#715). 차면 기다리지 않고 거절한다(OrderOutboxRelayExecutorConfig)
+    public static final String RELAY_EXECUTOR = "orderOutboxRelayExecutor";
+
     // 이만큼 실패하면(재발송 30초 주기로 약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
     static final int ESCALATE_ATTEMPT_COUNT = 10;
 
@@ -51,10 +54,13 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
     }
 
     /**
-     * 커밋 직후 방금 남긴 줄 하나를 다른 스레드에서 보낸다. 실패해도 예외를 던지지 않고 줄에 남겨 재발송에 맡긴다.
+     * 커밋 직후 방금 남긴 줄 하나를 전용 실행기에서 보낸다. 실패해도 예외를 던지지 않고 줄에 남겨 재발송에 맡긴다.
      * 그사이 재발송이 먼저 보냈으면 아무것도 하지 않는다.
+     *
+     * @throws org.springframework.core.task.TaskRejectedException 전용 실행기의 대기열이 가득 차 작업을 받지 못하면.
+     *         호출한 쪽이 잡아 재발송에 맡긴다
      */
-    @Async
+    @Async(RELAY_EXECUTOR)
     public void relayAfterCommit(Long outboxId) {
         try {
             orderOutboxService.findPendingById(outboxId).ifPresent(this::sendAndRecord);

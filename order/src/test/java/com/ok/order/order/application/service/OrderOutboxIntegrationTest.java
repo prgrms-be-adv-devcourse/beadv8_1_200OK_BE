@@ -12,7 +12,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -20,6 +22,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,6 +56,10 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     KafkaConnectionDetails kafkaConnectionDetails;
+
+    @Autowired
+    @Qualifier(OrderOutboxRelayFacade.RELAY_EXECUTOR)
+    ThreadPoolTaskExecutor relayExecutor;
 
     private OrderKafkaTopicReader reader;
     private String key;
@@ -116,6 +126,48 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(orderOutboxRepository.findAll()).filteredOn(outbox -> key.equals(outbox.getMessageKey()))
                     .extracting(OrderOutbox::getStatus).containsOnly(OrderOutboxStatus.SENT);
         });
+    }
+
+    // 커밋 직후 콜백은 DB 커넥션을 돌려주기 전이라, 대기열 자리를 기다리면 커넥션을 쥔 채 멈춘다(#715, 2차 부하테스트).
+    // 전용 실행기의 스레드를 막고 대기열을 가득 채운 뒤 남겨, 기다리지 않고 끝나는지와 줄이 재발송으로 나가는지 본다
+    @Test
+    void 커밋_직후_발송_대기열이_가득_차도_기다리지_않고_끝나고_줄은_재발송이_보낸다() throws Exception {
+        // given: 스레드를 모두 막고 대기열을 빈 작업으로 채운다
+        CountDownLatch release = new CountDownLatch(1);
+        ThreadPoolExecutor pool = relayExecutor.getThreadPoolExecutor();
+        try {
+            for (int i = 0; i < relayExecutor.getMaxPoolSize(); i++) {
+                pool.execute(() -> awaitQuietly(release));
+            }
+            while (pool.getQueue().remainingCapacity() > 0) {
+                pool.execute(() -> { });
+            }
+
+            // when: 기다리면 이 시간 안에 끝나지 않는다
+            CompletableFuture<Void> commit = CompletableFuture.runAsync(() -> transactionTemplate.executeWithoutResult(
+                    status -> sut.record(TOPIC, key, "{\"orderId\":13}")));
+            commit.get(5, TimeUnit.SECONDS);
+
+            // then: 바로 보내지 못하고 PENDING으로 남는다
+            assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.PENDING);
+        } finally {
+            release.countDown();
+        }
+
+        // 막아 둔 작업이 끝난 뒤 재발송이 보낸다
+        orderOutboxRelayUseCase.relayPending(100);
+        assertSoftly(softly -> {
+            softly.assertThat(reader.readValuesFor(key, READ_DURATION)).containsExactly("{\"orderId\":13}");
+            softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.SENT);
+        });
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private OrderOutboxStatus statusOf(String messageKey) {
