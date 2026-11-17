@@ -1,0 +1,7 @@
+# order 통합·모듈 테스트 전용 설정. common의 application-test.yml이 읽는다 (#485)
+order:
+  outbox:
+    relay:
+      # outbox 재발송 스케줄러를 끈다. 30초마다 돌면 테스트가 직접 보내는 중에 같은 줄을 함께 보내 메시지 건수와 상태가 흔들린다.
+      # 재발송은 테스트가 OrderOutboxRelayUseCase를 직접 불러 확인한다 (#666)
+      cron: "-"

@@ -11,11 +11,13 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeDeliveryPort;
 import com.ok.testsupport.FakeProductPort;
 import com.ok.testsupport.FakeWalletPort;
+import com.ok.testsupport.OrderKafkaTopicReader;
 import com.ok.testsupport.TestAccessTokens;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,7 +27,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -39,7 +44,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-// 주문 생성 API를 보안 필터부터 DB 저장, 주문 생성 이벤트 발행까지 실제 경로로 확인한다.
+// 주문 생성 API를 보안 필터부터 DB 저장, 주문 생성 이벤트 발행(Spring 이벤트와 Kafka, #602)까지 실제 경로로 확인한다.
 // 상품·배송·지갑 HTTP 호출은 testsupport의 Fake가 대신한다. 결제 결과를 받은 뒤의 흐름은 OrderModuleTest가 확인한다.
 // 헥사고날 구조 전환 전후에 같은 결과가 나오는지 보는 기준이 되도록 API 요청과 DB·이벤트 결과만 본다.
 @RecordApplicationEvents
@@ -57,6 +62,9 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     // 상품 24,000 + 배송비 3,000 + 도서산간 5,000
     private static final long TOTAL_AMOUNT = UNIT_PRICE * QUANTITY + SHIPPING_FEE + REMOTE_AREA_FEE;
     private static final String ORDERS_URL = "/api/v1/orders";
+    private static final String ORDER_CREATED_TOPIC = "order.order-created.v1";
+    // 다시 보낸 중복까지 세려고 이 시간 동안 계속 읽는다. 커밋 직후 보내므로 정상이면 바로 읽힌다
+    private static final Duration READ_DURATION = Duration.ofSeconds(3);
 
     @Autowired
     WebApplicationContext context;
@@ -82,7 +90,14 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     FakeWalletPort fakeWalletPort;
 
+    @Autowired
+    KafkaConnectionDetails kafkaConnectionDetails;
+
+    @Autowired
+    JsonMapper jsonMapper;
+
     private MockMvc mockMvc;
+    private OrderKafkaTopicReader orderCreatedReader;
 
     @BeforeEach
     void setUp() {
@@ -93,11 +108,13 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
         fakeDeliveryPort.register(SELLER_ID, new SellerShippingFee(
                 SHIPPING_FEE, null, SHIPPING_FEE, REMOTE_AREA_FEE));
         fakeWalletPort.setBalance(BUYER_ID, 100_000L);
+        orderCreatedReader = new OrderKafkaTopicReader(kafkaConnectionDetails.getBootstrapServers(), ORDER_CREATED_TOPIC);
     }
 
     // 통합 테스트는 롤백되지 않아 이 클래스가 만든 주문·장바구니를 지운다
     @AfterEach
     void tearDown() {
+        orderCreatedReader.close();
         fakeProductPort.clear();
         fakeDeliveryPort.clear();
         fakeWalletPort.clear();
@@ -108,7 +125,7 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 장바구니에_담은_상품으로_주문하면_결제_대기로_저장되고_주문_생성_이벤트가_나간다() throws Exception {
+    void 장바구니에_담은_상품으로_주문하면_결제_대기로_저장되고_주문_생성_이벤트와_메시지가_나간다() throws Exception {
         // when
         Long orderId = orderId(createOrder("key-created").andExpect(status().isCreated()));
 
@@ -120,6 +137,7 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
                 + "oi.status, g.seller_id, g.shipping_fee, g.remote_area_fee FROM " + OrderSchema.NAME + ".order_item oi JOIN "
                 + OrderSchema.NAME + ".order_seller_group g ON oi.seller_group_id = g.id WHERE g.order_id = ?", orderId);
         List<OrderCreatedEvent> createdEvents = events.stream(OrderCreatedEvent.class).toList();
+        List<String> createdMessages = orderCreatedReader.readValuesFor(String.valueOf(orderId), READ_DURATION);
 
         assertThat(order).isNotNull();
         assertSoftly(softly -> {
@@ -142,6 +160,14 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(countConsents(orderId)).isEqualTo(1);
             softly.assertThat(fakeProductPort.allocatedOrderIds()).containsExactly(orderId);
             softly.assertThat(createdEvents).containsExactly(new OrderCreatedEvent(orderId, BUYER_ID, TOTAL_AMOUNT));
+            softly.assertThat(createdMessages).hasSize(1);
+        });
+        JsonNode message = jsonMapper.readTree(createdMessages.get(0));
+        assertSoftly(softly -> {
+            softly.assertThat(message.get("orderId").asLong()).isEqualTo(orderId);
+            softly.assertThat(message.get("buyerId").asLong()).isEqualTo(BUYER_ID);
+            softly.assertThat(message.get("totalAmount").asLong()).isEqualTo(TOTAL_AMOUNT);
+            softly.assertThat(message.get("orderSummary").asString()).isEqualTo("사과");
         });
     }
 
@@ -163,7 +189,7 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 재고_선점이_실패하면_주문이_취소로_남고_주문_생성_이벤트는_나가지_않는다() throws Exception {
+    void 재고_선점이_실패하면_주문이_취소로_남고_주문_생성_이벤트와_메시지는_나가지_않는다() throws Exception {
         // given
         fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
 
@@ -186,6 +212,7 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(itemStatuses).containsOnly("CANCELED");
             softly.assertThat(fakeProductPort.releasedOrderIds()).containsExactly(orderId);
             softly.assertThat(events.stream(OrderCreatedEvent.class).count()).isZero();
+            softly.assertThat(orderCreatedReader.readValuesFor(String.valueOf(orderId), READ_DURATION)).isEmpty();
         });
     }
 
@@ -257,6 +284,8 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
 
     private void deleteOrders() {
         String orders = "SELECT id FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?";
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_outbox WHERE topic = ? AND message_key IN ("
+                + "SELECT CAST(id AS CHAR) FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?)", ORDER_CREATED_TOPIC, BUYER_ID);
         jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_third_party_consent WHERE order_id IN ("
                 + orders + ")", BUYER_ID);
         jdbcTemplate.update("DELETE oi FROM " + OrderSchema.NAME + ".order_item oi JOIN " + OrderSchema.NAME

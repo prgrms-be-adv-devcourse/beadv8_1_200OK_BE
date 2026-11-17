@@ -800,4 +800,75 @@ class OrderTest {
         // then
         assertThat(sut).isEqualTo(3_000L);
     }
+
+    @Test
+    void 주문_상품이_한_줄이면_주문_요약은_상품_이름만이다() {
+        // given
+        Order order = Order.create(1L, List.of(new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 2)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("사과");
+    }
+
+    @Test
+    void 주문_상품이_여러_줄이면_첫_상품_이름에_나머지_줄_수를_붙인다() {
+        // given: 판매자가 섞여 있어도 나머지 줄 수를 모두 센다
+        Order order = Order.create(1L, List.of(
+                new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 1),
+                new OrderLine(2L, 21L, 200L, "배", "2kg", 20_000L, 1),
+                new OrderLine(3L, 31L, 100L, "감", "1박스", 15_000L, 3),
+                new OrderLine(4L, 41L, 300L, "귤", "5kg", 12_000L, 1)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("사과 외 3건");
+    }
+
+    @Test
+    void 같은_상품이라도_옵션이_다르면_따로_센다() {
+        // given
+        Order order = Order.create(1L, List.of(
+                new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 1),
+                new OrderLine(1L, 12L, 100L, "사과", "2kg", 18_000L, 1)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("사과 외 1건");
+    }
+
+    @Test
+    void 저장된_주문은_목록_순서와_관계없이_ID가_가장_작은_주문_상품을_첫_상품으로_본다() {
+        // given: DB에서 읽은 목록 순서가 저장 순서와 달라도 요약이 바뀌지 않아야 한다
+        Order order = Order.create(1L, List.of(
+                new OrderLine(1L, 11L, 100L, "사과", "1kg", 10_000L, 1),
+                new OrderLine(2L, 21L, 200L, "배", "2kg", 20_000L, 1)));
+        ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 2L);
+        ReflectionTestUtils.setField(order.getAllItems().get(1), "id", 1L);
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo("배 외 1건");
+    }
+
+    @Test
+    void 상품_이름이_길어도_자르지_않는다() {
+        // given: 주문 상품 이름의 최대 길이(100자)
+        String longName = "가".repeat(100);
+        Order order = Order.create(1L, List.of(new OrderLine(1L, 11L, 100L, longName, "1kg", 10_000L, 1)));
+
+        // when
+        String sut = order.orderSummary();
+
+        // then
+        assertThat(sut).isEqualTo(longName);
+    }
 }

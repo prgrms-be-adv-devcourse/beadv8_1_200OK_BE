@@ -66,7 +66,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // 통합 테스트: 판매자가 승인하면 실제 Kafka(테스트 컨테이너)의 refund.refund-approved.v1 토픽에 지갑 반환 요청이 나가는지 확인한다 (#512)
-// 지갑이 .v1로 옮기기 전까지 옛 이름 refund.refund-approved에도 함께 나가는지는 첫 테스트가 본다 (#653)
 // - 토픽 메시지는 테스트마다 지워지지 않는다(다른 승인 통합 테스트도 같은 토픽에 보냄). 그래서 승인 직전의 끝 위치부터 읽고,
 //   키(orderId)는 여러 환불이 같을 수 있어 값의 refundId로 이번 환불의 메시지를 걸러 본다
 // - 값은 문자열로 읽어 JSON 그대로 확인한다. 지갑은 환불 클래스가 아니라 이 JSON 모양으로 읽기 때문이다
@@ -143,7 +142,6 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
         // given: 3개 중 1개를 취소한다. 2개(20,000원)가 남아 묶음이 그대로라 배송비는 돌려주지도 빼지도 않는다. 10,000원을 돌려준다
         Long refundId = requestedRefundId();
         Map<TopicPartition, Long> before = endOffsets();
-        Map<TopicPartition, Long> beforeOld = endOffsets(RefundTopics.REFUND_APPROVED_OLD);
 
         // when
         approve(refundId)
@@ -151,18 +149,11 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status", is("PROCESSING")))
                 .andExpect(jsonPath("$.refundAmount", is(10000)));
 
-        // then: 지갑이 .v1로 옮기기 전까지 옛 이름 토픽에도 같은 키·같은 JSON이 한 건 나간다 (#653)
-        List<ConsumerRecord<?, ?>> sentToOld = readMessagesOf(RefundTopics.REFUND_APPROVED_OLD, refundId, beforeOld);
-        assertThat(sentToOld).hasSize(1);
-        assertThat(sentToOld.getFirst().key()).isEqualTo(String.valueOf(ORDER_ID));
-        String sentToOldValue = (String) sentToOld.getFirst().value();
-
         // then: 이번 환불의 메시지가 정확히 한 건, 키는 orderId
         List<ConsumerRecord<?, ?>> sent = readMessagesOf(refundId, before);
         assertThat(sent).hasSize(1);
         ConsumerRecord<?, ?> record = sent.getFirst();
         assertThat(record.key()).isEqualTo(String.valueOf(ORDER_ID));
-        assertThat(record.value()).isEqualTo(sentToOldValue);
         // then: 값은 #413에 적은 약속 모양. 같은 Long 필드 넷이 서로 다른 값이라 뒤바뀌면 실패한다
         JsonNode message = jsonMapper.readTree((String) record.value());
         assertThat(message).isNotNull();

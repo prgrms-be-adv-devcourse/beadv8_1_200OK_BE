@@ -43,6 +43,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -85,7 +86,7 @@ class OrderServiceTest {
     }
 
     @Test
-    void 주문_생성_이벤트에는_주문_ID_구매자_결제_총액을_담는다() {
+    void 주문_생성_이벤트에는_주문_ID_구매자_결제_총액_주문_요약을_담는다() {
         // given
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(savedOrder(10L)));
 
@@ -93,7 +94,7 @@ class OrderServiceTest {
         sut.publishCreated(10L);
 
         // then
-        then(orderEventPublisher).should().publishOrderCreatedEvent(10L, 1L, 20_000L);
+        then(orderEventPublisher).should().publishOrderCreatedEvent(10L, 1L, 20_000L, "사과");
     }
 
     @Test
@@ -120,7 +121,7 @@ class OrderServiceTest {
         assertThatThrownBy(() -> sut.publishCreated(10L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("결제 대기가 아닌 주문에는 결제를 요청할 수 없습니다. status=CANCELED");
-        then(orderEventPublisher).should(never()).publishOrderCreatedEvent(anyLong(), anyLong(), anyLong());
+        then(orderEventPublisher).should(never()).publishOrderCreatedEvent(anyLong(), anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -267,7 +268,7 @@ class OrderServiceTest {
         assertThatThrownBy(() -> sut.publishCreated(10L))
                 .isInstanceOfSatisfying(RestApiException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_NOT_FOUND));
-        then(orderEventPublisher).should(never()).publishOrderCreatedEvent(anyLong(), anyLong(), anyLong());
+        then(orderEventPublisher).should(never()).publishOrderCreatedEvent(anyLong(), anyLong(), anyLong(), anyString());
     }
 
     @Test

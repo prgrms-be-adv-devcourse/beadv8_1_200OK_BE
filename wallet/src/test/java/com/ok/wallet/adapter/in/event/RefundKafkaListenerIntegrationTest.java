@@ -3,6 +3,7 @@ package com.ok.wallet.adapter.in.event;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.service.BuyerWalletService;
 import com.ok.wallet.support.KafkaTopicReader;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,8 +46,11 @@ class RefundKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
         jdbcTemplate.update("DELETE FROM wallet_message_failure");
     }
@@ -161,7 +165,7 @@ class RefundKafkaListenerIntegrationTest extends AbstractIntegrationTest {
 
     // 50,000원을 충전하고 주문을 결제한다
     private void paidOrder(long buyerId, long orderId, long amount) {
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 50_000);
+        charger.charge(buyerId, "pay-" + orderId, 50_000);
         buyerWalletService.payForOrder(buyerId, orderId, amount);
     }
 

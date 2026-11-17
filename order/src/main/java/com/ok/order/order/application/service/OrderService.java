@@ -97,7 +97,8 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
         order.markPaymentRequested(LocalDateTime.now(clock));
-        orderEventPublisher.publishOrderCreatedEvent(order.getId(), order.getBuyerId(), order.getTotalAmount());
+        orderEventPublisher.publishOrderCreatedEvent(
+                order.getId(), order.getBuyerId(), order.getTotalAmount(), order.orderSummary());
     }
 
     // 보상용 취소: 주문 생성 중 재고 선점·이벤트 발행이 실패한 주문을 지우지 않고 취소로 남긴다(#401).

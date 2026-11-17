@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -218,6 +219,23 @@ public class Order extends BaseTime {
             allItems.addAll(group.getItems());
         }
         return allItems;
+    }
+
+    // 지갑 이용 내역에 보일 주문 요약(#602). 첫 주문 상품의 상품 이름에, 나머지가 있으면 " 외 N건"을 붙인다(예: "사과 외 3건").
+    // N은 나머지 주문 상품 줄 수다. 같은 상품도 옵션이 다르면 따로 센다.
+    // 상품 이름은 최대 100자라 자르지 않고 그대로 보낸다. 지갑은 120자까지 저장하고, 길면 화면에서 말줄임한다
+    public String orderSummary() {
+        List<OrderItem> items = getAllItems();
+        // 묶음과 주문 상품 목록은 DB에서 읽을 때 순서가 정해져 있지 않다. 주문서 순서대로 저장되므로 ID가 가장 작은 상품을 첫 상품으로 본다.
+        // 저장 전이라 ID가 없으면 담긴 순서의 첫 상품이다
+        OrderItem first = items.stream()
+                .min(Comparator.comparing(OrderItem::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElseThrow(() -> new IllegalStateException("주문 상품이 없는 주문입니다. orderId=" + id));
+        int others = items.size() - 1;
+        if (others == 0) {
+            return first.getProductName();
+        }
+        return first.getProductName() + " 외 " + others + "건";
     }
 
     // 결제 대기 상태인지

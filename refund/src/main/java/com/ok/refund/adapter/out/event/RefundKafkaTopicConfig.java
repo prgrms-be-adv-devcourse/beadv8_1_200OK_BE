@@ -16,12 +16,6 @@ class RefundKafkaTopicConfig {
 
     // 빈 이름에 refund를 넣는다. 한 앱(monolith)에서 다른 모듈의 같은 이름 빈과 겹치면 앱이 시작되지 않는다 (refund/CLAUDE.md 6절)
     @Bean
-    NewTopic refundApprovedTopic() {
-        return TopicBuilder.name(RefundTopics.REFUND_APPROVED_OLD).build();
-    }
-
-    // .v1 토픽(#653). 지갑이 .v1로 옮기며 같은 토픽을 선언해도 빈 이름이 겹치지 않게 refund를 넣는다
-    @Bean
     NewTopic refundApprovedV1Topic() {
         return TopicBuilder.name(RefundTopics.REFUND_APPROVED).build();
     }

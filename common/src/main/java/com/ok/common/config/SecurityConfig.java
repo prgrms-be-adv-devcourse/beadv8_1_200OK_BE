@@ -57,6 +57,8 @@ public class SecurityConfig {
             new PublicEndpoint(HttpMethod.POST, "/api/v1/auth/reissue", TokenUse.IGNORED),
             // Refresh Token 자체가 권한이라 Access Token 없이 받는다. Access Token이 만료된 뒤에도 로그아웃할 수 있어야 한다
             new PublicEndpoint(HttpMethod.POST, "/api/v1/auth/logout", TokenUse.IGNORED),
+            // 택배사가 호출하는 배송 상태 변경 알림. 인증 헤더를 못 보내므로 경로의 비밀값을 컨트롤러가 확인한다 (#668)
+            new PublicEndpoint(HttpMethod.POST, "/api/v1/carrier-notifications/{secret}", TokenUse.IGNORED),
             // 누구나 볼 수 있는 상품·리뷰 조회
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}", TokenUse.IGNORED),

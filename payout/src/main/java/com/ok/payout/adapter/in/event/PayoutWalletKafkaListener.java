@@ -24,11 +24,11 @@ public class PayoutWalletKafkaListener {
 
     // Kafka로 받는 길. 지갑이 아직 Kafka로 보내지 않아도 미리 열어 둔다(#339)
     // 받는 타입은 정산 DTO. 메시지에 보내는 쪽 클래스 이름이 없어서(타입 헤더 없음) 리스너마다 읽을 타입을 정한다
-    // 그룹을 payout으로 정해 두는 이유: 주문도 같은 결제 완료를 받으므로, 같은 그룹이면 메시지가 둘 중 한쪽에만 간다
+    // 그룹을 정산 것으로 따로 두는 이유: 주문도 같은 결제 완료를 받으므로, 같은 그룹이면 메시지가 둘 중 한쪽에만 간다
     // Spring 이벤트와 Kafka로 같은 결제 완료가 두 번 와도 서비스가 orderId로 중복을 막는다
     @KafkaListener(
             topics = PayoutTopics.WALLET_PAYMENT_COMPLETED,
-            groupId = PayoutTopics.CONSUMER_GROUP,
+            groupId = PayoutTopics.PAYMENT_RECORD_GROUP,
             containerFactory = PayoutKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
             properties = "spring.json.value.default.type=com.ok.payout.adapter.in.event.dto.WalletPaymentCompletedMessage")
     void onKafka(WalletPaymentCompletedMessage message) {

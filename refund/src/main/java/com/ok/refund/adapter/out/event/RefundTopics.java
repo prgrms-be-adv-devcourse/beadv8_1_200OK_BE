@@ -14,13 +14,6 @@ public final class RefundTopics {
      */
     public static final String REFUND_APPROVED = "refund.refund-approved.v1";
 
-    /**
-     * {@link #REFUND_APPROVED}의 옛 이름. 키·값은 같다.
-     * 지갑이 아직 이 이름으로 받아서(WalletKafkaTopics), 지갑이 .v1로 옮길 때까지 같은 메시지를 .v1과 함께 보낸다.
-     * 지갑이 옮긴 뒤 이 상수와 쓰는 곳을 지운다 (#653 PR 3)
-     */
-    public static final String REFUND_APPROVED_OLD = "refund.refund-approved";
-
     private RefundTopics() {
     }
 }
