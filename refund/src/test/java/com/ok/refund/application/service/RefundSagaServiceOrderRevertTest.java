@@ -215,7 +215,7 @@ class RefundSagaServiceOrderRevertTest {
     // 지갑은 같은 요청에 처음 결과만 다시 보내기로 약속했다. 어겨 완료가 늦게 와도, 주문을 되돌리는 중에 재고·완료로 가면
     // 상품은 배송되는데 돈까지 나가므로 재고를 부르지 않고 사람이 보게 한다(#622 검토)
     @Test
-    void 지갑_실패로_되돌리기를_시작한_뒤_같은_환불의_지갑_완료가_오면_재고를_부르지_않는다() {
+    void 지갑_실패로_되돌리기를_시작한_뒤_같은_환불의_지갑_완료가_오면_재고를_부르지_않고_되돌리기_줄을_멈춘다() {
         // given
         RefundStep stoppedByFailure = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, null,
                 "PAYMENT_NOT_FOUND", NOW.minusMinutes(3));
@@ -233,6 +233,38 @@ class RefundSagaServiceOrderRevertTest {
         then(productStockReleasePort).should(never()).releaseStock(any());
         then(refundStepPersistencePort).should(never()).saveNew(any());
         then(refundPersistencePort).should(never()).update(any());
+        // 멈춰 두면 주문 결과가 와도 실패로 끝나지 않고 처리 중으로 남아 찾기 알람이 사람에게 알린다(투표 반영)
+        RefundStep orderRevert = updatedStep();
+        assertThat(orderRevert).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(orderRevert.getType()).isEqualTo(RefundStepType.ORDER_REVERT);
+            softly.assertThat(orderRevert.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(orderRevert.getLastReason()).isEqualTo(RefundSagaService.WALLET_COMPLETED_LATE);
+        });
+    }
+
+    // 회수 성공 경로는 지갑 줄이 성공이다. 지갑은 같은 refundId에 처음 결과(완료)를 다시 보내므로 정상 중복이다.
+    // 여기서 되돌리기 줄을 멈추면 주문의 진짜 결과를 버려 끝날 환불이 처리 중에 갇힌다(투표 지적)
+    @Test
+    void 회수_뒤_되돌리는_중에_같은_지갑_완료가_다시_오면_되돌리기_줄을_건드리지_않는다() {
+        // given
+        RefundStep productStopped = RefundStep.restore(3L, REFUND_ID, RefundStepType.PRODUCT, RefundStepStatus.STOPPED, 1, null,
+                "PRODUCT_RELEASE_REFUSED", NOW.minusMinutes(3));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(productStopped));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
+                .willReturn(Optional.of(awaiting(RefundStepType.ORDER_REVERT)));
+
+        // when
+        saga.completeAfterWalletRefund(new WalletRefundCompletedCommand(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+        then(refundStepPersistencePort).should(never()).saveNew(any());
     }
 
     // ---- 알람이 깨운 다시 보내기 ----
