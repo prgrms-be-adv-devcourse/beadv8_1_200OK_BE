@@ -447,7 +447,7 @@ class RefundSagaServiceWalletResultTest {
         // when
         sut.recordWalletRefundFailure(failed("WALLET_FROZEN"));
 
-        // then: 처음 멈춘 이유가 남아야 한다. 결과 불일치 표시가 보통 실패로 지워지면 되돌리기(#706)가 주문을 되돌릴 수 있다
+        // then: 처음 멈춘 이유가 남아야 한다. 결과 불일치 표시가 보통 실패로 지워지면 되돌리기(#546)가 주문을 되돌릴 수 있다
         then(refundPersistencePort).should(never()).update(any());
         then(refundStepPersistencePort).should(never()).update(any());
         then(refundStepPersistencePort).should(never()).saveNew(any());
@@ -534,7 +534,7 @@ class RefundSagaServiceWalletResultTest {
     }
 
     // ---- 재고 단계가 시작된 환불(재고 실패 뒤 다시 시도 대기) ----
-    // 재고 줄은 지갑 완료를 반영할 때만 만든다. 지갑 결과로 지갑 실패를 남기면 #706이 돈을 다시 가져오지 않고 주문만 되돌린다
+    // 재고 줄은 지갑 완료를 반영할 때만 만든다. 지갑 결과로 지갑 실패를 남기면 #546이 돈을 다시 가져오지 않고 주문만 되돌린다
 
     @Test
     void 재고_실패가_기록된_환불의_실패_메시지는_기록하지_않는다() {
