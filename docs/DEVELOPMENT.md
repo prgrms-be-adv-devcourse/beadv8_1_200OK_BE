@@ -697,7 +697,7 @@ com.ok.wallet
 
 **Kafka 수신과 실패 기록**
 
-- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`, 그룹 `wallet.payout-deposit`, #579)과 환불 반환 요청(`refund.refund-approved.v1`, 키 `orderId`, 그룹 `wallet.refund-return`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 그룹 `wallet.deposit-check-reply`, #613), 주문 생성(`order.order-created.v1`, 키 `orderId`, 그룹 `wallet.order-payment`, #614)입니다. 토픽 이름과 그룹은 `WalletKafkaTopics`에 있고, 그룹은 리스너마다 하나입니다(#669).
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`, 그룹 `wallet.payout-deposit`, #579)과 환불 반환 요청(`refund.refund-approved.v1`, 키 `orderId`, 그룹 `wallet.refund-return`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 그룹 `wallet.deposit-check-reply`, #613), 주문 생성(`order.order-created.v1`, 키 `orderId`, 그룹 `wallet.order-payment`, #614), 결제 만료 요청(`order.order-payment-expire-requested.v1`, 키 `orderId`, 그룹 `wallet.payment-expire`, #693)입니다. 토픽 이름과 그룹은 `WalletKafkaTopics`에 있고, 그룹은 리스너마다 하나입니다(#669).
 - 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`), 주문 결제 결과(`wallet.wallet-payment-completed.v1` / `wallet.wallet-payment-failed.v1`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 지갑은 다른 모듈과 Spring 이벤트를 주고받지 않습니다.
 - 환불·정산이 `.v1`로 옮길 때까지 세 메시지 모두 버전 없는 옛 이름에도 함께 보냅니다(#669). 두 토픽에 먼저 보내 놓고 저장 확인을 합쳐서 10초까지 기다리며, 한쪽만 실패해도 예외라 다시 받을 때 두 토픽에 모두 다시 나갑니다. 환불·정산이 옮기면 옛 이름 발행을 지웁니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
@@ -721,7 +721,10 @@ com.ok.wallet
 - `payAndSendResult`는 트랜잭션 밖에서만 돕니다(`Propagation.NEVER`). 트랜잭션 안에서 부르면 커밋 전에 결과가 나가 롤백된 결제의 완료가 갈 수 있어 바로 예외로 막습니다. `OrderPaymentService`에는 클래스 단위 `@Transactional`을 두지 않고 메서드마다 정합니다.
 - 같은 주문이 다시 오면 금액을 보기 전에 처리 기록(`wallet_order_payment`)부터 찾아, 돈은 다시 빼지 않고 처음 기록의 값(구매자, 금액, 처리 시각)으로 결과를 다시 보냅니다. 결제 시각(`paidAt`)은 처리 기록 시각이고, DB가 마이크로초까지 저장하므로 넣기 전에 마이크로초로 잘라 처음 결과와 다시 보낸 결과가 같게 합니다.
 - 실패 사유는 결과(`OrderPaymentResult.failureReason()`) 한 곳에서 정합니다. 처음 보는 주문의 금액이 0 이하이거나 없으면 처리 기록 없이 `INVALID_PAYMENT_REQUEST` 실패를 보내고, 주문·구매자 ID가 없으면 결과를 보낼 곳을 몰라 실패 기록에 남깁니다.
-- 결제는 커밋됐는데 결과를 끝내 보내지 못한 주문은 실패 기록(`wallet_message_failure`, `[WALLET_MESSAGE_FAILED]` ERROR 로그)에 남습니다. 결제 만료(#693)가 들어오면 주문이 30분 뒤 만료를 요청할 때 지갑이 처음 결과를 다시 보내 풀립니다.
+- 결제는 커밋됐는데 결과를 끝내 보내지 못한 주문은 실패 기록(`wallet_message_failure`, `[WALLET_MESSAGE_FAILED]` ERROR 로그)에 남습니다. 주문이 30분 뒤 결제 만료를 요청하면 처음 결과를 다시 보내 풀립니다.
+- 결제 만료 요청(`OrderPaymentExpireKafkaListener` → `expireAndSendResult`): 주문이 결제 요청 뒤 30분 넘게 결과를 받지 못하면 보냅니다(#656). 결과는 지갑이 정합니다. 결제와 같은 순서로 구매자 지갑을 잠근 뒤 처리 기록을 보고, 없으면 만료(`EXPIRED`)로 기록해 결제 실패 `PAYMENT_EXPIRED`를 보냅니다. 기록이 있으면 처음 결과(결제 완료, 잔액 부족, 만료)를 다시 보냅니다. 돈은 움직이지 않습니다.
+- 만료로 기록된 주문에 결제 요청이 늦게 와도 처리 기록이 걸러 차감하지 않고 `PAYMENT_EXPIRED`를 보냅니다. 결제 요청과 만료 요청이 동시에 와도 먼저 지갑을 잠근 쪽의 결과 하나만 남습니다. 주문은 결과가 올 때까지 5분마다 만료를 다시 요청하고, 지갑은 올 때마다 처음 결과를 보냅니다.
+- 만료 요청 토픽은 주문(#684)보다 지갑이 먼저 머지되어, 지갑도 앱 시작 때 만듭니다(`WalletInboundKafkaTopicConfig`). 처음 보는 주문은 요청의 금액(`totalAmount`, 주문 생성과 같은 값)으로 만료를 기록합니다.
 
 **정산금 입금 확인**
 
