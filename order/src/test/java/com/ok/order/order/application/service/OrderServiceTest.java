@@ -217,7 +217,7 @@ class OrderServiceTest {
             softly.assertThat(requested).isTrue();
             softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
         });
-        then(orderEventPublisher).should().publishPaymentExpireRequested(10L, 1L);
+        then(orderEventPublisher).should().publishPaymentExpireRequested(10L, 1L, 20_000L);
     }
 
     @Test
@@ -232,7 +232,7 @@ class OrderServiceTest {
 
         // then
         assertThat(requested).isFalse();
-        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong());
+        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -248,7 +248,7 @@ class OrderServiceTest {
 
         // then
         assertThat(requested).isFalse();
-        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong());
+        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -261,7 +261,7 @@ class OrderServiceTest {
 
         // then
         assertThat(requested).isFalse();
-        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong());
+        then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong(), anyLong());
     }
 
     @Test

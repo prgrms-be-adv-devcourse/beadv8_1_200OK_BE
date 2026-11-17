@@ -15,6 +15,8 @@ public interface OrderEventPublisher {
     /**
      * 결제를 요청하고 오래 결과가 없는 주문의 결제 만료를 지갑에 요청한다(#656). 지갑은 결제했으면 결제 완료를,
      * 아니면 결제 실패(PAYMENT_EXPIRED)를 보낸다. 트랜잭션 안에서 부른다.
+     *
+     * @param totalAmount 결제 요청한 금액(원). 지갑이 처음 보는 주문이면 이 금액으로 만료 실패를 먼저 기록한다
      */
-    void publishPaymentExpireRequested(Long orderId, Long buyerId);
+    void publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount);
 }

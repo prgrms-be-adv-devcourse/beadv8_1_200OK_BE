@@ -75,10 +75,11 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     }
 
     // 지갑이 Kafka로만 받는다(#656). 전환 전에 없던 메시지라 Spring 이벤트로는 보내지 않는다.
-    // 키를 orderId로 둬 같은 주문의 주문 생성·결제 결과와 같은 파티션에 순서대로 쌓인다
+    // 키는 orderId다. 순서는 같은 토픽 안에서만 지켜지므로 만료 요청이 주문 생성(order.order-created.v1)보다 먼저 도착할 수 있다.
+    // 그래도 지갑이 만료 실패를 먼저 기록해 두어 늦게 온 주문 생성은 차감하지 않는다
     @Override
-    public void publishPaymentExpireRequested(Long orderId, Long buyerId) {
+    public void publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount) {
         outboxRecorder.record(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED, String.valueOf(orderId),
-                jsonMapper.writeValueAsString(new OrderPaymentExpireRequestedMessage(orderId, buyerId)));
+                jsonMapper.writeValueAsString(new OrderPaymentExpireRequestedMessage(orderId, buyerId, totalAmount)));
     }
 }

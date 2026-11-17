@@ -206,7 +206,7 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         }
         log.warn("[ORDER_PAYMENT_EXPIRE_REQUESTED] 결제 요청 뒤 결과가 없어 지갑에 결제 만료를 요청합니다. orderId={}, paymentRequestedAt={}",
                 orderId, order.getPaymentRequestedAt());
-        orderEventPublisher.publishPaymentExpireRequested(order.getId(), order.getBuyerId());
+        orderEventPublisher.publishPaymentExpireRequested(order.getId(), order.getBuyerId(), order.getTotalAmount());
         return true;
     }
 

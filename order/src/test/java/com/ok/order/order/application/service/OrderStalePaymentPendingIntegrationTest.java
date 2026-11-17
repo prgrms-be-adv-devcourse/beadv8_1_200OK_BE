@@ -200,13 +200,13 @@ class OrderStalePaymentPendingIntegrationTest extends AbstractIntegrationTest {
         // when
         scheduler.run();
 
-        // then: 주문과 재고는 그대로이고, 만료 요청이 키 orderId로 나간다
+        // then: 주문과 재고는 그대로이고, 만료 요청이 키 orderId로 나간다. 금액은 상품 20,000원 + 배송비 3,000원
         List<String> messages = expireReader.readValuesFor(String.valueOf(orderId), READ_DURATION);
         assertSoftly(softly -> {
             softly.assertThat(orderStatus(orderId)).isEqualTo("PAYMENT_PENDING");
             softly.assertThat(fakeProductPort.releasedOrderIds()).doesNotContain(orderId);
             softly.assertThat(messages).containsExactly(
-                    "{\"orderId\":" + orderId + ",\"buyerId\":" + BUYER_ID + "}");
+                    "{\"orderId\":" + orderId + ",\"buyerId\":" + BUYER_ID + ",\"totalAmount\":23000}");
         });
     }
 
