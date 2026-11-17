@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
@@ -27,6 +28,9 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 @Slf4j
 class ChargeTransactionService {
+    // 승인 호출은 토스 응답 대기(30초) 안에 끝나므로, 그보다 넉넉히 뒤에 복구가 처음 확인해 진행 중인 승인과 겹치지 않게 한다
+    private static final Duration FIRST_RECOVERY_CHECK_DELAY = Duration.ofMinutes(5);
+
     private final ChargeRepository chargeRepository;
     private final BuyerWalletService buyerWalletService;
     private final Clock clock;
@@ -64,7 +68,8 @@ class ChargeTransactionService {
     // 토스를 호출하기 전에 409로 막고, 예외로 트랜잭션이 롤백되어 충전 건은 대기 상태로 남는다
     private int markInProgress(String chargeNo, String paymentKey) {
         try {
-            return chargeRepository.markInProgress(chargeNo, paymentKey, LocalDateTime.now(clock));
+            LocalDateTime now = LocalDateTime.now(clock);
+            return chargeRepository.markInProgress(chargeNo, paymentKey, now, now.plus(FIRST_RECOVERY_CHECK_DELAY));
         } catch (DataIntegrityViolationException e) {
             throw new RestApiException(WalletErrorCode.PAYMENT_KEY_ALREADY_USED);
         }

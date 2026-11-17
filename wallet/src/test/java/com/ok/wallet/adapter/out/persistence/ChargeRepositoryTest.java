@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Import({JpaConfig.class, TestcontainersConfiguration.class, ChargeRepositoryAdapter.class})
 class ChargeRepositoryTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 12, 0);
+    private static final LocalDateTime NEXT_CHECK_AT = NOW.plusMinutes(5);
     private static final String PAYMENT_KEY = "payment-key-1";
 
     @Autowired
@@ -38,27 +39,28 @@ class ChargeRepositoryTest {
     // 조건부 상태 변경
 
     @Test
-    void 대기_중인_충전_건은_처리_중으로_바뀌고_결제_키가_저장된다() {
+    void 대기_중인_충전_건은_처리_중으로_바뀌고_결제_키와_복구_확인_시각이_저장된다() {
         // Given
         Charge charge = chargeRepository.save(Charge.request(1L, 10_000));
 
         // When
-        int updated = chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW);
+        int updated = chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW, NEXT_CHECK_AT);
 
         // Then: 승인 결과가 불명확해 처리 중으로 남아도 어떤 결제인지 알 수 있다
         assertThat(updated).isEqualTo(1);
         assertThat(statusOf(charge.getChargeNo())).isEqualTo(ChargeStatus.IN_PROGRESS);
         assertThat(paymentKeyOf(charge.getChargeNo())).isEqualTo(PAYMENT_KEY);
+        assertThat(nextCheckAtOf(charge.getChargeNo())).isEqualTo(NEXT_CHECK_AT);
     }
 
     @Test
     void 이미_처리_중으로_바뀐_충전_건은_다시_바뀌지_않는다() {
         // Given: 첫 승인 요청이 먼저 처리 중으로 바꿈
         Charge charge = chargeRepository.save(Charge.request(1L, 10_000));
-        chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW);
+        chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW, NEXT_CHECK_AT);
 
         // When: 같은 건으로 승인 요청이 다시 옴
-        int updated = chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW);
+        int updated = chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW, NEXT_CHECK_AT);
 
         // Then: 0을 받은 요청은 토스 승인을 호출하지 않는다
         assertThat(updated).isZero();
@@ -72,7 +74,7 @@ class ChargeRepositoryTest {
         chargeRepository.save(charge);
 
         // When & Then
-        assertThat(chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW)).isZero();
+        assertThat(chargeRepository.markInProgress(charge.getChargeNo(), PAYMENT_KEY, NOW, NEXT_CHECK_AT)).isZero();
         assertThat(statusOf(charge.getChargeNo())).isEqualTo(ChargeStatus.FAILED);
         assertThat(paymentKeyOf(charge.getChargeNo())).isNull();
     }
@@ -81,7 +83,7 @@ class ChargeRepositoryTest {
     void 처리_중인_충전_건을_완료하면_결제_키와_완료_시각이_저장된다() {
         // Given
         Charge saved = chargeRepository.save(Charge.request(1L, 10_000));
-        chargeRepository.markInProgress(saved.getChargeNo(), PAYMENT_KEY, NOW);
+        chargeRepository.markInProgress(saved.getChargeNo(), PAYMENT_KEY, NOW, NEXT_CHECK_AT);
         // 조건부 UPDATE가 영속성 컨텍스트를 비우므로 다시 읽어 처리 중 상태를 가져온다
         Charge inProgress = chargeRepository.findByChargeNo(saved.getChargeNo()).orElseThrow();
 
@@ -158,7 +160,7 @@ class ChargeRepositoryTest {
     // 결제 키에 유니크 제약이 있으므로 충전 번호로 건마다 다른 키를 만든다
     private void inProgressCharge(Long memberId, long amount) {
         Charge charge = chargeRepository.save(Charge.request(memberId, amount));
-        chargeRepository.markInProgress(charge.getChargeNo(), "pk-" + charge.getChargeNo(), NOW);
+        chargeRepository.markInProgress(charge.getChargeNo(), "pk-" + charge.getChargeNo(), NOW, NEXT_CHECK_AT);
     }
 
     private ChargeStatus statusOf(String chargeNo) {
@@ -169,6 +171,11 @@ class ChargeRepositoryTest {
     private String paymentKeyOf(String chargeNo) {
         return jdbcTemplate.queryForObject(
                 "SELECT payment_key FROM wallet_charge WHERE charge_no = ?", String.class, chargeNo);
+    }
+
+    private LocalDateTime nextCheckAtOf(String chargeNo) {
+        return jdbcTemplate.queryForObject(
+                "SELECT next_check_at FROM wallet_charge WHERE charge_no = ?", LocalDateTime.class, chargeNo);
     }
 
     // 엔티티 검증을 거치지 않고 DB 제약만 확인하려고 SQL로 직접 넣는다

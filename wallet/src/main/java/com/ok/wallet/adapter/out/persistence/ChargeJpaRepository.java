@@ -23,12 +23,14 @@ public interface ChargeJpaRepository extends Repository<Charge, Long> {
         UPDATE Charge c
         SET c.status = com.ok.wallet.domain.ChargeStatus.IN_PROGRESS,
             c.paymentKey = :paymentKey,
+            c.nextCheckAt = :nextCheckAt,
             c.updatedAt = :now
         WHERE c.chargeNo = :chargeNo AND c.status = com.ok.wallet.domain.ChargeStatus.PENDING
         """)
     int markInProgress(@Param("chargeNo") String chargeNo,
                        @Param("paymentKey") String paymentKey,
-                       @Param("now") LocalDateTime now);
+                       @Param("now") LocalDateTime now,
+                       @Param("nextCheckAt") LocalDateTime nextCheckAt);
 
     // 일괄 UPDATE는 Auditing을 거치지 않아 수정 시각을 직접 넣는다.
     @Modifying(flushAutomatically = true, clearAutomatically = true)

@@ -65,6 +65,14 @@ public class Charge extends BaseTime {
     @Column(name = "failed_at")
     private LocalDateTime failedAt;
 
+    // 복구가 다음에 토스에 확인할 시각. 처리 중인 건에서만 보고, 비어 있으면 복구가 고르지 않는다(사람 확인 대기)
+    @Column(name = "next_check_at")
+    private LocalDateTime nextCheckAt;
+
+    // 복구가 토스에 확인한 횟수. 상한을 넘으면 더 묻지 않고 멈춘다
+    @Column(name = "check_count", nullable = false)
+    private int checkCount;
+
     private Charge(Long memberId, long amount) {
         this.chargeNo = CHARGE_NO_PREFIX + UUID.randomUUID();
         this.memberId = memberId;

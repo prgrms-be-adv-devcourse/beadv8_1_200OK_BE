@@ -29,8 +29,8 @@ public class ChargeRepositoryAdapter implements ChargeRepository {
     }
 
     @Override
-    public int markInProgress(String chargeNo, String paymentKey, LocalDateTime now) {
-        return chargeJpaRepository.markInProgress(chargeNo, paymentKey, now);
+    public int markInProgress(String chargeNo, String paymentKey, LocalDateTime now, LocalDateTime nextCheckAt) {
+        return chargeJpaRepository.markInProgress(chargeNo, paymentKey, now, nextCheckAt);
     }
 
     @Override

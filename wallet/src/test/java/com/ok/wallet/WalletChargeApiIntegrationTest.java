@@ -209,6 +209,25 @@ class WalletChargeApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 승인_결과를_알_수_없으면_처리_중으로_남고_5분_뒤에_복구가_확인하도록_잡힌다() throws Exception {
+        // given
+        String chargeNo = chargeNoOf(MEMBER_ID, 10_000);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willReturn(new TossConfirmResult.Unknown("토스 응답 없음"));
+
+        // when
+        confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, 10_000)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+
+        // then: 진행 중인 승인과 겹치지 않게, 처리 중이 된 때부터 5분 뒤에 처음 확인한다
+        Long secondsUntilFirstCheck = jdbcTemplate.queryForObject(
+                "SELECT TIMESTAMPDIFF(SECOND, updated_at, next_check_at) FROM wallet_charge WHERE charge_no = ?",
+                Long.class, chargeNo);
+        assertThat(secondsUntilFirstCheck).isEqualTo(300L);
+    }
+
+    @Test
     void 결제_금액이_요청과_다르면_422() throws Exception {
         String chargeNo = chargeNoOf(MEMBER_ID, 10_000);
 
