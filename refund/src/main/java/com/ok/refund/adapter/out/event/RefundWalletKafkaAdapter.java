@@ -4,19 +4,16 @@ import com.ok.refund.application.port.out.WalletRefundRequest;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
  * {@link WalletRefundRequestPort}의 Kafka 구현체. 반환 요청을 {@link RefundTopics#REFUND_APPROVED}로 보낸다.
- * 지갑이 .v1로 옮길 때까지 옛 이름 토픽({@link RefundTopics#REFUND_APPROVED_OLD})에도 함께 보낸다 (#653).
- * 한 건마다 두 토픽의 저장 확인(acks=all)을 합쳐서 최대 {@link #SEND_TIMEOUT}까지 기다리고, 실패하면 환불 ID를 담은 예외를 던진다.
+ * 한 건마다 저장 확인(acks=all)을 최대 {@link #SEND_TIMEOUT}까지 기다리고, 실패하면 환불 ID를 담은 예외를 던진다.
  * KafkaTemplate은 스프링 부트가 yaml(spring.kafka)로 만든 것을 그대로 쓴다. 환불 전용으로 새로 만들면 한 앱(monolith)에
  * KafkaTemplate이 둘이 되어 다른 모듈의 주입이 모호해질 수 있다.
  */
@@ -48,18 +45,10 @@ class RefundWalletKafkaAdapter implements WalletRefundRequestPort {
         String key = String.valueOf(request.orderId());
         RefundApprovedMessage message = RefundApprovedMessage.from(request);
         try {
-            // 지갑이 .v1로 옮길 때까지 옛 이름에도 함께 보낸다(#653). 한쪽만 실패해도 예외라, 다시 진행할 때 두 토픽에 모두 다시 나간다.
-            // 지갑은 refundId로 한 번만 돌려주므로 두 번 받아도 괜찮다(#413 약속)
-            // 두 토픽에 먼저 보내 놓고 함께 기다린다. 하나씩 기다리면 브로커가 느릴 때 승인 요청이 최대 20초(10초 × 2) 막힌다
-            CompletableFuture<SendResult<String, Object>> toV1 =
-                    kafkaTemplate.send(RefundTopics.REFUND_APPROVED, key, message);
-            CompletableFuture<SendResult<String, Object>> toOld =
-                    kafkaTemplate.send(RefundTopics.REFUND_APPROVED_OLD, key, message);
             // 저장 확인을 기다린다. 기다리지 않으면 브로커가 거절해도 판매자는 성공 응답을 받아 실패를 아무도 모른다.
             // 이 시간 제한은 send() 뒤의 기다림만 줄인다. send() 안에서 Kafka 주소를 찾느라 기다리는 시간(max.block.ms 기본 60초)은
             // 그대로다. 그 시간은 producer 설정이라 #516에서 함께 다룬다
-            // 실패 문구에 어느 토픽인지는 적지 않는다(둘 다 실패하면 한쪽 원인만 남음). 옛 이름을 지우면(#653 PR 3) 토픽이 하나라 구분할 일이 없다
-            CompletableFuture.allOf(toV1, toOld).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            kafkaTemplate.send(RefundTopics.REFUND_APPROVED, key, message).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             // 기다리는 중 스레드가 중단되면 중단 표시를 되살린 뒤 실패로 올린다
             Thread.currentThread().interrupt();

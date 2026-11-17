@@ -87,7 +87,7 @@ class PayoutDepositIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutJobRunner.runScheduled().getStatus()).isEqualTo(BatchStatus.COMPLETED);
         await().atMost(Duration.ofSeconds(10)).until(() -> sellerBalance() == 12_700L);
 
-        // when: 정산이 지갑에 묻고(payout.payout-deposit-check-requested), 지갑이 원장을 읽어 답함(wallet.payout-deposit-checked)
+        // when: 정산이 지갑에 묻고(payout.payout-deposit-check-requested.v1), 지갑이 원장을 읽어 답함(wallet.payout-deposit-checked.v1)
         payoutDepositCheckUseCase.runCheck();
 
         // then: 지갑이 답한 판매자·금액·입금 시각이 정산 대사 줄에 그대로 남는다

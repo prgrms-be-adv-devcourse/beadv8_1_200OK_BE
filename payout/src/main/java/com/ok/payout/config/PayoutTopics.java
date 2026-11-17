@@ -3,7 +3,7 @@ package com.ok.payout.config;
 /**
  * 정산이 보내고 받는 Kafka 토픽 이름과 정산 리스너의 컨슈머 그룹을 한곳에 둔다.
  * 토픽 이름은 다른 모듈과의 약속이라, 발행·수신 코드와 토픽 생성 설정(config)이 같은 값을 쓰도록 상수로 둔다.
- * 토픽 이름 규칙은 {@code <보내는 모듈>.<이벤트>.v<버전>}이다 (#648). 버전이 없는 이름({@code *_OLD})은 지갑이 .v1로 옮길 때까지 함께 보내는 옛 이름이다 (#653).
+ * 토픽 이름 규칙은 {@code <보내는 모듈>.<이벤트>.v<버전>}이다 (#648).
  * 컨슈머 그룹 규칙은 {@code <모듈>.<용도>}로 리스너마다 하나다 (#648).
  */
 public final class PayoutTopics {
@@ -13,15 +13,6 @@ public final class PayoutTopics {
 
     /** 정산 → 지갑: 대사 질문 묶음("이 정산들, 입금됐나요?", #619). 키는 checkId, 값은 {@link com.ok.payout.adapter.out.event.dto.PayoutDepositCheckRequestedMessage} */
     public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED = "payout.payout-deposit-check-requested.v1";
-
-    // 옛 이름. 지갑이 아직 이 이름으로 받아서(WalletKafkaTopics), 지갑이 .v1로 옮길 때까지 같은 메시지를 .v1과 함께 보낸다 (#653)
-    // 지갑이 옮긴 뒤 이 두 줄과 쓰는 곳을 지운다 (#653 PR 3)
-
-    /** {@link #SELLER_PAYOUT_CREATED}의 옛 이름. 키·값은 같다 */
-    public static final String SELLER_PAYOUT_CREATED_OLD = "payout.seller-payout-created";
-
-    /** {@link #PAYOUT_DEPOSIT_CHECK_REQUESTED}의 옛 이름. 키·값은 같다 */
-    public static final String PAYOUT_DEPOSIT_CHECK_REQUESTED_OLD = "payout.payout-deposit-check-requested";
 
     // 정산이 받는 토픽. 이름은 보내는 모듈(주문·지갑)의 것이라 보내는 쪽과 같은 값이어야 받는다(#339 합의)
 

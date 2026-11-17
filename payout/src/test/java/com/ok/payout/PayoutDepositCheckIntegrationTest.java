@@ -190,8 +190,6 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
         // then: 질문 토픽에 묶음 번호(키)로 지갑과 약속한 JSON이 나감
         String sent = readMessage(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED, String.valueOf(checkId));
         assertThat(sent).isNotNull();
-        // 지갑이 .v1로 옮기기 전까지 옛 이름 토픽에도 같은 JSON이 나감 (#653)
-        assertThat(readMessage(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED_OLD, String.valueOf(checkId))).isEqualTo(sent);
         JsonNode message = jsonMapper.readTree(sent);
         JsonNode item = message.get("items").get(0);
         assertSoftly(softly -> {
@@ -323,17 +321,15 @@ class PayoutDepositCheckIntegrationTest extends AbstractIntegrationTest {
         payoutDepositCheckUseCase.runCheck();
         assertThat(checkOf(payoutId).getMismatchReason()).isEqualTo(PayoutDepositMismatchReason.NO_RESPONSE);
         Map<TopicPartition, Long> before = endOffsets(PayoutTopics.SELLER_PAYOUT_CREATED);
-        Map<TopicPartition, Long> beforeOld = endOffsets(PayoutTopics.SELLER_PAYOUT_CREATED_OLD);
 
         // when: 첫 질문의 "있음, 같은 값"이 이제야 옴
         sendAnswer(firstCheckId, payoutId, true, 10L, 9_700L, "2026-11-15T02:05:00");
 
-        // then: 일치로 바뀌고, 입금 메시지는 .v1과 옛 이름 어느 쪽으로도 다시 나가지 않음 (#653)
+        // then: 일치로 바뀌고, 입금 메시지는 다시 나가지 않음
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(checkOf(payoutId).getStatus()).isEqualTo(PayoutDepositCheckStatus.MATCHED));
         assertThat(checkOf(payoutId).getMismatchReason()).isNull();
         assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED, String.valueOf(payoutId), before)).isNull();
-        assertThat(readMessage(PayoutTopics.SELLER_PAYOUT_CREATED_OLD, String.valueOf(payoutId), beforeOld)).isNull();
     }
 
     @Test

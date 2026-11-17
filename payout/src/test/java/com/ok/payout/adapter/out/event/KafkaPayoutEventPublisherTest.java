@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.only;
 
 @ExtendWith(MockitoExtension.class)
 class KafkaPayoutEventPublisherTest {
@@ -41,7 +42,7 @@ class KafkaPayoutEventPublisherTest {
     KafkaPayoutEventPublisher sut;
 
     @Test
-    void 키는_payoutId이고_값은_필드마다_같은_값을_담는다() {
+    void 정산_확정은_v1_토픽_한_곳에만_키는_payoutId_값은_필드마다_같은_값으로_보낸다() {
         // given
         // 같은 Long 필드 3개에 서로 다른 값을 넣어, 필드 순서가 뒤바뀌면 실패하게 한다
         SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
@@ -50,28 +51,14 @@ class KafkaPayoutEventPublisherTest {
         // when
         sut.publishSellerPayoutCreated(created);
 
-        // then
+        // then: only()는 send가 이 호출 한 번뿐이었는지 본다. 옛 이름 토픽(#653 PR 3에서 끊음) 같은 다른 토픽으로 새면 실패한다
         ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        then(kafkaTemplate).should().send(eq(PayoutTopics.SELLER_PAYOUT_CREATED), eq("12"), captor.capture());
+        then(kafkaTemplate).should(only()).send(eq(PayoutTopics.SELLER_PAYOUT_CREATED), eq("12"), captor.capture());
         assertThat(captor.getValue()).isEqualTo(new SellerPayoutCreatedMessage(12L, 5L, 9_700L, CREATED_AT));
     }
 
     @Test
-    void 지갑이_옮기기_전까지_옛_이름_토픽에도_같은_키와_값을_보낸다() {
-        // given
-        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
-        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
-
-        // when
-        sut.publishSellerPayoutCreated(created);
-
-        // then: 지갑은 아직 옛 이름으로 받는다 (#653)
-        then(kafkaTemplate).should().send(PayoutTopics.SELLER_PAYOUT_CREATED_OLD, "12",
-                new SellerPayoutCreatedMessage(12L, 5L, 9_700L, CREATED_AT));
-    }
-
-    @Test
-    void 대사_질문도_v1과_옛_이름_토픽에_함께_보낸다() {
+    void 대사_질문은_v1_토픽_한_곳에만_묶음_번호를_키로_보낸다() {
         // given
         PayoutDepositCheckRequested requested = new PayoutDepositCheckRequested(3L, List.of());
         given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
@@ -80,23 +67,7 @@ class KafkaPayoutEventPublisherTest {
         sut.publishDepositCheckRequested(requested);
 
         // then
-        then(kafkaTemplate).should().send(eq(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED), eq("3"), any());
-        then(kafkaTemplate).should().send(eq(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED_OLD), eq("3"), any());
-    }
-
-    @Test
-    void 한쪽_토픽만_실패해도_실패한_토픽을_담은_예외를_던진다() {
-        // given: .v1은 저장됐고 옛 이름만 실패. 부른 쪽이 다시 보낼 때 두 토픽에 모두 다시 나가고, 지갑이 중복을 거른다
-        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
-        given(kafkaTemplate.send(eq(PayoutTopics.SELLER_PAYOUT_CREATED), anyString(), any()))
-                .willReturn(CompletableFuture.completedFuture(null));
-        given(kafkaTemplate.send(eq(PayoutTopics.SELLER_PAYOUT_CREATED_OLD), anyString(), any()))
-                .willReturn(CompletableFuture.failedFuture(new KafkaException("브로커 저장 실패")));
-
-        // when & then
-        assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED_OLD);
+        then(kafkaTemplate).should(only()).send(eq(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED), eq("3"), any());
     }
 
     @Test

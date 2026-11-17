@@ -49,7 +49,6 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 // 통합 테스트: 정산 배치가 확정한 정산을 실제 Kafka(테스트 컨테이너)의 payout.seller-payout-created.v1 토픽으로 보내는지 확인 (#339)
-// 지갑이 .v1로 옮기기 전까지는 옛 이름 payout.seller-payout-created에도 함께 보내는지 본다 (#653)
 // - 토픽 메시지는 테스트마다 지워지지 않으므로(다른 정산 통합 테스트도 같은 토픽에 보냄) 이번 정산의 payoutId(키)로 걸러서 본다
 // - 값은 문자열로 읽어 JSON 그대로 확인한다. 지갑은 정산 클래스가 아니라 이 JSON 모양으로 읽기 때문이다
 // - 정산·스냅샷·draft는 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다 (PayoutSettleIntegrationTest와 같은 방식)
@@ -139,9 +138,6 @@ class PayoutKafkaPublishIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(message.get("createdAt").isString()).isTrue();
             softly.assertThat(LocalDateTime.parse(message.get("createdAt").asString())).isEqualTo(seller10.getCreatedAt());
         });
-
-        // then: 지갑이 .v1로 옮기기 전까지 옛 이름 토픽에도 같은 키·같은 JSON이 나감 (#653)
-        assertThat(readMessages(PayoutTopics.SELLER_PAYOUT_CREATED_OLD, keysOf(payouts), Map.of())).isEqualTo(sent);
 
         // then: 0원 초과 판매자 정산(10번)만 outbox 줄이 1건이고 SENT, 발송 시각이 기록됨
         PayoutOutbox outbox = singleOutboxOf(seller10PayoutId);
