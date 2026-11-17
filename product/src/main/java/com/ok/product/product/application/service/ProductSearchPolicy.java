@@ -10,7 +10,7 @@ class ProductSearchPolicy {
 
 	private final double minScore;
 
-	public ProductSearchPolicy(@Value("${product.search.min-score}") double minScore) {
+	ProductSearchPolicy(@Value("${product.search.min-score}") double minScore) {
 		// 검색 SQL은 MATCH로 거르지 않고 하한으로만 거른다. 0 이하이면 검색어와 한 글자도 겹치지 않는 상품까지 모두 나온다
 		if (minScore <= 0) {
 			throw new IllegalArgumentException("product.search.min-score는 0보다 커야 합니다.");
