@@ -40,7 +40,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -118,7 +117,9 @@ public class RefundSagaService implements RefundSagaUseCase {
         // 회수가 성공해 주문 되돌리기를 시작한 환불에 같은 지갑 완료가 다시 옴(지갑은 같은 refundId에 처음 결과를 다시 보낸다). 정상 중복이다
         DUPLICATE_AFTER_REVERT,
         // 지갑 실패를 받아 주문 되돌리기를 시작한 환불에 같은 refundId의 완료가 옴(지갑 약속 위반, #622). 되돌리기 줄을 멈춰 사람이 보게 한다
-        WALLET_COMPLETED_LATE
+        WALLET_COMPLETED_LATE,
+        // 위와 같은 약속 위반인데 되돌리기 줄이 이미 끝나 있어(예: 주문이 되돌리지 못해 멈춤) 줄을 고치지 않은 경우
+        WALLET_COMPLETED_LATE_AFTER_REVERT_ENDED
     }
 
     // 주문 성공을 기록한 결과. 다음 단계를 부를지(call)와 지금 환불 상태
@@ -150,9 +151,9 @@ public class RefundSagaService implements RefundSagaUseCase {
     }
 
     // 주문 되돌리기 결과를 잠근 구간에서 거른 판단과, 로그에 남길 그때의 환불·되돌리기 줄 상태(없으면 null)
-    // stepReason: 되돌리기 줄이 이미 멈춰 있을 때 그 이유. 같은 실패가 다시 온 정상 중복인지 가르는 데 쓴다(#622 투표)
+    // sameFailure: 되돌리기 줄이 같은 이유로 이미 멈춰 있음(같은 실패가 다시 온 정상 중복, #622 투표). 이유 비교는 도메인이 저장할 때와 같은 규칙(자르기)으로 한다
     private record OrderRevertRecorded(OrderRevertResultPolicy.Verdict verdict, RefundStatus refundStatus,
-                                       RefundStepStatus stepStatus, String stepReason) {
+                                       RefundStepStatus stepStatus, boolean sameFailure) {
     }
 
     private final OrderCancellationPort orderCancellationPort;
@@ -737,7 +738,8 @@ public class RefundSagaService implements RefundSagaUseCase {
                     orderId, orderItemId);
             if (verdict.decision() == OrderRevertResultPolicy.Decision.SKIP) {
                 return new OrderRevertRecorded(verdict, locked == null ? null : locked.getStatus(),
-                        revertStep.map(RefundStep::getStatus).orElse(null), revertStep.map(RefundStep::getLastReason).orElse(null));
+                        revertStep.map(RefundStep::getStatus).orElse(null),
+                        kind == OrderRevertResultPolicy.Kind.FAILED && revertStep.map(s -> s.isStoppedWith(orderReason)).orElse(false));
             }
             RefundStep step = revertStep.get();
             if (verdict.decision() == OrderRevertResultPolicy.Decision.MISMATCH) {
@@ -752,7 +754,7 @@ public class RefundSagaService implements RefundSagaUseCase {
                 step.stop(orderReason);
             }
             refundStepPersistencePort.update(step);
-            return new OrderRevertRecorded(verdict, locked.getStatus(), step.getStatus(), step.getLastReason());
+            return new OrderRevertRecorded(verdict, locked.getStatus(), step.getStatus(), false);
         });
         logOrderRevertRecorded(recorded, kind, refundId, orderId, orderItemId, orderReason);
     }
@@ -793,9 +795,7 @@ public class RefundSagaService implements RefundSagaUseCase {
                     label, refundId);
             case ALREADY_FINISHED -> {
                 // 이유까지 같아야 같은 실패의 정상 중복이다. 다른 이유(예: 늦은 지갑 완료로 우리가 멈춘 줄에 온 실패)는 사람이 봐야 해 WARN이다
-                boolean sameResult = kind == OrderRevertResultPolicy.Kind.FAILED
-                        && recorded.stepStatus() == RefundStepStatus.STOPPED
-                        && Objects.equals(recorded.stepReason(), orderReason);
+                boolean sameResult = recorded.sameFailure();
                 if (sameResult) {
                     log.info("되돌리기 줄이 이미 멈춰 주문 되돌리기 실패 메시지를 넘김. refundId={}", refundId);
                 } else {
@@ -1044,13 +1044,13 @@ public class RefundSagaService implements RefundSagaUseCase {
     }
 
     // 처리 중이 아닌 환불의 지갑 결과를 넘길 때 남긴다(#622 투표). 실패로 끝난 환불의 지갑 완료는 경로에 따라 뜻이 다르다.
-    // 회수 성공 경로(지갑 줄 성공): 같은 완료가 다시 온 정상 중복이라 INFO.
-    // 지갑 실패 경로(지갑 줄 멈춤): 처음 결과가 실패였는데 완료가 온 약속 위반이라 돈이 나갔을 수 있다. 실패 환불은 찾기 알람에서 빠져 이 로그가 유일한 흔적이라 WARN
+    // 회수 성공 경로(재고 줄 있음): 같은 완료가 다시 온 정상 중복이라 INFO.
+    // 지갑 실패 경로(재고 줄 없음): 처음 결과가 실패였는데 완료가 온 약속 위반이라 돈이 나갔을 수 있다. 실패 환불은 찾기 알람에서 빠져 이 로그가 유일한 흔적이라 WARN
     private static void logSkippedNotProcessing(WalletResultPolicy.Kind kind, Long refundId, Snapshot snapshot, String label) {
         RefundStatus status = snapshot.refund().getStatus();
         if (status == RefundStatus.FAILED && kind == WalletResultPolicy.Kind.COMPLETED) {
-            RefundStep walletStep = snapshot.walletStep();
-            if (walletStep != null && walletStep.getStatus() == RefundStepStatus.SUCCEEDED) {
+            // 회수 경로인지는 재고 줄이 있는지로 본다(startProductStep과 같은 기준). 지갑 실패 경로에서는 재고 줄이 생기지 않는다
+            if (snapshot.productStep() != null) {
                 log.info("회수 뒤 실패로 끝난 환불에 같은 지갑 완료가 다시 와 넘김. refundId={}", refundId);
             } else {
                 log.warn("지갑 실패로 되돌려 실패로 끝난 환불에 지갑 완료가 와 넘김(지갑 약속 위반, 돈이 나갔을 수 있음, 확인 필요). refundId={}",
@@ -1197,19 +1197,22 @@ public class RefundSagaService implements RefundSagaUseCase {
                 return ProductStart.NO_WALLET_STEP;
             }
             // 주문 되돌리기를 시작한 환불은 지갑 완료가 와도 재고로 가지 않는다(#622 검토). 되돌리기 줄은 두 경로에서 생겨 지갑 줄 상태로 가른다.
-            // 회수 성공 경로(지갑 줄 성공): 같은 완료가 다시 온 정상 중복이라 아무것도 쓰지 않는다. 여기서 되돌리기를 멈추면 끝날 환불이 처리 중에 갇힌다(투표 지적).
-            // 지갑 실패 경로(지갑 줄 멈춤): 처음 결과가 실패인데 완료가 온 지갑 약속 위반이다. 재고·완료까지 가면 상품 배송과 돈 반환이 함께 일어나 되돌릴 수 없다.
+            // 경로는 재고 줄이 있는지로 가른다(2라운드 재검). 지갑 줄 상태로 가르면 앞선 불일치로 지갑 줄이 멈춘 채 맞는 완료를 받아 재고로 간 회수 경로(#544 결정 8)를 지갑 실패로 잘못 본다.
+            // 회수 성공 경로(재고 줄 있음): 같은 완료가 다시 온 정상 중복이라 아무것도 쓰지 않는다. 여기서 되돌리기를 멈추면 끝날 환불이 처리 중에 갇힌다(투표 지적).
+            // 지갑 실패 경로(재고 줄 없음, 지갑 실패는 재고 줄이 있으면 받지 않는다): 처음 결과가 실패인데 완료가 온 지갑 약속 위반이다. 재고·완료까지 가면 상품 배송과 돈 반환이 함께 일어나 되돌릴 수 없다.
             // 되돌리기 줄이 끝나기 전이면 이유를 남기고 멈춘다. 그러면 주문 결과가 와도 실패로 끝나지 않고 처리 중으로 남아, 찾기 알람이 사람에게 알린다
             // (멈추지 않으면 주문이 되돌린 뒤 FAILED가 되어 알람에서 빠지고 DB에 흔적이 없다). 같은 구간에서 읽은 줄 객체로 고친다(4절)
             Optional<RefundStep> orderRevert = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER_REVERT);
             if (orderRevert.isPresent()) {
-                if (walletStep.get().getStatus() == RefundStepStatus.SUCCEEDED) {
+                if (productStep != null) {
                     return ProductStart.DUPLICATE_AFTER_REVERT;
                 }
+                // 되돌리기 줄이 이미 다른 이유(예: 이미 구매확정)로 끝났으면 고치지 않는다(끝 상태). 로그만 다르게 남긴다
                 if (orderRevert.get().stop(WALLET_COMPLETED_LATE)) {
                     refundStepPersistencePort.update(orderRevert.get());
+                    return ProductStart.WALLET_COMPLETED_LATE;
                 }
-                return ProductStart.WALLET_COMPLETED_LATE;
+                return ProductStart.WALLET_COMPLETED_LATE_AFTER_REVERT_ENDED;
             }
             if (walletStep.get().succeed()) {
                 refundStepPersistencePort.update(walletStep.get());
@@ -1234,6 +1237,8 @@ public class RefundSagaService implements RefundSagaUseCase {
             case PRODUCT_ENDED -> log.warn("지갑 완료를 받았지만 재고 단계 줄이 끝 상태라 재고를 부르지 않음(확인 필요). refundId={}", refundId);
             case DUPLICATE_AFTER_REVERT -> log.info("회수 뒤 주문 되돌리기 중인 환불에 같은 지갑 완료가 다시 와 넘김. refundId={}", refundId);
             case WALLET_COMPLETED_LATE -> log.warn("지갑 실패로 주문 되돌리기를 시작한 환불에 같은 refundId의 지갑 완료가 와 재고를 부르지 않고 되돌리기 줄을 멈춤"
+                    + "(지갑 약속 위반, 돈이 나갔을 수 있음. 주문·돈을 사람이 맞춰야 함, 확인 필요). refundId={}", refundId);
+            case WALLET_COMPLETED_LATE_AFTER_REVERT_ENDED -> log.warn("지갑 실패로 주문 되돌리기를 시작한 환불에 같은 refundId의 지갑 완료가 와 재고를 부르지 않음. 되돌리기 줄은 이미 끝나 그대로 둠"
                     + "(지갑 약속 위반, 돈이 나갔을 수 있음. 주문·돈을 사람이 맞춰야 함, 확인 필요). refundId={}", refundId);
             case STARTED -> throw new IllegalArgumentException("시작한 경우는 넘기지 않는다");
         }

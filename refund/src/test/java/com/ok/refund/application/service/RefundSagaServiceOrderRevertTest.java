@@ -267,6 +267,53 @@ class RefundSagaServiceOrderRevertTest {
         then(refundStepPersistencePort).should(never()).saveNew(any());
     }
 
+    // 앞선 결과 불일치로 지갑 줄이 멈춘 채 맞는 완료를 받아 재고로 간 회수 경로(#544 결정 8)다. 지갑 줄은 멈춤이지만 재고 줄이 있어
+    // 지갑 실패 경로가 아니다. 같은 완료가 다시 와도 정상 중복이라 되돌리기 줄을 멈추지 않는다(2라운드 재검 지적)
+    @Test
+    void 지갑_줄이_불일치로_멈춘_회수_경로에_같은_지갑_완료가_다시_와도_되돌리기_줄을_건드리지_않는다() {
+        // given
+        RefundStep productStopped = RefundStep.restore(3L, REFUND_ID, RefundStepType.PRODUCT, RefundStepStatus.STOPPED, 1, null,
+                "PRODUCT_RELEASE_REFUSED", NOW.minusMinutes(3));
+        RefundStep walletMismatch = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, null,
+                RefundSagaService.RESULT_MISMATCH, NOW.minusMinutes(5));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(productStopped));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET)).willReturn(Optional.of(walletMismatch));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
+                .willReturn(Optional.of(awaiting(RefundStepType.ORDER_REVERT)));
+
+        // when
+        saga.completeAfterWalletRefund(new WalletRefundCompletedCommand(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+    }
+
+    // 되돌리기 줄이 이미 주문의 실패(예: 이미 구매확정)로 끝났으면 늦은 지갑 완료가 와도 줄을 고치지 않는다(끝 상태는 바뀌지 않음)
+    @Test
+    void 되돌리기_줄이_이미_끝난_지갑_실패_경로에_지갑_완료가_와도_줄을_고치지_않는다() {
+        // given
+        RefundStep stoppedByFailure = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, null,
+                "PAYMENT_NOT_FOUND", NOW.minusMinutes(5));
+        RefundStep revertRefused = RefundStep.restore(5L, REFUND_ID, RefundStepType.ORDER_REVERT, RefundStepStatus.STOPPED, 1, null,
+                "ALREADY_CONFIRMED", NOW.minusMinutes(3));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.empty());
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET)).willReturn(Optional.of(stoppedByFailure));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT)).willReturn(Optional.of(revertRefused));
+
+        // when
+        saga.completeAfterWalletRefund(new WalletRefundCompletedCommand(REFUND_ID, ORDER_ID, BUYER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+        assertThat(revertRefused.getLastReason()).isEqualTo("ALREADY_CONFIRMED");
+    }
+
     // ---- 알람이 깨운 다시 보내기 ----
 
     // 결과를 5분 기다려도 오지 않으면 같은 refundId로 다시 보낸다(#577 규칙). 앞의 멈춘 지갑 줄 때문에 막히지 않는다
