@@ -2,6 +2,7 @@ package com.ok.refund.application.service;
 
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.OrderCancellationPort;
+import com.ok.refund.application.port.out.OrderRevertRequestPort;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
@@ -52,13 +53,15 @@ class RefundSagaServiceResumeTest {
     WalletRefundRequestPort walletRefundRequestPort;
     @Mock
     ProductStockReleasePort productStockReleasePort;
+    @Mock
+    OrderRevertRequestPort orderRevertRequestPort;
 
     RefundSagaService saga;
 
     @BeforeEach
     void setUp() {
         saga = new RefundSagaService(orderCancellationPort, walletRefundRequestPort, productStockReleasePort,
-                refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
+                orderRevertRequestPort, refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
     }
 
     @Test

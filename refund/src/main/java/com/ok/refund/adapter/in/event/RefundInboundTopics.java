@@ -22,6 +22,12 @@ public final class RefundInboundTopics {
     /** 지갑 → 환불: 돈을 다시 가져오지 못함(예: 잔액 부족 {@code INSUFFICIENT_BALANCE}, #546). 키는 orderId */
     public static final String WALLET_REFUND_REVERT_FAILED = "wallet.wallet-refund-revert-failed.v1";
 
+    /** 주문 → 환불: 환불이 남긴 취소 기록을 되돌림(#622. PR #537 약속, 주문 #604). 키는 orderId */
+    public static final String ORDER_REFUND_REVERTED = "order.order-refund-reverted.v1";
+
+    /** 주문 → 환불: 취소 기록을 되돌리지 못함(예: 이미 구매확정 {@code ALREADY_CONFIRMED}, #622). 키는 orderId */
+    public static final String ORDER_REFUND_REVERT_FAILED = "order.order-refund-revert-failed.v1";
+
     // 그룹을 환불 것으로 따로 두는 이유: 같은 토픽을 다른 모듈이 받더라도 그룹이 다르면 메시지가 각자에게 모두 간다.
     // 환불 서버가 여러 대여도 같은 그룹이라 한 메시지는 한 대만 처리한다.
     // 리스너마다 그룹을 나눠, 한 리스너의 읽은 위치를 되돌리거나 다시 붙어도 다른 리스너가 멈추지 않는다 (#648)
@@ -37,6 +43,12 @@ public final class RefundInboundTopics {
 
     /** 회수 결과(실패) 리스너의 컨슈머 그룹 (#546) */
     public static final String REVERT_FAILED_GROUP = "refund.revert-failed";
+
+    /** 주문 되돌리기 결과(되돌림) 리스너의 컨슈머 그룹 (#622) */
+    public static final String ORDER_REVERT_COMPLETED_GROUP = "refund.order-revert-completed";
+
+    /** 주문 되돌리기 결과(실패) 리스너의 컨슈머 그룹 (#622) */
+    public static final String ORDER_REVERT_FAILED_GROUP = "refund.order-revert-failed";
 
     private RefundInboundTopics() {
     }

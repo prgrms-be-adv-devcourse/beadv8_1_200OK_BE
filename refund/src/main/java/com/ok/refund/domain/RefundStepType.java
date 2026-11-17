@@ -18,5 +18,10 @@ public enum RefundStepType {
      * 지갑 돈 다시 가져오기(회수, #546). 재고가 다시 해도 같은 이유로 거절되면(PRODUCT_RELEASE_REFUSED) 이미 돌려준 돈을 다시 가져온다.
      * 앞 단계를 되돌리는 단계라 처리 순서의 마지막에 두고, 이 줄이 생긴 환불은 앞으로 가지 않는다(RefundSagaPlan.fromSteps)
      */
-    WALLET_REVERT
+    WALLET_REVERT,
+    /**
+     * 주문 취소 기록 되돌리기(#622). 지갑이 반환에 실패했거나 회수가 성공한 뒤, 주문에 남긴 취소 기록(수량·뺀 배송비)을 되돌려 달라고 한다.
+     * 되돌리는 순서가 지갑 먼저, 주문 다음이라(PR #537) 회수 뒤에 둔다. 이 줄이 생긴 환불은 이 줄만 보고 끝을 기다린다(RefundSagaPlan.fromSteps)
+     */
+    ORDER_REVERT
 }

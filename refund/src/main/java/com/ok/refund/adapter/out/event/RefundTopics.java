@@ -20,6 +20,13 @@ public final class RefundTopics {
      */
     public static final String REFUND_WALLET_REVERT_REQUESTED = "refund.refund-wallet-revert-requested.v1";
 
+    /**
+     * 환불 → 주문: 승인 뒤 단계가 끝내 실패해 환불이 남긴 취소 기록을 되돌려 달라고 함(#622. PR #537 약속, 주문 #604).
+     * 키는 orderId, 값은 {@link RefundOrderRevertRequestedMessage}. 지갑 회수와 이름을 나눈 이유: 받는 모듈마다 토픽을 나눠,
+     * 주문만 되돌리면 되는 경우(지갑 실패)에 지갑이 메시지를 받지 않게 한다(PR #537 4절)
+     */
+    public static final String REFUND_ORDER_REVERT_REQUESTED = "refund.refund-order-revert-requested.v1";
+
     private RefundTopics() {
     }
 }

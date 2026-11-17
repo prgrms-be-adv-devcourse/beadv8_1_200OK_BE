@@ -493,6 +493,35 @@ class RefundTest {
         return Stream.of(requested(), completed, withdrawn);
     }
 
+    // 실패(#622): 주문이 취소 기록을 되돌린 처리 중 환불을 끝낸다. 같은 상품에 새 요청을 받고, 무엇을 되돌렸는지 알 수 있게 배송비 칸은 남긴다
+    @Test
+    void 처리_중을_실패로_끝내면_진행_중_칸이_비워지고_배송비와_승인_시각은_그대로다() {
+        // given
+        Refund sut = requested();
+        sut.approve(NOW, RefundShippingFee.deduct(3_000L));
+
+        // when
+        sut.failAfterApproval();
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.FAILED);
+            softly.assertThat(sut.getActiveOrderItemId()).isNull();
+            softly.assertThat(sut.getDeductedShippingFeeAmount()).isEqualTo(3_000L);
+            softly.assertThat(sut.getDecidedAt()).isEqualTo(NOW);
+            softly.assertThat(sut.getCompletedAt()).isNull();
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("처리_중이_아닌_환불")
+    void 처리_중이_아니면_실패로_끝낼_수_없다(Refund refund) {
+        // when & then
+        assertThatThrownBy(refund::failAfterApproval)
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.INVALID_REFUND_STATE));
+    }
+
     private static Refund requested() {
         return Refund.request(10L, 101L, 2, 1L, 2L, 55L, "감자", "1kg", 10_000L, null);
     }

@@ -14,9 +14,9 @@ public record SellerRefundPageRequest(
 
         // 컨트롤러는 도메인 enum을 쓰지 않으므로 허용 값을 여기서 문자열로 검사한다.
         // 상태가 늘면 함께 바꾼다. 빠뜨리면 SellerRefundPageRequestTest가 깨진다
-        @Schema(description = "상태 거르기 (생략하면 전체). REQUESTED, PROCESSING, REJECTED, WITHDRAWN, COMPLETED", example = "REQUESTED")
-        @Pattern(regexp = "REQUESTED|PROCESSING|REJECTED|WITHDRAWN|COMPLETED",
-                message = "상태는 REQUESTED, PROCESSING, REJECTED, WITHDRAWN, COMPLETED 중 하나여야 합니다.")
+        @Schema(description = "상태 거르기 (생략하면 전체). REQUESTED, PROCESSING, REJECTED, WITHDRAWN, COMPLETED, FAILED", example = "REQUESTED")
+        @Pattern(regexp = "REQUESTED|PROCESSING|REJECTED|WITHDRAWN|COMPLETED|FAILED",
+                message = "상태는 REQUESTED, PROCESSING, REJECTED, WITHDRAWN, COMPLETED, FAILED 중 하나여야 합니다.")
         String status
 ) {
 

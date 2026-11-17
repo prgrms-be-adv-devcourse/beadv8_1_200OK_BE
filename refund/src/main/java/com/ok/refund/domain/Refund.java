@@ -305,6 +305,20 @@ public class Refund {
         finish(RefundStatus.COMPLETED);
     }
 
+    /**
+     * 승인 뒤 단계가 끝내 실패해 주문이 취소 기록을 되돌린 환불을 실패로 끝낸다(#622). {@code PROCESSING → FAILED}
+     * 진행 중 칸을 비워 같은 주문 상품에 새 요청을 받는다. 주문 쪽에서는 그 상품이 취소되지 않은 상태로 돌아갔기 때문이다.
+     * 배송비 세 칸은 그대로 둔다. 거절과 달리 승인 뒤 돈이 움직였다가 되돌아온 기록이라 무엇을 되돌렸는지 남기려는 것이고,
+     * 실패는 배송비 집계({@link RefundShippingFeePolicy#CANCELLING_STATUSES})에 들지 않아 다른 요청의 판단에 쓰이지 않는다.
+     * {@code decidedAt}(판매자 승인 시각)과 {@code completedAt}(완료 전이라 없음)은 바꾸지 않는다.
+     *
+     * @throws RestApiException 처리 중이 아니면 {@code INVALID_REFUND_STATE}
+     */
+    public void failAfterApproval() {
+        requireStatus(RefundStatus.PROCESSING);
+        finish(RefundStatus.FAILED);
+    }
+
     public boolean isOwnedByBuyer(Long memberId) {
         return buyerId.equals(memberId);
     }

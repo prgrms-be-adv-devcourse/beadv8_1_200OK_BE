@@ -159,7 +159,8 @@ class RefundWalletRevertIntegrationTest extends AbstractIntegrationTest {
         // when: 지갑이 다시 가져왔다고 알린다
         walletResultSender.sendReverted(refundId);
 
-        // then: 회수 줄은 성공, 환불은 처리 중 그대로(주문 되돌리기 #622 전). 멈춘 재고 줄이 있어 멈춘 환불 찾기가 사람에게 알린다
+        // then: 회수 줄은 성공, 환불은 주문 되돌리기 결과(#622)를 기다리는 동안 처리 중. 멈춘 재고 줄이 있어 멈춘 환불 찾기가 사람에게 알린다
+        // (되돌리기 요청과 그 뒤는 RefundOrderRevertIntegrationTest가 본다)
         awaitStepStatus(refundId, RefundStepType.WALLET_REVERT, RefundStepStatus.SUCCEEDED);
         assertThat(refundPersistencePort.findById(refundId).map(Refund::getStatus)).contains(RefundStatus.PROCESSING);
         assertThat(refundStepPersistencePort.findRefundIdsNeedingAttention(LocalDateTime.now(clock))).contains(refundId);

@@ -6,6 +6,7 @@ import com.ok.refund.application.port.in.RefundDecisionCommand;
 import com.ok.refund.application.port.in.RefundResult;
 import com.ok.refund.application.port.out.OrderCancellation;
 import com.ok.refund.application.port.out.OrderCancellationPort;
+import com.ok.refund.application.port.out.OrderRevertRequestPort;
 import com.ok.refund.application.port.out.OrderCancellationResult;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
@@ -86,6 +87,8 @@ class DecideRefundServiceTest {
     @Mock
     ProductStockReleasePort productStockReleasePort;
     @Mock
+    OrderRevertRequestPort orderRevertRequestPort;
+    @Mock
     RefundStepPersistencePort refundStepPersistencePort;
 
     DecideRefundService sut;
@@ -99,7 +102,7 @@ class DecideRefundServiceTest {
         // 승인 → 주문 → 지갑·재고 호출을 한 흐름으로 확인해, 옮겨도 동작이 같다는 근거로 삼는다(#592).
         // 실패 기록도 지휘자가 같은 영속 포트로 하므로 단계 줄이 실제로 "할 차례"로 남는지 함께 본다
         RefundSagaService refundSagaService = new RefundSagaService(orderCancellationPort, walletRefundRequestPort,
-                productStockReleasePort, refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
+                productStockReleasePort, orderRevertRequestPort, refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
         sut = new DecideRefundService(orderQueryPort, refundPersistencePort, refundStepPersistencePort, refundSagaService,
                 CLOCK, transactionManager);
         givenStepStoreRemembersWrites();

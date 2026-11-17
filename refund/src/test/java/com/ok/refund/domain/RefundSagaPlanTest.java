@@ -43,7 +43,12 @@ class RefundSagaPlanTest {
                 // 재고가 다시 해도 거절되면 돌려준 돈이 있을 때만 회수한다(#546). 0원은 가져올 돈이 없어 멈춘다
                 Arguments.of(Event.PRODUCT_REFUSED, 20_000L, Action.CALL_WALLET_REVERT),
                 Arguments.of(Event.PRODUCT_REFUSED, 0L, Action.STOP),
-                Arguments.of(Event.WALLET_REVERT_PUBLISHED, 20_000L, Action.WAIT));
+                Arguments.of(Event.WALLET_REVERT_PUBLISHED, 20_000L, Action.WAIT),
+                // 되돌리기(#622): 지갑 실패와 회수 성공 뒤에는 주문 취소 기록을 되돌리고, 주문이 되돌리면 실패로 끝낸다
+                Arguments.of(Event.WALLET_FAILED, 20_000L, Action.CALL_ORDER_REVERT),
+                Arguments.of(Event.WALLET_REVERTED, 20_000L, Action.CALL_ORDER_REVERT),
+                Arguments.of(Event.ORDER_REVERT_PUBLISHED, 20_000L, Action.WAIT),
+                Arguments.of(Event.ORDER_REVERTED, 20_000L, Action.FAIL));
     }
 
     @ParameterizedTest
@@ -57,7 +62,7 @@ class RefundSagaPlanTest {
     }
 
     static Stream<RefundStatus> 처리_중이_아닌_상태() {
-        return Stream.of(RefundStatus.REQUESTED, RefundStatus.REJECTED, RefundStatus.WITHDRAWN, RefundStatus.COMPLETED);
+        return Stream.of(RefundStatus.REQUESTED, RefundStatus.REJECTED, RefundStatus.WITHDRAWN, RefundStatus.COMPLETED, RefundStatus.FAILED);
     }
 
     // ---- 단계 줄만 보고 정하기 (알람이 깨운 경우) ----
@@ -121,14 +126,34 @@ class RefundSagaPlanTest {
                         refusedWith(overdueAwaiting(RefundStepType.WALLET_REVERT)), Action.CALL_WALLET_REVERT),
                 Arguments.of("회수 시도 중인데 만료 지남 → 회수", 20_000L, refusedWith(expired(RefundStepType.WALLET_REVERT)),
                         Action.CALL_WALLET_REVERT),
-                Arguments.of("회수 성공(주문 되돌리기 #622 전) → 멈춤", 20_000L, refusedWith(succeeded(RefundStepType.WALLET_REVERT)),
+                Arguments.of("회수 성공인데 되돌리기 줄 없음(같은 구간에서 만들어 있을 수 없음) → 멈춤", 20_000L, refusedWith(succeeded(RefundStepType.WALLET_REVERT)),
                         Action.STOP),
                 Arguments.of("회수 실패로 멈춤 → 멈춤", 20_000L, refusedWith(step(RefundStepType.WALLET_REVERT, RefundStepStatus.STOPPED)),
                         Action.STOP),
                 Arguments.of("회수 결과 대기 중이면 재고 멈춤이 아니라 회수 줄로 정함(지갑 결과 대기 시각이 지나도) → 기다림", 20_000L,
                         List.of(succeeded(RefundStepType.ORDER), overdueAwaiting(RefundStepType.WALLET),
                                 step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED),
-                                step(RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT)), Action.WAIT));
+                                step(RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT)), Action.WAIT),
+                // 주문 되돌리기(#622): 되돌리기 줄이 있으면 가장 먼저 본다. 앞 줄(멈춘 지갑, 끝난 회수)을 보면 멈춤이 되기 때문이다
+                Arguments.of("지갑 실패로 멈춤, 되돌리기 결과 대기 → 기다림", 20_000L,
+                        walletFailedWith(step(RefundStepType.ORDER_REVERT, RefundStepStatus.AWAITING_RESULT)), Action.WAIT),
+                Arguments.of("지갑 실패로 멈춤, 되돌리기 할 차례 → 되돌리기", 20_000L,
+                        walletFailedWith(step(RefundStepType.ORDER_REVERT, RefundStepStatus.READY)), Action.CALL_ORDER_REVERT),
+                Arguments.of("되돌리기 결과 대기인데 기다리는 시각 지남(#577) → 되돌리기 다시 요청", 20_000L,
+                        walletFailedWith(overdueAwaiting(RefundStepType.ORDER_REVERT)), Action.CALL_ORDER_REVERT),
+                Arguments.of("되돌리기 시도 중인데 만료 지남 → 되돌리기", 20_000L,
+                        walletFailedWith(expired(RefundStepType.ORDER_REVERT)), Action.CALL_ORDER_REVERT),
+                Arguments.of("되돌리기 실패로 멈춤(예: 이미 구매확정) → 멈춤", 20_000L,
+                        walletFailedWith(step(RefundStepType.ORDER_REVERT, RefundStepStatus.STOPPED)), Action.STOP),
+                Arguments.of("회수 성공 뒤 되돌리기 할 차례 → 되돌리기", 20_000L,
+                        List.of(succeeded(RefundStepType.ORDER), succeeded(RefundStepType.WALLET),
+                                step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED), succeeded(RefundStepType.WALLET_REVERT),
+                                step(RefundStepType.ORDER_REVERT, RefundStepStatus.READY)), Action.CALL_ORDER_REVERT));
+    }
+
+    // 주문은 반영했는데 지갑이 반환에 실패해 지갑 줄이 멈춘 환불에 되돌리기 줄 하나를 더한 단계 줄(#622)
+    private static List<RefundStep> walletFailedWith(RefundStep orderRevert) {
+        return List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.WALLET, RefundStepStatus.STOPPED), orderRevert);
     }
 
     // 지갑 반환까지 끝났는데 재고가 거절로 멈춘 환불에 회수 줄 하나를 더한 단계 줄

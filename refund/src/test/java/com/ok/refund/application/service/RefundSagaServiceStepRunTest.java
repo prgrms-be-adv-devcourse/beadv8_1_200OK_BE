@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.OrderCancellationPort;
+import com.ok.refund.application.port.out.OrderRevertRequestPort;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
@@ -65,6 +66,8 @@ class RefundSagaServiceStepRunTest {
     WalletRefundRequestPort walletRefundRequestPort;
     @Mock
     ProductStockReleasePort productStockReleasePort;
+    @Mock
+    OrderRevertRequestPort orderRevertRequestPort;
 
     RefundSagaService sut;
 
@@ -75,7 +78,7 @@ class RefundSagaServiceStepRunTest {
     @BeforeEach
     void setUp() {
         sut = new RefundSagaService(orderCancellationPort, walletRefundRequestPort, productStockReleasePort,
-                refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
+                orderRevertRequestPort, refundPersistencePort, refundStepPersistencePort, CLOCK, new NoOpTransactionManager());
     }
 
     @BeforeEach

@@ -31,15 +31,16 @@ public interface RefundSagaUseCase {
     void completeAfterWalletRefund(WalletRefundCompletedCommand command);
 
     /**
-     * 지갑 반환 실패를 환불에 남긴다. 처리 중이면 WALLET 단계와 지갑이 알려 준 이유를 기록하고 처리 중으로 둔다.
-     * 금액·주문·구매자가 환불과 다르면 지갑 이유 대신 {@code RESULT_MISMATCH}를 남긴다.
+     * 지갑 반환 실패를 환불에 남긴다. 처리 중이면 WALLET 단계와 지갑이 알려 준 이유를 기록하고 처리 중으로 둔 채,
+     * 주문에 취소 기록 되돌리기를 요청한다(#622. 돈이 나가지 않아 지갑은 되돌릴 것이 없다).
+     * 금액·주문·구매자가 환불과 다르면 지갑 이유 대신 {@code RESULT_MISMATCH}를 남기고 주문은 되돌리지 않는다(지갑 실패인지 알 수 없다).
      * 같은 이유가 이미 기록돼 있거나, 처리 중이 아니거나, 재고 단계가 이미 시작됐으면 넘긴다.
      */
     void recordWalletRefundFailure(WalletRefundFailedCommand command);
 
     /**
-     * 지갑이 돈을 다시 가져왔다는(회수) 결과를 회수 줄에 남긴다(#546). 환불은 처리 중으로 두고 사람이 본다(주문 되돌리기 #622 전까지).
-     * 주문·구매자·금액이 환불과 다르면 회수 줄을 {@code RESULT_MISMATCH}로 멈춘다.
+     * 지갑이 돈을 다시 가져왔다는(회수) 결과를 회수 줄에 남긴다(#546). 이어서 주문에 취소 기록 되돌리기를 요청한다(#622).
+     * 주문·구매자·금액이 환불과 다르면 회수 줄을 {@code RESULT_MISMATCH}로 멈추고 주문은 되돌리지 않는다.
      * 없는 환불, 처리 중이 아닌 환불, 회수 줄이 없거나 이미 끝난 환불은 예외 없이 넘긴다.
      */
     void recordWalletRevertCompleted(WalletRevertCompletedCommand command);
@@ -49,6 +50,19 @@ public interface RefundSagaUseCase {
      * 거르는 규칙은 {@link #recordWalletRevertCompleted}와 같다.
      */
     void recordWalletRevertFailure(WalletRevertFailedCommand command);
+
+    /**
+     * 주문이 취소 기록을 되돌렸다는 결과를 되돌리기 줄에 성공으로 남기고 환불을 실패로 끝낸다(#622).
+     * 주문·주문 상품이 환불과 다르면 되돌리기 줄을 {@code RESULT_MISMATCH}로 멈추고 환불은 처리 중으로 둔다.
+     * 없는 환불, 처리 중이 아닌 환불(같은 결과가 다시 온 경우 포함), 되돌리기 줄이 없거나 이미 끝난 환불은 예외 없이 넘긴다.
+     */
+    void recordOrderRefundReverted(OrderRefundRevertedCommand command);
+
+    /**
+     * 주문이 취소 기록을 되돌리지 못했다는 결과(예: 이미 구매확정)를 되돌리기 줄에 멈춤으로 남긴다(#622). 환불은 처리 중으로 두고 사람이 본다.
+     * 거르는 규칙은 {@link #recordOrderRefundReverted}와 같다.
+     */
+    void recordOrderRefundRevertFailure(OrderRefundRevertFailedCommand command);
 
     /**
      * 환불 번호만으로 승인 뒤 단계를 이어 간다(#616). 지휘 작업(알람, #576)이 멈춘 환불을 다시 진행할 때 쓴다.

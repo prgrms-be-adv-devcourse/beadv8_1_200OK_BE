@@ -4,6 +4,7 @@ import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
 import com.ok.refund.application.port.out.OrderCancellationPort;
+import com.ok.refund.application.port.out.OrderRevertRequestPort;
 import com.ok.refund.application.port.out.ProductStockReleasePort;
 import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
@@ -63,6 +64,8 @@ class RefundSagaServiceWalletResultTest {
     RefundPersistencePort refundPersistencePort;
     @Mock
     ProductStockReleasePort productStockReleasePort;
+    @Mock
+    OrderRevertRequestPort orderRevertRequestPort;
     // 단계 줄을 스텁하지 않은 테스트의 환불은 단계 줄이 없다(#574 전에 승인된 환불, 비어 있는 Optional을 돌려주는 기본 동작)
     @Mock
     RefundStepPersistencePort refundStepPersistencePort;
@@ -78,7 +81,7 @@ class RefundSagaServiceWalletResultTest {
     void setUp() {
         NoOpTransactionManager transactionManager = new NoOpTransactionManager();
         sut = new RefundSagaService(orderCancellationPort, walletRefundRequestPort, productStockReleasePort,
-                refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
+                orderRevertRequestPort, refundPersistencePort, refundStepPersistencePort, CLOCK, transactionManager);
     }
 
     // ---- 완료 ----
