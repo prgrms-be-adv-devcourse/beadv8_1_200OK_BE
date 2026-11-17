@@ -97,9 +97,10 @@ public interface PayoutQueryRepository {
     // 초과 청구에 걸린 주문만 넘기므로 보통 몇 건뿐임 (빈 목록을 넘기지 않음)
     List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds, Long snapshotId);
 
-    // 보류된 판매자의 원래 후보 (#291 결정 2번): 이전 스냅샷에서 draft까지 갔는데 정산이 안 된 후보, 상한(to) 전·조회 기간 하한 없음·잠긴 주문 제외
+    // 보류된 판매자의 원래 후보 (#291 결정 2번): heldFrom 뒤에 만든 스냅샷에서 draft까지 갔는데 정산이 안 된 후보, 상한(to) 전·후보 생성 시각 하한 없음·잠긴 주문 제외
     // 판매자 합계가 0원 이하라 commit이 정산을 만들지 않은 판매자의 후보가, 하한이 올라가 영영 빠지지 않게 다시 넣으려고 씀
-    List<PayoutCandidateItem> findHeldCandidatesBefore(LocalDateTime to);
+    // heldFrom은 PayoutPolicy.heldLookbackFrom으로 구함. null이면 스냅샷 기간을 거르지 않음 (첫 정산 전)
+    List<PayoutCandidateItem> findHeldCandidates(LocalDateTime heldFrom, LocalDateTime to);
 
     // 아직 정산 안 된 조정 후보 전부와 그 원래 후보 상태 (#291 결정 1번), 잠긴 주문 제외, 후보 ID 오름차순
     // 조정 자기 생성 시각으로 기간을 거르지 않음: 조정은 원래 후보를 따라 정산됨 (원래가 이번 스냅샷에 들었거나 이미 정산됐으면 포함)

@@ -1,5 +1,7 @@
 package com.ok.payout.domain;
 
+import java.time.LocalDateTime;
+
 public class PayoutPolicy {
 
     // 수수료율 단위: 베이시스 포인트 (1bp = 0.01%, 10000bp = 100%)
@@ -22,7 +24,22 @@ public class PayoutPolicy {
     //   일시적인 오류(지갑 차감 기록이 늦게 도착 등)는 몇 번 더 기회를 주려는 것
     public static final int MAX_FAILED_RUNS = 3;
 
+    // 보류된 판매자의 후보를 다시 찾을 때 보는 draft 기간 (#291 결정 2번): 하한 기준일(끝까지 성공한 마지막 정기 실행)부터 거꾸로 대기 일수의 두 배
+    //   보류된 후보는 배치마다 다시 들어가 draft까지 가므로, 기준일이 된 실행의 draft에 늘 있음. 기준일은 배치가 멈춘 날 움직이지 않아 창도 그대로 기다림
+    //   하한(대기 + 여유)보다 넓게 두는 이유: 그 주문이 며칠 금액 검사에 걸려 draft에서 빠져도 그 전 draft가 창 안에 남게 하려는 여유
+    //   기준을 "오늘"로 두지 않는 이유: 배치가 창 길이만큼 연속으로 멈추면 보류된 후보를 기록 없이 놓침
+    public static final int HELD_LOOKBACK_DAYS = SETTLEMENT_WAITING_DAYS * 2;
+
     private PayoutPolicy() {
+    }
+
+    // 하한(기준일 − 대기 − 여유)에서 보류 조회 창의 시작(기준일 − HELD_LOOKBACK_DAYS)을 구함
+    // 하한이 없으면(첫 정산 전) 창도 없음 (null): 하한과 같이 처음부터 봄
+    public static LocalDateTime heldLookbackFrom(LocalDateTime settlementFrom) {
+        if (settlementFrom == null) {
+            return null;
+        }
+        return settlementFrom.minusDays(HELD_LOOKBACK_DAYS - SETTLEMENT_WAITING_DAYS - SETTLEMENT_LOOKBACK_MARGIN_DAYS);
     }
 
     // 실패 횟수로 본 멈춤 판정 (#549). 스냅샷·해결 API·막힌 주문 집계 표(#582)가 함께 씀

@@ -193,11 +193,12 @@ public class PayoutService implements PayoutUseCase {
             }
         }
 
-        // 3) 판매자 합계가 0원 이하라 보류된 후보(#291 결정 2번)를 조회 기간 하한 없이 다시 넣음
+        // 3) 판매자 합계가 0원 이하라 보류된 후보(#291 결정 2번)를 후보 생성 시각 하한 없이 다시 넣음
         //    commit이 그 판매자의 정산을 만들지 않고 후보를 남겨 둠. 하한이 올라가 기간 밖으로 밀려도 새 매출이 생긴 배치에서 함께 정산되게 하려는 것
         //    예) 이미 9,700 지급된 판매자에게 −2,000 조정, 새 매출 없음 → 보류. 3일 뒤 하한 밖이어도 다시 넣어, 새 매출 5,000이 들어온 날 3,000 지급
+        //    대신 최근 스냅샷(하한 기준일 − 대기 일수 × 2 뒤)의 draft에서만 찾음: 보류된 후보는 배치마다 draft에 다시 오르므로 그 창 안에 있음 (PayoutPolicy.HELD_LOOKBACK_DAYS)
         //    멈춘 주문은 뺌: 빼지 않으면 #549 3번 멈춤을 이 길로 우회함. 잠긴 주문은 조회가 뺌
-        for (PayoutCandidateItem candidate : payoutQueryRepository.findHeldCandidatesBefore(to)) {
+        for (PayoutCandidateItem candidate : payoutQueryRepository.findHeldCandidates(PayoutPolicy.heldLookbackFrom(from), to)) {
             if (!stoppedOrderIds.contains(candidate.getOrderId()) && candidateIds.add(candidate.getId())) {
                 candidates.add(candidate);
             }

@@ -356,6 +356,50 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
                 .containsExactlyInAnyOrder(tuple(SELLER, 3_820L), tuple(null, 150L));
     }
 
+    // 보류 조회는 최근 스냅샷(기준일 − 대기 일수 × 2 뒤)의 draft에서만 찾음 (PayoutPolicy.HELD_LOOKBACK_DAYS)
+    // 1차 스냅샷을 25일 전으로 옮겨도 창(30일) 안이라 다시 들어감: 1차 실행이 기준일이라 창 시작은 오늘 − 30일
+    @Test
+    void 보류된_후보는_창_안의_오래된_draft에서도_다시_찾아_정산된다() throws Exception {
+        // given: 1차에 판매자 합계 970 − 2,000 = −1,030 → 보류, 그 스냅샷을 25일 전으로 옮김
+        givenSale(ORDER_A, ITEM_A, SELLER, 1_000L);
+        adjust(ITEM_A, "SALE_AMOUNT", -2_000L, REASON);
+        backdateOriginals(ORDER_A, 40);
+        JobExecution first = payoutJobRunner.runScheduled();
+        backdateSnapshot(snapshotIdOf(first), 25);
+
+        // when: 새 매출 5,000(대금 4,850)
+        givenSale(ORDER_B, ITEM_B, SELLER, 5_000L);
+        backdateOriginals(ORDER_B, 16);
+        JobExecution sut = payoutJobRunner.runScheduled();
+
+        // then: 970 − 2,000 + 4,850 = 3,820
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(sut)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 3_820L), tuple(null, 150L));
+    }
+
+    // 창 밖(35일 전) 스냅샷의 draft에만 있는 보류 후보는 찾지 않음 (창이 실제로 범위를 거르는지 확인)
+    // 실제로는 배치마다 보류 후보가 다시 draft에 오르고, 기준일이 성공한 실행이라 이런 경우가 생기지 않음 (알고 감)
+    @Test
+    void 창_밖_draft에만_있는_보류_후보는_다시_찾지_않는다() throws Exception {
+        // given: 1차 보류 후 그 스냅샷을 35일 전으로 옮김
+        givenSale(ORDER_A, ITEM_A, SELLER, 1_000L);
+        adjust(ITEM_A, "SALE_AMOUNT", -2_000L, REASON);
+        backdateOriginals(ORDER_A, 40);
+        JobExecution first = payoutJobRunner.runScheduled();
+        backdateSnapshot(snapshotIdOf(first), 35);
+
+        // when
+        givenSale(ORDER_B, ITEM_B, SELLER, 5_000L);
+        backdateOriginals(ORDER_B, 16);
+        JobExecution sut = payoutJobRunner.runScheduled();
+
+        // then: 원래 970이 빠져 새 매출 4,850만. 조정 −2,000도 원래를 따라 빠짐
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(sut)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 4_850L), tuple(null, 150L));
+    }
+
     // ---------- 확인한 조정으로 금액 불일치 풀기 (결정 4·5번) ----------
 
     // 결제 30,000인데 판매 40,000(대금 38,800 / 수수료 1,200)으로 구매확정 → 초과 청구로 3번 실패해 멈춤
@@ -592,6 +636,12 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         LocalDateTime createdAt = LocalDateTime.now().minusDays(days);
         jdbcTemplate.update("UPDATE payout_candidate_items SET created_at = ?, updated_at = ? WHERE order_id = ? AND adjustment_id = 0",
                 createdAt, createdAt, orderId);
+    }
+
+    // 스냅샷 생성 시각만 며칠 전으로 옮김: 보류 조회 창이 스냅샷 생성 시각으로 거르므로 (스냅샷 표는 @Immutable이라 테스트 준비용 SQL)
+    private void backdateSnapshot(Long snapshotId, int days) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(days);
+        jdbcTemplate.update("UPDATE payout_snapshot SET created_at = ?, updated_at = ? WHERE id = ?", createdAt, createdAt, snapshotId);
     }
 
     private PayoutAdjustmentCreateResult adjust(long orderItemId, String eventType, long amount, String reason) {

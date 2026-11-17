@@ -64,6 +64,7 @@ import static com.ok.payout.domain.QPayoutFailureResolution.payoutFailureResolut
 import static com.ok.payout.domain.QPayoutItem.payoutItem;
 import static com.ok.payout.domain.QPayoutSellerDraft.payoutSellerDraft;
 import static com.ok.payout.domain.QPayoutSellerDraftItem.payoutSellerDraftItem;
+import static com.ok.payout.domain.QPayoutSnapshot.payoutSnapshot;
 import static com.ok.payout.domain.QPayoutSnapshotItem.payoutSnapshotItem;
 import static com.ok.payout.domain.QPayoutSystemDraftItem.payoutSystemDraftItem;
 import static com.ok.payout.domain.QPayoutWalletDeduction.payoutWalletDeduction;
@@ -194,23 +195,32 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .fetch();
     }
 
-    // 보류된 판매자의 원래 후보 (#291 결정 2번): 이전 스냅샷에서 draft까지 갔는데 정산(payout_item)이 안 된 후보, 조회 기간 하한 없음
+    // 보류된 판매자의 원래 후보 (#291 결정 2번): 이전 스냅샷에서 draft까지 갔는데 정산(payout_item)이 안 된 후보, 후보 생성 시각 하한 없음
     //   commit이 판매자 합계 0원 이하인 판매자의 정산을 만들지 않고 남겨 두므로(PayoutService.commit), 하한이 올라가도 다시 잡으려고 고름
     //   하한을 두면 보류 3일 뒤(여유 일수) 원래 후보가 기간 밖으로 밀려 영영 정산되지 않음 → 그 판매자의 음수 조정도 회수되지 않음
     // 조정은 뺌: 조정은 원래 후보를 따라 들어가므로(findUnsettledAdjustments) 여기서 따로 넣지 않음
     // 결과 검증으로 빠진 항목(#290)도 draft는 있고 정산은 없지만, 그 주문은 잠겨 lockedOrder가 뺌 (해결하면 다시 들어오는 것이 맞음)
     //   FAILED로 끝난 실행의 draft 후보도 여기서 다시 들어옴: 아직 정산 안 된 후보라 들어오는 것이 맞고, 금액 검사를 다시 거침
-    // draft 항목 표를 미정산 후보마다 EXISTS로 봄: draft 항목은 정산되면 payout_item이 생겨 미정산 조건이 먼저 거름. 대량에서의 시간은 #304
+    // draft 항목에서 출발함 (payout/CLAUDE.md 규모 전제): 후보 생성 시각 하한이 없어 후보 쪽에서 출발하면 운영 이후 쌓인 후보를 매번 다 읽음
+    //   heldFrom 뒤에 만든 스냅샷의 draft 항목만 봄: 스냅샷 표는 실행마다 1줄이라 작고, draft 항목은 UK(snapshot_id, candidate_id) 앞자리로 그 스냅샷들만 읽음
+    //   보류된 후보는 배치마다 다시 들어가 draft까지 가므로 창 안의 draft에 남아 있음 (창 길이와 기준은 PayoutPolicy.HELD_LOOKBACK_DAYS)
     @Override
-    public List<PayoutCandidateItem> findHeldCandidatesBefore(LocalDateTime to) {
+    public List<PayoutCandidateItem> findHeldCandidates(LocalDateTime heldFrom, LocalDateTime to) {
+        BooleanBuilder draftedInWindow = new BooleanBuilder();
+        if (heldFrom != null) {
+            draftedInWindow.and(payoutSellerDraftItem.snapshotId.in(JPAExpressions
+                    .select(payoutSnapshot.id)
+                    .from(payoutSnapshot)
+                    .where(payoutSnapshot.createdAt.goe(heldFrom))));
+        }
         return queryFactory
                 .selectFrom(payoutCandidateItem)
-                .where(payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
-                        unsettledInPeriod(null, to),
-                        JPAExpressions.selectOne()
+                .where(payoutCandidateItem.id.in(JPAExpressions
+                                .select(payoutSellerDraftItem.candidateId)
                                 .from(payoutSellerDraftItem)
-                                .where(payoutSellerDraftItem.candidateId.eq(payoutCandidateItem.id))
-                                .exists(),
+                                .where(draftedInWindow)),
+                        payoutCandidateItem.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID),
+                        unsettledInPeriod(null, to),
                         lockedOrder().not())
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
@@ -225,7 +235,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     //     (INNER JOIN으로 빼면 그 조정은 아무 기록 없이 영영 정산되지 않아 아무도 모름)
     // 원래가 정산됐는지는 원래 후보의 payout_item으로 봄 (LEFT JOIN, candidate_id 유니크라 줄이 늘지 않음)
     // 잠긴 주문은 뺌: 원래가 잠겨 빠지면 조정만 따로 정산되면 안 됨. 멈춘 주문은 부르는 쪽이 뺌 (스냅샷의 다른 조회와 같음)
-    // 미정산 조정만 보므로 보통 몇 건뿐임 (조정은 관리자가 손으로 넣음)
+    // 미정산 조정만 보므로 보통 몇 건뿐임 (조정은 관리자가 손으로 넣음). adjustment_id 인덱스(V202611171437)로 조정만 읽음 (원래 후보 전체를 훑지 않음)
     @Override
     public List<AdjustmentCandidateRow> findUnsettledAdjustments() {
         QPayoutCandidateItem original = new QPayoutCandidateItem("original");
