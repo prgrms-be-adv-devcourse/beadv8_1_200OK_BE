@@ -1,6 +1,8 @@
 package com.ok.wallet.adapter.out.toss;
 
 import com.ok.wallet.application.dto.TossConfirmResult;
+import com.ok.wallet.application.dto.TossPaymentLookupResult;
+import com.ok.wallet.application.dto.TossPaymentStatus;
 import com.ok.wallet.application.port.out.TossPaymentsClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,16 +14,20 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.util.Arrays;
 import java.util.Set;
 
 /**
- * {@link TossPaymentsClient}의 HTTP 구현. 토스페이먼츠 결제 승인 API를 호출한다.
+ * {@link TossPaymentsClient}의 HTTP 구현. 토스페이먼츠 결제 승인·조회 API를 호출한다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class TossPaymentsHttpClient implements TossPaymentsClient {
     private static final String CONFIRM_PATH = "/v1/payments/confirm";
+    private static final String LOOKUP_BY_ORDER_ID_PATH = "/v1/payments/orders/{orderId}";
+    // 조회에서 결제가 없다는 뜻이 분명한 코드는 이것 하나다. 같은 404인 NOT_FOUND는 뜻이 넓어(주소 설정 오류 등) 알 수 없음으로 둔다
+    private static final String PAYMENT_NOT_FOUND_CODE = "NOT_FOUND_PAYMENT";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
     private static final String APPROVED_STATUS = "DONE";
 
@@ -51,13 +57,13 @@ public class TossPaymentsHttpClient implements TossPaymentsClient {
     @Override
     public TossConfirmResult confirm(String paymentKey, String chargeNo, long amount) {
         try {
-            TossConfirmResponse response = tossRestClient.post()
+            TossPaymentResponse response = tossRestClient.post()
                     .uri(CONFIRM_PATH)
                     .header(IDEMPOTENCY_KEY_HEADER, chargeNo)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new TossConfirmRequest(paymentKey, chargeNo, amount))
                     .retrieve()
-                    .body(TossConfirmResponse.class);
+                    .body(TossPaymentResponse.class);
             return toApprovedOrUnknown(response, paymentKey, chargeNo, amount);
         } catch (HttpClientErrorException e) {
             return fromClientError(e, chargeNo);
@@ -71,9 +77,58 @@ public class TossPaymentsHttpClient implements TossPaymentsClient {
         }
     }
 
+    @Override
+    public TossPaymentLookupResult findPayment(String chargeNo) {
+        try {
+            TossPaymentResponse response = tossRestClient.get()
+                    .uri(LOOKUP_BY_ORDER_ID_PATH, chargeNo)
+                    .retrieve()
+                    .body(TossPaymentResponse.class);
+            return toFoundOrUnknown(response, chargeNo);
+        } catch (HttpClientErrorException e) {
+            TossErrorResponse error = e.getResponseBodyAs(TossErrorResponse.class);
+            if (error != null && PAYMENT_NOT_FOUND_CODE.equals(error.code())) {
+                return new TossPaymentLookupResult.NotFound();
+            }
+            return lookupUnknown(chargeNo, "토스 조회 오류 " + e.getStatusCode().value()
+                    + " " + (error == null ? null : error.code()));
+        } catch (HttpServerErrorException e) {
+            return lookupUnknown(chargeNo, "토스 서버 오류 " + e.getStatusCode().value());
+        } catch (ResourceAccessException e) {
+            return lookupUnknown(chargeNo, "토스 응답 없음: " + e.getMessage());
+        } catch (RestClientException e) {
+            return lookupUnknown(chargeNo, "토스 응답 처리 실패: " + e.getMessage());
+        }
+    }
+
+    // 다른 충전 건의 결제이거나 모르는 상태면 그 답으로 충전 건을 바꾸지 않는다
+    private TossPaymentLookupResult toFoundOrUnknown(TossPaymentResponse response, String chargeNo) {
+        if (response == null || !chargeNo.equals(response.orderId()) || response.totalAmount() == null) {
+            return lookupUnknown(chargeNo, "조회 응답이 충전 건과 맞지 않음. orderId="
+                    + (response == null ? null : response.orderId()));
+        }
+        TossPaymentStatus status = toStatus(response.status());
+        if (status == null) {
+            return lookupUnknown(chargeNo, "모르는 결제 상태 " + response.status());
+        }
+        return new TossPaymentLookupResult.Found(response.paymentKey(), status, response.totalAmount());
+    }
+
+    private static TossPaymentStatus toStatus(String status) {
+        return Arrays.stream(TossPaymentStatus.values())
+                .filter(value -> value.name().equals(status))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private TossPaymentLookupResult lookupUnknown(String chargeNo, String reason) {
+        log.warn("토스 결제 조회 결과를 알 수 없어 다음에 다시 확인합니다. chargeNo={}, reason={}", chargeNo, reason);
+        return new TossPaymentLookupResult.Unknown(reason);
+    }
+
     // 응답은 시스템이 넘긴 값이라 이 경계에서 확인한다. 요청과 다르면 승인으로 믿지 않는다.
     // 결제 키는 잔액 반영 근거 키(CHARGE:{paymentKey})가 되므로 주문 번호·금액과 같은 수준으로 대조한다.
-    private TossConfirmResult toApprovedOrUnknown(TossConfirmResponse response, String paymentKey,
+    private TossConfirmResult toApprovedOrUnknown(TossPaymentResponse response, String paymentKey,
                                                   String chargeNo, long amount) {
         if (response == null
                 || !paymentKey.equals(response.paymentKey())

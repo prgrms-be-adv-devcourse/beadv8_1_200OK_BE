@@ -1,8 +1,13 @@
 package com.ok.wallet.adapter.out.toss;
 
 import com.ok.wallet.application.dto.TossConfirmResult;
+import com.ok.wallet.application.dto.TossPaymentLookupResult;
+import com.ok.wallet.application.dto.TossPaymentStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -10,6 +15,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.net.SocketTimeoutException;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
@@ -28,6 +34,7 @@ class TossPaymentsHttpClientTest {
     private static final String CONFIRM_URL = BASE_URL + "/v1/payments/confirm";
     private static final String PAYMENT_KEY = "payment-key-1";
     private static final String CHARGE_NO = "CHG_test-charge-no";
+    private static final String LOOKUP_URL = BASE_URL + "/v1/payments/orders/" + CHARGE_NO;
     private static final long AMOUNT = 10_000;
 
     private MockRestServiceServer server;
@@ -232,5 +239,117 @@ class TossPaymentsHttpClientTest {
 
         assertThat(client.confirm(PAYMENT_KEY, CHARGE_NO, AMOUNT))
                 .isInstanceOf(TossConfirmResult.Rejected.class);
+    }
+
+    // 결제 조회
+
+    @Test
+    void 결제가_있으면_결제_키와_상태와_금액을_돌려주고_충전_번호로_조회한다() {
+        // given
+        server.expect(requestTo(LOOKUP_URL))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(approvedResponse(CHARGE_NO, "DONE", AMOUNT), MediaType.APPLICATION_JSON));
+
+        // when
+        TossPaymentLookupResult sut = client.findPayment(CHARGE_NO);
+
+        // then
+        assertThat(sut).isEqualTo(new TossPaymentLookupResult.Found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @MethodSource("토스_결제_상태")
+    void 토스_문서의_결제_상태는_모두_그대로_돌려준다(TossPaymentStatus status) {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withSuccess(approvedResponse(CHARGE_NO, status.name(), AMOUNT), MediaType.APPLICATION_JSON));
+
+        assertThat(client.findPayment(CHARGE_NO))
+                .isEqualTo(new TossPaymentLookupResult.Found(PAYMENT_KEY, status, AMOUNT));
+    }
+
+    static Stream<TossPaymentStatus> 토스_결제_상태() {
+        return Stream.of(TossPaymentStatus.values());
+    }
+
+    @Test
+    void 결제가_없다는_코드면_결제_없음으로_분류한다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다.")));
+
+        assertThat(client.findPayment(CHARGE_NO)).isEqualTo(new TossPaymentLookupResult.NotFound());
+    }
+
+    @Test
+    void 같은_404여도_뜻이_넓은_코드는_알_수_없음으로_분류한다() {
+        // 주소 설정 오류에서도 나올 수 있어, 결제 없음으로 보면 승인된 충전을 실패로 바꿀 수 있다
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("NOT_FOUND", "존재하지 않는 정보 입니다.")));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    @ParameterizedTest
+    @MethodSource("결제_없음이_아닌_조회_오류")
+    void 결제_없음이_아닌_조회_오류는_알_수_없음으로_분류한다(HttpStatus status, String code) {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(status)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse(code, "오류")));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    static Stream<Arguments> 결제_없음이_아닌_조회_오류() {
+        return Stream.of(
+                Arguments.of(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED_KEY"),
+                Arguments.of(HttpStatus.FORBIDDEN, "FORBIDDEN_CONSECUTIVE_REQUEST"),
+                Arguments.of(HttpStatus.INTERNAL_SERVER_ERROR, "FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING"));
+    }
+
+    @Test
+    void 조회_오류_본문을_읽을_수_없으면_알_수_없음으로_분류한다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    @Test
+    void 조회_응답_타임아웃은_알_수_없음으로_분류한다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withException(new SocketTimeoutException("Read timed out")));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    @Test
+    void 조회_응답의_주문_번호가_충전_번호와_다르면_알_수_없음으로_분류한다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withSuccess(approvedResponse("CHG_other", "DONE", AMOUNT), MediaType.APPLICATION_JSON));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    @Test
+    void 조회_응답의_상태가_토스_문서에_없는_값이면_알_수_없음으로_분류한다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withSuccess(approvedResponse(CHARGE_NO, "SOMETHING_NEW", AMOUNT), MediaType.APPLICATION_JSON));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    @Test
+    void 조회_응답에_금액이_없으면_알_수_없음으로_분류한다() {
+        server.expect(requestTo(LOOKUP_URL))
+                .andRespond(withSuccess("""
+                    {"paymentKey": "%s", "orderId": "%s", "status": "DONE"}
+                    """.formatted(PAYMENT_KEY, CHARGE_NO), MediaType.APPLICATION_JSON));
+
+        assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
     }
 }
