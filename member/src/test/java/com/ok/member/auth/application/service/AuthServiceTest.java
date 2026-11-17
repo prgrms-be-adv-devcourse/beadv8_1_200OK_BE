@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -45,10 +46,10 @@ class AuthServiceTest {
     // Facade가 비밀번호 확인에 쓴 값. 저장된 회원 해시(ENCODED_PASSWORD)와 같다
     private static final LoginCredential CREDENTIAL = new LoginCredential(MEMBER_ID, ENCODED_PASSWORD);
     // 회원 도메인이 판단해 넘겨주는 계정 상태. 일반 회원(관리자 아님)이다
-    private static final AuthAccount ACTIVE = new AuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD);
-    private static final AuthAccount WITHDRAWN = new AuthAccount(MEMBER_ID, false, true, false, ENCODED_PASSWORD);
-    private static final AuthAccount SUSPENDED = new AuthAccount(MEMBER_ID, false, false, true, ENCODED_PASSWORD);
-    private static final AuthAccount ADMIN = new AuthAccount(MEMBER_ID, true, false, false, ENCODED_PASSWORD);
+    private static final AuthAccount ACTIVE = new AuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD, 0L);
+    private static final AuthAccount WITHDRAWN = new AuthAccount(MEMBER_ID, false, true, false, ENCODED_PASSWORD, 0L);
+    private static final AuthAccount SUSPENDED = new AuthAccount(MEMBER_ID, false, false, true, ENCODED_PASSWORD, 0L);
+    private static final AuthAccount ADMIN = new AuthAccount(MEMBER_ID, true, false, false, ENCODED_PASSWORD, 0L);
 
     @Mock
     MemberCredentialReader memberCredentialReader;
@@ -79,7 +80,7 @@ class AuthServiceTest {
         Instant refreshExpiresAt = NOW.plus(Duration.ofDays(14));
         given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
                 .willReturn(new AccessToken("access-token", accessExpiresAt));
-        given(refreshTokenService.issue(MEMBER_ID))
+        given(refreshTokenService.issue(MEMBER_ID, 0L))
                 .willReturn(new IssuedRefreshToken("refresh-token", refreshExpiresAt));
 
         // when
@@ -102,7 +103,7 @@ class AuthServiceTest {
         given(sellerApprovalReader.isApprovedSeller(MEMBER_ID)).willReturn(true);
         given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER, TokenRoles.SELLER)))
                 .willReturn(new AccessToken("seller-access-token", NOW.plus(Duration.ofMinutes(30))));
-        given(refreshTokenService.issue(MEMBER_ID))
+        given(refreshTokenService.issue(MEMBER_ID, 0L))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
 
         // when
@@ -118,7 +119,7 @@ class AuthServiceTest {
         given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(ADMIN));
         given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.ADMIN)))
                 .willReturn(new AccessToken("admin-access-token", NOW.plus(Duration.ofMinutes(30))));
-        given(refreshTokenService.issue(MEMBER_ID))
+        given(refreshTokenService.issue(MEMBER_ID, 0L))
                 .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
 
         // when
@@ -137,7 +138,7 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.issueLoginTokens(CREDENTIAL))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
-        then(refreshTokenService).should(never()).issue(any());
+        then(refreshTokenService).should(never()).issue(any(), anyLong());
     }
 
     @Test
@@ -150,7 +151,7 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.issueLoginTokens(staleCredential))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
-        then(refreshTokenService).should(never()).issue(any());
+        then(refreshTokenService).should(never()).issue(any(), anyLong());
     }
 
     @ParameterizedTest
@@ -164,7 +165,7 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.issueLoginTokens(CREDENTIAL))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(expected));
-        then(refreshTokenService).should(never()).issue(any());
+        then(refreshTokenService).should(never()).issue(any(), anyLong());
     }
 
     static Stream<Arguments> 로그인할_수_없는_회원_상태() {
@@ -198,7 +199,7 @@ class AuthServiceTest {
             softly.assertThat(sut.refreshTokenExpiresAt()).isEqualTo(refreshExpiresAt);
         });
         // 재발급은 같은 세션을 회전한다. 새 세션을 만들지 않는다
-        then(refreshTokenService).should(never()).issue(any());
+        then(refreshTokenService).should(never()).issue(any(), anyLong());
     }
 
     @Test
@@ -233,6 +234,38 @@ class AuthServiceTest {
         then(accessTokenIssuer).should(never()).issue(any(), any());
     }
 
+    @Test
+    void 로그인하면_회원의_지금_토큰_버전으로_세션을_연다() {
+        // given
+        AuthAccount account = new AuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD, 3L);
+        given(memberCredentialReader.findAuthAccount(MEMBER_ID)).willReturn(Optional.of(account));
+        given(accessTokenIssuer.issue(MEMBER_ID, List.of(TokenRoles.BUYER)))
+                .willReturn(new AccessToken("access-token", NOW.plus(Duration.ofMinutes(30))));
+        given(refreshTokenService.issue(MEMBER_ID, 3L))
+                .willReturn(new IssuedRefreshToken("refresh-token", NOW.plus(Duration.ofDays(14))));
+
+        // when
+        TokenResult sut = authService.issueLoginTokens(CREDENTIAL);
+
+        // then
+        assertThat(sut.refreshToken()).isEqualTo("refresh-token");
+    }
+
+    @Test
+    void 세션의_토큰_버전이_회원의_지금_버전과_다르면_INVALID_REFRESH_TOKEN이_발생하고_새_토큰을_발급하지_않는다() {
+        // given: 버전 0으로 연 세션인데 비밀번호를 바꿔 회원 버전이 1이 됐다
+        given(refreshTokenService.rotate("old-refresh-token"))
+                .willReturn(rotated(new IssuedRefreshToken("new-refresh-token", NOW.plus(Duration.ofDays(14)))));
+        given(memberCredentialReader.findAuthAccount(MEMBER_ID))
+                .willReturn(Optional.of(new AuthAccount(MEMBER_ID, false, false, false, ENCODED_PASSWORD, 1L)));
+
+        // when & then
+        assertThatThrownBy(() -> authService.reissue(new TokenReissueCommand("old-refresh-token")))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
+        then(accessTokenIssuer).should(never()).issue(any(), any());
+    }
+
     @ParameterizedTest
     @MethodSource("재발급할_수_없는_회원_상태")
     void 재발급할_수_없는_상태의_회원은_예외가_발생하고_새_토큰을_발급하지_않는다(
@@ -258,7 +291,7 @@ class AuthServiceTest {
     }
 
     private static RotatedRefreshToken rotated(IssuedRefreshToken issued) {
-        return new RotatedRefreshToken(MEMBER_ID, issued);
+        return new RotatedRefreshToken(MEMBER_ID, 0L, issued);
     }
 
 }

@@ -63,12 +63,12 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    void 발급하면_원문을_반환하고_저장소에는_원문이_아닌_해시를_저장한다() {
+    void 발급하면_원문을_반환하고_저장소에는_원문이_아닌_해시와_로그인_당시_토큰_버전을_저장한다() {
         // given
         Long memberId = 1L;
 
         // when
-        IssuedRefreshToken sut = refreshTokenService.issue(memberId);
+        IssuedRefreshToken sut = refreshTokenService.issue(memberId, 7L);
 
         // then
         ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
@@ -81,13 +81,14 @@ class RefreshTokenServiceTest {
             softly.assertThat(saved.getTokenHash()).isNotEqualTo(sut.value());
             softly.assertThat(saved.getTokenHash()).isEqualTo(TokenHasher.sha256Hex(sut.value()));
             softly.assertThat(saved.getExpiresAt()).isEqualTo(LocalDateTime.ofInstant(sut.expiresAt(), ZONE));
+            softly.assertThat(saved.getTokenVersion()).isEqualTo(7L);
         });
     }
 
     @Test
     void 원문은_URL에_안전한_문자로_된_43자_문자열이다() {
         // when
-        IssuedRefreshToken sut = refreshTokenService.issue(1L);
+        IssuedRefreshToken sut = refreshTokenService.issue(1L, 0L);
 
         // then
         // 32바이트를 패딩 없는 Base64URL로 인코딩하면 43자다. 요청 검증이 이 길이 상수를 쓰므로 계산식이 실제 인코딩 결과와 맞는지 확인한다
@@ -99,7 +100,7 @@ class RefreshTokenServiceTest {
     @Test
     void 만료_일시는_발급_시각으로부터_유효기간_뒤이고_마이크로초_단위로_잘린다() {
         // when
-        IssuedRefreshToken sut = refreshTokenService.issue(1L);
+        IssuedRefreshToken sut = refreshTokenService.issue(1L, 0L);
 
         // then
         // 2026-10-12 14:00:00.123456789 + 14일 → 마이크로초 단위로 잘려 .123456
@@ -110,8 +111,8 @@ class RefreshTokenServiceTest {
     @Test
     void 발급할_때마다_다른_토큰이_만들어진다() {
         // when
-        IssuedRefreshToken first = refreshTokenService.issue(1L);
-        IssuedRefreshToken second = refreshTokenService.issue(1L);
+        IssuedRefreshToken first = refreshTokenService.issue(1L, 0L);
+        IssuedRefreshToken second = refreshTokenService.issue(1L, 0L);
 
         // then
         ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
@@ -130,7 +131,7 @@ class RefreshTokenServiceTest {
         Long memberId = null;
 
         // when & then
-        assertThatThrownBy(() -> refreshTokenService.issue(memberId))
+        assertThatThrownBy(() -> refreshTokenService.issue(memberId, 0L))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("memberId는 null일 수 없습니다.");
         verify(refreshTokenRepository, never()).save(any());
@@ -150,6 +151,9 @@ class RefreshTokenServiceTest {
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.memberId()).isEqualTo(1L);
+            // 세션의 버전은 회전해도 로그인 당시 값 그대로다. 바뀌면 폐기 전에 연 세션이 다시 살아난다
+            softly.assertThat(sut.tokenVersion()).isEqualTo(4L);
+            softly.assertThat(stored.getTokenVersion()).isEqualTo(4L);
             softly.assertThat(stored.getTokenHash()).isEqualTo(TokenHasher.sha256Hex(sut.issued().value()));
             // 2026-10-12 14:00:00.123456789 → 마이크로초 단위로 잘려 .123456
             softly.assertThat(stored.getRotatedAt()).isEqualTo(LocalDateTime.of(2026, 10, 12, 14, 0, 0, 123_456_000));
@@ -235,7 +239,7 @@ class RefreshTokenServiceTest {
 
     // 저장된 토큰 기록을 흉내 낸다. 기본 키로 잠그므로 id를 넣어 둔다
     private RefreshToken storedToken(Long id, LocalDateTime expiresAt) {
-        RefreshToken token = RefreshToken.create(1L, TokenHasher.sha256Hex("raw-token"), expiresAt);
+        RefreshToken token = RefreshToken.create(1L, TokenHasher.sha256Hex("raw-token"), expiresAt, 4L);
         ReflectionTestUtils.setField(token, "id", id);
         return token;
     }

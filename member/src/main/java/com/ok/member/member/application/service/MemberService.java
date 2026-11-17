@@ -55,7 +55,7 @@ public class MemberService implements MemberInfoUseCase, MemberAuthAccountUseCas
     public Optional<MemberAuthAccount> findAuthAccount(Long memberId) {
         return memberRepository.findById(memberId)
                 .map(member -> new MemberAuthAccount(member.getId(), member.isAdmin(), member.isWithdrawn(),
-                        member.isSuspended(), member.getPassword()));
+                        member.isSuspended(), member.getPassword(), member.getTokenVersion()));
     }
 
     /**

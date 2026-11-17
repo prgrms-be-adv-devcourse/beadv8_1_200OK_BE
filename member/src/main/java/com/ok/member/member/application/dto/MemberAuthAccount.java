@@ -5,13 +5,15 @@ package com.ok.member.member.application.dto;
  * 상태는 회원 도메인이 판단한 결과만 넘기고 회원 유형·상태 enum은 넘기지 않아, 인증이 판단 규칙을 따로 갖지 않게 한다.
  *
  * @param passwordHash 지금 저장된 비밀번호 해시. 비밀번호를 확인한 뒤 바뀌었는지 비교하는 데 쓴다
+ * @param tokenVersion 회원의 지금 토큰 버전. 이 값보다 낮은 버전으로 발급된 토큰은 거부된다
  */
 public record MemberAuthAccount(
         Long memberId,
         boolean admin,
         boolean withdrawn,
         boolean suspended,
-        String passwordHash
+        String passwordHash,
+        long tokenVersion
 ) {
 
     /**
@@ -19,8 +21,8 @@ public record MemberAuthAccount(
      */
     @Override
     public String toString() {
-        return "MemberAuthAccount[memberId=%d, admin=%s, withdrawn=%s, suspended=%s, passwordHash=****]"
-                .formatted(memberId, admin, withdrawn, suspended);
+        return "MemberAuthAccount[memberId=%d, admin=%s, withdrawn=%s, suspended=%s, passwordHash=****, tokenVersion=%d]"
+                .formatted(memberId, admin, withdrawn, suspended, tokenVersion);
     }
 
 }

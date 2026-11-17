@@ -58,17 +58,18 @@ public class RefreshTokenService {
     /**
      * 새 로그인 세션의 Refresh Token을 발급해 해시를 저장하고, 원문을 반환한다.
      *
-     * @param memberId 토큰을 발급받을 회원 id
+     * @param memberId     토큰을 발급받을 회원 id
+     * @param tokenVersion 로그인할 때 읽은 회원의 토큰 버전. 세션이 끝날 때까지 행에 남아 재발급마다 비교된다
      * @return 토큰 원문과 만료 일시. 원문은 이 반환값으로만 얻을 수 있다.
      */
     @Transactional
-    public IssuedRefreshToken issue(Long memberId) {
+    public IssuedRefreshToken issue(Long memberId, long tokenVersion) {
         Objects.requireNonNull(memberId, "memberId는 null일 수 없습니다.");
 
         String tokenValue = generateTokenValue();
         Instant expiresAt = expiresAtFrom(clock.instant());
-        refreshTokenRepository.save(
-                RefreshToken.create(memberId, TokenHasher.sha256Hex(tokenValue), toClockZone(expiresAt)));
+        refreshTokenRepository.save(RefreshToken.create(memberId, TokenHasher.sha256Hex(tokenValue),
+                toClockZone(expiresAt), tokenVersion));
 
         return new IssuedRefreshToken(tokenValue, expiresAt);
     }
@@ -81,7 +82,7 @@ public class RefreshTokenService {
      * 호출한 쪽의 트랜잭션에 참여하므로, 이후 처리(회원 확인)가 실패하면 회전도 함께 취소된다.
      *
      * @param tokenValue 클라이언트가 보낸 토큰 원문
-     * @return 새 토큰과 토큰을 발급받은 회원 id
+     * @return 새 토큰과 토큰을 발급받은 회원 id, 세션의 토큰 버전
      * @throws RestApiException 없거나 만료되었거나 이미 사용한 토큰이면 {@code INVALID_REFRESH_TOKEN}
      */
     @Transactional
@@ -112,7 +113,8 @@ public class RefreshTokenService {
         refreshToken.rotate(TokenHasher.sha256Hex(newTokenValue),
                 toClockZone(now.truncatedTo(ChronoUnit.MICROS)), toClockZone(expiresAt));
 
-        return new RotatedRefreshToken(refreshToken.getMemberId(), new IssuedRefreshToken(newTokenValue, expiresAt));
+        return new RotatedRefreshToken(refreshToken.getMemberId(), refreshToken.getTokenVersion(),
+                new IssuedRefreshToken(newTokenValue, expiresAt));
     }
 
     /**

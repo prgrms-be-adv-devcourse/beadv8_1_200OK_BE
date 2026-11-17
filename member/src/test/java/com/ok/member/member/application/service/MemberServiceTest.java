@@ -150,7 +150,7 @@ class MemberServiceTest {
         Optional<MemberAuthAccount> sut = memberService.findAuthAccount(MEMBER_ID);
 
         // then
-        assertThat(sut).contains(new MemberAuthAccount(MEMBER_ID, false, withdrawn, suspended, "{bcrypt}encoded"));
+        assertThat(sut).contains(new MemberAuthAccount(MEMBER_ID, false, withdrawn, suspended, "{bcrypt}encoded", 0L));
     }
 
     static Stream<Arguments> 회원_상태별_계정_상태() {

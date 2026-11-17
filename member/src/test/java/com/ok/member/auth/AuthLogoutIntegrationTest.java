@@ -79,7 +79,7 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
     void 로그아웃하면_204를_반환하고_그_세션의_행을_지운다() throws Exception {
         // given
         Member member = saveMember();
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         ResultActions result = performLogout(refreshToken);
@@ -93,7 +93,7 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
     void 로그아웃한_Refresh_Token으로_재발급하면_401을_반환한다() throws Exception {
         // given
         Member member = saveMember();
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
         performLogout(refreshToken).andExpect(status().isNoContent());
 
         // when
@@ -108,8 +108,8 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
     void 한_기기에서_로그아웃해도_같은_회원의_다른_기기_세션은_재발급할_수_있다() throws Exception {
         // given
         Member member = saveMember();
-        String pc = refreshTokenService.issue(member.getId()).value();
-        String phone = refreshTokenService.issue(member.getId()).value();
+        String pc = refreshTokenService.issue(member.getId(), 0L).value();
+        String phone = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         performLogout(pc).andExpect(status().isNoContent());
@@ -138,7 +138,7 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
         Member member = saveMember();
         String raw = "expired-refresh-token";
         refreshTokenRepository.saveAndFlush(RefreshToken.create(
-                member.getId(), TokenHasher.sha256Hex(raw), LocalDateTime.now(clock).minusDays(1)));
+                member.getId(), TokenHasher.sha256Hex(raw), LocalDateTime.now(clock).minusDays(1), 0L));
 
         // when
         ResultActions result = performLogout(raw);
@@ -153,7 +153,7 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
     void 같은_Refresh_Token으로_두_번_로그아웃해도_모두_204를_반환한다() throws Exception {
         // given
         Member member = saveMember();
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
         performLogout(refreshToken).andExpect(status().isNoContent());
 
         // when
@@ -167,7 +167,7 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
     void 만료된_Access_Token을_붙여_보내도_로그아웃이_처리된다() throws Exception {
         // given
         Member member = saveMember();
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         ResultActions result = mockMvc.perform(post("/api/v1/auth/logout")
@@ -185,7 +185,7 @@ class AuthLogoutIntegrationTest extends AbstractIntegrationTest {
     void 형식이_틀린_요청이면_422를_반환하고_세션은_남는다(String requestBody) throws Exception {
         // given
         Member member = saveMember();
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         ResultActions result = mockMvc.perform(post("/api/v1/auth/logout")

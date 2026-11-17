@@ -166,7 +166,7 @@ class RefreshTokenSessionIntegrationTest extends AbstractIntegrationTest {
         LocalDateTime now = LocalDateTime.now(clock);
         int expiredCount = 50;
         IntStream.range(0, expiredCount).forEach(i -> refreshTokenRepository.save(
-                RefreshToken.create(-1L, TokenHasher.sha256Hex("abandoned-" + i), now.minusDays(1).minusMinutes(i))));
+                RefreshToken.create(-1L, TokenHasher.sha256Hex("abandoned-" + i), now.minusDays(1).minusMinutes(i), 0L)));
         refreshTokenRepository.flush();
 
         // when

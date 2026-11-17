@@ -80,7 +80,9 @@ public class AuthService implements TokenReissueUseCase, LogoutUseCase {
         if (account.suspended()) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);
         }
-        return createTokens(account, refreshTokenService.issue(account.memberId()));
+        // 이 트랜잭션의 회원 조회는 잠금 없는 스냅샷이라, 비밀번호 변경이 커밋되기 직전에 읽었다면 옛 버전이 세션에 남는다.
+        // 그런 세션은 다음 재발급에서 회원의 새 버전과 달라 거부되므로 여기서 따로 막지 않는다
+        return createTokens(account, refreshTokenService.issue(account.memberId(), account.tokenVersion()));
     }
 
     /**
@@ -97,7 +99,8 @@ public class AuthService implements TokenReissueUseCase, LogoutUseCase {
      * <p>이 트랜잭션은 사용한 토큰의 행 잠금을 끝까지 쥐고 있다. 같은 토큰의 다른 요청이 그동안 기다리므로,
      * 외부 호출이나 비용이 큰 작업(bcrypt 등)을 이 안에 넣지 않는다.
      *
-     * @throws RestApiException 없거나 만료되었거나 이미 사용한 토큰이면, 또는 회원이 없거나 탈퇴했으면 {@code INVALID_REFRESH_TOKEN},
+     * @throws RestApiException 없거나 만료되었거나 이미 사용한 토큰이면, 회원이 없거나 탈퇴했으면,
+     *                          또는 비밀번호 변경 등으로 토큰 버전이 올라 폐기된 세션이면 {@code INVALID_REFRESH_TOKEN},
      *                          정지된 회원이면 {@code MEMBER_SUSPENDED}
      */
     @Override
@@ -105,9 +108,12 @@ public class AuthService implements TokenReissueUseCase, LogoutUseCase {
     public TokenResult reissue(TokenReissueCommand command) {
         RotatedRefreshToken rotated = refreshTokenService.rotate(command.refreshToken());
 
-        // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다
+        // 탈퇴 회원은 로그인과 같이 "없는 회원"으로 취급해, 토큰이 실패한 이유를 구분해 드러내지 않는다.
+        // 세션의 버전이 회원의 지금 버전과 다르면 비밀번호 변경 등으로 폐기된 세션이다. 클라이언트가 할 일은 똑같이 다시 로그인이라
+        // 같은 코드로 응답한다. 예외로 트랜잭션이 롤백되어 회전도 취소되지만, 그 행은 버전이 맞지 않아 다시 쓸 수 없고 만료 뒤 정리된다
         AuthAccount account = memberCredentialReader.findAuthAccount(rotated.memberId())
                 .filter(found -> !found.withdrawn())
+                .filter(found -> found.tokenVersion() == rotated.tokenVersion())
                 .orElseThrow(() -> new RestApiException(AuthErrorCode.INVALID_REFRESH_TOKEN));
         if (account.suspended()) {
             throw new RestApiException(AuthErrorCode.MEMBER_SUSPENDED);

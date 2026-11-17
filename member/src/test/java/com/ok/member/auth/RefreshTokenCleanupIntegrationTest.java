@@ -68,6 +68,6 @@ class RefreshTokenCleanupIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void save(String rawValue, LocalDateTime expiresAt) {
-        refreshTokenRepository.saveAndFlush(RefreshToken.create(1L, TokenHasher.sha256Hex(rawValue), expiresAt));
+        refreshTokenRepository.saveAndFlush(RefreshToken.create(1L, TokenHasher.sha256Hex(rawValue), expiresAt, 0L));
     }
 }

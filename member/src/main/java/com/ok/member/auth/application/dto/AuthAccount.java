@@ -5,13 +5,15 @@ package com.ok.member.auth.application.dto;
  * 회원 하위 도메인의 타입을 그대로 쓰지 않고 인증이 자기 타입을 가져, 회원 쪽 연동 방식이 바뀌어도 서비스가 바뀌지 않게 한다.
  *
  * @param passwordHash 지금 저장된 비밀번호 해시. 비밀번호를 확인한 뒤 바뀌었는지 비교하는 데 쓴다
+ * @param tokenVersion 회원의 지금 토큰 버전. 새 세션에 남기고, 재발급할 때 세션의 버전과 비교한다
  */
 public record AuthAccount(
         Long memberId,
         boolean admin,
         boolean withdrawn,
         boolean suspended,
-        String passwordHash
+        String passwordHash,
+        long tokenVersion
 ) {
 
     /**
@@ -19,8 +21,8 @@ public record AuthAccount(
      */
     @Override
     public String toString() {
-        return "AuthAccount[memberId=%d, admin=%s, withdrawn=%s, suspended=%s, passwordHash=****]"
-                .formatted(memberId, admin, withdrawn, suspended);
+        return "AuthAccount[memberId=%d, admin=%s, withdrawn=%s, suspended=%s, passwordHash=****, tokenVersion=%d]"
+                .formatted(memberId, admin, withdrawn, suspended, tokenVersion);
     }
 
 }

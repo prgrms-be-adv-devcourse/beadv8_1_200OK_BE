@@ -44,7 +44,7 @@ public class MemberAuthAdapter implements MemberCredentialReader, SellerApproval
 
     private static AuthAccount toAuthAccount(MemberAuthAccount account) {
         return new AuthAccount(account.memberId(), account.admin(), account.withdrawn(), account.suspended(),
-                account.passwordHash());
+                account.passwordHash(), account.tokenVersion());
     }
 
 }

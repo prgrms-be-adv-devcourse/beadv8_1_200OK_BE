@@ -19,7 +19,7 @@ class RefreshTokenTest {
     @Test
     void 생성하면_회원_id와_해시와_만료_일시가_저장된다() {
         // when
-        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT, 0L);
 
         // then
         assertThat(sut).isNotNull();
@@ -33,7 +33,7 @@ class RefreshTokenTest {
     @Test
     void 만료_시각_이전이면_만료되지_않았다() {
         // given
-        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT, 0L);
 
         // when
         boolean expired = sut.isExpired(EXPIRES_AT.minusNanos(1));
@@ -46,7 +46,7 @@ class RefreshTokenTest {
     @MethodSource("만료_시각과_같거나_지난_시각")
     void 만료_시각과_같거나_지나면_만료되었다(LocalDateTime now) {
         // given
-        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT, 0L);
 
         // when
         boolean expired = sut.isExpired(now);
@@ -63,7 +63,7 @@ class RefreshTokenTest {
     @MethodSource("필수값이_null인_입력")
     void 필수값이_null이면_생성할_수_없다(Long memberId, String tokenHash, LocalDateTime expiresAt, String message) {
         // when & then
-        assertThatThrownBy(() -> RefreshToken.create(memberId, tokenHash, expiresAt))
+        assertThatThrownBy(() -> RefreshToken.create(memberId, tokenHash, expiresAt, 0L))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage(message);
     }
@@ -79,7 +79,7 @@ class RefreshTokenTest {
     @Test
     void 회전하면_새_해시와_회전_일시와_만료_일시로_바뀐다() {
         // given
-        RefreshToken sut = RefreshToken.create(1L, "old-hash", EXPIRES_AT);
+        RefreshToken sut = RefreshToken.create(1L, "old-hash", EXPIRES_AT, 0L);
         LocalDateTime rotatedAt = EXPIRES_AT.minusDays(1);
         LocalDateTime newExpiresAt = rotatedAt.plusDays(14);
 
@@ -98,7 +98,7 @@ class RefreshTokenTest {
     @Test
     void 생성만_하면_회전_일시가_없다() {
         // when
-        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT, 0L);
 
         // then
         assertThat(sut.getRotatedAt()).isNull();
@@ -109,7 +109,7 @@ class RefreshTokenTest {
     void 회전_필수값이_null이면_회전하지_않는다(String newTokenHash, LocalDateTime rotatedAt, LocalDateTime newExpiresAt,
                                     String message) {
         // given
-        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT);
+        RefreshToken sut = RefreshToken.create(1L, "hash", EXPIRES_AT, 0L);
 
         // when & then
         assertThatThrownBy(() -> sut.rotate(newTokenHash, rotatedAt, newExpiresAt))

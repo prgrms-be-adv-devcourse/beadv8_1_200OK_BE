@@ -59,7 +59,7 @@ class MemberAuthAdapterTest {
     void 계정_상태를_필드마다_그대로_옮긴다(boolean admin, boolean withdrawn, boolean suspended) {
         // given
         given(memberAuthAccountUseCase.findAuthAccount(MEMBER_ID))
-                .willReturn(Optional.of(new MemberAuthAccount(MEMBER_ID, admin, withdrawn, suspended, "{bcrypt}hash")));
+                .willReturn(Optional.of(new MemberAuthAccount(MEMBER_ID, admin, withdrawn, suspended, "{bcrypt}hash", 3L)));
 
         // when
         AuthAccount sut = memberAuthAdapter.findAuthAccount(MEMBER_ID).orElseThrow();
@@ -72,6 +72,7 @@ class MemberAuthAdapterTest {
             softly.assertThat(sut.withdrawn()).isEqualTo(withdrawn);
             softly.assertThat(sut.suspended()).isEqualTo(suspended);
             softly.assertThat(sut.passwordHash()).isEqualTo("{bcrypt}hash");
+            softly.assertThat(sut.tokenVersion()).isEqualTo(3L);
         });
     }
 

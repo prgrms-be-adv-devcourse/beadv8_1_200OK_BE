@@ -48,7 +48,7 @@ class RefreshTokenIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 발급한_토큰은_원문의_해시로_조회되고_원문으로는_조회되지_않는다() {
         // when
-        IssuedRefreshToken issued = refreshTokenService.issue(MEMBER_ID);
+        IssuedRefreshToken issued = refreshTokenService.issue(MEMBER_ID, 0L);
 
         // then
         RefreshToken sut = refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(issued.value()))
@@ -66,8 +66,8 @@ class RefreshTokenIntegrationTest extends AbstractIntegrationTest {
     @Test
     void 같은_회원이_여러_번_발급받으면_토큰이_각각_저장된다() {
         // when
-        refreshTokenService.issue(MEMBER_ID);
-        refreshTokenService.issue(MEMBER_ID);
+        refreshTokenService.issue(MEMBER_ID, 0L);
+        refreshTokenService.issue(MEMBER_ID, 0L);
 
         // then
         assertThat(refreshTokenRepository.count()).isEqualTo(2);
@@ -90,9 +90,9 @@ class RefreshTokenIntegrationTest extends AbstractIntegrationTest {
         // given
         LocalDateTime now = LocalDateTime.of(2026, 11, 15, 12, 0);
         RefreshToken valid = refreshTokenRepository.save(
-                RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("valid"), now.plusNanos(1_000)));
-        refreshTokenRepository.save(RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("at-expiry"), now));
-        refreshTokenRepository.save(RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("expired"), now.minusDays(1)));
+                RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("valid"), now.plusNanos(1_000), 0L));
+        refreshTokenRepository.save(RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("at-expiry"), now, 0L));
+        refreshTokenRepository.save(RefreshToken.create(MEMBER_ID, TokenHasher.sha256Hex("expired"), now.minusDays(1), 0L));
         refreshTokenRepository.flush();
 
         // when & then
@@ -109,6 +109,6 @@ class RefreshTokenIntegrationTest extends AbstractIntegrationTest {
 
     private RefreshToken token(Long memberId, String rawValue) {
         LocalDateTime expiresAt = LocalDateTime.now().plusDays(14).truncatedTo(ChronoUnit.MICROS);
-        return RefreshToken.create(memberId, TokenHasher.sha256Hex(rawValue), expiresAt);
+        return RefreshToken.create(memberId, TokenHasher.sha256Hex(rawValue), expiresAt, 0L);
     }
 }

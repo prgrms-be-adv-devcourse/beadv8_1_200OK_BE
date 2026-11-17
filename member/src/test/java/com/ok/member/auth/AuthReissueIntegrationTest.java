@@ -104,7 +104,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     void 재발급하면_새_토큰_두_개를_반환하고_새_Refresh_Token은_해시로_저장된다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         ResultActions result = performReissue(refreshToken);
@@ -131,7 +131,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     void 재발급하면_세션의_행을_새로_만들지_않고_같은_행의_토큰을_회전한다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
         Long sessionId = refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
                 .map(RefreshToken::getId)
                 .orElseThrow();
@@ -163,7 +163,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     void 회전된_토큰으로_다시_재발급하면_401을_반환하고_세션의_토큰은_그대로다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
         String newRefreshToken = JsonPath.read(performReissue(refreshToken).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(), "$.refreshToken");
 
@@ -181,7 +181,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     void 사용한_Refresh_Token으로_다시_재발급하면_401을_반환한다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
         performReissue(refreshToken).andExpect(status().isOk());
 
         // when
@@ -209,7 +209,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
         Member member = saveMember(MemberStatus.ACTIVE);
         String raw = "expired-refresh-token";
         refreshTokenRepository.saveAndFlush(RefreshToken.create(
-                member.getId(), TokenHasher.sha256Hex(raw), LocalDateTime.now(clock).minusDays(1)));
+                member.getId(), TokenHasher.sha256Hex(raw), LocalDateTime.now(clock).minusDays(1), 0L));
 
         // when
         ResultActions result = performReissue(raw);
@@ -225,7 +225,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
             MemberStatus status, int expectedStatus, String expectedType) throws Exception {
         // given
         Member member = saveMember(status);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         ResultActions result = performReissue(refreshToken);
@@ -250,7 +250,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     void 만료된_Access_Token을_붙여_보내도_재발급이_처리된다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
 
         // when
         ResultActions result = mockMvc.perform(post("/api/v1/auth/reissue")
@@ -266,7 +266,7 @@ class AuthReissueIntegrationTest extends AbstractIntegrationTest {
     void 같은_Refresh_Token으로_동시에_재발급하면_하나만_성공한다() throws Exception {
         // given
         Member member = saveMember(MemberStatus.ACTIVE);
-        String refreshToken = refreshTokenService.issue(member.getId()).value();
+        String refreshToken = refreshTokenService.issue(member.getId(), 0L).value();
         int requestCount = 2;
         CountDownLatch ready = new CountDownLatch(requestCount);
         CountDownLatch start = new CountDownLatch(1);

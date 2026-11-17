@@ -69,24 +69,34 @@ public class RefreshToken extends BaseTime {
     /** 마지막으로 재발급(회전)한 일시. 한 번도 재발급하지 않았으면 null */
     private LocalDateTime rotatedAt;
 
-    private RefreshToken(Long memberId, String tokenHash, LocalDateTime expiresAt) {
+    /**
+     * 세션을 연 로그인 당시의 회원 토큰 버전(#561). 회전해도 바꾸지 않는다.
+     * 재발급할 때 회원의 지금 버전과 다르면 비밀번호 변경 등으로 폐기된 세션이다. 회전할 때 지금 버전으로 바꾸면
+     * 폐기 전에 연 세션이 한 번의 재발급으로 다시 살아나므로, 로그인 때 값을 끝까지 유지한다.
+     */
+    @Column(nullable = false)
+    private long tokenVersion;
+
+    private RefreshToken(Long memberId, String tokenHash, LocalDateTime expiresAt, long tokenVersion) {
         this.memberId = memberId;
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
+        this.tokenVersion = tokenVersion;
     }
 
     /**
      * 저장할 Refresh Token 기록을 만든다.
      *
-     * @param memberId  토큰을 발급받은 회원 id
-     * @param tokenHash 토큰 원문의 해시 (원문을 넘기지 않도록 주의)
-     * @param expiresAt 만료 일시
+     * @param memberId     토큰을 발급받은 회원 id
+     * @param tokenHash    토큰 원문의 해시 (원문을 넘기지 않도록 주의)
+     * @param expiresAt    만료 일시
+     * @param tokenVersion 로그인할 때 읽은 회원의 토큰 버전
      */
-    public static RefreshToken create(Long memberId, String tokenHash, LocalDateTime expiresAt) {
+    public static RefreshToken create(Long memberId, String tokenHash, LocalDateTime expiresAt, long tokenVersion) {
         Objects.requireNonNull(memberId, "memberId는 null일 수 없습니다.");
         Objects.requireNonNull(tokenHash, "tokenHash는 null일 수 없습니다.");
         Objects.requireNonNull(expiresAt, "expiresAt은 null일 수 없습니다.");
-        return new RefreshToken(memberId, tokenHash, expiresAt);
+        return new RefreshToken(memberId, tokenHash, expiresAt, tokenVersion);
     }
 
     /**
