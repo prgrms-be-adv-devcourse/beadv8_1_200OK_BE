@@ -52,6 +52,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -759,6 +760,24 @@ class PayoutServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.ADJUSTMENT_ORIGINAL_NOT_FOUND));
         then(payoutCandidateItemRepository).should(never()).saveAll(any());
+    }
+
+    // 재전송 막기 2겹 (#291 결정 3번): 두 요청이 같은 번호를 받아 두 번째 저장이 UK(주문상품, 종류, 조정 번호)에 걸리면 409
+    // 통합 테스트의 동시 요청은 1겹(같은 조정 있음)과 2겹 중 어느 쪽이 막았는지 실행마다 달라서, 2겹은 여기서 저장 실패를 흉내 내 확인함
+    //   실제 MySQL이 중복 키에 1062를 주는지는 PayoutFailureResolutionIntegrationTest가 확인함 (해결 API #568과 같은 방식)
+    @Test
+    void 저장이_중복_키로_실패하면_같은_조정_오류로_바꾼다() {
+        // given
+        given(payoutCandidateItemRepository.findByOrderItemIdAndEventTypeAndAdjustmentId(
+                900L, PayoutEventType.SALE_AMOUNT, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
+                .willReturn(Optional.of(PayoutCandidateItem.ofSaleAmount(100L, 900L, 7L, 9_700L)));
+        given(payoutCandidateItemRepository.saveAll(any())).willThrow(new DataIntegrityViolationException("중복 키",
+                new SQLIntegrityConstraintViolationException("Duplicate entry", "23000", 1062)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createAdjustment(1L, adjustmentCommand()))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.DUPLICATE_ADJUSTMENT));
     }
 
     // 동시 요청의 두 번째가 UK에 걸리는 경우만 409로 바꿈. 다른 무결성 오류(FK 등)는 코드 버그라 그대로 나가야 함
