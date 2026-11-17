@@ -13,6 +13,7 @@ import com.ok.payout.application.port.in.PayoutAdjustmentCreateResult;
 import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
 import com.ok.payout.application.port.in.PayoutUseCase;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutFailure;
@@ -40,6 +41,7 @@ import org.springframework.web.context.WebApplicationContext;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -124,6 +126,10 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    // Job 도중을 흉내 내려고 금액 검사 합계 조회를 직접 부름 (스냅샷 범위 테스트만 씀)
+    @Autowired
+    private PayoutQueryRepository payoutQueryRepository;
 
     @BeforeEach
     void setUp() {
@@ -415,6 +421,79 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
     }
 
+    // 결정 4번 하한(실패 뒤에 넣은 조정만 셈)을 지킴: 실패 전에 미리 넣은 조정은 해결해도 확인한 조정이 아님
+    // 하한이 없으면 실패 전에 다른 이유로 넣어 둔 조정이 해결만으로 초과 청구를 가려 돈이 더 나감
+    // 대가(11/17 감수): 미리 넣은 관리자는 한 번 더 넣어야 하고, 두 번 빠지면 반대 금액 조정으로 상쇄함
+    @Test
+    void 실패_전에_미리_넣은_조정은_해결해도_검사에_들어가지_않아_다시_초과_청구로_실패한다() throws Exception {
+        // given: 결제 30,000, 판매 40,000. 첫 실행 전에 −9,700 / −300을 미리 넣고 3번 실패해 멈춤
+        givenDeduction(ORDER_A, 30_000L);
+        givenSale(ORDER_A, ITEM_A, SELLER, 40_000L);
+        backdateOriginals(ORDER_A, 16);
+        adjust(ITEM_A, "SALE_AMOUNT", -9_700L, REASON);
+        adjust(ITEM_A, "SALE_FEE", -300L, REASON);
+        runUntilStopped(PayoutFailureReason.AMOUNT_MISMATCH);
+
+        // when: 새 조정 없이 해결만
+        resolve(ORDER_A);
+        JobExecution sut = payoutJobRunner.runScheduled();
+
+        // then: 미리 넣은 조정은 세지 않아 40,000 > 30,000, 돈이 나가지 않음
+        Long snapshotId = snapshotIdOf(sut);
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsOnly(PayoutFailureReason.AMOUNT_MISMATCH);
+        assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    // 결정 4번 사유 필터(금액 불일치 실패만)를 지킴: 결제 기록 없음(DEDUCTION_MISSING)으로 멈춘 동안 넣은 조정은 확인한 조정이 아님
+    // 사유를 안 거르면 금액과 상관없는 실패의 해결이 그 사이에 넣은 조정을 확인한 것으로 만들어 초과 청구를 가림
+    @Test
+    void 결제_기록_없음으로_멈춘_동안_넣은_조정은_해결해도_초과_청구를_가리지_않는다() throws Exception {
+        // given: 판매 40,000인데 결제 기록이 아직 없어 3번 실패해 멈춤
+        candidateRepository.saveAll(List.of(
+                PayoutCandidateItem.ofSaleAmount(ORDER_A, ITEM_A, SELLER, 38_800L),
+                PayoutCandidateItem.ofSaleFee(ORDER_A, ITEM_A, SELLER, 1_200L)));
+        backdateOriginals(ORDER_A, 16);
+        runUntilStopped(PayoutFailureReason.DEDUCTION_MISSING);
+
+        // when: 멈춘 동안 조정을 넣고, 결제 기록 30,000이 들어온 뒤 해결
+        adjust(ITEM_A, "SALE_AMOUNT", -9_700L, REASON);
+        adjust(ITEM_A, "SALE_FEE", -300L, REASON);
+        givenDeduction(ORDER_A, 30_000L);
+        resolve(ORDER_A);
+        JobExecution sut = payoutJobRunner.runScheduled();
+
+        // then: 조정을 세지 않아 40,000 > 30,000, 돈이 나가지 않음
+        Long snapshotId = snapshotIdOf(sut);
+        assertThat(failureRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutFailure::getReason)
+                .containsOnly(PayoutFailureReason.AMOUNT_MISMATCH);
+        assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    // 결정 4번 스냅샷 범위(이번 스냅샷에 들었거나 이미 정산된 조정만)를 지킴
+    // Job 도중(스냅샷을 만든 뒤, 금액 검사 전) 조정·해결이 들어온 경우를 흉내 냄: 이미 만든 스냅샷으로 금액 검사 합계를 다시 구함
+    //   이 조정은 그 스냅샷 목록에 없어 이번 지급에서는 빠지므로, 검사 합계에도 들어가면 안 됨
+    //   들어가면 합계 30,000으로 통과하는데 지급은 원래 40,000 그대로라 10,000이 더 나감
+    @Test
+    void 스냅샷을_만든_뒤_넣은_조정은_그_스냅샷의_금액_검사_합계에_들어가지_않는다() throws Exception {
+        // given: 3번 실패해 멈춘 주문, 마지막 실행의 스냅샷
+        givenDeduction(ORDER_A, 30_000L);
+        givenSale(ORDER_A, ITEM_A, SELLER, 40_000L);
+        backdateOriginals(ORDER_A, 16);
+        Long snapshotId = runUntilStopped(PayoutFailureReason.AMOUNT_MISMATCH);
+        adjust(ITEM_A, "SALE_AMOUNT", -9_700L, REASON);
+        adjust(ITEM_A, "SALE_FEE", -300L, REASON);
+        resolve(ORDER_A);
+
+        // when
+        Map<Long, Long> sut = payoutQueryRepository.sumCandidateAmountByOrderInSnapshot(snapshotId);
+
+        // then: 확인한 조정이지만 그 스냅샷 밖이라 원래 40,000만
+        assertThat(sut).containsEntry(ORDER_A, 40_000L);
+    }
+
     // 대금만 −10,000 줄이면 합계는 30,000으로 맞지만 수수료 짝이 28,800 / 1,200 (판매 30,000의 수수료는 900) → 수수료 불일치
     // 그대로 통과시키면 판매자는 300원 덜 받고 시스템이 300원을 더 가짐
     @Test
@@ -478,6 +557,19 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
                     .extracting(PayoutFailure::getReason)
                     .containsOnly(PayoutFailureReason.AMOUNT_MISMATCH);
         }
+    }
+
+    // 이미 준비한 주문을 3번 실행해 멈춤. 매번 그 사유로만 실패했는지 확인하고, 마지막 실행의 스냅샷 ID를 돌려줌
+    private Long runUntilStopped(PayoutFailureReason reason) throws Exception {
+        Long lastSnapshotId = null;
+        for (int run = 0; run < PayoutPolicy.MAX_FAILED_RUNS; run++) {
+            JobExecution execution = payoutJobRunner.runScheduled();
+            lastSnapshotId = snapshotIdOf(execution);
+            assertThat(failureRepository.findBySnapshotId(lastSnapshotId))
+                    .extracting(PayoutFailure::getReason)
+                    .containsOnly(reason);
+        }
+        return lastSnapshotId;
     }
 
     // 판매 금액으로 구매확정 후보(대금·수수료)를 만들고, 차감 기록이 없으면 판매 금액만큼 넣음
