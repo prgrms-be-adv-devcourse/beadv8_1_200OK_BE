@@ -201,6 +201,29 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 글자가_그대로_겹친_상품이_있으면_자모로만_걸린_상품은_결과와_전체_개수에서_빠진다() {
+		// given
+		Long grape = create("김천 청포도 2kg", ProductCategoryCode.FRUIT, ProductRegionCode.GYEONGBUK, "2kg");
+		Long cheongdoPeach = create("청도 복숭아 4kg", ProductCategoryCode.FRUIT, ProductRegionCode.GYEONGBUK, "4kg");
+		// 하한을 낮춰 자모 조각 몇 개만 겹친 상품도 하한을 넘게 한다
+		double lowFloor = 0.1;
+		PageRequest pageable = PageRequest.of(0, 1);
+		// "청뽀도"는 두 상품 모두와 글자 조각이 겹치지 않아 자모로만 찾는다. 청도 복숭아도 자모로 걸린다는 것을 먼저 확인한다
+		List<Long> typo = buyerProductQueryRepository.findVisibleProductIds(
+			ProductSearchKeyword.from("청뽀도").orElseThrow(), null, null, null, ProductSort.RELEVANCE, lowFloor,
+			PageRequest.of(0, 20)).getContent();
+
+		// when
+		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(
+			ProductSearchKeyword.from("청포도").orElseThrow(), null, null, null, ProductSort.RELEVANCE, lowFloor, pageable);
+
+		// then
+		assertThat(typo).contains(grape, cheongdoPeach);
+		assertThat(sut.getContent()).containsExactly(grape);
+		assertThat(sut.getTotalElements()).isEqualTo(1);
+	}
+
+	@Test
 	void 맞는_상품이_없으면_빈_목록과_전체_개수_0이다() throws Exception {
 		// when & then
 		mockMvc.perform(get("/api/v1/products").param("keyword", "컴퓨터"))
