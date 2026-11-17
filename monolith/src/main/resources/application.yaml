@@ -48,14 +48,10 @@ app:
     bucket: ${S3_BUCKET}
   async:
     executors:
-      # 커밋된 배송 outbox 줄을 바로 Kafka로 보내는 실행기 (DeliveryAsyncConfig, #644)
+      # 커밋된 배송 outbox 줄을 바로 Kafka로 보내는 실행기 (DeliveryAsyncConfig, #644). 값을 정한 이유는 application-delivery.yaml에 있다
       delivery-outbox-send:
-        # 작업을 넘기는 곳이 커밋 뒤 콜백(요청 스레드)이다. virtual은 대기열이 없어 상한이 차면 요청이 바로 기다리므로 대기열이 있는 platform을 쓴다
         type: platform
-        # 작업은 브로커 확인을 기다리는 동안 DB 커넥션을 잡지 않는다. 줄 읽기, "보냄" 기록, Modulith 이벤트 발행 기록의 완료 표시에서만 잠깐 쓴다.
-        # Hikari(기본 10)를 event(8)와 나눠 쓰므로 작게 둔다. 브로커 확인이 수 ms라 2개로도 초당 수백 건을 보낸다
         pool-size: ${DELIVERY_OUTBOX_SEND_POOL_SIZE:2}
-        # 브로커 장애로 작업이 쌓여도 줄은 PENDING이라 발송 작업이 보낸다. 가득 차면 요청 스레드가 기다리므로 넉넉히 둔다(측정 근거 없는 값)
         queue-capacity: ${DELIVERY_OUTBOX_SEND_QUEUE_CAPACITY:1000}
         thread-name-prefix: delivery-outbox-
   review-analysis:

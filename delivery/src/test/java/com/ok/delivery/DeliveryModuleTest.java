@@ -59,10 +59,8 @@ class DeliveryModuleTest {
 
     static final String MODULE_TEST_PROFILE = "delivery-module-test";
 
-    // 배송 outbox 즉시 발송 실행기(DeliveryAsyncConfig)는 공용 실행기 팩토리로 만든다. 운영 AsyncConfig(com.ok.common.config)는
-    // 다른 모듈이라 모듈 테스트에서 걸러지므로 팩토리만 앱 yml과 같은 이름으로 만든다.
-    // 모듈 테스트는 다른 모듈 타입의 빈을 @TestConfiguration이 만든 것만 남긴다. 그런데 @TestConfiguration은 통합 테스트의 컴포넌트 스캔(com.ok)에도
-    // 잡혀 팩토리 빈이 둘이 되므로, 이 테스트만 켜는 프로필에서만 등록한다
+    // DeliveryAsyncConfig가 쓰는 공용 팩토리를 만든다. 팩토리를 등록하는 AsyncConfig는 다른 모듈이라 모듈 테스트에서 걸러진다.
+    // 통합 테스트의 컴포넌트 스캔(com.ok)에도 잡혀 팩토리가 둘이 되지 않게 이 테스트 프로필에서만 등록한다
     @TestConfiguration(proxyBeanMethods = false)
     @Profile(MODULE_TEST_PROFILE)
     static class AsyncExecutorFactoryConfiguration {

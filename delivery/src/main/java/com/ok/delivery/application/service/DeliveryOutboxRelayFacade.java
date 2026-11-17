@@ -54,7 +54,6 @@ public class DeliveryOutboxRelayFacade implements DeliveryOutboxRelayUseCase {
 
     @Override
     public void send(Long outboxId) {
-        // 발송 작업이 먼저 보냈으면 비어 있다
         Optional<DeliveryOutboxMessage> pending = deliveryOutboxService.findPendingById(outboxId);
         if (pending.isEmpty()) {
             return;
