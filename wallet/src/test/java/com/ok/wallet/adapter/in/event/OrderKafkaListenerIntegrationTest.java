@@ -3,6 +3,7 @@ package com.ok.wallet.adapter.in.event;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.service.BuyerWalletService;
 import com.ok.wallet.support.KafkaTopicReader;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,9 +47,12 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
         jdbcTemplate.update("DELETE FROM wallet_message_failure");
     }
 
@@ -63,7 +67,7 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
         // given
         long buyerId = nextId();
         long orderId = nextId();
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
 
         // when
         sendOrderCreated(orderId, orderCreated(orderId, buyerId, 3_000L));
@@ -93,7 +97,7 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
         // given
         long buyerId = nextId();
         long orderId = nextId();
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
         Map<String, Object> message = orderCreated(orderId, buyerId, 3_000L);
 
         // when
@@ -112,7 +116,7 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
         // given
         long buyerId = nextId();
         long orderId = nextId();
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
         Map<String, Object> noBuyer = new HashMap<>(orderCreated(orderId, buyerId, 3_000L));
         noBuyer.remove("buyerId");
 

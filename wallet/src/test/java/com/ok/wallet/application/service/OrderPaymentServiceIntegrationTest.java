@@ -4,6 +4,7 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.wallet.application.dto.OrderPaymentCommand;
 import com.ok.wallet.application.port.in.OrderPaymentUseCase;
 import com.ok.wallet.support.KafkaTopicReader;
+import com.ok.wallet.support.WalletTestCharger;
 import com.ok.wallet.support.WalletTestDataCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,9 +47,12 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     ConsumerFactory<?, ?> consumerFactory;
 
+    private WalletTestCharger charger;
+
     @BeforeEach
     void setUp() {
         new WalletTestDataCleaner(jdbcTemplate).deleteAll();
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
     }
 
     @AfterEach
@@ -61,7 +65,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         // given
         long buyerId = nextId();
         long orderId = nextId();
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
 
         // when
         orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
@@ -113,7 +117,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         // given
         long buyerId = nextId();
         long orderId = nextId();
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
         orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
 
         // when: 결과 보내기가 실패해 같은 주문을 다시 받은 경우
@@ -133,7 +137,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         long buyerId = nextId();
         long orderId = nextId();
         orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
 
         // when
         orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
@@ -149,7 +153,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         // given: 전환 기간에 같은 주문이 Spring 이벤트로 먼저 처리됨
         long buyerId = nextId();
         long orderId = nextId();
-        buyerWalletService.chargeByPayment(buyerId, "pay-" + orderId, 10_000);
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
         orderPaymentUseCase.pay(new OrderPaymentCommand(orderId, buyerId, 3_000L));
 
         // when

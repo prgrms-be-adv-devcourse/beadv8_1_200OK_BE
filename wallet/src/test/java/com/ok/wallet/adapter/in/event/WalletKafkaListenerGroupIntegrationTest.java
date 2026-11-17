@@ -34,6 +34,7 @@ class WalletKafkaListenerGroupIntegrationTest extends AbstractIntegrationTest {
         assertThat(sut).containsExactlyInAnyOrderEntriesOf(Map.of(
                 "payout.seller-payout-created.v1", List.of("wallet.payout-deposit"),
                 "refund.refund-approved.v1", List.of("wallet.refund-return"),
-                "payout.payout-deposit-check-requested.v1", List.of("wallet.deposit-check-reply")));
+                "payout.payout-deposit-check-requested.v1", List.of("wallet.deposit-check-reply"),
+                "order.order-created.v1", List.of("wallet.order-payment")));
     }
 }

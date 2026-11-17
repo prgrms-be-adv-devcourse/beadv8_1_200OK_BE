@@ -340,7 +340,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 같은_주문이_다른_값으로_다시_와도_처음_기록의_구매자와_금액을_돌려준다() {
         // Given
         Long memberId = 38L;
-        buyerWalletService.chargeByPayment(memberId, "pay-38", 10_000);
+        charger.charge(memberId, "pay-38", 10_000);
         buyerWalletService.payForOrder(memberId, 1_008L, 3_000);
 
         // When: 같은 주문이 다른 구매자·금액으로 다시 옴
