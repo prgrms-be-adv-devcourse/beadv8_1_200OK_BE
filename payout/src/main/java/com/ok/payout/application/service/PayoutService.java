@@ -210,6 +210,8 @@ public class PayoutService implements PayoutUseCase {
         //    원래가 아직 대기 중이거나, 잠기거나 멈춰 빠졌으면 넣지 않음: 원래 없이 조정만 정산되면 돈이 어긋남
         //      (잠긴 주문은 조회가 빼고, 멈춘 주문은 여기서 뺌)
         //    Job 도중 들어온 조정은 이 스냅샷 목록에 없어 다음 배치로 넘어감 (금액 검사도 같은 범위만 봄, PayoutQuerydslRepository.checkedCandidate)
+        //    조정 조회에 상한(to)을 걸지 않는 것은 의도: to는 "15일 대기를 채운" 기준이라, 걸면 원래가 정산된 뒤 넣은 조정도 15일을 기다림
+        //      스냅샷 조회 시점까지 들어온 조정이 기준이고, 금액 검사는 이 목록과 같은 범위(이번 스냅샷·정산됨)를 봐 검사한 돈과 지급하는 돈이 같음
         for (AdjustmentCandidateRow row : payoutQueryRepository.findUnsettledAdjustments()) {
             PayoutCandidateItem adjustment = row.adjustment();
             if (stoppedOrderIds.contains(adjustment.getOrderId())) {
@@ -625,8 +627,14 @@ public class PayoutService implements PayoutUseCase {
             //   대가: 판매자가 더 팔지 않으면 음수는 회수되지 않음 (장부에는 정산 없이 후보로만 남음, 알고 감)
             //   0원도 보류: 지급할 돈이 없고, 정산을 만들면 그 후보가 "정산됨"이 되어 뒤에 들어온 조정과 묶이지 않음
             // 수수료(시스템 몫)는 판매자와 상관없이 아래에서 그대로 정산함: 수수료는 구매자가 낸 돈의 플랫폼 몫이라 판매자 보류와 묶을 이유가 없음
+            //   그래서 수수료 조정만 큰 음수면 시스템 정산이 음수가 될 수 있음. 시스템 몫은 지갑·대사로 가지 않아 장부의 음수 줄일 뿐 (알고 감)
+            //   시스템 몫까지 보류하면 그 수수료 후보를 다시 찾는 길이 없음(보류 조회는 판매자 draft에서 출발)
             if (sellerAmount <= 0) {
                 heldSellerCount++;
+                // 판매자별로 남김: 보류는 정산·실패 기록이 없어, 문의가 오거나 음수가 오래 남은 판매자를 찾을 곳이 이 로그뿐임
+                //   보류는 음수 조정이 들어간 판매자에게만 생겨 건수가 적음. 다시 보류되면 배치마다 같은 판매자 줄이 남음
+                log.info("판매자 합계 0원 이하라 정산 보류. snapshotId={}, sellerId={}, amount={}",
+                        snapshotId, draft.getSellerId(), sellerAmount);
                 continue;
             }
             payouts.add(Payout.forSeller(snapshotId, draft.getSellerId(), items));
