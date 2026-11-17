@@ -3,7 +3,9 @@ package com.ok.product.product.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.never;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -137,6 +139,26 @@ class ProductSearchIndexerTest {
 			softly.assertThat(existing.getNormalizerVersion()).isEqualTo(SearchTextNormalizer.VERSION);
 			softly.assertThat(existing.getKeywords()).isEqualTo("새콤 달콤");
 		});
+	}
+
+	@Test
+	void 여러_상품은_기존_검색_행을_한_번에_읽어_있으면_바꾸고_없으면_새로_저장한다() {
+		// given
+		Product existingProduct = product("제주 한라봉 3kg", "<p>설명</p>", ProductCategory.FRUIT,
+			List.of(ProductOptionSpec.newOption("특대", null, 30_000L, 10)));
+		Product newProduct = product("해남 배추 10kg", "<p>설명</p>", ProductCategory.VEGETABLE,
+			List.of(ProductOptionSpec.newOption("10kg", null, 30_000L, 10)));
+		ReflectionTestUtils.setField(newProduct, "id", PRODUCT_ID + 1);
+		ProductSearch existing = ProductSearch.create(PRODUCT_ID, "옛이름", "ㅇㅖㅅ", "옛 옵션", "귤", 0);
+		given(productSearchRepository.findAllById(List.of(PRODUCT_ID, PRODUCT_ID + 1))).willReturn(List.of(existing));
+
+		// when
+		sut.indexAll(List.of(existingProduct, newProduct));
+
+		// then
+		assertThat(existing.getNameCompact()).isEqualTo("제주한라봉3kg");
+		assertThat(savedProductSearch().getProductId()).isEqualTo(PRODUCT_ID + 1);
+		then(productSearchRepository).should(never()).findById(any());
 	}
 
 	private Product product(String name, String descriptionHtml, ProductCategory category,

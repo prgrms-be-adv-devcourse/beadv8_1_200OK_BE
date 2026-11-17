@@ -1,12 +1,14 @@
 package com.ok.product.product.adapter.in.startup;
 
+import java.util.concurrent.Executor;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import com.ok.product.product.application.port.in.ProductSearchBackfillUseCase;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -15,16 +17,30 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ProductSearchBackfillRunner {
 
 	private final ProductSearchBackfillUseCase productSearchBackfillUseCase;
+	private final Executor executor;
+
+	@Autowired
+	public ProductSearchBackfillRunner(ProductSearchBackfillUseCase productSearchBackfillUseCase) {
+		this(productSearchBackfillUseCase, task -> Thread.ofPlatform().daemon().name("product-search-backfill").start(task));
+	}
+
+	ProductSearchBackfillRunner(ProductSearchBackfillUseCase productSearchBackfillUseCase, Executor executor) {
+		this.productSearchBackfillUseCase = productSearchBackfillUseCase;
+		this.executor = executor;
+	}
 
 	// 예외를 다시 던지면 앱 전체가 뜨지 못한다. 검색 행은 다음 기동이나 상품 수정 때 다시 채워지므로
 	// 검색 색인 하나 때문에 모놀리스 전체를 멈추지 않는다
-	// TODO(#704): 동기 실행이라 상품이 많거나 VERSION을 올리면 readiness 전환이 늦어진다. 별도 스레드로 실행한다
+	// 리스너에서 바로 돌리면 상품이 많거나 VERSION을 올렸을 때 readiness 전환이 늦어지므로 별도 스레드로 돌린다
 	@EventListener(ApplicationReadyEvent.class)
 	void backfill() {
+		executor.execute(this::runBackfill);
+	}
+
+	private void runBackfill() {
 		try {
 			productSearchBackfillUseCase.backfill();
 		} catch (RuntimeException e) {

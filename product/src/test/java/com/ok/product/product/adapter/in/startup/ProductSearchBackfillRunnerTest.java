@@ -1,9 +1,16 @@
 package com.ok.product.product.adapter.in.startup;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
@@ -13,12 +20,12 @@ import com.ok.product.product.application.port.in.ProductSearchBackfillUseCase;
 class ProductSearchBackfillRunnerTest {
 
 	private final ProductSearchBackfillUseCase productSearchBackfillUseCase = mock(ProductSearchBackfillUseCase.class);
-	private final ProductSearchBackfillRunner sut = new ProductSearchBackfillRunner(productSearchBackfillUseCase);
 
 	@Test
 	void 기동하면_백필을_맡긴다() {
 		// given
 		given(productSearchBackfillUseCase.backfill()).willReturn(new ProductSearchBackfillResult(0, 0));
+		ProductSearchBackfillRunner sut = new ProductSearchBackfillRunner(productSearchBackfillUseCase, Runnable::run);
 
 		// when
 		sut.backfill();
@@ -28,11 +35,47 @@ class ProductSearchBackfillRunnerTest {
 	}
 
 	@Test
+	void 리스너는_백필을_실행기에_넘기고_바로_돌아온다() {
+		// given
+		List<Runnable> submitted = new ArrayList<>();
+		ProductSearchBackfillRunner sut = new ProductSearchBackfillRunner(productSearchBackfillUseCase,
+			submitted::add);
+
+		// when
+		sut.backfill();
+
+		// then
+		assertThat(submitted).hasSize(1);
+		then(productSearchBackfillUseCase).should(never()).backfill();
+	}
+
+	@Test
 	void 백필이_실패해도_예외를_던지지_않아_기동을_막지_않는다() {
 		// given
 		given(productSearchBackfillUseCase.backfill()).willThrow(new IllegalStateException("DB 연결 실패"));
+		ProductSearchBackfillRunner sut = new ProductSearchBackfillRunner(productSearchBackfillUseCase, Runnable::run);
 
 		// when & then
 		assertThatCode(sut::backfill).doesNotThrowAnyException();
+	}
+
+	@Test
+	void 기본_실행기는_product_search_backfill_스레드에서_백필을_돌린다() throws InterruptedException {
+		// given
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<String> threadName = new AtomicReference<>();
+		given(productSearchBackfillUseCase.backfill()).willAnswer(invocation -> {
+			threadName.set(Thread.currentThread().getName());
+			done.countDown();
+			return new ProductSearchBackfillResult(0, 0);
+		});
+		ProductSearchBackfillRunner sut = new ProductSearchBackfillRunner(productSearchBackfillUseCase);
+
+		// when
+		sut.backfill();
+		done.await();
+
+		// then
+		assertThat(threadName.get()).isEqualTo("product-search-backfill");
 	}
 }

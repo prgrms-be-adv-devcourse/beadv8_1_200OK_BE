@@ -19,8 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 검색 행이 없거나 정규화 버전이 낮은 상품의 검색 행을 {@link ProductSearchIndexer}로 다시 계산한다.
  */
-// TODO(#704): 서버가 2대가 되면 ShedLock을 건다. 현재는 두 인스턴스가 같은 상품을 INSERT하면 PK 중복으로 묶음이 실패해 ERROR 로그가 남는다.
-// 같은 이슈에서 묶음당 약 1,000회인 N+1 조회와 묶음 실패 시 건별 재시도도 다룬다
+// TODO(#704): 서버가 2대가 되면 ShedLock을 건다. 현재는 두 인스턴스가 같은 상품을 INSERT하면 PK 중복으로 묶음이 실패해 건별 재시도까지 거치고 ERROR 로그가 남는다
 @Slf4j
 @Service
 public class ProductSearchBackfillService implements ProductSearchBackfillUseCase {
@@ -57,8 +56,17 @@ public class ProductSearchBackfillService implements ProductSearchBackfillUseCas
 			try {
 				processedCount += indexInNewTransaction(ids);
 			} catch (RuntimeException e) {
-				failedCount += ids.size();
-				log.error("검색 행 백필 묶음 실패. firstProductId={}, lastProductId={}", ids.getFirst(), ids.getLast(), e);
+				// 한 건 때문에 묶음 전체를 버리지 않도록 건별로 다시 시도해 문제 상품만 건너뛴다
+				log.warn("검색 행 백필 묶음 실패. 건별로 다시 시도한다. firstProductId={}, lastProductId={}", ids.getFirst(),
+					ids.getLast(), e);
+				for (Long id : ids) {
+					try {
+						processedCount += indexInNewTransaction(List.of(id));
+					} catch (RuntimeException single) {
+						failedCount++;
+						log.error("검색 행 백필 실패. productId={}", id, single);
+					}
+				}
 			}
 			// 처음부터 다시 찾지 않고 직전 묶음 뒤부터 읽는다. 다시 찾으면 계속 실패하는 상품이 같은 묶음에 남아 끝없이 반복한다
 			afterId = ids.getLast();
@@ -77,8 +85,8 @@ public class ProductSearchBackfillService implements ProductSearchBackfillUseCas
 
 	private int indexInNewTransaction(List<Long> ids) {
 		return batchTransaction.execute(status -> {
-			List<Product> products = productRepository.findAllById(ids);
-			products.forEach(productSearchIndexer::index);
+			List<Product> products = productRepository.findAllWithOptionsByIdIn(ids);
+			productSearchIndexer.indexAll(products);
 			return products.size();
 		});
 	}

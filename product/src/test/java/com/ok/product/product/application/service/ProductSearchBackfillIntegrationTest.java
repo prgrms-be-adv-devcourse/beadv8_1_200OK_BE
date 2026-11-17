@@ -176,7 +176,7 @@ class ProductSearchBackfillIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 한_묶음이_실패해도_다음_묶음은_처리한다() {
+	void 한_상품만_실패하면_같은_묶음의_나머지는_건별로_다시_시도해_채운다() {
 		// given
 		List<Long> productIds = IntStream.range(0, 4)
 			.mapToObj(i -> saveProduct(ProductStatus.ON_SALE, ProductVisibility.VISIBLE))
@@ -195,11 +195,35 @@ class ProductSearchBackfillIntegrationTest extends AbstractIntegrationTest {
 		}
 
 		// then
-		assertThat(sut).isEqualTo(new ProductSearchBackfillResult(2, 2));
-		// 첫 묶음은 통째로 롤백되어 막히지 않은 두 번째 상품도 비어 있다
+		assertThat(sut).isEqualTo(new ProductSearchBackfillResult(3, 1));
+		// 막힌 첫 상품만 비고, 같은 묶음의 두 번째 상품과 다음 묶음은 채워진다
 		assertThat(productSearchRepository.findAllById(productIds))
 			.extracting(ProductSearch::getProductId)
-			.containsExactlyInAnyOrder(productIds.get(2), productIds.get(3));
+			.containsExactlyInAnyOrder(productIds.get(1), productIds.get(2), productIds.get(3));
+	}
+
+	@Test
+	void 묶음에_문제_상품이_하나여도_나머지_499건은_버려지지_않는다() {
+		// given
+		List<Long> productIds = IntStream.range(0, 500)
+			.mapToObj(i -> saveProduct(ProductStatus.ON_SALE, ProductVisibility.VISIBLE))
+			.toList();
+		jdbcTemplate.execute("ALTER TABLE " + SEARCH_TABLE + " ADD CONSTRAINT " + BLOCKING_CHECK
+			+ " CHECK (product_id <> " + productIds.get(250) + ")");
+
+		ProductSearchBackfillResult sut;
+		try {
+			// when
+			sut = productSearchBackfillService.backfill();
+		} finally {
+			jdbcTemplate.execute("ALTER TABLE " + SEARCH_TABLE + " DROP CHECK " + BLOCKING_CHECK);
+		}
+
+		// then
+		assertThat(sut).isEqualTo(new ProductSearchBackfillResult(499, 1));
+		assertThat(productSearchRepository.findAllById(productIds)).hasSize(499)
+			.extracting(ProductSearch::getProductId)
+			.doesNotContain(productIds.get(250));
 	}
 
 	private Long saveProduct(ProductStatus status, ProductVisibility visibility) {

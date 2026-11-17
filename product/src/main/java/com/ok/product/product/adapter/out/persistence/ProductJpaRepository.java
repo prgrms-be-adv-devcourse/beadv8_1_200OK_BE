@@ -7,6 +7,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface ProductJpaRepository extends JpaRepository<Product, Long>, ProductRepository {
@@ -34,4 +38,9 @@ public interface ProductJpaRepository extends JpaRepository<Product, Long>, Prod
 			WHERE p.id = :productId
 			""")
 	int addReviewStats(Long productId, int countDelta, int ratingDelta);
+
+	// 옵션 매핑을 전역으로 바꾸지 않고 백필 조회에서만 fetch join 한다. 옵션이 없는 상품도 나와야 하므로 left join이다
+	@Override
+	@Query("SELECT DISTINCT p FROM Product p LEFT JOIN FETCH p.options WHERE p.id IN :ids")
+	List<Product> findAllWithOptionsByIdIn(@Param("ids") Collection<Long> ids);
 }

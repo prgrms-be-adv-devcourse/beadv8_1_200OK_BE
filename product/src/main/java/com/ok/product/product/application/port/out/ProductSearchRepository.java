@@ -12,6 +12,8 @@ public interface ProductSearchRepository {
 
 	Optional<ProductSearch> findById(Long productId);
 
+	List<ProductSearch> findAllById(Iterable<Long> productIds);
+
 	<S extends ProductSearch> S save(S productSearch);
 
 	/**

@@ -1,5 +1,6 @@
 package com.ok.product.product.application.port.out;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,6 +31,11 @@ public interface ProductRepository {
 	int addReviewStats(Long productId, int countDelta, int ratingDelta);
 
 	List<Product> findAllById(Iterable<Long> ids);
+
+	/**
+	 * 검색 행 백필용. 옵션까지 한 번의 쿼리로 읽어 상품마다 옵션을 지연 로딩하지 않게 한다.
+	 */
+	List<Product> findAllWithOptionsByIdIn(Collection<Long> ids);
 
 	<S extends Product> S save(S product);
 
