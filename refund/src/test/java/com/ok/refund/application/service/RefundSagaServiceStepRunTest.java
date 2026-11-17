@@ -229,6 +229,29 @@ class RefundSagaServiceStepRunTest {
         then(walletRefundRequestPort).should(never()).requestRevert(any());
     }
 
+    // 상품 404(재고 배정 기록 없음)는 다시 해도 같아 바로 멈추지만, 주소 설정 오류와 가를 수 없어 돈은 가져가지 않는다(#546 봇 리뷰, 사용자 결정)
+    @Test
+    void 재고_기록이_없다는_404는_멈추지만_회수하지_않는다() {
+        // given
+        givenRecordable(RefundStepType.PRODUCT);
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_STOCK_NOT_FOUND);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_STOCK_NOT_FOUND));
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep product = captor.getValue();
+        assertThat(product).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(product.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(product.getLastReason()).isEqualTo("PRODUCT_STOCK_NOT_FOUND");
+        });
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
     // 몇 분짜리 상품 장애로 5번을 다 써 멈춘 재고는 돈을 가져가지 않는다(11/16 결정). 사람이 본다
     @Test
     void 재고가_시도_횟수를_다_써서_멈추면_회수하지_않는다() {

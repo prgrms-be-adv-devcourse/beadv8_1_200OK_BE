@@ -8,6 +8,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
@@ -68,21 +69,24 @@ class RefundProductHttpAdapterTest {
         });
     }
 
-    // 상품의 거절(404·409)은 다시 해도 결과가 같아, 다시 시도하지 않을 코드로 바꾼다(#576)
+    // 상품의 거절(404·409)은 다시 해도 결과가 같아, 다시 시도하지 않을 코드로 바꾼다(#576).
+    // 409만 돈 다시 가져오기(#546) 대상인 PRODUCT_RELEASE_REFUSED이고, 404는 주소 설정 오류와 가를 수 없어 따로 둔다
     @ParameterizedTest
     @MethodSource("다시_해도_같은_상태")
-    void 다시_해도_같은_거절이면_PRODUCT_RELEASE_REFUSED(int errorStatus) {
+    void 다시_해도_같은_거절은_상태마다_다른_코드로_바꾼다(int errorStatus, RefundErrorCode expected) {
         // given
         status.set(errorStatus);
 
         // when & then
         assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
                 .isInstanceOfSatisfying(RestApiException.class,
-                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_RELEASE_REFUSED));
+                        e -> assertThat(e.getErrorCode()).isEqualTo(expected));
     }
 
-    static Stream<Integer> 다시_해도_같은_상태() {
-        return Stream.of(404, 409);
+    static Stream<Arguments> 다시_해도_같은_상태() {
+        return Stream.of(
+                Arguments.of(409, RefundErrorCode.PRODUCT_RELEASE_REFUSED),
+                Arguments.of(404, RefundErrorCode.PRODUCT_STOCK_NOT_FOUND));
     }
 
     // 422는 우리가 보낸 값이 틀린 것(환불 버그)이라 상품의 거절로 섞지 않는다. 섞으면 돈 다시 가져오기(#546)가 우리 버그로 구매자 돈을 회수한다

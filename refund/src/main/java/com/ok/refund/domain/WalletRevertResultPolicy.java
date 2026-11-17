@@ -80,6 +80,7 @@ public final class WalletRevertResultPolicy {
         if (revertStep.getStatus().isFinished()) {
             return Verdict.skip(SkipReason.ALREADY_FINISHED);
         }
+        // TODO(#572): 지갑 완료 결과 값(실제로 돌려준 기록)을 남기게 되면 환불 값 대신 그 값과 비교한다. 지금은 완료를 환불 값과 같을 때만 받아 둘이 같다
         // ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
         boolean matches = Objects.equals(refund.getOrderId(), orderId)
                 && Objects.equals(refund.getBuyerId(), buyerId)

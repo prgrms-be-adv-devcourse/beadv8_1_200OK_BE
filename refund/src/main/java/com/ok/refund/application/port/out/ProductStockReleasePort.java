@@ -10,7 +10,8 @@ public interface ProductStockReleasePort {
     /**
      * 재고 일부 해제를 한 번 요청한다. 같은 refundId로 같은 내용을 다시 보내면 상품은 또 풀지 않고 성공으로 답한다.
      *
-     * @throws com.ok.common.exception.RestApiException 상품이 다시 해도 결과가 같은 이유로 거절하면 {@code PRODUCT_RELEASE_REFUSED}(다시 시도하지 않음),
+     * @throws com.ok.common.exception.RestApiException 상품이 다시 해도 결과가 같은 이유로 거절하면 {@code PRODUCT_RELEASE_REFUSED}(409, 다시 시도하지 않고 돈을 다시 가져옴),
+     *                                                   재고 배정 기록이 없다고 답하면 {@code PRODUCT_STOCK_NOT_FOUND}(404, 다시 시도하지 않고 돈은 그대로),
      *                                                   응답하지 않거나 서버 오류면 {@code PRODUCT_API_FAILED}(다시 시도함)
      * @throws IllegalStateException                    상품이 요청 값 오류(422)로 답하면. 환불이 보낸 값의 버그라 거절과 나눈다(다시 시도한 뒤 멈춤, #546)
      */

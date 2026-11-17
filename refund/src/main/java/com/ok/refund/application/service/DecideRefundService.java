@@ -81,7 +81,7 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                          거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
      * @throws RestApiException 승인은 커밋됐는데 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED},
      *                          0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}, 상품이 다시 해도 같은 이유로 거절하면
-     *                          {@code PRODUCT_RELEASE_REFUSED} (모두 처리 중으로 남는다.
+     *                          {@code PRODUCT_RELEASE_REFUSED}, 재고 배정 기록이 없으면 {@code PRODUCT_STOCK_NOT_FOUND} (모두 처리 중으로 남는다.
      *                          돌려줄 돈이 있으면 재고 복구는 지갑 완료 메시지를 받은 뒤라 이 응답에 오지 않는다)
      * @throws IllegalStateException 승인은 커밋됐는데 지갑 반환 요청을 보내지 못했으면 (처리 중으로 남는다, 주문은 이미 반영됐다,
      *                               {@link #approve(Long, Long, RefundableOrderItem)} 참고)

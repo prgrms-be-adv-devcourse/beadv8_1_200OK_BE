@@ -31,8 +31,11 @@ public enum RefundErrorCode implements ErrorCode {
 
     // 상품 모듈 호출 (승인 뒤 재고 되돌리기, #414)
     PRODUCT_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Product API failed", "상품 재고를 되돌리지 못했습니다. 잠시 후 다시 시도해 주세요."),
-    // 상품이 다시 해도 결과가 같은 이유(배정 기록 없음, 해제 가능 수량 초과, 같은 환불 다른 내용)로 해제를 거절함. 다시 시도하지 않고 단계를 멈춘다(#576)
-    PRODUCT_RELEASE_REFUSED(HttpStatus.CONFLICT, "Product release refused", "상품 재고를 되돌릴 수 없는 상태입니다. 관리자에게 문의해 주세요.");
+    // 상품이 다시 해도 결과가 같은 이유(해제 가능 수량 초과, 같은 환불 다른 내용, 상품 409)로 해제를 거절함. 다시 시도하지 않고 단계를 멈추고 지갑 돈을 다시 가져온다(#576, #546)
+    PRODUCT_RELEASE_REFUSED(HttpStatus.CONFLICT, "Product release refused", "상품 재고를 되돌릴 수 없는 상태입니다. 관리자에게 문의해 주세요."),
+    // 상품이 재고 배정 기록이 없다고 답함(404). 다시 해도 같아 단계를 멈추지만 돈은 다시 가져오지 않는다(#546).
+    // 404는 상품 문서에 뜻이 없고, 주소 설정 오류·게이트웨이 404와 가를 수 없어 돈을 움직이는 근거로 쓰지 않는다. 판매자 응답은 거절과 같게 409로 둔다
+    PRODUCT_STOCK_NOT_FOUND(HttpStatus.CONFLICT, "Product stock allocation not found", "상품 재고를 되돌릴 수 없는 상태입니다. 관리자에게 문의해 주세요.");
 
     private final HttpStatus httpStatus;
     private final String title;

@@ -257,6 +257,35 @@ class RefundSagaServiceResumeTest {
         });
     }
 
+    // 처음 지갑 결과를 기다린 지 24시간이 지났다(RefundStep.RESEND_LIMIT, #546). 더 보내지 않고 다시 볼 시각을 비워 알람이 더 뽑지 않게 한다
+    @Test
+    void 처음_기다린_지_24시간이_지난_지갑_줄은_다시_보내지_않고_늦은_결과만_기다린다() {
+        // given
+        RefundStep longWaiting = RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                1, NOW, null, NOW.minusHours(24), NOW.minusHours(25));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID))
+                .willReturn(List.of(step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED), longWaiting));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
+                .willReturn(Optional.of(RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT,
+                        1, NOW, null, NOW.minusHours(24), NOW.minusHours(25))));
+
+        // when
+        saga.resume(REFUND_ID);
+
+        // then
+        then(walletRefundRequestPort).should(never()).requestRefund(any());
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep held = captor.getValue();
+        assertThat(held).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(held.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(held.getNextCheckAt()).isNull();
+        });
+    }
+
     // 읽을 때는 기다리는 시각이 지났지만, 잠그기 전에 늦게 온 지갑 완료가 먼저 지갑 줄을 성공으로 바꿨다. 다시 보내지 않는다(#577)
     @Test
     void 읽은_뒤_늦은_지갑_완료가_먼저_반영됐으면_다시_보내지_않는다() {
