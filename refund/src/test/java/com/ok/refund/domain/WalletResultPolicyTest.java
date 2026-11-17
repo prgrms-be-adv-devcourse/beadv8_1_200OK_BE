@@ -154,6 +154,16 @@ class WalletResultPolicyTest {
         assertThat(sut).isEqualTo(new Verdict(Decision.ACCEPT, null));
     }
 
+    @Test
+    void 지갑이_이미_회수한_refundId라는_실패는_지갑_실패로_보지_않고_넘긴다() {
+        // when
+        Verdict sut = WalletResultPolicy.judge(Kind.FAILED, refund(RefundStatus.PROCESSING), awaiting(), null,
+                ORDER_ID, BUYER_ID, AMOUNT, WalletResultPolicy.REFUND_REVERTED);
+
+        // then
+        assertThat(sut).isEqualTo(new Verdict(Decision.SKIP, SkipReason.REFUND_REVERTED));
+    }
+
     private static Refund refund(RefundStatus status) {
         return Refund.restore(REFUND_ID, ORDER_ID, 101L, 2, BUYER_ID, 5L, 55L, "감자", "1kg", 10_000L, 20_000L,
                 0L, 0L, 0L, null, status, null, null, null, null, null);

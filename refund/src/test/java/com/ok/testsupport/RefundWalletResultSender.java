@@ -25,6 +25,9 @@ public class RefundWalletResultSender {
     // 지갑은 옛 이름과 .v1에 함께 보내고(#671), 환불은 .v1만 받는다 (#653)
     public static final String COMPLETED_TOPIC = "wallet.wallet-refund-completed.v1";
     public static final String FAILED_TOPIC = "wallet.wallet-refund-failed.v1";
+    // 회수 결과(#546, PR #537 약속)
+    public static final String REVERTED_TOPIC = "wallet.wallet-refund-reverted.v1";
+    public static final String REVERT_FAILED_TOPIC = "wallet.wallet-refund-revert-failed.v1";
 
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
     private static final Duration POLL_INTERVAL = Duration.ofMillis(100);
@@ -62,6 +65,18 @@ public class RefundWalletResultSender {
     public void sendFailed(Long refundId, String reason) {
         Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
         send(FAILED_TOPIC, message(refund, refund.getRefundAmount(), reason));
+    }
+
+    /** 저장된 환불의 값으로 회수 완료(다시 가져옴) 메시지를 보낸다. 기다리지 않는다 */
+    public void sendReverted(Long refundId) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(REVERTED_TOPIC, message(refund, refund.getRefundAmount(), null));
+    }
+
+    /** 저장된 환불의 값으로 회수 실패 메시지를 보낸다. 기다리지 않는다 */
+    public void sendRevertFailed(Long refundId, String reason) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(REVERT_FAILED_TOPIC, message(refund, refund.getRefundAmount(), reason));
     }
 
     /** 테스트 브로커에서 이 토픽의 파티션 수. 보낸 순서대로 처리된다고 가정하는 테스트가 그 가정을 먼저 확인할 때 쓴다 */

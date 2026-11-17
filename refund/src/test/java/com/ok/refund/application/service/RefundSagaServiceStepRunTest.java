@@ -157,6 +157,74 @@ class RefundSagaServiceStepRunTest {
         });
     }
 
+    // 예: 감자 1개 10,000원을 지갑이 돌려줬는데 상품이 재고 해제를 거절했다(409). 같은 구간에서 회수 줄을 할 차례로 만들어
+    // 알람이 다음 회차에 회수 요청을 보낸다(#546). 지금 바로 보내지 않는다
+    @Test
+    void 재고가_다시_해도_거절되면_회수_줄을_할_차례로_만든다() {
+        // given
+        givenRecordable(RefundStepType.PRODUCT);
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
+        })).isInstanceOf(RestApiException.class);
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().saveNew(captor.capture());
+        RefundStep revert = captor.getValue();
+        assertThat(revert).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(revert.getRefundId()).isEqualTo(REFUND_ID);
+            softly.assertThat(revert.getType()).isEqualTo(RefundStepType.WALLET_REVERT);
+            softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.READY);
+            softly.assertThat(revert.getNextCheckAt()).isEqualTo(NOW);
+        });
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // 같은 거절이 다시 기록돼도(예: 재고 줄이 다른 경로로 한 번 더 실패) 회수 줄은 하나다((refund_id, step) 유일 제약)
+    @Test
+    void 회수_줄이_이미_있으면_다시_만들지_않는다() {
+        // given
+        givenRecordable(RefundStepType.PRODUCT);
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.of(RefundStep.ready(REFUND_ID, RefundStepType.WALLET_REVERT, NOW.minusMinutes(1))));
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_RELEASE_REFUSED);
+        })).isInstanceOf(RestApiException.class);
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
+    // 몇 분짜리 상품 장애로 5번을 다 써 멈춘 재고는 돈을 가져가지 않는다(11/16 결정). 사람이 본다
+    @Test
+    void 재고가_시도_횟수를_다_써서_멈추면_회수하지_않는다() {
+        // given
+        givenProcessingRefund();
+        RefundStep lastTry = RefundStep.restore(3L, REFUND_ID, RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS,
+                5, NOW.plusMinutes(1), "PRODUCT_API_FAILED", NOW.minusMinutes(5));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(lastTry));
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new RestApiException(RefundErrorCode.PRODUCT_API_FAILED);
+        })).isInstanceOf(RestApiException.class);
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
+    // 상품 422(환불이 보낸 값 오류)는 표준 예외로 와 다시 시도한다. 회수 대상이 아니다(PR #673)
+    @Test
+    void 재고의_다시_시도할_실패는_회수하지_않는다() {
+        // given
+        givenRecordable(RefundStepType.PRODUCT);
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.PRODUCT, () -> {
+            throw new IllegalStateException("상품이 422로 답함");
+        })).isInstanceOf(IllegalStateException.class);
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+    }
+
     // 다시 시도할 실패라도 시도 횟수를 다 썼으면 멈춘다(#576). 사람이 보게 WARN을 남긴다
     @Test
     void 시도_횟수를_다_쓴_뒤_실패하면_멈추고_WARN을_남긴다() {

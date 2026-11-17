@@ -13,5 +13,10 @@ public enum RefundStepType {
     /** 지갑 예치금 반환 (#512) */
     WALLET,
     /** 상품 재고 되돌리기 (#414) */
-    PRODUCT
+    PRODUCT,
+    /**
+     * 지갑 돈 다시 가져오기(회수, #546). 재고가 다시 해도 같은 이유로 거절되면(PRODUCT_RELEASE_REFUSED) 이미 돌려준 돈을 다시 가져온다.
+     * 앞 단계를 되돌리는 단계라 처리 순서의 마지막에 두고, 이 줄이 생긴 환불은 앞으로 가지 않는다(RefundSagaPlan.fromSteps)
+     */
+    WALLET_REVERT
 }

@@ -2,6 +2,7 @@ package com.ok.testsupport;
 
 import com.ok.refund.application.port.out.WalletRefundRequest;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
+import com.ok.refund.application.port.out.WalletRevertRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
@@ -56,5 +57,14 @@ public class FakeWalletRefundRequestPort implements WalletRefundRequestPort {
         if (action != null) {
             action.run();
         }
+    }
+
+    // 회수 요청(#546)도 반환 요청과 같이 평소에는 실제 토픽에 보내고, fail() 뒤에는 실패한다
+    @Override
+    public void requestRevert(WalletRevertRequest request) {
+        if (failing) {
+            throw new IllegalStateException("지갑 회수 요청 발행에 실패했습니다(테스트). refundId=" + request.refundId());
+        }
+        kafkaAdapter.requestRevert(request);
     }
 }

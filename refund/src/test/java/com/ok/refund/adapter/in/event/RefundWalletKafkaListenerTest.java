@@ -2,7 +2,11 @@ package com.ok.refund.adapter.in.event;
 
 import com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage;
 import com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage;
+import com.ok.refund.adapter.in.event.dto.WalletRevertCompletedMessage;
+import com.ok.refund.adapter.in.event.dto.WalletRevertFailedMessage;
 import com.ok.refund.application.port.in.RefundSagaUseCase;
+import com.ok.refund.application.port.in.WalletRevertCompletedCommand;
+import com.ok.refund.application.port.in.WalletRevertFailedCommand;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.application.port.in.WalletRefundCompletedCommand;
 import com.ok.refund.application.port.in.WalletRefundFailedCommand;
@@ -147,6 +151,83 @@ class RefundWalletKafkaListenerTest {
                 // 긴 이유는 로그가 길어지지 않게 메시지 대신 길이와 refundId만 남긴다
                 Arguments.of(new WalletRefundFailedMessage(1L, 2L, 3L, 1_000L, "a".repeat(101)),
                         "[REFUND_WALLET_RESULT_INVALID] 실패 이유가 100자를 넘습니다. length=101, refundId=1"));
+    }
+
+    // ---- 회수 결과(#546). 값 검사는 반환 결과와 같은 도우미를 쓴다 ----
+
+    @Test
+    void 정상_회수_완료_메시지는_값을_그대로_입력_포트에_넘긴다() {
+        // given
+        WalletRevertCompletedMessage message = new WalletRevertCompletedMessage(11L, 22L, 33L, 4_000L);
+
+        // when
+        sut.onWalletRevertCompleted(message);
+
+        // then
+        ArgumentCaptor<WalletRevertCompletedCommand> captor = ArgumentCaptor.forClass(WalletRevertCompletedCommand.class);
+        then(useCase).should().recordWalletRevertCompleted(captor.capture());
+        WalletRevertCompletedCommand command = captor.getValue();
+        assertThat(command).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(command.refundId()).isEqualTo(11L);
+            softly.assertThat(command.orderId()).isEqualTo(22L);
+            softly.assertThat(command.buyerId()).isEqualTo(33L);
+            softly.assertThat(command.amount()).isEqualTo(4_000L);
+        });
+    }
+
+    @Test
+    void 정상_회수_실패_메시지는_값을_그대로_입력_포트에_넘긴다() {
+        // given
+        WalletRevertFailedMessage message = new WalletRevertFailedMessage(11L, 22L, 33L, 4_000L, "INSUFFICIENT_BALANCE");
+
+        // when
+        sut.onWalletRevertFailed(message);
+
+        // then
+        ArgumentCaptor<WalletRevertFailedCommand> captor = ArgumentCaptor.forClass(WalletRevertFailedCommand.class);
+        then(useCase).should().recordWalletRevertFailure(captor.capture());
+        WalletRevertFailedCommand command = captor.getValue();
+        assertThat(command).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(command.refundId()).isEqualTo(11L);
+            softly.assertThat(command.orderId()).isEqualTo(22L);
+            softly.assertThat(command.buyerId()).isEqualTo(33L);
+            softly.assertThat(command.amount()).isEqualTo(4_000L);
+            softly.assertThat(command.reason()).isEqualTo("INSUFFICIENT_BALANCE");
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_회수_완료_메시지")
+    void 값이_잘못된_회수_완료_메시지는_입력_포트를_부르지_않고_거절한다(WalletRevertCompletedMessage message, String expectedMessage) {
+        // when & then
+        assertThatThrownBy(() -> sut.onWalletRevertCompleted(message))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(expectedMessage);
+        then(useCase).shouldHaveNoInteractions();
+    }
+
+    static Stream<Arguments> 잘못된_회수_완료_메시지() {
+        return Stream.of(
+                invalid(new WalletRevertCompletedMessage(null, 2L, 3L, 1_000L), EMPTY_IDS),
+                invalid(new WalletRevertCompletedMessage(1L, 2L, 3L, 0L), NOT_POSITIVE_AMOUNT));
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_회수_실패_메시지")
+    void 값이_잘못된_회수_실패_메시지는_입력_포트를_부르지_않고_거절한다(WalletRevertFailedMessage message, String expectedMessage) {
+        // when & then
+        assertThatThrownBy(() -> sut.onWalletRevertFailed(message))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(expectedMessage);
+        then(useCase).shouldHaveNoInteractions();
+    }
+
+    static Stream<Arguments> 잘못된_회수_실패_메시지() {
+        return Stream.of(
+                invalid(new WalletRevertFailedMessage(1L, null, 3L, 1_000L, "X"), EMPTY_IDS),
+                invalid(new WalletRevertFailedMessage(1L, 2L, 3L, 1_000L, " "), EMPTY_REASON));
     }
 
     // 리스너는 거절 문구 끝에 받은 메시지를 그대로 붙인다(넘긴 메시지를 로그에서 찾으려고)

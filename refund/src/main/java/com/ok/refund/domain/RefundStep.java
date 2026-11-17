@@ -80,6 +80,15 @@ public class RefundStep {
                 now.plus(IN_PROGRESS_EXPIRY), null, null, now);
     }
 
+    /**
+     * 할 차례로 만든다. 지금 바로 부르지 않고 다시 진행 알람(#576)이 집게 할 때 쓴다(다시 볼 시각 = 지금).
+     * 회수 줄(#546)이 쓴다. 재고 실패를 기록하는 구간에서 회수 줄을 만들고, 발행은 그 구간 밖에서 알람이 한다(먼저 기록하고 보내기).
+     * 시도 횟수는 0이다. 알람이 다시 시작할 때(begin) 1이 된다
+     */
+    public static RefundStep ready(Long refundId, RefundStepType type, LocalDateTime now) {
+        return new RefundStep(null, refundId, type, RefundStepStatus.READY, 0, now, null, null, now);
+    }
+
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
                                      RefundStepStatus status, int attemptCount,
                                      LocalDateTime nextCheckAt, String lastReason,
@@ -143,7 +152,7 @@ public class RefundStep {
     /**
      * 실패해서 다음 시도를 기다린다. 시도 횟수를 다 썼으면 기다리지 않고 멈춘다(이유는 이번 실패 그대로, #576).
      * 단, 이미 한 번 보내고 결과를 기다린 적 있는 줄(결과 대기 시간 초과로 다시 보내다 실패함)은 횟수와 관계없이 멈추지 않고
-     * 결과 대기로 되돌린다(#577). 멈춘 줄은 뒤늦게 온 진짜 지갑 답(잔액 부족 등)을 기록하지 못해, 되돌리기(#706)가
+     * 결과 대기로 되돌린다(#577). 멈춘 줄은 뒤늦게 온 진짜 지갑 답(잔액 부족 등)을 기록하지 못해, 되돌리기(#546)가
      * "지갑이 거절함"과 "돈이 나갔는지 모름"을 가를 수 없기 때문이다. 지갑은 처음 요청을 이미 받았을 수 있고, 같은 refundId는 한 번만 처리한다.
      * 오래 걸리는 환불은 멈춘 환불 찾기(30분)가 사람에게 알린다.
      * 멈췄는지는 바뀐 뒤 {@link #getStatus()}로 본다.
@@ -176,7 +185,7 @@ public class RefundStep {
     /**
      * 결과를 기다리는 시각이 지난 줄을 같은 요청으로 다시 보내려고 시도 중으로 바꾼다(#577). 만료 시각은 새로 잡는다.
      * 시도 횟수는 올리지 않고, 몇 번이 지나도 멈추지 않는다. 멈추면 끝 상태라 뒤늦게 온 진짜 지갑 답(잔액 부족 등)이 기록되지 않아
-     * 되돌리기(#706)가 "지갑이 거절함"과 "돈이 나갔는지 모름"을 가를 수 없다. 횟수는 발행 실패·만료 다시 집기와 함께 써서,
+     * 되돌리기(#546)가 "지갑이 거절함"과 "돈이 나갔는지 모름"을 가를 수 없다. 횟수는 발행 실패·만료 다시 집기와 함께 써서,
      * 넣으면 Kafka가 잠깐 끊겼던 환불이 다시 요청도 못 하고 멈춘다. 지갑이 같은 refundId를 한 번만 처리하므로 다시 보내도 돈은 한 번만 나간다.
      * 오래 걸리는 환불은 멈춘 환불 찾기(#577)가 사람에게 알린다. 시각이 지나지 않았으면 바꾸지 않는다.
      */
@@ -239,7 +248,7 @@ public class RefundStep {
     /** 자동 처리를 멈춘다. 이미 끝난 단계(성공·거절됨·멈춤)는 이유도 바꾸지 않는다. */
     public boolean stop(String reason) {
         // 멈춘 줄도 끝 상태라 이유까지 그대로 둔다. 처음 멈춘 이유를 덮으면 결과 불일치(RESULT_MISMATCH) 표시가
-        // 뒤에 온 보통 실패로 지워져, 되돌리기(#706)가 돈이 나갔는지 모르는 환불을 보통 지갑 실패로 보고 주문을 되돌릴 수 있다
+        // 뒤에 온 보통 실패로 지워져, 되돌리기(#546)가 돈이 나갔는지 모르는 환불을 보통 지갑 실패로 보고 주문을 되돌릴 수 있다
         String normalized = normalizeReason(reason);
         if (status.isFinished()) {
             return false;

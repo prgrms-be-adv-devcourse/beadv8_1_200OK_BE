@@ -14,6 +14,12 @@ public final class RefundTopics {
      */
     public static final String REFUND_APPROVED = "refund.refund-approved.v1";
 
+    /**
+     * 환불 → 지갑: 재고가 다시 해도 거절돼 돌려준 돈을 다시 가져와 달라고 함(회수, #546. PR #537 약속, 지갑 #611).
+     * 키는 orderId, 값은 {@link RefundWalletRevertRequestedMessage}
+     */
+    public static final String REFUND_WALLET_REVERT_REQUESTED = "refund.refund-wallet-revert-requested.v1";
+
     private RefundTopics() {
     }
 }

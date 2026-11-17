@@ -2,13 +2,15 @@ package com.ok.refund.adapter.in.event;
 
 import com.ok.refund.adapter.in.event.dto.WalletRefundCompletedMessage;
 import com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage;
+import com.ok.refund.adapter.in.event.dto.WalletRevertCompletedMessage;
+import com.ok.refund.adapter.in.event.dto.WalletRevertFailedMessage;
 import com.ok.refund.application.port.in.RefundSagaUseCase;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
- * 지갑이 보내는 예치금 반환 결과(완료·실패)를 Kafka로 받아 입력 포트에 넘기는 입구다.
+ * 지갑이 보내는 예치금 반환 결과(완료·실패)와 회수 결과(다시 가져옴·실패, #546)를 Kafka로 받아 입력 포트에 넘기는 입구다.
  * 여기서는 값이 형식에 맞는지만 보고, 환불 상태·금액 대조 같은 업무 판단은 승인 뒤 단계 지휘자가 한다(#575).
  */
 @Component
@@ -44,15 +46,40 @@ public class RefundWalletKafkaListener {
             properties = "spring.json.value.default.type=com.ok.refund.adapter.in.event.dto.WalletRefundFailedMessage")
     void onWalletRefundFailed(WalletRefundFailedMessage message) {
         requireIds(message.refundId(), message.orderId(), message.buyerId(), message.amount(), message);
-        String reason = message.reason();
+        requireReason(message.reason(), message.refundId(), message);
+        refundSagaUseCase.recordWalletRefundFailure(message.toCommand());
+    }
+
+    // 회수 결과(#546)도 반환 결과와 같은 값 검사와 오류 처리 규칙을 쓴다. 다시 받아도 같은 회수 줄에 같은 결과라 안전하다
+    @KafkaListener(
+            topics = RefundInboundTopics.WALLET_REFUND_REVERTED,
+            groupId = RefundInboundTopics.REVERT_COMPLETED_GROUP,
+            containerFactory = RefundKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
+            properties = "spring.json.value.default.type=com.ok.refund.adapter.in.event.dto.WalletRevertCompletedMessage")
+    void onWalletRevertCompleted(WalletRevertCompletedMessage message) {
+        requireIds(message.refundId(), message.orderId(), message.buyerId(), message.amount(), message);
+        refundSagaUseCase.recordWalletRevertCompleted(message.toCommand());
+    }
+
+    @KafkaListener(
+            topics = RefundInboundTopics.WALLET_REFUND_REVERT_FAILED,
+            groupId = RefundInboundTopics.REVERT_FAILED_GROUP,
+            containerFactory = RefundKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY,
+            properties = "spring.json.value.default.type=com.ok.refund.adapter.in.event.dto.WalletRevertFailedMessage")
+    void onWalletRevertFailed(WalletRevertFailedMessage message) {
+        requireIds(message.refundId(), message.orderId(), message.buyerId(), message.amount(), message);
+        requireReason(message.reason(), message.refundId(), message);
+        refundSagaUseCase.recordWalletRevertFailure(message.toCommand());
+    }
+
+    private void requireReason(String reason, Long refundId, Object message) {
         if (reason == null || reason.isBlank()) {
             throw new IllegalArgumentException("[REFUND_WALLET_RESULT_INVALID] 실패 이유가 비어 있습니다. message=" + message);
         }
         if (reason.length() > MAX_REASON_LENGTH) {
             throw new IllegalArgumentException("[REFUND_WALLET_RESULT_INVALID] 실패 이유가 " + MAX_REASON_LENGTH
-                    + "자를 넘습니다. length=" + reason.length() + ", refundId=" + message.refundId());
+                    + "자를 넘습니다. length=" + reason.length() + ", refundId=" + refundId);
         }
-        refundSagaUseCase.recordWalletRefundFailure(message.toCommand());
     }
 
     private void requireIds(Long refundId, Long orderId, Long buyerId, Long amount, Object message) {

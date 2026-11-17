@@ -15,4 +15,13 @@ public interface WalletRefundRequestPort {
      *                               던지는 쪽은 로그를 따로 남기지 않는다(service.md, {@code ApiControllerAdvice}가 오류 로그를 남긴다)
      */
     void requestRefund(WalletRefundRequest request);
+
+    /**
+     * 돈 다시 가져오기(회수) 요청 한 건을 보낸다(#546). 저장 확인을 기다리는 이유와 실패 처리는 {@link #requestRefund}와 같다.
+     * 지갑은 결과(다시 가져옴·실패)를 따로 보낸다. 반환 요청과 같은 포트에 두는 이유: 같은 지갑에 같은 방식으로 보내는 요청이라
+     * 포트를 나누면 지휘자가 지갑 포트를 둘 받는다.
+     *
+     * @throws IllegalStateException 보내지 못했거나 기다리는 시간이 지났으면. 메시지에 {@code refundId}를 담는다
+     */
+    void requestRevert(WalletRevertRequest request);
 }

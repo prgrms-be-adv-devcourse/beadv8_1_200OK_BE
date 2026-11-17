@@ -19,4 +19,9 @@ class RefundKafkaTopicConfig {
     NewTopic refundApprovedV1Topic() {
         return TopicBuilder.name(RefundTopics.REFUND_APPROVED).build();
     }
+
+    @Bean
+    NewTopic refundWalletRevertRequestedV1Topic() {
+        return TopicBuilder.name(RefundTopics.REFUND_WALLET_REVERT_REQUESTED).build();
+    }
 }

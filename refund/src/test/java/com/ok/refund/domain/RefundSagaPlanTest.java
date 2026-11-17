@@ -39,7 +39,11 @@ class RefundSagaPlanTest {
                 Arguments.of(Event.WALLET_PUBLISHED, 20_000L, Action.WAIT),
                 Arguments.of(Event.WALLET_COMPLETED, 20_000L, Action.CALL_PRODUCT),
                 Arguments.of(Event.PRODUCT_RELEASED, 20_000L, Action.COMPLETE),
-                Arguments.of(Event.PRODUCT_RELEASED, 0L, Action.COMPLETE));
+                Arguments.of(Event.PRODUCT_RELEASED, 0L, Action.COMPLETE),
+                // 재고가 다시 해도 거절되면 돌려준 돈이 있을 때만 회수한다(#546). 0원은 가져올 돈이 없어 멈춘다
+                Arguments.of(Event.PRODUCT_REFUSED, 20_000L, Action.CALL_WALLET_REVERT),
+                Arguments.of(Event.PRODUCT_REFUSED, 0L, Action.STOP),
+                Arguments.of(Event.WALLET_REVERT_PUBLISHED, 20_000L, Action.WAIT));
     }
 
     @ParameterizedTest
@@ -107,7 +111,30 @@ class RefundSagaPlanTest {
                 Arguments.of("0원, 재고 할 차례 → 지갑 없이 재고", 0L,
                         List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.PRODUCT, RefundStepStatus.READY)), Action.CALL_PRODUCT),
                 Arguments.of("0원, 재고 시도 중 → 기다림", 0L,
-                        List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS)), Action.WAIT));
+                        List.of(succeeded(RefundStepType.ORDER), step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS)), Action.WAIT),
+                // 회수(#546): 회수 줄이 있으면 다른 줄보다 먼저 본다
+                Arguments.of("재고 멈춤, 회수 할 차례 → 회수", 20_000L, refusedWith(step(RefundStepType.WALLET_REVERT, RefundStepStatus.READY)),
+                        Action.CALL_WALLET_REVERT),
+                Arguments.of("회수 결과 대기 → 기다림", 20_000L,
+                        refusedWith(step(RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT)), Action.WAIT),
+                Arguments.of("회수 결과 대기인데 기다리는 시각 지남(#577) → 회수 다시 요청", 20_000L,
+                        refusedWith(overdueAwaiting(RefundStepType.WALLET_REVERT)), Action.CALL_WALLET_REVERT),
+                Arguments.of("회수 시도 중인데 만료 지남 → 회수", 20_000L, refusedWith(expired(RefundStepType.WALLET_REVERT)),
+                        Action.CALL_WALLET_REVERT),
+                Arguments.of("회수 성공(주문 되돌리기 #622 전) → 멈춤", 20_000L, refusedWith(succeeded(RefundStepType.WALLET_REVERT)),
+                        Action.STOP),
+                Arguments.of("회수 실패로 멈춤 → 멈춤", 20_000L, refusedWith(step(RefundStepType.WALLET_REVERT, RefundStepStatus.STOPPED)),
+                        Action.STOP),
+                Arguments.of("회수 중이면 지갑 결과 대기 시각이 지나도 지갑 반환을 다시 요청하지 않음 → 기다림", 20_000L,
+                        List.of(succeeded(RefundStepType.ORDER), overdueAwaiting(RefundStepType.WALLET),
+                                step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED),
+                                step(RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT)), Action.WAIT));
+    }
+
+    // 지갑 반환까지 끝났는데 재고가 거절로 멈춘 환불에 회수 줄 하나를 더한 단계 줄
+    private static List<RefundStep> refusedWith(RefundStep revert) {
+        return List.of(succeeded(RefundStepType.ORDER), succeeded(RefundStepType.WALLET),
+                step(RefundStepType.PRODUCT, RefundStepStatus.STOPPED), revert);
     }
 
     @Test
@@ -141,7 +168,11 @@ class RefundSagaPlanTest {
 
     // 지갑 결과 대기인데 기다리는 시각이 지금인 줄(결과 메시지가 늦거나 버려짐)
     private static RefundStep overdueAwaiting() {
-        return RefundStep.restore(RefundStepType.WALLET.ordinal() + 1L, REFUND_ID, RefundStepType.WALLET,
+        return overdueAwaiting(RefundStepType.WALLET);
+    }
+
+    private static RefundStep overdueAwaiting(RefundStepType type) {
+        return RefundStep.restore(type.ordinal() + 1L, REFUND_ID, type,
                 RefundStepStatus.AWAITING_RESULT, 1, NOW, null, NOW.minusMinutes(5));
     }
 

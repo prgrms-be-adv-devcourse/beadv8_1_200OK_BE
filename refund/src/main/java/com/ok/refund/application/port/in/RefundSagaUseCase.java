@@ -5,7 +5,7 @@ package com.ok.refund.application.port.in;
  * 승인 서비스는 승인 구간을 커밋한 뒤 시작만 맡기고, 지갑 결과 메시지도 이 포트로 들어온다. 다음 단계를 정하고 다른 모듈을 부르는 곳은 이 포트의 구현 하나다.
  * 지갑 결과는 상태나 금액·주문·구매자가 맞지 않으면 예외 없이 기록하거나 로그만 남기고 넘긴다. 예외를 던지면 메시지 오류 처리기가
  * 같은 메시지를 다시 시도해 어차피 같은 결과인 일로 다시 시도 줄을 막기 때문이다.
- * 재고 단계가 이미 시작된 환불은 지갑 결과로 지갑 실패를 남기지 않는다. 어디까지 왔는지로 다시 시도(#576)·되돌리기(#706)를 정하기 때문이다.
+ * 재고 단계가 이미 시작된 환불은 지갑 결과로 지갑 실패를 남기지 않는다. 어디까지 왔는지로 다시 시도(#576)·되돌리기(#546)를 정하기 때문이다.
  */
 public interface RefundSagaUseCase {
 
@@ -36,6 +36,19 @@ public interface RefundSagaUseCase {
      * 같은 이유가 이미 기록돼 있거나, 처리 중이 아니거나, 재고 단계가 이미 시작됐으면 넘긴다.
      */
     void recordWalletRefundFailure(WalletRefundFailedCommand command);
+
+    /**
+     * 지갑이 돈을 다시 가져왔다는(회수) 결과를 회수 줄에 남긴다(#546). 환불은 처리 중으로 두고 사람이 본다(주문 되돌리기 #622 전까지).
+     * 주문·구매자·금액이 환불과 다르면 회수 줄을 {@code RESULT_MISMATCH}로 멈춘다.
+     * 없는 환불, 처리 중이 아닌 환불, 회수 줄이 없거나 이미 끝난 환불은 예외 없이 넘긴다.
+     */
+    void recordWalletRevertCompleted(WalletRevertCompletedCommand command);
+
+    /**
+     * 지갑이 돈을 다시 가져오지 못했다는 결과를 회수 줄에 멈춤으로 남긴다(#546). 주문은 되돌리지 않고 사람이 본다.
+     * 거르는 규칙은 {@link #recordWalletRevertCompleted}와 같다.
+     */
+    void recordWalletRevertFailure(WalletRevertFailedCommand command);
 
     /**
      * 환불 번호만으로 승인 뒤 단계를 이어 간다(#616). 지휘 작업(알람, #576)이 멈춘 환불을 다시 진행할 때 쓴다.

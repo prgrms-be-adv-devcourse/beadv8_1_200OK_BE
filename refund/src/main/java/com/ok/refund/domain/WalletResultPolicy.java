@@ -6,7 +6,7 @@ import java.util.Objects;
  * 지갑이 보낸 예치금 반환 결과(완료·실패)를 받을지 거르는 정책이다(#616). 받음·불일치·넘김만 답하고 다음 단계는 정하지 않는다.
  * 다음 단계는 {@link RefundSagaPlan} 한 곳에서 정한다. 여기서 다음 단계까지 정하면 순서 판단이 두 곳으로 갈라진다(#575 결정 5).
  * 지휘자는 잠그기 전에 먼저 읽은 값으로 한 번, 잠근 뒤 다시 읽은 값으로 한 번 부른다. 읽은 뒤 잠그기 전에 상태가 바뀔 수 있어서다.
- * 지갑 반환 답 전용이다. 되돌리기(돈 다시 가져오기) 답은 결과의 구매자·금액이 지갑 기록 값이라 비교 기준이 달라 따로 거른다(#706·#572).
+ * 지갑 반환 답 전용이다. 되돌리기(돈 다시 가져오기) 답은 결과의 구매자·금액이 지갑 기록 값이라 비교 기준이 달라 따로 거른다(#546·#572).
  */
 public final class WalletResultPolicy {
 
@@ -37,8 +37,17 @@ public final class WalletResultPolicy {
         /** 지갑 완료를 받아 재고 단계가 시작된 환불이다. 실패나 불일치를 남기면 앞선 완료와 모순이다 */
         AFTER_WALLET_SUCCESS,
         /** 같은 이유의 실패가 이미 기록돼 있다 */
-        SAME_FAILURE
+        SAME_FAILURE,
+        /**
+         * 지갑이 "이미 다시 가져간 refundId"라 반환하지 않았다고 알렸다({@link #REFUND_REVERTED}, #546).
+         * 지갑은 회수 요청을 먼저 받으면 그 refundId를 막아 두고, 뒤에 온 반환 요청에 이 이유로 답한다.
+         * 돈은 움직이지 않았고 회수 결과는 회수 줄에 따로 오므로 지갑 실패로 남기지 않는다
+         */
+        REFUND_REVERTED
     }
+
+    /** 지갑이 막아 둔 refundId의 반환 요청에 답하는 실패 이유(PR #537 약속) */
+    public static final String REFUND_REVERTED = "REFUND_REVERTED";
 
     /**
      * 거른 결과와 넘기는 이유. 넘기지 않으면 이유는 {@code null}이다.
@@ -83,6 +92,9 @@ public final class WalletResultPolicy {
         }
         if (refund.getStatus() != RefundStatus.PROCESSING) {
             return Verdict.skip(SkipReason.NOT_PROCESSING);
+        }
+        if (kind == Kind.FAILED && REFUND_REVERTED.equals(reason)) {
+            return Verdict.skip(SkipReason.REFUND_REVERTED);
         }
         if (kind == Kind.FAILED && productStep != null) {
             return Verdict.skip(SkipReason.AFTER_WALLET_SUCCESS);
