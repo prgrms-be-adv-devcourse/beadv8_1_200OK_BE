@@ -80,6 +80,11 @@ public class Charge extends BaseTime {
     @Column(name = "approved_after_failure_at")
     private LocalDateTime approvedAfterFailureAt;
 
+    // 관리자가 토스 결제 취소를 요청한 시각. 토스 취소는 트랜잭션 밖이라, 그 사이 같은 건이 잔액에 반영되면
+    // 환불과 잔액 증가가 함께 일어난다. 토스를 부르기 전에 남겨 두고, 값이 있는 처리 중 건은 완료·실패로 바꾸지 않는다
+    @Column(name = "payment_cancel_requested_at")
+    private LocalDateTime paymentCancelRequestedAt;
+
     // 관리자가 토스 결제를 취소(환불)한 시각. 새 상태를 두면 상태 규칙과 한도 합계를 모두 고쳐야 해서 상태는 실패로 둔다
     @Column(name = "payment_canceled_at")
     private LocalDateTime paymentCanceledAt;
@@ -122,6 +127,35 @@ public class Charge extends BaseTime {
         }
         if (approvedAfterFailureAt == null) {
             approvedAfterFailureAt = knownAt;
+        }
+    }
+
+    /** 관리자가 토스 결제 취소를 요청한 처리 중 건이다. 취소 결과가 정해질 때까지 완료·실패로 바꾸지 않는다. */
+    public boolean isPaymentCancelRequested() {
+        return status == ChargeStatus.IN_PROGRESS && paymentCancelRequestedAt != null;
+    }
+
+    /**
+     * 관리자가 토스 결제 취소를 요청한 것을 남긴다. 처리 중인 건만 남긴다.
+     * 이미 표시가 있으면 앞선 요청이 토스에서 아직 처리 중이거나 결과를 모르는 것이라 그대로 둔다.
+     *
+     * @return 이 요청이 표시를 새로 남겼으면 true. 표시를 지울 수 있는 것은 이 요청뿐이다
+     */
+    public boolean requestPaymentCancel(LocalDateTime requestedAt) {
+        if (status != ChargeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("처리 중인 충전 건만 결제 취소를 요청할 수 있습니다. chargeNo=" + chargeNo + ", status=" + status);
+        }
+        if (paymentCancelRequestedAt != null) {
+            return false;
+        }
+        paymentCancelRequestedAt = requestedAt;
+        return true;
+    }
+
+    /** 토스가 취소를 거절해 취소 요청 표시를 지운다. 표시를 새로 남긴 요청만 부른다. */
+    public void clearPaymentCancelRequest() {
+        if (status == ChargeStatus.IN_PROGRESS) {
+            paymentCancelRequestedAt = null;
         }
     }
 

@@ -26,6 +26,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,6 +44,7 @@ import static org.mockito.Mockito.never;
 class ChargeAdminServiceIntegrationTest extends AbstractIntegrationTest {
     private static final Long MEMBER_ID = 8_201L;
     private static final Long ADMIN_ID = 1L;
+    private static final Long OTHER_ADMIN_ID = 2L;
     private static final long AMOUNT = 10_000;
     private static final String PAYMENT_KEY = "admin-payment-key-1";
     private static final String REASON = "토스 결제 확인 후 관리자 처리";
@@ -59,6 +61,9 @@ class ChargeAdminServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     ChargeConfirmService chargeConfirmService;
+
+    @Autowired
+    ChargeTransactionService chargeTransaction;
 
     @Autowired
     TermsService termsService;
@@ -322,6 +327,166 @@ class ChargeAdminServiceIntegrationTest extends AbstractIntegrationTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED));
         assertHeldUnchanged(chargeNo);
+    }
+
+    @Test
+    void 결제_취소_중에_다른_관리자가_반영하면_반영을_막아_환불과_잔액_증가가_함께_일어나지_않는다() {
+        // given: 토스 취소 응답을 기다리는 사이 다른 관리자가 같은 건을 반영한다. 반영 직전 조회에는 아직 승인 상태로 보인다
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        AtomicReference<RuntimeException> completeError = new AtomicReference<>();
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString())).willAnswer(invocation -> {
+            try {
+                chargeAdminService.complete(OTHER_ADMIN_ID, chargeNo);
+            } catch (RuntimeException e) {
+                completeError.set(e);
+            }
+            return new TossCancelResult.Canceled();
+        });
+
+        // when
+        ChargeAdminResult sut = chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON);
+
+        // then
+        assertThat(completeError.get()).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.status()).isEqualTo("FAILED");
+            softly.assertThat(sut.paymentCanceledAt()).isNotNull();
+            softly.assertThat(balanceOrZero(MEMBER_ID)).isZero();
+        });
+    }
+
+    @Test
+    void 결제_취소_중에_늦게_온_승인_응답은_잔액에_반영하지_않는다() {
+        // given: 토스 취소 응답을 기다리는 사이 회원의 승인 요청이 늦게 승인 응답을 받는다
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        AtomicReference<String> lateApprovalStatus = new AtomicReference<>();
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString())).willAnswer(invocation -> {
+            lateApprovalStatus.set(chargeTransaction.complete(MEMBER_ID, chargeNo, PAYMENT_KEY).status());
+            return new TossCancelResult.Canceled();
+        });
+
+        // when
+        ChargeAdminResult sut = chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(lateApprovalStatus.get()).isEqualTo("IN_PROGRESS");
+            softly.assertThat(sut.status()).isEqualTo("FAILED");
+            softly.assertThat(sut.paymentCanceledAt()).isNotNull();
+            softly.assertThat(balanceOrZero(MEMBER_ID)).isZero();
+        });
+    }
+
+    @Test
+    void 취소_결과를_모르는_건은_반영과_실패를_막고_결제_취소만_다시_할_수_있다() {
+        // given: 취소 결과를 몰라 환불됐을 수도 있는 건
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString()))
+                .willReturn(new TossCancelResult.Unknown("토스 응답 없음"), new TossCancelResult.Canceled());
+        assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_TOSS_STATUS_UNKNOWN));
+
+        // when & then
+        assertThatThrownBy(() -> chargeAdminService.complete(OTHER_ADMIN_ID, chargeNo))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
+        assertThatThrownBy(() -> chargeAdminService.fail(OTHER_ADMIN_ID, chargeNo, REASON))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
+        assertThat(chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON).paymentCanceledAt()).isNotNull();
+        assertThat(balanceOrZero(MEMBER_ID)).isZero();
+    }
+
+    @Test
+    void 토스가_취소를_거절한_건은_다시_반영할_수_있다() {
+        // given
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString()))
+                .willReturn(new TossCancelResult.Rejected("EXCEED_MAX_REFUND_DUE", "환불 가능한 기간이 지났습니다."));
+        assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
+                .isInstanceOf(RestApiException.class);
+
+        // when
+        ChargeAdminResult sut = chargeAdminService.complete(ADMIN_ID, chargeNo);
+
+        // then
+        assertThat(sut.status()).isEqualTo("COMPLETED");
+        assertThat(balanceOrZero(MEMBER_ID)).isEqualTo(AMOUNT);
+    }
+
+    @Test
+    void 다시_시도한_취소가_거절돼도_앞선_취소로_환불됐으면_결제_취소로_기록한다() {
+        // given: 앞선 취소는 결과를 몰랐는데 토스에서는 늦게 끝났다. 다시 시도한 취소는 거절된다
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        given(tossPaymentsClient.findPayment(chargeNo)).willReturn(
+                found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT),
+                found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT),
+                found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT),
+                found(PAYMENT_KEY, TossPaymentStatus.CANCELED, AMOUNT));
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString())).willReturn(
+                new TossCancelResult.Unknown("토스 응답 없음"),
+                new TossCancelResult.Rejected("NOT_CANCELABLE_PAYMENT", "취소 할 수 없는 결제 입니다."));
+        assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_TOSS_STATUS_UNKNOWN));
+
+        // when
+        ChargeAdminResult sut = chargeAdminService.cancelPayment(OTHER_ADMIN_ID, chargeNo, REASON);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.status()).isEqualTo("FAILED");
+            softly.assertThat(sut.paymentCanceledAt()).isNotNull();
+            softly.assertThat(balanceOrZero(MEMBER_ID)).isZero();
+        });
+    }
+
+    @Test
+    void 결과를_모르는_취소가_있는_건에_다시_건_취소가_거절되면_표시를_남겨_반영을_막는다() {
+        // given: 앞선 취소는 결과를 모르고, 토스에서 아직 처리 중이라 조회에는 승인 상태로 보인다
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString())).willReturn(
+                new TossCancelResult.Unknown("토스 응답 없음"),
+                new TossCancelResult.Rejected("NOT_CANCELABLE_PAYMENT", "취소 할 수 없는 결제 입니다."));
+        assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_TOSS_STATUS_UNKNOWN));
+        assertThatThrownBy(() -> chargeAdminService.cancelPayment(OTHER_ADMIN_ID, chargeNo, REASON))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED));
+
+        // when & then
+        assertThatThrownBy(() -> chargeAdminService.complete(OTHER_ADMIN_ID, chargeNo))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
+        assertThat(balanceOrZero(MEMBER_ID)).isZero();
+    }
+
+    @Test
+    void 토스_취소_호출이_예상하지_못한_오류를_내면_결과를_모르는_것으로_보고_표시를_남긴다() {
+        // given
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString()))
+                .willThrow(new IllegalStateException("응답 변환 실패"));
+
+        // when & then
+        assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_TOSS_STATUS_UNKNOWN));
+        assertThatThrownBy(() -> chargeAdminService.complete(OTHER_ADMIN_ID, chargeNo))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
     }
 
     @Test

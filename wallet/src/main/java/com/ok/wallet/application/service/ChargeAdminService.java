@@ -64,13 +64,14 @@ public class ChargeAdminService implements ChargeAdminUseCase {
         if (!charge.isHeldForReview()) {
             throw new RestApiException(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE, "잔액 반영은 복구가 멈춘 처리 중 건만 할 수 있습니다.");
         }
+        requireNoCancelRequest(charge);
         TossPaymentLookupResult.Found found = requireFound(lookup(chargeNo));
         if (found.status() != TossPaymentStatus.DONE || !charge.hasAmount(found.totalAmount())) {
             throw mismatch(found, "토스가 같은 금액으로 승인한 결제만 잔액에 반영할 수 있습니다.");
         }
         // 토스 조회는 승인된 시도가 있으면 그 시도를 돌려주므로, 그 결제 키가 잔액 반영 근거가 된다
         ChargeConfirmResult result = chargeTransaction.complete(charge.getMemberId(), chargeNo, found.paymentKey());
-        requireStatus(result.status(), ChargeStatus.COMPLETED);
+        requireStatus(chargeNo, result.status(), ChargeStatus.COMPLETED);
         log.info("관리자가 충전 건을 잔액에 반영했습니다. adminId={}, chargeNo={}", adminId, chargeNo);
         return ChargeAdminResult.from(chargeTransaction.findCharge(chargeNo));
     }
@@ -81,6 +82,7 @@ public class ChargeAdminService implements ChargeAdminUseCase {
         if (!charge.isHeldForReview()) {
             throw new RestApiException(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE, "실패 처리는 복구가 멈춘 처리 중 건만 할 수 있습니다.");
         }
+        requireNoCancelRequest(charge);
         TossPaymentLookupResult lookup = lookup(chargeNo);
         if (lookup instanceof TossPaymentLookupResult.Unknown) {
             throw new RestApiException(WalletErrorCode.CHARGE_TOSS_STATUS_UNKNOWN);
@@ -89,7 +91,7 @@ public class ChargeAdminService implements ChargeAdminUseCase {
             throw mismatch(found, "토스 결제가 승인됐거나 아직 진행 중이라 실패로 둘 수 없습니다.");
         }
         ChargeConfirmResult result = chargeTransaction.failApproval(charge.getMemberId(), chargeNo, ADMIN_FAILURE_CODE, reason);
-        requireStatus(result.status(), ChargeStatus.FAILED);
+        requireStatus(chargeNo, result.status(), ChargeStatus.FAILED);
         log.info("관리자가 충전 건을 실패로 바꿨습니다. adminId={}, chargeNo={}", adminId, chargeNo);
         return ChargeAdminResult.from(chargeTransaction.findCharge(chargeNo));
     }
@@ -109,15 +111,54 @@ public class ChargeAdminService implements ChargeAdminUseCase {
         if (found.status() != TossPaymentStatus.DONE || !charge.hasAmount(found.totalAmount())) {
             throw mismatch(found, "토스가 같은 금액으로 승인한 결제만 전액 취소할 수 있습니다.");
         }
-        TossCancelResult cancel = tossPaymentsClient.cancel(found.paymentKey(), chargeNo, reason, idempotencyKey(chargeNo));
+        // 처리 중 건은 토스를 부르기 전에 잠그고 취소 요청을 남긴다. 토스 취소를 기다리는 사이 다른 관리자의 반영이나
+        // 늦게 온 승인 응답이 완료하면 환불과 잔액 증가가 함께 일어나므로, 표시가 있는 건은 완료·실패로 바꾸지 않는다
+        boolean ownsCancelRequest = charge.isHeldForReview() && chargeTransaction.requestPaymentCancel(chargeNo);
+        TossCancelResult cancel = cancel(found.paymentKey(), chargeNo, reason);
         return switch (cancel) {
             case TossCancelResult.Canceled canceled -> recordPaymentCanceled(adminId, chargeNo, reason);
-            case TossCancelResult.Rejected rejected -> throw new RestApiException(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED,
-                    "토스가 결제 취소를 거절했습니다. code=" + rejected.code() + ", message=" + rejected.message());
-            // 응답만으로는 취소됐는지 확실하지 않아, 토스에 다시 물어 전액 취소된 것을 확인한 뒤에만 기록한다
+            case TossCancelResult.Rejected rejected -> handleRejected(adminId, chargeNo, reason, ownsCancelRequest, rejected);
+            // 응답만으로는 취소됐는지 확실하지 않아, 토스에 다시 물어 전액 취소된 것을 확인한 뒤에만 기록한다.
+            // 확인하지 못하면 환불됐을 수도 있어 표시를 남겨 두고, 결제 취소만 다시 할 수 있게 한다
             case TossCancelResult.AlreadyCanceled alreadyCanceled -> recordIfCanceled(adminId, chargeNo, reason);
             case TossCancelResult.Unknown unknown -> recordIfCanceled(adminId, chargeNo, reason);
         };
+    }
+
+    // 조회처럼 예상하지 못한 예외도 취소 결과를 알 수 없는 것으로 본다. 다시 조회해 취소됐을 때만 기록하고, 아니면 표시를 남긴다
+    private TossCancelResult cancel(String paymentKey, String chargeNo, String reason) {
+        try {
+            return tossPaymentsClient.cancel(paymentKey, chargeNo, reason, idempotencyKey(chargeNo));
+        } catch (RuntimeException e) {
+            log.warn("관리자 결제 취소 중 토스 호출에서 예상하지 못한 오류가 났습니다. chargeNo={}", chargeNo, e);
+            return new TossCancelResult.Unknown("토스 결제 취소 중 예상하지 못한 오류");
+        }
+    }
+
+    // 거절은 이번 요청이 취소되지 않았다는 뜻일 뿐이다. 앞서 결과를 모른 취소가 토스에서 늦게 끝났을 수 있어 다시 묻고,
+    // 취소됐으면 기록한다. 표시는 이 요청이 새로 남겼고 토스가 승인 상태 그대로일 때만 지운다.
+    // 앞선 요청의 표시는 그 요청이 토스에서 아직 처리 중일 수 있어(조회에는 승인 상태로 보일 수 있음) 지우지 않는다
+    private ChargeAdminResult handleRejected(
+            Long adminId, String chargeNo, String reason, boolean ownsCancelRequest, TossCancelResult.Rejected rejected) {
+        if (lookup(chargeNo) instanceof TossPaymentLookupResult.Found found) {
+            if (found.status() == TossPaymentStatus.CANCELED) {
+                return recordPaymentCanceled(adminId, chargeNo, reason);
+            }
+            if (found.status() == TossPaymentStatus.DONE && ownsCancelRequest) {
+                releaseCancelRequest(chargeNo);
+            }
+        }
+        throw new RestApiException(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED,
+                "토스가 결제 취소를 거절했습니다. code=" + rejected.code() + ", message=" + rejected.message());
+    }
+
+    // 표시를 지우지 못해도 관리자에게는 토스의 거절 이유를 알린다. 남은 표시는 개발 문서의 절차대로 사람이 지운다
+    private void releaseCancelRequest(String chargeNo) {
+        try {
+            chargeTransaction.clearPaymentCancelRequest(chargeNo);
+        } catch (RuntimeException e) {
+            log.warn("토스가 결제 취소를 거절했지만 취소 요청 표시를 지우지 못했습니다. chargeNo={}", chargeNo, e);
+        }
     }
 
     private ChargeAdminResult recordIfCanceled(Long adminId, String chargeNo, String reason) {
@@ -170,11 +211,25 @@ public class ChargeAdminService implements ChargeAdminUseCase {
                 reason + " 토스 결제 상태: " + found.status() + ", 금액: " + found.totalAmount());
     }
 
-    // 토스에 묻는 사이 늦게 온 승인 응답이 먼저 끝낼 수 있다. 그때 완료·실패 처리는 현재 상태를 그대로 돌려준다
-    private static void requireStatus(String actual, ChargeStatus expected) {
-        if (!expected.name().equals(actual)) {
-            throw new RestApiException(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE,
-                    "처리하는 사이 충전 건 상태가 바뀌었습니다. 현재 상태: " + actual);
+    // 토스에 묻는 사이 늦게 온 승인 응답이 먼저 끝내거나 다른 관리자가 결제 취소를 요청할 수 있다.
+    // 그때 완료·실패 처리는 바꾸지 않고 현재 상태를 그대로 돌려준다
+    private void requireStatus(String chargeNo, String actual, ChargeStatus expected) {
+        if (expected.name().equals(actual)) {
+            return;
         }
+        requireNoCancelRequest(chargeTransaction.findCharge(chargeNo));
+        throw stateChanged(actual);
+    }
+
+    private static void requireNoCancelRequest(Charge charge) {
+        if (charge.isPaymentCancelRequested()) {
+            throw new RestApiException(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE,
+                    "결제 취소를 요청한 건입니다. 취소 결과를 확인하지 못했다면 결제 취소를 다시 시도해 주세요.");
+        }
+    }
+
+    private static RestApiException stateChanged(String actual) {
+        return new RestApiException(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE,
+                "처리하는 사이 충전 건 상태가 바뀌었습니다. 현재 상태: " + actual);
     }
 }
