@@ -2,6 +2,8 @@ package com.ok.delivery.application.port.out;
 
 import com.ok.delivery.domain.SellerOriginPostalCode;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -10,6 +12,8 @@ import java.util.Optional;
 public interface SellerOriginPostalCodeRepository {
 
     Optional<SellerOriginPostalCode> findBySellerId(Long sellerId);
+
+    List<SellerOriginPostalCode> findAllBySellerIdIn(Collection<Long> sellerIds);
 
     <S extends SellerOriginPostalCode> S save(S entity);
 }

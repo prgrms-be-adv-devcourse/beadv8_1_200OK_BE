@@ -40,13 +40,14 @@ public class ShippingFeeQuoteService implements ShippingFeeQuoteUseCase {
     public ShippingFeeQuoteResult quote(ShippingFeeQuoteQuery query) {
         LocalDateTime baseTime = LocalDateTime.now(clock);
         RegionResult region = deliveryRegionService.resolve(query.postalCode());
+        Map<Long, Integer> surcharges = deliveryRegionService.resolveSurcharges(region, query.sellerIds());
         Map<Long, SellerShippingSetting> settings = sellerShippingSettingService.getSettings(query.sellerIds());
 
         List<SellerShippingFee> fees = new ArrayList<>();
         List<SellerShippingQuoteResult> sellers = new ArrayList<>();
         for (SellerItemAmount seller : query.sellers()) {
             SellerShippingSetting setting = settings.get(seller.sellerId());
-            SellerShippingFee fee = ShippingFeePolicy.calculate(seller.sellerId(), seller.itemAmount(), setting, region.surcharge());
+            SellerShippingFee fee = ShippingFeePolicy.calculate(seller.sellerId(), seller.itemAmount(), setting, surcharges.get(seller.sellerId()));
             // 마감 시간이 판매자마다 달라 출고 예정일도 판매자별로 계산한다
             LocalDate shipDate = deliveryDatePolicy.shipDate(baseTime, setting.cutoffTime());
             DeliveryDateRange arrival = deliveryDatePolicy.arrivalRange(shipDate, region.extraDeliveryDays());

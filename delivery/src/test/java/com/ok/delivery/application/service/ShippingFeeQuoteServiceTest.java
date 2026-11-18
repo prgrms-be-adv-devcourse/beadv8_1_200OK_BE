@@ -22,6 +22,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
+import static com.ok.delivery.fixture.RegionSurchargeStubs.chargeDestinationSurcharge;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.BDDMockito.given;
@@ -56,6 +57,7 @@ class ShippingFeeQuoteServiceTest {
         shippingFeeQuoteService = new ShippingFeeQuoteService(
                 deliveryRegionService, sellerShippingSettingService,
                 new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), clock);
+        chargeDestinationSurcharge(deliveryRegionService);
     }
 
     @Test
@@ -100,6 +102,31 @@ class ShippingFeeQuoteServiceTest {
             softly.assertThat(sut.sellers()).containsExactly(
                     new SellerShippingQuoteResult(10L, 3_000, 3_000, 6_000, FRIDAY, NEXT_WEDNESDAY, NEXT_THURSDAY),
                     new SellerShippingQuoteResult(20L, 0, 3_000, 3_000, FRIDAY, NEXT_WEDNESDAY, NEXT_THURSDAY));
+            softly.assertThat(sut.totalShippingFee()).isEqualTo(9_000);
+        });
+    }
+
+    @Test
+    void 추가_운임은_판매자별_판정_값을_쓰고_추가_소요일은_면제와_상관없이_붙는다() {
+        // given
+        RegionResult jeju = new RegionResult("JEJU_MAIN", 3_000, 1);
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(jeju);
+        given(deliveryRegionService.resolveSurcharges(jeju, List.of(10L, 20L))).willReturn(Map.of(10L, 0, 20L, 3_000));
+        given(sellerShippingSettingService.getSettings(List.of(10L, 20L)))
+                .willReturn(Map.of(10L, DEFAULT_SETTING, 20L, DEFAULT_SETTING));
+        ShippingFeeQuoteQuery query = new ShippingFeeQuoteQuery(POSTAL_CODE, List.of(
+                new SellerItemAmount(10L, 10_000), new SellerItemAmount(20L, 10_000)));
+
+        // when
+        ShippingFeeQuoteResult sut = shippingFeeQuoteService.quote(query);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.regionGroup()).isEqualTo("JEJU_MAIN");
+            softly.assertThat(sut.sellers()).containsExactly(
+                    new SellerShippingQuoteResult(10L, 3_000, 0, 3_000, FRIDAY, NEXT_WEDNESDAY, NEXT_THURSDAY),
+                    new SellerShippingQuoteResult(20L, 3_000, 3_000, 6_000, FRIDAY, NEXT_WEDNESDAY, NEXT_THURSDAY));
             softly.assertThat(sut.totalShippingFee()).isEqualTo(9_000);
         });
     }

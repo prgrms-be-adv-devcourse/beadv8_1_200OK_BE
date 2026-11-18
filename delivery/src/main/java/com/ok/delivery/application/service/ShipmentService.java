@@ -40,6 +40,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -76,10 +77,10 @@ public class ShipmentService implements ShipmentUseCase {
         }
         Address address = command.address().toAddress();
         RegionResult region = deliveryRegionService.resolve(address.getPostalCode());
-        warnIfSurchargeMismatched(command, address, region);
+        List<Long> sellerIds = command.sellers().stream().map(SellerShipmentCommand::sellerId).toList();
+        warnIfSurchargeMismatched(command, address, deliveryRegionService.resolveSurcharges(region, sellerIds));
         // 견적과 같은 판매자 설정에서 마감 시간을 읽어야 견적에서 보여 준 도착 예정일과 어긋나지 않는다
-        Map<Long, SellerShippingSetting> settings = sellerShippingSettingService.getSettings(
-                command.sellers().stream().map(SellerShipmentCommand::sellerId).toList());
+        Map<Long, SellerShippingSetting> settings = sellerShippingSettingService.getSettings(sellerIds);
         List<Shipment> shipments = command.sellers().stream()
                 .map(seller -> toShipment(command, address, region, seller, settings.get(seller.sellerId()).cutoffTime()))
                 .toList();
@@ -257,16 +258,19 @@ public class ShipmentService implements ShipmentUseCase {
         return ShippingFeePolicy.calculate(seller.sellerId(), itemAmount, paidSetting, regionSurcharge).totalFee();
     }
 
-    // 추가 운임은 결제 금액과 맞추려고 이벤트 값을 저장한다. 판정 값과 다르면 주문 생성 뒤 우편번호 데이터가 바뀐 것이라 확인할 수 있게 남긴다.
-    // 배송지가 하나라 판정도 하나이므로 판매자마다 남기지 않고 주문당 한 번 남긴다
-    private static void warnIfSurchargeMismatched(ShipmentCreateCommand command, Address address, RegionResult region) {
-        List<Long> mismatchedSellerIds = command.sellers().stream()
-                .filter(seller -> seller.regionSurcharge() != region.surcharge())
-                .map(SellerShipmentCommand::sellerId)
-                .toList();
-        if (!mismatchedSellerIds.isEmpty()) {
-            log.warn("결제된 추가 운임과 지역 판정 운임이 다름, 결제 값으로 저장. orderId={}, postalCode={}, resolved={}, sellerIds={}",
-                    command.orderId(), address.getPostalCode(), region.surcharge(), mismatchedSellerIds);
+    // 추가 운임은 결제 금액과 맞추려고 이벤트 값을 저장한다. 판정 값과 다르면 주문 생성 뒤 우편번호 데이터나 판매자 출고지가 바뀐 것이라 확인할 수 있게 남긴다.
+    // 출고지에 따라 판매자마다 판정 값이 다를 수 있어 판매자별 판정 값을 함께 남기되, 로그는 주문당 한 번 남긴다
+    private static void warnIfSurchargeMismatched(ShipmentCreateCommand command, Address address, Map<Long, Integer> resolvedSurcharges) {
+        Map<Long, Integer> mismatched = new LinkedHashMap<>();
+        for (SellerShipmentCommand seller : command.sellers()) {
+            Integer resolved = resolvedSurcharges.get(seller.sellerId());
+            if (seller.regionSurcharge() != resolved.longValue()) {
+                mismatched.put(seller.sellerId(), resolved);
+            }
+        }
+        if (!mismatched.isEmpty()) {
+            log.warn("결제된 추가 운임과 지역 판정 운임이 다름, 결제 값으로 저장. orderId={}, postalCode={}, resolvedBySellerId={}",
+                    command.orderId(), address.getPostalCode(), mismatched);
         }
     }
 

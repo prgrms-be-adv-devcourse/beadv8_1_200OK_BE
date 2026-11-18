@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import static com.ok.delivery.fixture.RegionSurchargeStubs.chargeDestinationSurcharge;
 import static com.ok.delivery.fixture.ShipmentFixture.item;
 import static com.ok.delivery.fixture.ShipmentFixture.shipment;
 import static com.ok.delivery.fixture.ShipmentFixture.shipmentIn;
@@ -99,6 +100,7 @@ class ShipmentServiceTest {
         shipmentService = new ShipmentService(shipmentRepository, shipmentQueryRepository, addressChangeRequestRepository, deliveryRegionService,
                 new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService,
                 deliveryEventPublisher, clock);
+        chargeDestinationSurcharge(deliveryRegionService);
     }
 
     @Test

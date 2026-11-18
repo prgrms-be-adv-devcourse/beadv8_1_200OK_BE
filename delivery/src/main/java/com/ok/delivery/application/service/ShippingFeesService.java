@@ -31,11 +31,12 @@ public class ShippingFeesService implements ShippingFeesUseCase {
     @Override
     public ShippingFeesResult calculate(ShippingFeeQuoteQuery query) {
         RegionResult region = deliveryRegionService.resolve(query.postalCode());
+        Map<Long, Integer> surcharges = deliveryRegionService.resolveSurcharges(region, query.sellerIds());
         Map<Long, SellerShippingSetting> settings = sellerShippingSettingService.getSettings(query.sellerIds());
 
         // getSettings는 요청한 모든 판매자 ID를 채워(저장값이 없으면 기본값) 돌려주므로 settings.get은 null이 아니다
         List<SellerShippingFeeResult> sellers = query.sellers().stream()
-                .map(seller -> toResult(seller, settings.get(seller.sellerId()), region.surcharge()))
+                .map(seller -> toResult(seller, settings.get(seller.sellerId()), surcharges.get(seller.sellerId())))
                 .toList();
         return new ShippingFeesResult(sellers);
     }

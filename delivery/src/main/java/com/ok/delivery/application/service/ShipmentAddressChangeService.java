@@ -49,7 +49,8 @@ public class ShipmentAddressChangeService implements ShipmentAddressChangeUseCas
         }
         Address address = command.requestedAddress().toAddress();
         RegionResult region = deliveryRegionService.resolve(address.getPostalCode());
-        ShipmentAddressChangeRequest request = shipment.requestAddressChange(address, region.surcharge(), LocalDateTime.now(clock));
+        int surcharge = deliveryRegionService.resolveSurcharge(region, shipment.getSellerId());
+        ShipmentAddressChangeRequest request = shipment.requestAddressChange(address, surcharge, LocalDateTime.now(clock));
         return AddressChangeRequestResult.from(requestRepository.save(request));
     }
 

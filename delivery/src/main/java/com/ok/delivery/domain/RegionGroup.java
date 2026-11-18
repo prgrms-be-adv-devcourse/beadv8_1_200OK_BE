@@ -37,6 +37,9 @@ public class RegionGroup extends BaseTime {
     /** 도서산간이 아닌 지역. {@code shipment.region_group}에 저장하는 값과 같다 */
     public static final String GENERAL_CODE = "GENERAL";
 
+    /** 제주 본섬. 출고지와 배송지가 모두 이 그룹이면 추가 운임을 받지 않는다 */
+    public static final String JEJU_MAIN_CODE = "JEJU_MAIN";
+
     @Id
     @Column(name = "code", length = 30)
     private String code;

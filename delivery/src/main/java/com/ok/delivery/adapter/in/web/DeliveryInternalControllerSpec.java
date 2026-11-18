@@ -17,7 +17,7 @@ interface DeliveryInternalControllerSpec {
             - 요청한 모든 판매자를 요청 순서대로 응답합니다.
             - baseShippingFee와 freeShippingThreshold는 판매자 설정 값입니다. 무료배송이어도 baseShippingFee는 설정 값이고, freeShippingThreshold가 null이면 무료배송이 없습니다.
             - shippingFee는 무료배송을 적용한 뒤의 기본 배송비입니다. 상품 금액이 무료배송 기준 이상이면 0입니다.
-            - regionSurcharge는 판매자(송장) 한 건에 붙는 도서산간 추가 운임입니다. 무료배송이어도 붙고, 일반 지역이면 0입니다.
+            - regionSurcharge는 판매자(송장) 한 건에 붙는 도서산간 추가 운임입니다. 무료배송이어도 붙고, 일반 지역이면 0입니다. 판매자 출고지와 배송지가 모두 제주 본섬이면 그 판매자는 0입니다.
             - 배송 설정을 저장하지 않은 판매자는 기본 설정을 적용하고, 등록되지 않은 우편번호는 일반 지역으로 봅니다.
             - 판매자가 중복되거나 우편번호가 없거나 숫자 5자리가 아니면 검증 실패로 거절합니다.
             """)

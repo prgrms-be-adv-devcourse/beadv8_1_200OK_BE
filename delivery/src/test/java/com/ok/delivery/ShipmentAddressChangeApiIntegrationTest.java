@@ -74,6 +74,7 @@ class ShipmentAddressChangeApiIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM shipment_address_change_request");
         jdbcTemplate.update("DELETE FROM shipment_item");
         jdbcTemplate.update("DELETE FROM shipment");
+        jdbcTemplate.update("DELETE FROM seller_origin_postal_code");
     }
 
     @Test
@@ -93,6 +94,23 @@ class ShipmentAddressChangeApiIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.rejectReason", nullValue()))
                 .andExpect(jsonPath("$.requestedAt", notNullValue()))
                 .andExpect(jsonPath("$.processedAt", nullValue()));
+    }
+
+    @Test
+    void 판매자_출고지가_제주_본섬이면_제주_본섬으로_바꿔도_추가_운임_안내_금액이_0원이다() throws Exception {
+        // given
+        Long shipmentId = saveShipment();
+        jdbcTemplate.update("""
+                INSERT INTO seller_origin_postal_code (seller_id, postal_code, source_occurred_at, created_at, updated_at)
+                VALUES (?, '63200', NOW(6), NOW(6), NOW(6))
+                """, SELLER_ID);
+
+        // when
+        ResultActions sut = request(BUYER_ID, shipmentId, JEJU_BODY);
+
+        // then
+        sut.andExpect(status().isCreated())
+                .andExpect(jsonPath("$.additionalFeeNotice", is(0)));
     }
 
     @Test

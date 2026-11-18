@@ -16,6 +16,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 
+import static com.ok.delivery.fixture.RegionSurchargeStubs.chargeDestinationSurcharge;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 
@@ -36,6 +37,7 @@ class ShippingFeesServiceTest {
     @BeforeEach
     void setUp() {
         sut = new ShippingFeesService(deliveryRegionService, sellerShippingSettingService);
+        chargeDestinationSurcharge(deliveryRegionService);
     }
 
     @Test
@@ -71,6 +73,26 @@ class ShippingFeesServiceTest {
 
         // then
         assertThat(result.sellers()).containsExactly(new SellerShippingFeeResult(10L, 3_000, 50_000, 0, 3_000));
+    }
+
+    @Test
+    void 추가_운임은_배송지_운임이_아니라_판매자별_판정_값을_돌려준다() {
+        // given
+        RegionResult jeju = new RegionResult("JEJU_MAIN", 3_000, 1);
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(jeju);
+        given(deliveryRegionService.resolveSurcharges(jeju, List.of(10L, 20L))).willReturn(Map.of(10L, 0, 20L, 3_000));
+        given(sellerShippingSettingService.getSettings(List.of(10L, 20L)))
+                .willReturn(Map.of(10L, DEFAULT_SETTING, 20L, DEFAULT_SETTING));
+        ShippingFeeQuoteQuery query = new ShippingFeeQuoteQuery(POSTAL_CODE, List.of(
+                new SellerItemAmount(10L, 10_000), new SellerItemAmount(20L, 10_000)));
+
+        // when
+        ShippingFeesResult result = sut.calculate(query);
+
+        // then
+        assertThat(result.sellers()).containsExactly(
+                new SellerShippingFeeResult(10L, 3_000, 50_000, 3_000, 0),
+                new SellerShippingFeeResult(20L, 3_000, 50_000, 3_000, 3_000));
     }
 
     @Test

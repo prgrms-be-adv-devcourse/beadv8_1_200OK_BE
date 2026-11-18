@@ -4,6 +4,8 @@ import com.ok.delivery.domain.RemoteAreaPostalCode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -12,6 +14,8 @@ import java.util.Optional;
 public interface RemoteAreaPostalCodeRepository {
 
     Optional<RemoteAreaPostalCode> findByPostalCodeAndDeletedAtIsNull(String postalCode);
+
+    List<RemoteAreaPostalCode> findAllByPostalCodeInAndRegionGroupAndDeletedAtIsNull(Collection<String> postalCodes, String regionGroup);
 
     /**
      * 삭제된 행까지 포함해 우편번호 행을 쓰기 잠금({@code SELECT ... FOR UPDATE})으로 조회한다.
