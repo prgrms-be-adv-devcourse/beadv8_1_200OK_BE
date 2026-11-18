@@ -112,9 +112,10 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
             case DONE -> matches(target, found)
                     ? complete(target, found)
                     : hold(target, "승인됐지만 결제 키나 금액이 충전 건과 다름");
-            // 우리가 승인을 요청한 결제는 저장된 결제 키 하나뿐이다. 같은 충전 번호로 결제창을 다시 열면 시도가 따로 생기고,
+            // 승인을 요청한 결제는 저장된 결제 키 하나뿐이다. 같은 충전 번호로 결제창을 다시 열면 시도가 따로 생기고,
             // 승인된 시도가 없으면 조회가 가장 최근 시도를 돌려준다(테스트 키로 확인, 문서에는 없음).
-            // 키가 다르면 다른 시도의 상태라 우리 결제는 아직 승인 중일 수 있어 실패로 바꾸지 않는다
+            // 키가 다르면 다른 시도의 상태라 승인을 요청한 결제의 상태는 이 조회로 알 수 없다. 대부분은 실패가 맞지만,
+            // 토스가 승인 요청을 늦게 끝내면 승인된 결제를 실패로 바꾸게 되어 실패로 바꾸지 않는다
             case ABORTED, EXPIRED -> isRequestedPayment(target, found)
                     ? fail(target, status.name(), "토스 결제 조회 결과 승인되지 않음 " + status)
                     : hold(target, "승인되지 않은 결제의 결제 키가 충전 건과 다름 " + status);

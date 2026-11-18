@@ -153,7 +153,7 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
     @ParameterizedTest
     @MethodSource("결제_키가_다른_승인되지_않은_결제")
     void 승인되지_않은_결제의_결제_키가_충전_건과_다르면_실패로_바꾸지_않고_멈춘다(String paymentKey, TossPaymentStatus status) {
-        // given: 같은 충전 번호의 다른 결제 시도(승인 실패)를 토스가 돌려준 경우. 승인을 요청한 결제는 아직 승인 중일 수 있다
+        // given: 같은 충전 번호의 다른 결제 시도(승인 실패)를 토스가 돌려준 경우. 승인을 요청한 결제의 상태는 이 조회로 알 수 없다
         String chargeNo = dueInProgressCharge(MEMBER_ID, PAYMENT_KEY);
         givenLookup(chargeNo, found(paymentKey, status, AMOUNT));
 
