@@ -639,7 +639,7 @@ com.ok.delivery
 - 의존 방향은 `adapter.in` → `application`(`port.in`, `dto`) → `domain`, `adapter.out` → `application.port.out`, `domain`입니다. 서비스는 JPA 저장소를 모르고 `port.out` 인터페이스에만 의존합니다.
 - 컨트롤러와 이벤트 리스너는 `port.in`의 유스케이스 인터페이스만 압니다. 서비스 구현체, `port.out`, `domain`을 직접 쓰지 않습니다. 기본 배송지는 재시도를 맡는 `DefaultShippingAddressFacade`가, 택배사 추적 요청은 트랜잭션 없는 `CarrierTrackingFacade`가 유스케이스를 구현합니다.
 - 출력 포트 이름은 `*Repository`(조회 전용은 `*QueryRepository`)이고, 구현은 `adapter/out/persistence`에 있습니다. Spring Data 인터페이스(`*JpaRepository`)가 포트를 상속해 구현하므로 실행 객체는 Spring Data 프록시 그대로이고, 잠금·트랜잭션·쿼리 동작은 서비스가 JPA 저장소를 직접 쓸 때와 같습니다. 포트에는 Spring Data `Repository` 상속과 JPA 어노테이션을 두지 않고, 잠금 조회(`@Lock`, `@Query`)는 JPA 저장소에서 다시 선언합니다. 포트는 Spring Data의 `Page`, `Pageable`은 씁니다.
-- 모듈 간 연동은 Kafka, Spring 이벤트와 `/internal` 호출입니다. 판매자 출고지 우편번호는 Kafka로(#558), 결제 완료는 Kafka와 Spring 이벤트로 함께 받고 구매확정은 Kafka로만 받으며, 배송 생성은 Kafka로만, 배송 시작과 배송 완료는 Kafka와 Spring 이벤트로 함께 보냅니다(#644). 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `common.event`의 이벤트 클래스와 `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
+- 모듈 간 연동은 Kafka, Spring 이벤트와 `/internal` 호출입니다. 판매자 출고지 우편번호는 Kafka로(#558), 결제 완료와 구매확정은 Kafka로 받고, 배송 생성·시작·완료는 Kafka로 보냅니다(#644, Spring 이벤트 경로는 #721에서 삭제). 이벤트 수신은 `adapter/in/event`, 발행은 `adapter/out/event`에 있어서, 연동 방식이 바뀌어도 서비스는 바뀌지 않습니다. `ApplicationEventPublisher`는 `adapter`에서만 씁니다.
 - **Kafka로 받는 메시지:** 배송이 Kafka로 받는 이벤트는 아래 표와 같습니다. 이벤트는 하나씩 Kafka로 옮기고 있어서(#558이 첫 번째) 표는 옮길 때마다 한 줄씩 늘립니다.
 
 | 방향 | 토픽 | 키 | 값 | 실패 |
@@ -664,10 +664,9 @@ com.ok.delivery
 - **보내기:** `OutboxDeliveryEventPublisher`가 배송 생성·출고·배송 완료 트랜잭션 안에서 메시지 본문(JSON)을 `delivery_outbox`에 남기고 배송 안 이벤트 `DeliveryOutboxRecordedEvent`(줄 id)를 냅니다. 커밋되면 `DeliveryOutboxSendListener`(`@TransactionalEventListener` + `@Async`)가 배송 전용 실행기 `delivery-outbox-send`(`DeliveryAsyncConfig`, `platform` 스레드 2개)에서 그 줄을 바로 Kafka로 보냅니다. 롤백되면 줄도 이벤트도 없어 보내지 않습니다. `@ApplicationModuleListener`를 쓰지 않는 이유는 이름 없는 `@Async`(공용 `event` 실행기)와 `REQUIRES_NEW`가 붙기 때문입니다. 커밋 뒤 리스너라 이 구조도 줄마다 Modulith 이벤트 발행 기록(`event_publication`) 한 행을 남깁니다. 브로커 확인을 기다리는 동안에는 DB 커넥션을 잡지 않고, 줄 읽기·"보냄" 기록·발행 기록 완료 표시에서만 잠깐 씁니다.
 - **다시 보내기:** 즉시 발송이 실패하면 예외를 올리지 않고 실패 횟수와 원인만 남기며, 줄은 `PENDING`으로 남습니다. 커밋 직후 서버가 죽은 줄도 `PENDING`입니다. 이런 줄은 `DeliveryOutboxRelayScheduler`가 30초마다(`delivery.outbox.relay.cron`) 남은 지 10초(`min-age`)가 지난 것만 쌓인 순서대로 보냅니다. 평소에는 이 주기를 기다리지 않습니다. 한 줄이 실패하면 그 실행은 거기서 멈추고, 같은 줄이 10번을 넘게 실패하면 ERROR 로그를 남깁니다.
 - **중복과 순서:** "보냄" 기록은 아직 `PENDING`일 때만 바꾸는 조건부 UPDATE라, 즉시 발송과 스케줄러가 같은 줄을 함께 보내면 뒤쪽이 0줄을 받고 INFO 로그를 남깁니다. 메시지는 두 번 나가고 주문이 중복을 무시합니다. 즉시 발송은 줄마다 다른 스레드에서 나가 같은 주문의 메시지 순서를 지키지 않습니다. 주문이 순서 뒤바뀜을 처리합니다(#603). 보낸 줄은 지우지 않고 `SENT`로 남깁니다.
-- **배송 생성:** 결제 완료로 `ShipmentService.create()`가 판매자별 shipment를 만들면 판매자마다 한 줄을 남깁니다. `orderItemIds`는 그 판매자 묶음의 주문 상품 ID이고, `createdAt`은 shipment에 저장된 생성 시각입니다. 같은 결제 완료를 다시 받으면 shipment를 만들지 않으므로 줄도 더 남지 않습니다. 아직 받는 쪽이 없어 Spring 이벤트는 내지 않습니다.
+- **배송 생성:** 결제 완료로 `ShipmentService.create()`가 판매자별 shipment를 만들면 판매자마다 한 줄을 남깁니다. `orderItemIds`는 그 판매자 묶음의 주문 상품 ID이고, `createdAt`은 shipment에 저장된 생성 시각입니다. 같은 결제 완료를 다시 받으면 shipment를 만들지 않으므로 줄도 더 남지 않습니다.
 - **배송 완료:** 택배사 알림(`CarrierNotificationFacade`)과 Mock·조회 경로(`CarrierEventListener`)가 모두 `ShipmentService.deliver()`를 거쳐 같은 줄을 남깁니다. `deliveredAt`은 shipment에 기록한 배송 완료 시각 그대로이고, 주문은 이 값을 자동 구매확정 기준으로 씁니다.
 - **택배사 추적 요청:** 출고 때 배송 안 이벤트 `CarrierTrackingRequestedEvent`도 함께 내고, `CarrierEventListener`가 커밋 뒤에 받아 택배사에 HTTP로 요청합니다. 같은 서버 안의 일이라 Kafka를 거치지 않습니다.
-- **이중 경로(#603 머지 전까지):** 주문이 아직 Spring 이벤트로 결제 완료를 보내고 배송 시작·완료를 받으므로, `OrderPaidEventListener`(Spring 이벤트 수신)를 Kafka 리스너와 함께 두고 `ShipmentDispatchedEvent`, `ShipmentDeliveredEvent`도 함께 발행합니다. 주문이 Kafka로만 주고받게 되면 지웁니다(`TODO(#603)`).
 - 이 구조는 `delivery`의 `ArchitectureTest`가 검사합니다(레이어 방향, 입력 어댑터 제한, application의 영속 기술 의존 금지, 포트 규칙, 이름·위치, `common` 외 다른 모듈 의존 금지).
 
 ### refund 모듈 구조(헥사고날)

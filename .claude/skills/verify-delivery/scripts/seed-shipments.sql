@@ -1,4 +1,4 @@
--- 검증용 시드. 상류(order 모듈)의 OrderPaidEvent 경계를 대신한다. 단독 실행하는 delivery 에는 order 가 없어서
+-- 검증용 시드. 상류(order 모듈)의 결제 완료 메시지(order.order-paid.v1) 경계를 대신한다. 단독 실행하는 delivery 에는 order 가 없어서
 -- 실제로는 이벤트가 만들 shipment 와 shipment_item 행을 직접 넣는다.
 -- 컬럼 값은 delivery/src/test/java/com/ok/delivery/fixture/ShipmentFixture.java 의 shipment(...)/item(...) 과 같은 모양이다
 -- (지역 GENERAL, 기본 배송비 3000, 부과 3000, 추가 운임 0, 무료배송 기준 50000, 상태 PREPARING).

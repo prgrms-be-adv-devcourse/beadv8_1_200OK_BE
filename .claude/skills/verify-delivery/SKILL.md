@@ -9,7 +9,7 @@ delivery 모듈을 `./gradlew :delivery:bootRun` 으로 단독 실행해 사용�
 
 ## 표면과 격리 (먼저 읽는다)
 
-- 사용자 접점은 HTTP API 와 이벤트다. 이 스킬은 HTTP 를 구동한다. 이벤트 중 출고 이벤트와 Mock 택배사 배송 완료는 API 로 출고하면 따라 일어나서 함께 확인된다. 주문의 `OrderPaidEvent` 는 단독 실행에 order 가 없어 발행하지 않는다(아래 "검증용 시드").
+- 사용자 접점은 HTTP API 와 이벤트다. 이 스킬은 HTTP 를 구동한다. 이벤트 중 출고 이벤트와 Mock 택배사 배송 완료는 API 로 출고하면 따라 일어나서 함께 확인된다. 주문의 결제 완료 메시지(`order.order-paid.v1`)는 단독 실행에 order 가 없어 보내지 않는다(아래 "검증용 시드").
 - delivery 는 Redis 와 Kafka 를 쓰지 않는다. `delivery/src/main` 에 연동 코드가 없고 `application-delivery.yaml` 이 `common-redis.yaml` 을 import 하지 않는다. 띄우는 것은 MySQL 하나다. (기동 로그에 Spring Data Redis 저장소 후보 탐색 INFO 가 나오는데 연결은 시도하지 않는다.)
 - 이 스킬은 항상 새 인스턴스(임의 포트의 MySQL 컨테이너, 빈 포트의 앱)를 띄운다. 사용자의 `docker compose`(server 스택: 8080, 3306, 6379, kafka 등)와 포트와 네트워크를 공유하지 않는다. **그 스택과 `localhost:8080` 을 건드리지 않는다.** 이 스킬이 시작하지 않은 인스턴스는 드라이브하지 않는다.
 - 작업 트리의 현재 상태(커밋 안 한 변경 포함)를 그대로 검증한다. 다른 작업의 미커밋 변경이 있으면 그것도 함께 올라간다. 필요하면 `git status` 로 무엇이 올라가는지 확인하고 보고에 적는다.
@@ -63,7 +63,7 @@ claim 모양은 `common` 의 `JwtConfig`, `TestAccessTokens` 와 같다. 헤더 
 
 ## 검증용 시드 (shipment)
 
-shipment 는 production 에서 order 의 `OrderPaidEvent` 로만 만들어진다. 단독 실행에는 order 가 없고 API 로 만드는 길이 없다. 그래서 shipment 가 필요한 기능은 **검증용 시드**로 SQL 행을 넣는다. 상류(order)의 경계를 대신하는 것이고, 이벤트 처리(`OrderPaidEventListener`) 자체는 이 스킬이 검증하지 않는다.
+shipment 는 production 에서 order 의 결제 완료 메시지(`order.order-paid.v1`)로만 만들어진다. 단독 실행에는 order 가 없고 API 로 만드는 길이 없다. 그래서 shipment 가 필요한 기능은 **검증용 시드**로 SQL 행을 넣는다. 상류(order)의 경계를 대신하는 것이고, 메시지 처리(`DeliveryOrderPaidKafkaListener`) 자체는 이 스킬이 검증하지 않는다.
 
 ```bash
 $SKILL/scripts/seed-shipments.sh   # shipment 1001, 1002 (구매자 100, 판매자 10, GENERAL, PREPARING) 와 항목 3개
@@ -114,6 +114,6 @@ $SKILL/scripts/cleanup.sh     # VD_STATE 가 가리키는 인스턴스만
 ## 확인하지 않은 것
 
 - 실제 Delivery Tracker 택배사(`delivery.carrier.type=tracker`). 시크릿이 필요해 쓰지 않는다.
-- `OrderPaidEvent` 로 shipment 가 만들어지는 경로. order 가 없어 시드로 대신한다.
+- 결제 완료 메시지(`order.order-paid.v1`)로 shipment 가 만들어지는 경로. order 가 없어 시드로 대신한다.
 - `monolith` 로 올렸을 때의 동작, nginx 를 거친 경로. 이 스킬은 모듈 단독 실행만 다룬다.
 - 운영(prod) 프로파일. `dev` 로만 띄운다.
