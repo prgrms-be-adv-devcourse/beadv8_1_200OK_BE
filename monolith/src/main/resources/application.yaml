@@ -53,19 +53,17 @@ app:
         # 백필 도중 종료돼도 묶음마다 별도 트랜잭션이라 안전하고 다음 기동이 이어서 채운다. 종료를 오래 붙잡지 않도록 짧게 둔다
         task-termination-timeout: 2s
         thread-name-prefix: product-search-backfill-
-  problem:
-    base-uri: ${PROBLEM_BASE_URI:about:blank}
-  s3:
-    region: ${AWS_REGION}
-    bucket: ${S3_BUCKET}
-  async:
-    executors:
       # 커밋된 배송 outbox 줄을 바로 Kafka로 보내는 실행기 (DeliveryAsyncConfig, #644). 값을 정한 이유는 application-delivery.yaml에 있다
       delivery-outbox-send:
         type: platform
         pool-size: ${DELIVERY_OUTBOX_SEND_POOL_SIZE:2}
         queue-capacity: ${DELIVERY_OUTBOX_SEND_QUEUE_CAPACITY:1000}
         thread-name-prefix: delivery-outbox-
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION}
+    bucket: ${S3_BUCKET}
   review-analysis:
     jev:
       base-url: https://api.typesafe.ai
