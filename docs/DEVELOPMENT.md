@@ -797,6 +797,8 @@ com.ok.member.member
 - 통합 테스트는 `src/test/resources/module-test.yml`에서 스케줄러를 끄고(`cron: "-"`) 발송 유스케이스를 직접 부릅니다.
 - 장바구니가 아직 스프링 이벤트로 받으므로, 장바구니가 Kafka로 옮길 때까지 스프링 이벤트 발행도 그대로 둡니다.
 
+`member` 하위 도메인의 비밀번호 변경(#561)은 로그인과 같이 `MemberPasswordFacade`(트랜잭션 없음, bcrypt)와 `MemberService`(회원 행 잠금, 짧은 트랜잭션)로 나눕니다. 비밀번호 해시를 읽는 메서드와 바꾸는 메서드는 확인 없이 이어 부르지 못하도록 입력 포트에 넣지 않고 package-private으로 둡니다. 토큰 최소 버전은 출력 포트 `TokenVersionRecorder`로 남기고, 구현 `adapter/out/token/TokenVersionStoreAdapter`가 common의 `TokenVersionStore`에 맡깁니다. 다시 채우기는 `adapter/in/scheduler/TokenVersionResyncScheduler` → `TokenVersionResyncFacade`입니다. 흐름은 "8. 인증"의 "비밀번호 변경과 토큰 폐기"를 봅니다.
+
 `auth` 하위 도메인은 저장소 말고도 출력 포트가 둘 더 있습니다.
 
 ```
@@ -1030,6 +1032,7 @@ com.ok.product
 | 클레임 | `iat` | 발급 시각 | 추적, 특정 시점 이전 토큰 일괄 무효화용 |
 | 클레임 | `exp` | 발급 시각 + 30분 | 만료 검증 (필수) |
 | 클레임 | `roles` | 예: `["BUYER", "SELLER"]` | 역할 기반 인가 (각 값이 `ROLE_` 권한으로 변환) |
+| 클레임 | `ver` | 회원 토큰 버전(숫자) | 비밀번호 변경 등으로 폐기된 토큰 거부. 없으면 0으로 봄 (#561, 아래 "비밀번호 변경과 토큰 폐기") |
 
 - `nbf`(사용 시작 시각)는 넣지 않습니다. 발급 즉시 유효한 토큰이라 `iat`와 같은 값이 되고, 서버 간 시계 차이로 정상 토큰이 거부될 위험만 생깁니다.
 - 이름·이메일 같은 개인정보는 넣지 않습니다. JWT는 누구나 내용을 볼 수 있고, 회원 정보가 바뀌어도 토큰 만료 전까지 예전 값이 남습니다.
@@ -1142,12 +1145,29 @@ Access Token(30분)이 만료되면 로그인 때 받은 Refresh Token으로 새
 
 `POST /api/v1/auth/logout`에 재발급과 같은 형식(`{"refreshToken": "..."}`)으로 보내면 그 기기의 세션(Refresh Token 행)을 지우고 204를 반환합니다.
 
-- 같은 회원이 다른 기기에서 로그인한 세션은 그대로 남습니다. 모든 기기 로그아웃은 아직 없습니다(#561 이후).
+- 같은 회원이 다른 기기에서 로그인한 세션은 그대로 남습니다. 모든 기기 로그아웃은 아직 없습니다. 비밀번호를 바꾸면 모든 기기의 세션이 끝납니다(#561).
 - 없거나 만료되었거나 이미 로그아웃한 토큰이어도 204입니다. 응답으로 토큰의 유효 여부를 드러내지 않고, 같은 요청을 다시 보내도 됩니다. 형식이 틀리면 422입니다.
 - Access Token 없이 보냅니다. Access Token이 만료된 뒤에도 로그아웃할 수 있도록 공개 API로 열었고, 붙어 있어도 무시합니다.
 - 이미 발급된 Access Token은 만료(30분)까지 유효하므로 클라이언트가 두 토큰을 함께 지웁니다.
 - 진행 중인 재발급 요청이 있으면 그 응답을 기다렸다가, 응답으로 받은 **새 Refresh Token으로** 로그아웃합니다. 재발급이 실패했으면 가지고 있던 토큰으로 보냅니다.
   옛 Refresh Token으로 보내면, 서버에서 재발급이 먼저 끝난 경우 행을 찾지 못해 새 토큰의 세션이 남습니다. 재발급 응답만 버려서는 이 세션이 끝나지 않습니다. 재발급 응답이 네트워크에서 사라진 경우처럼 클라이언트가 새 토큰을 모르는 경우는 이전 토큰을 기억해야 막을 수 있어 재사용 탐지(#562)에서 다룹니다.
+
+### 비밀번호 변경과 토큰 폐기 (#561)
+
+`PATCH /api/v1/members/me/password`에 `{"currentPassword": "...", "newPassword": "..."}`를 보내면 비밀번호를 바꾸고 204를 반환합니다. 그 전에 발급된 Access Token과 Refresh Token은 **이 요청에 쓴 토큰까지 모두** 거부되므로, 204를 받으면 다시 로그인합니다. 현재 비밀번호가 틀리면 400(`member/invalid-current-password`), 같은 회원의 다른 요청이 먼저 바꿨으면 409(`member/password-changed-concurrently`)입니다.
+
+폐기는 토큰을 지우지 않고 회원의 **토큰 버전**(`member.token_version`)을 올려 비교합니다.
+
+| 토큰 | 비교 | 거부 응답 |
+|---|---|---|
+| Refresh Token | 세션 행의 버전(`refresh_token.token_version`, 로그인 당시 값, 회전해도 유지) ≠ 회원 버전 | 401 `auth/invalid-refresh-token` |
+| Access Token | 토큰의 `ver` < Redis의 최소 버전 | 401 `invalid-token` (재발급 없이 재로그인) |
+
+- Redis 키는 `member:token-version:v1:{memberId}`, 값은 숫자 문자열 하나입니다. member가 쓰고 모든 앱의 검증기(`TokenVersionValidator`)가 읽는 **서비스 간 계약**이라, 형식을 바꾸면 `v2` 키를 새로 만들고 옛 키를 읽는 앱이 없어질 때까지 함께 씁니다. 키 이름은 `RedisTokenVersionStore`에만 둡니다.
+- 값은 지금보다 높을 때만 씁니다(Lua 스크립트). 늦게 도착한 쓰기가 값을 낮추지 못합니다.
+- member는 비밀번호 변경이 **커밋된 뒤에** Access Token 수명 + 1분 동안 남깁니다. 남기지 못해도 비밀번호 변경은 성공이고, `TokenVersionResyncScheduler`가 30초마다(`member.token-version.resync.cron`) 최근 31분 안에 바꾼 회원의 DB 버전을 다시 씁니다. 원본은 DB이고 Redis는 사본입니다.
+- Redis 장애 중에는 검사를 건너뛰고 통과시킵니다. 처음 실패에서 경고 한 줄을 남기고 10초 동안 Redis를 부르지 않은 뒤 요청 하나로 복구를 확인합니다. 그동안 폐기된 Access Token은 최대 수명(30분)까지 통과하지만 Refresh Token은 DB로 막힙니다. 건너뛴 횟수는 지표 `token.version.check{result=skipped}`로 봅니다.
+- 검사는 `jwt.token-version-check.enabled`(기본 `true`)로 끕니다. **서비스를 나눌 때 각 앱은 `common-redis.yaml`을 가져와 같은 Redis를 봐야 합니다.** 다른 Redis를 보거나 접속하지 못하면 앱은 뜨지만 폐기 검사가 빠집니다.
 
 ### 컨트롤러에서 로그인 회원 받기
 
@@ -1226,7 +1246,7 @@ mockMvc.perform(post("/api/v1/products")
 ### 주의
 
 - 토큰이 있으면 공개 API여도 검증합니다. 만료되거나 잘못된 토큰을 보내면 공개 API도 401입니다. 401을 받으면 토큰을 지우고 다시 로그인하세요.
-- 역할은 토큰에 담기므로, 판매자 승인처럼 역할이 바뀌어도 기존 토큰이 만료되기 전(최대 30분)까지는 이전 역할로 판단합니다.
+- 역할은 토큰에 담기므로, 판매자 승인처럼 역할이 바뀌어도 기존 토큰이 만료되기 전(최대 30분)까지는 이전 역할로 판단합니다. 만료 전에 끊기는 것은 토큰 버전을 올리는 동작(지금은 비밀번호 변경)뿐입니다.
 - 공개 API(상품 조회 등)에 만료된 토큰을 붙이면 비로그인 화면도 401로 깨집니다. 프론트는 토큰 재발급이나 재로그인이 끝날 때까지 공개 API를 토큰 없이 호출하거나, 401을 받으면 토큰을 떼고 한 번 더 호출합니다.
 
 
