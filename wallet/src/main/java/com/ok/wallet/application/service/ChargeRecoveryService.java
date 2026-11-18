@@ -1,11 +1,13 @@
 package com.ok.wallet.application.service;
 
+import com.ok.wallet.application.dto.ChargeConfirmResult;
 import com.ok.wallet.application.dto.ChargeRecoveryResult;
 import com.ok.wallet.application.dto.TossPaymentLookupResult;
 import com.ok.wallet.application.dto.TossPaymentStatus;
 import com.ok.wallet.application.port.in.ChargeRecoveryUseCase;
 import com.ok.wallet.application.port.out.TossPaymentsClient;
 import com.ok.wallet.domain.Charge;
+import com.ok.wallet.domain.ChargeStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -63,7 +65,8 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
                 counts.getOrDefault(Outcome.COMPLETED, 0),
                 counts.getOrDefault(Outcome.FAILED, 0),
                 counts.getOrDefault(Outcome.HELD, 0),
-                counts.getOrDefault(Outcome.RETRIED, 0));
+                counts.getOrDefault(Outcome.RETRIED, 0),
+                counts.getOrDefault(Outcome.ALREADY_HANDLED, 0));
     }
 
     @Override
@@ -138,15 +141,30 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
     }
 
     private Outcome complete(Charge target, TossPaymentLookupResult.Found found) {
-        chargeTransaction.complete(target.getMemberId(), target.getChargeNo(), found.paymentKey());
+        ChargeConfirmResult result = chargeTransaction.complete(target.getMemberId(), target.getChargeNo(), found.paymentKey());
+        if (!ChargeStatus.COMPLETED.name().equals(result.status())) {
+            return alreadyHandled(target, result);
+        }
         log.info("복구가 토스 승인을 확인해 충전 건을 완료했습니다. chargeNo={}", target.getChargeNo());
         return Outcome.COMPLETED;
     }
 
     private Outcome fail(Charge target, String failureCode, String failureMessage) {
-        chargeTransaction.failApproval(target.getMemberId(), target.getChargeNo(), failureCode, failureMessage);
+        ChargeConfirmResult result = chargeTransaction.failApproval(
+                target.getMemberId(), target.getChargeNo(), failureCode, failureMessage);
+        if (!ChargeStatus.FAILED.name().equals(result.status())) {
+            return alreadyHandled(target, result);
+        }
         log.info("복구가 토스에 확인해 충전 건을 실패로 바꿨습니다. chargeNo={}, failureCode={}", target.getChargeNo(), failureCode);
         return Outcome.FAILED;
+    }
+
+    // 맡기는 다음 확인 시각만 미루므로, 토스 조회를 기다리는 사이 늦게 온 승인 응답이 먼저 끝낼 수 있다.
+    // 그때 완료·실패 처리는 오류 없이 현재 상태를 돌려주므로, 복구가 끝냈다고 세거나 로그를 남기지 않는다
+    private Outcome alreadyHandled(Charge target, ChargeConfirmResult result) {
+        log.info("복구가 처리하려던 충전 건이 이미 끝나 있어 바꾸지 않았습니다. chargeNo={}, status={}",
+                target.getChargeNo(), result.status());
+        return Outcome.ALREADY_HANDLED;
     }
 
     private Outcome hold(Charge target, String reason) {
@@ -166,6 +184,6 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
     }
 
     private enum Outcome {
-        COMPLETED, FAILED, HELD, RETRIED
+        COMPLETED, FAILED, HELD, RETRIED, ALREADY_HANDLED
     }
 }

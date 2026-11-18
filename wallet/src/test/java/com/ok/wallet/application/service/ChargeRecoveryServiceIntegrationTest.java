@@ -64,6 +64,9 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
     ChargeConfirmService chargeConfirmService;
 
     @Autowired
+    ChargeTransactionService chargeTransactionService;
+
+    @Autowired
     TermsService termsService;
 
     @Autowired
@@ -398,6 +401,50 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(statusOf(chargeNo)).isEqualTo("COMPLETED");
             softly.assertThat(balanceOf(MEMBER_ID)).isEqualTo(AMOUNT);
             softly.assertThat(countLedgers(MEMBER_ID, "CHARGE:" + PAYMENT_KEY)).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void 토스에_묻는_사이_승인_응답이_실패로_끝낸_건은_복구가_완료로_세지_않는다() {
+        // given: 복구가 토스 답(승인)을 받기 전에 늦게 온 거절 응답이 같은 건을 실패로 끝낸다
+        String chargeNo = dueInProgressCharge(MEMBER_ID, PAYMENT_KEY);
+        given(tossPaymentsClient.findPayment(chargeNo)).willAnswer(invocation -> {
+            chargeTransactionService.failApproval(MEMBER_ID, chargeNo, "REJECT_CARD_COMPANY", "카드사 거절");
+            return found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT);
+        });
+
+        // when
+        ChargeRecoveryResult sut = chargeRecoveryService.recover();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.alreadyHandled()).isEqualTo(1);
+            softly.assertThat(sut.completed()).isZero();
+            softly.assertThat(statusOf(chargeNo)).isEqualTo("FAILED");
+            softly.assertThat(balanceOrZero(MEMBER_ID)).isZero();
+        });
+    }
+
+    @Test
+    void 토스에_묻는_사이_승인_응답이_완료한_건은_복구가_실패로_세지_않는다() {
+        // given: 복구가 토스 답(승인 실패)을 받기 전에 늦게 온 승인 응답이 같은 건을 완료한다
+        String chargeNo = dueInProgressCharge(MEMBER_ID, PAYMENT_KEY);
+        given(tossPaymentsClient.findPayment(chargeNo)).willAnswer(invocation -> {
+            chargeTransactionService.complete(MEMBER_ID, chargeNo, PAYMENT_KEY);
+            return found(PAYMENT_KEY, TossPaymentStatus.ABORTED, AMOUNT);
+        });
+
+        // when
+        ChargeRecoveryResult sut = chargeRecoveryService.recover();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.alreadyHandled()).isEqualTo(1);
+            softly.assertThat(sut.failed()).isZero();
+            softly.assertThat(statusOf(chargeNo)).isEqualTo("COMPLETED");
+            softly.assertThat(balanceOf(MEMBER_ID)).isEqualTo(AMOUNT);
         });
     }
 

@@ -33,8 +33,9 @@ public class ChargeRecoveryScheduler {
     public void recover() {
         ChargeRecoveryResult result = chargeRecovery.recover();
         if (result.checked() > 0) {
-            log.info("충전 복구 종료 확인={}, 완료={}, 실패={}, 멈춤={}, 다시 확인={}",
-                    result.checked(), result.completed(), result.failed(), result.held(), result.retried());
+            log.info("충전 복구 종료 확인={}, 완료={}, 실패={}, 멈춤={}, 다시 확인={}, 이미 끝남={}",
+                    result.checked(), result.completed(), result.failed(), result.held(), result.retried(),
+                    result.alreadyHandled());
         }
     }
 
