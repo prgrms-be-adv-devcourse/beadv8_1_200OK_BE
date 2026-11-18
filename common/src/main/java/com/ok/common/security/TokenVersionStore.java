@@ -21,7 +21,9 @@ public interface TokenVersionStore {
     OptionalLong findMinVersion(long memberId);
 
     /**
-     * 회원의 토큰 최소 버전을 저장한다. 이미 있으면 덮어쓰고 기록 시간도 새로 정한다.
+     * 회원의 토큰 최소 버전을 저장한다. 지금 기록보다 높을 때만 바꾸고, 같으면 기록 시간만 더 긴 쪽으로 늘리고, 낮으면 무시한다.
+     * 최소 버전은 내려가면 안 된다. 쓰기가 늦게 도착하는 순서(연속 비밀번호 변경, 그 사이에 DB를 읽은 다시 채우기)에 상관없이
+     * 가장 높은 버전이 남아야 두 변경 사이에 발급된 토큰까지 거부된다.
      *
      * @param ttl 기록을 남길 시간. 버전을 올리기 전에 발급된 Access Token이 모두 만료될 때까지 남아야 한다. 1밀리초 이상
      * @throws org.springframework.dao.DataAccessException 저장소에 접근하지 못하면(장애, 타임아웃)

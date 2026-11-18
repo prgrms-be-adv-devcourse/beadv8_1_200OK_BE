@@ -1,11 +1,16 @@
 package com.ok.member.member.adapter.out.persistence;
 
+import com.ok.member.member.application.dto.TokenVersionChange;
 import com.ok.member.member.application.port.out.MemberRepository;
 import com.ok.member.member.domain.Member;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -22,6 +27,11 @@ public interface MemberJpaRepository extends JpaRepository<Member, Long>, Member
     @Override
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<Member> findForUpdateById(Long id);
+
+    @Override
+    @Query("SELECT new com.ok.member.member.application.dto.TokenVersionChange(m.id, m.tokenVersion, m.tokenVersionChangedAt) "
+            + "FROM Member m WHERE m.tokenVersionChangedAt > :since")
+    List<TokenVersionChange> findTokenVersionChangesSince(@Param("since") LocalDateTime since);
 
     @Override
     <S extends Member> S save(S member);

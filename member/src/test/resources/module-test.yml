@@ -5,3 +5,8 @@ member:
       # outbox 발송 스케줄러를 끈다. 30초마다 돌면 테스트가 직접 보내는 중에 같은 줄을 함께 보내 메시지 건수가 흔들린다.
       # 발송은 테스트가 MemberOutboxRelayUseCase를 직접 불러 확인한다
       cron: "-"
+  token-version:
+    resync:
+      # 다시 채우기 스케줄러를 끈다. 30초마다 돌면 테스트가 지운 Redis 키를 되살려 결과가 흔들린다.
+      # 다시 채우기는 테스트가 TokenVersionResyncUseCase를 직접 불러 확인한다
+      cron: "-"

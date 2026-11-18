@@ -84,15 +84,58 @@ class RedisTokenVersionStoreTest {
     }
 
     @Test
-    void 다시_저장하면_값을_덮어쓴다() {
+    void 더_높은_버전을_저장하면_바꾸고_TTL도_새로_정한다() {
         // given
-        sut.saveMinVersion(MEMBER_ID, 1L, Duration.ofMinutes(31));
+        sut.saveMinVersion(MEMBER_ID, 1L, Duration.ofSeconds(30));
 
         // when
         sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofMinutes(31));
 
         // then
         assertThat(sut.findMinVersion(MEMBER_ID)).hasValue(2L);
+        assertThat(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).isGreaterThan(30L * 60);
+    }
+
+    // 앞선 비밀번호 변경의 기록이나 그 전에 DB를 읽은 다시 채우기가 늦게 도착해도 최소 버전이 내려가면 안 된다
+    @Test
+    void 더_낮은_버전이_늦게_도착하면_무시한다() {
+        // given
+        sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofMinutes(31));
+
+        // when
+        sut.saveMinVersion(MEMBER_ID, 1L, Duration.ofMinutes(31));
+
+        // then
+        assertThat(sut.findMinVersion(MEMBER_ID)).hasValue(2L);
+    }
+
+    @Test
+    void 같은_버전을_다시_저장하면_TTL만_더_긴_쪽으로_늘린다() {
+        // given
+        sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofMinutes(31));
+
+        // when
+        sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofSeconds(30));
+        long afterShorter = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
+        sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofMinutes(40));
+        long afterLonger = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
+
+        // then
+        assertThat(sut.findMinVersion(MEMBER_ID)).hasValue(2L);
+        assertThat(afterShorter).isGreaterThan(30L * 60);
+        assertThat(afterLonger).isGreaterThan(39L * 60);
+    }
+
+    @Test
+    void 지금_값이_숫자가_아니면_새_값으로_덮어쓴다() {
+        // given
+        redisTemplate.opsForValue().set(KEY, "not-a-number", Duration.ofMinutes(1));
+
+        // when
+        sut.saveMinVersion(MEMBER_ID, 1L, Duration.ofMinutes(31));
+
+        // then
+        assertThat(sut.findMinVersion(MEMBER_ID)).hasValue(1L);
     }
 
     // 쓰는 쪽의 버그는 저장소 장애가 아니므로 예외로 올려 검사를 멈추게 하지 않는다

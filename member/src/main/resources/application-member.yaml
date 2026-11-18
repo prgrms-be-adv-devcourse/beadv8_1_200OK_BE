@@ -69,6 +69,11 @@ member:
     relay:
       cron: "*/30 * * * * *"
       batch-size: 100
+  token-version:
+    # 토큰 검증기가 읽는 저장소(Redis)의 토큰 최소 버전을 회원 DB 값으로 다시 채우는 주기(TokenVersionResyncScheduler, #561).
+    # 값을 빼면 스케줄러의 기본값(30초마다)을 쓴다. cron을 "-"로 두면 다시 채우지 않는다
+    resync:
+      cron: "*/30 * * * * *"
 management:
   endpoints:
     web:

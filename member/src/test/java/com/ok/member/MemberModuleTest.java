@@ -3,6 +3,7 @@ package com.ok.member;
 import com.ok.common.config.JpaConfig;
 import com.ok.common.config.JwtProperties;
 import com.ok.common.media.MediaUrlResolver;
+import com.ok.common.security.TokenVersionStore;
 import com.ok.member.auth.adapter.in.web.JwksController;
 import com.ok.member.member.adapter.out.persistence.MemberJpaRepository;
 import com.ok.member.member.adapter.out.persistence.MemberOutboxJpaRepository;
@@ -32,10 +33,12 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 // 운영 ClockConfig(com.ok.common.config)는 다른 모듈이라 모듈 테스트에서 걸러지므로, 테스트용 복사본 TestClockConfiguration을 불러온다.
 // (#93에서 Clock 빈을 member → config로 옮기면서 생긴 처리, 자세한 이유는 TestClockConfiguration 참고)
 @Import({TestcontainersConfiguration.class, JpaConfig.class, TestClockConfiguration.class})
-// 모듈 테스트는 Kafka 컨테이너를 켜지 않으므로 outbox 발송 스케줄러(#560)를 끈다. 켜 두면 가입 뒤 없는 브로커를 기다리며 스레드를 붙잡는다
+// 모듈 테스트는 Kafka 컨테이너를 켜지 않으므로 outbox 발송 스케줄러(#560)를 끈다. 켜 두면 가입 뒤 없는 브로커를 기다리며 스레드를 붙잡는다.
+// 토큰 버전 다시 채우기 스케줄러(#561)도 끈다. 아래에서 가짜로 둔 JwtProperties로는 기록할 시간을 계산할 수 없다
 @TestPropertySource(properties = {
         "app.problem.base-uri=https://api.example.com/problems",
-        "member.outbox.relay.cron=-"
+        "member.outbox.relay.cron=-",
+        "member.token-version.resync.cron=-"
 })
 public class MemberModuleTest {
 
@@ -57,6 +60,10 @@ public class MemberModuleTest {
     // 이 테스트에서 쓰지 않고 컨텍스트가 뜨는 데만 필요하므로 가짜로 둔다. (JwtEncoder는 진짜 키가 있어야 만들 수 있어 함께 가짜로 둔다)
     @MockitoBean
     JwtProperties jwtProperties;
+
+    // 토큰 최소 버전 저장소(Redis 구현)도 common 모듈에 있어 걸러진다. 이 테스트는 비밀번호를 바꾸지 않으므로 가짜로 둔다
+    @MockitoBean
+    TokenVersionStore tokenVersionStore;
 
     @MockitoBean
     JwtEncoder jwtEncoder;

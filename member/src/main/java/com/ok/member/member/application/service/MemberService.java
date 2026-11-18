@@ -5,6 +5,7 @@ import com.ok.member.member.application.dto.MemberAuthAccount;
 import com.ok.member.member.application.dto.MemberInfoResult;
 import com.ok.member.member.application.dto.MemberInfoUpdateCommand;
 import com.ok.member.member.application.dto.MemberLoginCredential;
+import com.ok.member.member.application.dto.TokenVersionChange;
 import com.ok.member.member.application.port.in.MemberAuthAccountUseCase;
 import com.ok.member.member.application.port.in.MemberInfoUseCase;
 import com.ok.member.member.application.port.out.MemberRepository;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -77,11 +79,12 @@ public class MemberService implements MemberInfoUseCase, MemberAuthAccountUseCas
      *
      * @param verifiedHash       현재 비밀번호 확인에 쓴 해시
      * @param encodedNewPassword 인코딩된 새 비밀번호
+     * @return 올린 토큰 버전과 변경 시각. 커밋된 뒤 토큰 검증기가 읽는 저장소에 남긴다
      * @throws RestApiException 회원이 없거나 탈퇴했으면 {@code MEMBER_NOT_FOUND},
      *                          해시가 그사이 바뀌었으면 {@code PASSWORD_CHANGED_CONCURRENTLY}
      */
     @Transactional
-    void changePassword(Long memberId, String verifiedHash, String encodedNewPassword) {
+    TokenVersionChange changePassword(Long memberId, String verifiedHash, String encodedNewPassword) {
         Member member = memberRepository.findForUpdateById(memberId)
                 .filter(found -> !found.isWithdrawn())
                 .orElseThrow(() -> new RestApiException(MemberErrorCode.MEMBER_NOT_FOUND));
@@ -89,6 +92,19 @@ public class MemberService implements MemberInfoUseCase, MemberAuthAccountUseCas
             throw new RestApiException(MemberErrorCode.PASSWORD_CHANGED_CONCURRENTLY);
         }
         member.changePassword(encodedNewPassword, LocalDateTime.now(clock));
+        return toTokenVersionChange(member);
+    }
+
+    /**
+     * 기준 시각 뒤에 토큰 버전을 올린 회원의 지금 버전을 조회한다. 저장소의 기록이 빠졌을 때 다시 채우는 데 쓴다.
+     * 다시 채우기({@link TokenVersionResyncFacade})만 쓰는 조회라 입력 포트에 넣지 않는다.
+     */
+    List<TokenVersionChange> findTokenVersionChangesSince(LocalDateTime since) {
+        return memberRepository.findTokenVersionChangesSince(since);
+    }
+
+    private static TokenVersionChange toTokenVersionChange(Member member) {
+        return new TokenVersionChange(member.getId(), member.getTokenVersion(), member.getTokenVersionChangedAt());
     }
 
     private Member findMember(Long memberId) {
