@@ -22,7 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
  * 품목 사전({@code product-search/items.json})으로 상품명의 품목을 찾고, 그 상품을 찾을 한 글자 품목을 고른다.
  * 고른 값은 {@code product_search.search_item}에 저장되고, 1글자 검색어("귤")는 이 값과의 정확 일치로 찾는다.
  * MySQL ngram FULLTEXT는 1글자 단어를 인덱싱하지 않아 FULLTEXT로는 1글자 검색어를 찾지 못하기 때문이다.
- * 품목 사전 파일에는 품목만 둔다. 오타 교정 제안(F7)도 같은 파일을 쓴다.
+ * 품목 사전 파일에는 품목만 둔다. 오타 교정 제안(F7, {@link #suggest(String)})도 같은 파일을 쓴다.
  * 파일이 없거나, 품목이 하나도 없거나, 품목이 20자를 넘거나, 한 글자 품목 표가 품목 사전과 맞지 않으면 앱이 뜨지 않는다.
  */
 @Component
@@ -37,6 +37,8 @@ public class ProductItemDictionary {
 
 	private final List<String> items;
 	private final Map<String, String> singleCharItemByItem;
+	// 사전 파일 순서를 지켜야 제안 후보가 여럿일 때 늘 같은 품목을 고른다
+	private final List<SuggestionCandidate> suggestionCandidates;
 
 	public ProductItemDictionary() {
 		this(read(), readSingleCharItems());
@@ -64,6 +66,11 @@ public class ProductItemDictionary {
 					+ ", location=" + LOCATION);
 			});
 		this.singleCharItemByItem = toSingleCharItemByItem(singleCharItems);
+		// 한 글자 품목은 자모가 두세 개뿐이라 "배2"처럼 글자 하나 붙은 검색어에도 맞아 엉뚱한 제안이 되므로 후보에서 뺀다
+		this.suggestionCandidates = this.items.stream()
+			.filter(item -> item.codePointCount(0, item.length()) >= 2)
+			.map(item -> new SuggestionCandidate(item, SearchTextNormalizer.jamo(item)))
+			.toList();
 	}
 
 	/**
@@ -90,6 +97,49 @@ public class ProductItemDictionary {
 	 */
 	public Optional<String> findSingleCharItem(String productName) {
 		return findLongestItem(productName).map(singleCharItemByItem::get);
+	}
+
+	/**
+	 * 검색어와 자모 하나가 다른 품목을 오타 교정 제안으로 고른다. 후보가 여럿이면 품목 사전 파일에서 먼저 나온 품목이다.
+	 * 검색어를 단어별로 나누지 않고 띄어쓰기를 뺀 전체로 비교한다. 단어별로 비교하면 "아이 간식"의 "아이"가 "오이"로 제안된다.
+	 *
+	 * @return {@code compact}로 바꾼 품목. 검색어가 없거나, 한 글자이거나, 그 자체가 품목이거나, 맞는 품목이 없으면 빈 값
+	 */
+	public Optional<String> suggest(String keyword) {
+		if (keyword == null) {
+			return Optional.empty();
+		}
+		String compact = SearchTextNormalizer.compact(keyword);
+		if (compact.codePointCount(0, compact.length()) < 2 || items.contains(compact)) {
+			return Optional.empty();
+		}
+		String jamo = SearchTextNormalizer.jamo(compact);
+		return suggestionCandidates.stream()
+			.filter(candidate -> isOneEditApart(jamo, candidate.jamo()))
+			.map(SuggestionCandidate::item)
+			.findFirst();
+	}
+
+	// 편집 거리가 정확히 1인지만 보면 되므로 전체 Levenshtein 표를 만들지 않고 한 번 훑는다
+	private static boolean isOneEditApart(String a, String b) {
+		if (Math.abs(a.length() - b.length()) > 1) {
+			return false;
+		}
+		String shorter = a;
+		String longer = b;
+		if (a.length() > b.length()) {
+			shorter = b;
+			longer = a;
+		}
+		int i = 0;
+		while (i < shorter.length() && shorter.charAt(i) == longer.charAt(i)) {
+			i++;
+		}
+		if (i == longer.length()) {
+			return false;
+		}
+		int skip = shorter.length() == longer.length() ? 1 : 0;
+		return shorter.substring(i + skip).equals(longer.substring(i + 1));
 	}
 
 	private Map<String, String> toSingleCharItemByItem(Map<String, List<String>> singleCharItems) {
@@ -137,5 +187,8 @@ public class ProductItemDictionary {
 		} catch (IOException e) {
 			throw new UncheckedIOException("한 글자 품목 표 파일을 읽지 못했습니다. location=" + SINGLE_CHAR_LOCATION, e);
 		}
+	}
+
+	private record SuggestionCandidate(String item, String jamo) {
 	}
 }

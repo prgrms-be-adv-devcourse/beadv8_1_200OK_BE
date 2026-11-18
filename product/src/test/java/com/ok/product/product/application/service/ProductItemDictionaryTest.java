@@ -93,6 +93,57 @@ class ProductItemDictionaryTest {
 		return Stream.of("해남배추3kg", "강원 감자", "상주 곶감", "제주 한라봉", "도라지배즙", "한우 등심 1kg");
 	}
 
+	@ParameterizedTest
+	@MethodSource("오타_검색어와_제안_품목")
+	void 품목과_자모_하나가_다른_검색어면_그_품목을_제안한다(String keyword, String expected) {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary();
+
+		// when
+		Optional<String> sut = dictionary.suggest(keyword);
+
+		// then
+		assertThat(sut).hasValue(expected);
+	}
+
+	static Stream<Arguments> 오타_검색어와_제안_품목() {
+		return Stream.of(
+			Arguments.of("고추가루", "고춧가루"),
+			Arguments.of("고추 가루", "고춧가루"),
+			Arguments.of("샤인머스켓", "샤인머스캣"),
+			Arguments.of("시레기", "시래기")
+		);
+	}
+
+	@ParameterizedTest
+	@MethodSource("제안하지_않는_검색어")
+	void 품목_그대로이거나_한_글자이거나_맞는_품목이_없으면_제안하지_않는다(String keyword) {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary();
+
+		// when
+		Optional<String> sut = dictionary.suggest(keyword);
+
+		// then
+		assertThat(sut).isEmpty();
+	}
+
+	static Stream<String> 제안하지_않는_검색어() {
+		return Stream.of("고추", "사과", "고구마", "귤", "아이 간식", "", " ", null);
+	}
+
+	@Test
+	void 제안할_품목이_여럿이면_품목_사전에서_먼저_나온_품목이다() {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary(List.of("감자", "부추", "고추", "배추"), Map.of());
+
+		// when
+		Optional<String> sut = dictionary.suggest("보추");
+
+		// then
+		assertThat(sut).hasValue("부추");
+	}
+
 	@Test
 	void 품목이_하나도_없으면_만들지_못한다() {
 		// when & then

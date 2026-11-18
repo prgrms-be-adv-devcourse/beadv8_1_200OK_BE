@@ -2,6 +2,7 @@ package com.ok.product;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -22,6 +23,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
@@ -289,6 +291,39 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.content").isEmpty())
 			.andExpect(jsonPath("$.totalElements").value(0));
+	}
+
+	@Test
+	void 품목_오타로_검색하면_바른_품목을_제안하고_결과는_원래_검색어로_찾은_그대로다() throws Exception {
+		// given
+		create("영양 태양초 고춧가루 1kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.GYEONGBUK, "고운 1kg");
+		create("청양 고추 1kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.CHUNGNAM, "홍고추 1kg");
+		List<Long> typoResult = search("고추가루");
+
+		// when & then
+		mockMvc.perform(get("/api/v1/products").param("keyword", "고추가루"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.suggestion").value("고춧가루"))
+			.andExpect(jsonPath("$.content[*].productId").value(
+				contains(typoResult.stream().map(Long::intValue).toArray())));
+	}
+
+	@ParameterizedTest
+	@MethodSource("제안이_없는_검색_요청")
+	void 품목_그대로_검색하거나_검색어가_없으면_제안은_null이다(Map<String, String> params) throws Exception {
+		// given
+		MockHttpServletRequestBuilder request = get("/api/v1/products");
+		params.forEach(request::param);
+
+		// when & then
+		mockMvc.perform(request)
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content").isNotEmpty())
+			.andExpect(jsonPath("$.suggestion").value(nullValue()));
+	}
+
+	static Stream<Map<String, String>> 제안이_없는_검색_요청() {
+		return Stream.of(Map.of("keyword", "사과"), Map.of());
 	}
 
 	@ParameterizedTest

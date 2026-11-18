@@ -1,8 +1,8 @@
 package com.ok.product.product.adapter.in.web;
 
+import com.ok.product.product.adapter.in.web.dto.BuyerProductPageResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductCategoryGroupResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductDetailResponse;
-import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductSummaryResponse;
 import com.ok.product.product.application.port.in.BuyerProductUseCase;
 import com.ok.product.product.application.dto.ProductCategoryCode;
@@ -30,7 +30,7 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 
 	@Override
 	@GetMapping
-	public ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
+	public ResponseEntity<BuyerProductPageResponse> search(
 		@RequestParam(required = false) String keyword,
 		@RequestParam(required = false) ProductCategoryGroupCode categoryGroup,
 		@RequestParam(required = false) ProductCategoryCode category,
@@ -40,8 +40,9 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 		@RequestParam(defaultValue = "20") int size
 	) {
 		ProductSearchQuery query = new ProductSearchQuery(keyword, categoryGroup, category, region, sort, page, size);
-		return ResponseEntity.ok(
-			ProductPageResponse.from(buyerProductUseCase.searchVisibleProducts(query).map(ProductSummaryResponse::from)));
+		return ResponseEntity.ok(BuyerProductPageResponse.of(
+			buyerProductUseCase.searchVisibleProducts(query).map(ProductSummaryResponse::from),
+			buyerProductUseCase.suggestKeyword(keyword).orElse(null)));
 	}
 
 	@Override

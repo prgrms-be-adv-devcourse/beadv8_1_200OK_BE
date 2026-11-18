@@ -44,6 +44,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -63,6 +64,7 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	private final BuyerProductQueryRepository buyerProductQueryRepository;
 	private final ProductSearchPolicy productSearchPolicy;
 	private final ProductSearchIndexer productSearchIndexer;
+	private final ProductItemDictionary productItemDictionary;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
 	private final MediaUrlResolver mediaUrlResolver;
 	// 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
@@ -185,6 +187,12 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		// default_batch_fetch_size 덕분에 첫 접근 때 페이지 상품들의 옵션을 IN 쿼리 한 번으로 불러온다
 		return productIds.map(productsById::get)
 			.map(product -> ProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())));
+	}
+
+	// 결과 수와 관계없이 제안한다. 결과가 적을 때만 제안하면 "고추가루"처럼 고추 상품이 잘 찾히는 오타에서 제안이 사라진다
+	@Override
+	public Optional<String> suggestKeyword(String keyword) {
+		return productItemDictionary.suggest(keyword);
 	}
 
 	// 판매자 본인의 상품 목록을 최신순으로 조회한다. 관리 화면용이라 숨긴 상품도 나오고, 삭제한 상품만 빠진다

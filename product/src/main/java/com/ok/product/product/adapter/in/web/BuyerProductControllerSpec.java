@@ -5,10 +5,9 @@ import java.util.List;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 
+import com.ok.product.product.adapter.in.web.dto.BuyerProductPageResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductCategoryGroupResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductDetailResponse;
-import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
-import com.ok.product.product.adapter.in.web.dto.ProductSummaryResponse;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCategoryGroupCode;
 import com.ok.product.product.application.dto.ProductRegionCode;
@@ -38,6 +37,7 @@ interface BuyerProductControllerSpec {
 		sort를 보내지 않으면 keyword가 있을 때 정확도순, 없을 때 최신순입니다. keyword 없이 RELEVANCE를 보내면 최신순으로 나옵니다.
 		어떤 정렬이든 품절 상품(soldOut)은 판매 가능한 상품 뒤에 옵니다. 품절 상품도 목록에서 빠지지는 않습니다.
 		검색어와 필터는 모두 선택이고, 함께 보내면 모두 만족하는 상품만 나옵니다.
+		keyword가 품목 이름과 자모 하나만 다르면(예: 고추가루) suggestion에 바른 품목(예: 고춧가루)을 담습니다. 결과는 원래 keyword로 찾은 그대로입니다.
 		""")
 	@ApiResponses({
 		@ApiResponse(responseCode = "200", description = "성공"),
@@ -50,7 +50,7 @@ interface BuyerProductControllerSpec {
 			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
 		)
 	})
-	ResponseEntity<ProductPageResponse<ProductSummaryResponse>> search(
+	ResponseEntity<BuyerProductPageResponse> search(
 		@Parameter(description = "검색어 (50자 이하, 앞뒤 공백 포함). 띄어쓰기가 달라도 찾습니다. 비우거나 공백·기호만 보내면 검색어 없이 조회합니다",
 			example = "샤인머스캣") @Size(max = 50) String keyword,
 		@Parameter(description = "상위 카테고리", example = "AGRICULTURE") ProductCategoryGroupCode categoryGroup,
