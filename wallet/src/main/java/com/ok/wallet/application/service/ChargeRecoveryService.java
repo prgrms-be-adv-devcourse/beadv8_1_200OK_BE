@@ -54,12 +54,23 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
     public ChargeRecoveryResult recover() {
         Map<Outcome, Integer> counts = new EnumMap<>(Outcome.class);
         List<Charge> targets = chargeTransaction.findDueForRecovery(BATCH_SIZE);
+        // 한 건에서 오류가 나도 나머지 건은 계속 처리한다
         for (Charge target : targets) {
-            // 다른 서버의 복구가 먼저 맡았으면 묻지 않고 넘어간다
-            if (!chargeTransaction.claimForRecovery(target.getChargeNo())) {
-                continue;
+            boolean claimed = false;
+            try {
+                // 다른 서버의 복구가 먼저 맡았으면 묻지 않고 넘어간다
+                claimed = chargeTransaction.claimForRecovery(target.getChargeNo());
+                if (claimed) {
+                    counts.merge(recoverClaimed(target), 1, Integer::sum);
+                }
+            } catch (RuntimeException e) {
+                // 맡기나 멈춤 처리의 DB 오류다. 맡았으면 확인 시각이 미뤄져 있어 다음 확인 때, 못 맡았으면 다음 회차에 다시 고른다
+                log.warn("충전 건 복구 중 오류가 나 다음에 다시 확인합니다. chargeNo={}, claimed={}",
+                        target.getChargeNo(), claimed, e);
+                if (claimed) {
+                    counts.merge(Outcome.RETRIED, 1, Integer::sum);
+                }
             }
-            counts.merge(recoverClaimed(target), 1, Integer::sum);
         }
         return new ChargeRecoveryResult(
                 counts.getOrDefault(Outcome.COMPLETED, 0),
@@ -75,7 +86,7 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
         return chargeTransaction.findInProgressChargeNosCreatedBefore(createdBefore, LONG_IN_PROGRESS_LIMIT);
     }
 
-    // 한 건에서 오류가 나도 나머지 건은 계속 처리한다. 확인 시각은 맡을 때 이미 미뤘으므로 다음 확인 때 다시 묻는다
+    // 반영 중 오류는 다시 확인하고, 확인 상한이면 멈춘다. 확인 시각은 맡을 때 이미 미뤘으므로 다음 확인 때 다시 묻는다
     private Outcome recoverClaimed(Charge target) {
         // 맡으면서 확인 횟수를 1 늘렸다
         int checkCount = target.getCheckCount() + 1;
