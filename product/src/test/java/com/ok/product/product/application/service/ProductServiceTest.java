@@ -295,7 +295,7 @@ class ProductServiceTest {
 		ArgumentCaptor<ProductSearchKeyword> captor = ArgumentCaptor.forClass(ProductSearchKeyword.class);
 		then(buyerProductQueryRepository).should()
 			.findVisibleProductIds(captor.capture(), any(), any(), any(), any(), anyDouble(), any());
-		assertThat(captor.getValue()).isEqualTo(new ProductSearchKeyword("샤인 머스캣", "샤인머스캣", "ㅅㅑㅇㅣㄴㅁㅓㅅㅡㅋㅐㅅ"));
+		assertThat(captor.getValue()).isEqualTo(new ProductSearchKeyword("샤인 머스캣", "샤인머스캣", "ㅅㅑㅇㅣㄴㅁㅓㅅㅡㅋㅐㅅ", false));
 	}
 
 	@Test

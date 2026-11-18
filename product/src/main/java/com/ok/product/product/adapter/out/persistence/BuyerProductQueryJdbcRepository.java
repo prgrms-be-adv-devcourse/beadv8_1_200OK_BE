@@ -41,6 +41,13 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 		+ TEXT_SCORE + ") OVER () AS best_text_score";
 	private static final String JAMO_FALLBACK = " WHERE (p.text_score > 0 OR p.best_text_score = 0)";
 
+	// 검색어에 가공 표현이 없으면 농산 가공품 점수에 곱한다. E0 평가셋에서 0.3~0.7 중 clean·spacing MRR이 가장 높았다.
+	// 하한과 자모 대체는 곱하기 전 점수로 판정해 결과와 전체 개수는 그대로 두고 순서만 바꾼다
+	private static final double PROCESSED_DEMOTION = 0.5;
+	private static final String RANK_SCORE =
+		"p.score * CASE WHEN p.category = '%s' AND NOT :processedIntent THEN %s ELSE 1 END AS score".formatted(
+			ProductCategory.PROCESSED_AGRI.name(), PROCESSED_DEMOTION);
+
 	// 품절 여부를 상품에 저장하지 않고 Product.isSoldOut()과 같은 기준(삭제되지 않은 옵션의 가용 재고 합 <= 0)으로 매번 계산한다.
 	// 저장하면 재고 배정·해제·일부 해제·재고 수정 경로가 모두 그 값을 함께 고쳐야 하고, 하나라도 빠지면 목록 순서만 조용히 틀어진다.
 	// 동점 정렬은 리뷰 5개 분량의 별 4.0을 미리 더한 베이지안 평균이다. rating_sum은 10점 척도(별 0.5 단위)라 4.0 × 2 × 5 = 40.0을 더한다
@@ -95,6 +102,7 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 				params.put("text", keyword.text());
 				params.put("jamo", keyword.jamo());
 				params.put("minScore", minScore);
+				params.put("processedIntent", keyword.processedIntent());
 			}
 		}
 		if (categoryGroup != null) {
@@ -115,7 +123,7 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 		String content = switch (match) {
 			case NONE -> "SELECT p.id, " + SOLD_OUT_AND_RATING + from;
 			case ITEM -> "SELECT p.id, 0 AS score, " + SOLD_OUT_AND_RATING + from;
-			case FULLTEXT -> "SELECT p.id, p.score, " + SOLD_OUT_AND_RATING + from;
+			case FULLTEXT -> "SELECT p.id, " + RANK_SCORE + ", " + SOLD_OUT_AND_RATING + from;
 		};
 		List<Long> productIds = jdbcClient.sql(content + " ORDER BY " + orderBy(sort) + " LIMIT :size OFFSET :offset")
 			.params(params)

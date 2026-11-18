@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -29,7 +30,7 @@ import com.ok.product.product.domain.ProductSearchKeyword;
 import com.ok.product.product.domain.ProductSort;
 import com.ok.testsupport.AbstractIntegrationTest;
 
-// 검색 평가셋(search-eval/README.md)으로 구매자 검색의 유형별 recall@10이 떨어지지 않았는지 본다.
+// 검색 평가셋(search-eval/README.md)으로 구매자 검색의 유형별 recall@10과 MRR@10이 떨어지지 않았는지 본다.
 // FULLTEXT 점수는 전체 문서 수(IDF)에 따라 달라지므로 다른 테스트가 남긴 상품을 비우고 시드 300개만으로 잰다
 class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 
@@ -41,8 +42,13 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 	private static final Map<String, Double> RECALL_FLOORS = Map.of(
 		"clean", 0.92,
 		"spacing", 0.93,
-		"typo", 0.79,
-		"vague", 0.36);
+		"typo", 0.80,
+		"vague", 0.34);
+	private static final Map<String, Double> MRR_FLOORS = Map.of(
+		"clean", 0.87,
+		"spacing", 0.89,
+		"typo", 0.70,
+		"vague", 0.46);
 
 	@Autowired
 	BuyerProductQueryJdbcRepository buyerProductQueryRepository;
@@ -75,7 +81,7 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	void 평가셋_검색어의_유형별_recall_10이_하한_이상이다() throws IOException {
+	void 평가셋_검색어의_유형별_recall_10과_MRR_10이_하한_이상이다() throws IOException {
 		// given
 		ProductSearchBackfillResult backfill = productSearchBackfillService.backfill();
 		int nonDeleted = count("product WHERE deleted_at IS NULL");
@@ -93,16 +99,22 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 
 		// then
 		String summary = sut.entrySet().stream()
-			.map(entry -> "search-eval %-8s n=%3d recall@10=%.4f floor=%.2f zeroResultRate=%.4f".formatted(
-				entry.getKey(), entry.getValue().size(), recall(entry.getValue()), RECALL_FLOORS.get(entry.getKey()),
+			.map(entry -> ("search-eval %-8s n=%3d recall@10=%.4f floor=%.2f mrr@10=%.4f floor=%.2f "
+				+ "zeroResultRate=%.4f").formatted(entry.getKey(), entry.getValue().size(), recall(entry.getValue()),
+				RECALL_FLOORS.get(entry.getKey()), mrr(entry.getValue()), MRR_FLOORS.get(entry.getKey()),
 				zeroResultRate(entry.getValue())))
 			.collect(Collectors.joining("\n"));
 		System.out.println(summary);
 		assertThat(sut).containsOnlyKeys(RECALL_FLOORS.keySet());
 		// 한 유형만 떨어져도 다른 유형과 함께 봐야 원인을 좁힐 수 있어 실패 메시지에 모든 유형을 싣는다
-		assertSoftly(softly -> sut.forEach((type, results) -> softly.assertThat(recall(results))
-			.as("%s recall@10이 하한보다 낮다. 전체 결과:%n%s", type, summary)
-			.isGreaterThanOrEqualTo(RECALL_FLOORS.get(type))));
+		assertSoftly(softly -> sut.forEach((type, results) -> {
+			softly.assertThat(recall(results))
+				.as("%s recall@10이 하한보다 낮다. 전체 결과:%n%s", type, summary)
+				.isGreaterThanOrEqualTo(RECALL_FLOORS.get(type));
+			softly.assertThat(mrr(results))
+				.as("%s MRR@10이 하한보다 낮다. 전체 결과:%n%s", type, summary)
+				.isGreaterThanOrEqualTo(MRR_FLOORS.get(type));
+		}));
 	}
 
 	private QueryResult evaluate(EvalQuery query) {
@@ -111,11 +123,20 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 			ProductSort.RELEVANCE, PRODUCTION_MIN_SCORE, PageRequest.of(0, TOP_K)).getContent();
 		long hits = top.stream().filter(query.relevant()::contains).count();
 		double recall = (double)hits / Math.min(TOP_K, query.relevant().size());
-		return new QueryResult(query.type(), recall, top.isEmpty());
+		double reciprocalRank = IntStream.range(0, top.size())
+			.filter(i -> query.relevant().contains(top.get(i)))
+			.mapToDouble(i -> 1.0 / (i + 1))
+			.findFirst()
+			.orElse(0);
+		return new QueryResult(query.type(), recall, reciprocalRank, top.isEmpty());
 	}
 
 	private static double recall(List<QueryResult> results) {
 		return results.stream().mapToDouble(QueryResult::recall).average().orElseThrow();
+	}
+
+	private static double mrr(List<QueryResult> results) {
+		return results.stream().mapToDouble(QueryResult::reciprocalRank).average().orElseThrow();
 	}
 
 	private static double zeroResultRate(List<QueryResult> results) {
@@ -150,6 +171,6 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 		}
 	}
 
-	private record QueryResult(String type, double recall, boolean zeroResult) {
+	private record QueryResult(String type, double recall, double reciprocalRank, boolean zeroResult) {
 	}
 }

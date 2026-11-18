@@ -251,6 +251,38 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 가공_표현이_없는_검색어는_같은_품목의_원물을_가공품보다_위에_두고_전체_개수는_그대로다() {
+		// given
+		// 상품명과 옵션명에 "사과"가 더 많이 들어 있어 감점하지 않으면 원물보다 점수가 높다
+		Long appleJuice = create("청송 사과즙 30포", ProductCategoryCode.PROCESSED_AGRI,
+			ProductRegionCode.GYEONGBUK, "사과즙 30포");
+		// 한 페이지를 1개로 해야 첫 페이지가 다 차서 전체 개수를 따로 센다
+		PageRequest pageable = PageRequest.of(0, 1);
+
+		// when
+		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(ProductSearchKeyword.from("사과").orElseThrow(),
+			null, null, null, ProductSort.RELEVANCE, 0.5, pageable);
+
+		// then
+		assertThat(sut.getContent()).containsExactly(apple);
+		assertThat(sut.getTotalElements()).isEqualTo(2);
+		assertThat(search("사과")).containsExactly(apple, appleJuice);
+	}
+
+	@Test
+	void 가공_표현이_있는_검색어는_가공품을_감점하지_않는다() {
+		// given
+		Long appleJuice = create("청송 사과즙 30포", ProductCategoryCode.PROCESSED_AGRI,
+			ProductRegionCode.GYEONGBUK, "사과즙 30포");
+
+		// when
+		List<Long> sut = search("사과즙");
+
+		// then
+		assertThat(sut).first().isEqualTo(appleJuice);
+	}
+
+	@Test
 	void 맞는_상품이_없으면_빈_목록과_전체_개수_0이다() throws Exception {
 		// when & then
 		mockMvc.perform(get("/api/v1/products").param("keyword", "컴퓨터"))

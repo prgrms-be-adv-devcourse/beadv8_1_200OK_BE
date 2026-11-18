@@ -1,16 +1,22 @@
 package com.ok.product.product.domain;
 
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
- * 구매자가 입력한 검색어를 검색 행({@link ProductSearch})과 같은 규칙으로 정규화한 세 가지 형태를 담는다.
+ * 구매자가 입력한 검색어를 검색 행({@link ProductSearch})과 같은 규칙으로 정규화한 세 가지 형태와 가공 표현이 있는지를 담는다.
  * 검색 행의 컬럼마다 비교하는 형태가 달라 한 번에 만들어 함께 넘긴다.
  *
- * @param text    {@code search_body}, {@code keywords}와 비교한다
- * @param compact 공백을 없앤 상품명({@code name_compact})과 비교한다
- * @param jamo    자모로 나눈 상품명({@code name_jamo})과 비교한다. 오타가 있어도 찾기 위해서다
+ * @param text            {@code search_body}, {@code keywords}와 비교한다
+ * @param compact         공백을 없앤 상품명({@code name_compact})과 비교한다
+ * @param jamo            자모로 나눈 상품명({@code name_jamo})과 비교한다. 오타가 있어도 찾기 위해서다
+ * @param processedIntent 검색어에 가공 표현(즙, 가루, 청 등)이 있는지. 없으면 농산 가공품의 점수를 낮춘다
  */
-public record ProductSearchKeyword(String text, String compact, String jamo) {
+public record ProductSearchKeyword(String text, String compact, String jamo, boolean processedIntent) {
+
+	// 품목만 입력한 구매자("사과")는 원물을 찾고, 즙·가루까지 입력한 구매자는 가공품을 찾는다.
+	// "청"은 낱말 끝에 올 때만 본다. 앞에 오면 "청송", "청양", "청포도"처럼 산지·품종이다
+	private static final Pattern PROCESSED_EXPRESSION = Pattern.compile("즙|가루|기름|말린|말랭이|분말|곶감|누룽지|청(\\s|$)");
 
 	/**
 	 * 검색어를 정규화한다. null이거나 정규화한 뒤 남는 글자가 없으면(공백, 기호뿐) 빈 값이다.
@@ -21,8 +27,9 @@ public record ProductSearchKeyword(String text, String compact, String jamo) {
 		if (compact.isEmpty()) {
 			return Optional.empty();
 		}
-		return Optional.of(new ProductSearchKeyword(SearchTextNormalizer.text(keyword), compact,
-			SearchTextNormalizer.jamo(keyword)));
+		String text = SearchTextNormalizer.text(keyword);
+		return Optional.of(new ProductSearchKeyword(text, compact, SearchTextNormalizer.jamo(keyword),
+			PROCESSED_EXPRESSION.matcher(text).find()));
 	}
 
 	/**
