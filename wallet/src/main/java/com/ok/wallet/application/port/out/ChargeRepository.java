@@ -57,6 +57,12 @@ public interface ChargeRepository {
      */
     int holdForReview(String chargeNo, LocalDateTime now);
 
+    /**
+     * 관리자가 처리할 충전 건을 요청 시각이 이른 순으로 최대 limit개 읽는다.
+     * 복구가 멈춘 처리 중 건과, 실패로 처리된 뒤 토스가 승인해 아직 결제를 취소하지 않은 건이다.
+     */
+    List<Charge> findAdminTargets(int limit);
+
     // 회원의 특정 상태 충전 금액 합계. 잔액 보유 한도 확인에서 처리 중 충전을 함께 계산할 때 쓴다.
     long sumAmountByMemberIdAndStatus(Long memberId, ChargeStatus status);
 }

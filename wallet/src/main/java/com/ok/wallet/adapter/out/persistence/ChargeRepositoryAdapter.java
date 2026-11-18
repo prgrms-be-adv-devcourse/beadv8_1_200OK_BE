@@ -66,6 +66,11 @@ public class ChargeRepositoryAdapter implements ChargeRepository {
     }
 
     @Override
+    public List<Charge> findAdminTargets(int limit) {
+        return chargeJpaRepository.findAdminTargets(Limit.of(limit));
+    }
+
+    @Override
     public long sumAmountByMemberIdAndStatus(Long memberId, ChargeStatus status) {
         return chargeJpaRepository.sumAmountByMemberIdAndStatus(memberId, status);
     }

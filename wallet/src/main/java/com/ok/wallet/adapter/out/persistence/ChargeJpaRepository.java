@@ -94,6 +94,15 @@ public interface ChargeJpaRepository extends Repository<Charge, Long> {
             """)
     int holdForReview(@Param("chargeNo") String chargeNo, @Param("now") LocalDateTime now);
 
+    @Query("""
+            SELECT c FROM Charge c
+            WHERE (c.status = com.ok.wallet.domain.ChargeStatus.IN_PROGRESS AND c.nextCheckAt IS NULL)
+               OR (c.status = com.ok.wallet.domain.ChargeStatus.FAILED
+                   AND c.approvedAfterFailureAt IS NOT NULL AND c.paymentCanceledAt IS NULL)
+            ORDER BY c.createdAt
+            """)
+    List<Charge> findAdminTargets(Limit limit);
+
     @Query("SELECT COALESCE(SUM(c.amount), 0) FROM Charge c WHERE c.memberId = :memberId AND c.status = :status")
     long sumAmountByMemberIdAndStatus(@Param("memberId") Long memberId, @Param("status") ChargeStatus status);
 }
