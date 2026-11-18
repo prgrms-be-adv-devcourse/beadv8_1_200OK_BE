@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 충전 승인과 결제 실패의 트랜잭션 단계. 토스 호출을 트랜잭션 밖에 두려고 ChargeConfirmService와 빈을 나눴다
@@ -30,6 +31,8 @@ import java.time.LocalDateTime;
 class ChargeTransactionService {
     // 승인 호출은 토스 응답 대기(30초) 안에 끝나므로, 그보다 넉넉히 뒤에 복구가 처음 확인해 진행 중인 승인과 겹치지 않게 한다
     private static final Duration FIRST_RECOVERY_CHECK_DELAY = Duration.ofMinutes(5);
+    // 확인 상한(10번)을 다 써도 토스 승인 가능 시간(결제 없음을 실패로 보는 1시간)을 넘겨 확인하도록 간격을 둔다
+    private static final Duration RECOVERY_RECHECK_DELAY = Duration.ofMinutes(10);
 
     private final ChargeRepository chargeRepository;
     private final BuyerWalletService buyerWalletService;
@@ -126,6 +129,28 @@ class ChargeTransactionService {
         // 조건부 UPDATE가 영속성 컨텍스트를 비우므로(clearAutomatically) 다시 읽어 결과 상태를 돌려준다.
         // 바꿨으면 실패 상태를, 0행이면 다른 요청이 커밋한 최신 상태를 돌려준다 (READ COMMITTED)
         return ChargeConfirmResult.from(findOwnedCharge(memberId, chargeNo));
+    }
+
+    /** 복구가 토스에 확인할 때가 된 처리 중 충전 건을 읽는다. */
+    @Transactional(readOnly = true)
+    public List<Charge> findDueForRecovery(int limit) {
+        return chargeRepository.findDueForRecovery(LocalDateTime.now(clock), limit);
+    }
+
+    /**
+     * 복구가 이 충전 건을 맡는다. 다음 확인 시각을 미루고 확인 횟수를 늘리며, 맡았으면 true다.
+     * 확인 시각을 토스에 묻기 전에 미뤄 두므로, 반영 중 오류가 나도 다음 확인 때 다시 묻는다.
+     */
+    @Transactional
+    public boolean claimForRecovery(String chargeNo) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return chargeRepository.claimForRecovery(chargeNo, now, now.plus(RECOVERY_RECHECK_DELAY)) == 1;
+    }
+
+    /** 처리 중인 충전 건을 복구가 더 고르지 않게 멈춘다. 사람이 토스 결제를 확인한 뒤 처리한다. */
+    @Transactional
+    public void holdForReview(String chargeNo) {
+        chargeRepository.holdForReview(chargeNo, LocalDateTime.now(clock));
     }
 
     // 타인의 충전 건은 존재 여부도 알리지 않도록 없는 것과 같게 응답한다

@@ -4,6 +4,7 @@ import com.ok.wallet.domain.Charge;
 import com.ok.wallet.domain.ChargeStatus;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -34,6 +35,24 @@ public interface ChargeRepository {
      * 승인이 먼저 처리 중으로 바꿨다면 0이 되어, 승인된 결제를 실패로 덮어쓰지 않는다.
      */
     int markFailedIfPending(String chargeNo, String failureCode, String failureMessage, LocalDateTime now);
+
+    /**
+     * 복구가 토스에 확인할 때가 된 처리 중 충전 건을 확인 시각이 이른 순으로 최대 limit개 읽는다.
+     * 확인 시각이 비어 있는 건(사람 확인 대기)은 고르지 않는다.
+     */
+    List<Charge> findDueForRecovery(LocalDateTime now, int limit);
+
+    /**
+     * 확인할 때가 된 처리 중 충전 건이면 다음 확인 시각을 미루고 확인 횟수를 1 늘린다. 바뀐 행 수를 반환한다.
+     * 두 서버의 복구가 같은 건을 함께 골라도, 먼저 바꾼 쪽이 확인 시각을 미루므로 뒤에 온 쪽은 0을 받아 토스에 묻지 않는다.
+     */
+    int claimForRecovery(String chargeNo, LocalDateTime now, LocalDateTime nextCheckAt);
+
+    /**
+     * 처리 중인 충전 건의 확인 시각을 비워 복구가 더 고르지 않게 한다. 바뀐 행 수를 반환한다.
+     * 토스 답만으로 판단할 수 없어 사람이 확인해야 하는 건에 쓴다.
+     */
+    int holdForReview(String chargeNo, LocalDateTime now);
 
     // 회원의 특정 상태 충전 금액 합계. 잔액 보유 한도 확인에서 처리 중 충전을 함께 계산할 때 쓴다.
     long sumAmountByMemberIdAndStatus(Long memberId, ChargeStatus status);
