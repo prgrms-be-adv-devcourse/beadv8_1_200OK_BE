@@ -39,7 +39,7 @@ import static org.awaitility.Awaitility.await;
 //   지갑이 실제로 보내는 "없음" 모양(found=false, 나머지 null)을 정산이 받아들이는지는 여기서만 확인된다
 // - "없음" 상태는 지갑 원장을 지워서 만들지 않는다. 지갑 원장 입금 줄은 고치거나 지우지 않는 설계라(SellerWalletLedger @Immutable)
 //   지우면 실제로 생길 수 없는 상태가 된다. 대신 지갑의 정산 입금 리스너만 멈춰 "입금 메시지가 아직 지갑에 닿지 않은" 상태를 만든다
-//   대사 질문을 받는 지갑 리스너는 그룹이 달라(#675 리스너마다 그룹) 멈추지 않고 그대로 답한다
+//   대사 질문을 받는 지갑 리스너는 그룹이 달라(#679 리스너마다 그룹) 멈추지 않고 그대로 답한다
 // - 정산 범위의 하한이 마지막 정산일이므로 정산 데이터는 테스트 전후로 전부 비운다 (com.ok.wallet.PayoutDepositIntegrationTest와 같은 방식)
 @SpringBootTest(classes = PaldoGotganApplication.class)
 class PayoutDepositNotFoundIntegrationTest extends AbstractIntegrationTest {
@@ -91,8 +91,7 @@ class PayoutDepositNotFoundIntegrationTest extends AbstractIntegrationTest {
         if (!container.isRunning()) {
             container.start();
         }
-        // 다시 켠 리스너가 남은 입금 메시지를 처리한 뒤에 지워야 지운 자리에 지갑이 다시 생기지 않는다
-        await().atMost(Duration.ofSeconds(10)).until(() -> sellerBalance() == SELLER_AMOUNT || countSellerLedgers() == 0);
+        // 중간에 실패하면 다시 켠 리스너가 지운 뒤에 입금할 수 있다. 그때 남는 이 판매자 지갑은 다음 실행의 setUp이 판매자 번호로 지운다
         cleanUp();
     }
 
