@@ -17,6 +17,7 @@ import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.StepExecution;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
+import org.springframework.batch.infrastructure.item.ExecutionContext;
 import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +34,8 @@ public class PayoutJobConfig {
 
     // 다음 Step들이 스냅샷 ID를 꺼내 쓰는 키 (JobExecutionContext)
     public static final String SNAPSHOT_ID_KEY = "snapshotId";
+    // draftStep 회차 사이에 "지난 회차 마지막 판매자"를 넘기는 키 (StepExecutionContext, #304)
+    static final String DRAFT_LAST_SELLER_ID_KEY = "draftLastSellerId";
 
     private final PayoutUseCase payoutUseCase;
     private final PayoutOutboxSendLock payoutOutboxSendLock;
@@ -136,7 +139,17 @@ public class PayoutJobConfig {
     public Tasklet payoutDraftTasklet(@Value("#{jobExecutionContext['" + SNAPSHOT_ID_KEY + "']}") Long snapshotId) {
         // 1회 호출에 판매자 N명 draft, 남으면 CONTINUABLE로 다시 호출, 없으면 FINISHED
         return (contribution, chunkContext) -> {
-            PayoutDraftResult result = payoutUseCase.draft(snapshotId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
+            // 판매자는 번호 순으로 "지난 회차 마지막 판매자 다음"부터 고름 (#304)
+            // 마지막 판매자를 Step 실행 기록(ExecutionContext)에 두는 이유: tasklet은 회차마다 새로 불려 지역 변수로는 다음 회차에 못 넘김
+            //   람다 밖 필드로 두면 @StepScope 빈이라 Step마다 새로 만들어지긴 하지만, 값이 어디 있는지 배치 기록에서 보이지 않음
+            //   Step 실행 기록은 회차마다 커밋되어 BATCH_STEP_EXECUTION_CONTEXT에 남으므로, 멈췄을 때 어디까지 했는지도 보임
+            //   러너는 실패한 Job을 이어서 재시작하지 않고 새 스냅샷으로 새로 실행함(PayoutJobRunner). 손으로 restart하면 이 값을 이어 쓰지만,
+            //     이미 draft·실패로 기록된 줄은 판매자 조회 조건 ②③④가 빼므로 건너뛰거나 두 번 처리하지 않음
+            ExecutionContext stepContext = contribution.getStepExecution().getExecutionContext();
+            Long afterSellerId = stepContext.containsKey(DRAFT_LAST_SELLER_ID_KEY)
+                    ? stepContext.getLong(DRAFT_LAST_SELLER_ID_KEY)
+                    : null;
+            PayoutDraftResult result = payoutUseCase.draft(snapshotId, afterSellerId, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE);
             if (result.sellerCount() == 0) {
                 failIfEverySellerFailed(contribution.getStepExecution(), snapshotId);
                 return RepeatStatus.FINISHED;
@@ -148,6 +161,7 @@ public class PayoutJobConfig {
             //   filter count가 아니라 write skip count에 두는 이유: filter는 "처리기가 일부러 걸러낸 것", skip은 "예외로 쓰지 못하고 건너뛴 것"이라 뒤쪽이 맞음
             contribution.incrementWriteCount(result.draftedSellerCount());
             contribution.incrementWriteSkipCount(result.failedSellerCount());
+            stepContext.putLong(DRAFT_LAST_SELLER_ID_KEY, result.lastSellerId());
             return RepeatStatus.CONTINUABLE;
         };
     }

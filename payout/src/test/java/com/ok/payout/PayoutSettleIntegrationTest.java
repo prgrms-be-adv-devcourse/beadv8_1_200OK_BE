@@ -256,10 +256,13 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         insertSaleAmount(30L, 1_000L, TO.minusDays(1));
         Long snapshotId = createSnapshot(FROM, TO);
 
-        // when & then: 1회차 2명 → 2회차 1명 → 3회차 없음(FINISHED 신호)
-        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isEqualTo(2);
-        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isEqualTo(1);
-        assertThat(payoutService.draft(snapshotId, 2).sellerCount()).isZero();
+        // when & then: 1회차 2명 → 2회차 1명 → 3회차 없음(FINISHED 신호). 회차마다 지난 회차 마지막 판매자를 넘김 (#304)
+        PayoutDraftResult first = payoutService.draft(snapshotId, null, 2);
+        PayoutDraftResult second = payoutService.draft(snapshotId, first.lastSellerId(), 2);
+        PayoutDraftResult third = payoutService.draft(snapshotId, second.lastSellerId(), 2);
+        assertThat(first).isEqualTo(new PayoutDraftResult(2, 0, 20L));
+        assertThat(second).isEqualTo(new PayoutDraftResult(1, 0, 30L));
+        assertThat(third.sellerCount()).isZero();
         // 각 판매자는 draft에 한 번씩만
         assertThat(sellerDraftRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutSellerDraft::getSellerId)
@@ -301,19 +304,48 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 판매자는_가장_먼저_들어온_후보_순으로_뽑힌다() {
-        // given: 판매자 ID 순서와 후보 시간 순서를 일부러 반대로
-        insertSaleAmount(20L, 1_000L, TO.minusDays(3));   // 20이 가장 먼저
-        insertSaleAmount(30L, 1_000L, TO.minusDays(2));
-        insertSaleAmount(10L, 1_000L, TO.minusDays(1));   // 10이 가장 늦게
-        insertSaleAmount(30L, 1_000L, TO.minusDays(4));   // 30에 더 이른 후보 추가 → 30이 가장 먼저가 됨
+    void 판매자는_번호_순으로_뽑히고_지난_회차_마지막_판매자_다음_번호부터_뽑힌다() {
+        // given: 판매자 번호 순서와 후보 시간 순서를 일부러 반대로 (예전 "가장 먼저 들어온 후보 순"이면 30, 20, 10)
+        insertSaleAmount(20L, 1_000L, TO.minusDays(3));
+        insertSaleAmount(30L, 1_000L, TO.minusDays(4));
+        insertSaleAmount(10L, 1_000L, TO.minusDays(1));
         Long snapshotId = createSnapshot(FROM, TO);
 
         // when
-        List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, LIMIT);
+        List<Long> fromStart = payoutQueryRepository.findUndraftedSellerIds(snapshotId, null, LIMIT);
+        List<Long> after10 = payoutQueryRepository.findUndraftedSellerIds(snapshotId, 10L, LIMIT);
 
-        // then: 각 판매자의 MIN(created_at) 순 → 30(4일 전), 20(3일 전), 10(1일 전)
-        assertThat(sellerIds).containsExactly(30L, 20L, 10L);
+        // then: 시간과 상관없이 번호 순 (#304: 회차마다 남은 판매자 전부를 묶고 정렬하지 않으려고 순서를 바꿈, 금액은 같음)
+        assertSoftly(softly -> {
+            softly.assertThat(fromStart).containsExactly(10L, 20L, 30L);
+            softly.assertThat(after10).containsExactly(20L, 30L);
+        });
+    }
+
+    @Test
+    void 스냅샷_항목에_판매자가_복사되고_draft는_같은_판매자의_지난_정산_후보를_다시_옮기지_않는다() {
+        // given: 판매자 10의 후보가 이미 지난 스냅샷에 들어가 정산된 뒤, 새 후보 1건이 생김
+        insertSaleAmount(10L, 1_000L, TO.minusDays(2));
+        settleAll(FROM, TO);
+        long newOrderItemId = nextOrderItemId();
+        insertCandidate(PayoutEventType.SALE_AMOUNT, newOrderItemId, 10L, 2_000L, TO.minusDays(1));
+        Long candidateOfNewSnapshot = candidateIdsOf(newOrderItemId).get(0);
+        Long snapshotId = createSnapshot(FROM, TO);
+
+        // when
+        draftAll(snapshotId, LIMIT);
+
+        // then: 스냅샷 항목에 판매자가 복사되고, draft에는 이번 스냅샷의 후보 1건만 들어감
+        assertThat(snapshotItemRepository.findBySnapshotId(snapshotId))
+                .extracting(PayoutSnapshotItem::getCandidateId, PayoutSnapshotItem::getSellerId)
+                .containsExactly(tuple(candidateOfNewSnapshot, 10L));
+        List<Long> draftedCandidateIds = new ArrayList<>();
+        for (PayoutSellerDraft draft : sellerDraftRepository.findBySnapshotId(snapshotId)) {
+            for (PayoutSellerDraftItem item : draft.getItems()) {
+                draftedCandidateIds.add(item.getCandidateId());
+            }
+        }
+        assertThat(draftedCandidateIds).containsExactly(candidateOfNewSnapshot);
     }
 
     // ---------- verifyStep ----------
@@ -1710,14 +1742,14 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         // when
         PayoutDraftResult drafted;
         try {
-            drafted = payoutService.draft(snapshotId, LIMIT);
+            drafted = payoutService.draft(snapshotId, null, LIMIT);
         } finally {
             unblockSellerDraft(snapshotId, 20L);
         }
 
         // then: 판매자 단위 오류라 두 주문 후보 모두 실패 기록, 판매자 20은 실패 판매자
         //   (#534 전 코드에서도 같은 결과. 주문별로 시험하는 분기는 PayoutServiceTest가 확인하고, 여기서는 실제 DB 예외로 Job이 멈추지 않는지 봄)
-        assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1));
+        assertThat(drafted).isEqualTo(new PayoutDraftResult(1, 1, 20L));
         assertThat(failureRepository.findBySnapshotId(snapshotId))
                 .extracting(PayoutFailure::getOrderId, PayoutFailure::getReason)
                 .containsExactlyInAnyOrder(
@@ -1826,9 +1858,13 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
     }
 
     // draftStep처럼 0이 나올 때까지 회차 반복
+    // draftStep tasklet처럼 지난 회차 마지막 판매자를 다음 회차에 넘기며 반복 (#304)
     private void draftAll(Long snapshotId, int limit) {
-        while (payoutService.draft(snapshotId, limit).sellerCount() > 0) {
-            // 회차 반복
+        Long afterSellerId = null;
+        PayoutDraftResult drafted = payoutService.draft(snapshotId, afterSellerId, limit);
+        while (drafted.sellerCount() > 0) {
+            afterSellerId = drafted.lastSellerId();
+            drafted = payoutService.draft(snapshotId, afterSellerId, limit);
         }
     }
 
@@ -1951,8 +1987,8 @@ class PayoutSettleIntegrationTest extends AbstractIntegrationTest {
         Long candidateId = candidateIdsOf(orderItemId).get(0);
         LocalDateTime now = LocalDateTime.now();
         jdbcTemplate.update(
-                "INSERT INTO payout_snapshot_item (snapshot_id, candidate_id, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                snapshotId, candidateId, amount, now, now);
+                "INSERT INTO payout_snapshot_item (snapshot_id, candidate_id, seller_id, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, sellerId, amount, now, now);
     }
 
     // draft 저장 중 DB 오류 재현 (#90): 그 스냅샷·판매자의 빈 draft를 미리 넣어 두면, draft 저장 때 UK(snapshot_id, seller_id) 위반이 남

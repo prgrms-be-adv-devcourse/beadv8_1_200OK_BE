@@ -40,7 +40,7 @@ class PayoutJobConfigTest {
     @Test
     void draft_회차에서_성공한_판매자는_write_count_실패한_판매자는_write_skip_count로_남기고_다음_회차를_부른다() throws Exception {
         // given: 이번 회차 판매자 3명 중 1명 실패
-        given(payoutUseCase.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(3, 1));
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(3, 1, 30L));
         StepContribution contribution = contribution();
 
         // when
@@ -58,7 +58,7 @@ class PayoutJobConfigTest {
     @Test
     void 이번_회차의_판매자가_모두_실패해도_다음_회차를_부른다() throws Exception {
         // given: 판매자 2명 모두 실패 (실패한 판매자는 실패 기록 때문에 다음 회차에서 다시 뽑히지 않음)
-        given(payoutUseCase.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 2));
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 2, 20L));
         StepContribution contribution = contribution();
 
         // when
@@ -71,7 +71,7 @@ class PayoutJobConfigTest {
     @Test
     void draft_대상_판매자가_처음부터_없으면_draft_Step을_끝낸다() throws Exception {
         // given: 정산 대상이 없는 날 (validate 실패만 있는 날도 draft 대상은 0명)
-        given(payoutUseCase.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0));
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, null));
         StepContribution contribution = contribution();
 
         // when
@@ -82,10 +82,29 @@ class PayoutJobConfigTest {
     }
 
     @Test
+    void draft_회차의_마지막_판매자를_Step_실행_기록에_남기고_다음_회차에_넘긴다() throws Exception {
+        // given: 1회차는 처음부터(null) 판매자 10·20, 2회차는 20 다음부터 판매자 30, 3회차는 남은 판매자 없음
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 0, 20L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 20L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(1, 0, 30L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 30L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, 30L));
+        StepExecution stepExecution = stepExecution();
+
+        // when
+        RepeatStatus sut = runRounds(stepExecution, 3);
+
+        // then: 회차마다 지난 회차의 마지막 판매자를 받아야 위 세 응답이 차례로 나옴 (다른 값을 넘기면 Mockito가 인자 불일치로 실패시킴)
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertSoftly(softly -> {
+            softly.assertThat(stepExecution.getWriteCount()).isEqualTo(3L);
+            softly.assertThat(stepExecution.getExecutionContext().getLong(PayoutJobConfig.DRAFT_LAST_SELLER_ID_KEY)).isEqualTo(30L);
+        });
+    }
+
+    @Test
     void 일부_판매자라도_성공했으면_실패가_있어도_draft_Step을_끝낸다() throws Exception {
         // given: 1회차 2명 중 1명 실패 → 2회차 남은 판매자 없음
-        given(payoutUseCase.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE))
-                .willReturn(new PayoutDraftResult(2, 1), new PayoutDraftResult(0, 0));
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 1, 20L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 20L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, 20L));
         StepExecution stepExecution = stepExecution();
 
         // when
@@ -98,8 +117,9 @@ class PayoutJobConfigTest {
     @Test
     void 모든_판매자가_실패했으면_마지막_회차에서_draft_Step을_실패시킨다() {
         // given: 1회차 2명, 2회차 1명 모두 실패 → 3회차 남은 판매자 없음
-        given(payoutUseCase.draft(SNAPSHOT_ID, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE))
-                .willReturn(new PayoutDraftResult(2, 2), new PayoutDraftResult(1, 1), new PayoutDraftResult(0, 0));
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 2, 20L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 20L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(1, 1, 30L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 30L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, 30L));
         StepExecution stepExecution = stepExecution();
 
         // when & then: 지킬 정산이 없는 전원 실패라 Job을 FAILED로 드러냄 (앞 회차들의 실패 수가 Step에 누적된 것으로 판단)

@@ -302,7 +302,7 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
 
         // when: 같은 실행의 draft 전에 관리자가 해결
         resolve(order);
-        payoutService.draft(snapshotId, 100);
+        payoutService.draft(snapshotId, null, 100);
 
         // then: 한 실행 안의 제외는 해결과 무관 → 그 실행의 draft에는 실패 없는 다른 주문만 들어감 (해결한 주문은 다음 실행부터 다시 검사)
         List<Long> draftedOrderIds = new ArrayList<>();

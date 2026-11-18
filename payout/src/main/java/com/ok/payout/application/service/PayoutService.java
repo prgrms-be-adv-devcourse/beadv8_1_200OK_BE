@@ -454,8 +454,9 @@ public class PayoutService implements PayoutUseCase {
         }
     }
 
-    // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환
+    // 스냅샷에서 판매자 limit명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수, 마지막 판매자를 반환
     // 판매자 수가 0이면 더 없음 → tasklet 종료
+    // 판매자는 번호 순으로 afterSellerId 다음부터 고름 (#304): 돌려준 마지막 판매자를 tasklet이 다음 회차에 afterSellerId로 넘김
     // 판매 대금·배송비는 판매자별 draft로, 수수료는 시스템 draft 항목으로만 저장 (합계는 commitStep에서 스냅샷 전체를 합침)
     // payout 생성·지갑 이벤트(commitStep)와 Kafka 발송(publishStep)은 검증 이후 단계에서 함
     //
@@ -484,10 +485,10 @@ public class PayoutService implements PayoutUseCase {
     //   수정안 후보: 판매자 N명을 한 트랜잭션으로 묶어 저장해 보고, 실패한 묶음만 판매자 한 명씩 다시 저장 (평소 커밋 수는 예전 수준, 실패 때만 판매자 단위 격리)
     @Override
     @Transactional(readOnly = true)
-    public PayoutDraftResult draft(Long snapshotId, int limit) {
-        List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, limit);
+    public PayoutDraftResult draft(Long snapshotId, Long afterSellerId, int limit) {
+        List<Long> sellerIds = payoutQueryRepository.findUndraftedSellerIds(snapshotId, afterSellerId, limit);
         if (sellerIds.isEmpty()) {
-            return new PayoutDraftResult(0, 0);
+            return new PayoutDraftResult(0, 0, afterSellerId);
         }
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUndraftedCandidates(snapshotId, sellerIds);
@@ -528,7 +529,8 @@ public class PayoutService implements PayoutUseCase {
                 }
             }
         }
-        return new PayoutDraftResult(sellerIds.size(), failedSellerCount);
+        // 판매자 조회가 번호 순으로 돌려주므로 마지막 줄이 가장 큰 번호
+        return new PayoutDraftResult(sellerIds.size(), failedSellerCount, sellerIds.getLast());
     }
 
     // 판매자 저장이 실패한 뒤, 후보를 주문별로 나눠 다시 저장해 봄 (#534). 저장된 주문이 하나라도 있으면 true
@@ -814,7 +816,7 @@ public class PayoutService implements PayoutUseCase {
         if (!result.failedCandidatesInDraft().isEmpty()) {
             // TODO(#52): 코드 고장 즉시 알림 필요. 지금은 전용 에러 코드로 Job만 멈추고 알림이 없어 배치 결과를 봐야 알 수 있음
             //   어디서 보나: BATCH_STEP_EXECUTION에서 payoutVerifyStep이 FAILED인 실행의 EXIT_MESSAGE (후보 ID가 들어 있음)
-            //   멈췄을 때 할 일: draft 대상 조회 조건(PayoutQueryRepository.undraftedInSnapshot ④) 확인·수정 → 재실행
+            //   멈췄을 때 할 일: draft 대상 조회 조건(PayoutQuerydslRepository.undraftedSnapshotItems ④) 확인·수정 → 재실행
             //   잠금·실패 기록을 남기지 않으므로 정리할 데이터는 없음 (다음 정기 배치나 /payouts/run으로 새 스냅샷부터 다시 처리)
             throw new RestApiException(PayoutErrorCode.DRAFT_INCLUDES_FAILED_CANDIDATE, String.format(
                     "실패 후보가 임시 정산에 들어감(코드 오류). snapshotId=%d, 후보 수=%d, 후보 ID(최대 %d건)=%s",

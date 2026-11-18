@@ -16,7 +16,7 @@ import org.hibernate.annotations.Immutable;
 
 import static jakarta.persistence.GenerationType.IDENTITY;
 
-// 스냅샷 대상 목록 1건 = 정산후보 1건. 정산후보를 복사하지 않고 ID와 금액만 기록 (verifyStep의 비교 기준)
+// 스냅샷 대상 목록 1건 = 정산후보 1건. 정산후보를 복사하지 않고 ID·판매자·금액만 기록 (verifyStep의 비교 기준)
 @Entity
 @Immutable
 @Table(name = "payout_snapshot_item", catalog = PayoutSchema.NAME)
@@ -36,6 +36,12 @@ public class PayoutSnapshotItem extends BaseTime {
     @Column(nullable = false)
     private Long candidateId;
 
+    // 스냅샷 시점 정산후보의 판매자 (member 모듈 ID)
+    // 정산후보에도 있는 값을 복사해 둠: draftStep이 정산후보 표 전체를 판매자별로 묶고 정렬하지 않고
+    //   이 목록에서 판매자 번호 순으로 바로 고르게 하려는 것 (#304)
+    @Column(nullable = false)
+    private Long sellerId;
+
     // 스냅샷 시점의 정산후보 금액 (원)
     @Column(nullable = false)
     private Long amount;
@@ -48,6 +54,7 @@ public class PayoutSnapshotItem extends BaseTime {
         PayoutSnapshotItem item = new PayoutSnapshotItem();
         item.snapshotId = snapshotId;
         item.candidateId = candidate.getId();
+        item.sellerId = candidate.getSellerId();
         item.amount = candidate.getAmount();
         return item;
     }

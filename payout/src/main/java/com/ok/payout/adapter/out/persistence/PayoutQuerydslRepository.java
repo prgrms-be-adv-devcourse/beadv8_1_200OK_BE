@@ -36,6 +36,7 @@ import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.JPQLSubQuery;
+import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
@@ -577,28 +578,31 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // draftStep 회차마다 "이번에 처리할 판매자" 조회
-    // 스냅샷에서 아직 draft가 안 된 후보가 있는 판매자 ID를 가장 먼저 들어온 후보 순으로 limit명
+    // 스냅샷에서 아직 draft가 안 된 줄이 있는 판매자 ID를, afterSellerId보다 큰 번호부터 번호 순으로 limit명 (#304)
+    //   인덱스 (snapshot_id, seller_id) 순서대로 읽다 limit명을 채우면 멈추므로, 회차마다 이번 100명 근처만 읽음
+    //   처리 순서는 판매자 번호 순 (금액은 순서와 상관없이 같음)
     @Override
-    public List<Long> findUndraftedSellerIds(Long snapshotId, int limit) {
-        return queryFactory
-                .select(payoutCandidateItem.sellerId)
-                .from(payoutCandidateItem)
-                .where(undraftedInSnapshot(snapshotId))
-                .groupBy(payoutCandidateItem.sellerId)
-                .orderBy(payoutCandidateItem.createdAt.min().asc(),
-                        payoutCandidateItem.sellerId.asc())
+    public List<Long> findUndraftedSellerIds(Long snapshotId, Long afterSellerId, int limit) {
+        JPAQuery<Long> query = undraftedSnapshotItems(
+                queryFactory.select(payoutSnapshotItem.sellerId).distinct(), snapshotId);
+        // 첫 회차는 지난번 판매자가 없음
+        if (afterSellerId != null) {
+            query.where(payoutSnapshotItem.sellerId.gt(afterSellerId));
+        }
+        return query
+                .orderBy(payoutSnapshotItem.sellerId.asc())
                 .limit(limit)
                 .fetch();
     }
 
     // draftStep 회차마다 "그 판매자들의 처리할 후보" 조회 (대금·배송비·수수료 3종 모두)
+    // 스냅샷 항목에서 판매자로 찾아 이번 스냅샷 줄만 꺼냄: 정산후보 표에서 판매자로 찾으면 그 판매자의 과거 후보까지 읽고 버림 (#304)
     @Override
     public List<PayoutCandidateItem> findUndraftedCandidates(Long snapshotId, List<Long> sellerIds) {
-        return queryFactory
-                .selectFrom(payoutCandidateItem)
-                .where(
-                        payoutCandidateItem.sellerId.in(sellerIds),
-                        undraftedInSnapshot(snapshotId)) // 판매자 조회와 반드시 같은 조건
+        // 판매자 조회와 반드시 같은 조건 (undraftedSnapshotItems)
+        return undraftedSnapshotItems(queryFactory.select(payoutCandidateItem), snapshotId)
+                .join(payoutCandidateItem).on(payoutCandidateItem.id.eq(payoutSnapshotItem.candidateId))
+                .where(payoutSnapshotItem.sellerId.in(sellerIds))
                 .orderBy(payoutCandidateItem.id.asc())
                 .fetch();
     }
@@ -1074,31 +1078,40 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return condition;
     }
 
-    // 두 draft 조회가 공유하는 조건: 이번 스냅샷 목록에 있고, 아직 draft로 옮기지 않았고, 실패로 기록되지 않은 후보
+    // 두 draft 조회가 공유하는 조건: 이번 스냅샷 목록의 줄 중, 아직 draft로 옮기지 않았고, 실패로 기록되지 않은 줄
     // 처리한 후보는 draft 항목에 들어가 다음 회차에서 자동으로 빠지므로, 언젠가 0명이 되어 Step이 끝남
     // 한 곳에서만 정의해서 두 쿼리의 조건이 어긋나지 않게 강제함
     // (어긋나면 판매자는 뽑히는데 후보가 0건 → draft()가 계속 0보다 큰 값 반환 → tasklet 무한 반복)
     // "정산 항목(payout_item)에 없는 후보" 기준을 쓰면 안 됨: draft 결과는 아직 payout_item에 없어 같은 판매자를 반복 처리함
-    private BooleanBuilder undraftedInSnapshot(Long snapshotId) {
-        BooleanBuilder condition = new BooleanBuilder();
-        // ① 이번 스냅샷 목록에 있는 후보만 (배치 도중 새로 생긴 후보는 제외)
-        condition.and(inSnapshot(snapshotId));
-        // ② 아직 판매자 draft 항목으로 옮기지 않은 것
-        condition.and(JPAExpressions.selectOne()
-                .from(payoutSellerDraftItem)
-                .where(payoutSellerDraftItem.snapshotId.eq(snapshotId),
-                        payoutSellerDraftItem.candidateId.eq(payoutCandidateItem.id))
-                .notExists());
-        // ③ 아직 시스템 draft 항목으로 옮기지 않은 것
-        condition.and(JPAExpressions.selectOne()
-                .from(payoutSystemDraftItem)
-                .where(payoutSystemDraftItem.snapshotId.eq(snapshotId),
-                        payoutSystemDraftItem.candidateId.eq(payoutCandidateItem.id))
-                .notExists());
-        // ④ 이번 스냅샷에서 실패로 기록되지 않은 것 (실패 = 이번 정산에서 빠짐. 실패 정보는 payout_failure에만 둠)
-        //    validate 실패뿐 아니라 이후 생길 실패(#90 draft 예외)도 모두 여기서 빠져, 같은 후보를 다시 잡는 무한 반복이 생기지 않음
-        condition.and(notFailedInSnapshot(snapshotId));
-        return condition;
+    // 두 조회 모두 스냅샷 항목(payout_snapshot_item)에서 출발함 (#304): 정산후보 표에서 출발하면 쌓인 과거 후보까지 읽음
+    // ①(이번 스냅샷 목록에 있는 후보만, 배치 도중 새로 생긴 후보는 제외)은 스냅샷 항목에서 출발하는 것으로 지켜짐
+    // ②③은 판매자 번호가 앞으로만 가므로 없어도 Step은 끝나지만, 같은 후보를 두 번 draft하지 않게 하는 안전장치로 둠
+    // ②③④는 NOT EXISTS가 아니라 LEFT JOIN + IS NULL로 씀 (#304)
+    //   NOT EXISTS로 쓰면 MySQL이 회차마다 "이번 스냅샷의 draft 항목 전체"를 임시 목록으로 만들어 찾음(Materialize with deduplication)
+    //   → draft가 진행될수록 목록이 커져 다시 판매자 수의 제곱으로 늚
+    //     (10만 명 측정 DB, 5만 명 draft된 상태의 판매자 조회 1번: NOT EXISTS 0.7~0.9초, LEFT JOIN 9ms)
+    //   LEFT JOIN은 세 표의 UK (snapshot_id, candidate_id)로 줄마다 한 건만 찾아보므로 고른 판매자 범위만큼만 읽음
+    //   UK라 이어 붙여도 스냅샷 줄이 늘어나지 않음 (한 후보에 draft 항목·실패 기록은 스냅샷당 최대 1건)
+    private <T> JPAQuery<T> undraftedSnapshotItems(JPAQuery<T> query, Long snapshotId) {
+        return query
+                .from(payoutSnapshotItem)
+                // ② 아직 판매자 draft 항목으로 옮기지 않은 것
+                .leftJoin(payoutSellerDraftItem).on(
+                        payoutSellerDraftItem.snapshotId.eq(snapshotId),
+                        payoutSellerDraftItem.candidateId.eq(payoutSnapshotItem.candidateId))
+                // ③ 아직 시스템 draft 항목으로 옮기지 않은 것
+                .leftJoin(payoutSystemDraftItem).on(
+                        payoutSystemDraftItem.snapshotId.eq(snapshotId),
+                        payoutSystemDraftItem.candidateId.eq(payoutSnapshotItem.candidateId))
+                // ④ 이번 스냅샷에서 실패로 기록되지 않은 것 (실패 = 이번 정산에서 빠짐. 실패 정보는 payout_failure에만 둠)
+                //    validate 실패뿐 아니라 이후 생길 실패(#90 draft 예외)도 모두 여기서 빠져, 같은 후보를 다시 잡는 무한 반복이 생기지 않음
+                .leftJoin(payoutFailure).on(
+                        payoutFailure.snapshotId.eq(snapshotId),
+                        payoutFailure.candidateId.eq(payoutSnapshotItem.candidateId))
+                .where(payoutSnapshotItem.snapshotId.eq(snapshotId),
+                        payoutSellerDraftItem.id.isNull(),
+                        payoutSystemDraftItem.id.isNull(),
+                        payoutFailure.id.isNull());
     }
 
     // 후보의 주문이 잠겼는지: 그 주문에 해결되지 않은 잠그는 사유(PayoutFailureReason.locksOrder)의 실패 기록이 하나라도 있으면 잠김

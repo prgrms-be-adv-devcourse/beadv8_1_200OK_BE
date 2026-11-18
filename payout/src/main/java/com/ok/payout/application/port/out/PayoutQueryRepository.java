@@ -27,8 +27,8 @@ public interface PayoutQueryRepository {
     long countLockedUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to);
 
     // draftStep 회차마다 "이번에 처리할 판매자" 조회
-    // 스냅샷에서 아직 draft가 안 된 후보가 있는 판매자 ID를 가장 먼저 들어온 후보 순으로 limit명
-    List<Long> findUndraftedSellerIds(Long snapshotId, int limit);
+    // 스냅샷에서 아직 draft가 안 된 줄이 있는 판매자 ID를 afterSellerId(지난 회차 마지막 판매자, 첫 회차는 null)보다 큰 번호부터 번호 순으로 limit명
+    List<Long> findUndraftedSellerIds(Long snapshotId, Long afterSellerId, int limit);
 
     // draftStep 회차마다 "그 판매자들의 처리할 후보" 조회 (대금·배송비·수수료 3종 모두)
     List<PayoutCandidateItem> findUndraftedCandidates(Long snapshotId, List<Long> sellerIds);

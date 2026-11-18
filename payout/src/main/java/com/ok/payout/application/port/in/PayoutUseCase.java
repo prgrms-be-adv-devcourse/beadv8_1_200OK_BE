@@ -33,9 +33,12 @@ public interface PayoutUseCase {
     int validate(Long snapshotId);
 
     /**
-     * 스냅샷에서 판매자 {@code limit}명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수를 반환한다.
+     * 스냅샷에서 판매자 {@code limit}명 단위로 임시 정산(draft)을 만들고, 이번 회차 판매자 수(실패 포함)와 실패 수, 마지막 판매자를 반환한다.
+     * 판매자는 번호 순으로 고르며, 회차마다 지난 회차 마지막 판매자 다음 번호부터 고른다(#304).
+     *
+     * @param afterSellerId 지난 회차의 마지막 판매자 ID. 첫 회차는 {@code null}
      */
-    PayoutDraftResult draft(Long snapshotId, int limit);
+    PayoutDraftResult draft(Long snapshotId, Long afterSellerId, int limit);
 
     /**
      * 검증을 통과한 draft를 payout과 payout_item으로 확정한다. 반드시 단일 트랜잭션에서 처리된다.

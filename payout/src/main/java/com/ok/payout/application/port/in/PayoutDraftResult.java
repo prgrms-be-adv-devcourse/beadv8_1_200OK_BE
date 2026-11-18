@@ -8,7 +8,10 @@ public record PayoutDraftResult(
         int sellerCount,
         // 그중 저장된 주문이 하나도 없어 후보 전부를 UNEXPECTED_ERROR로 기록한 판매자 수
         // 주문별 다시 시도(#534)로 일부 주문이라도 저장된 판매자는 성공으로 셈: 그날 정산이 나가므로 "전원 실패"(Job FAILED)로 보지 않음
-        int failedSellerCount
+        int failedSellerCount,
+        // 이번 회차에 뽑은 판매자 중 가장 큰 번호 (#304). tasklet이 다음 회차에 "이 번호 다음부터" 고르라고 넘김
+        // 뽑은 판매자가 없으면 받은 값을 그대로 돌려줌 (첫 회차부터 없으면 null)
+        Long lastSellerId
 ) {
     // 성공한 판매자 수 (배치 write count)
     public int draftedSellerCount() {
