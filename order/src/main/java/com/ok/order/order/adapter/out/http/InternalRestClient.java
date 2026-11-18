@@ -27,11 +27,16 @@ public final class InternalRestClient {
      * @param failureCode 호출이 실패했을 때 사용자에게 줄 에러 코드 (모듈마다 다름)
      */
     public static RestClient create(String baseUrl, OrderErrorCode failureCode) {
+        return create(baseUrl, failureCode, READ_TIMEOUT);
+    }
+
+    // 응답 시간 초과를 짧게 두고 확인하려는 테스트용
+    static RestClient create(String baseUrl, OrderErrorCode failureCode, Duration readTimeout) {
         // [1] 타임아웃
         // 설정이 없으면 상대가 응답하지 않을 때 주문 요청도 끝없이 기다린다.
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(CONNECT_TIMEOUT);
-        factory.setReadTimeout(READ_TIMEOUT);
+        factory.setReadTimeout(readTimeout);
 
         return RestClient.builder()
                 .baseUrl(baseUrl)
@@ -40,12 +45,14 @@ public final class InternalRestClient {
                 // [추적] 받는 쪽이 어느 요청·주문의 호출인지 알 수 있도록 MDC의 추적 키를 헤더로 보낸다
                 .requestInterceptor(new TraceHeaderInterceptor())
 
-                // [2] 응답 자체를 못 받은 경우 (서버 꺼짐, 타임아웃)
+                // [2] 응답을 끝까지 받지 못한 경우 (서버 꺼짐, 타임아웃)
                 // 이때는 IOException이 나고, 그대로 두면 500이 된다.
-                // 요청을 보내는 순간을 감싸서, IOException이면 우리 에러 코드로 바꾼다.
+                // 요청을 보내고 응답(상태 코드·본문)을 끝까지 읽는 구간을 감싸서, IOException이면 우리 에러 코드(503)로 바꾼다.
+                // 보내기만 감싸면 상태 코드나 본문을 읽다가 난 시간 초과는 이 구간 밖(클라이언트의 body 변환)에서 나 500이 된다(#739, 3차 부하테스트 1,033건).
+                // 본문은 다 읽은 뒤 변환하므로, 형식이 깨진 응답처럼 다시 해도 낫지 않는 실패는 지금처럼 500으로 남는다
                 .requestInterceptor((request, body, execution) -> {
                     try {
-                        return execution.execute(request, body);
+                        return BufferedClientHttpResponse.readFully(execution.execute(request, body));
                     } catch (IOException e) {
                         throw new RestApiException(failureCode);
                     }
