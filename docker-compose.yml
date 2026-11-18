@@ -500,12 +500,16 @@ services:
       MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:-exporterpassword}
     # 계정 exporter는 deploy/monitoring/create-exporter-user.sh로 만든다(docs/DEVELOPMENT.md). 계정이 없어도 뜨고 mysql_up만 0이다
     # 비밀번호는 명령행에 넘기지 않고 컨테이너 안 설정 파일(--config.my-cnf)로 넘긴다 (운영과 같은 방식)
+    # 기본 수집기에 더해 두 가지를 켠다 (#509). innodb_trx: 열린 트랜잭션 수와 가장 오래된 트랜잭션 나이(커넥션을 물고 있는 긴 트랜잭션),
+    # innodb_metrics: lock_deadlocks 같은 InnoDB 카운터(시계열 약 70개 증가). 둘 다 exporter 계정의 기존 권한(PROCESS)으로 읽힌다
     entrypoint: [sh, -c]
     command:
       - |
         umask 077
         printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
-        exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
+        exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf \
+          --collect.info_schema.innodb_trx \
+          --collect.info_schema.innodb_metrics
 
   # 컨테이너별 CPU 스로틀링·메모리 지표. 호스트 포트는 열지 않고 prometheus가 monitoring-net에서 cadvisor:8080으로 읽는다
   cadvisor:

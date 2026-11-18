@@ -484,12 +484,16 @@ services:
       MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD가 필요하다}
     # 비밀번호를 --config.my-cnf 파일에 담아 넘긴다. DATA_SOURCE_NAME 같은 환경변수나 명령행 인자로 넘기면 ps·inspect에 드러난다
     # 파일은 컨테이너 안에서 만들고(redis와 같은 방식) 본인만 읽게 한다. 비밀번호는 create-exporter-user.sh가 허용하는 문자만 쓴다
+    # 기본 수집기에 더해 두 가지를 켠다 (#509). innodb_trx: 열린 트랜잭션 수와 가장 오래된 트랜잭션 나이(커넥션을 물고 있는 긴 트랜잭션),
+    # innodb_metrics: lock_deadlocks 같은 InnoDB 카운터(시계열 약 70개 증가). 둘 다 exporter 계정의 기존 권한(PROCESS)으로 읽힌다
     entrypoint: [sh, -c]
     command:
       - |
         umask 077
         printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
-        exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
+        exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf \
+          --collect.info_schema.innodb_trx \
+          --collect.info_schema.innodb_metrics
     mem_limit: 64m
 
   nginx:

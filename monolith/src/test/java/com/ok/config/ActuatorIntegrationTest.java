@@ -154,6 +154,21 @@ class ActuatorIntegrationTest extends AbstractIntegrationTest {
         assertThat(sut).contains("hibernate_statements_total");
     }
 
+    // 대시보드의 "커넥션 점유 시간" 패널(#509)이 평균(sum/count)과 최대(max)를 이 이름으로 읽는다
+    @Test
+    void 커넥션_점유_시간_지표를_Hikari가_노출한다() throws Exception {
+        // given: 풀에서 커넥션을 빌려 쓰게 한다
+        get(serverPort, "/api/v1/products/987654321");
+
+        // when
+        String sut = awaitPrometheusContaining("hikaricp_connections_usage_seconds_max{");
+
+        // then
+        assertThat(sut)
+                .contains("hikaricp_connections_usage_seconds_count{")
+                .contains("hikaricp_connections_usage_seconds_sum{");
+    }
+
     private String awaitPrometheusContaining(String label) {
         AtomicReference<String> body = new AtomicReference<>("");
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {

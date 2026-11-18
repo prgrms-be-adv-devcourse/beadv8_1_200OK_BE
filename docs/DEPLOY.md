@@ -441,6 +441,8 @@ BFF 컨테이너는 프론트 레포가 배포합니다(프론트 레포 `deploy
 
 > **이 변경을 처음 배포하면 mysql 컨테이너가 한 번 다시 만들어져 DB가 잠깐 끊깁니다.** 슬로우 쿼리 로그 설정(`command`)이 새로 생기기 때문입니다. 데이터는 `/data/mysql`에 있어 그대로이고, app은 재연결합니다. 점검 시간에 배포합니다.
 
+> **#509 변경(데드락·장기 트랜잭션 수집기)을 배포하면 mysqld-exporter 컨테이너만 다시 만들어집니다.** 수집기 옵션만 바뀌고 mysql은 그대로라 DB는 끊기지 않으며, `exporter` 계정은 다시 만들 필요가 없습니다. `compose.prod.yml`과 `monitoring/`(대시보드 JSON 포함)을 복사하고 `./deploy.sh`를 실행하는 평소 순서(6절)로 반영합니다.
+
 ### 처음 켜기 (서버당 1회)
 
 ```bash
@@ -462,7 +464,7 @@ monitoring/create-exporter-user.sh         # mysqld-exporter용 조회 전용 DB
 
 - `create-exporter-user.sh`는 `.env`의 `MYSQL_EXPORTER_PASSWORD`로 계정 `exporter`를 만들거나 비밀번호를 맞춥니다(몇 번 실행해도 같은 결과). 처음 한 번과 비밀번호를 바꿀 때 실행합니다. 비밀번호를 바꿨다면 `.env`를 고친 뒤 `./deploy.sh`로 exporter를 다시 띄우고 이 스크립트를 실행합니다.
   - initdb에 넣지 않은 이유: initdb는 빈 데이터 디렉터리에서 처음 뜰 때만 돌아서 이미 운영 중인 DB에는 실행되지 않습니다.
-  - 권한은 `PROCESS`, `REPLICATION CLIENT`(전역)과 `performance_schema` 조회뿐이고 동시 접속은 3개로 제한합니다. exporter가 계정이 없어도 컨테이너는 뜨고 `mysql_up`만 0입니다.
+  - 권한은 `PROCESS`, `REPLICATION CLIENT`(전역)과 `performance_schema` 조회뿐이고 동시 접속은 3개로 제한합니다. 이 권한으로 `innodb_trx`·`innodb_metrics` 수집기(데드락, 장기 트랜잭션)도 읽힙니다(일회용 MySQL 9.4로 확인했습니다). exporter가 계정이 없어도 컨테이너는 뜨고 `mysql_up`만 0입니다.
 - Grafana에는 MySQL 데이터소스를 만들지 않습니다. MySQL 지표는 mysqld-exporter → Prometheus로 보므로 Grafana가 DB 계정을 가질 필요가 없습니다(이슈의 "Grafana DB 조회 계정 분리"는 이렇게 충족합니다).
 - `GRAFANA_ADMIN_PASSWORD`는 Grafana DB가 처음 만들어질 때만 쓰입니다. 나중에 바꾸려면 `docker compose -f compose.prod.yml exec grafana grafana cli admin reset-admin-password '<새 비밀번호>'`를 실행합니다(명령행에 남으므로 쓴 뒤 `history -c`).
 

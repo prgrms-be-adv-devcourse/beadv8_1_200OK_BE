@@ -179,7 +179,11 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 - 계정 스크립트는 로컬에서 `COMPOSE_FILE=../docker-compose.yml COMPOSE_PROFILES=monitoring deploy/monitoring/create-exporter-user.sh`로 실행합니다. 몇 번 실행해도 같은 결과이고, `.env`의 `MYSQL_EXPORTER_PASSWORD`로 `exporter` 계정(조회 전용)을 만들거나 비밀번호를 맞춥니다. 계정이 없으면 MySQL 지표(`mysql_up`)만 0입니다.
 - Grafana: `http://localhost:3000` (`admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`, 기본 `admin`), Prometheus: `http://localhost:9090`. 둘 다 `127.0.0.1`에만 열립니다. 대시보드 `paldo-gotgan 개요`가 자동 등록됩니다.
 - 앱 지표는 컨테이너로 띄운 앱(`--profile app`)의 관리 포트(`app:18080`)를 가져옵니다. 운영과 같은 주소입니다. IDE나 `:monolith:bootRun`으로 내 PC에서 앱을 띄우는 경우에는 `deploy/monitoring/prometheus/targets/local/app.yml`의 대상을 `host.docker.internal:18080`으로 바꿉니다(재시작 없이 반영되고, 이 변경은 커밋하지 않습니다).
-- 대시보드는 위에서부터 주요 지표(트래픽·지연 P50/P95/P99·에러 4xx/5xx·포화도) 현재값과 색 임계값, API별 p95 상위 10 표, 원인 분석(JVM·커넥션 풀), 컨테이너 포화도, MySQL 순서입니다. 색 임계값은 글의 기준(CPU 80%, 풀 사용률 90%)과 시작값이라 서비스의 평소 값에 맞춰 `deploy/monitoring/grafana/dashboards/overview.json`에서 조정합니다. 앱 재시작은 그래프에 주황색 마커로 표시됩니다(`process_start_time_seconds` 변화).
+- `API × DB` 행과 `DB 트랜잭션 · 락 · 커넥션 점유` 행(#509)은 이렇게 읽습니다.
+  - 상단 `uri` 변수로 API를 고르면 지연·초당 SQL 패널이 그 API로 좁혀지고, MySQL 지표(슬로우 쿼리율, 락 대기)는 같은 시간축에 DB 전체 값으로 겹칩니다. MySQL 지표에는 API 라벨이 없어서, 슬로우 쿼리가 늘 때 어느 API의 지연이나 SQL 수가 같이 올랐는지 보는 **시간 상관**으로 후보를 좁히는 용도입니다. 슬로우 쿼리 한 건을 특정 API에 귀속하지는 못합니다.
+  - 데드락(`mysql_info_schema_innodb_metrics_lock_lock_deadlocks_total`)과 장기 트랜잭션(`mysql_info_schema_innodb_trx_*`)은 mysqld-exporter의 `innodb_metrics`·`innodb_trx` 수집기를 켜서 얻습니다(compose의 exporter 명령). 시계열이 약 70개 늘고 `exporter` 계정 권한은 그대로입니다. 트랜잭션이 없으면 시계열이 사라지므로 패널은 `or vector(0)`로 0을 보여 줍니다. 카운터의 `increase`는 Prometheus가 처음 본 값부터 세므로 처음 켠 시점에 이미 있던 데드락은 세지 않습니다.
+  - 빨간 선(요청당 쿼리 20, 가장 오래된 트랜잭션 5초)은 시작값이라 서비스의 평소 값에 맞춰 `overview.json`에서 조정합니다. 커넥션 점유 시간은 OSIV를 꺼 둬서 트랜잭션 길이와 거의 같고, 평균은 묻히므로 최대를 함께 봅니다.
+- 대시보드는 위에서부터 주요 지표(트래픽·지연 P50/P95/P99·에러 4xx/5xx·포화도) 현재값과 색 임계값, API별 p95 상위 10 표, API × DB, DB 트랜잭션·락·커넥션 점유, 원인 분석(JVM·커넥션 풀), 컨테이너 포화도, MySQL 순서입니다. 색 임계값은 글의 기준(CPU 80%, 풀 사용률 90%)과 시작값이라 서비스의 평소 값에 맞춰 `deploy/monitoring/grafana/dashboards/overview.json`에서 조정합니다. 앱 재시작은 그래프에 주황색 마커로 표시됩니다(`process_start_time_seconds` 변화).
 - 컨테이너 CPU 스로틀링은 cAdvisor가 모읍니다(`monitoring` 프로파일에 함께 뜸, 호스트 포트 없음, 대상은 `deploy/monitoring/prometheus/targets/local/cadvisor.yml`). 스로틀링은 CPU 사용률이 낮아 보여도 CPU limit에 걸려 멈춘 비율이라 P99를 키웁니다. 컨테이너 CPU limit은 서비스에 `cpus`를 주어야 생기고(기본으로는 어느 서비스에도 걸려 있지 않음), limit이 없는 컨테이너는 스로틀 비율이 0이라 대시보드에 값이 없습니다(`-`).
 - 스로틀링을 재현하려면 `docker run --rm --cpus 0.2 busybox sh -c 'while :; do :; done'`를 실행하고 대시보드의 `container` 변수에서 그 컨테이너를 고르면 스로틀 비율이 100%에 가깝게 오릅니다.
 - Docker Desktop(Mac)에서는 cAdvisor가 도커 소켓을 직접 연결해야 컨테이너를 찾습니다(compose에 이미 연결해 둠). 이렇게 하면 `name` 라벨이 채워져 컨테이너 이름으로 고를 수 있음을 확인했습니다(Docker Desktop 4.92). 그래도 `name`이 비어 나오면 대시보드의 `container` 변수에 아무것도 뜨지 않으니, `container_cpu_cfs_throttled_periods_total` 같은 지표를 Prometheus에서 `id` 라벨(`/docker/<컨테이너 ID>`)로 직접 골라 봅니다. Linux(EC2)에서의 동작은 아직 확인하지 않았습니다.
@@ -202,7 +206,7 @@ docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single �
 
 ### JPA 지표 (#509)
 
-앱이 `/actuator/prometheus`로 JPA 지표를 함께 내놓습니다(대시보드 패널은 이후 PR에서 추가).
+앱이 `/actuator/prometheus`로 JPA 지표를 함께 내놓고, 대시보드의 `API × DB` 행에서 봅니다.
 
 | 지표 | 의미 |
 |---|---|
