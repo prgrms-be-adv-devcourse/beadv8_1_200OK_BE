@@ -79,6 +79,38 @@ class WalletRevertResultPolicyTest {
         assertThat(sut).isEqualTo(new Verdict(Decision.SKIP, SkipReason.ALREADY_FINISHED));
     }
 
+    // #572: 지갑이 "구매자 2001번에게 19,000원 돌려줬다"고 알려 그 돈을 다시 가져오는 회수다. 지갑은 자기 기록(2001번, 19,000원)으로
+    // 가져오고 결과에도 그 값을 넣으므로, 환불 값(2000번, 20,000원)이 아니라 회수 줄에 남긴 값과 같으면 받는다
+    @Test
+    void 지갑이_알린_값으로_시작한_회수는_그_값과_같으면_받는다() {
+        // when
+        Verdict sut = WalletRevertResultPolicy.judge(refund(RefundStatus.PROCESSING), revertOfMismatch(2_001L, 19_000L),
+                ORDER_ID, 2_001L, 19_000L);
+
+        // then
+        assertThat(sut).isEqualTo(new Verdict(Decision.ACCEPT, null));
+    }
+
+    // 회수 줄에 남긴 값과 다르면 환불 값과 같아도 불일치다. 환불 값과 같다는 것은 지갑이 처음과 다른 기록으로 가져왔다는 뜻이라 믿을 수 없다
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("지갑이_알린_값과_어긋난_값")
+    void 지갑이_알린_값으로_시작한_회수는_그_값과_다르면_불일치다(String 경우, Long orderId, Long buyerId, long amount) {
+        // when
+        Verdict sut = WalletRevertResultPolicy.judge(refund(RefundStatus.PROCESSING), revertOfMismatch(2_001L, 19_000L),
+                orderId, buyerId, amount);
+
+        // then
+        assertThat(sut).isEqualTo(new Verdict(Decision.MISMATCH, null));
+    }
+
+    static Stream<Arguments> 지갑이_알린_값과_어긋난_값() {
+        return Stream.of(
+                Arguments.of("환불 값과 같음", ORDER_ID, BUYER_ID, AMOUNT),
+                Arguments.of("주문이 다름", 1_001L, 2_001L, 19_000L),
+                Arguments.of("구매자가 다름", ORDER_ID, 2_002L, 19_000L),
+                Arguments.of("금액이 다름", ORDER_ID, 2_001L, 18_000L));
+    }
+
     private static Refund refund(RefundStatus status) {
         return Refund.restore(REFUND_ID, ORDER_ID, 101L, 2, BUYER_ID, 5L, 55L, "감자", "1kg", 10_000L, AMOUNT,
                 0L, 0L, 0L, null, status, null, null, null, null, null);
@@ -87,5 +119,11 @@ class WalletRevertResultPolicyTest {
     private static RefundStep revert(RefundStepStatus status) {
         LocalDateTime nextCheckAt = status.isFinished() ? null : NOW.plusMinutes(5);
         return RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, status, 1, nextCheckAt, null, NOW);
+    }
+
+    // 결과를 기다리는 회수 줄(#572). Long 캐시 밖 번호를 long으로 받아 새 객체가 되게 한다(구매자 비교가 equals인지 보려는 것)
+    private static RefundStep revertOfMismatch(long buyerId, long amount) {
+        return RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT, 1,
+                NOW.plusMinutes(5), null, NOW, buyerId, amount, NOW);
     }
 }

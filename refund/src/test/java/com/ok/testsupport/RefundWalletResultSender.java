@@ -73,6 +73,12 @@ public class RefundWalletResultSender {
         send(REVERTED_TOPIC, message(refund, refund.getRefundAmount(), null));
     }
 
+    /** 저장된 환불의 orderId·buyerId에 금액만 바꿔 회수 완료 메시지를 보낸다. 지갑이 자기 기록(다른 금액)으로 가져온 경우(#572)를 만들 때 쓴다. 기다리지 않는다 */
+    public void sendReverted(Long refundId, long amount) {
+        Refund refund = refundPersistencePort.findById(refundId).orElseThrow();
+        send(REVERTED_TOPIC, message(refund, amount, null));
+    }
+
     /** 저장된 환불의 값으로 회수 실패 메시지를 보낸다. 기다리지 않는다 */
     public void sendRevertFailed(Long refundId, String reason) {
         Refund refund = refundPersistencePort.findById(refundId).orElseThrow();

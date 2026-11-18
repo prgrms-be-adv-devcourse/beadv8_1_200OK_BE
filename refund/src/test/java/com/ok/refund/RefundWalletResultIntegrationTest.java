@@ -302,28 +302,68 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
-    // 불일치는 메시지 하나가 틀렸다는 표시라, 뒤에 맞는 완료 메시지가 오면 완료로 진행한다.
-    // 지갑 줄은 멈춤과 불일치 이유를 그대로 둔다(끝 상태는 바뀌지 않음, 사람이 볼 흔적, #574 결정 2·9)
+    // 지갑이 10,000원 대신 9,000원을 돌려줬다고 알렸다(주문·구매자는 같음). 돈이 어긋나게 나갔으니 지갑이 알린 값(9,000원)을 회수 줄에 남기고
+    // 바로 다시 가져오기를 요청한다(#572). 지갑이 자기 기록대로 9,000원을 가져왔다고 답하면 그 값과 같아 받고, 이어서 주문 취소 기록을 되돌린다(#622)
     @Test
-    void 불일치_뒤_맞는_완료_메시지가_오면_완료하고_지갑_줄은_불일치로_남는다() throws Exception {
+    void 금액이_다른_완료_메시지가_오면_지갑이_알린_금액을_다시_가져오고_가져오면_주문을_되돌린다() throws Exception {
+        // given
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+
+        // when: 어긋난 완료
+        walletResultSender.sendCompleted(refundId, 9_000L);
+
+        // then: 회수 줄이 지갑이 알린 값으로 생기고 회수 요청이 나가 결과를 기다린다
+        RefundWalletResultSender.awaitUntil("회수 요청이 나가지 않았습니다", () -> refundStepPersistencePort
+                .findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT)
+                .map(revert -> revert.getStatus() == RefundStepStatus.AWAITING_RESULT)
+                .orElse(false));
+        RefundStep revertStep = stepOf(refundId, RefundStepType.WALLET_REVERT);
+        assertThat(revertStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(stepOf(refundId, RefundStepType.WALLET).getLastReason()).isEqualTo("RESULT_MISMATCH");
+            softly.assertThat(revertStep.getRevertBuyerId()).isEqualTo(BUYER_ID);
+            softly.assertThat(revertStep.getRevertAmount()).isEqualTo(9_000L);
+        });
+
+        // when: 지갑이 자기 기록(9,000원)으로 가져왔다고 답한다
+        walletResultSender.sendReverted(refundId, 9_000L);
+
+        // then: 환불 값(10,000원)과 달라도 회수 줄에 남긴 값과 같아 받고, 주문 되돌리기를 시작한다. 환불은 주문이 답할 때까지 처리 중이다
+        RefundWalletResultSender.awaitUntil("주문 되돌리기가 시작되지 않았습니다", () -> refundStepPersistencePort
+                .findByRefundIdAndType(refundId, RefundStepType.ORDER_REVERT).isPresent());
+        assertSoftly(softly -> {
+            softly.assertThat(stepOf(refundId, RefundStepType.WALLET_REVERT).getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
+            softly.assertThat(refundPersistencePort.findById(refundId).orElseThrow().getStatus()).isEqualTo(RefundStatus.PROCESSING);
+        });
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+    }
+
+    // 어긋난 완료로 돈을 다시 가져오는 중에 맞는 완료가 와도 받지 않는다(#572 결정 3, #544 결정 8을 바꿈).
+    // 한 환불에 서로 다른 두 결과를 보낸 지갑의 뒤 답은 믿을 수 없고, 받으면 돈을 거두는 중에 완료가 된다. 회수는 그대로 기다린다
+    @Test
+    void 불일치로_다시_가져오는_중에_맞는_완료_메시지가_와도_재고를_되돌리지_않고_처리_중으로_둔다() throws Exception {
         // given
         Long refundId = requestedRefundId();
         approve(refundId).andExpect(status().isOk());
         walletResultSender.sendCompleted(refundId, 9_000L);
-        RefundWalletResultSender.awaitUntil("불일치가 기록되지 않았습니다",
-                () -> stepOf(refundId, RefundStepType.WALLET).getStatus() == RefundStepStatus.STOPPED);
+        RefundWalletResultSender.awaitUntil("회수 줄이 생기지 않았습니다", () -> refundStepPersistencePort
+                .findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT).isPresent());
 
-        // when
-        walletResultSender.completeByWallet(refundId);
+        // when: 맞는 완료를 보내고, 뒤이어 다른 환불(마커)의 완료를 보내 앞 메시지가 처리될 때까지 기다린다
+        walletResultSender.sendCompleted(refundId);
+        awaitCompletedMessagesHandled();
 
         // then
+        Refund sut = refundPersistencePort.findById(refundId).orElseThrow();
+        assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
         assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
-                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getLastReason)
+                .extracting(RefundStep::getType, RefundStep::getLastReason)
                 .containsExactly(
-                        tuple(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED, null),
-                        tuple(RefundStepType.WALLET, RefundStepStatus.STOPPED, "RESULT_MISMATCH"),
-                        tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED, null));
-        assertThat(productStockReleasePort.releasedOf(refundId)).isPresent();
+                        tuple(RefundStepType.ORDER, null),
+                        tuple(RefundStepType.WALLET, "RESULT_MISMATCH"),
+                        tuple(RefundStepType.WALLET_REVERT, null));
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
     }
 
     // 멈춘 지갑 줄에 다른 이유의 실패가 와도 처음 이유를 둔다. 뒤 메시지로 덮으면 불일치 같은 처음 흔적이 사라진다(#574 결정 9)
@@ -480,15 +520,32 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
                 () -> "MARKER".equals(stepOf(markerRefundId, RefundStepType.WALLET).getLastReason()));
     }
 
+    // 완료 토픽에서 무시되는 메시지가 처리됐는지 알려고, 실패 토픽과 같은 방식으로 다른 환불(판매자 6의 모자 602)의 완료를 뒤이어 보내고 완료될 때까지 기다린다
+    private void awaitCompletedMessagesHandled() throws Exception {
+        assertThat(walletResultSender.partitionCountOf(RefundWalletResultSender.COMPLETED_TOPIC)).isEqualTo(1);
+        assertThat(listenerConcurrencyOf(RefundWalletResultSender.COMPLETED_TOPIC)).isEqualTo(1);
+        BundleShipping bundle = new BundleShipping(3_000L, 0, 3_000L, 50_000L,
+                List.of(new BundleItem(MARKER_ORDER_ITEM_ID, 5_000L, 1)));
+        orderQueryPort.put(new RefundableOrderItem(ORDER_ID, MARKER_ORDER_ITEM_ID, BUYER_ID, MARKER_SELLER_ID, MARKER_PRODUCT_OPTION_ID,
+                "모자", "검정", "PREPARING", 5_000L, 1, bundle));
+        Long markerRefundId = requestedRefundId(ORDER_ID, MARKER_ORDER_ITEM_ID);
+        approve(MARKER_SELLER_ID, markerRefundId).andExpect(status().isOk());
+        walletResultSender.completeByWallet(markerRefundId);
+    }
+
     // 실패 토픽을 듣는 리스너 컨테이너의 동시 처리 수
     private int failedListenerConcurrency() {
+        return listenerConcurrencyOf(RefundWalletResultSender.FAILED_TOPIC);
+    }
+
+    private int listenerConcurrencyOf(String topic) {
         for (MessageListenerContainer container : listenerRegistry.getAllListenerContainers()) {
             String[] topics = container.getContainerProperties().getTopics();
-            if (topics != null && Arrays.asList(topics).contains(RefundWalletResultSender.FAILED_TOPIC)) {
+            if (topics != null && Arrays.asList(topics).contains(topic)) {
                 return ((ConcurrentMessageListenerContainer<?, ?>) container).getConcurrency();
             }
         }
-        throw new AssertionError("실패 토픽을 듣는 리스너가 없습니다");
+        throw new AssertionError(topic + " 토픽을 듣는 리스너가 없습니다");
     }
 
     private Long requestedRefundId() throws Exception {

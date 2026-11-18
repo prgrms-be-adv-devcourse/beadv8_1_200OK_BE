@@ -65,6 +65,52 @@ class RefundSagaPlanTest {
         return Stream.of(RefundStatus.REQUESTED, RefundStatus.REJECTED, RefundStatus.WITHDRAWN, RefundStatus.COMPLETED, RefundStatus.FAILED);
     }
 
+    // ---- 결과 불일치 완료 (#572) ----
+
+    // 지갑이 환불 7번(주문 1000번, 20,000원)에 "돌려줬다"고 했는데 구매자나 금액이 다르다. 주문 번호가 같으면 엉뚱하게 나간 돈을 다시 가져오고,
+    // 주문 번호까지 다르면 다른 환불의 정상 결과일 수 있어 멈춘다(#572 결정 1)
+    @ParameterizedTest(name = "{0} → {4}")
+    @MethodSource("결과_불일치_완료별_다음_할_일")
+    void 결과_불일치_완료면_주문_번호가_같을_때만_돈을_다시_가져온다(String 경우, RefundStatus status, long refundAmount,
+                                                Long messageOrderId, Action expected) {
+        // when
+        Action sut = RefundSagaPlan.afterMismatchedCompletion(refund(status, refundAmount), messageOrderId);
+
+        // then
+        assertThat(sut).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> 결과_불일치_완료별_다음_할_일() {
+        return Stream.of(
+                // Long 캐시 밖 번호를 새 객체로 넘긴다(주문 비교가 equals인지 보려는 것)
+                Arguments.of("주문 같음", RefundStatus.PROCESSING, 20_000L, Long.valueOf(1_000L), Action.CALL_WALLET_REVERT),
+                Arguments.of("주문 다름", RefundStatus.PROCESSING, 20_000L, 1_001L, Action.STOP),
+                Arguments.of("주문 번호 없음", RefundStatus.PROCESSING, 20_000L, null, Action.STOP),
+                Arguments.of("돌려준 돈 없음(0원)", RefundStatus.PROCESSING, 0L, 1_000L, Action.STOP),
+                Arguments.of("처리 중 아님", RefundStatus.COMPLETED, 20_000L, 1_000L, Action.STOP));
+    }
+
+    // 맞는 완료가 와도 재고로 가지 않는 것은 결과 불일치로 시작한 회수 줄(지갑이 알린 값이 있음)뿐이다(#572 결정 3).
+    // 재고 거절로 시작한 회수 줄은 그 값이 없어 여기서 막지 않는다
+    @ParameterizedTest(name = "{0} → {2}")
+    @MethodSource("회수_줄별_재고_막음")
+    void 결과_불일치로_시작한_회수_줄이_있을_때만_재고로_가지_않는다(String 경우, RefundStep walletRevert, boolean expected) {
+        // when
+        boolean sut = RefundSagaPlan.blocksProductForMismatchRevert(walletRevert);
+
+        // then
+        assertThat(sut).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> 회수_줄별_재고_막음() {
+        return Stream.of(
+                Arguments.of("회수 줄 없음", null, false),
+                Arguments.of("재고 거절의 회수 줄", step(RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT), false),
+                Arguments.of("결과 불일치 회수 중", RefundStep.startRevertOfMismatch(REFUND_ID, 2_001L, 20_000L, NOW), true),
+                Arguments.of("결과 불일치 회수 끝남", RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT,
+                        RefundStepStatus.SUCCEEDED, 1, null, null, NOW, 2_001L, 20_000L, NOW), true));
+    }
+
     // ---- 단계 줄만 보고 정하기 (알람이 깨운 경우) ----
 
     @ParameterizedTest(name = "{0}")

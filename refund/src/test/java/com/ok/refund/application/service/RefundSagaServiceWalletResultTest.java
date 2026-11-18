@@ -10,6 +10,7 @@ import com.ok.refund.application.port.out.RefundPersistencePort;
 import com.ok.refund.application.port.out.RefundStepPersistencePort;
 import com.ok.refund.application.port.out.WalletRefundRequestPort;
 import com.ok.refund.application.port.out.StockRelease;
+import com.ok.refund.application.port.out.WalletRevertRequest;
 import com.ok.refund.domain.Refund;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
@@ -42,6 +43,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
@@ -160,7 +162,9 @@ class RefundSagaServiceWalletResultTest {
         then(refundPersistencePort).should(never()).update(any());
     }
 
-    // 지갑이 실패나 어긋난 결과를 먼저 알린 뒤 올바른 완료를 보내는 경우다. 앞선 기록은 멈춤으로 남기고(#544 결정 8) 환불은 완료한다
+    // 지갑이 실패나 어긋난 결과를 먼저 알린 뒤 올바른 완료를 보내는 경우다. 앞선 기록은 멈춤으로 남기고(#544 결정 8) 환불은 완료한다.
+    // #572부터 어긋난 "돌려줬다"는 회수를 시작해 이 경로로 오지 않는다(회수 줄이 있으면 막음). 회수 줄이 없는 경우(실패 메시지의 불일치,
+    // 주문 번호까지 다른 완료)만 여기 온다
     @Test
     void 불일치_뒤_올바른_완료가_오면_지갑_줄은_멈춤으로_남고_환불은_완료된다() {
         // given
@@ -353,6 +357,176 @@ class RefundSagaServiceWalletResultTest {
                 Arguments.of(ORDER_ID, BUYER_ID, AMOUNT + 1),
                 Arguments.of(1_001L, BUYER_ID, AMOUNT),
                 Arguments.of(ORDER_ID, 2_001L, AMOUNT));
+    }
+
+    // ---- 결과 불일치 완료의 회수 (#572) ----
+    // 예시: 환불 7번은 주문 1000번, 구매자 2000번에게 20,000원을 돌려줘야 하는데 지갑이 "구매자 2001번에게 20,000원 돌려줬다"고 알린다
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("주문은_같고_구매자나_금액이_다른_완료")
+    void 주문은_같고_구매자나_금액이_다른_완료면_지갑이_알린_값으로_회수_줄을_만들고_회수를_요청한다(String 경우, long buyerId, long amount) {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null), null);
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, buyerId, amount));
+
+        // then: 회수 줄에 지갑이 알린 값을 남기고(회수 결과를 이 값과 비교) 요청에도 그 값을 담는다.
+        // 환불 값을 담으면 지갑이 요청 값대로 처리할 때 돈을 받은 적 없는 구매자 2000번에게서 가져간다(#572 검토)
+        ArgumentCaptor<RefundStep> created = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().saveNew(created.capture());
+        assertThat(created.getValue()).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(created.getValue().getType()).isEqualTo(RefundStepType.WALLET_REVERT);
+            softly.assertThat(created.getValue().getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(created.getValue().getRevertBuyerId()).isEqualTo(buyerId);
+            softly.assertThat(created.getValue().getRevertAmount()).isEqualTo(amount);
+        });
+        then(walletRefundRequestPort).should().requestRevert(new WalletRevertRequest(REFUND_ID, ORDER_ID, buyerId, amount));
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
+    // 지갑은 같은 refundId에 처음 결과를 다시 보낸다. 같은 어긋난 완료가 다시 와도 회수 줄을 또 만들거나 요청을 또 보내지 않는다
+    @Test
+    void 같은_어긋난_완료가_다시_와도_회수를_다시_시작하지_않는다() {
+        // given: 처음 어긋난 완료(구매자 2001번)로 지갑 줄은 불일치로 멈췄고 회수 결과를 기다린다
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "RESULT_MISMATCH"), null);
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.of(revertOfMismatch(RefundStepStatus.AWAITING_RESULT)));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, 2_001L, AMOUNT));
+
+        // then
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // 지갑 실패로 주문 되돌리기를 시작했는데 어긋난 완료가 왔다(지갑 약속 위반, 돈이 나갔을 수 있음). 맞는 완료처럼 되돌리기 줄을 멈춘다(#622).
+    // 멈추지 않으면 주문이 되돌린 뒤 실패로 끝나 찾기 알람에서 빠지고 돈이 나간 흔적이 남지 않는다
+    @Test
+    void 지갑_실패로_주문을_되돌리는_중에_어긋난_완료가_오면_되돌리기_줄을_멈춘다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "PAYMENT_NOT_FOUND"), null);
+        RefundStep orderRevert = step(RefundStepType.ORDER_REVERT, RefundStepStatus.AWAITING_RESULT, 1, null);
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT)).willReturn(Optional.of(orderRevert));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, 2_001L, AMOUNT));
+
+        // then
+        ArgumentCaptor<RefundStep> updated = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(updated.capture());
+        assertThat(updated.getValue()).isSameAs(orderRevert);
+        assertSoftly(softly -> {
+            softly.assertThat(orderRevert.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(orderRevert.getLastReason()).isEqualTo(RefundSagaService.WALLET_COMPLETED_LATE);
+        });
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // 결과 불일치로 회수한 뒤 주문을 되돌리는 중이다. 맞는 완료가 와도 되돌리기 줄을 "늦은 완료"로 멈추면 안 된다(지갑 실패 경로가 아님).
+    // 회수 줄 확인이 주문 되돌리기 확인보다 먼저여야 해서, 그 순서를 지킨다. 순서가 바뀌면 아래 되돌리기 줄 스텁이 쓰여 줄이 멈춘다
+    @Test
+    void 결과_불일치_회수_뒤_주문을_되돌리는_중에_맞는_완료가_와도_되돌리기_줄을_건드리지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "RESULT_MISMATCH"), null);
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.of(revertOfMismatch(RefundStepStatus.SUCCEEDED)));
+        RefundStep orderRevert = step(RefundStepType.ORDER_REVERT, RefundStepStatus.AWAITING_RESULT, 1, null);
+        // 지금 순서에서는 부르지 않는다. 순서가 바뀌었을 때만 쓰이는 스텁이라 엄격 검사에서 뺀다
+        lenient().when(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
+                .thenReturn(Optional.of(orderRevert));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
+
+        // then
+        then(refundStepPersistencePort).should(never()).update(any());
+        assertSoftly(softly -> {
+            softly.assertThat(orderRevert.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(orderRevert.getLastReason()).isNull();
+        });
+        then(productStockReleasePort).should(never()).releaseStock(any());
+    }
+
+    static Stream<Arguments> 주문은_같고_구매자나_금액이_다른_완료() {
+        return Stream.of(
+                Arguments.of("구매자가 다름", 2_001L, AMOUNT),
+                Arguments.of("금액이 다름", BUYER_ID, 3_000L));
+    }
+
+    // 주문 번호까지 다르면 다른 환불의 정상 결과일 수 있어(환불 DB만 지워 refundId가 겹침) 가져오면 올바르게 끝난 반환을 거둔다(#572 결정 1)
+    @Test
+    void 주문_번호까지_다른_완료면_불일치만_기록하고_회수하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null);
+        givenSteps(walletStep, null);
+
+        // when
+        sut.completeAfterWalletRefund(completed(1_001L, 2_001L, AMOUNT));
+
+        // then
+        assertThat(walletStep.isStoppedWith("RESULT_MISMATCH")).isTrue();
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // "못 돌려줬다"는 답의 불일치는 돈이 나가지 않아 가져올 것이 없다(#572, 기록만)
+    @Test
+    void 실패_메시지의_불일치는_회수하지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null);
+        givenSteps(walletStep, null);
+
+        // when
+        sut.recordWalletRefundFailure(failed(ORDER_ID, 2_001L, AMOUNT, "PAYMENT_NOT_FOUND"));
+
+        // then
+        assertThat(walletStep.isStoppedWith("RESULT_MISMATCH")).isTrue();
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // 회수하는 중에 맞는 완료가 와도 받지 않는다(#572 결정 3). 한 환불에 서로 다른 두 결과를 보낸 지갑의 뒤 답은 믿을 수 없고,
+    // 받으면 돈을 거두는 중에 완료가 된다. 회수는 그대로 이어 간다
+    @Test
+    void 결과_불일치로_회수하는_중에_맞는_완료가_와도_재고와_완료로_가지_않는다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        RefundStep walletStep = step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "RESULT_MISMATCH");
+        givenSteps(walletStep, null);
+        RefundStep revertStep = revertOfMismatch(RefundStepStatus.AWAITING_RESULT);
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.of(revertStep));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT));
+
+        // then
+        then(productStockReleasePort).should(never()).releaseStock(any());
+        then(refundPersistencePort).should(never()).update(any());
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(refundStepPersistencePort).should(never()).update(any());
+        assertSoftly(softly -> {
+            softly.assertThat(walletStep.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(revertStep.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+        });
     }
 
     // 다시 시도는 알람이 맡으므로 예외를 올리지 않는다(#576). 올리면 Kafka 오류 처리기가 다시 시도하며 시도 횟수를 다 써 버린다
@@ -674,6 +848,12 @@ class RefundSagaServiceWalletResultTest {
     private static RefundStep step(RefundStepType type, RefundStepStatus status, int attemptCount, String lastReason) {
         LocalDateTime nextCheckAt = status.isFinished() ? null : NOW.plusMinutes(1);
         return RefundStep.restore(type.ordinal() + 1L, REFUND_ID, type, status, attemptCount, nextCheckAt, lastReason, NOW);
+    }
+
+    // 지갑이 "구매자 2001번에게 20,000원 돌려줬다"고 알려 시작한 회수 줄(#572)
+    private static RefundStep revertOfMismatch(RefundStepStatus status) {
+        LocalDateTime nextCheckAt = status.isFinished() ? null : NOW.plusMinutes(5);
+        return RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, status, 1, nextCheckAt, null, NOW, 2_001L, AMOUNT, NOW);
     }
 
     private static RefundStep succeededWalletStep() {

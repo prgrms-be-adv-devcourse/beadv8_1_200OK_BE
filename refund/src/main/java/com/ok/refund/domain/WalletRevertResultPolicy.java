@@ -4,9 +4,9 @@ import java.util.Objects;
 
 /**
  * 지갑이 보낸 돈 다시 가져오기(회수) 결과(다시 가져옴·실패)를 받을지 거르는 정책이다(#546). 받음·불일치·넘김만 답한다.
- * 기준은 지갑 반환 결과({@link WalletResultPolicy})와 같다. 주문·구매자·금액이 환불과 다르면 불일치로 회수 줄을 멈춘다.
- * 회수 결과의 구매자·금액은 지갑이 실제로 돌려준 기록 값이다(PR #537 약속). 지금 흐름에서는 지갑 완료를 받을 때 환불 값과 같은 것만
- * 받았으므로 환불 값과 비교하면 된다(처음 완료 결과 값과 비교하는 일은 #572).
+ * 주문·구매자·금액이 기대한 값과 다르면 불일치로 회수 줄을 멈춘다.
+ * 회수 결과의 구매자·금액은 지갑이 실제로 돌려준 기록 값이다(PR #537 약속). 재고 거절로 시작한 회수는 지갑 완료를 환불 값과 같을 때만
+ * 받았으므로 환불 값과 비교하고, 지갑이 다른 값으로 돌려줬다고 알려 시작한 회수(#572)는 회수 줄에 남긴 그 값과 비교한다.
  * 지갑 반환 결과와 따로 둔 이유: 보는 단계 줄(회수 줄)과 넘기는 경우(이미 끝난 회수 줄)가 달라, 한 정책에 넣으면 경우마다 갈라진다.
  * 지휘자는 환불 행을 잠근 뒤 한 번만 부른다. 회수 결과는 다른 모듈을 부르지 않아 잠그기 전에 먼저 읽을 까닭이 없다.
  */
@@ -22,7 +22,7 @@ public final class WalletRevertResultPolicy {
     public enum Decision {
         /** 받는다. 다시 가져옴이면 회수 줄을 성공, 실패면 멈춤으로 남긴다 */
         ACCEPT,
-        /** 주문·구매자·금액이 환불과 달라 회수 줄을 불일치로 멈춘다 */
+        /** 주문·구매자·금액이 기대한 값(환불 값, 또는 #572 회수면 지갑이 처음 알린 값)과 달라 회수 줄을 불일치로 멈춘다 */
         MISMATCH,
         /** 아무것도 쓰지 않고 넘긴다. 이유는 {@link SkipReason} */
         SKIP
@@ -80,11 +80,13 @@ public final class WalletRevertResultPolicy {
         if (revertStep.getStatus().isFinished()) {
             return Verdict.skip(SkipReason.ALREADY_FINISHED);
         }
-        // TODO(#572): 지갑 완료 결과 값(실제로 돌려준 기록)을 남기게 되면 환불 값 대신 그 값과 비교한다. 지금은 완료를 환불 값과 같을 때만 받아 둘이 같다
+        // 지갑이 환불과 다른 구매자·금액으로 돌려줬다고 알려 시작한 회수(#572)는 그때 알린 값과 비교한다. 지갑은 자기 반환 기록으로 회수하고
+        // 결과에도 그 값을 넣기 때문이다(지갑 #611). 그 밖의 회수(재고 거절)는 완료를 환불 값과 같을 때만 받았으므로 환불 값과 비교한다.
+        // 주문 번호는 어느 경우든 환불 값이다. 주문 번호까지 다른 완료는 회수하지 않는다(#572 결정 1)
         // ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
         boolean matches = Objects.equals(refund.getOrderId(), orderId)
-                && Objects.equals(refund.getBuyerId(), buyerId)
-                && refund.getRefundAmount() == amount;
+                && Objects.equals(revertStep.expectedRevertBuyerId(refund), buyerId)
+                && revertStep.expectedRevertAmount(refund) == amount;
         return matches ? Verdict.accept() : Verdict.mismatch();
     }
 }

@@ -62,11 +62,17 @@ public class RefundStep {
     // 결과를 처음 기다리기 시작한 시각. 다시 보내도(resendAfterResultTimeout) 바꾸지 않는다(#577).
     // nextCheckAt은 다시 보낼 때마다 밀려 처음부터 기다린 시간을 알 수 없어서 따로 둔다. 결과 대기가 된 적 없으면 null
     private LocalDateTime awaitingSince;
+    // 회수 줄이 다시 가져올 것으로 기대하는 구매자·금액(#572). 지갑이 환불과 다른 구매자·금액으로 "돌려줬다"고 알려 회수를 시작한 줄에만 있다.
+    // 지갑은 자기 반환 기록으로 회수하고 결과에도 그 값을 넣으므로(지갑 #611), 회수 결과는 환불 값이 아니라 이 값과 비교한다.
+    // 회수 요청에도 이 값을 담는다. 지갑이 요청 값으로 처리하더라도 돈을 받은 적 없는 환불 구매자에게서 가져가지 않게 하려는 것이다.
+    // 그 밖의 줄(재고 거절로 시작한 회수 줄 포함)은 돌려준 값이 환불 값과 같아 null이다. 줄을 만들 때 정해지고 바뀌지 않는다
+    private final Long revertBuyerId;
+    private final Long revertAmount;
     private final LocalDateTime createdAt;
 
     private RefundStep(Long id, Long refundId, RefundStepType type, RefundStepStatus status,
                        int attemptCount, LocalDateTime nextCheckAt, String lastReason,
-                       LocalDateTime awaitingSince, LocalDateTime createdAt) {
+                       LocalDateTime awaitingSince, Long revertBuyerId, Long revertAmount, LocalDateTime createdAt) {
         this.id = id;
         this.refundId = refundId;
         this.type = type;
@@ -75,13 +81,30 @@ public class RefundStep {
         this.nextCheckAt = nextCheckAt;
         this.lastReason = lastReason;
         this.awaitingSince = awaitingSince;
+        this.revertBuyerId = revertBuyerId;
+        this.revertAmount = revertAmount;
         this.createdAt = createdAt;
     }
 
     /** 단계 차례가 되어 첫 시도를 시작하며 만든다. */
     public static RefundStep start(Long refundId, RefundStepType type, LocalDateTime now) {
         return new RefundStep(null, refundId, type, RefundStepStatus.IN_PROGRESS, 1,
-                now.plus(IN_PROGRESS_EXPIRY), null, null, now);
+                now.plus(IN_PROGRESS_EXPIRY), null, null, null, null, now);
+    }
+
+    /**
+     * 지갑이 환불과 다른 구매자·금액으로 돌려줬다고 알려, 그 돈을 다시 가져오는 회수 줄을 시도 중으로 만든다(#572).
+     * 지갑이 알린 구매자·금액을 함께 남겨 회수 결과를 이 값과 비교하게 한다.
+     *
+     * @param revertBuyerId 지갑이 돌려줬다고 알린 구매자 ID
+     * @param revertAmount  지갑이 돌려줬다고 알린 금액
+     */
+    public static RefundStep startRevertOfMismatch(Long refundId, Long revertBuyerId, long revertAmount, LocalDateTime now) {
+        if (revertBuyerId == null) {
+            throw new IllegalArgumentException("회수할 구매자는 비어 있을 수 없습니다. refundId=" + refundId);
+        }
+        return new RefundStep(null, refundId, RefundStepType.WALLET_REVERT, RefundStepStatus.IN_PROGRESS, 1,
+                now.plus(IN_PROGRESS_EXPIRY), null, null, revertBuyerId, revertAmount, now);
     }
 
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
@@ -91,13 +114,40 @@ public class RefundStep {
         return restore(id, refundId, type, status, attemptCount, nextCheckAt, lastReason, null, createdAt);
     }
 
-    /** 결과를 처음 기다리기 시작한 시각까지 되살린다. 영속 어댑터가 쓴다. */
+    /** 결과를 처음 기다리기 시작한 시각까지 되살린다(회수 대상 값 없음). 테스트가 보통 줄을 만들 때 쓴다. */
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
                                      RefundStepStatus status, int attemptCount,
                                      LocalDateTime nextCheckAt, String lastReason,
                                      LocalDateTime awaitingSince, LocalDateTime createdAt) {
+        return restore(id, refundId, type, status, attemptCount, nextCheckAt, lastReason, awaitingSince, null, null, createdAt);
+    }
+
+    /** 회수 대상 구매자·금액(#572)까지 모든 칸을 되살린다. 영속 어댑터가 쓴다. */
+    public static RefundStep restore(Long id, Long refundId, RefundStepType type,
+                                     RefundStepStatus status, int attemptCount,
+                                     LocalDateTime nextCheckAt, String lastReason,
+                                     LocalDateTime awaitingSince, Long revertBuyerId, Long revertAmount,
+                                     LocalDateTime createdAt) {
         return new RefundStep(id, refundId, type, status, attemptCount, nextCheckAt,
-                lastReason, awaitingSince, createdAt);
+                lastReason, awaitingSince, revertBuyerId, revertAmount, createdAt);
+    }
+
+    /**
+     * 지갑이 알린 값으로 회수를 시작한 줄(#572)인지. 아니면 회수 결과를 환불 값과 비교한다.
+     * 두 칸은 함께 채워진다(DB CHECK 제약). 한쪽만 보면 다른 칸이 비었을 때 금액을 꺼내다 실패하므로 둘 다 본다.
+     */
+    public boolean hasRevertTarget() {
+        return revertBuyerId != null && revertAmount != null;
+    }
+
+    /** 회수로 다시 가져올 구매자. 지갑이 알린 값으로 시작한 줄이면 그 값, 아니면(재고 거절의 회수) 환불의 구매자다. */
+    public Long expectedRevertBuyerId(Refund refund) {
+        return hasRevertTarget() ? revertBuyerId : refund.getBuyerId();
+    }
+
+    /** 회수로 다시 가져올 금액. 지갑이 알린 값으로 시작한 줄이면 그 값, 아니면(재고 거절의 회수) 환불 금액이다. */
+    public long expectedRevertAmount(Refund refund) {
+        return hasRevertTarget() ? revertAmount : refund.getRefundAmount();
     }
 
     /** 다시 시도를 시작한다. READY일 때만 되고, 이미 시도 중이면 다른 곳이 하고 있으므로 false. */

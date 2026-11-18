@@ -42,6 +42,47 @@ class RefundStepTest {
         });
     }
 
+    // 지갑이 "구매자 2001번에게 19,000원 돌려줬다"고 알려 그 돈을 다시 가져오는 회수 줄이다(#572). 회수 결과를 비교할 값을 함께 남긴다
+    @Test
+    void 결과_불일치_회수_줄은_지갑이_알린_구매자와_금액을_남기고_시도_중으로_시작한다() {
+        // when
+        RefundStep sut = RefundStep.startRevertOfMismatch(10L, 2_001L, 19_000L, NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getType()).isEqualTo(RefundStepType.WALLET_REVERT);
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.IN_PROGRESS);
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
+            softly.assertThat(sut.getNextCheckAt()).isEqualTo(NOW.plusMinutes(2));
+            softly.assertThat(sut.hasRevertTarget()).isTrue();
+            softly.assertThat(sut.getRevertBuyerId()).isEqualTo(2_001L);
+            softly.assertThat(sut.getRevertAmount()).isEqualTo(19_000L);
+        });
+    }
+
+    @Test
+    void 결과_불일치_회수_줄의_구매자가_비면_막는다() {
+        // when & then
+        assertThatThrownBy(() -> RefundStep.startRevertOfMismatch(10L, null, 19_000L, NOW))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("회수할 구매자는 비어 있을 수 없습니다. refundId=10");
+    }
+
+    @Test
+    void 보통_단계_줄은_회수_대상_값이_없다() {
+        // when
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET_REVERT, NOW);
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.hasRevertTarget()).isFalse();
+            softly.assertThat(sut.getRevertBuyerId()).isNull();
+            softly.assertThat(sut.getRevertAmount()).isNull();
+        });
+    }
+
     static Stream<Arguments> 끝난_단계와_전이() {
         Stream.Builder<Arguments> builder = Stream.builder();
         for (RefundStepStatus status : new RefundStepStatus[]{

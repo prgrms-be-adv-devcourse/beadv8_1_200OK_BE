@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 승인 뒤 단계에서 다음에 할 일을 정하는 정책이다(#616). 단계 순서(주문 → 지갑(0원이면 건너뜀) → 재고 → 완료)를 아는 곳은 여기 하나다.
@@ -67,6 +68,8 @@ public final class RefundSagaPlan {
     /**
      * 방금 받은 답으로 다음 할 일을 정한다. 처리 중이 아닌 환불은 더 할 일이 없어 멈춤이다.
      * 지갑 완료를 받으면 지갑 줄이 앞선 불일치로 멈춰 있어도 재고로 간다(#544 결정 8, 지갑 줄은 멈춤 그대로).
+     * 단, 앞선 불일치로 돈을 다시 가져오는 중이거나 가져온 환불(#572)은 재고로 가지 않는다. 이 판단은 회수 줄이 있어야 해서
+     * {@link #blocksProductForMismatchRevert}가 맡고, 지휘자가 재고 단계를 시작하는 잠근 구간에서 부른다.
      * 재고가 다시 해도 같은 이유로 거절되면 돌려준 돈이 있을 때만 회수한다(#546). 0원은 돌려준 돈이 없어 가져올 것도 없으니 멈춘다
      * (사람이 본다). 0원에서 주문만 되돌리지 않는 이유: 상품 409에는 "주문 전체 해제로 재고가 이미 돌아옴"도 섞여 있어,
      * 그때 주문을 되돌리면 상품은 보내야 하는데 재고는 풀린 채라 한 번 더 팔릴 수 있다. 돈이 움직이지 않은 0원은 멈춰도 손해가 없다(#622 결정 D1).
@@ -91,6 +94,39 @@ public final class RefundSagaPlan {
             case WALLET_FAILED, WALLET_REVERTED -> Action.CALL_ORDER_REVERT;
             case ORDER_REVERTED -> Action.FAIL;
         };
+    }
+
+    /**
+     * 지갑이 환불과 다른 값으로 "돌려줬다"고 알렸을 때(결과 불일치 완료) 다음 할 일을 정한다(#572).
+     * 주문 번호는 같고 구매자나 금액만 다르면 돈이 엉뚱하게 나간 것이라 그 돈을 다시 가져온다(회수). 회수가 성공하면 주문을 되돌려
+     * 실패로 끝내는 길(#622)을 그대로 탄다. 같은 refundId로 다시 올바르게 돌려줄 수는 없다(지갑이 회수한 refundId를 막아 둔다, PR #537).
+     * 주문 번호까지 다르면 다른 환불의 정상 결과일 수 있어(예: 환불 DB만 지워 refundId가 겹침) 가져오면 올바르게 끝난 반환을 거둘 수 있다.
+     * 그래서 멈추고 사람이 본다(#572 결정 1). 돌려준 돈이 없는 환불(0원)은 지갑을 부르지 않아 이 답이 오지 않지만, 오면 가져올 것이 없어 멈춘다.
+     * "못 돌려줬다"(실패) 메시지의 불일치는 돈이 나가지 않아 이 답이 아니다(기록만, #544).
+     *
+     * @param messageOrderId 지갑 완료 메시지의 주문 번호
+     */
+    public static Action afterMismatchedCompletion(Refund refund, Long messageOrderId) {
+        if (refund.getStatus() != RefundStatus.PROCESSING) {
+            return Action.STOP;
+        }
+        // ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
+        if (!Objects.equals(refund.getOrderId(), messageOrderId) || refund.getRefundAmount() <= 0) {
+            return Action.STOP;
+        }
+        return Action.CALL_WALLET_REVERT;
+    }
+
+    /**
+     * 맞는 지갑 완료를 받았는데 앞선 결과 불일치로 돈을 다시 가져오는 중이거나 가져온 환불이라 재고로 가지 않는지 정한다(#572 결정 3).
+     * 한 환불에 서로 다른 두 결과를 보낸 지갑의 뒤 답은 믿을 수 없고, 받으면 돈을 거두는 중에 완료가 돼 "완료인데 돈은 없음"이 된다.
+     * 회수는 그대로 이어 가 실패로 끝내고, 구매자는 새로 요청한다. 결과 불일치로 시작한 회수 줄은 지갑이 알린 값을 갖고 있어 그것으로 가른다.
+     * 재고 거절로 시작한 회수 줄은 그 값이 없어 여기서 막지 않는다(그 경로의 중복 완료는 지휘자가 따로 다룬다)
+     *
+     * @param walletRevert 회수 줄. 없으면 {@code null}
+     */
+    public static boolean blocksProductForMismatchRevert(RefundStep walletRevert) {
+        return walletRevert != null && walletRevert.hasRevertTarget();
     }
 
     /**

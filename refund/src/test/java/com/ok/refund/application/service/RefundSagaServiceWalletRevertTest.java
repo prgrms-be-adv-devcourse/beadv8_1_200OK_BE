@@ -215,6 +215,51 @@ class RefundSagaServiceWalletRevertTest {
         then(refundStepPersistencePort).should(never()).saveNew(any());
     }
 
+    // ---- 결과 불일치로 시작한 회수 (#572) ----
+    // 예시: 환불 7번(구매자 2000번, 20,000원)에 지갑이 "구매자 2001번에게 9,000원 돌려줬다"고 알려 그 돈을 다시 가져오는 중이다
+
+    // 알람이 다시 보낼 때도 처음과 같이 지갑이 알린 값을 담는다. 환불 값을 담으면 지갑이 요청 값대로 처리할 때 돈을 받은 적 없는 구매자에게서 가져간다
+    @Test
+    void 결과_불일치_회수를_다시_보낼_때도_지갑이_알린_구매자와_금액을_담는다() {
+        // given
+        RefundStep revert = RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, RefundStepStatus.READY, 1,
+                NOW.minusMinutes(1), "WALLET_API_FAILED", null, 2_001L, 9_000L, NOW.minusMinutes(3));
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundStepPersistencePort.findAllByRefundId(REFUND_ID)).willReturn(List.of(
+                step(RefundStepType.ORDER, RefundStepStatus.SUCCEEDED),
+                RefundStep.restore(2L, REFUND_ID, RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, null,
+                        RefundSagaService.RESULT_MISMATCH, NOW.minusMinutes(3)),
+                revert));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT)).willReturn(Optional.of(revert));
+
+        // when
+        saga.resume(REFUND_ID);
+
+        // then
+        then(walletRefundRequestPort).should().requestRevert(new WalletRevertRequest(REFUND_ID, ORDER_ID, 2_001L, 9_000L));
+    }
+
+    @Test
+    void 결과_불일치_회수를_지갑이_하지_못하면_지갑이_알려_준_이유로_멈추고_주문은_되돌리지_않는다() {
+        // given
+        givenLockedWithRevert(RefundStep.restore(4L, REFUND_ID, RefundStepType.WALLET_REVERT, RefundStepStatus.AWAITING_RESULT, 1,
+                NOW.plusMinutes(5), null, NOW, 2_001L, 9_000L, NOW.minusMinutes(1)));
+
+        // when
+        saga.recordWalletRevertFailure(new WalletRevertFailedCommand(REFUND_ID, ORDER_ID, 2_001L, 9_000L, "INSUFFICIENT_BALANCE"));
+
+        // then
+        RefundStep revert = updatedStep();
+        assertThat(revert).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(revert.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(revert.getLastReason()).isEqualTo("INSUFFICIENT_BALANCE");
+        });
+        then(orderRevertRequestPort).should(never()).requestRevert(any());
+        then(refundPersistencePort).should(never()).update(any());
+    }
+
     // 지갑 반환을 끝낸 뒤 재고가 거절로 멈춘 환불의 단계 줄에 회수 줄을 더해 다시 진행할 수 있게 한다
     private void givenResumable(RefundStep revert) {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));

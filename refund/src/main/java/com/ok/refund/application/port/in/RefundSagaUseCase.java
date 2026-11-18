@@ -24,6 +24,8 @@ public interface RefundSagaUseCase {
     /**
      * 지갑 반환 완료를 반영한다. 처리 중이고 금액·주문·구매자가 환불과 같으면 재고를 되돌린 뒤 환불을 완료로 바꾼다.
      * 이미 완료됐거나 처리 중이 아닌 환불, 없는 환불은 넘기고, 금액·주문·구매자가 다르면 완료하지 않고 {@code RESULT_MISMATCH}를 남긴다.
+     * 그때 주문 번호가 같으면 지갑이 알린 구매자·금액의 돈을 다시 가져오기(회수)를 요청한다(#572). 회수 중이거나 회수한 환불에는
+     * 맞는 완료가 와도 재고·완료로 가지 않는다.
      *
      * @throws com.ok.common.exception.RestApiException 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}
      *                                                  (PRODUCT 단계 실패를 기록하고 다시 던져 오류 처리기가 다시 시도한다)
@@ -40,7 +42,8 @@ public interface RefundSagaUseCase {
 
     /**
      * 지갑이 돈을 다시 가져왔다는(회수) 결과를 회수 줄에 남긴다(#546). 이어서 주문에 취소 기록 되돌리기를 요청한다(#622).
-     * 주문·구매자·금액이 환불과 다르면 회수 줄을 {@code RESULT_MISMATCH}로 멈추고 주문은 되돌리지 않는다.
+     * 주문·구매자·금액이 기대한 값(환불 값, 결과 불일치로 시작한 회수면 지갑이 처음 알린 값, #572)과 다르면
+     * 회수 줄을 {@code RESULT_MISMATCH}로 멈추고 주문은 되돌리지 않는다.
      * 없는 환불, 처리 중이 아닌 환불, 회수 줄이 없거나 이미 끝난 환불은 예외 없이 넘긴다.
      */
     void recordWalletRevertCompleted(WalletRevertCompletedCommand command);

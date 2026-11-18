@@ -298,6 +298,35 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
         });
     }
 
+    // 회수 대상 구매자·금액(#572)이 새 행 저장으로 들어가고, 다른 칸을 고쳐 저장해도 그대로 남는다(만들 때만 정하는 칸이라 수정에서 옮기지 않음)
+    @Test
+    void 결과_불일치_회수_줄의_회수_대상_값은_저장되고_고쳐도_바뀌지_않는다() {
+        // given
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            return refundStepPersistencePort.saveNew(RefundStep.startRevertOfMismatch(refundId, 2_001L, 9_000L, NOW));
+        });
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            RefundStep revert = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT).orElseThrow();
+            revert.awaitResult(NOW.plusSeconds(3));
+            refundStepPersistencePort.update(revert);
+            return revert;
+        });
+
+        // when
+        RefundStep sut = inTransaction(() ->
+                refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET_REVERT)).orElseThrow();
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
+            softly.assertThat(sut.getRevertBuyerId()).isEqualTo(2_001L);
+            softly.assertThat(sut.getRevertAmount()).isEqualTo(9_000L);
+        });
+    }
+
     // 경우 3: 환불 행을 잠그지 않고 단계 행을 만들면, 같은 환불을 다른 곳이 처리하는 중에도 끼어들 수 있어 막는다
     @Test
     void 환불을_잠그지_않고_단계_줄을_저장하면_거부한다() {

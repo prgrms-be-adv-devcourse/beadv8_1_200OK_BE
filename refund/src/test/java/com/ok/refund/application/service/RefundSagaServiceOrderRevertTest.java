@@ -223,6 +223,8 @@ class RefundSagaServiceOrderRevertTest {
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.empty());
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET)).willReturn(Optional.of(stoppedByFailure));
+        // 지갑 실패 경로는 돈이 나가지 않아 회수 줄이 없다(회수 줄이 있으면 결과 불일치 회수 경로, #572)
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT)).willReturn(Optional.empty());
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
                 .willReturn(Optional.of(awaiting(RefundStepType.ORDER_REVERT)));
 
@@ -253,6 +255,9 @@ class RefundSagaServiceOrderRevertTest {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(productStopped));
+        // 재고 거절로 시작한 회수 줄은 지갑이 알린 값이 없어 회수 중 막음(#572) 대상이 아니다
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.of(step(RefundStepType.WALLET_REVERT, RefundStepStatus.SUCCEEDED)));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET))
                 .willReturn(Optional.of(step(RefundStepType.WALLET, RefundStepStatus.SUCCEEDED)));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
@@ -279,6 +284,8 @@ class RefundSagaServiceOrderRevertTest {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(processing()));
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.of(productStopped));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT))
+                .willReturn(Optional.of(step(RefundStepType.WALLET_REVERT, RefundStepStatus.SUCCEEDED)));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET)).willReturn(Optional.of(walletMismatch));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT))
                 .willReturn(Optional.of(awaiting(RefundStepType.ORDER_REVERT)));
@@ -303,6 +310,7 @@ class RefundSagaServiceOrderRevertTest {
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(processing()));
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.PRODUCT)).willReturn(Optional.empty());
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET)).willReturn(Optional.of(stoppedByFailure));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.WALLET_REVERT)).willReturn(Optional.empty());
         given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT)).willReturn(Optional.of(revertRefused));
 
         // when

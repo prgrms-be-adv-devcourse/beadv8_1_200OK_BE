@@ -21,6 +21,8 @@ final class RefundStepMapper {
                 entity.getNextCheckAt(),
                 entity.getLastReason(),
                 entity.getAwaitingSince(),
+                entity.getRevertBuyerId(),
+                entity.getRevertAmount(),
                 entity.getCreatedAt());
     }
 
@@ -28,7 +30,8 @@ final class RefundStepMapper {
     // 같은 메서드를 써야 새 행과 수정이 옮기는 칸 목록이 어긋나지 않는다.
     // 도메인의 createdAt은 옮기지 않는다. 생성 시각은 환불 행처럼 감사 리스너가 채운 값을 기준으로 한다
     static RefundStepJpaEntity toNewEntity(RefundStep step) {
-        RefundStepJpaEntity entity = new RefundStepJpaEntity(step.getRefundId(), step.getType());
+        RefundStepJpaEntity entity = new RefundStepJpaEntity(step.getRefundId(), step.getType(),
+                step.getRevertBuyerId(), step.getRevertAmount());
         applyMutableState(step, entity);
         return entity;
     }

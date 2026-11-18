@@ -62,11 +62,20 @@ public class RefundStepJpaEntity extends BaseTime {
     @Column(name = "awaiting_since")
     private LocalDateTime awaitingSince;
 
+    @Column(name = "revert_buyer_id")
+    private Long revertBuyerId;
+
+    @Column(name = "revert_amount")
+    private Long revertAmount;
+
     // 새 행 저장용. ID와 생성·수정 시각은 DB(IDENTITY)와 감사 리스너가 채우므로 받지 않는다.
-    // 바뀌는 칸은 changeMutableState로 따로 채운다(매퍼가 새 행과 수정에 같은 규칙을 쓰게 하려고)
-    RefundStepJpaEntity(Long refundId, RefundStepType step) {
+    // 바뀌는 칸은 changeMutableState로 따로 채운다(매퍼가 새 행과 수정에 같은 규칙을 쓰게 하려고).
+    // 회수 대상 구매자·금액(#572)은 줄을 만들 때 정해지고 바뀌지 않아 여기서만 받는다
+    RefundStepJpaEntity(Long refundId, RefundStepType step, Long revertBuyerId, Long revertAmount) {
         this.refundId = refundId;
         this.step = step;
+        this.revertBuyerId = revertBuyerId;
+        this.revertAmount = revertAmount;
     }
 
     // 바뀔 수 있는 칸만 받는다. 어느 환불의 어느 단계인지는 만들 때 정해지고 바뀌지 않아,
