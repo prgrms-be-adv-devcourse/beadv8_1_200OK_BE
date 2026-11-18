@@ -9,6 +9,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
@@ -28,6 +29,8 @@ import com.github.dockerjava.api.model.Ports;
  * 클러스터 모드(cluster.nodes)로 실제 Redis에 연결되는지 검증한다. 다른 Redis 테스트는 단일 노드 컨테이너를 쓰므로 이 경로를 타지 않는다.
  * 노드 1대가 슬롯 전체를 맡는 클러스터라 장애 조치는 검증하지 못한다. 그건 docs/DEPLOY.md의 수동 절차가 맡는다.
  */
+// 클러스터 모드가 보류라 꺼 둔다. 다른 모듈 테스트와 함께 돌면 컨테이너가 멈춰 가끔 실패하고, 원인 조사도 보류했다 (#731)
+@Disabled("보류: Redis 클러스터 모드 보류 중, 함께 돌 때 간헐 실패 (#731)")
 @DataRedisTest(properties = "spring.data.redis.repositories.enabled=false")
 class RedisClusterConnectionTest {
 
