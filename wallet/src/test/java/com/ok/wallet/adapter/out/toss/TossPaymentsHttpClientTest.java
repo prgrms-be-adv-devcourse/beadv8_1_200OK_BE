@@ -1,5 +1,6 @@
 package com.ok.wallet.adapter.out.toss;
 
+import com.ok.wallet.application.dto.TossCancelResult;
 import com.ok.wallet.application.dto.TossConfirmResult;
 import com.ok.wallet.application.dto.TossPaymentLookupResult;
 import com.ok.wallet.application.dto.TossPaymentStatus;
@@ -35,6 +36,9 @@ class TossPaymentsHttpClientTest {
     private static final String PAYMENT_KEY = "payment-key-1";
     private static final String CHARGE_NO = "CHG_test-charge-no";
     private static final String LOOKUP_URL = BASE_URL + "/v1/payments/orders/" + CHARGE_NO;
+    private static final String CANCEL_URL = BASE_URL + "/v1/payments/" + PAYMENT_KEY + "/cancel";
+    private static final String CANCEL_REASON = "관리자 확인 후 결제 취소";
+    private static final String CANCEL_KEY = "CANCEL-" + CHARGE_NO + "-1";
     private static final long AMOUNT = 10_000;
 
     private MockRestServiceServer server;
@@ -351,5 +355,118 @@ class TossPaymentsHttpClientTest {
                     """.formatted(PAYMENT_KEY, CHARGE_NO), MediaType.APPLICATION_JSON));
 
         assertThat(client.findPayment(CHARGE_NO)).isInstanceOf(TossPaymentLookupResult.Unknown.class);
+    }
+
+    // 결제 취소
+
+    @Test
+    void 취소_응답이면_취소됨으로_분류하고_결제_키_주소로_받은_멱등_키와_사유를_보낸다() {
+        // given
+        server.expect(requestTo(CANCEL_URL))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Idempotency-Key", CANCEL_KEY))
+                .andExpect(content().json("""
+                        {"cancelReason": "%s"}
+                        """.formatted(CANCEL_REASON), true))
+                .andRespond(withSuccess(approvedResponse(CHARGE_NO, "CANCELED", AMOUNT), MediaType.APPLICATION_JSON));
+
+        // when
+        TossCancelResult sut = client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY);
+
+        // then
+        assertThat(sut).isEqualTo(new TossCancelResult.Canceled());
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @MethodSource("요청과_맞지_않는_취소_응답")
+    void 취소_응답이_요청과_맞지_않거나_전액_취소가_아니면_알_수_없음으로_분류한다(String body) {
+        // 부분 취소나 다른 결제의 응답을 취소됨으로 보면, 환불이 끝나지 않았는데 충전 건에 취소를 기록하게 된다
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+
+        assertThat(client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY)).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    static Stream<String> 요청과_맞지_않는_취소_응답() {
+        return Stream.of(
+                approvedResponse(CHARGE_NO, "PARTIAL_CANCELED", AMOUNT),
+                approvedResponse(CHARGE_NO, "DONE", AMOUNT),
+                approvedResponse("CHG_other", "CANCELED", AMOUNT),
+                """
+                {"paymentKey": "other-key", "orderId": "%s", "status": "CANCELED", "totalAmount": %d}
+                """.formatted(CHARGE_NO, AMOUNT));
+    }
+
+    @Test
+    void 이미_취소된_결제라는_응답은_이미_취소됨으로_분류한다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse("ALREADY_CANCELED_PAYMENT", "이미 취소된 결제 입니다.")));
+
+        assertThat(client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY))
+                .isEqualTo(new TossCancelResult.AlreadyCanceled());
+    }
+
+    @ParameterizedTest
+    @MethodSource("취소할_수_없다는_오류")
+    void 취소할_수_없다고_분명히_답하면_거절로_분류한다(HttpStatus status, String code) {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(status)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse(code, "취소 할 수 없는 결제 입니다.")));
+
+        assertThat(client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY))
+                .isEqualTo(new TossCancelResult.Rejected(code, "취소 할 수 없는 결제 입니다."));
+    }
+
+    static Stream<Arguments> 취소할_수_없다는_오류() {
+        return Stream.of(
+                Arguments.of(HttpStatus.FORBIDDEN, "NOT_CANCELABLE_PAYMENT"),
+                Arguments.of(HttpStatus.FORBIDDEN, "NOT_CANCELABLE_AMOUNT"),
+                Arguments.of(HttpStatus.NOT_FOUND, "NOT_FOUND_PAYMENT"),
+                Arguments.of(HttpStatus.FORBIDDEN, "EXCEED_MAX_REFUND_DUE"),
+                Arguments.of(HttpStatus.FORBIDDEN, "EXCEED_CANCEL_LIMIT"),
+                Arguments.of(HttpStatus.FORBIDDEN, "NOT_CANCELABLE_PAYMENT_FOR_DORMANT_USER"),
+                Arguments.of(HttpStatus.BAD_REQUEST, "REFUND_REJECTED"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("취소_여부를_알_수_없는_오류")
+    void 취소됐는지_알_수_없는_오류는_알_수_없음으로_분류한다(HttpStatus status, String code) {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(status)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(errorResponse(code, "오류")));
+
+        assertThat(client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY)).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    static Stream<Arguments> 취소_여부를_알_수_없는_오류() {
+        return Stream.of(
+                Arguments.of(HttpStatus.BAD_REQUEST, "PROVIDER_ERROR"),
+                Arguments.of(HttpStatus.CONFLICT, "IDEMPOTENT_REQUEST_PROCESSING"),
+                Arguments.of(HttpStatus.FORBIDDEN, "FORBIDDEN_CONSECUTIVE_REQUEST"),
+                Arguments.of(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED_KEY"),
+                Arguments.of(HttpStatus.BAD_REQUEST, "INVALID_REQUEST"),
+                Arguments.of(HttpStatus.INTERNAL_SERVER_ERROR, "FAILED_INTERNAL_SYSTEM_PROCESSING"),
+                Arguments.of(HttpStatus.INTERNAL_SERVER_ERROR, "FAILED_CARD_COMPANY_RESPONSE"));
+    }
+
+    @Test
+    void 취소_오류_본문을_읽을_수_없으면_알_수_없음으로_분류한다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+        assertThat(client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY)).isInstanceOf(TossCancelResult.Unknown.class);
+    }
+
+    @Test
+    void 취소_응답_타임아웃은_알_수_없음으로_분류한다() {
+        server.expect(requestTo(CANCEL_URL))
+                .andRespond(withException(new SocketTimeoutException("Read timed out")));
+
+        assertThat(client.cancel(PAYMENT_KEY, CHARGE_NO, CANCEL_REASON, CANCEL_KEY)).isInstanceOf(TossCancelResult.Unknown.class);
     }
 }
