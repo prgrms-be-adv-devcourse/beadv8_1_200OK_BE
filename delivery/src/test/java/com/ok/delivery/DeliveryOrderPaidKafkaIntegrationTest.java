@@ -91,6 +91,23 @@ class DeliveryOrderPaidKafkaIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 무료배송_기준이_없는_판매자의_결제_완료도_처리해_부과_배송비를_저장한다() {
+        // given: 상품 금액이 커도 무료배송 기준이 없으면 기본 배송비를 낸다
+        long orderId = SEQ.incrementAndGet();
+        Map<String, Object> message = orderPaidMessage(orderId,
+                List.of(sellerOrder(10L, orderId * 10 + 1, null, null, 10_000_000L)));
+
+        // when
+        sendOrderPaid(orderId, message);
+
+        // then
+        await().atMost(TIMEOUT).untilAsserted(() -> assertThat(countShipments(orderId)).isEqualTo(1));
+        Integer chargedShippingFee = jdbcTemplate.queryForObject(
+                "SELECT charged_shipping_fee FROM shipment WHERE order_id = ?", Integer.class, orderId);
+        assertThat(chargedShippingFee).isEqualTo(3_000);
+    }
+
+    @Test
     void 주문_번호가_빠진_메시지는_다시_시도하지_않고_DLT로_옮기고_다음_메시지를_처리한다() {
         // given: 리스너가 파티션을 맡았는지 정상 메시지로 먼저 확인한다. 그래야 아래 시간 측정에 그룹 배정 대기가 섞이지 않는다
         awaitListenerReady();
@@ -139,6 +156,12 @@ class DeliveryOrderPaidKafkaIntegrationTest extends AbstractIntegrationTest {
 
     // 주문이 보낼 JSON (#644 메시지 약속). 시각은 오프셋 없는 ISO-8601, 금액은 원
     private static Map<String, Object> orderPaidMessage(long orderId) {
+        return orderPaidMessage(orderId, List.of(
+                sellerOrder(10L, orderId * 10 + 1, "옵션", 50_000L, 10_000L),
+                sellerOrder(20L, orderId * 10 + 2, null, 50_000L, 10_000L)));
+    }
+
+    private static Map<String, Object> orderPaidMessage(long orderId, List<Map<String, Object>> sellerOrders) {
         Map<String, Object> address = new HashMap<>();
         address.put("recipientName", "홍길동");
         address.put("recipientPhone", "010-1234-5678");
@@ -151,24 +174,25 @@ class DeliveryOrderPaidKafkaIntegrationTest extends AbstractIntegrationTest {
                 "buyerId", 1L,
                 "paidAt", "2026-10-19T10:00:00",
                 "shippingAddress", address,
-                "sellerOrders", List.of(
-                        sellerOrder(10L, orderId * 10 + 1, "옵션"),
-                        sellerOrder(20L, orderId * 10 + 2, null)));
+                "sellerOrders", sellerOrders);
     }
 
-    private static Map<String, Object> sellerOrder(long sellerId, long orderItemId, String optionName) {
+    private static Map<String, Object> sellerOrder(long sellerId, long orderItemId, String optionName,
+                                                   Long freeShippingThreshold, long unitPrice) {
         Map<String, Object> item = new HashMap<>();
         item.put("orderItemId", orderItemId);
         item.put("productName", "상품");
         item.put("optionName", optionName);
         item.put("quantity", 1);
-        item.put("unitPrice", 10_000L);
-        return Map.of(
-                "sellerId", sellerId,
-                "baseShippingFee", 3_000L,
-                "freeShippingThreshold", 50_000L,
-                "regionSurcharge", 0L,
-                "items", List.of(item));
+        item.put("unitPrice", unitPrice);
+        // 무료배송 기준은 null일 수 있어 null을 받지 않는 Map.of 대신 HashMap을 쓴다
+        Map<String, Object> sellerOrder = new HashMap<>();
+        sellerOrder.put("sellerId", sellerId);
+        sellerOrder.put("baseShippingFee", 3_000L);
+        sellerOrder.put("freeShippingThreshold", freeShippingThreshold);
+        sellerOrder.put("regionSurcharge", 0L);
+        sellerOrder.put("items", List.of(item));
+        return sellerOrder;
     }
 
     private void sendOrderPaid(long orderId, Map<String, Object> message) {

@@ -52,7 +52,7 @@ public record OrderPaidMessage(
     }
 
     /**
-     * 값을 검사하고 shipment 생성 입력으로 바꾼다. 검사 규칙은 스프링 이벤트로 받던 결제 완료 이벤트({@code OrderPaidEvent})와 같다.
+     * 값을 검사하고 shipment 생성 입력으로 바꾼다.
      * 다시 받아도 같은 값이라 결과가 같으므로, 틀린 값은 표준 예외로 알려 오류 처리기가 다시 시도 없이 DLT로 보내게 한다 (exception.md).
      *
      * @throws IllegalArgumentException 필수 값이 비었거나, 금액·수량이 범위를 벗어났거나, 판매자·주문 상품 ID가 겹치면

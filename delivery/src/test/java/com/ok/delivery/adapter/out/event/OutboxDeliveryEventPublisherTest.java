@@ -1,7 +1,5 @@
 package com.ok.delivery.adapter.out.event;
 
-import com.ok.common.event.ShipmentDeliveredEvent;
-import com.ok.common.event.ShipmentDispatchedEvent;
 import com.ok.delivery.application.dto.CarrierTrackingRequestedEvent;
 import com.ok.delivery.application.dto.DeliveryOutboxRecordedEvent;
 import com.ok.delivery.application.port.out.DeliveryOutboxRepository;
@@ -29,7 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.lenient;
 
-// 실제 Kafka로 나간 메시지는 DeliveryOutboxKafkaIntegrationTest가 본다. 여기서는 outbox에 남기는 값과 함께 내는 스프링 이벤트를 본다
+// 실제 Kafka로 나간 메시지는 DeliveryOutboxKafkaIntegrationTest가 본다. 여기서는 outbox에 남기는 값과 배송 모듈 안의 스프링 이벤트를 본다
 @ExtendWith(MockitoExtension.class)
 class OutboxDeliveryEventPublisherTest {
 
@@ -124,7 +122,7 @@ class OutboxDeliveryEventPublisherTest {
     }
 
     @Test
-    void 배송_시작을_알리면_주문용_스프링_이벤트와_택배사_추적_요청_이벤트와_즉시_발송_이벤트를_발행한다() {
+    void 배송_시작을_알리면_택배사_추적_요청_이벤트와_즉시_발송_이벤트만_발행하고_주문용_스프링_이벤트는_내지_않는다() {
         // given
         LocalDateTime shippedAt = LocalDateTime.of(2026, 10, 21, 10, 0);
 
@@ -133,10 +131,9 @@ class OutboxDeliveryEventPublisherTest {
 
         // then
         then(applicationEventPublisher).should()
-                .publishEvent(new ShipmentDispatchedEvent(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", shippedAt));
-        then(applicationEventPublisher).should()
                 .publishEvent(new CarrierTrackingRequestedEvent(1L, "CJ_LOGISTICS", "1234567890"));
         then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
+        then(applicationEventPublisher).shouldHaveNoMoreInteractions();
     }
 
     @Test
@@ -178,7 +175,7 @@ class OutboxDeliveryEventPublisherTest {
     }
 
     @Test
-    void 배송_완료를_알리면_주문용_스프링_이벤트와_즉시_발송_이벤트를_발행한다() {
+    void 배송_완료를_알리면_즉시_발송_이벤트만_발행하고_주문용_스프링_이벤트는_내지_않는다() {
         // given
         LocalDateTime deliveredAt = LocalDateTime.of(2026, 10, 23, 15, 0);
 
@@ -186,8 +183,8 @@ class OutboxDeliveryEventPublisherTest {
         sut.publishShipmentDelivered(1L, 2L, 10L, deliveredAt);
 
         // then
-        then(applicationEventPublisher).should().publishEvent(new ShipmentDeliveredEvent(1L, 2L, 10L, deliveredAt));
         then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
+        then(applicationEventPublisher).shouldHaveNoMoreInteractions();
     }
 
     @Test

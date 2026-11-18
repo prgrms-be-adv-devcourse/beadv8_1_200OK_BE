@@ -1,16 +1,11 @@
 package com.ok.delivery;
 
-import com.ok.common.event.OrderPaidEvent;
-import com.ok.common.event.ShipmentDeliveredEvent;
-import com.ok.common.event.ShipmentDispatchedEvent;
-import com.ok.common.event.payload.PaidOrderItem;
-import com.ok.common.event.payload.PaidSellerOrder;
-import com.ok.common.event.payload.ShippingAddress;
 import com.ok.common.config.AsyncExecutorFactory;
 import com.ok.common.config.AsyncProperties;
 import com.ok.common.config.JpaConfig;
 import com.ok.common.config.MdcTaskDecorator;
 import com.ok.delivery.config.DeliveryAsyncConfig;
+import com.ok.delivery.domain.DeliveryOutboxEventType;
 import com.ok.delivery.domain.ShipmentStatus;
 import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.fixture.ShipmentFixture;
@@ -30,8 +25,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.modulith.events.CompletedEventPublications;
-import org.springframework.modulith.events.EventPublication;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 import org.springframework.test.context.ActiveProfiles;
@@ -39,7 +32,6 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -76,7 +68,7 @@ class DeliveryModuleTest {
     }
 
     // 모듈 테스트는 배송 밖의 설정(QueryDslConfig)을 걸러 내 JPAQueryFactory가 없다.
-    // 이 테스트는 이벤트 수신·발행 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다
+    // 이 테스트는 출고·배송 완료 발행 흐름만 확인하고 배송 목록 조회는 쓰지 않으므로 가짜로 둔다
     @MockitoBean
     ShipmentQueryRepository shipmentQueryRepository;
 
@@ -89,9 +81,6 @@ class DeliveryModuleTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
-    @Autowired
-    CompletedEventPublications completedEventPublications;
-
     @AfterEach
     void tearDown() {
         // @ApplicationModuleTest는 롤백되지 않으므로 테스트마다 데이터를 정리한다
@@ -101,111 +90,47 @@ class DeliveryModuleTest {
     }
 
     @Test
-    void 결제_완료_이벤트를_받으면_판매자별_shipment를_만든다(Scenario scenario) {
-        // given
-        Long orderId = 9_400_001L;
-
-        // when & then
-        scenario.publish(orderPaidEvent(orderId, 1L, 2L))
-                .andWaitForStateChange(() -> countShipments(orderId), count -> count == 2)
-                .andVerify(count -> assertThat(count).isEqualTo(2));
-    }
-
-    @Test
-    void 무료배송_기준이_없는_판매자의_결제_완료_이벤트도_처리해_부과_배송비를_저장한다(Scenario scenario) {
-        // given
-        Long orderId = 9_400_003L;
-        OrderPaidEvent event = new OrderPaidEvent(orderId, 1L, LocalDateTime.of(2026, 10, 19, 10, 0),
-                new ShippingAddress("홍길동", "010-1234-5678", "06236", "주소", "상세 주소", null),
-                List.of(new PaidSellerOrder(10L, 3_000L, null, 0L,
-                        List.of(new PaidOrderItem(orderId * 10 + 1, "상품", null, 1, 10_000_000L)))));
-
-        // when
-        scenario.publish(event)
-                .andWaitForStateChange(() -> countShipments(orderId), count -> count == 1);
-
-        // then
-        Integer chargedShippingFee = jdbcTemplate.queryForObject(
-                "SELECT charged_shipping_fee FROM shipment WHERE order_id = ?", Integer.class, orderId);
-        assertThat(chargedShippingFee).isEqualTo(3_000);
-    }
-
-    @Test
-    void 같은_결제_완료_이벤트를_두_번_받아도_판매자별_shipment는_한_건이다(Scenario scenario) {
-        // given
-        Long orderId = 9_400_002L;
-        OrderPaidEvent event = orderPaidEvent(orderId, 3L, 4L);
-        scenario.publish(event)
-                .andWaitForStateChange(() -> countCompletedEvents(orderId), count -> count == 1);
-
-        // when
-        scenario.publish(event)
-                .andWaitForStateChange(() -> countCompletedEvents(orderId), count -> count == 2);
-
-        // then
-        assertThat(countShipments(orderId)).isEqualTo(2);
-    }
-
-    @Test
-    void 출고하면_송장_정보를_담은_배송_시작_이벤트를_발행한다(Scenario scenario) {
+    void 출고하면_송장_정보를_담은_배송_시작_메시지를_outbox에_남긴다(Scenario scenario) {
         // given
         Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.PREPARING)).getId();
 
         // when & then
         scenario.stimulate(() -> shipmentService.dispatch(new ShipmentDispatchCommand(shipmentId, 10L, "CJ_LOGISTICS", "1234567890")))
-                .andWaitForEventOfType(ShipmentDispatchedEvent.class)
-                .matching(event -> event.shipmentId().equals(shipmentId))
-                .toArriveAndVerify(event -> {
-                    assertThat(event).isNotNull();
+                .andWaitForStateChange(() -> outboxOf(DeliveryOutboxEventType.SHIPMENT_DISPATCHED), rows -> !rows.isEmpty())
+                .andVerify(rows -> {
+                    assertThat(rows).hasSize(1);
+                    Map<String, Object> row = rows.getFirst();
                     assertSoftly(softly -> {
-                        softly.assertThat(event.orderId()).isEqualTo(1L);
-                        softly.assertThat(event.sellerId()).isEqualTo(10L);
-                        softly.assertThat(event.carrier()).isEqualTo("CJ_LOGISTICS");
-                        softly.assertThat(event.trackingNumber()).isEqualTo("1234567890");
-                        softly.assertThat(event.shippedAt()).isNotNull();
+                        softly.assertThat(row.get("message_key")).isEqualTo("1");
+                        softly.assertThat((String) row.get("payload")).contains(
+                                "\"shipmentId\":" + shipmentId, "\"orderId\":1", "\"sellerId\":10",
+                                "\"carrier\":\"CJ_LOGISTICS\"", "\"trackingNumber\":\"1234567890\"", "\"shippedAt\":");
                     });
                 });
     }
 
     @Test
-    void 택배사가_배송_완료를_알리면_배송_완료_이벤트를_발행한다(Scenario scenario) {
+    void 택배사가_배송_완료를_알리면_배송_완료_메시지를_outbox에_남긴다(Scenario scenario) {
         // given
         Long shipmentId = shipmentRepository.save(ShipmentFixture.shipmentIn(ShipmentStatus.SHIPPING)).getId();
 
         // when & then
         scenario.publish(new CarrierDeliveredEvent(shipmentId))
-                .andWaitForEventOfType(ShipmentDeliveredEvent.class)
-                .matching(event -> event.shipmentId().equals(shipmentId))
-                .toArriveAndVerify(event -> {
-                    assertThat(event).isNotNull();
+                .andWaitForStateChange(() -> outboxOf(DeliveryOutboxEventType.SHIPMENT_DELIVERED), rows -> !rows.isEmpty())
+                .andVerify(rows -> {
+                    assertThat(rows).hasSize(1);
+                    Map<String, Object> row = rows.getFirst();
                     assertSoftly(softly -> {
-                        softly.assertThat(event.orderId()).isEqualTo(1L);
-                        softly.assertThat(event.sellerId()).isEqualTo(10L);
-                        softly.assertThat(event.deliveredAt()).isNotNull();
+                        softly.assertThat(row.get("message_key")).isEqualTo("1");
+                        softly.assertThat((String) row.get("payload")).contains(
+                                "\"shipmentId\":" + shipmentId, "\"orderId\":1", "\"sellerId\":10", "\"deliveredAt\":");
                     });
                 });
     }
 
-    private static OrderPaidEvent orderPaidEvent(Long orderId, Long firstOrderItemId, Long secondOrderItemId) {
-        ShippingAddress address = new ShippingAddress("홍길동", "010-1234-5678", "06236", "주소", "상세 주소", null);
-        return new OrderPaidEvent(orderId, 1L, LocalDateTime.of(2026, 10, 19, 10, 0), address, List.of(
-                new PaidSellerOrder(10L, 3_000L, 50_000L, 0L,
-                        List.of(new PaidOrderItem(orderId * 10 + firstOrderItemId, "상품", null, 1, 10_000L))),
-                new PaidSellerOrder(20L, 3_000L, 50_000L, 0L,
-                        List.of(new PaidOrderItem(orderId * 10 + secondOrderItemId, "상품", "옵션", 2, 5_000L)))));
-    }
-
-    private long countShipments(Long orderId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM shipment WHERE order_id = ?", Long.class, orderId);
-    }
-
-    // 해당 주문의 OrderPaidEvent 중 리스너 처리가 완료된 건수
-    // 완료된 이벤트 발행 기록(event_publication)이 남아 있다는 전제에 의존한다
-    private long countCompletedEvents(Long orderId) {
-        return completedEventPublications.findAll().stream()
-                .map(EventPublication::getEvent)
-                .filter(e -> e instanceof OrderPaidEvent paid && paid.orderId().equals(orderId))
-                .count();
+    // 즉시 발송이 Kafka로 보내고 상태를 바꿀 수 있어 상태와 상관없이 종류로만 찾는다
+    private List<Map<String, Object>> outboxOf(DeliveryOutboxEventType eventType) {
+        return jdbcTemplate.queryForList(
+                "SELECT message_key, payload FROM delivery_outbox WHERE event_type = ?", eventType.name());
     }
 }
