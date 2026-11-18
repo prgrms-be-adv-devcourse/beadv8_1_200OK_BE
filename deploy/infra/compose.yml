@@ -1,0 +1,98 @@
+name: paldo-gotgan-infra
+
+services:
+  mysql:
+    image: mysql:${MYSQL_VERSION:-9.4}
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?MYSQL_DATABASE가 필요하다}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER가 필요하다}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD가 필요하다}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 필요하다}
+      TZ: ${APP_TIME_ZONE:-Asia/Seoul}
+    command:
+      - --slow_query_log=ON
+      - --long_query_time=1
+      - --log_slow_extra=ON
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+    ports:
+      - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:3306:3306'
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: redis:${REDIS_VERSION:-8.10}-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        umask 077
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
+        else
+          printf 'protected-mode no\n' > /tmp/redis.conf
+        fi
+        exec redis-server /tmp/redis.conf --maxmemory 256mb --maxmemory-policy noeviction --save '' --appendonly yes --appendfsync everysec
+    mem_limit: 512m
+    memswap_limit: 512m
+    ports:
+      - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', '[ -n "$$REDIS_PASSWORD" ] && export REDISCLI_AUTH="$$REDIS_PASSWORD"; redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:${KAFKA_VERSION:?KAFKA_VERSION이 필요하다}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1024m
+    memswap_limit: 1024m
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:?KAFKA_CLUSTER_ID가 필요하다}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://${INFRA_PRIVATE_IP}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_BYTES: 268435456
+      KAFKA_LOG_SEGMENT_BYTES: 67108864
+      KAFKA_HEAP_OPTS: -Xms576m -Xmx576m
+    ports:
+      - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:9092:9092'
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ['CMD-SHELL', 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null']
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 60s
+      start_interval: 5s
+
+volumes:
+  mysql-data:
+  redis-data:
+  kafka-data:
