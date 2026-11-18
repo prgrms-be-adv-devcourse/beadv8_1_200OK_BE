@@ -1,5 +1,9 @@
 package com.ok.refund.adapter.out.product;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.out.StockRelease;
 import com.ok.refund.exception.RefundErrorCode;
@@ -10,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -133,11 +138,16 @@ class RefundProductHttpAdapterTest {
     }
 
     // 요청은 받았는데 응답을 주지 않고 연결을 끊는 경우(#578). 읽기 타임아웃(3초)과 같은 경로(응답 상태줄 읽기 실패)라
-    // 인터셉터가 감싸지 못해 500이 되던 것을 503(다시 시도하면 나을 수 있음)으로 맞춘다. 기다리지 않으려고 연결을 닫는다
+    // 인터셉터가 감싸지 못해 500이 되던 것을 503(다시 시도하면 나을 수 있음)으로 맞춘다. 기다리지 않으려고 연결을 닫는다.
+    // 503 예외는 원인을 담지 못해, 끊김인지 시간 초과인지는 어댑터가 남긴 WARN 로그로만 알 수 있다. 그래서 로그와 원인 예외까지 본다
     @Test
-    void 재고_복구_응답을_읽지_못하면_PRODUCT_API_FAILED() throws IOException {
+    void 재고_복구_응답을_읽지_못하면_PRODUCT_API_FAILED와_원인을_남긴다() throws IOException {
         // given: 요청을 읽은 뒤 응답 없이 소켓을 끊는 서버. JDK HttpServer는 응답 없이 끊기가 어려워 소켓으로 직접 연다
         server.stop(0);
+        Logger adapterLogger = (Logger) LoggerFactory.getLogger(RefundProductHttpAdapter.class);
+        ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
+        logAppender.start();
+        adapterLogger.addAppender(logAppender);
         try (ServerSocket socket = new ServerSocket(0, 0, InetAddress.getByName("localhost"))) {
             Thread acceptor = Thread.ofVirtual().start(() -> {
                 try (Socket client = socket.accept()) {
@@ -152,7 +162,13 @@ class RefundProductHttpAdapterTest {
             assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
                     .isInstanceOfSatisfying(RestApiException.class,
                             e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
+            assertThat(logAppender.list)
+                    .anyMatch(event -> event.getLevel() == Level.WARN
+                            && event.getFormattedMessage().contains("상품 재고 복구 응답을 읽지 못함")
+                            && event.getThrowableProxy() != null);
             acceptor.interrupt();
+        } finally {
+            adapterLogger.detachAppender(logAppender);
         }
     }
 }
