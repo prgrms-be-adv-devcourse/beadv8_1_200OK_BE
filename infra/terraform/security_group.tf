@@ -78,6 +78,25 @@ resource "aws_vpc_security_group_ingress_rule" "infra_ssh_from_app" {
   ip_protocol                  = "tcp"
 }
 
+locals {
+  infra_service_ports = {
+    mysql = 3306
+    redis = 6379
+    kafka = 9092
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "infra_service_from_app" {
+  for_each = local.infra_service_ports
+
+  security_group_id            = aws_security_group.infra.id
+  referenced_security_group_id = aws_security_group.app.id
+  from_port                    = each.value
+  to_port                      = each.value
+  ip_protocol                  = "tcp"
+  description                  = each.key
+}
+
 # infra의 Prometheus가 app 서버의 exporter를 긁어 간다(mysql·redis·kafka는 app 서버의 compose에서 돈다).
 # 방향이 infra -> app이라 규칙은 app SG에 둔다. 수집 대상이 늘면 포트를 추가한다.
 locals {

@@ -32,7 +32,8 @@ resource "aws_instance" "infra" {
   }
 
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes  = [ami]
+    prevent_destroy = true
   }
 }
 
