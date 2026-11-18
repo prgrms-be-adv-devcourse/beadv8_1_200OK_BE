@@ -90,3 +90,10 @@ product:
     # 구매자 목록 SQL의 시간 제한(BuyerProductQueryJdbcConfig). 넘으면 503 PRODUCT_SEARCH_TIMEOUT이다. 잠정 값이라 S28 측정 뒤 다시 정한다(#659).
     # JDBC queryTimeout은 초 단위라 1초 이상이어야 한다. monolith/application.yaml에도 같은 값을 둔다
     query-timeout: 2s
+    # 검색어 로그(F11). 저장은 전용 실행기에서 하고, 대기열이 차면 검색을 기다리게 하지 않고 로그를 버린다(#744).
+    # 스레드는 DB 커넥션을 하나씩 잡으므로 적게 두고, 대기열은 순간 몰림을 받을 만큼 둔다. monolith/application.yaml에도 같은 값을 둔다
+    log:
+      pool-size: ${PRODUCT_SEARCH_LOG_POOL_SIZE:2}
+      queue-capacity: ${PRODUCT_SEARCH_LOG_QUEUE_CAPACITY:1000}
+      # 보존 기간. 날짜 단위로 지난 행을 날마다 지운다. PRD 7.3 미결 사항이라 확정 전 기본값이다
+      retention: ${PRODUCT_SEARCH_LOG_RETENTION:90d}

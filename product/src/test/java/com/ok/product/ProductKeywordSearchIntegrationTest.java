@@ -370,7 +370,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		List<Long> sameName = List.of(onSale, ready, hidden, deleted);
 		// 검색어가 있을 때와 없을 때 노출 조건이 같은지 보려고 검색어 없는 목록을 기준으로 삼는다
 		List<Long> listed = productService.searchVisibleProducts(
-				new ProductSearchQuery(null, null, null, null, null, 0, 100))
+				new ProductSearchQuery(null, null, null, null, null, 0, 100)).products()
 			.map(ProductSummaryResult::productId).filter(sameName::contains).toList();
 
 		// when
@@ -427,7 +427,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 		// when
 		Page<ProductSummaryResult> sut = productService.searchVisibleProducts(
-			new ProductSearchQuery("시레기", null, null, null, sort, 0, 1));
+			new ProductSearchQuery("시레기", null, null, null, sort, 0, 1)).products();
 
 		// then
 		assertThat(lowFloor.getContent()).containsExactlyInAnyOrder(siraegi, shineMuscat, spinach);
@@ -562,7 +562,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		List<Long> latest = search("배", ProductSortCode.LATEST);
 		List<Long> jeonnam = search("배", null, null, ProductRegionCode.JEONNAM);
 		Page<ProductSummaryResult> secondPage = productService.searchVisibleProducts(
-			new ProductSearchQuery("배", null, null, null, ProductSortCode.PRICE_ASC, 1, 2));
+			new ProductSearchQuery("배", null, null, null, ProductSortCode.PRICE_ASC, 1, 2)).products();
 
 		// then
 		// 한 글자 검색은 점수가 모두 같아 정확도순이 보정 평점, 그다음 id 순이다
@@ -578,7 +578,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 	private List<Long> search(String keyword, ProductSortCode sort) {
 		return productService.searchVisibleProducts(new ProductSearchQuery(keyword, null, null, null, sort, 0, 20))
-			.map(ProductSummaryResult::productId)
+			.products().map(ProductSummaryResult::productId)
 			.getContent();
 	}
 
@@ -595,7 +595,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	private List<Long> search(String keyword, ProductCategoryGroupCode categoryGroup, ProductCategoryCode category,
 		ProductRegionCode region) {
 		return productService.searchVisibleProducts(
-				new ProductSearchQuery(keyword, categoryGroup, category, region, null, 0, 20))
+				new ProductSearchQuery(keyword, categoryGroup, category, region, null, 0, 20)).products()
 			.map(ProductSummaryResult::productId)
 			.getContent();
 	}

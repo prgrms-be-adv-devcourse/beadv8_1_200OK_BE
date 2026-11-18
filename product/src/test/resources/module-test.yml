@@ -6,3 +6,8 @@ product:
     min-score: 0.5
     # 타임아웃 테스트가 오래 기다리지 않도록 JDBC가 허용하는 가장 짧은 값(1초)으로 둔다
     query-timeout: 1s
+    log:
+      # 스레드가 하나면 로그가 들어온 순서대로 저장돼, 테스트가 나중 검색의 행을 보고 앞선 검색의 저장이 끝났음을 안다
+      pool-size: 1
+      queue-capacity: 100
+      retention: 90d

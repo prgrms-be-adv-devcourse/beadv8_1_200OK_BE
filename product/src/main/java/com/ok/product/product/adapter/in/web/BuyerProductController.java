@@ -9,6 +9,7 @@ import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCategoryGroupCode;
 import com.ok.product.product.application.dto.ProductRegionCode;
 import com.ok.product.product.application.dto.ProductSearchQuery;
+import com.ok.product.product.application.dto.ProductSearchResult;
 import com.ok.product.product.application.dto.ProductSortCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -40,9 +41,9 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 		@RequestParam(defaultValue = "20") int size
 	) {
 		ProductSearchQuery query = new ProductSearchQuery(keyword, categoryGroup, category, region, sort, page, size);
+		ProductSearchResult result = buyerProductUseCase.searchVisibleProducts(query);
 		return ResponseEntity.ok(BuyerProductPageResponse.of(
-			buyerProductUseCase.searchVisibleProducts(query).map(ProductSummaryResponse::from),
-			buyerProductUseCase.suggestKeyword(keyword).orElse(null)));
+			result.products().map(ProductSummaryResponse::from), result.suggestion()));
 	}
 
 	@Override

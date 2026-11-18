@@ -2,6 +2,7 @@ package com.ok.product.product.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -14,6 +15,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -42,6 +46,7 @@ import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductSearchKeyword;
+import com.ok.product.product.domain.ProductSearchLog;
 import com.ok.product.product.domain.ProductSort;
 import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
@@ -50,11 +55,13 @@ import com.ok.product.product.application.port.out.BuyerProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductOptionRepository;
 import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductRepository;
+import com.ok.product.product.application.port.out.ProductSearchLogRecorder;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductOptionCommand;
 import com.ok.product.product.application.dto.ProductRegionCode;
 import com.ok.product.product.application.dto.ProductSearchQuery;
+import com.ok.product.product.application.dto.ProductSearchResult;
 import com.ok.product.product.application.dto.ProductSortCode;
 import com.ok.product.product.application.dto.ProductStatusCode;
 import com.ok.product.product.application.dto.ProductSummaryResult;
@@ -68,6 +75,7 @@ class ProductServiceTest {
 	private static final Long PRODUCT_ID = 10L;
 	private static final Long OPTION_ID = 100L;
 	private static final double MIN_SCORE = 1.5;
+	private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-11-18T01:00:00Z"), ZoneId.of("Asia/Seoul"));
 
 	@Mock
 	ProductRepository productRepository;
@@ -84,16 +92,18 @@ class ProductServiceTest {
 	@Mock
 	ProductSearchIndexer productSearchIndexer;
 
+	@Mock
+	ProductSearchLogRecorder productSearchLogRecorder;
+
 	ProductService service;
 
 	@BeforeEach
 	void setUp() {
 		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
-		// ProductService가 Clock을 주입받으므로 생성자에 넣는다 (#93). 시각을 검증하는 테스트가 없어 실제 시계를 그대로 쓴다
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
 			productQueryRepository, buyerProductQueryRepository, new ProductSearchPolicy(MIN_SCORE), productSearchIndexer, new ProductItemDictionary(),
 			new ProductDescriptionSanitizer(imageUrlValidator),
-			new MediaUrlResolver("bucket", "ap-northeast-2"), Clock.systemDefaultZone());
+			new MediaUrlResolver("bucket", "ap-northeast-2"), productSearchLogRecorder, CLOCK);
 	}
 
 	@Test
@@ -241,7 +251,7 @@ class ProductServiceTest {
 
 	@ParameterizedTest
 	@MethodSource("검색어가_없는_것으로_보는_값")
-	void 검색어가_비었거나_기호뿐이면_검색어_없이_최신순으로_찾는다(String keyword) {
+	void 검색어가_비었거나_기호뿐이면_검색어_없이_최신순으로_찾고_검색어_로그를_남기지_않는다(String keyword) {
 		// given
 		PageRequest pageable = PageRequest.of(0, 20);
 		given(buyerProductQueryRepository.findVisibleProductIds(null, null, null, null, ProductSort.LATEST, MIN_SCORE,
@@ -250,10 +260,11 @@ class ProductServiceTest {
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
-			new ProductSearchQuery(keyword, null, null, null, null, 0, 20));
+			new ProductSearchQuery(keyword, null, null, null, null, 0, 20)).products();
 
 		// then
 		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(PRODUCT_ID);
+		then(productSearchLogRecorder).should(never()).record(any());
 	}
 
 	static Stream<String> 검색어가_없는_것으로_보는_값() {
@@ -269,14 +280,14 @@ class ProductServiceTest {
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
-			new ProductSearchQuery(null, null, null, null, ProductSortCode.RELEVANCE, 0, 20));
+			new ProductSearchQuery(null, null, null, null, ProductSortCode.RELEVANCE, 0, 20)).products();
 
 		// then
 		assertThat(sut.getContent()).isEmpty();
 	}
 
 	@Test
-	void 검색어가_있으면_정규화한_검색어와_정렬과_하한으로_찾고_검색_결과의_순서대로_돌려준다() {
+	void 검색어가_있으면_정규화한_검색어와_정렬과_하한으로_찾고_검색_결과의_순서대로_돌려주며_첫_페이지가_아니면_로그를_남기지_않는다() {
 		// given
 		PageRequest pageable = PageRequest.of(1, 3);
 		given(buyerProductQueryRepository.findVisibleProductIds(any(), eq(null), eq(ProductCategory.FRUIT),
@@ -288,7 +299,7 @@ class ProductServiceTest {
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(new ProductSearchQuery("샤인 머스캣!", null,
-			ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, ProductSortCode.PRICE_ASC, 1, 3));
+			ProductCategoryCode.FRUIT, ProductRegionCode.JEJU, ProductSortCode.PRICE_ASC, 1, 3)).products();
 
 		// then
 		assertThat(sut.getContent()).extracting(ProductSummaryResult::productId).containsExactly(30L, 10L, 20L);
@@ -297,6 +308,36 @@ class ProductServiceTest {
 		then(buyerProductQueryRepository).should()
 			.findVisibleProductIds(captor.capture(), any(), any(), any(), any(), anyDouble(), any());
 		assertThat(captor.getValue()).isEqualTo(new ProductSearchKeyword("샤인 머스캣", "샤인머스캣", "ㅅㅑㅇㅣㄴㅁㅓㅅㅡㅋㅐㅅ", false));
+		then(productSearchLogRecorder).should(never()).record(any());
+	}
+
+	@Test
+	void 검색어가_있는_첫_페이지는_원문과_정규화한_검색어와_전체_결과_수와_제안_여부로_로그를_남긴다() {
+		// given
+		PageRequest pageable = PageRequest.of(0, 2);
+		given(buyerProductQueryRepository.findVisibleProductIds(any(), any(), any(), any(), any(), anyDouble(),
+			eq(pageable))).willReturn(new PageImpl<>(List.of(10L, 20L), pageable, 5));
+		given(productRepository.findAllById(List.of(10L, 20L)))
+			.willReturn(List.of(productWithId(10L), productWithId(20L)));
+
+		// when
+		ProductSearchResult result = service.searchVisibleProducts(
+			new ProductSearchQuery("고추 가루", null, null, null, null, 0, 2));
+
+		// then
+		assertThat(result.suggestion()).isEqualTo("고춧가루");
+		ArgumentCaptor<ProductSearchLog> captor = ArgumentCaptor.forClass(ProductSearchLog.class);
+		then(productSearchLogRecorder).should().record(captor.capture());
+		ProductSearchLog sut = captor.getValue();
+		assertThat(sut).isNotNull();
+		assertSoftly(softly -> {
+			softly.assertThat(sut.getKeyword()).isEqualTo("고추 가루");
+			softly.assertThat(sut.getNormalizedKeyword()).isEqualTo("고추가루");
+			softly.assertThat(sut.getResultCount()).isEqualTo(5);
+			softly.assertThat(sut.getLatencyMillis()).isNotNegative();
+			softly.assertThat(sut.isSuggested()).isTrue();
+			softly.assertThat(sut.getSearchedAt()).isEqualTo(LocalDateTime.now(CLOCK));
+		});
 	}
 
 	@Test
@@ -308,7 +349,7 @@ class ProductServiceTest {
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
-			new ProductSearchQuery("사과", null, null, null, null, 0, 20));
+			new ProductSearchQuery("사과", null, null, null, null, 0, 20)).products();
 
 		// then
 		assertThat(sut.getContent()).isEmpty();
@@ -316,7 +357,7 @@ class ProductServiceTest {
 
 	@Test
 	@ExtendWith(OutputCaptureExtension.class)
-	void 목록_SQL이_시간_제한을_넘으면_PRODUCT_SEARCH_TIMEOUT이고_로그에_검색어_원문을_남기지_않는다(CapturedOutput output) {
+	void 목록_SQL이_시간_제한을_넘으면_PRODUCT_SEARCH_TIMEOUT이고_로그에_검색어_원문을_남기지_않으며_검색어_로그도_남기지_않는다(CapturedOutput output) {
 		// given
 		String keyword = "제주 하우스감귤";
 		given(buyerProductQueryRepository.findVisibleProductIds(any(), any(), any(), any(), any(), anyDouble(), any()))
@@ -330,6 +371,7 @@ class ProductServiceTest {
 		assertThat(output).contains("keywordLength=8", "sort=PRICE_ASC", "category=true", "region=false")
 			.doesNotContain(keyword, "하우스감귤");
 		then(productRepository).should(never()).findAllById(any());
+		then(productSearchLogRecorder).should(never()).record(any());
 	}
 
 	// id·version이 채워진 저장된 상품처럼 만들어 수정용 조회가 돌려주게 한다

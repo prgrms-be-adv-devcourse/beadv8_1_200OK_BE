@@ -83,6 +83,11 @@ product:
     min-score: 1.0
     # 구매자 목록 SQL의 시간 제한(product BuyerProductQueryJdbcConfig). 근거는 application-product.yaml에 있다(#659)
     query-timeout: 2s
+    # 검색어 로그 실행기와 보존 기간(product ProductAsyncConfig, ProductSearchLogService). 근거는 application-product.yaml에 있다(#744)
+    log:
+      pool-size: ${PRODUCT_SEARCH_LOG_POOL_SIZE:2}
+      queue-capacity: ${PRODUCT_SEARCH_LOG_QUEUE_CAPACITY:1000}
+      retention: ${PRODUCT_SEARCH_LOG_RETENTION:90d}
 
 # 앱 시작 시 만들 최초 관리자 계정 (member.member.adapter.in.bootstrap.AdminBootstrapConfig)
 # - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)
