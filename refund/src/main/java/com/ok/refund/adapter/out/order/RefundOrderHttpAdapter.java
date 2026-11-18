@@ -11,6 +11,7 @@ import com.ok.refund.application.port.out.OrderCancellationPort;
 import com.ok.refund.application.port.out.OrderCancellationResult;
 import com.ok.refund.application.port.out.OrderQueryPort;
 import com.ok.refund.application.port.out.RefundableOrderItem;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ import java.util.List;
  * 이름에 Refund를 붙인 이유: 다른 모듈에도 주문 호출 클라이언트가 있어, monolith에서 빈 이름이 겹치면 앱이 뜨지 않는다.
  * 조회(①)와 취소 반영(②)은 포트를 나눴지만 같은 주문 내부 API라 주소·타임아웃·실패 처리를 함께 쓰려고 한 어댑터가 둘 다 구현한다.
  */
+@Slf4j
 @Component
 public class RefundOrderHttpAdapter implements OrderQueryPort, OrderCancellationPort {
 
@@ -110,7 +112,9 @@ public class RefundOrderHttpAdapter implements OrderQueryPort, OrderCancellation
                 return problem.getDetail();
             }
         } catch (RuntimeException e) {
-            // 읽지 못한 본문은 아래 기본 문장으로 대신한다
+            // 읽지 못한 본문은 아래 기본 문장으로 대신한다. 거절은 그대로 유효하지만, 주문 응답 모양이 바뀐 것일 수 있어
+            // 원인을 버리지 않고 WARN으로 남긴다(#578). 거절 자체도 지휘자가 WARN으로 남기는 경로라 같은 수준이다
+            log.warn("주문 409 본문을 읽지 못해 설명을 기본 문장으로 채움(거절은 그대로)", e);
         }
         return NO_ORDER_DETAIL;
     }

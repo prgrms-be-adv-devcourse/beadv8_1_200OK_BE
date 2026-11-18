@@ -187,6 +187,9 @@ class RefundWalletRequestIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 승인 때는 출고 전이었는데 주문에 알리는 사이 출고됐다. 주문을 지갑보다 먼저 부르므로 돈이 나가기 전에 거절로 끝나야 한다
+    // 한계(#578): 주문 쪽은 Fake라 아래 reflectedOf 확인은 Fake 동작만 본다. 실제 주문이 409로 막고 반영하지 않는지는
+    // 주문 모듈의 OrderItemRefundApiIntegrationTest가, 409 응답을 거절 결과로 바꾸는지는 RefundOrderHttpAdapterTest가 맡는다.
+    // Fake가 실제 주문 규칙과 같게 답하는지는 FakeOrderCancellationPortTest가 확인한다
     @Test
     void 승인_뒤_주문이_반영을_거절하면_REJECTED로_응답하고_반환_요청을_보내지_않는다() throws Exception {
         // given

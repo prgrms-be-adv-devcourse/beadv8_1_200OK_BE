@@ -1,5 +1,9 @@
 package com.ok.refund.application.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.application.port.in.RefundDecision;
 import com.ok.refund.application.port.in.RefundDecisionCommand;
@@ -35,6 +39,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -563,6 +568,52 @@ class DecideRefundServiceTest {
             softly.assertThat(result.status()).isEqualTo("REJECTED");
             softly.assertThat(result.rejectReason()).isEqualTo(Refund.SHIPPED_REJECT_REASON);
         });
+    }
+
+    // 환불은 409의 원인(이미 출고, 수량 초과, refundId 충돌)을 가르지 못한다. 기록이 어긋난 경우도 거절로 끝나므로
+    // 사람이 확인하도록 WARN을 남기는 것이 요구사항이다(#544에서 ERROR → WARN, #578)
+    @Test
+    void 주문이_반영을_거절해_거절로_끝내면_WARN을_남긴다() {
+        // given
+        givenLockedBundle(requested());
+        given(orderCancellationPort.reflectCancellation(any())).willReturn(OrderCancellationResult.rejected("이미 출고된 상품입니다."));
+        Logger sagaLogger = (Logger) LoggerFactory.getLogger(RefundSagaService.class);
+        ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
+        logAppender.start();
+        sagaLogger.addAppender(logAppender);
+
+        try {
+            // when
+            sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+            // then
+            assertThat(logAppender.list)
+                    .anyMatch(event -> event.getLevel() == Level.WARN
+                            && event.getFormattedMessage().contains("주문이 취소 반영을 거절해 환불을 거절로 끝냄"));
+        } finally {
+            sagaLogger.detachAppender(logAppender);
+        }
+    }
+
+    // 거절 구간은 승인한 환불을 다시 잠가 읽는다. 그사이 행이 사라졌으면 있을 수 없는 상태(코드 버그·DB 손상)라
+    // 조용히 넘기지 않고 표준 예외로 드러낸다(#578)
+    @Test
+    void 주문이_거절했는데_거절할_환불_행이_없으면_예외를_던진다() {
+        // given: 승인 구간의 잠금 조회는 환불을 주고, 거절 구간의 두 번째 잠금 조회는 비어 있다
+        Refund locked = withId(requested(), REFUND_ID);
+        given(refundPersistencePort.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
+                .willReturn(List.of(REFUND_ID));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID))
+                .willReturn(Optional.of(locked))
+                .willReturn(Optional.empty());
+        lenient().when(refundPersistencePort.findById(REFUND_ID))
+                .thenAnswer(invocation -> Optional.of(withId(locked, REFUND_ID)));
+        given(orderCancellationPort.reflectCancellation(any())).willReturn(OrderCancellationResult.rejected("이미 출고된 상품입니다."));
+
+        // when & then
+        assertThatThrownBy(() -> sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("승인한 환불을 거절로 바꾸려는데 찾을 수 없습니다. refundId=7");
     }
 
     // 주문이 실패해도 승인은 이미 커밋돼 되돌릴 수 없다. 예외를 삼키면 판매자는 성공으로 알고 주문은 취소를 모르므로 그대로 올린다.

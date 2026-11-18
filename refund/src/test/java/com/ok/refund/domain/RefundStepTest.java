@@ -134,7 +134,7 @@ class RefundStepTest {
         sut.stop("RESULT_MISMATCH");
 
         // when
-        boolean changed = sut.stop("INSUFFICIENT_BALANCE");
+        boolean changed = sut.stop("PAYMENT_NOT_FOUND");
 
         // then: 처음 멈춘 이유(결과 불일치)가 뒤에 온 보통 실패로 지워지지 않아야 되돌리기가 사람에게 넘긴다
         assertSoftly(softly -> {
@@ -142,7 +142,7 @@ class RefundStepTest {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
             softly.assertThat(sut.getLastReason()).isEqualTo("RESULT_MISMATCH");
             softly.assertThat(sut.isStoppedWith("RESULT_MISMATCH")).isTrue();
-            softly.assertThat(sut.isStoppedWith("INSUFFICIENT_BALANCE")).isFalse();
+            softly.assertThat(sut.isStoppedWith("PAYMENT_NOT_FOUND")).isFalse();
         });
     }
 

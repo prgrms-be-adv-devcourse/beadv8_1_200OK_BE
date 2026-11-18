@@ -12,7 +12,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -127,5 +130,29 @@ class RefundProductHttpAdapterTest {
         assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
+    }
+
+    // 요청은 받았는데 응답을 주지 않고 연결을 끊는 경우(#578). 읽기 타임아웃(3초)과 같은 경로(응답 상태줄 읽기 실패)라
+    // 인터셉터가 감싸지 못해 500이 되던 것을 503(다시 시도하면 나을 수 있음)으로 맞춘다. 기다리지 않으려고 연결을 닫는다
+    @Test
+    void 재고_복구_응답을_읽지_못하면_PRODUCT_API_FAILED() throws IOException {
+        // given: 요청을 읽은 뒤 응답 없이 소켓을 끊는 서버. JDK HttpServer는 응답 없이 끊기가 어려워 소켓으로 직접 연다
+        server.stop(0);
+        try (ServerSocket socket = new ServerSocket(0, 0, InetAddress.getByName("localhost"))) {
+            Thread acceptor = Thread.ofVirtual().start(() -> {
+                try (Socket client = socket.accept()) {
+                    client.getInputStream().read(new byte[4096]);
+                } catch (IOException ignored) {
+                    // 연결을 끊는 것이 목적이라 읽기 실패는 무시한다
+                }
+            });
+            sut = new RefundProductHttpAdapter("http://localhost:" + socket.getLocalPort());
+
+            // when & then
+            assertThatThrownBy(() -> sut.releaseStock(new StockRelease(7L, 10L, 55L, 1)))
+                    .isInstanceOfSatisfying(RestApiException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.PRODUCT_API_FAILED));
+            acceptor.interrupt();
+        }
     }
 }

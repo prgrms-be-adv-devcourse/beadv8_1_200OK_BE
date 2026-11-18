@@ -1,5 +1,9 @@
 package com.ok.refund.adapter.out.order;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.refund.domain.BundleItem;
 import com.ok.refund.domain.BundleShipping;
@@ -13,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
@@ -62,11 +67,16 @@ class RefundOrderHttpAdapterTest {
     private final AtomicReference<String> path = new AtomicReference<>();
     private final AtomicReference<String> method = new AtomicReference<>();
     private final AtomicReference<String> requestBody = new AtomicReference<>();
+    private final Logger adapterLogger = (Logger) LoggerFactory.getLogger(RefundOrderHttpAdapter.class);
+    private ListAppender<ILoggingEvent> logAppender;
     private HttpServer server;
     private RefundOrderHttpAdapter sut;
 
     @BeforeEach
     void setUp() throws IOException {
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        adapterLogger.addAppender(logAppender);
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/", exchange -> {
             path.set(exchange.getRequestURI().getPath());
@@ -89,6 +99,7 @@ class RefundOrderHttpAdapterTest {
     @AfterEach
     void tearDown() {
         server.stop(0);
+        adapterLogger.detachAppender(logAppender);
     }
 
     @Test
@@ -372,11 +383,35 @@ class RefundOrderHttpAdapterTest {
         });
     }
 
+    // 본문을 못 읽어도 거절은 유효하다. 주문 응답 모양이 바뀐 것일 수 있어 원인 예외를 WARN 로그에 남긴다(#578)
     @Test
-    void 취소_반영이_409인데_본문이_깨졌으면_설명_없음으로_채운다() {
+    void 취소_반영이_409인데_본문이_깨졌으면_설명_없음으로_채우고_원인을_남긴다() {
         // given
         status.set(409);
         body.set("not json");
+
+        // when
+        OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.rejected()).isTrue();
+            softly.assertThat(result.orderDetail()).isEqualTo("주문 응답에 설명 없음");
+            softly.assertThat(logAppender.list)
+                    .anyMatch(event -> event.getLevel() == Level.WARN
+                            && event.getFormattedMessage().contains("주문 409 본문을 읽지 못해")
+                            && event.getThrowableProxy() != null);
+        });
+    }
+
+    // 설명이 공백뿐이면 설명이 없는 것과 같다. 공백 설명을 그대로 넘기면 로그에 빈 칸만 남는다(#578)
+    @Test
+    void 취소_반영이_409인데_설명이_공백뿐이면_설명_없음으로_채운다() {
+        // given
+        status.set(409);
+        body.set("""
+                { "type": "about:blank", "title": "Conflict", "status": 409, "detail": "   " }""");
 
         // when
         OrderCancellationResult result = sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L));

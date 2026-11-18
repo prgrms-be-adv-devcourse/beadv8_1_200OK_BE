@@ -392,7 +392,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(walletStep, null);
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then: 실패는 지갑 줄에만 남고 환불 행은 처리 중 그대로라 저장하지 않는다
         then(refundPersistencePort).should(never()).update(any());
@@ -402,7 +402,7 @@ class RefundSagaServiceWalletResultTest {
         assertSoftly(softly -> {
             softly.assertThat(updated.getValue().getType()).isEqualTo(RefundStepType.WALLET);
             softly.assertThat(updated.getValue().getStatus()).isEqualTo(RefundStepStatus.STOPPED);
-            softly.assertThat(updated.getValue().getLastReason()).isEqualTo("INSUFFICIENT_BALANCE");
+            softly.assertThat(updated.getValue().getLastReason()).isEqualTo("PAYMENT_NOT_FOUND");
         });
     }
 
@@ -414,7 +414,7 @@ class RefundSagaServiceWalletResultTest {
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundStepPersistencePort).should(never()).saveNew(any());
@@ -426,10 +426,10 @@ class RefundSagaServiceWalletResultTest {
         // given: 같은 이유로 멈춘 지갑 줄
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(
                 refund(RefundStatus.PROCESSING)));
-        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "INSUFFICIENT_BALANCE"), null);
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "PAYMENT_NOT_FOUND"), null);
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).findByIdForUpdate(any());
@@ -457,7 +457,7 @@ class RefundSagaServiceWalletResultTest {
     }
 
     static Stream<String> 이미_멈춘_이유() {
-        return Stream.of("INSUFFICIENT_BALANCE", "RESULT_MISMATCH");
+        return Stream.of("PAYMENT_NOT_FOUND", "RESULT_MISMATCH");
     }
 
     @Test
@@ -466,7 +466,7 @@ class RefundSagaServiceWalletResultTest {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.empty());
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).update(any());
@@ -479,7 +479,7 @@ class RefundSagaServiceWalletResultTest {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(status)));
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then: 읽기 단계에서 걸러 잠금 구간까지 가지 않는다.
         // 잠금 조회를 확인하는 이유: 스텁하지 않은 잠금 조회는 빈 값을 돌려줘, 읽기 단계 거르기가 빠져도 update는 안 불려 그것만으로는 못 잡는다
@@ -494,7 +494,7 @@ class RefundSagaServiceWalletResultTest {
         given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).findByIdForUpdate(any());
@@ -510,7 +510,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(step(RefundStepType.WALLET, RefundStepStatus.AWAITING_RESULT, 1, null), null);
 
         // when
-        sut.recordWalletRefundFailure(failed(orderId, buyerId, amount, "INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed(orderId, buyerId, amount, "PAYMENT_NOT_FOUND"));
 
         // then: 지갑 사유가 아니라 불일치로 남아야 어느 번호가 틀렸는지 사람이 확인한다. 환불 행은 저장하지 않는다
         then(refundPersistencePort).should(never()).update(any());
@@ -530,7 +530,7 @@ class RefundSagaServiceWalletResultTest {
         given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.COMPLETED)));
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).update(any());
@@ -547,7 +547,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(succeededWalletStep(), failedProductStep());
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).findByIdForUpdate(any());
@@ -562,7 +562,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(null, step(RefundStepType.PRODUCT, RefundStepStatus.IN_PROGRESS, 1, null));
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then: 보낸 적 없는 지갑의 결과라 그 자체가 이상이다. 지갑 줄을 새로 만들지 않고 넘긴다(WARN)
         then(refundPersistencePort).should(never()).findByIdForUpdate(any());
@@ -578,7 +578,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(succeededWalletStep(), failedProductStep());
 
         // when
-        sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed(1_001L, "PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).findByIdForUpdate(any());
@@ -610,7 +610,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(succeededWalletStep(), null, failedProductStep());
 
         // when
-        sut.recordWalletRefundFailure(failed("INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed("PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).update(any());
@@ -627,7 +627,7 @@ class RefundSagaServiceWalletResultTest {
         givenSteps(succeededWalletStep(), null, failedProductStep());
 
         // when
-        sut.recordWalletRefundFailure(failed(1_001L, "INSUFFICIENT_BALANCE"));
+        sut.recordWalletRefundFailure(failed(1_001L, "PAYMENT_NOT_FOUND"));
 
         // then
         then(refundPersistencePort).should(never()).update(any());
