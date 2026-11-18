@@ -48,6 +48,9 @@ public interface ChargeRepository {
      */
     int claimForRecovery(String chargeNo, LocalDateTime now, LocalDateTime nextCheckAt);
 
+    // 이 시각 전에 요청됐는데 아직 처리 중인 충전 번호를 오래된 순으로 최대 limit개 읽는다. 오래 남은 건을 알릴 때 쓴다.
+    List<String> findInProgressChargeNosCreatedBefore(LocalDateTime createdBefore, int limit);
+
     /**
      * 처리 중인 충전 건의 확인 시각을 비워 복구가 더 고르지 않게 한다. 바뀐 행 수를 반환한다.
      * 토스 답만으로 판단할 수 없어 사람이 확인해야 하는 건에 쓴다.

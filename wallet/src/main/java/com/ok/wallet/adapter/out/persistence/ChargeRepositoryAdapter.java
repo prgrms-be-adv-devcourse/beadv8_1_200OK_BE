@@ -56,6 +56,11 @@ public class ChargeRepositoryAdapter implements ChargeRepository {
     }
 
     @Override
+    public List<String> findInProgressChargeNosCreatedBefore(LocalDateTime createdBefore, int limit) {
+        return chargeJpaRepository.findInProgressChargeNosCreatedBefore(createdBefore, Limit.of(limit));
+    }
+
+    @Override
     public int holdForReview(String chargeNo, LocalDateTime now) {
         return chargeJpaRepository.holdForReview(chargeNo, now);
     }

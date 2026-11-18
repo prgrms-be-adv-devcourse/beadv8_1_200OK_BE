@@ -147,6 +147,12 @@ class ChargeTransactionService {
         return chargeRepository.claimForRecovery(chargeNo, now, now.plus(RECOVERY_RECHECK_DELAY)) == 1;
     }
 
+    /** 이 시각 전에 요청됐는데 아직 처리 중인 충전 번호를 읽는다. */
+    @Transactional(readOnly = true)
+    public List<String> findInProgressChargeNosCreatedBefore(LocalDateTime createdBefore, int limit) {
+        return chargeRepository.findInProgressChargeNosCreatedBefore(createdBefore, limit);
+    }
+
     /** 처리 중인 충전 건을 복구가 더 고르지 않게 멈춘다. 사람이 토스 결제를 확인한 뒤 처리한다. */
     @Transactional
     public void holdForReview(String chargeNo) {

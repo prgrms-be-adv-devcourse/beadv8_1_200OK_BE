@@ -36,6 +36,10 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
     private static final int MAX_CHECK_COUNT = 10;
     // 토스 결제창은 30분 뒤 만료되고 그 뒤 승인 가능 시간도 지나므로, 충전 요청 뒤 이만큼 지나도 결제가 없으면 승인될 수 없다
     private static final Duration NOT_FOUND_FAIL_AFTER = Duration.ofHours(1);
+    // 결제창(30분)과 복구 확인(처리 중이 된 뒤 5분~약 95분)을 다 지나도 남은 건이다. 이보다 짧으면 복구가 아직 처리 중인 건까지 알린다
+    private static final Duration LONG_IN_PROGRESS_AFTER = Duration.ofHours(3);
+    // 알림 로그가 너무 길어지지 않게 충전 번호는 이만큼만 남긴다
+    private static final int LONG_IN_PROGRESS_LIMIT = 20;
     private static final String NOT_FOUND_FAILURE_CODE = "NOT_FOUND_PAYMENT";
     private static final String HOLD = "[CHARGE_RECOVERY_HOLD] 토스 답만으로 처리할 수 없어 복구를 멈춥니다. 사람이 토스 결제를 확인해야 합니다.";
     private static final String APPLY_FAILED = "[CHARGE_RECOVERY_APPLY_FAILED] 토스 조회 결과를 충전 건에 반영하지 못했습니다.";
@@ -60,6 +64,12 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
                 counts.getOrDefault(Outcome.FAILED, 0),
                 counts.getOrDefault(Outcome.HELD, 0),
                 counts.getOrDefault(Outcome.RETRIED, 0));
+    }
+
+    @Override
+    public List<String> findLongInProgressChargeNos() {
+        LocalDateTime createdBefore = LocalDateTime.now(clock).minus(LONG_IN_PROGRESS_AFTER);
+        return chargeTransaction.findInProgressChargeNosCreatedBefore(createdBefore, LONG_IN_PROGRESS_LIMIT);
     }
 
     // 한 건에서 오류가 나도 나머지 건은 계속 처리한다. 확인 시각은 맡을 때 이미 미뤘으므로 다음 확인 때 다시 묻는다

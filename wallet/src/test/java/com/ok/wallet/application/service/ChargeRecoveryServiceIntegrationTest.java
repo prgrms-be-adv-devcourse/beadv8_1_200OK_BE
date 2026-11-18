@@ -297,6 +297,27 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
         assertThat(checkCountOf(second)).isEqualTo(1);
     }
 
+    @Test
+    void 요청_뒤_3시간이_지나도_처리_중인_건만_오래_남은_건으로_알린다() {
+        // given: 3시간 넘게 처리 중인 건, 막 처리 중이 된 건, 3시간 넘었지만 완료된 건
+        String longInProgress = inProgressCharge(MEMBER_ID, PAYMENT_KEY);
+        String recent = inProgressCharge(OTHER_MEMBER_ID, "recovery-payment-key-2");
+        String completedOld = dueInProgressCharge(OTHER_MEMBER_ID, "recovery-payment-key-3");
+        givenLookup(completedOld, found("recovery-payment-key-3", TossPaymentStatus.DONE, AMOUNT));
+        chargeRecoveryService.recover();
+        for (String chargeNo : List.of(longInProgress, completedOld)) {
+            jdbcTemplate.update("UPDATE wallet_charge SET created_at = ? WHERE charge_no = ?",
+                    LocalDateTime.now().minusHours(3).minusMinutes(1), chargeNo);
+        }
+
+        // when
+        List<String> sut = chargeRecoveryService.findLongInProgressChargeNos();
+
+        // then
+        assertThat(sut).containsExactly(longInProgress);
+        assertThat(statusOf(recent)).isEqualTo("IN_PROGRESS");
+    }
+
     // 승인 결과를 알 수 없어 처리 중으로 남은 건을 만들고, 확인할 때가 되게 한다
     private String dueInProgressCharge(Long memberId, String paymentKey) {
         String chargeNo = inProgressCharge(memberId, paymentKey);

@@ -77,6 +77,13 @@ public interface ChargeJpaRepository extends Repository<Charge, Long> {
                          @Param("now") LocalDateTime now,
                          @Param("nextCheckAt") LocalDateTime nextCheckAt);
 
+    @Query("""
+            SELECT c.chargeNo FROM Charge c
+            WHERE c.status = com.ok.wallet.domain.ChargeStatus.IN_PROGRESS AND c.createdAt < :createdBefore
+            ORDER BY c.createdAt
+            """)
+    List<String> findInProgressChargeNosCreatedBefore(@Param("createdBefore") LocalDateTime createdBefore, Limit limit);
+
     // 일괄 UPDATE는 Auditing을 거치지 않아 수정 시각을 직접 넣는다.
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
