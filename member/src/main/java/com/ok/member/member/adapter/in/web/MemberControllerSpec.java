@@ -90,18 +90,30 @@ interface MemberControllerSpec {
     )
     @ApiResponse(responseCode = "204", description = "변경 성공. 다시 로그인해야 함")
     // 400 안에서 잘못된 JSON과 현재 비밀번호 불일치를 구분해야 하므로 예시를 둔다
-    @ApiResponse(responseCode = "400", description = "현재 비밀번호 불일치, 또는 요청 본문을 읽을 수 없음 (잘못된 JSON 형식)",
+    @ApiResponse(responseCode = "400",
+            description = "현재 비밀번호 불일치, 새 비밀번호가 현재와 같음, 또는 요청 본문을 읽을 수 없음 (잘못된 JSON 형식)",
             content = @Content(mediaType = "application/problem+json",
                     schema = @Schema(implementation = ProblemDetail.class),
-                    examples = @ExampleObject(name = "현재 비밀번호 불일치", value = """
-                            {
-                              "type": "https://api.example.com/problems/member/invalid-current-password",
-                              "title": "Invalid current password",
-                              "status": 400,
-                              "detail": "현재 비밀번호가 올바르지 않습니다.",
-                              "instance": "/api/v1/members/me/password"
-                            }
-                            """)))
+                    examples = {
+                            @ExampleObject(name = "현재 비밀번호 불일치", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/member/invalid-current-password",
+                                      "title": "Invalid current password",
+                                      "status": 400,
+                                      "detail": "현재 비밀번호가 올바르지 않습니다.",
+                                      "instance": "/api/v1/members/me/password"
+                                    }
+                                    """),
+                            @ExampleObject(name = "새 비밀번호가 현재와 같음", value = """
+                                    {
+                                      "type": "https://api.example.com/problems/member/same-as-current-password",
+                                      "title": "Same as current password",
+                                      "status": 400,
+                                      "detail": "새 비밀번호가 현재 비밀번호와 같습니다.",
+                                      "instance": "/api/v1/members/me/password"
+                                    }
+                                    """)
+                    }))
     @ApiResponse(responseCode = "401", description = "로그인 필요")
     @ApiResponse(responseCode = "404", description = "회원이 없거나 탈퇴함")
     @ApiResponse(responseCode = "409", description = "같은 회원의 다른 요청이 비밀번호를 먼저 바꿈")

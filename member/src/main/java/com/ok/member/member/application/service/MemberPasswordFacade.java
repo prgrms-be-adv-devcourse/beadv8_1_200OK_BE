@@ -33,6 +33,12 @@ public class MemberPasswordFacade implements MemberPasswordChangeUseCase {
         if (!passwordEncoder.matches(command.currentPassword(), verifiedHash)) {
             throw new RestApiException(MemberErrorCode.INVALID_CURRENT_PASSWORD);
         }
+        // 같은 비밀번호로 "바꾸면" 아무것도 바뀌지 않고 모든 기기의 세션만 끊긴다. 실수일 가능성이 커 막는다.
+        // 현재 비밀번호를 확인한 뒤에 비교해, 틀린 현재 비밀번호로는 이 오류를 볼 수 없게 한다.
+        // 현재 비밀번호가 해시와 맞는 것을 확인했으므로 bcrypt를 한 번 더 돌리지 않고 원문끼리 비교하면 된다
+        if (command.newPassword().equals(command.currentPassword())) {
+            throw new RestApiException(MemberErrorCode.SAME_AS_CURRENT_PASSWORD);
+        }
         String encodedNewPassword = passwordEncoder.encode(command.newPassword());
         TokenVersionChange change = memberService.changePassword(memberId, verifiedHash, encodedNewPassword);
         // 서비스가 반환했다는 것은 커밋됐다는 뜻이라 이제 남긴다. 커밋 전에 남기면 롤백된 변경 때문에 그 회원의 토큰이 모두 거부된다

@@ -128,6 +128,34 @@ class MemberPasswordFacadeTest {
         then(tokenVersionRecorder).should(never()).record(any(), anyLong(), any());
     }
 
+    @Test
+    void 새_비밀번호가_현재와_같으면_SAME_AS_CURRENT_PASSWORD를_던지고_바꾸지_않는다() {
+        // given
+        given(memberService.findPasswordHash(MEMBER_ID)).willReturn(CURRENT_HASH);
+        given(passwordEncoder.matches("password1!", CURRENT_HASH)).willReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> memberPasswordFacade.changePassword(MEMBER_ID,
+                new PasswordChangeCommand("password1!", "password1!")))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.SAME_AS_CURRENT_PASSWORD));
+        then(memberService).should(never()).changePassword(anyLong(), anyString(), anyString());
+        then(tokenVersionRecorder).should(never()).record(any(), anyLong(), any());
+    }
+
+    @Test
+    void 현재_비밀번호가_틀리면_새_비밀번호가_같아도_INVALID_CURRENT_PASSWORD가_먼저다() {
+        // given: 틀린 현재 비밀번호로 "같은 비밀번호" 오류를 보면, 입력한 값이 현재 비밀번호가 아니라는 것 말고는 알 수 없어야 한다
+        given(memberService.findPasswordHash(MEMBER_ID)).willReturn(CURRENT_HASH);
+        given(passwordEncoder.matches("wrong1!", CURRENT_HASH)).willReturn(false);
+
+        // when & then
+        assertThatThrownBy(() -> memberPasswordFacade.changePassword(MEMBER_ID,
+                new PasswordChangeCommand("wrong1!", "wrong1!")))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(MemberErrorCode.INVALID_CURRENT_PASSWORD));
+    }
+
     private void givenPasswordMatches() {
         given(memberService.findPasswordHash(MEMBER_ID)).willReturn(CURRENT_HASH);
         given(passwordEncoder.matches("password1!", CURRENT_HASH)).willReturn(true);

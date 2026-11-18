@@ -13,6 +13,7 @@ public interface MemberPasswordChangeUseCase {
      *
      * @throws RestApiException 회원이 없거나 탈퇴했으면 {@code MEMBER_NOT_FOUND},
      *                          현재 비밀번호가 틀리면 {@code INVALID_CURRENT_PASSWORD},
+     *                          새 비밀번호가 현재와 같으면 {@code SAME_AS_CURRENT_PASSWORD},
      *                          확인하는 사이 다른 요청이 비밀번호를 먼저 바꿨으면 {@code PASSWORD_CHANGED_CONCURRENTLY}
      */
     void changePassword(Long memberId, PasswordChangeCommand command);

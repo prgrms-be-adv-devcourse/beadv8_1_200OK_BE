@@ -122,6 +122,28 @@ class MemberPasswordChangeIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 새_비밀번호가_현재와_같으면_400을_반환하고_토큰_버전을_올리지_않는다() throws Exception {
+        // when
+        ResultActions result = changePassword(PASSWORD, PASSWORD);
+
+        // then
+        result.andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type", endsWith("/member/same-as-current-password")));
+        assertUnchanged();
+    }
+
+    @Test
+    void 현재_비밀번호가_20자를_넘으면_bcrypt까지_가지_않고_422를_반환한다() throws Exception {
+        // when
+        ResultActions result = changePassword("a1!".repeat(100), NEW_PASSWORD);
+
+        // then
+        result.andExpect(status().is(422))
+                .andExpect(jsonPath("$.type", endsWith("/validation-failed")));
+        assertUnchanged();
+    }
+
+    @Test
     void 토큰_없이_호출하면_401을_반환한다() throws Exception {
         // when
         ResultActions result = mockMvc.perform(patch(URL)
