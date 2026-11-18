@@ -28,21 +28,17 @@ class RedisTokenVersionStore implements TokenVersionStore {
     static final String KEY_PREFIX = "member:token-version:v1:";
 
     /**
-     * 지금 값보다 높을 때만 쓰고, 같으면 TTL만 더 긴 쪽으로 늘린다. 낮은 값은 버린다.
+     * 지금 값보다 높을 때만 쓰고, 같거나 낮은 값은 버린다.
      * 그냥 덮어쓰면 늦게 도착한 쓰기(앞선 비밀번호 변경의 기록, 그 변경 전에 DB를 읽은 다시 채우기)가 값을 낮춰,
      * 두 변경 사이에 발급되어 폐기됐어야 할 토큰이 다시 통과한다. 지금 값이 숫자가 아니면 쓰는 쪽의 버그라 새 값으로 덮어쓴다.
+     * 같은 버전은 TTL도 건드리지 않는다. 회원 쪽이 TTL을 변경 시각 기준 남은 시간으로 주므로 같은 버전의 만료 시각은 언제 써도 같다.
      * 반환값: 1 = 썼다, 0 = 쓰지 않았다(같거나 낮은 값)
      */
     private static final RedisScript<Long> SAVE_IF_HIGHER = RedisScript.of("""
             local current = tonumber(redis.call('GET', KEYS[1]))
-            local version = tonumber(ARGV[1])
-            local ttl = tonumber(ARGV[2])
-            if current == nil or version > current then
-                redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
+            if current == nil or tonumber(ARGV[1]) > current then
+                redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
                 return 1
-            end
-            if version == current and redis.call('PTTL', KEYS[1]) < ttl then
-                redis.call('PEXPIRE', KEYS[1], ttl)
             end
             return 0
             """, Long.class);

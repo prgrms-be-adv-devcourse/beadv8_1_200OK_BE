@@ -18,8 +18,7 @@ public record SignupRequest(
         @Schema(description = "비밀번호 (영문, 숫자, 특수문자 포함 8~20자)", example = "password1!",
                 format = "password")
         @NotBlank(message = "비밀번호는 필수입니다.")
-        @Pattern(regexp = "^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z\\d]).{8,20}$",
-                message = "비밀번호는 영문, 숫자, 특수문자를 모두 포함해 8~20자여야 합니다.")
+        @Pattern(regexp = PasswordRule.REGEX, message = PasswordRule.MESSAGE)
         String password,
 
         @Schema(description = "이메일", example = "tester@example.com")

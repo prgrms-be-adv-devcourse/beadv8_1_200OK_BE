@@ -19,12 +19,10 @@ public record PasswordChangeRequest(
         @Size(max = 20, message = "비밀번호는 20자 이하여야 합니다.")
         String currentPassword,
 
-        // 회원가입(SignupRequest)과 같은 규칙이어야 가입할 때 쓸 수 없는 비밀번호로 바꿀 수 없다
         @Schema(description = "새 비밀번호 (영문, 숫자, 특수문자 포함 8~20자)", example = "newPassword1!",
                 format = "password")
         @NotBlank(message = "새 비밀번호는 필수입니다.")
-        @Pattern(regexp = "^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z\\d]).{8,20}$",
-                message = "비밀번호는 영문, 숫자, 특수문자를 모두 포함해 8~20자여야 합니다.")
+        @Pattern(regexp = PasswordRule.REGEX, message = PasswordRule.MESSAGE)
         String newPassword
 ) {
 

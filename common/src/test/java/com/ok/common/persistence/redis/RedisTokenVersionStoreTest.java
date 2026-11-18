@@ -109,21 +109,18 @@ class RedisTokenVersionStoreTest {
         assertThat(sut.findMinVersion(MEMBER_ID)).hasValue(2L);
     }
 
+    // 다시 채우기가 같은 버전을 주기적으로 다시 쓴다. 회원 쪽이 주는 TTL은 같은 만료 시각까지 남은 시간이라 늘리거나 줄일 일이 없다
     @Test
-    void 같은_버전을_다시_저장하면_TTL만_더_긴_쪽으로_늘린다() {
+    void 같은_버전을_다시_저장하면_값과_TTL을_그대로_둔다() {
         // given
         sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofMinutes(31));
 
         // when
         sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofSeconds(30));
-        long afterShorter = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
-        sut.saveMinVersion(MEMBER_ID, 2L, Duration.ofMinutes(40));
-        long afterLonger = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
 
         // then
         assertThat(sut.findMinVersion(MEMBER_ID)).hasValue(2L);
-        assertThat(afterShorter).isGreaterThan(30L * 60);
-        assertThat(afterLonger).isGreaterThan(39L * 60);
+        assertThat(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).isGreaterThan(30L * 60);
     }
 
     @Test
