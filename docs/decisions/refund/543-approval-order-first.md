@@ -39,3 +39,10 @@ related: [513, 512, 414, 516, 545, 546]
 - 주문 409의 `type`을 보고 분기하려면 먼저 `PROBLEM_BASE_URI`가 운영에서 설정돼 있는지 확인한다. 기본값이면 이름이 오지 않는다.
 - 주문 어댑터는 `exchange()`를 쓴다. 응답 상태는 공통 클라이언트(`InternalRestClient`)의 인터셉터 밖에서 읽힌다. 그래서 응답을 읽다 끊기면 `ResourceAccessException`이 나고, 어댑터가 이를 잡아 503으로 바꾼다. 재고·조회 쪽은 아직 이 처리가 없어 500이 된다(#545).
 - 지갑 발행이 실패하면 주문은 이미 취소를 기록한 상태다. 다시 시도는 같은 refundId로 주문부터 다시 불러도 된다. 주문은 같은 refundId·같은 내용이면 출고 여부보다 먼저 성공으로 답한다(#542).
+
+## 후속 (2026-11-18)
+
+- "건드릴 때 주의"의 "재고·조회 쪽은 아직 이 처리가 없어 500이 된다"는 이제 맞지 않다.
+  - 재고 복구도 #578에서 `ResourceAccessException`을 잡아 503(`PRODUCT_API_FAILED`)으로 바꾼다. 원인은 WARN 로그에 남긴다. `RestApiException`이 원인을 담지 못해서다.
+  - 주문 조회(①)는 이미 에러 코드(`RestApiException`)로 바뀐다. 11/15에 돌려서 확인했다(#578 본문).
+- 같은 줄의 "공통 클라이언트(`InternalRestClient`)"는 common 모듈이 아니라 환불 모듈의 클래스(`refund/.../adapter/out/order/InternalRestClient.java`)다.
