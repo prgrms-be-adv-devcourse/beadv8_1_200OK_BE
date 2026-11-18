@@ -665,22 +665,23 @@ com.ok.wallet
 ├── config/               모듈 전용 설정
 ├── application/
 │   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
-│   ├── port/out/         출력 포트: 저장소, 이벤트 발행, 토스 결제 승인 인터페이스
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행, 토스 결제 승인·조회 인터페이스
 │   ├── service/          유스케이스 구현 (*Service)
-│   └── dto/              *Command, *Query, *Result, 토스 승인 결과(TossConfirmResult)
+│   └── dto/              *Command, *Query, *Result, 토스 승인·조회 결과(TossConfirmResult, TossPaymentLookupResult)
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
     ├── in/event/         Kafka 리스너, 받는 메시지 DTO(dto/), Kafka 수신 설정과 실패 기록 연결
+    ├── in/scheduler/     충전 복구 스케줄러 (1분마다 복구, 한 시간마다 오래 남은 건 알림)
     ├── out/persistence/  저장소 포트 구현(*RepositoryAdapter), Spring Data JPA 저장소, Querydsl 조회
     ├── out/event/        Kafka 발행 구현체, 보내는 메시지 DTO(dto/), 보내는 토픽 생성
-    └── out/toss/         토스 결제 승인 HTTP 구현, 토스 요청·응답 DTO, 설정
+    └── out/toss/         토스 결제 승인·조회 HTTP 구현, 토스 요청·응답 DTO, 설정
 ```
 
 - 의존 방향, 이벤트 수신·발행 위치는 delivery와 같습니다.
 - 저장소 포트는 delivery와 달리 `*JpaRepository`가 상속하지 않고, 어댑터 클래스(`*RepositoryAdapter`)가 구현해 `*JpaRepository`에 넘깁니다. 어댑터는 트랜잭션을 열지 않으므로 잠금과 쿼리는 서비스의 트랜잭션 안에서 지금과 같이 동작합니다. 저장소 메서드를 추가하면 포트, 어댑터, `*JpaRepository` 세 곳을 고칩니다.
 - 어댑터에는 `@Repository`가 아니라 `@Component`를 붙입니다. DB 예외 변환은 안쪽 `*JpaRepository` 프록시가 이미 하므로 다시 할 필요가 없습니다.
 - 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`saveAndFlush`, `deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다. `@DataJpaTest`로 포트를 쓰는 테스트는 어댑터를 `@Import`로 등록합니다.
-- 토스 승인은 출력 포트(`TossPaymentsClient`)로 부릅니다. 서비스는 승인 결과(`TossConfirmResult`)만 알고, HTTP 요청·응답 모양은 `adapter/out/toss` 안에 둡니다.
+- 토스 승인과 결제 조회는 출력 포트(`TossPaymentsClient`)로 부릅니다. 서비스는 승인 결과(`TossConfirmResult`)와 조회 결과(`TossPaymentLookupResult`)만 알고, HTTP 요청·응답 모양은 `adapter/out/toss` 안에 둡니다.
 - 충전 승인은 토스를 부르는 `ChargeConfirmService`(트랜잭션 없음)만 `ChargeConfirmUseCase`를 구현합니다. DB 반영은 `ChargeTransactionService`가 포트 없이 다른 빈으로 맡습니다. 같은 빈 안에서 부르면 `@Transactional`이 걸리지 않으므로 두 서비스를 합치지 않습니다.
 - 엔티티를 도메인 모델과 나누지 않습니다. 잔액 변경과 충전 완료는 엔티티 값만 바꾸고 저장은 변경 감지에 맡기므로, 나누면 저장이 빠졌을 때 오류 없이 잔액이 반영되지 않습니다.
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
@@ -694,6 +695,15 @@ com.ok.wallet
 - "지갑이 있다"를 가입·판매자 승인의 증거로 쓰지 않습니다. 그런 판단이 필요하면 회원 쪽에 묻습니다.
 - 지갑이 없어도 뜻이 있는 정보(약관 동의처럼)는 지갑 행이 아니라 회원 ID로 따로 저장합니다. 지갑 정지처럼 지갑 자체의 상태를 바꾸는 기능만 `getOrCreate`로 지갑을 가져옵니다. 이렇게 두면 "지갑이 먼저 있어야 하는 기능"이 지갑을 바꾸는 입구 하나로 모입니다.
 - 판매자 지갑 `getOrCreate`는 판매자 승인 여부를 확인하지 않습니다. 지금은 승인된 판매자에게만 오는 정산금 입금에서만 부릅니다. 판매자가 직접 부르는 길(출금 등)을 만들면 승인 확인을 함께 넣습니다.
+
+**충전 복구**
+
+- 토스 승인 결과를 알 수 없거나 반영에 실패한 충전 건은 처리 중(`IN_PROGRESS`)으로 남습니다. 복구(`ChargeRecoveryService`, 트랜잭션 없음)가 토스에 충전 번호로 결제를 조회해 끝냅니다(#135). 스케줄러(`ChargeRecoveryScheduler`)가 앞 회차가 끝나고 1분 뒤 다시 부르고, 테스트 프로필에서는 켜지 않습니다.
+- 충전 건의 다음 확인 시각(`next_check_at`)이 복구 대상을 정합니다. 처리 중이 될 때 5분 뒤로 잡고(진행 중인 승인과 겹치지 않게), 복구가 맡을 때마다 10분 뒤로 미룹니다. 비어 있으면 사람 확인 대기라 복구가 고르지 않습니다.
+- 서버가 여러 대여도 잠금(ShedLock)을 두지 않습니다. 확인할 때가 된 건만 다음 확인 시각을 미루는 조건부 UPDATE로 맡아, 같은 건은 한 서버만 토스에 묻습니다.
+- 토스 답이 승인(결제 키·금액이 충전 건과 같음)이면 완료하고, 승인 실패·만료이면 실패로 바꿉니다. 결제가 없다는 답은 충전 요청 뒤 1시간이 지나야 실패로 봅니다. 준비·진행 중·알 수 없음은 다음에 다시 확인합니다. 승인됐는데 결제 키나 금액이 다르거나, 취소·부분 취소·입금 대기이면 멈추고 `[CHARGE_RECOVERY_HOLD]` ERROR 로그를 남깁니다. 10번째 확인에도 끝나지 않아도 멈춥니다.
+- 승인 응답과 복구가 같은 건을 함께 끝내려 하면 완료 처리는 지갑 → 충전 건 순서로, 실패 처리는 충전 건만 잠근 뒤 상태를 봅니다. 뒤에 온 쪽은 바뀐 상태를 보고 그대로 돌아갑니다. 잠그는 순서는 승인 시작과 같아야 하고(반대면 교착), 잠그기 전에 충전 건을 읽지 않습니다(먼저 읽으면 잠금 조회가 옛 상태를 돌려줌).
+- 요청 뒤 3시간이 지나도 처리 중인 건은 한 시간마다 `[CHARGE_LONG_IN_PROGRESS]` WARN 로그로 다시 알립니다.
 
 **Kafka 수신과 실패 기록**
 
