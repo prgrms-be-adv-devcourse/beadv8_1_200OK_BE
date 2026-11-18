@@ -453,7 +453,7 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
     }
 
-    // 해결한 뒤에 넣은 조정은 확인한 조정이 아님 → 다시 초과 청구로 실패 (다시 해결해도 확인이 되지 않아, 반대 금액 조정으로 상쇄한 뒤 순서대로 다시 넣어야 함)
+    // 해결한 뒤에 넣은 조정은 확인한 조정이 아님 → 다시 초과 청구로 실패 (다시 해결해도 확인이 되지 않아, 멈춘 뒤 맞는 조정 → 해결 → 해결 뒤 반대 조정으로 상쇄)
     @Test
     void 해결한_뒤에_넣은_조정은_검사에_들어가지_않아_다시_초과_청구로_실패한다() throws Exception {
         // given: 3번 실패해 멈춘 주문을 먼저 해결
@@ -475,7 +475,7 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
 
     // 결정 4번 하한(실패 뒤에 넣은 조정만 셈)을 지킴: 실패 전에 미리 넣은 조정은 해결해도 확인한 조정이 아님
     // 하한이 없으면 실패 전에 다른 이유로 넣어 둔 조정이 해결만으로 초과 청구를 가려 돈이 더 나감
-    // 대가(11/17 감수): 미리 넣은 관리자는 한 번 더 넣어야 하고, 두 번 빠지면 반대 금액 조정으로 상쇄함
+    // 대가(11/17 감수): 미리 넣은 관리자는 한 번 더 넣어야 하고, 두 번 빠진 만큼은 해결한 뒤 반대 금액 조정으로 상쇄함
     @Test
     void 실패_전에_미리_넣은_조정은_해결해도_검사에_들어가지_않아_다시_초과_청구로_실패한다() throws Exception {
         // given: 결제 30,000, 판매 40,000. 첫 실행 전에 −9,700 / −300을 미리 넣고 3번 실패해 멈춤
@@ -496,6 +496,42 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
                 .extracting(PayoutFailure::getReason)
                 .containsOnly(PayoutFailureReason.AMOUNT_MISMATCH);
         assertThat(payoutRepository.findBySnapshotId(snapshotId)).isEmpty();
+    }
+
+    // 미리 넣은 조정을 Spec 안내대로 바로잡는 순서: 멈춘 뒤 맞는 조정 → 해결 → 해결한 뒤에 미리 넣은 것의 반대 조정
+    // 결제 30,000, 판매 40,000. 미리 −9,700 / −300(세지 않음) → 3번 실패해 멈춤 → 맞는 조정 −9,700 / −300 → 해결
+    // → 다음 배치는 검사 30,000으로 통과하지만 두 쌍 모두 지급돼 판매자 19,400, 시스템 600
+    // → 해결 뒤 반대 조정 +9,700 / +300은 검사에 섞이지 않고 지급에만 들어가 그다음 배치에 판매자 9,700, 시스템 300 → 합계 29,100 / 900
+    // 반대 조정을 해결 전에 넣으면 그것도 확인한 조정이 되어 검사 합계가 40,000으로 돌아가 다시 실패함
+    @Test
+    void 미리_넣은_조정은_해결한_뒤_반대_조정을_넣어_상쇄하면_합계가_맞는_금액이_된다() throws Exception {
+        // given: 미리 넣은 조정이 있는 채로 3번 실패해 멈춤 → 맞는 조정과 해결로 첫 지급
+        givenDeduction(ORDER_A, 30_000L);
+        givenSale(ORDER_A, ITEM_A, SELLER, 40_000L);
+        backdateOriginals(ORDER_A, 16);
+        adjust(ITEM_A, "SALE_AMOUNT", -9_700L, REASON);
+        adjust(ITEM_A, "SALE_FEE", -300L, REASON);
+        runUntilStopped(PayoutFailureReason.AMOUNT_MISMATCH);
+        adjust(ITEM_A, "SALE_AMOUNT", -9_700L, "실패 확인 뒤 다시 넣은 조정");
+        adjust(ITEM_A, "SALE_FEE", -300L, "실패 확인 뒤 다시 넣은 조정");
+        resolve(ORDER_A);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(first)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 19_400L), tuple(null, 600L));
+
+        // when: 해결한 뒤 미리 넣은 조정의 반대 금액 조정
+        adjust(ITEM_A, "SALE_AMOUNT", 9_700L, "미리 넣은 조정 상쇄");
+        adjust(ITEM_A, "SALE_FEE", 300L, "미리 넣은 조정 상쇄");
+        JobExecution sut = payoutJobRunner.runScheduled();
+
+        // then: 모자랐던 9,700 / 300이 지급돼 두 배치 합계가 29,100 / 900
+        assertThat(sut.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        Long snapshotId = snapshotIdOf(sut);
+        assertThat(failureRepository.findBySnapshotId(snapshotId)).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotId))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 9_700L), tuple(null, 300L));
     }
 
     // 결정 4번 사유 필터(금액 불일치 실패만)를 지킴: 결제 기록 없음(DEDUCTION_MISSING)으로 멈춘 동안 넣은 조정은 확인한 조정이 아님
