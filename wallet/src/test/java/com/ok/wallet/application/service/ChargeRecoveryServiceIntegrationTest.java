@@ -1,6 +1,7 @@
 package com.ok.wallet.application.service;
 
 import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.wallet.application.dto.ChargeConfirmResult;
 import com.ok.wallet.application.dto.ChargeRecoveryResult;
 import com.ok.wallet.application.dto.TermsAgreeCommand;
 import com.ok.wallet.application.dto.TossConfirmResult;
@@ -298,6 +299,87 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 복구가_먼저_완료한_뒤_늦게_온_승인_응답은_잔액을_다시_늘리지_않는다() throws Exception {
+        // given: 승인 요청이 토스 응답을 기다리는 동안 복구가 같은 건의 승인을 확인해 완료한다
+        String chargeNo = requestCharge(MEMBER_ID);
+        LateTossResponse late = confirmWaitingForToss(chargeNo, new TossConfirmResult.Approved(PAYMENT_KEY));
+        makeDue(chargeNo);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        assertThat(chargeRecoveryService.recover().completed()).isEqualTo(1);
+
+        // when: 늦게 온 승인 응답을 반영한다
+        String sut = late.release().status();
+
+        // then
+        assertThat(sut).isEqualTo("COMPLETED");
+        assertSoftly(softly -> {
+            softly.assertThat(statusOf(chargeNo)).isEqualTo("COMPLETED");
+            softly.assertThat(balanceOf(MEMBER_ID)).isEqualTo(AMOUNT);
+            softly.assertThat(countLedgers(MEMBER_ID, "CHARGE:" + PAYMENT_KEY)).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void 복구가_먼저_완료한_뒤_늦게_온_거절_응답은_완료를_실패로_덮지_않는다() throws Exception {
+        // given
+        String chargeNo = requestCharge(MEMBER_ID);
+        LateTossResponse late = confirmWaitingForToss(chargeNo,
+                new TossConfirmResult.Rejected("REJECT_CARD_COMPANY", "카드사 거절"));
+        makeDue(chargeNo);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        chargeRecoveryService.recover();
+
+        // when
+        String sut = late.release().status();
+
+        // then
+        assertThat(sut).isEqualTo("COMPLETED");
+        assertSoftly(softly -> {
+            softly.assertThat(statusOf(chargeNo)).isEqualTo("COMPLETED");
+            softly.assertThat(balanceOf(MEMBER_ID)).isEqualTo(AMOUNT);
+        });
+    }
+
+    @Test
+    void 복구와_늦게_온_승인_응답이_동시에_완료해도_어느_쪽도_오류로_끝나지_않고_잔액은_한_번만_는다() throws Exception {
+        // given
+        String chargeNo = requestCharge(MEMBER_ID);
+        LateTossResponse late = confirmWaitingForToss(chargeNo, new TossConfirmResult.Approved(PAYMENT_KEY));
+        makeDue(chargeNo);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+
+        // when: 승인 응답을 풀어 주는 것과 복구를 같은 순간에 시작한다
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        String confirmStatus;
+        ChargeRecoveryResult recoveryResult;
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            Future<ChargeRecoveryResult> recovery = executor.submit(() -> {
+                start.await();
+                return chargeRecoveryService.recover();
+            });
+            start.countDown();
+            confirmStatus = late.release().status();
+            recoveryResult = recovery.get(30, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        // then: 잔액이 두 번 늘지 않게 막는 마지막 안전망은 원장의 중복 금지 제약이다. 거기까지 가면 진 쪽이
+        // 오류로 끝나(승인 응답은 처리 중으로 답하고, 복구는 반영 실패로 다시 확인) 잔액만 보면 놓친다.
+        // 승인 응답이 먼저 끝나면 복구는 고를 건이 없으므로, 복구가 완료한 수는 보지 않는다
+        assertSoftly(softly -> {
+            softly.assertThat(confirmStatus).isEqualTo("COMPLETED");
+            softly.assertThat(recoveryResult.retried()).isZero();
+        });
+        assertSoftly(softly -> {
+            softly.assertThat(statusOf(chargeNo)).isEqualTo("COMPLETED");
+            softly.assertThat(balanceOf(MEMBER_ID)).isEqualTo(AMOUNT);
+            softly.assertThat(countLedgers(MEMBER_ID, "CHARGE:" + PAYMENT_KEY)).isEqualTo(1);
+        });
+    }
+
+    @Test
     void 요청_뒤_3시간이_지나도_처리_중인_건만_오래_남은_건으로_알린다() {
         // given: 3시간 넘게 처리 중인 건, 막 처리 중이 된 건, 3시간 넘었지만 완료된 건
         String longInProgress = inProgressCharge(MEMBER_ID, PAYMENT_KEY);
@@ -324,6 +406,44 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("UPDATE wallet_charge SET next_check_at = ? WHERE charge_no = ?",
                 LocalDateTime.now().minusMinutes(1), chargeNo);
         return chargeNo;
+    }
+
+    private void makeDue(String chargeNo) {
+        jdbcTemplate.update("UPDATE wallet_charge SET next_check_at = ? WHERE charge_no = ?",
+                LocalDateTime.now().minusMinutes(1), chargeNo);
+    }
+
+    private String requestCharge(Long memberId) {
+        agreeAllTerms(memberId);
+        return chargeService.request(memberId, AMOUNT).chargeNo();
+    }
+
+    // 승인 요청을 다른 스레드에서 시작해, 충전 건이 처리 중이 되고 토스 응답을 기다리는 데서 멈춘다.
+    // release()를 부르면 그때 토스 응답(response)이 온 것처럼 이어서 반영하고 승인 결과를 돌려준다
+    private LateTossResponse confirmWaitingForToss(String chargeNo, TossConfirmResult response) throws Exception {
+        CountDownLatch waiting = new CountDownLatch(1);
+        CountDownLatch respond = new CountDownLatch(1);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong())).willAnswer(invocation -> {
+            waiting.countDown();
+            respond.await(30, TimeUnit.SECONDS);
+            return response;
+        });
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<ChargeConfirmResult> confirm = executor.submit(
+                () -> chargeConfirmService.confirm(MEMBER_ID, chargeNo, PAYMENT_KEY, AMOUNT));
+        assertThat(waiting.await(30, TimeUnit.SECONDS)).isTrue();
+        return new LateTossResponse(respond, confirm, executor);
+    }
+
+    private record LateTossResponse(CountDownLatch respond, Future<ChargeConfirmResult> confirm, ExecutorService executor) {
+        ChargeConfirmResult release() throws Exception {
+            try {
+                respond.countDown();
+                return confirm.get(30, TimeUnit.SECONDS);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
     }
 
     private String inProgressCharge(Long memberId, String paymentKey) {
