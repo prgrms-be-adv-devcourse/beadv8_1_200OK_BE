@@ -3,6 +3,7 @@ package com.ok.common.persistence.redis;
 import com.ok.common.security.TokenVersionStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
@@ -28,20 +29,16 @@ class RedisTokenVersionStore implements TokenVersionStore {
     static final String KEY_PREFIX = "member:token-version:v1:";
 
     /**
-     * 지금 값보다 높을 때만 쓰고, 같거나 낮은 값은 버린다.
-     * 그냥 덮어쓰면 늦게 도착한 쓰기(앞선 비밀번호 변경의 기록, 그 변경 전에 DB를 읽은 다시 채우기)가 값을 낮춰,
-     * 두 변경 사이에 발급되어 폐기됐어야 할 토큰이 다시 통과한다. 지금 값이 숫자가 아니면 쓰는 쪽의 버그라 새 값으로 덮어쓴다.
-     * 같은 버전은 TTL도 건드리지 않는다. 회원 쪽이 TTL을 변경 시각 기준 남은 시간으로 주므로 같은 버전의 만료 시각은 언제 써도 같다.
-     * 반환값: 1 = 썼다, 0 = 쓰지 않았다(같거나 낮은 값)
+     * 지금 값보다 높을 때만 쓰는 스크립트. 규칙과 인자는 스크립트 파일의 주석에 있다.
+     * IDE 지원을 받고 redis-cli로 따로 돌려 볼 수 있도록 코드 밖의 파일로 둔다.
      */
-    private static final RedisScript<Long> SAVE_IF_HIGHER = RedisScript.of("""
-            local current = tonumber(redis.call('GET', KEYS[1]))
-            if current == nil or tonumber(ARGV[1]) > current then
-                redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
-                return 1
-            end
-            return 0
-            """, Long.class);
+    private static final RedisScript<Long> SAVE_IF_HIGHER =
+            RedisScript.of(new ClassPathResource("redis/token-version-save-if-higher.lua"), Long.class);
+
+    static {
+        // 파일은 처음 실행할 때 읽힌다. 경로가 틀리면 첫 비밀번호 변경에서야 드러나므로, 클래스를 올릴 때 미리 읽어 앱 시작에서 실패하게 한다
+        SAVE_IF_HIGHER.getSha1();
+    }
 
     private final StringRedisTemplate redisTemplate;
 
