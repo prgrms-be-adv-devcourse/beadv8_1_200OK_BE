@@ -44,12 +44,12 @@ interface OrderInternalControllerSpec {
             """)
     @ApiResponse(responseCode = "204", description = "반영함, 또는 같은 refundId·같은 내용으로 이미 반영됨")
     @ApiResponse(responseCode = "404", description = "주문 상품이 없음(order/order-item-not-found)")
-    @ApiResponse(responseCode = "409", description = """
-            출고 전(배송 준비) 상품이 아님(order/refund-not-allowed-status),
-            환불 수량 합계가 주문 수량을 넘음(order/refund-quantity-exceeded),
-            같은 refundId인데 수량이나 뺀 배송비가 다름(order/refund-id-conflict)
+    @ApiResponse(responseCode = "409", description = "출고 전(배송 준비) 상품이 아님(order/refund-not-allowed-status). 판매자가 먼저 출고한 정상 경쟁입니다")
+    @ApiResponse(responseCode = "422", description = """
+            환불과 주문 기록이 어긋남: 환불 수량 합계가 주문 수량을 넘음(order/refund-quantity-exceeded),
+            같은 refundId인데 수량이나 뺀 배송비가 다름(order/refund-id-conflict).
+            요청 값 검증 실패(환불 ID·수량 1 이상, 뺀 배송비 0 이상)도 422입니다
             """)
-    @ApiResponse(responseCode = "422", description = "요청 값 검증 실패 (환불 ID·수량 1 이상, 뺀 배송비 0 이상)")
     ResponseEntity<Void> recordRefund(
             @Parameter(description = "주문 상품 ID", example = "101") Long orderItemId,
             RecordOrderItemRefundRequest request

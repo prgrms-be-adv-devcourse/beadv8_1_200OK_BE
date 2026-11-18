@@ -23,9 +23,11 @@ public enum OrderErrorCode implements ErrorCode {
     PURCHASE_CONFIRM_NOT_ALLOWED(HttpStatus.CONFLICT, "Purchase confirm not allowed", "배송 완료된 상품만 구매확정할 수 있습니다."),
 
     // 환불 취소 반영
+    // 이미 출고는 정상 경쟁이라 409, 수량 초과·refundId 충돌은 두 모듈 기록이 어긋난 경우라 422로 나눈다.
+    // 응답 type은 PROBLEM_BASE_URI가 기본값이면 about:blank라, 환불이 상태 코드만으로 거절과 멈춤을 가르게 하려는 것이다(#735, 환불 #554)
     REFUND_NOT_ALLOWED_STATUS(HttpStatus.CONFLICT, "Refund not allowed status", "출고 전(배송 준비) 상품만 환불을 반영할 수 있습니다."),
-    REFUND_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "Refund quantity exceeded", "환불 수량 합계가 주문 수량을 넘습니다."),
-    REFUND_ID_CONFLICT(HttpStatus.CONFLICT, "Refund id conflict", "같은 환불 ID로 다른 내용이 이미 반영되었습니다."),
+    REFUND_QUANTITY_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY, "Refund quantity exceeded", "환불 수량 합계가 주문 수량을 넘습니다."),
+    REFUND_ID_CONFLICT(HttpStatus.UNPROCESSABLE_ENTITY, "Refund id conflict", "같은 환불 ID로 다른 내용이 이미 반영되었습니다."),
 
     // 상품
     PRODUCT_OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Product option not found", "상품 옵션을 찾을 수 없습니다."),

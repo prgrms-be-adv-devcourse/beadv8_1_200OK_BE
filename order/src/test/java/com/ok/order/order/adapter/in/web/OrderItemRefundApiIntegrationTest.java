@@ -120,36 +120,36 @@ class OrderItemRefundApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 같은_환불_ID로_다른_수량을_보내면_409다() throws Exception {
+    void 같은_환불_ID로_다른_수량을_보내면_422다() throws Exception {
         // given
         recordRefund(sockId, 7L, 1, 0L).andExpect(status().isNoContent());
 
         // when & then
         recordRefund(sockId, 7L, 2, 0L)
-                .andExpect(status().isConflict())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("/" + OrderErrorCode.REFUND_ID_CONFLICT.slug())));
     }
 
     @Test
-    void 같은_환불_ID를_다른_주문_상품에_보내면_409다() throws Exception {
+    void 같은_환불_ID를_다른_주문_상품에_보내면_422다() throws Exception {
         // given
         recordRefund(sockId, 7L, 1, 0L).andExpect(status().isNoContent());
 
         // when & then
         recordRefund(gloveId, 7L, 1, 0L)
-                .andExpect(status().isConflict())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("/" + OrderErrorCode.REFUND_ID_CONFLICT.slug())));
         assertThat(refundRowCount(gloveId)).isZero();
     }
 
     @Test
-    void 환불_수량_합계가_주문_수량을_넘으면_409다() throws Exception {
+    void 환불_수량_합계가_주문_수량을_넘으면_422다() throws Exception {
         // given
         recordRefund(sockId, 7L, 2, 0L).andExpect(status().isNoContent());
 
         // when & then
         recordRefund(sockId, 8L, 2, 0L)
-                .andExpect(status().isConflict())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.type", endsWith("/" + OrderErrorCode.REFUND_QUANTITY_EXCEEDED.slug())));
         assertThat(refundedQuantity(sockId)).isEqualTo(2);
     }
