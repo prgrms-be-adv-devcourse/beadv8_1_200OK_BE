@@ -43,6 +43,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -53,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -362,6 +364,150 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(second)))
                 .extracting(Payout::getPayeeId, Payout::getAmount)
                 .containsExactlyInAnyOrder(tuple(SELLER, 3_820L), tuple(null, 150L));
+    }
+
+    // 정산 상세의 수수료 합계는 회차가 아니라 "이 정산이 대금을 치른 주문상품"으로 셈 (#291 리뷰 지적 1)
+    // 1차: 판매 1,000(대금 970 / 수수료 30) + 대금 조정 −2,000 → 판매자 보류, 수수료 30은 1차 시스템 몫
+    // 2차: 판매 5,000(대금 4,850 / 수수료 150) → 판매자 3,820 (1차 대금·조정 포함)
+    // → 2차 판매자 정산 상세의 수수료는 30 + 150 = 180 (2건). 같은 회차 시스템 몫 정산 ID는 2차 것(수수료 150만 들어 있음)
+    @Test
+    void 보류됐다가_다음_회차에_정산되면_상세_수수료에_보류_회차_수수료도_들어간다() throws Exception {
+        // given: 1차 보류
+        givenSale(ORDER_A, ITEM_A, SELLER, 1_000L);
+        adjust(ITEM_A, "SALE_AMOUNT", -2_000L, REASON);
+        backdateOriginals(ORDER_A, 16);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(first)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(null, 30L));
+
+        // given: 2차에 새 매출과 함께 정산
+        givenSale(ORDER_B, ITEM_B, SELLER, 5_000L);
+        backdateOriginals(ORDER_B, 16);
+        JobExecution second = payoutJobRunner.runScheduled();
+        Payout sellerPayout = payoutOf(snapshotIdOf(second), SELLER);
+        Payout secondSystemPayout = payoutOf(snapshotIdOf(second), null);
+        assertThat(sellerPayout.getAmount()).isEqualTo(3_820L);
+
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/{payoutId}", sellerPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(180))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(2))
+                .andExpect(jsonPath("$.systemPayoutId").value(secondSystemPayout.getId().intValue()));
+    }
+
+    // 보류된 회차에 수수료 조정도 함께 들어가면, 원래 수수료와 수수료 조정이 모두 보류 회차 시스템 몫에 들어감
+    // 1차: 판매 1,000(대금 970 / 수수료 30), 대금 조정 −2,000, 수수료 조정 −10 → 판매자 보류, 시스템 몫 30 − 10 = 20
+    // 2차: 판매 5,000(대금 4,850 / 수수료 150) → 판매자 970 − 2,000 + 4,850 = 3,820
+    // → 2차 판매자 정산 상세의 수수료는 30 − 10 + 150 = 170 (3건)
+    @Test
+    void 보류_회차에_수수료_조정도_들어가면_상세_수수료에_원래_수수료와_조정이_함께_들어간다() throws Exception {
+        // given: 1차 보류
+        givenSale(ORDER_A, ITEM_A, SELLER, 1_000L);
+        adjust(ITEM_A, "SALE_AMOUNT", -2_000L, REASON);
+        adjust(ITEM_A, "SALE_FEE", -10L, REASON);
+        backdateOriginals(ORDER_A, 16);
+        JobExecution first = payoutJobRunner.runScheduled();
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(first)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactly(tuple(null, 20L));
+
+        // given: 2차에 새 매출과 함께 정산
+        givenSale(ORDER_B, ITEM_B, SELLER, 5_000L);
+        backdateOriginals(ORDER_B, 16);
+        JobExecution second = payoutJobRunner.runScheduled();
+        Payout sellerPayout = payoutOf(snapshotIdOf(second), SELLER);
+        assertThat(sellerPayout.getAmount()).isEqualTo(3_820L);
+
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/{payoutId}", sellerPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(170))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(3));
+    }
+
+    // 원래 대금이 1차에 지급된 뒤 넣은 대금 조정은 다른 정산(3차)에 들어감
+    // 수수료는 원래 대금이 든 정산에만 붙어야 같은 수수료가 두 정산 상세에 겹쳐 세어지지 않음
+    // 1차: 판매 10,000(대금 9,700 / 수수료 300) 지급, 2차: 조정 −2,000만 → 보류, 3차: 판매 5,000(수수료 150)과 함께 2,850
+    // → 1차 정산 상세 수수료 300(1건), 3차 정산 상세 수수료 150(1건, 주문상품 A의 조정은 들었지만 A의 수수료 300은 1차에 이미 붙음)
+    @Test
+    void 대금_조정만_다른_정산에_들어가면_그_주문상품의_수수료는_원래_대금이_든_정산에만_붙는다() throws Exception {
+        // given
+        givenSale(ORDER_A, ITEM_A, SELLER, 10_000L);
+        backdateOriginals(ORDER_A, 16);
+        JobExecution first = payoutJobRunner.runScheduled();
+        adjust(ITEM_A, "SALE_AMOUNT", -2_000L, REASON);
+        payoutJobRunner.runScheduled();
+        givenSale(ORDER_B, ITEM_B, SELLER, 5_000L);
+        backdateOriginals(ORDER_B, 16);
+        JobExecution third = payoutJobRunner.runScheduled();
+        Payout firstPayout = payoutOf(snapshotIdOf(first), SELLER);
+        Payout thirdPayout = payoutOf(snapshotIdOf(third), SELLER);
+        assertThat(thirdPayout.getAmount()).isEqualTo(2_850L);
+
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/{payoutId}", firstPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(300))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(1));
+        mockMvc.perform(get("/api/v1/admin/payouts/{payoutId}", thirdPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(150))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(1));
+    }
+
+    // 수수료 조정이 나중 회차에 정산되면, 그 주문상품의 원래 대금이 든 지난 정산 상세의 수수료가 바뀜 (#291 리뷰 지적 1, 받아들인 대가)
+    // 1차: 판매 10,000(대금 9,700 / 수수료 300) 지급 → 1차 상세 수수료 300(1건)
+    // 수수료를 100 더 뗀 것을 바로잡는 조정: 대금 +100 / 수수료 −100 (원래가 지급된 뒤라 실패 없이 넣은 조정 = 확인 안 한 조정)
+    //   확인 안 한 조정은 금액 검사(초과 청구·수수료 짝)에 들어가지 않아 원래 9,700 / 300으로 검사해 통과함 (PayoutAmountValidator)
+    // 2차: 조정만 들어가 판매자 100, 시스템 몫 −100
+    // → 1차 상세 수수료 200(2건)으로 바뀜. 2차 판매자 정산은 원래 대금이 없어 수수료 0(0건, null 아님)
+    @Test
+    void 수수료_조정이_나중_회차에_정산되면_원래_대금이_든_지난_정산_상세의_수수료가_바뀐다() throws Exception {
+        // given: 1차 지급, 그때 상세 수수료는 300
+        givenSale(ORDER_A, ITEM_A, SELLER, 10_000L);
+        backdateOriginals(ORDER_A, 16);
+        JobExecution first = payoutJobRunner.runScheduled();
+        Payout firstPayout = payoutOf(snapshotIdOf(first), SELLER);
+        mockMvc.perform(get("/api/v1/admin/payouts/{payoutId}", firstPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(300))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(1));
+
+        // given: 수수료를 바로잡는 조정을 넣고 2차 실행
+        adjust(ITEM_A, "SALE_AMOUNT", 100L, REASON);
+        adjust(ITEM_A, "SALE_FEE", -100L, REASON);
+        JobExecution second = payoutJobRunner.runScheduled();
+        assertThat(second.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        assertThat(failureRepository.findBySnapshotId(snapshotIdOf(second))).isEmpty();
+        assertThat(payoutRepository.findBySnapshotId(snapshotIdOf(second)))
+                .extracting(Payout::getPayeeId, Payout::getAmount)
+                .containsExactlyInAnyOrder(tuple(SELLER, 100L), tuple(null, -100L));
+        Payout secondPayout = payoutOf(snapshotIdOf(second), SELLER);
+
+        // when & then: 1차 상세의 수수료가 300 − 100 = 200 (원래 + 조정 2건), 판매자가 봐도 같음
+        mockMvc.perform(get("/api/v1/admin/payouts/{payoutId}", firstPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(200))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(2));
+        mockMvc.perform(get("/api/v1/payouts/me/{payoutId}", firstPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER, "BUYER", "SELLER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(200))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(2));
+        // then: 2차 판매자 정산은 대금 조정만 있어 수수료가 붙지 않음 (같은 수수료를 두 상세에 겹쳐 세지 않음), 값은 null이 아니라 0
+        mockMvc.perform(get("/api/v1/payouts/me/{payoutId}", secondPayout.getId())
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER, "BUYER", "SELLER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerFeeAmount").value(0))
+                .andExpect(jsonPath("$.sellerFeeItemCount").value(0));
     }
 
     // 보류 조회는 최근 스냅샷(기준일 − 대기 일수 × 2 뒤)의 draft에서만 찾음 (PayoutPolicy.HELD_LOOKBACK_DAYS)
@@ -763,6 +909,16 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
         return post("/api/v1/admin/payouts/adjustments")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
+    }
+
+    // 한 스냅샷에서 수취인으로 정산 1건을 찾음 (payeeId null = 시스템 몫)
+    private Payout payoutOf(Long snapshotId, Long payeeId) {
+        for (Payout payout : payoutRepository.findBySnapshotId(snapshotId)) {
+            if (Objects.equals(payout.getPayeeId(), payeeId)) {
+                return payout;
+            }
+        }
+        throw new IllegalStateException("정산이 없습니다. snapshotId=" + snapshotId + ", payeeId=" + payeeId);
     }
 
     // Job 실행 1회 = 스냅샷 1건이라, 실행 ID로 그 실행이 만든 스냅샷을 찾음 (JPA 조회)

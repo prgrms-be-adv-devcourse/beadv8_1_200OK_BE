@@ -875,10 +875,10 @@ class PayoutServiceTest {
 
     @Test
     void 관리자가_판매자_정산을_보면_그_판매자_수수료와_시스템_몫_정산_ID를_함께_준다() {
-        // given: 판매자 7의 정산 12, 같은 스냅샷의 시스템 몫 정산 14에 판매자 7 수수료 1건 300원
+        // given: 판매자 7의 정산 12, 같은 스냅샷의 시스템 몫 정산 14, 정산 12가 대금을 치른 주문상품의 수수료 1건 300원
         givenDetail(sellerPayout(12L, 7L, 13_000L), 2L);
         given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.of(systemPayout(14L)));
-        given(payoutQueryRepository.summarizeSellerFeeItems(14L, 7L)).willReturn(new CountAndAmount(1, 300));
+        given(payoutQueryRepository.summarizeSaleFeesOfSellerPayout(12L)).willReturn(new CountAndAmount(1, 300));
 
         // when
         PayoutDetailResult result = sut.getDetailForAdmin(12L);
@@ -903,7 +903,7 @@ class PayoutServiceTest {
         // given
         givenDetail(sellerPayout(12L, 7L, 13_000L), 2L);
         given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.of(systemPayout(14L)));
-        given(payoutQueryRepository.summarizeSellerFeeItems(14L, 7L)).willReturn(new CountAndAmount(1, 300));
+        given(payoutQueryRepository.summarizeSaleFeesOfSellerPayout(12L)).willReturn(new CountAndAmount(1, 300));
 
         // when
         PayoutDetailResult result = sut.getDetailForSeller(7L, 12L);
@@ -935,10 +935,12 @@ class PayoutServiceTest {
     }
 
     @Test
-    void 같은_스냅샷에_시스템_몫_정산이_없으면_수수료_필드가_없다() {
-        // given: 이번 회차에 수수료가 하나도 없어서 시스템 몫 정산이 만들어지지 않음
+    void 같은_회차에_시스템_몫_정산이_없어도_앞_회차에_들어간_수수료는_합계에_준다() {
+        // given: 이번 회차에 수수료가 하나도 없어 시스템 몫 정산이 없음
+        //   보류됐던 대금이 이번에 정산되면, 그 대금의 수수료 500은 앞 회차 시스템 몫에 들어 있음 (#291)
         givenDetail(sellerPayout(12L, 7L, 13_000L), 2L);
         given(payoutRepository.findBySnapshotIdAndSystemTrue(SNAPSHOT_ID)).willReturn(Optional.empty());
+        given(payoutQueryRepository.summarizeSaleFeesOfSellerPayout(12L)).willReturn(new CountAndAmount(1, 500));
 
         // when
         PayoutDetailResult result = sut.getDetailForAdmin(12L);
@@ -947,8 +949,8 @@ class PayoutServiceTest {
         assertThat(result).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(result.systemPayoutId()).isNull();
-            softly.assertThat(result.sellerFeeAmount()).isNull();
-            softly.assertThat(result.sellerFeeItemCount()).isNull();
+            softly.assertThat(result.sellerFeeAmount()).isEqualTo(500L);
+            softly.assertThat(result.sellerFeeItemCount()).isEqualTo(1L);
         });
     }
 

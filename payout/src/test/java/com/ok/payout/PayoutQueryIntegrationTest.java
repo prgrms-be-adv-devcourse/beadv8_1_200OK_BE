@@ -370,7 +370,7 @@ class PayoutQueryIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.periodFrom").value(nullValue()))
                 .andExpect(jsonPath("$.periodTo").value(json(snapshot.getPeriodTo())))
                 .andExpect(jsonPath("$.itemCount").value(3))                 // 판매 대금, 배송비, 조정
-                .andExpect(jsonPath("$.sellerFeeAmount").value(300))          // 시스템 몫에서 판매자 7 것만
+                .andExpect(jsonPath("$.sellerFeeAmount").value(300))          // 이 정산이 대금을 치른 주문상품의 수수료만
                 .andExpect(jsonPath("$.sellerFeeItemCount").value(1))
                 .andExpect(jsonPath("$.systemPayoutId").doesNotExist());      // 판매자 응답에는 칸 자체가 없음
     }

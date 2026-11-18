@@ -985,16 +985,34 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return Objects.requireNonNullElse(count, 0L);
     }
 
-    // 시스템 몫 정산 항목(수수료) 중 한 판매자 판매에서 나온 것의 건수·금액 합계 (정산 상세용)
-    // 수수료는 판매자 정산이 아니라 같은 스냅샷의 시스템 몫 정산에 모든 판매자 것이 섞여 들어가므로 sellerId로 골라냄
-    //   예) 시스템 몫 정산 14의 수수료 300(판매자 7) + 600(판매자 9) → 판매자 7이면 (1건, 300원)
+    // 판매자 정산 1건이 대금을 치른 주문상품의 수수료 중 정산된 것의 건수·금액 합계 (정산 상세용)
+    // 짝 짓는 기준 = 이 정산에 든 "원래 대금 후보"(SALE_AMOUNT, adjustment_id = 0)의 주문상품
+    //   원래 대금 후보는 주문상품마다 1건(UK order_item_id·event_type·adjustment_id)이고 정산 항목도 1건(UK candidate_id)이라,
+    //   한 주문상품의 수수료는 판매자 정산 딱 하나에만 붙음 → 여러 정산 상세를 더해도 같은 수수료가 두 번 세어지지 않음
+    //   대금 조정은 원래가 정산된 뒤 따로 다른 정산에 들어갈 수 있어(findUnsettledAdjustments) 기준으로 쓰지 않음 (쓰면 같은 수수료가 두 정산에 붙음)
+    // 수수료 쪽은 원래·조정을 모두 더함: 수수료 조정도 그 주문상품에서 떼어 간 돈이라서
+    //   그래서 지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 이 합계가 바뀜 (#291, 받아들임. 예: 300 → −100 정산 뒤 200)
+    // 수수료 정산 항목은 시스템 몫 정산에만 들어가므로(PayoutCandidateItem.isSystemShare) 정산 표를 다시 거르지 않음
+    // 인덱스: 판매자 항목은 payout_id(FK), 대금 후보는 PK, 수수료 후보는 UK(order_item_id, event_type, …)의 앞자리,
+    //   수수료 정산 항목은 UK(candidate_id)로 찾음 → 이 정산의 항목 수만큼만 읽고 전체 기록을 훑지 않음
+    //   payout_item에는 order_item_id 인덱스가 없어 항목끼리 order_item_id로 바로 잇지 않고 정산후보를 거침
     @Override
-    public CountAndAmount summarizeSellerFeeItems(Long systemPayoutId, Long sellerId) {
+    public CountAndAmount summarizeSaleFeesOfSellerPayout(Long sellerPayoutId) {
+        QPayoutItem saleItem = new QPayoutItem("saleItem");
+        QPayoutCandidateItem saleCandidate = new QPayoutCandidateItem("saleCandidate");
+        QPayoutCandidateItem feeCandidate = new QPayoutCandidateItem("feeCandidate");
+        QPayoutItem feeItem = new QPayoutItem("feeItem");
         Tuple row = queryFactory
-                .select(payoutItem.count(), payoutItem.amount.sumLong().coalesce(0L))
-                .from(payoutItem)
-                .where(payoutItem.payout.id.eq(systemPayoutId),
-                        payoutItem.sellerId.eq(sellerId))
+                .select(feeItem.count(), feeItem.amount.sumLong().coalesce(0L))
+                .from(saleItem)
+                .join(saleCandidate).on(saleCandidate.id.eq(saleItem.candidateId))
+                .join(feeCandidate).on(feeCandidate.orderItemId.eq(saleItem.orderItemId),
+                        feeCandidate.eventType.eq(PayoutEventType.SALE_FEE),
+                        feeCandidate.sellerId.eq(saleItem.sellerId))
+                .join(feeItem).on(feeItem.candidateId.eq(feeCandidate.id))
+                .where(saleItem.payout.id.eq(sellerPayoutId),
+                        saleItem.eventType.eq(PayoutEventType.SALE_AMOUNT),
+                        saleCandidate.adjustmentId.eq(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID))
                 .fetchOne();
         return new CountAndAmount(row.get(0, Long.class), row.get(1, Long.class));
     }

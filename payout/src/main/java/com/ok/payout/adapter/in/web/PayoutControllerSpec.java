@@ -52,7 +52,8 @@ interface PayoutControllerSpec {
 
     @Operation(summary = "본인 정산 상세 조회", description = """
             본인 정산 1건의 상세(정산 대상 기간, 항목 수)를 조회합니다. 항목 목록은 GET /api/v1/payouts/me/{payoutId}/items로 따로 조회합니다.
-            이 정산에서 떼어 간 판매 수수료 합계·건수를 함께 줍니다.
+            이 정산이 대금을 치른 주문상품에서 떼어 간 판매 수수료 합계·건수를 함께 줍니다(0원 이하로 보류됐다가 이번에 정산된 대금의 수수료 포함). 수수료가 없으면 0입니다.
+            지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 수수료 합계·건수가 바뀝니다(예: 300 → 수수료 조정 −100 정산 뒤 200).
             다른 판매자의 정산이나 시스템 몫 정산 ID를 넣으면 403입니다.
             """)
     @ApiResponses({
@@ -122,7 +123,8 @@ interface PayoutControllerSpec {
             정산 전인 후보(정산 대기)와 정산이 끝난 후보(정산 완료)가 함께 나오며, settled로 구분합니다. unsettledOnly=true면 정산 대기만 나옵니다.
             기간(from, to)은 필수이며 후보 생성 시각 기준으로 from은 포함, to는 포함하지 않습니다. 기간은 최대 1년입니다.
             후보 생성 시각은 평소 건이면 구매확정 직후, 관리자 조정 건이면 조정한 시각입니다.
-            수수료(SALE_FEE) 후보는 나오지 않습니다. 판매자가 낸 수수료 합계는 정산 상세(GET /api/v1/payouts/me/{payoutId})의 sellerFeeAmount로 확인합니다.
+            수수료(SALE_FEE) 후보는 나오지 않습니다. 각 정산이 대금을 치른 주문상품의 수수료 합계는 정산 상세(GET /api/v1/payouts/me/{payoutId})의 sellerFeeAmount로 확인합니다.
+            대금이 아직 정산되지 않은 주문상품(0원 이하 보류 포함)의 수수료는 그 대금이 정산된 정산 상세에 나옵니다.
             조정 사유는 원문 그대로라 화면에 출력할 때 HTML 이스케이프가 필요합니다.
             """)
     @ApiResponses({

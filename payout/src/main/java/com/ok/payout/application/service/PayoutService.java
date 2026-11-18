@@ -1098,20 +1098,29 @@ public class PayoutService implements PayoutUseCase {
                 .orElseThrow(() -> new IllegalStateException("정산의 스냅샷이 없습니다. payoutId=" + payout.getId()));
         long itemCount = payoutQueryRepository.countItemsByPayoutId(payout.getId());
 
-        // 판매자 수수료는 판매자 정산이 아니라 같은 회차의 시스템 몫 정산에 항목으로 들어 있음
-        // payout.snapshot_id는 같은 실행 회차에 만들어진 정산끼리 같은 값이라, 이 값으로 짝이 되는 시스템 몫 정산을 찾고 (payout 테이블)
-        // 그 항목 중 이 판매자(seller_id) 몫만 더함 (payout_item 테이블). seller_id만으로 더하면 모든 회차의 수수료가 합쳐짐
+        // 판매자 수수료는 판매자 정산이 아니라 시스템 몫 정산에 항목으로 들어 있음
+        // 수수료 합계는 회차가 아니라 "이 정산이 대금을 치른 주문상품"으로 찾음 (#291)
+        //   판매자가 0원 이하로 보류되면 수수료만 그 회차 시스템 몫에 들어가고 대금은 다음 회차 판매자 정산에 들어가서,
+        //   같은 회차 시스템 몫만 보면 보류 회차의 수수료가 빠짐
+        //   예) 1회차 판매 1,000(대금 970, 수수료 30은 1회차 시스템 몫) + 대금 조정 −2,000 → 판매자 −1,030이라 보류
+        //       → 2회차 판매 5,000(대금 4,850, 수수료 150은 2회차 시스템 몫) → 판매자 정산 3,820에 1회차 대금도 함께 들어감
+        //       → 회차로 보면 150, 주문상품으로 보면 30 + 150 = 180
+        //   대가: 지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 상세의 수수료가 바뀜 (받아들임. 예: 300 → −100 정산 뒤 200)
+        //   판매자 정산이면 수수료 칸은 늘 값(없으면 0)이고, null은 시스템 몫 정산일 때뿐
+        // 같은 회차 시스템 몫 정산 ID는 관리자가 그 회차 수수료 묶음을 열어 볼 수 있게 그대로 줌 (수수료 일부만 들어 있을 수 있음)
+        //   payout.snapshot_id는 같은 실행 회차에 만들어진 정산끼리 같은 값이라 이 값으로 찾음
+        //   그 회차에 수수료가 하나도 없으면 시스템 몫 정산이 없어 null이지만, 수수료 합계는 앞 회차 것이 있을 수 있어 따로 셈
         Long systemPayoutId = null;
         Long sellerFeeAmount = null;
         Long sellerFeeItemCount = null;
         if (!payout.isSystem()) {
             Optional<Payout> systemPayout = payoutRepository.findBySnapshotIdAndSystemTrue(payout.getSnapshotId());
             if (systemPayout.isPresent()) {
-                CountAndAmount fee = payoutQueryRepository.summarizeSellerFeeItems(systemPayout.get().getId(), payout.getPayeeId());
                 systemPayoutId = systemPayout.get().getId();
-                sellerFeeAmount = fee.amount();
-                sellerFeeItemCount = fee.count();
             }
+            CountAndAmount fee = payoutQueryRepository.summarizeSaleFeesOfSellerPayout(payout.getId());
+            sellerFeeAmount = fee.amount();
+            sellerFeeItemCount = fee.count();
         }
 
         return new PayoutDetailResult(payout.getId(), payout.getSnapshotId(), payout.getPayeeId(), payout.isSystem(),
@@ -1167,7 +1176,8 @@ public class PayoutService implements PayoutUseCase {
     /**
      * 판매자가 본인 정산후보 목록을 조회한다. 판매자는 본인으로 고정하고, 수수료(시스템 몫) 후보는 빼고 조회한다.
      * 수수료는 판매자 정산이 아니라 시스템 몫 정산에 들어가서, 정산 항목 조회처럼 판매자에게 줄 단위로 보여 주지 않는다
-     * (판매자가 낸 수수료 합계는 정산 상세의 sellerFeeAmount로 본다). 조정 번호·관리자 ID는 판매자 응답 DTO에서 뺀다.
+     * (판매자가 낸 수수료 합계는 정산 상세의 sellerFeeAmount로 본다. 대금이 아직 정산되지 않은 주문상품(0원 이하 보류 포함)의 수수료는
+     * 그 대금이 정산된 정산 상세에 나온다). 조정 번호·관리자 ID는 판매자 응답 DTO에서 뺀다.
      *
      * @param sellerId 요청한 판매자의 회원 ID (토큰에서 받은 값)
      */

@@ -35,18 +35,23 @@ public record PayoutDetailResponse(
         @Schema(description = "이 정산에 묶인 정산 항목 수. 항목은 GET /api/v1/admin/payouts/{payoutId}/items로 조회", example = "2")
         long itemCount,
 
-        @Schema(description = "같은 스냅샷의 시스템 몫 정산 ID (이 판매자의 수수료 항목이 들어 있음). 판매자 정산이면 값이 있음. "
-                + "시스템 몫 정산을 열면 null (그 정산이 바로 수수료 총합이라 가리킬 정산이 없음)",
+        @Schema(description = "같은 회차(스냅샷)의 시스템 몫 정산 ID. 이 판매자 수수료의 일부만 들어 있을 수 있음 "
+                + "(0원 이하로 보류됐다가 이번에 정산된 대금의 수수료는 앞 회차 시스템 몫 정산에 있음). "
+                + "시스템 몫 정산을 열면 null (그 정산이 바로 수수료 총합이라 가리킬 정산이 없음), "
+                + "그 회차에 수수료가 하나도 없어 시스템 몫 정산이 없어도 null",
                 example = "14", nullable = true)
         Long systemPayoutId,
 
-        @Schema(description = "이 판매자 판매에서 떼어 간 수수료 합계 (원). 판매자 정산일 때만 값이 있음. "
+        @Schema(description = "이 정산이 대금을 치른 주문상품에서 떼어 간 수수료 합계 (원, 정산된 수수료 조정 포함, 회차와 상관없이 더함). "
+                + "판매자 정산일 때만 값이 있음(없으면 0). "
+                + "지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 이 값이 바뀜. "
                 + "시스템 몫 정산은 특정 판매자의 정산이 아니라 모든 판매자 수수료를 모은 총합이라 null이며, "
                 + "총합은 amount·itemCount에, 판매자별 수수료는 GET /api/v1/admin/payouts/{payoutId}/items의 sellerId로 확인",
                 example = "300", nullable = true)
         Long sellerFeeAmount,
 
-        @Schema(description = "위 수수료 항목 수. 판매자 정산일 때만 값이 있음 (시스템 몫 정산이면 null, 이유는 sellerFeeAmount 참고)",
+        @Schema(description = "위 수수료 항목 수 (원래 수수료 + 정산된 수수료 조정). 판매자 정산일 때만 값이 있음(없으면 0). "
+                + "시스템 몫 정산이면 null, 이유는 sellerFeeAmount 참고",
                 example = "1", nullable = true)
         Long sellerFeeItemCount
 ) {

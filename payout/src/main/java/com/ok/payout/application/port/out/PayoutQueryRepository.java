@@ -129,10 +129,12 @@ public interface PayoutQueryRepository {
     // 정산 1건에 묶인 정산 항목 수 (상세 조회용). 항목을 다 불러오지 않고 개수만 셈
     long countItemsByPayoutId(Long payoutId);
 
-    // 시스템 몫 정산 항목(수수료) 중 한 판매자 판매에서 나온 것의 건수·금액 합계 (정산 상세용)
-    // 수수료는 판매자 정산이 아니라 같은 스냅샷의 시스템 몫 정산에 모든 판매자 것이 섞여 들어가므로 sellerId로 골라냄
-    //   예) 시스템 몫 정산 14의 수수료 300(판매자 7) + 600(판매자 9) → 판매자 7이면 (1건, 300원)
-    CountAndAmount summarizeSellerFeeItems(Long systemPayoutId, Long sellerId);
+    // 판매자 정산 1건이 대금을 치른 주문상품의 수수료(SALE_FEE, 원래 + 수수료 조정) 중 정산된 것의 건수·금액 합계 (정산 상세용)
+    // 수수료는 판매자 정산이 아니라 시스템 몫 정산에 들어가고, 판매자가 0원 이하로 보류되면(#291) 대금보다 앞 회차에 들어감
+    //   그래서 회차(스냅샷)가 아니라 주문상품으로 짝을 지음. 회차와 상관없이 어느 시스템 몫 정산에 들어갔든 더함
+    //   예) 1회차 보류(수수료 500은 1회차 시스템 몫) → 2회차 판매자 정산에 1회차 대금이 들어감 → 이 정산의 수수료 500 + 2회차 300 = 800
+    // 지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 합계가 바뀜 (받아들임. 예: 300 → −100 정산 뒤 200)
+    CountAndAmount summarizeSaleFeesOfSellerPayout(Long sellerPayoutId);
 
     // 마지막 "정기(SCHEDULED) 실행이 COMPLETED이고 정산을 1건 이상 만든" 배치 실행의 requestedAt (#390)
     // 정산 조회 하한을 정할 때 쓴다. 조건에 맞는 실행이 없으면 빈 값

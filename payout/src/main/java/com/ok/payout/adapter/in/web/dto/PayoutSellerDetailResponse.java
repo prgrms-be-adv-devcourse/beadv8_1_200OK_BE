@@ -37,10 +37,12 @@ public record PayoutSellerDetailResponse(
         @Schema(description = "이 정산에 묶인 정산 항목 수. 항목은 GET /api/v1/payouts/me/{payoutId}/items로 조회", example = "2")
         long itemCount,
 
-        @Schema(description = "이 정산에서 떼어 간 판매 수수료 합계 (원). 같은 회차에 수수료 항목이 없으면 null", example = "300", nullable = true)
+        @Schema(description = "이 정산이 대금을 치른 주문상품에서 떼어 간 판매 수수료 합계 (원, 정산된 수수료 조정 포함)."
+                + "0원 이하로 보류됐다가 이번에 정산된 대금의 수수료도 들어감. 수수료가 없으면 0. "
+                + "지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 이 값이 바뀜", example = "300")
         Long sellerFeeAmount,
 
-        @Schema(description = "위 수수료 항목 수. sellerFeeAmount와 같은 조건으로 값이 있음", example = "1", nullable = true)
+        @Schema(description = "위 수수료 항목 수 (원래 수수료 + 정산된 수수료 조정). 수수료가 없으면 0", example = "1")
         Long sellerFeeItemCount
 ) {
 
