@@ -61,7 +61,8 @@ class RefundWalletKafkaAdapter implements WalletRefundRequestPort {
         try {
             // 저장 확인을 기다린다. 기다리지 않으면 브로커가 거절해도 판매자는 성공 응답을 받아 실패를 아무도 모른다.
             // 이 시간 제한은 send() 뒤의 기다림만 줄인다. send() 안에서 Kafka 주소를 찾느라 기다리는 시간(max.block.ms 기본 60초)은
-            // 그대로다. 그 시간은 producer 설정이라 #516에서 함께 다룬다
+            // 그대로다. 그 시간은 공통 producer 설정(common-kafka.yaml)이라 환불이 따로 줄이지 않고 기본값을 쓴다.
+            // 시도 중 만료(RefundStep, 2분)를 이 최대 대기(약 70초)보다 길게 둬 맞췄다(#576, #578에서 그대로 두기로 정리)
             kafkaTemplate.send(topic, key, message).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             // 기다리는 중 스레드가 중단되면 중단 표시를 되살린 뒤 실패로 올린다

@@ -76,7 +76,9 @@ public class FakeOrderCancellationPort implements OrderCancellationPort {
             return OrderCancellationResult.rejected("이미 출고된 상품입니다.");
         }
         // 동시에 같은 refundId가 두 번 오면 위 확인을 둘 다 지나칠 수 있다(확인과 저장 사이 틈, #578).
-        // 저장 결과로 다시 가른다: 먼저 들어간 값과 같으면 반영됨, 다르면 실제 주문처럼 거절됨. 잠금 없이 키 하나 단위로 원자적이다
+        // 저장 결과로 다시 가른다: 먼저 들어간 값과 같으면 반영됨, 다르면 실제 주문처럼 거절됨. 잠금 없이 키 하나 단위로 원자적이다.
+        // 차례로 부르는 테스트는 위 previous 확인에서 먼저 걸려 이 분기에 닿지 않는다. 두 스레드가 확인과 저장 사이에 겹치는 순간을
+        // 매번 만들 수 없어(통과해도 고친 것을 증명하지 못함) 테스트를 두지 않았다
         OrderCancellation raced = reflected.putIfAbsent(cancellation.refundId(), cancellation);
         if (raced != null && !raced.equals(cancellation)) {
             return OrderCancellationResult.rejected("같은 refundId로 다른 내용의 요청이 이미 반영되어 있습니다.");

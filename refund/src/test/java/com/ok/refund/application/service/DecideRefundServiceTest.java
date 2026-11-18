@@ -595,6 +595,43 @@ class DecideRefundServiceTest {
         }
     }
 
+    // 주문을 부르는 사이 다른 경로가 환불을 먼저 끝냈으면(처리 중이 아님) 거절로 덮지 않고 예외 없이 지금 상태를 돌려준다(#616 결정 15).
+    // 덮지 않은 것도 사람이 알아야 해 WARN을 남긴다(#578)
+    @Test
+    void 주문이_거절했는데_환불이_처리_중이_아니면_바꾸지_않고_지금_상태와_WARN을_남긴다() {
+        // given: 승인 구간의 잠금 조회는 요청됨 환불을, 거절 구간의 두 번째 잠금 조회는 처리 중이 아닌 환불(요청됨 그대로)을 준다
+        Refund locked = withId(requested(), REFUND_ID);
+        given(refundPersistencePort.findLockTargetIds(10L, SELLER_ID, REFUND_ID, LOCK_TARGET_STATUSES))
+                .willReturn(List.of(REFUND_ID));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID))
+                .willReturn(Optional.of(locked))
+                .willAnswer(invocation -> Optional.of(withId(requested(), REFUND_ID)));
+        lenient().when(refundPersistencePort.findById(REFUND_ID))
+                .thenAnswer(invocation -> Optional.of(withId(locked, REFUND_ID)));
+        given(orderCancellationPort.reflectCancellation(any())).willReturn(OrderCancellationResult.rejected("이미 출고된 상품입니다."));
+        Logger sagaLogger = (Logger) LoggerFactory.getLogger(RefundSagaService.class);
+        ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
+        logAppender.start();
+        sagaLogger.addAppender(logAppender);
+
+        try {
+            // when
+            RefundResult result = sut.approve(REFUND_ID, SELLER_ID, potato("PREPARING", 2));
+
+            // then: 거절 구간은 저장하지 않아 승인 구간의 저장(처리 중) 한 번만 남는다
+            assertThat(result).isNotNull();
+            assertSoftly(softly -> {
+                softly.assertThat(result.status()).isEqualTo("REQUESTED");
+                softly.assertThat(capturedUpdates()).hasSize(1);
+                softly.assertThat(logAppender.list)
+                        .anyMatch(event -> event.getLevel() == Level.WARN
+                                && event.getFormattedMessage().contains("거절했지만 환불이 처리 중이 아니라 거절로 바꾸지 않음"));
+            });
+        } finally {
+            sagaLogger.detachAppender(logAppender);
+        }
+    }
+
     // 거절 구간은 승인한 환불을 다시 잠가 읽는다. 그사이 행이 사라졌으면 있을 수 없는 상태(코드 버그·DB 손상)라
     // 조용히 넘기지 않고 표준 예외로 드러낸다(#578)
     @Test
