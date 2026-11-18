@@ -503,3 +503,28 @@ docker compose -f compose.prod.yml exec mysql tail -n 50 /var/lib/mysql/slow.log
 ```
 
 로그는 자동으로 줄지 않으므로 부하테스트 뒤 용량이 커졌다면 `docker compose -f compose.prod.yml exec mysql sh -c ': > /var/lib/mysql/slow.log'`로 비웁니다.
+
+## 12. 충전 복구 배포 뒤 기존 처리 중 충전 건 (#135, 한 번만)
+
+충전 복구를 처음 배포하기 전부터 처리 중(`IN_PROGRESS`)이던 충전 건은 다음 확인 시각이 비어 있어, 복구가 사람 확인 대기로 보고 건드리지 않습니다. 3시간이 넘은 건은 한 시간마다 `[CHARGE_LONG_IN_PROGRESS]` WARN 로그에 충전 번호가 찍힙니다. 범위를 모르는 운영 데이터를 배포 때 바꾸지 않으려고 마이그레이션에서 채우지 않았으므로, 배포 뒤 아래 순서로 한 번 실행합니다.
+
+```bash
+docker compose -f compose.prod.yml exec mysql mysql -u root -p   # DB 접속
+```
+
+```sql
+USE paldogotgan_wallet;
+
+-- 1. 대상 확인: 개수와 가장 오래된 요청 시각
+SELECT COUNT(*), MIN(created_at) FROM wallet_charge
+WHERE status = 'IN_PROGRESS' AND next_check_at IS NULL AND check_count = 0;
+
+-- 2. 복구 대상으로 바꾼다. 복구가 1분마다 50건씩 토스에 조회한다
+UPDATE wallet_charge SET next_check_at = updated_at
+WHERE status = 'IN_PROGRESS' AND next_check_at IS NULL AND check_count = 0;
+```
+
+- 조건은 배포 전부터 처리 중이던 건만 고릅니다. 배포 뒤 처리 중이 된 건은 그때 확인 시각이 잡히고, 복구가 멈춘 건은 확인 횟수가 1 이상이라 다시 돌리지 않습니다.
+- 확인 시각을 마지막 수정 시각으로 채워 바로 확인 대상이 되고, 오래된 건부터 조회됩니다.
+- 건수가 많아 나눠 돌리려면 2번 끝에 `ORDER BY created_at LIMIT 500`을 붙여 여러 번 실행합니다.
+- 실행 뒤 `[CHARGE_RECOVERY_HOLD]`, `[CHARGE_RECOVERY_APPLY_FAILED]` 로그를 확인합니다.

@@ -5,8 +5,3 @@ ALTER TABLE wallet_charge
 
 -- 복구는 확인할 때가 된 처리 중 건을 시각 순으로 고른다
 CREATE INDEX idx_wallet_charge_status_next_check_at ON wallet_charge (status, next_check_at);
-
--- 배포 전부터 처리 중이던 건은 이미 오래됐으므로 바로 확인 대상이 되게 한다
-UPDATE wallet_charge
-SET next_check_at = updated_at
-WHERE status = 'IN_PROGRESS';
