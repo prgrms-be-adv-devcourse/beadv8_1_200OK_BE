@@ -685,23 +685,23 @@ com.ok.wallet
 ├── config/               모듈 전용 설정
 ├── application/
 │   ├── port/in/          입력 포트: 유스케이스 인터페이스 (*UseCase)
-│   ├── port/out/         출력 포트: 저장소, 이벤트 발행, 토스 결제 승인·조회 인터페이스
+│   ├── port/out/         출력 포트: 저장소, 이벤트 발행, 토스 결제 승인·조회·취소 인터페이스
 │   ├── service/          유스케이스 구현 (*Service)
-│   └── dto/              *Command, *Query, *Result, 토스 승인·조회 결과(TossConfirmResult, TossPaymentLookupResult)
+│   └── dto/              *Command, *Query, *Result, 토스 승인·조회·취소 결과(TossConfirmResult, TossPaymentLookupResult, TossCancelResult)
 └── adapter/
     ├── in/web/           컨트롤러, *Spec, 요청·응답 DTO(dto/)
     ├── in/event/         Kafka 리스너, 받는 메시지 DTO(dto/), Kafka 수신 설정과 실패 기록 연결
     ├── in/scheduler/     충전 복구 스케줄러 (1분마다 복구, 한 시간마다 오래 남은 건 알림)
     ├── out/persistence/  저장소 포트 구현(*RepositoryAdapter), Spring Data JPA 저장소, Querydsl 조회
     ├── out/event/        Kafka 발행 구현체, 보내는 메시지 DTO(dto/), 보내는 토픽 생성
-    └── out/toss/         토스 결제 승인·조회 HTTP 구현, 토스 요청·응답 DTO, 설정
+    └── out/toss/         토스 결제 승인·조회·취소 HTTP 구현, 토스 요청·응답 DTO, 설정
 ```
 
 - 의존 방향, 이벤트 수신·발행 위치는 delivery와 같습니다.
 - 저장소 포트는 delivery와 달리 `*JpaRepository`가 상속하지 않고, 어댑터 클래스(`*RepositoryAdapter`)가 구현해 `*JpaRepository`에 넘깁니다. 어댑터는 트랜잭션을 열지 않으므로 잠금과 쿼리는 서비스의 트랜잭션 안에서 지금과 같이 동작합니다. 저장소 메서드를 추가하면 포트, 어댑터, `*JpaRepository` 세 곳을 고칩니다.
 - 어댑터에는 `@Repository`가 아니라 `@Component`를 붙입니다. DB 예외 변환은 안쪽 `*JpaRepository` 프록시가 이미 하므로 다시 할 필요가 없습니다.
 - 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`saveAndFlush`, `deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다. `@DataJpaTest`로 포트를 쓰는 테스트는 어댑터를 `@Import`로 등록합니다.
-- 토스 승인과 결제 조회는 출력 포트(`TossPaymentsClient`)로 부릅니다. 서비스는 승인 결과(`TossConfirmResult`)와 조회 결과(`TossPaymentLookupResult`)만 알고, HTTP 요청·응답 모양은 `adapter/out/toss` 안에 둡니다.
+- 토스 승인·결제 조회·결제 취소는 출력 포트(`TossPaymentsClient`)로 부릅니다. 서비스는 승인 결과(`TossConfirmResult`), 조회 결과(`TossPaymentLookupResult`), 취소 결과(`TossCancelResult`)만 알고, HTTP 요청·응답 모양은 `adapter/out/toss` 안에 둡니다.
 - 충전 승인은 토스를 부르는 `ChargeConfirmService`(트랜잭션 없음)만 `ChargeConfirmUseCase`를 구현합니다. DB 반영은 `ChargeTransactionService`가 포트 없이 다른 빈으로 맡습니다. 같은 빈 안에서 부르면 `@Transactional`이 걸리지 않으므로 두 서비스를 합치지 않습니다.
 - 엔티티를 도메인 모델과 나누지 않습니다. 잔액 변경과 충전 완료는 엔티티 값만 바꾸고 저장은 변경 감지에 맡기므로, 나누면 저장이 빠졌을 때 오류 없이 잔액이 반영되지 않습니다.
 - 입력 포트는 엔티티를 돌려주지 않습니다. 잠긴 엔티티가 필요한 `getOrCreate`는 서비스에만 두고 `application` 안에서만 씁니다.
@@ -724,6 +724,25 @@ com.ok.wallet
 - 토스 답이 승인(결제 키·금액이 충전 건과 같음)이면 완료하고, 승인 실패·만료이면 실패로 바꿉니다(결제 키가 충전 건과 같을 때만, 다르면 같은 충전 번호의 다른 결제 시도일 수 있어 멈춤). 결제가 없다는 답은 충전 요청 뒤 1시간이 지나야 실패로 봅니다. 준비·진행 중·알 수 없음은 다음에 다시 확인합니다. 승인됐는데 결제 키나 금액이 다르거나, 취소·부분 취소·입금 대기이면 멈추고 `[CHARGE_RECOVERY_HOLD]` ERROR 로그를 남깁니다. 10번째 확인에도 끝나지 않아도 멈춥니다.
 - 승인 응답과 복구가 같은 건을 함께 끝내려 하면 완료 처리는 지갑 → 충전 건 순서로, 실패 처리는 충전 건만 잠근 뒤 상태를 봅니다. 뒤에 온 쪽은 바뀐 상태를 보고 그대로 돌아갑니다. 잠그는 순서는 승인 시작과 같아야 하고(반대면 교착), 잠그기 전에 충전 건을 읽지 않습니다(먼저 읽으면 잠금 조회가 옛 상태를 돌려줌).
 - 요청 뒤 3시간이 지나도 처리 중인 건은 한 시간마다 `[CHARGE_LONG_IN_PROGRESS]` WARN 로그로 다시 알립니다.
+
+**충전 관리자 처리**
+
+- 복구가 끝내지 못한 충전 건은 관리자가 API(`/api/v1/admin/wallets/charges`, `hasRole('ADMIN')`)로 끝냅니다(`ChargeAdminService`, 트랜잭션 없음). 대상은 복구가 멈춘 처리 중 건과, 실패로 처리된 뒤 늦게 온 승인 응답이 표시를 남긴 건(`approved_after_failure_at`) 중 아직 결제를 취소하지 않은 건입니다. 자동으로 취소하지 않습니다.
+- 처리 절차:
+  1. 알림(`[CHARGE_RECOVERY_HOLD]`, `[CHARGE_APPROVED_BUT_FAILED]`, `[CHARGE_LONG_IN_PROGRESS]`)이나 목록(`GET /api/v1/admin/wallets/charges`)으로 충전 번호를 찾습니다.
+  2. 상세(`GET .../{충전 번호}`)로 충전 건과 토스 결제 상태를 함께 봅니다.
+  3. 토스 상태에 맞는 처리를 고릅니다. 맞지 않는 처리는 409로 거부됩니다(처리 직전에 토스에 다시 물어 막음).
+
+  | 토스 결제 상태 | 멈춘 처리 중 건 | 승인 뒤 실패한 건 |
+  |---|---|---|
+  | 같은 금액으로 승인(`DONE`) | 반영(`/complete`) 또는 결제 취소(`/cancel-payment`) | 결제 취소 |
+  | 결제 없음, 승인 실패, 만료 | 실패(`/fail`) | 해당 없음 |
+  | 취소됨 (토스에서 이미 환불) | 결제 취소(다시 취소하지 않고 기록만 함) 또는 실패 | 결제 취소(기록만 함) |
+  | 준비, 인증됨, 부분 취소, 입금 대기, 금액 다름 | 처리하지 않고 기다리거나 토스에서 직접 확인 | 같음 |
+
+  4. 503은 토스 상태나 취소 결과를 확인하지 못한 것입니다. 충전 건은 바뀌지 않았으니 잠시 뒤 같은 처리를 다시 누릅니다. 결제 취소는 다시 눌러도 두 번 환불되지 않습니다.
+- 결제 취소는 토스를 먼저 부르고, 취소가 확인된 뒤 충전 건에 결제 취소 시각(`payment_canceled_at`)을 남깁니다. 상태는 실패로 둡니다(처리 중이던 건은 실패 코드 `PAYMENT_CANCELED`, 이미 실패한 건은 원래 실패 사유 유지). 응답이 애매하면 충전 번호로 다시 조회해 `CANCELED`일 때만 기록합니다. 멱등 키는 시도마다 새로 만듭니다(같은 키는 첫 응답을 그대로 돌려줘, 일시 오류 뒤 다시 시도해도 같은 오류만 받을 수 있음).
+- 반영·실패·취소 기록은 충전 건을 잠근 뒤 해, 늦게 온 승인 응답과 겹쳐도 한쪽만 반영됩니다. 토스 취소를 부르는 사이 승인 응답이 먼저 완료하면 `[CHARGE_CANCELED_BUT_COMPLETED]` ERROR 로그가 남습니다. 환불도 되고 잔액도 는 상태라 사람이 잔액을 회수합니다.
 
 **Kafka 수신과 실패 기록**
 
