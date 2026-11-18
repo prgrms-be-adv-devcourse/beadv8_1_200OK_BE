@@ -4,6 +4,8 @@ import com.ok.order.order.adapter.out.event.dto.OrderCreatedMessage;
 import com.ok.order.order.adapter.out.event.dto.OrderPaidMessage;
 import com.ok.order.order.adapter.out.event.dto.OrderPaymentExpireRequestedMessage;
 import com.ok.order.order.adapter.out.event.dto.OrderProductConfirmedMessage;
+import com.ok.order.order.adapter.out.event.dto.OrderRefundRevertFailedMessage;
+import com.ok.order.order.adapter.out.event.dto.OrderRefundRevertedMessage;
 import com.ok.order.order.application.dto.PaidItemMessage;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.PaidSellerGroupMessage;
@@ -78,5 +80,19 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     public void publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount) {
         outboxRecorder.record(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderPaymentExpireRequestedMessage(orderId, buyerId, totalAmount)));
+    }
+
+    // 환불이 Kafka로만 받는다(환불 #622). 키는 환불이 보낸 요청과 같은 orderId라 한 주문의 요청과 결과가 같은 기준으로 쌓인다(#604).
+    // 다시 보내져도 환불이 이미 끝난 되돌리기 줄이면 넘기므로 한 번만 반영된다
+    @Override
+    public void publishRefundReverted(Long refundId, Long orderId, Long orderItemId) {
+        outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERTED, String.valueOf(orderId),
+                jsonMapper.writeValueAsString(new OrderRefundRevertedMessage(refundId, orderId, orderItemId)));
+    }
+
+    @Override
+    public void publishRefundRevertFailed(Long refundId, Long orderId, Long orderItemId, String reason) {
+        outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERT_FAILED, String.valueOf(orderId),
+                jsonMapper.writeValueAsString(new OrderRefundRevertFailedMessage(refundId, orderId, orderItemId, reason)));
     }
 }

@@ -34,4 +34,14 @@ class OrderKafkaTopicConfig {
     NewTopic orderOrderPaymentExpireRequestedTopic() {
         return TopicBuilder.name(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED).build();
     }
+
+    @Bean
+    NewTopic orderOrderRefundRevertedTopic() {
+        return TopicBuilder.name(OrderTopics.ORDER_REFUND_REVERTED).build();
+    }
+
+    @Bean
+    NewTopic orderOrderRefundRevertFailedTopic() {
+        return TopicBuilder.name(OrderTopics.ORDER_REFUND_REVERT_FAILED).build();
+    }
 }

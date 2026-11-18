@@ -7,6 +7,7 @@ import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.OrderStatus;
+import com.ok.order.order.domain.RefundRevertOutcome;
 import com.ok.order.order.domain.SellerShippingFee;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.application.port.out.OrderRepository;
@@ -16,6 +17,7 @@ import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
+import com.ok.order.order.application.dto.RevertOrderItemRefundCommand;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -888,6 +890,77 @@ class OrderServiceTest {
         assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
         then(orderEventPublisher).should(never())
                 .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    // ---------- 환불 취소 기록 되돌리기 (#604) ----------
+
+    // 결제 완료된 주문 10의 주문 상품 1에 환불 7(1개)이 기록된 상태
+    private Order paidOrderWithRefund() {
+        Order order = savedOrder(10L);
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        ReflectionTestUtils.setField(item, "id", 1L);
+        item.recordRefund(7L, 1, 0L);
+        return order;
+    }
+
+    @Test
+    void 되돌릴_수_있으면_되돌리고_환불에_되돌림을_보낸다() {
+        // given
+        Order order = paidOrderWithRefund();
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 1));
+
+        // then
+        assertThat(order.getAllItems().get(0).refundedQuantity()).isZero();
+        then(orderEventPublisher).should().publishRefundReverted(7L, 10L, 1L);
+        then(orderEventPublisher).should(never()).publishRefundRevertFailed(anyLong(), anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void 되돌릴_수_없으면_이유와_함께_실패를_보내고_기록은_그대로_둔다() {
+        // given: 기록은 1개인데 2개를 되돌려 달라고 함
+        Order order = paidOrderWithRefund();
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 2));
+
+        // then
+        assertThat(order.getAllItems().get(0).refundedQuantity()).isEqualTo(1);
+        then(orderEventPublisher).should()
+                .publishRefundRevertFailed(7L, 10L, 1L, RefundRevertOutcome.QUANTITY_MISMATCH.name());
+        then(orderEventPublisher).should(never()).publishRefundReverted(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void 메시지의_주문_ID가_주문_상품의_주문과_다르면_되돌리지_않고_실패를_보낸다() {
+        // given
+        Order order = paidOrderWithRefund();
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+
+        // when
+        sut.revertRefund(new RevertOrderItemRefundCommand(7L, 99L, 1L, 1));
+
+        // then
+        assertThat(order.getAllItems().get(0).refundedQuantity()).isEqualTo(1);
+        then(orderEventPublisher).should()
+                .publishRefundRevertFailed(7L, 99L, 1L, RefundRevertOutcome.ORDER_ITEM_NOT_FOUND.name());
+    }
+
+    @Test
+    void 되돌릴_주문_상품이_없으면_예외_없이_실패를_보낸다() {
+        // given
+        given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.empty());
+
+        // when
+        sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 1));
+
+        // then
+        then(orderEventPublisher).should()
+                .publishRefundRevertFailed(7L, 10L, 1L, RefundRevertOutcome.ORDER_ITEM_NOT_FOUND.name());
     }
 
     // ---------- 환불 취소 반영 (#28) ----------

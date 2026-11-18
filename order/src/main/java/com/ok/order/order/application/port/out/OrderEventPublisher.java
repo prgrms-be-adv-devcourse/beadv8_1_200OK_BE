@@ -19,4 +19,16 @@ public interface OrderEventPublisher {
      * @param totalAmount 결제 요청한 금액(원). 지갑이 처음 보는 주문이면 이 금액으로 만료 실패를 먼저 기록한다
      */
     void publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount);
+
+    /**
+     * 환불이 요청한 취소 기록 되돌리기를 마쳤다고 환불에 알린다(#604). 환불은 이 결과로 환불을 실패로 끝낸다. 트랜잭션 안에서 부른다.
+     */
+    void publishRefundReverted(Long refundId, Long orderId, Long orderItemId);
+
+    /**
+     * 취소 기록을 되돌리지 못했다고 이유와 함께 환불에 알린다(#604). 환불은 처리 중으로 남겨 사람이 보게 한다. 트랜잭션 안에서 부른다.
+     *
+     * @param reason 되돌리지 못한 이유. {@code RefundRevertOutcome}의 이름이다(예: {@code ALREADY_CONFIRMED})
+     */
+    void publishRefundRevertFailed(Long refundId, Long orderId, Long orderItemId, String reason);
 }

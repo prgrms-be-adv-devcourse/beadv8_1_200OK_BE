@@ -827,6 +827,177 @@ class OrderTest {
         assertThat(sut).isEqualTo(3_000L);
     }
 
+    // ---------- 환불 취소 기록 되돌리기 (#604) ----------
+
+    private static final LocalDateTime REVERTED_AT = LocalDateTime.of(2026, 11, 18, 15, 0);
+
+    @Test
+    void 출고_전_상품의_취소_기록을_되돌리면_환불_수량과_뺀_배송비에서_빠지고_상태는_그대로다() {
+        // given
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        order.applyShippingFee(100L, new SellerShippingFee(3_000L, 50_000L, 3_000L, 0L));
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        item.recordRefund(7L, 2, 3_000L);
+
+        // when
+        RefundRevertOutcome sut = item.revertRefund(7L, 2, REVERTED_AT);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isEqualTo(RefundRevertOutcome.REVERTED);
+            softly.assertThat(item.refundedQuantity()).isZero();
+            softly.assertThat(item.confirmedItemAmount()).isEqualTo(30_000L);
+            softly.assertThat(item.getSellerGroup().shippingFeeForPayout()).isEqualTo(3_000L);
+            softly.assertThat(item.getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+        });
+    }
+
+    @Test
+    void 이미_되돌린_환불이_다시_오면_다시_되돌림으로_답하고_수량은_그대로다() {
+        // given
+        OrderItem item = preparingItem();
+        item.recordRefund(7L, 1, 0L);
+        item.recordRefund(8L, 1, 0L);
+        item.revertRefund(7L, 1, REVERTED_AT);
+
+        // when
+        RefundRevertOutcome sut = item.revertRefund(7L, 1, REVERTED_AT.plusMinutes(5));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isEqualTo(RefundRevertOutcome.ALREADY_REVERTED);
+            softly.assertThat(item.refundedQuantity()).isEqualTo(1);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("되돌리지_않는_경우")
+    void 되돌릴_수_없으면_이유를_돌려주고_기록은_그대로_둔다(Long refundId, int quantity, RefundRevertOutcome expected) {
+        // given
+        OrderItem item = preparingItem();
+        item.recordRefund(7L, 2, 0L);
+
+        // when
+        RefundRevertOutcome sut = item.revertRefund(refundId, quantity, REVERTED_AT);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isEqualTo(expected);
+            softly.assertThat(item.refundedQuantity()).isEqualTo(2);
+        });
+    }
+
+    static Stream<Arguments> 되돌리지_않는_경우() {
+        return Stream.of(
+                Arguments.of(99L, 2, RefundRevertOutcome.REFUND_NOT_FOUND),    // 그 환불 ID로 남긴 기록이 없음
+                Arguments.of(7L, 1, RefundRevertOutcome.QUANTITY_MISMATCH));   // 기록된 수량과 다름
+    }
+
+    @Test
+    void 일부만_환불된_상품이_배송_중이면_출고됨으로_되돌리지_않는다() {
+        // given
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        item.recordRefund(7L, 1, 0L);
+        order.markShipping(100L);
+
+        // when
+        RefundRevertOutcome sut = item.revertRefund(7L, 1, REVERTED_AT);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isEqualTo(RefundRevertOutcome.ALREADY_SHIPPED);
+            softly.assertThat(item.refundedQuantity()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void 모두_환불돼_배송_준비로_남았어도_같은_묶음이_출고됐으면_되돌리지_않는다() {
+        // given: 같은 판매자 묶음에 감자 3개(모두 환불)와 사과 2개, 사과만 출고됨
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3), line(2L, 100L, 5_000L, 2)));
+        order.markPaid();
+        OrderItem potato = order.getAllItems().get(0);
+        potato.recordRefund(7L, 3, 0L);
+        order.markShipping(100L);
+
+        // when
+        RefundRevertOutcome sut = potato.revertRefund(7L, 3, REVERTED_AT);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isEqualTo(RefundRevertOutcome.ALREADY_SHIPPED);
+            softly.assertThat(potato.getStatus()).isEqualTo(OrderItemStatus.PREPARING);
+            softly.assertThat(potato.isFullyRefunded()).isTrue();
+        });
+    }
+
+    @Test
+    void 다른_판매자_묶음이_출고된_것은_되돌리기를_막지_않는다() {
+        // given: 판매자 100의 감자(모두 환불), 판매자 200의 사과만 출고됨
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3), line(2L, 200L, 5_000L, 2)));
+        order.markPaid();
+        OrderItem potato = order.getAllItems().stream()
+                .filter(item -> item.getSellerGroup().getSellerId().equals(100L)).findFirst().orElseThrow();
+        potato.recordRefund(7L, 3, 0L);
+        order.markShipping(200L);
+
+        // when
+        RefundRevertOutcome sut = potato.revertRefund(7L, 3, REVERTED_AT);
+
+        // then
+        assertThat(sut).isEqualTo(RefundRevertOutcome.REVERTED);
+    }
+
+    @Test
+    void 구매확정된_상품은_되돌리지_않는다() {
+        // given: 일부 환불 뒤 배송 완료·구매확정까지 간 상품
+        Order order = Order.create(1L, List.of(line(1L, 100L, 10_000L, 3)));
+        order.markPaid();
+        OrderItem item = order.getAllItems().get(0);
+        item.recordRefund(7L, 1, 0L);
+        order.markDelivered(100L, NOW);
+        item.confirmPurchase(NOW.plusDays(1));
+
+        // when
+        RefundRevertOutcome sut = item.revertRefund(7L, 1, REVERTED_AT);
+
+        // then
+        assertThat(sut).isEqualTo(RefundRevertOutcome.ALREADY_CONFIRMED);
+    }
+
+    @Test
+    void 되돌린_환불의_기록_요청이_늦게_오면_거절한다() {
+        // given
+        OrderItem item = preparingItem();
+        item.recordRefund(7L, 1, 0L);
+        item.revertRefund(7L, 1, REVERTED_AT);
+
+        // when & then
+        assertThatThrownBy(() -> item.recordRefund(7L, 1, 0L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.REFUND_ALREADY_REVERTED));
+        assertThat(item.refundedQuantity()).isZero();
+    }
+
+    @Test
+    void 되돌린_수량만큼_다른_환불을_다시_받을_수_있다() {
+        // given: 3개 중 3개를 환불했다가 되돌림
+        OrderItem item = preparingItem();
+        item.recordRefund(7L, 3, 0L);
+        item.revertRefund(7L, 3, REVERTED_AT);
+
+        // when
+        boolean sut = item.recordRefund(8L, 3, 0L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut).isTrue();
+            softly.assertThat(item.refundedQuantity()).isEqualTo(3);
+        });
+    }
+
     @Test
     void 주문_상품이_한_줄이면_주문_요약은_상품_이름만이다() {
         // given

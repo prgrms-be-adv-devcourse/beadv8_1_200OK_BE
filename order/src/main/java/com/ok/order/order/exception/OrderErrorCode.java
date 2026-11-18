@@ -28,6 +28,8 @@ public enum OrderErrorCode implements ErrorCode {
     REFUND_NOT_ALLOWED_STATUS(HttpStatus.CONFLICT, "Refund not allowed status", "출고 전(배송 준비) 상품만 환불을 반영할 수 있습니다."),
     REFUND_QUANTITY_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY, "Refund quantity exceeded", "환불 수량 합계가 주문 수량을 넘습니다."),
     REFUND_ID_CONFLICT(HttpStatus.UNPROCESSABLE_ENTITY, "Refund id conflict", "같은 환불 ID로 다른 내용이 이미 반영되었습니다."),
+    // 되돌린 환불의 기록 요청이 늦게 왔다. 되살리면 실패로 끝난 환불의 수량이 다시 빠지므로 기록이 어긋난 경우와 같이 422로 알린다(#604)
+    REFUND_ALREADY_REVERTED(HttpStatus.UNPROCESSABLE_ENTITY, "Refund already reverted", "취소 기록을 이미 되돌린 환불입니다."),
 
     // 상품
     PRODUCT_OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Product option not found", "상품 옵션을 찾을 수 없습니다."),

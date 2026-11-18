@@ -97,6 +97,18 @@ public class OrderSellerGroup extends BaseTime {
         return sum;
     }
 
+    // 이 판매자 묶음이 출고됐는지. 모두 환불된 상품은 출고돼도 배송 준비로 남으므로 묶음의 다른 상품으로 판단한다(#604)
+    boolean hasShipped() {
+        for (OrderItem item : items) {
+            OrderItemStatus status = item.getStatus();
+            if (status == OrderItemStatus.SHIPPING || status == OrderItemStatus.DELIVERED
+                    || status == OrderItemStatus.PURCHASE_CONFIRMED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // 이 판매자 묶음의 상품들을 '배송 중'으로 변경
     int markShipping() {
         int changed = 0;

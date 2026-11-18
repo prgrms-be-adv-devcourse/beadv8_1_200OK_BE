@@ -33,4 +33,9 @@ class OrderInboundKafkaTopicConfig {
     NewTopic orderShipmentDeliveredTopic() {
         return TopicBuilder.name(DeliveryTopics.SHIPMENT_DELIVERED).build();
     }
+
+    @Bean
+    NewTopic orderRefundOrderRevertRequestedTopic() {
+        return TopicBuilder.name(RefundTopics.REFUND_ORDER_REVERT_REQUESTED).build();
+    }
 }

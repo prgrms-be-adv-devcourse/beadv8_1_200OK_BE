@@ -7,6 +7,7 @@ import com.ok.order.order.domain.OrderItem;
 import com.ok.order.order.domain.OrderItemStatus;
 import com.ok.order.order.domain.OrderSellerGroup;
 import com.ok.order.order.domain.OrderStatus;
+import com.ok.order.order.domain.RefundRevertOutcome;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderItemForRefundResult;
@@ -14,6 +15,7 @@ import com.ok.order.order.application.dto.OrderSummaryResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
+import com.ok.order.order.application.dto.RevertOrderItemRefundCommand;
 import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.CompletePaymentUseCase;
 import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
@@ -22,6 +24,7 @@ import com.ok.order.order.application.port.in.GetOrderUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
 import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
 import com.ok.order.order.application.port.in.RequestPaymentExpireUseCase;
+import com.ok.order.order.application.port.in.RevertOrderItemRefundUseCase;
 import com.ok.order.order.application.port.in.UpdateShippingStatusUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import com.ok.order.order.application.port.out.OrderRepository;
@@ -46,7 +49,7 @@ import java.util.Optional;
 @Transactional(readOnly = true)
 public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, UpdateShippingStatusUseCase,
         GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, GetOrderItemForRefundUseCase,
-        RecordOrderItemRefundUseCase, RequestPaymentExpireUseCase {
+        RecordOrderItemRefundUseCase, RequestPaymentExpireUseCase, RevertOrderItemRefundUseCase {
 
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
@@ -419,6 +422,33 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             log.info("[ORDER_REFUND_ALREADY_RECORDED] 이미 반영된 환불입니다. orderItemId={}, refundId={}",
                     command.orderItemId(), command.refundId());
         }
+    }
+
+    // 환불 취소 기록 되돌리기 (환불이 Kafka로 요청, #604).
+    // 기록과 같은 이유로 READ COMMITTED로 주문을 잠근다. 리스너가 트랜잭션 없이 부르므로 이 격리 수준이 그대로 적용된다.
+    // 잠그면 같은 주문의 배송 시작·구매확정과 차례로 처리돼, 출고·구매확정 판단이 최신 상태를 본다
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Override
+    public void revertRefund(RevertOrderItemRefundCommand command) {
+        Optional<OrderItem> item = orderRepository.findByOrderItemIdForUpdate(command.orderItemId())
+                .filter(order -> order.getId().equals(command.orderId()))
+                .flatMap(order -> order.findItem(command.orderItemId()));
+
+        // 예외로 올리면 다시 시도해도 같아 실패 기록에만 남고 환불은 답을 받지 못한다. 실패 결과로 답해 환불이 사람에게 넘기게 한다
+        RefundRevertOutcome outcome = item
+                .map(found -> found.revertRefund(command.refundId(), command.quantity(), LocalDateTime.now(clock)))
+                .orElse(RefundRevertOutcome.ORDER_ITEM_NOT_FOUND);
+
+        if (outcome.isReverted()) {
+            log.info("[ORDER_REFUND_REVERTED] 환불 취소 기록을 되돌렸습니다. orderId={}, orderItemId={}, refundId={}, quantity={}, 결과={}",
+                    command.orderId(), command.orderItemId(), command.refundId(), command.quantity(), outcome);
+            orderEventPublisher.publishRefundReverted(command.refundId(), command.orderId(), command.orderItemId());
+            return;
+        }
+        // 환불이 처리 중으로 멈춰 사람이 보는 경우라 WARN으로 남긴다
+        log.warn("[ORDER_REFUND_REVERT_REJECTED] 환불 취소 기록을 되돌리지 않습니다. orderId={}, orderItemId={}, refundId={}, quantity={}, 이유={}",
+                command.orderId(), command.orderItemId(), command.refundId(), command.quantity(), outcome);
+        orderEventPublisher.publishRefundRevertFailed(command.refundId(), command.orderId(), command.orderItemId(), outcome.name());
     }
 
     // 자동 구매확정 대상 주문 ID

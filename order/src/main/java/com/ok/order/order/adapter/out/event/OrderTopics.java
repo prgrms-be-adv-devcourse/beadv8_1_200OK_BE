@@ -18,6 +18,12 @@ final class OrderTopics {
     // 결제 요청 뒤 결과가 없는 주문의 결제 만료 요청 → 지갑 (#656)
     static final String ORDER_PAYMENT_EXPIRE_REQUESTED = "order.order-payment-expire-requested.v1";
 
+    // 환불 취소 기록 되돌림 → 환불 (#604)
+    static final String ORDER_REFUND_REVERTED = "order.order-refund-reverted.v1";
+
+    // 환불 취소 기록 되돌리기 실패 → 환불 (#604)
+    static final String ORDER_REFUND_REVERT_FAILED = "order.order-refund-revert-failed.v1";
+
     private OrderTopics() {
     }
 }

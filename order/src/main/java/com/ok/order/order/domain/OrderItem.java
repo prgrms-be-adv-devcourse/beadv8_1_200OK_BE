@@ -147,13 +147,17 @@ public class OrderItem extends BaseTime {
      * 배송 잠금이 없어 승인 뒤 출고를 알아챌 수 있는 곳이 주문뿐이라, 출고 전(배송 준비)이 아니면 거절해 실패로 드러나게 한다.
      *
      * @return 이번에 새로 기록했으면 {@code true}
-     * @throws RestApiException 같은 환불 ID로 내용이 다르면 {@code REFUND_ID_CONFLICT},
+     * @throws RestApiException 같은 환불 ID로 내용이 다르면 {@code REFUND_ID_CONFLICT}, 이미 되돌린 환불이면 {@code REFUND_ALREADY_REVERTED},
      *                          출고 전이 아니면 {@code REFUND_NOT_ALLOWED_STATUS},
      *                          환불 수량 합계가 주문 수량을 넘으면 {@code REFUND_QUANTITY_EXCEEDED}
      */
     public boolean recordRefund(Long refundId, int refundQuantity, long deductedShippingFee) {
         Optional<OrderItemRefund> existing = findRefund(refundId);
         if (existing.isPresent()) {
+            // 되돌린 뒤 늦게 온 기록 요청이다. 되살리면 실패로 끝난 환불의 수량이 다시 빠진다(#604)
+            if (existing.get().isReverted()) {
+                throw new RestApiException(OrderErrorCode.REFUND_ALREADY_REVERTED);
+            }
             if (existing.get().hasSameContent(refundQuantity, deductedShippingFee)) {
                 return false;
             }
@@ -169,9 +173,39 @@ public class OrderItem extends BaseTime {
         return true;
     }
 
-    // 환불 반영된 수량 합계
+    /**
+     * 환불이 요청한 취소 기록 되돌리기를 판단하고, 되돌릴 수 있으면 되돌린다(#604).
+     * 줄은 지우지 않고 되돌린 시각만 남겨 합계에서 뺀다. 주문 상품 상태는 바꾸지 않는다.
+     * 출고 전(배송 준비)이고 같은 판매자 묶음도 출고되지 않았을 때만 되돌린다. 모두 환불된 상품은 묶음이 출고돼도 배송 준비로 남는데,
+     * 그 뒤에 되돌리면 배송 시작이 다시 오지 않아 상품이 배송 준비에 머물고 구매확정·정산도 되지 않기 때문이다.
+     *
+     * @param quantity 환불이 되돌리려는 취소 수량. 남긴 기록과 다르면 기록이 어긋난 것이라 되돌리지 않는다
+     */
+    public RefundRevertOutcome revertRefund(Long refundId, int quantity, LocalDateTime now) {
+        Optional<OrderItemRefund> found = findRefund(refundId);
+        if (found.isEmpty()) {
+            return RefundRevertOutcome.REFUND_NOT_FOUND;
+        }
+        OrderItemRefund refund = found.get();
+        if (refund.isReverted()) {
+            return RefundRevertOutcome.ALREADY_REVERTED;
+        }
+        if (refund.getQuantity() != quantity) {
+            return RefundRevertOutcome.QUANTITY_MISMATCH;
+        }
+        if (status == OrderItemStatus.PURCHASE_CONFIRMED) {
+            return RefundRevertOutcome.ALREADY_CONFIRMED;
+        }
+        if (status != OrderItemStatus.PREPARING || sellerGroup.hasShipped()) {
+            return RefundRevertOutcome.ALREADY_SHIPPED;
+        }
+        refund.revert(now);
+        return RefundRevertOutcome.REVERTED;
+    }
+
+    // 환불 반영된 수량 합계. 되돌린 기록은 뺀다(#604)
     public int refundedQuantity() {
-        return refunds.stream().mapToInt(OrderItemRefund::getQuantity).sum();
+        return refunds.stream().filter(refund -> !refund.isReverted()).mapToInt(OrderItemRefund::getQuantity).sum();
     }
 
     // 구매확정으로 정산할 상품 금액. 환불 반영된 수량을 뺀다
@@ -184,9 +218,9 @@ public class OrderItem extends BaseTime {
         return refundedQuantity() >= quantity;
     }
 
-    // 이 주문 상품의 환불에서 뺀 배송비 합계
+    // 이 주문 상품의 환불에서 뺀 배송비 합계. 되돌린 기록은 뺀다(#604)
     long deductedShippingFee() {
-        return refunds.stream().mapToLong(OrderItemRefund::getDeductedShippingFee).sum();
+        return refunds.stream().filter(refund -> !refund.isReverted()).mapToLong(OrderItemRefund::getDeductedShippingFee).sum();
     }
 
     private Optional<OrderItemRefund> findRefund(Long refundId) {
