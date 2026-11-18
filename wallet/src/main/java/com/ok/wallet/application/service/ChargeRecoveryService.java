@@ -112,7 +112,12 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
             case DONE -> matches(target, found)
                     ? complete(target, found)
                     : hold(target, "승인됐지만 결제 키나 금액이 충전 건과 다름");
-            case ABORTED, EXPIRED -> fail(target, status.name(), "토스 결제 조회 결과 승인되지 않음 " + status);
+            // 우리가 승인을 요청한 결제는 저장된 결제 키 하나뿐이다. 같은 충전 번호로 결제창을 다시 열면 시도가 따로 생기고,
+            // 승인된 시도가 없으면 조회가 가장 최근 시도를 돌려준다(테스트 키로 확인, 문서에는 없음).
+            // 키가 다르면 다른 시도의 상태라 우리 결제는 아직 승인 중일 수 있어 실패로 바꾸지 않는다
+            case ABORTED, EXPIRED -> isRequestedPayment(target, found)
+                    ? fail(target, status.name(), "토스 결제 조회 결과 승인되지 않음 " + status)
+                    : hold(target, "승인되지 않은 결제의 결제 키가 충전 건과 다름 " + status);
             // 승인 뒤 취소는 우리가 하지 않는 일이고, 가상계좌는 충전에 쓰지 않는다. 어느 쪽도 자동으로 정할 수 없다
             case CANCELED, PARTIAL_CANCELED, WAITING_FOR_DEPOSIT -> hold(target, "토스 결제 상태 " + status);
             case READY, IN_PROGRESS -> retryOrHold(target, checkCount, "토스 결제 상태 " + status);
@@ -120,9 +125,11 @@ public class ChargeRecoveryService implements ChargeRecoveryUseCase {
     }
 
     private static boolean matches(Charge target, TossPaymentLookupResult.Found found) {
-        return found.paymentKey() != null
-                && found.paymentKey().equals(target.getPaymentKey())
-                && target.hasAmount(found.totalAmount());
+        return isRequestedPayment(target, found) && target.hasAmount(found.totalAmount());
+    }
+
+    private static boolean isRequestedPayment(Charge target, TossPaymentLookupResult.Found found) {
+        return found.paymentKey() != null && found.paymentKey().equals(target.getPaymentKey());
     }
 
     private boolean isPastApprovalWindow(Charge target) {

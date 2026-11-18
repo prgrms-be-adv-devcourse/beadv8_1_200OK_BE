@@ -151,6 +151,28 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @ParameterizedTest
+    @MethodSource("결제_키가_다른_승인되지_않은_결제")
+    void 승인되지_않은_결제의_결제_키가_충전_건과_다르면_실패로_바꾸지_않고_멈춘다(String paymentKey, TossPaymentStatus status) {
+        // given: 같은 충전 번호의 다른 결제 시도(승인 실패)를 토스가 돌려준 경우. 승인을 요청한 결제는 아직 승인 중일 수 있다
+        String chargeNo = dueInProgressCharge(MEMBER_ID, PAYMENT_KEY);
+        givenLookup(chargeNo, found(paymentKey, status, AMOUNT));
+
+        // when
+        ChargeRecoveryResult sut = chargeRecoveryService.recover();
+
+        // then
+        assertThat(sut.held()).isEqualTo(1);
+        assertHeld(chargeNo);
+    }
+
+    static Stream<Arguments> 결제_키가_다른_승인되지_않은_결제() {
+        return Stream.of(
+                Arguments.of("later-attempt-key", TossPaymentStatus.ABORTED),
+                Arguments.of("later-attempt-key", TossPaymentStatus.EXPIRED),
+                Arguments.of(null, TossPaymentStatus.ABORTED));
+    }
+
+    @ParameterizedTest
     @MethodSource("자동으로_정할_수_없는_결제_상태")
     void 토스_답만으로_정할_수_없는_상태면_멈추고_사람_확인을_기다린다(TossPaymentStatus status) {
         // given
