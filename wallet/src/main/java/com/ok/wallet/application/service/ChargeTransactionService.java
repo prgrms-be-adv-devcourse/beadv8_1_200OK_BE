@@ -91,9 +91,10 @@ class ChargeTransactionService {
         Charge charge = findOwnedChargeForUpdate(memberId, chargeNo);
         if (charge.getStatus() != ChargeStatus.IN_PROGRESS) {
             // 복구 스케줄러가 먼저 처리한 경우다. 이미 완료면 정상이지만, 실패로 처리된 건이면
-            // 토스는 승인했는데 잔액에 반영되지 않은 상태라 환불 등 확인이 필요하다
+            // 토스는 승인했는데 잔액에 반영되지 않은 상태라 관리자가 결제를 취소해야 한다. 로그를 놓쳐도 처리 목록에 뜨게 남긴다
             if (charge.getStatus() == ChargeStatus.FAILED) {
                 log.error("[CHARGE_APPROVED_BUT_FAILED] 토스는 승인했지만 충전 건이 이미 실패로 처리되어 있습니다. chargeNo={}", chargeNo);
+                charge.markApprovedAfterFailure(LocalDateTime.now(clock));
             }
             return ChargeConfirmResult.from(charge);
         }

@@ -366,6 +366,25 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 실패로_처리된_뒤_늦게_온_승인_응답은_잔액에_넣지_않고_관리자_처리_대상으로_남긴다() throws Exception {
+        // given: 승인 요청이 토스 응답을 기다리는 동안 복구가 같은 건을 실패로 끝낸다
+        String chargeNo = requestCharge(MEMBER_ID);
+        LateTossResponse late = confirmWaitingForToss(chargeNo, new TossConfirmResult.Approved(PAYMENT_KEY));
+        chargeTransactionService.failApproval(MEMBER_ID, chargeNo, "NOT_FOUND_PAYMENT", "토스에 결제가 없고 승인 가능 시간이 지남");
+
+        // when: 늦게 온 승인 응답을 반영한다
+        String sut = late.release().status();
+
+        // then
+        assertThat(sut).isEqualTo("FAILED");
+        assertSoftly(softly -> {
+            softly.assertThat(statusOf(chargeNo)).isEqualTo("FAILED");
+            softly.assertThat(balanceOrZero(MEMBER_ID)).isZero();
+            softly.assertThat(approvedAfterFailureAtOf(chargeNo)).isNotNull();
+        });
+    }
+
+    @Test
     void 복구와_늦게_온_승인_응답이_동시에_완료해도_어느_쪽도_오류로_끝나지_않고_잔액은_한_번만_는다() throws Exception {
         // given
         String chargeNo = requestCharge(MEMBER_ID);
@@ -566,6 +585,11 @@ class ChargeRecoveryServiceIntegrationTest extends AbstractIntegrationTest {
     private String failureCodeOf(String chargeNo) {
         return jdbcTemplate.queryForObject(
                 "SELECT failure_code FROM wallet_charge WHERE charge_no = ?", String.class, chargeNo);
+    }
+
+    private LocalDateTime approvedAfterFailureAtOf(String chargeNo) {
+        return jdbcTemplate.queryForObject("SELECT approved_after_failure_at FROM wallet_charge WHERE charge_no = ?",
+                LocalDateTime.class, chargeNo);
     }
 
     private int checkCountOf(String chargeNo) {

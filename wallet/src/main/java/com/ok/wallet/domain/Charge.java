@@ -73,6 +73,15 @@ public class Charge extends BaseTime {
     @Column(name = "check_count", nullable = false)
     private int checkCount;
 
+    // 실패로 처리된 뒤 토스가 승인한 것을 안 시각. 돈은 빠졌는데 잔액이 늘지 않은 상태라 관리자가 결제를 취소할 대상이다.
+    // 로그만으로는 놓칠 수 있고, 실패 건은 DB만 봐서는 승인 여부를 알 수 없어 따로 남긴다
+    @Column(name = "approved_after_failure_at")
+    private LocalDateTime approvedAfterFailureAt;
+
+    // 관리자가 토스 결제를 취소(환불)한 시각. 새 상태를 두면 상태 규칙과 한도 합계를 모두 고쳐야 해서 상태는 실패로 둔다
+    @Column(name = "payment_canceled_at")
+    private LocalDateTime paymentCanceledAt;
+
     private Charge(Long memberId, long amount) {
         this.chargeNo = CHARGE_NO_PREFIX + UUID.randomUUID();
         this.memberId = memberId;
@@ -102,6 +111,16 @@ public class Charge extends BaseTime {
         changeStatus(ChargeStatus.COMPLETED);
         this.paymentKey = paymentKey;
         this.completedAt = completedAt;
+    }
+
+    /** 실패로 처리된 충전 건을 토스가 승인한 것을 기록한다. 같은 건을 여러 번 알게 돼도 처음 안 시각을 남긴다. */
+    public void markApprovedAfterFailure(LocalDateTime knownAt) {
+        if (status != ChargeStatus.FAILED) {
+            throw new IllegalStateException("실패한 충전 건만 승인 뒤 실패로 기록할 수 있습니다. chargeNo=" + chargeNo + ", status=" + status);
+        }
+        if (approvedAfterFailureAt == null) {
+            approvedAfterFailureAt = knownAt;
+        }
     }
 
     /** 결제 실패 또는 명확한 승인 실패로 충전 건을 실패 처리한다. 대기·처리 중인 건만 실패할 수 있다. */
