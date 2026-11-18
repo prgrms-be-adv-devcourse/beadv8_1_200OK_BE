@@ -2,6 +2,8 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.wallet.domain.Charge;
 import com.ok.wallet.domain.ChargeStatus;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
@@ -16,6 +18,9 @@ public interface ChargeJpaRepository extends Repository<Charge, Long> {
     Charge save(Charge charge);
 
     Optional<Charge> findByChargeNo(String chargeNo);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<Charge> findForUpdateByChargeNo(String chargeNo);
 
     // 일괄 UPDATE는 Auditing을 거치지 않아 수정 시각을 직접 넣는다.
     @Modifying(flushAutomatically = true, clearAutomatically = true)

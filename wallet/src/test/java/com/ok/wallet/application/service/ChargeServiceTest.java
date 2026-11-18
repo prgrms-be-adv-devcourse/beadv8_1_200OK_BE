@@ -52,6 +52,9 @@ class ChargeServiceTest extends AbstractIntegrationTest {
     ChargeConfirmService chargeConfirmService;
 
     @Autowired
+    ChargeTransactionService chargeTransaction;
+
+    @Autowired
     TermsService termsService;
 
     @Autowired
@@ -360,6 +363,86 @@ class ChargeServiceTest extends AbstractIntegrationTest {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }
+    }
+
+    @Test
+    void 처리_중인_충전_건을_여러_곳에서_동시에_완료해도_오류_없이_잔액은_한_번만_는다() throws Exception {
+        // given: 승인 응답을 못 받아 처리 중으로 남은 건
+        String chargeNo = inProgressCharge(MEMBER_ID, 10_000);
+        int threadCount = 5;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<ChargeConfirmResult>> results = new ArrayList<>();
+
+        try {
+            // when: 늦게 온 승인 응답과 두 서버의 복구가 같은 건을 동시에 완료하려 함
+            for (int i = 0; i < threadCount; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return chargeTransaction.complete(MEMBER_ID, chargeNo, PAYMENT_KEY);
+                }));
+            }
+            ready.await();
+            start.countDown();
+            List<String> statuses = new ArrayList<>();
+            for (Future<ChargeConfirmResult> result : results) {
+                statuses.add(result.get(30, TimeUnit.SECONDS).status());
+            }
+
+            // then: 뒤에 온 쪽은 잠금을 기다렸다가 완료된 상태를 읽고 넘어가므로, 근거 키 중복 오류도 나지 않는다
+            assertThat(statuses).containsOnly("COMPLETED");
+            assertThat(balanceOf(MEMBER_ID)).isEqualTo(10_000);
+            assertThat(countLedgers(MEMBER_ID, "CHARGE:" + PAYMENT_KEY)).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void 처리_중인_충전_건의_완료와_실패가_동시에_와도_한쪽만_반영된다() throws Exception {
+        // given
+        String chargeNo = inProgressCharge(MEMBER_ID, 10_000);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            // when
+            Future<ChargeConfirmResult> complete = executor.submit(() -> {
+                start.await();
+                return chargeTransaction.complete(MEMBER_ID, chargeNo, PAYMENT_KEY);
+            });
+            Future<ChargeConfirmResult> fail = executor.submit(() -> {
+                start.await();
+                return chargeTransaction.failApproval(MEMBER_ID, chargeNo, "REJECT_CARD_PAYMENT", "거절");
+            });
+            start.countDown();
+            ChargeConfirmResult completeResult = complete.get(30, TimeUnit.SECONDS);
+            ChargeConfirmResult failResult = fail.get(30, TimeUnit.SECONDS);
+
+            // then: 먼저 잠근 쪽의 결과를 둘 다 받고, 실패한 건에 원장이 붙거나 완료한 건이 실패로 덮이지 않는다
+            assertThat(completeResult.status()).isEqualTo(failResult.status());
+            if ("COMPLETED".equals(statusOf(chargeNo))) {
+                assertThat(balanceOf(MEMBER_ID)).isEqualTo(10_000);
+            } else {
+                assertThat(statusOf(chargeNo)).isEqualTo("FAILED");
+                assertThat(balanceOrZero(MEMBER_ID)).isZero();
+            }
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    // 토스 승인 결과를 알 수 없어 처리 중으로 남은 충전 건
+    private String inProgressCharge(Long memberId, long amount) {
+        String chargeNo = requestCharge(memberId, amount);
+        given(tossPaymentsClient.confirm(anyString(), anyString(), anyLong()))
+                .willReturn(new TossConfirmResult.Unknown("토스 응답 없음"));
+        chargeConfirmService.confirm(memberId, chargeNo, PAYMENT_KEY, amount);
+        return chargeNo;
     }
 
     private String requestCharge(Long memberId, long amount) {

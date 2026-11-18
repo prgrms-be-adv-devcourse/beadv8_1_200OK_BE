@@ -29,6 +29,11 @@ public class ChargeRepositoryAdapter implements ChargeRepository {
     }
 
     @Override
+    public Optional<Charge> findForUpdateByChargeNo(String chargeNo) {
+        return chargeJpaRepository.findForUpdateByChargeNo(chargeNo);
+    }
+
+    @Override
     public int markInProgress(String chargeNo, String paymentKey, LocalDateTime now, LocalDateTime nextCheckAt) {
         return chargeJpaRepository.markInProgress(chargeNo, paymentKey, now, nextCheckAt);
     }

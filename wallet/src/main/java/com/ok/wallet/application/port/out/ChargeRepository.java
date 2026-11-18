@@ -15,6 +15,12 @@ public interface ChargeRepository {
     Optional<Charge> findByChargeNo(String chargeNo);
 
     /**
+     * 충전 건 행을 잠그고 읽는다. 처리 중인 건을 완료나 실패로 바꿀 때 쓴다.
+     * 승인 응답과 복구, 또는 두 서버의 복구가 같은 건을 동시에 끝내려 하면 뒤에 온 쪽이 잠금을 기다렸다가 바뀐 상태를 읽는다.
+     */
+    Optional<Charge> findForUpdateByChargeNo(String chargeNo);
+
+    /**
      * 대기 중인 충전 건만 처리 중으로 바꾸고 결제 키를 함께 저장한다. 바뀐 행 수를 반환한다.
      * 같은 건으로 승인 요청이 동시에 와도 한 요청만 1을 받아 토스 승인을 호출한다.
      * 결제 키를 이때 저장해, 승인 결과가 불명확하거나 반영에 실패해 처리 중으로 남아도 복구 시 어떤 결제인지 알 수 있다.

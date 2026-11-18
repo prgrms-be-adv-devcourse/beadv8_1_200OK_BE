@@ -75,10 +75,17 @@ class ChargeTransactionService {
         }
     }
 
-    /** [트랜잭션 2] 승인된 결제를 잔액에 반영하고 충전 건을 완료한다. */
-    @Transactional
+    /**
+     * [트랜잭션 2] 승인된 결제를 잔액에 반영하고 충전 건을 완료한다.
+     * 충전 건을 잠근 뒤 상태를 보므로, 복구가 같은 건을 동시에 끝내도 한쪽만 처리 중을 보고 반영한다.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ChargeConfirmResult complete(Long memberId, String chargeNo, String paymentKey) {
-        Charge charge = findOwnedCharge(memberId, chargeNo);
+        // 승인 시작(startConfirm)과 같은 순서로 지갑 → 충전 건을 잠근다. 순서가 반대면 같은 건의 승인 요청이
+        // 겹칠 때 서로의 잠금을 기다리다 교착에 빠진다.
+        // 잠그기 전에 충전 건을 읽지 않는다. 먼저 읽으면 잠금 조회가 그때 읽어 둔 옛 상태를 그대로 돌려준다
+        buyerWalletService.getOrCreate(memberId);
+        Charge charge = findOwnedChargeForUpdate(memberId, chargeNo);
         if (charge.getStatus() != ChargeStatus.IN_PROGRESS) {
             // 복구 스케줄러가 먼저 처리한 경우다. 이미 완료면 정상이지만, 실패로 처리된 건이면
             // 토스는 승인했는데 잔액에 반영되지 않은 상태라 환불 등 확인이 필요하다
@@ -93,10 +100,13 @@ class ChargeTransactionService {
         return ChargeConfirmResult.from(charge);
     }
 
-    /** [트랜잭션 2] 토스가 명확히 거절한 충전 건을 실패로 기록한다. */
-    @Transactional
+    /**
+     * [트랜잭션 2] 토스가 명확히 거절한 충전 건을 실패로 기록한다.
+     * 충전 건을 잠근 뒤 상태를 보므로, 복구가 먼저 완료한 건을 실패로 덮어쓰지 않는다.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ChargeConfirmResult failApproval(Long memberId, String chargeNo, String failureCode, String failureMessage) {
-        Charge charge = findOwnedCharge(memberId, chargeNo);
+        Charge charge = findOwnedChargeForUpdate(memberId, chargeNo);
         if (charge.getStatus() == ChargeStatus.IN_PROGRESS) {
             // 토스가 준 거절 코드·메시지는 길이를 통제할 수 없어, 컬럼 길이에 맞춰 잘라 저장한다
             charge.fail(truncate(failureCode, 100), truncate(failureMessage, 500), LocalDateTime.now(clock));
@@ -121,6 +131,12 @@ class ChargeTransactionService {
     // 타인의 충전 건은 존재 여부도 알리지 않도록 없는 것과 같게 응답한다
     private Charge findOwnedCharge(Long memberId, String chargeNo) {
         return chargeRepository.findByChargeNo(chargeNo)
+                .filter(charge -> charge.isOwnedBy(memberId))
+                .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
+    }
+
+    private Charge findOwnedChargeForUpdate(Long memberId, String chargeNo) {
+        return chargeRepository.findForUpdateByChargeNo(chargeNo)
                 .filter(charge -> charge.isOwnedBy(memberId))
                 .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
     }
