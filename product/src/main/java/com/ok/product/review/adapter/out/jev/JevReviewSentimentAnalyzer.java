@@ -11,6 +11,7 @@ import java.util.Random;
 
 import org.springframework.stereotype.Component;
 
+import com.ok.product.config.JevProperties;
 import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.review.application.port.out.ReviewSentimentAnalyzer;
 import com.ok.product.review.adapter.out.jev.ReviewSentimentCriteria.Choice;

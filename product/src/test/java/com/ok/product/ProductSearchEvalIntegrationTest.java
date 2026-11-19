@@ -24,6 +24,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.ok.product.product.adapter.out.persistence.BuyerProductQueryJdbcRepository;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJudgmentJpaRepository;
 import com.ok.product.product.application.dto.ProductSearchBackfillResult;
 import com.ok.product.product.application.service.ProductSearchBackfillService;
 import com.ok.product.product.domain.ProductSearchKeyword;
@@ -58,6 +60,12 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ProductJpaRepository productRepository;
+
+	@Autowired
+	ProductTagJpaRepository productTagRepository;
+
+	@Autowired
+	ProductTagJudgmentJpaRepository productTagJudgmentRepository;
 
 	@Autowired
 	JdbcTemplate jdbcTemplate;
@@ -156,6 +164,9 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 	private void deleteAll() {
 		// DELETE는 FULLTEXT 인덱스에 지운 문서를 남겨 점수(IDF)가 앞서 돈 테스트에 따라 달라진다. TRUNCATE는 인덱스를 새로 만든다
 		jdbcTemplate.execute("TRUNCATE TABLE " + SCHEMA + ".product_search");
+		// 태그와 태그 판정 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productTagRepository.deleteAllInBatch();
+		productTagJudgmentRepository.deleteAllInBatch();
 		productRepository.deleteAll();
 	}
 

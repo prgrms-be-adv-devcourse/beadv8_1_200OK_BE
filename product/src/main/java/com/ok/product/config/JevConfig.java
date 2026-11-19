@@ -1,4 +1,4 @@
-package com.ok.product.review.adapter.out.jev;
+package com.ok.product.config;
 
 import java.net.http.HttpClient;
 
@@ -8,6 +8,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+/**
+ * Jev API를 부르는 {@code RestClient}를 만든다. 리뷰 분석과 상품 태그 판정이 같은 빈을 쓴다.
+ */
 @Configuration
 @EnableConfigurationProperties(JevProperties.class)
 class JevConfig {

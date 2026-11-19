@@ -4,9 +4,11 @@ import com.ok.product.ProductSchema;
 import com.ok.product.product.application.port.out.ProductSearchRepository;
 import com.ok.product.product.domain.ProductSearch;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,4 +34,10 @@ public interface ProductSearchJpaRepository extends JpaRepository<ProductSearch,
 		""", nativeQuery = true)
 	List<Long> findBackfillTargetIds(@Param("afterId") long afterId, @Param("currentVersion") int currentVersion,
 		@Param("limit") int limit);
+
+	@Override
+	@Modifying
+	@Query("UPDATE ProductSearch s SET s.keywords = :keywords, s.updatedAt = :now WHERE s.productId = :productId")
+	int updateKeywords(@Param("productId") Long productId, @Param("keywords") String keywords,
+		@Param("now") LocalDateTime now);
 }

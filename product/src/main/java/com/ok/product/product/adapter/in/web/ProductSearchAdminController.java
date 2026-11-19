@@ -11,8 +11,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.ok.product.product.adapter.in.web.dto.UntaggedProductResponse;
 import com.ok.product.product.adapter.in.web.dto.ZeroResultKeywordResponse;
+import com.ok.product.product.application.dto.UntaggedProductQuery;
 import com.ok.product.product.application.dto.ZeroResultKeywordQuery;
+import com.ok.product.product.application.port.in.UntaggedProductUseCase;
 import com.ok.product.product.application.port.in.ZeroResultKeywordUseCase;
 
 import lombok.RequiredArgsConstructor;
@@ -24,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 public class ProductSearchAdminController implements ProductSearchAdminControllerSpec {
 
 	private final ZeroResultKeywordUseCase zeroResultKeywordUseCase;
+	private final UntaggedProductUseCase untaggedProductUseCase;
 
 	@Override
 	@GetMapping("/zero-result-keywords")
@@ -35,6 +39,19 @@ public class ProductSearchAdminController implements ProductSearchAdminControlle
 		return ResponseEntity.ok(zeroResultKeywordUseCase.getZeroResultKeywords(new ZeroResultKeywordQuery(from, to, limit))
 			.stream()
 			.map(ZeroResultKeywordResponse::from)
+			.toList());
+	}
+
+	@Override
+	@GetMapping("/untagged-products")
+	public ResponseEntity<List<UntaggedProductResponse>> getUntaggedProducts(
+		@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+		@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+		@RequestParam(defaultValue = "20") int limit
+	) {
+		return ResponseEntity.ok(untaggedProductUseCase.getUntaggedProducts(new UntaggedProductQuery(from, to, limit))
+			.stream()
+			.map(UntaggedProductResponse::from)
 			.toList());
 	}
 }

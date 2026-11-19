@@ -8,6 +8,7 @@ import com.ok.common.media.MediaUrlResolver;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductCategoryGroup;
+import com.ok.product.product.domain.ProductOption;
 import com.ok.product.product.domain.ProductOptionSpec;
 import com.ok.product.product.domain.ProductRegion;
 import com.ok.product.product.domain.ProductSearchKeyword;
@@ -20,6 +21,7 @@ import com.ok.product.product.application.port.out.ProductOptionRepository;
 import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.product.application.port.out.ProductSearchLogRecorder;
+import com.ok.product.product.application.port.out.ProductTagJudgmentRepository;
 import com.ok.product.product.application.dto.ProductCategoryGroupResult;
 import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductDetailResult;
@@ -44,9 +46,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -71,6 +75,7 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	private final ProductDescriptionSanitizer descriptionSanitizer;
 	private final MediaUrlResolver mediaUrlResolver;
 	private final ProductSearchLogRecorder productSearchLogRecorder;
+	private final ProductTagJudgmentRepository productTagJudgmentRepository;
 	// 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
 	// 옵션 변경·삭제 시각을 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
 	private final Clock clock;
@@ -93,6 +98,8 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		}
 		Product saved = productRepository.save(product);
 		productSearchIndexer.index(saved);
+		// 판정기(Jev)는 작업자가 트랜잭션 밖에서 부른다. 등록은 대기열에 넣기만 해서 판정기가 실패해도 등록은 성공한다
+		productTagJudgmentRepository.request(saved.getId(), requestedAt());
 		return saved.getId();
 	}
 
@@ -108,6 +115,8 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 
 		validateImageUrls(command.imageUrls());
 		String descriptionHtml = sanitizeDescription(command.descriptionHtml());
+		String nameBefore = product.getName();
+		Set<String> optionNamesBefore = activeOptionNames(product);
 
 		// 상품 정보 업데이트
 		product.updateInfo(command.name(), descriptionHtml, command.category().toDomain(), command.region().toDomain());
@@ -136,6 +145,11 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 
 		// 가격·재고만 바뀌어도 다시 계산한다. 바뀐 필드를 가리는 조건이 계산 비용보다 버그를 만들기 쉽다
 		productSearchIndexer.index(product);
+		// 태그 판정은 상품명과 옵션명만 보므로 둘이 그대로면 다시 판정하지 않는다(#746). 판정은 외부 호출이라 검색 행과 달리 비용이 크다.
+		// 옵션은 순서가 아니라 이름 집합으로 본다. 판정이 옵션 순서에 기대는 정보가 아니다
+		if (!product.getName().equals(nameBefore) || !activeOptionNames(product).equals(optionNamesBefore)) {
+			productTagJudgmentRepository.request(product.getId(), requestedAt());
+		}
 	}
 
 	@Override
@@ -281,6 +295,15 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	// 상품 수정·삭제와 검색어 로그에서 쓰는 현재 시각. 주입받은 Clock 기준 (#93에서 Clock 빈이 생겨 TODO 해결)
 	private LocalDateTime now() {
 		return LocalDateTime.now(clock);
+	}
+
+	// 태그 판정 요청 세대. DB가 마이크로초까지만 저장해 작업자가 읽은 값과 비교할 수 있게 자른다
+	private LocalDateTime requestedAt() {
+		return now().truncatedTo(ChronoUnit.MICROS);
+	}
+
+	private static Set<String> activeOptionNames(Product product) {
+		return product.activeOptions().stream().map(ProductOption::getName).collect(Collectors.toSet());
 	}
 
 	// 수정, 변경, 삭제 전에 상품을 가져오고 본인 상품인지 확인한다

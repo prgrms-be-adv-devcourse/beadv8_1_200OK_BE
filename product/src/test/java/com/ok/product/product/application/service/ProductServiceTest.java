@@ -56,6 +56,7 @@ import com.ok.product.product.application.port.out.ProductOptionRepository;
 import com.ok.product.product.application.port.out.ProductQueryRepository;
 import com.ok.product.product.application.port.out.ProductRepository;
 import com.ok.product.product.application.port.out.ProductSearchLogRecorder;
+import com.ok.product.product.application.port.out.ProductTagJudgmentRepository;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCreateCommand;
 import com.ok.product.product.application.dto.ProductOptionCommand;
@@ -95,6 +96,9 @@ class ProductServiceTest {
 	@Mock
 	ProductSearchLogRecorder productSearchLogRecorder;
 
+	@Mock
+	ProductTagJudgmentRepository productTagJudgmentRepository;
+
 	ProductService service;
 
 	@BeforeEach
@@ -103,7 +107,7 @@ class ProductServiceTest {
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
 			productQueryRepository, buyerProductQueryRepository, new ProductSearchPolicy(MIN_SCORE), productSearchIndexer, new ProductItemDictionary(),
 			new ProductDescriptionSanitizer(imageUrlValidator),
-			new MediaUrlResolver("bucket", "ap-northeast-2"), productSearchLogRecorder, CLOCK);
+			new MediaUrlResolver("bucket", "ap-northeast-2"), productSearchLogRecorder, productTagJudgmentRepository, CLOCK);
 	}
 
 	@Test

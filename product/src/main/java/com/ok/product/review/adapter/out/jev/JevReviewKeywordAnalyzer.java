@@ -9,6 +9,7 @@ import java.util.Random;
 
 import org.springframework.stereotype.Component;
 
+import com.ok.product.config.JevProperties;
 import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.review.application.port.out.ReviewKeywordAnalyzer;
 import com.ok.product.review.application.service.ReviewKeywordList;

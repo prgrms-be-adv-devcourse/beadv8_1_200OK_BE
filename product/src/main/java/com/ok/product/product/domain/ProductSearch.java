@@ -40,7 +40,9 @@ public class ProductSearch extends BaseTime implements Persistable<Long> {
 	@Column(name = "search_body", nullable = false, columnDefinition = "TEXT")
 	private String searchBody;
 
-	@Column(nullable = false, columnDefinition = "TEXT")
+	// 태그 판정 작업자만 ProductSearchRepository.updateKeywords로 바꾼다. 엔티티 변경으로는 쓰지 않게 막아,
+	// 판정 중에 상품을 수정한 트랜잭션이 먼저 읽어 둔 옛 키워드로 작업자가 저장한 키워드를 덮지 않게 한다
+	@Column(nullable = false, columnDefinition = "TEXT", updatable = false)
 	private String keywords;
 
 	// 1글자 검색어로 이 상품을 찾을 한 글자 품목이다("제주감귤"이면 "귤"). 고르는 규칙은 ProductItemDictionary에 있다

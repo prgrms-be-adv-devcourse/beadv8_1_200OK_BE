@@ -35,6 +35,8 @@ import com.ok.product.product.domain.ProductStatus;
 import com.ok.product.product.domain.ProductVisibility;
 import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJudgmentJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
 import com.ok.testsupport.AbstractIntegrationTest;
 
@@ -48,6 +50,12 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ProductJpaRepository productRepository;
+
+	@Autowired
+	ProductTagJpaRepository productTagRepository;
+
+	@Autowired
+	ProductTagJudgmentJpaRepository productTagJudgmentRepository;
 
 	@Autowired
 	ProductOptionJpaRepository productOptionRepository;
@@ -64,6 +72,9 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 	// 목록 테스트는 다른 테스트가 남긴 상품이 섞이면 깨지므로 시작 전에 비운다
 	@BeforeEach
 	void setUp() {
+		// 태그와 태그 판정 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productTagRepository.deleteAllInBatch();
+		productTagJudgmentRepository.deleteAllInBatch();
 		productRepository.deleteAll();
 	}
 

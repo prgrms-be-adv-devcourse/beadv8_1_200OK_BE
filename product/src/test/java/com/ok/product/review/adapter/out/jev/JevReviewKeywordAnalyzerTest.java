@@ -37,6 +37,7 @@ import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import com.ok.product.config.JevProperties;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;

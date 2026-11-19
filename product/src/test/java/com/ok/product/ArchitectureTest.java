@@ -58,7 +58,7 @@ class ArchitectureTest {
     private static final String ANY_SUBDOMAIN_ADAPTER_OUT = "com.ok.product.*.adapter.out..";
     // 모듈 최상위 패키지(하위 패키지 제외). 다른 모듈에 공개하는 클래스를 두는 곳이다(CLAUDE.md 모듈 경계)
     private static final String MODULE_ROOT = "com.ok.product";
-    // 하위 도메인에 속하지 않는 모듈 전용 설정(Flyway). 하위 도메인 밖에 둘 수 있는 유일한 하위 패키지다
+    // 하위 도메인에 속하지 않는 모듈 전용 설정(Flyway, 실행기, 두 하위 도메인이 함께 쓰는 Jev 클라이언트). 하위 도메인 밖에 둘 수 있는 유일한 하위 패키지다
     private static final String MODULE_CONFIG = "com.ok.product.config..";
     private static final String[] SUBDOMAIN_PACKAGES = SUBDOMAINS.stream()
             .map(Subdomain::all)
@@ -71,11 +71,15 @@ class ArchitectureTest {
             "ProductRepository.findForUpdateByIdAndDeletedAtIsNull", LockModeType.OPTIMISTIC_FORCE_INCREMENT,
             // 작업자가 분석 요청을 꺼내는 조회. 이름에 ForUpdate가 없지만 SKIP LOCKED로 잠가 꺼낸다
             "ReviewAnalysisRequestRepository.findByAnalysisTypeAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc",
+            LockModeType.PESSIMISTIC_WRITE,
+            // 작업자가 태그 판정 요청을 꺼내는 조회. 분석 요청과 같은 이유다
+            "ProductTagJudgmentRepository.findByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc",
             LockModeType.PESSIMISTIC_WRITE);
 
     // 다른 작업자가 꺼내는 중인 행을 기다리지 않고 건너뛰는(SKIP LOCKED) 조회. 잠금과 함께 lock.timeout=-2 힌트도 다시 선언해야 한다
     private static final Set<String> SKIP_LOCKED_METHODS = Set.of(
-            "ReviewAnalysisRequestRepository.findByAnalysisTypeAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc");
+            "ReviewAnalysisRequestRepository.findByAnalysisTypeAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc",
+            "ProductTagJudgmentRepository.findByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc");
 
     private static final DescribedPredicate<JavaMethod> 잠금_조회 = DescribedPredicate.describe(
             "lock queries (name contains ForUpdate/ForShare or listed in LOCK_MODE_BY_METHOD)",

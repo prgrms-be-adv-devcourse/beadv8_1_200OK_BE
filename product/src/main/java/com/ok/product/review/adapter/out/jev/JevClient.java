@@ -10,6 +10,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import com.ok.product.config.JevProperties;
 import com.ok.product.review.exception.ReviewAnalysisFailedException;
 import com.ok.product.review.exception.ReviewAnalyzerUnavailableException;
 

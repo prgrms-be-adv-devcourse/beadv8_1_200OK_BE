@@ -24,6 +24,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJudgmentJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductSearchLogJpaRepository;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCreateCommand;
@@ -56,6 +58,12 @@ class ProductSearchLogIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ProductJpaRepository productRepository;
+
+	@Autowired
+	ProductTagJpaRepository productTagRepository;
+
+	@Autowired
+	ProductTagJudgmentJpaRepository productTagJudgmentRepository;
 
 	@Autowired
 	ProductSearchLogJpaRepository productSearchLogRepository;
@@ -198,6 +206,9 @@ class ProductSearchLogIntegrationTest extends AbstractIntegrationTest {
 	// 검색 행이 상품을 외래키로 가리키므로 먼저 지운다. TRUNCATE는 FULLTEXT 인덱스를 새로 만들어 앞선 테스트가 점수에 섞이지 않는다
 	private void deleteAll() {
 		jdbcTemplate.execute("TRUNCATE TABLE " + SEARCH_TABLE);
+		// 태그와 태그 판정 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productTagRepository.deleteAllInBatch();
+		productTagJudgmentRepository.deleteAllInBatch();
 		productRepository.deleteAll();
 		jdbcTemplate.execute("TRUNCATE TABLE " + LOG_TABLE);
 	}

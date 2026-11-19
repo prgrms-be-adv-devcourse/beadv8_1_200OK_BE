@@ -21,6 +21,9 @@ public enum ProductErrorCode implements ErrorCode {
 	INVALID_SEARCH_LOG_PERIOD(HttpStatus.BAD_REQUEST, "Invalid search log period", "시작일은 종료일보다 늦을 수 없습니다."),
 	SEARCH_LOG_PERIOD_BEYOND_RETENTION(HttpStatus.BAD_REQUEST, "Search log period beyond retention", "시작일이 검색어 로그 보존 기간을 넘었습니다."),
 
+	// 태그 판정
+	INVALID_TAG_JUDGMENT_PERIOD(HttpStatus.BAD_REQUEST, "Invalid tag judgment period", "시작일은 종료일보다 늦을 수 없습니다."),
+
 	// 옵션
 	OPTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Option not found", "상품의 옵션을 찾을 수 없습니다."),
 	DUPLICATE_OPTION_NAME(HttpStatus.CONFLICT, "Duplicate option name", "같은 상품 안에 같은 이름의 옵션이 있습니다."),

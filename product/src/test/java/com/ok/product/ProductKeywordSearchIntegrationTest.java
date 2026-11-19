@@ -27,6 +27,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJpaRepository;
+import com.ok.product.product.adapter.out.persistence.ProductTagJudgmentJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductOptionJpaRepository;
 import com.ok.product.product.adapter.out.persistence.BuyerProductQueryJdbcRepository;
 import com.ok.product.product.adapter.out.persistence.ProductSearchJpaRepository;
@@ -66,6 +68,12 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ProductJpaRepository productRepository;
+
+	@Autowired
+	ProductTagJpaRepository productTagRepository;
+
+	@Autowired
+	ProductTagJudgmentJpaRepository productTagJudgmentRepository;
 
 	@Autowired
 	ProductOptionJpaRepository productOptionRepository;
@@ -624,6 +632,9 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		// 검색 행이 상품을 외래키로 가리키므로 먼저 지운다. DELETE로 지우면 FULLTEXT 인덱스에 지운 문서가 남아
 		// 점수(IDF)가 앞서 돈 테스트에 따라 달라진다. TRUNCATE는 인덱스를 새로 만들어 매번 같은 점수가 나오게 한다
 		jdbcTemplate.execute("TRUNCATE TABLE " + SEARCH_TABLE);
+		// 태그와 태그 판정 행이 상품을 외래키로 가리키므로 먼저 지운다
+		productTagRepository.deleteAllInBatch();
+		productTagJudgmentRepository.deleteAllInBatch();
 		productRepository.deleteAll();
 	}
 }

@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 
+import com.ok.product.product.adapter.in.web.dto.UntaggedProductResponse;
 import com.ok.product.product.adapter.in.web.dto.ZeroResultKeywordResponse;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -46,6 +47,34 @@ interface ProductSearchAdminControllerSpec {
 		)
 	})
 	ResponseEntity<List<ZeroResultKeywordResponse>> getZeroResultKeywords(
+		@Parameter(description = "시작일 (yyyy-MM-dd, 포함)", example = "2026-11-01") LocalDate from,
+		@Parameter(description = "종료일 (yyyy-MM-dd, 포함)", example = "2026-11-18") LocalDate to,
+		@Parameter(description = "돌려줄 항목 수 (1~100)", example = "20") @Min(1) @Max(100) int limit
+	);
+
+	@Operation(summary = "태그 0개 상품 조회", description = """
+		기간 안에 태그 판정을 마쳤지만 태그가 하나도 붙지 않은 상품을 최근 판정 순으로 돌려줍니다. 태그 목록에 빠진 상황·용도를 찾는 데 씁니다.
+		판정을 기다리는 상품과 판정이 최종 실패한 상품, 삭제된 상품은 넣지 않습니다.
+		기간은 판정 시각 기준의 한국 시간 날짜 단위이고 시작일과 종료일을 모두 포함합니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공. 해당 상품이 없으면 빈 목록"),
+		@ApiResponse(
+			responseCode = "400", description = """
+				시작일이 종료일보다 늦음(product/invalid-tag-judgment-period),
+				from·to가 없거나 yyyy-MM-dd 형식이 아님, limit이 1~100 밖""",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "ADMIN이 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<List<UntaggedProductResponse>> getUntaggedProducts(
 		@Parameter(description = "시작일 (yyyy-MM-dd, 포함)", example = "2026-11-01") LocalDate from,
 		@Parameter(description = "종료일 (yyyy-MM-dd, 포함)", example = "2026-11-18") LocalDate to,
 		@Parameter(description = "돌려줄 항목 수 (1~100)", example = "20") @Min(1) @Max(100) int limit
