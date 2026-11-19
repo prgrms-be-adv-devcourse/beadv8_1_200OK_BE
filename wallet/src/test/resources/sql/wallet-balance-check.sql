@@ -12,6 +12,7 @@ WITH buyer_ledger AS (
                WHEN 'CHARGE' THEN l.amount
                WHEN 'REFUND' THEN l.amount
                WHEN 'PAYMENT' THEN -l.amount
+               WHEN 'REFUND_REVERT' THEN -l.amount
            END AS delta,
            LAG(l.balance_after, 1, 0) OVER (PARTITION BY l.buyer_wallet_id ORDER BY l.id) AS previous_balance_after,
            ROW_NUMBER() OVER (PARTITION BY l.buyer_wallet_id ORDER BY l.id DESC) AS reverse_order
@@ -155,4 +156,42 @@ SELECT 'BUYER', l.buyer_wallet_id, 'REFUND_LEDGER_WITHOUT_RECORD', l.id,
 FROM buyer_wallet_ledger l
 WHERE l.type = 'REFUND'
   AND NOT EXISTS (SELECT 1 FROM wallet_order_refund r WHERE CONCAT('REFUND:', r.refund_id) = l.reference_key)
+UNION ALL
+-- 돌려준 반환을 다시 가져왔으면 되돌리기 원장이 있어야 한다. 돌려준 적 없는 환불의 되돌리기는 가져올 돈이 없어 원장이 없다
+SELECT 'BUYER', w.id, 'REVERTED_WITHOUT_LEDGER', NULL,
+       CONCAT('REFUND_REVERT:', v.refund_id), NULL
+FROM wallet_order_refund_revert v
+JOIN wallet_order_refund r ON r.refund_id = v.refund_id
+LEFT JOIN buyer_wallet w ON w.member_id = v.buyer_id
+WHERE v.status = 'REVERTED'
+  AND r.status = 'COMPLETED'
+  AND NOT EXISTS (SELECT 1 FROM buyer_wallet_ledger l WHERE l.reference_key = CONCAT('REFUND_REVERT:', v.refund_id))
+UNION ALL
+SELECT 'BUYER', w.id, 'REVERT_LEDGER_MISMATCH', l.id,
+       CONCAT('member=', v.buyer_id, ', amount=', v.amount),
+       CONCAT('member=', w.member_id, ', amount=', l.amount)
+FROM wallet_order_refund_revert v
+JOIN buyer_wallet_ledger l ON l.reference_key = CONCAT('REFUND_REVERT:', v.refund_id)
+JOIN buyer_wallet w ON w.id = l.buyer_wallet_id
+WHERE w.member_id <> v.buyer_id OR l.amount <> v.amount
+UNION ALL
+-- 되돌리기는 반환 처리 기록의 구매자·금액으로 가져와야 한다. 다르면 돈을 받지 않은 지갑에서 가져갔거나 덜·더 가져간 것이다
+SELECT 'BUYER', w.id, 'REVERT_RECORD_MISMATCH', NULL,
+       CONCAT('member=', r.buyer_id, ', amount=', r.amount),
+       CONCAT('member=', v.buyer_id, ', amount=', v.amount)
+FROM wallet_order_refund_revert v
+JOIN wallet_order_refund r ON r.refund_id = v.refund_id
+LEFT JOIN buyer_wallet w ON w.member_id = v.buyer_id
+WHERE r.buyer_id <> v.buyer_id OR r.amount <> v.amount
+UNION ALL
+-- 되돌리기 원장은 돌려준 반환을 다시 가져온 기록에만 붙는다. 실패한 되돌리기나 돌려준 적 없는 환불에 붙으면 없는 돈을 뺀 것이다
+SELECT 'BUYER', l.buyer_wallet_id, 'REVERT_LEDGER_WITHOUT_RECORD', l.id,
+       NULL, l.reference_key
+FROM buyer_wallet_ledger l
+WHERE l.type = 'REFUND_REVERT'
+  AND NOT EXISTS (SELECT 1 FROM wallet_order_refund_revert v
+                  JOIN wallet_order_refund r ON r.refund_id = v.refund_id
+                  WHERE CONCAT('REFUND_REVERT:', v.refund_id) = l.reference_key
+                    AND v.status = 'REVERTED'
+                    AND r.status = 'COMPLETED')
 ORDER BY wallet_type, wallet_id, ledger_id;

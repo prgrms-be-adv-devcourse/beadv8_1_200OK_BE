@@ -4,5 +4,6 @@ package com.ok.wallet.domain;
 public enum BuyerWalletLedgerType {
     CHARGE,   // 충전: 잔액 증가
     PAYMENT,  // 결제: 잔액 감소
-    REFUND    // 환불·반환: 잔액 증가 (세미: 배송 전 취소 시 예치금 반환)
+    REFUND,        // 환불·반환: 잔액 증가 (세미: 배송 전 취소 시 예치금 반환)
+    REFUND_REVERT  // 환불 되돌리기: 반환으로 돌려준 금액을 다시 가져옴, 잔액 감소
 }

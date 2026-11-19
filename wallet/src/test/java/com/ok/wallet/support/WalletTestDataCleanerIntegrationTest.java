@@ -426,6 +426,125 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 돌려준_환불을_다시_가져온_되돌리기_기록에_원장이_없으면_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+        insertOrderRefund(7L, 100L, 1L, 3_000, "COMPLETED");
+        insertOrderRefundRevert(7L, 100L, 1L, 3_000, "REVERTED");
+        jdbcTemplate.update("UPDATE buyer_wallet SET balance = 3000 WHERE id = ?", walletId);
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("wallet_id"), row -> row.get("check_item"), row -> row.get("expected"))
+                .containsExactly(tuple(walletId, "REVERTED_WITHOUT_LEDGER", "REFUND_REVERT:7"));
+    }
+
+    @Test
+    void 돌려준_적_없는_환불의_되돌리기_기록은_원장이_없어도_맞다() {
+        // given: 반환이 거절된 환불을 되돌림. 가져올 돈이 없어 원장을 남기지 않는다
+        insertWallet(WalletKind.BUYER, 1L, 0);
+        insertOrderRefund(7L, 100L, 1L, 3_000, "FAILED");
+        insertOrderRefundRevert(7L, 100L, 1L, 3_000, "REVERTED");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches).isEmpty();
+    }
+
+    @Test
+    void 되돌리기_기록과_원장의_금액이_다르면_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "REFUND_REVERT", 3_000, 0, "REFUND_REVERT:7");
+        insertOrderRefund(7L, 100L, 1L, 3_000, "COMPLETED");
+        insertOrderRefundRevert(7L, 100L, 1L, 2_000, "REVERTED");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactlyInAnyOrder(
+                        tuple("REVERT_LEDGER_MISMATCH", ledgerId, "member=1, amount=2000", "member=1, amount=3000"),
+                        tuple("REVERT_RECORD_MISMATCH", null, "member=1, amount=3000", "member=1, amount=2000"));
+    }
+
+    @Test
+    void 되돌리기_기록의_구매자가_반환_기록과_다르면_잡는다() {
+        // given: 돈을 받은 구매자 1번이 아니라 2번 지갑에서 가져감
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 3_000);
+        insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+        long otherWalletId = insertWallet(WalletKind.BUYER, 2L, 0);
+        insertLedger(WalletKind.BUYER, otherWalletId, "REFUND", 3_000, 3_000, "REFUND:8");
+        insertLedger(WalletKind.BUYER, otherWalletId, "REFUND_REVERT", 3_000, 0, "REFUND_REVERT:7");
+        insertOrderRefund(7L, 100L, 1L, 3_000, "COMPLETED");
+        insertOrderRefund(8L, 200L, 2L, 3_000, "COMPLETED");
+        insertOrderRefundRevert(7L, 100L, 2L, 3_000, "REVERTED");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("wallet_id"), row -> row.get("check_item"),
+                        row -> row.get("expected"), row -> row.get("actual"))
+                .containsExactly(tuple(otherWalletId, "REVERT_RECORD_MISMATCH",
+                        "member=1, amount=3000", "member=2, amount=3000"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("원장이_붙으면_안_되는_되돌리기")
+    void 돈을_가져오지_않은_되돌리기에_붙은_원장을_잡는다(String refundStatus, String revertStatus) {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "REFUND_REVERT", 3_000, 0, "REFUND_REVERT:7");
+        insertOrderRefund(7L, 100L, 1L, 3_000, refundStatus);
+        insertOrderRefundRevert(7L, 100L, 1L, 3_000, revertStatus);
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then: 반환 거절 기록에 붙은 반환 원장은 따로 잡히므로 되돌리기 원장 줄만 본다
+        assertThat(mismatches)
+                .filteredOn(row -> "REVERT_LEDGER_WITHOUT_RECORD".equals(row.get("check_item")))
+                .extracting(row -> row.get("ledger_id"))
+                .containsExactly(ledgerId);
+    }
+
+    static Stream<Arguments> 원장이_붙으면_안_되는_되돌리기() {
+        return Stream.of(
+                Arguments.of("COMPLETED", "FAILED"),
+                Arguments.of("FAILED", "REVERTED"));
+    }
+
+    @Test
+    void 되돌리기_기록이_없는_되돌리기_원장을_잡는다() {
+        // given
+        long walletId = insertWallet(WalletKind.BUYER, 1L, 0);
+        insertLedger(WalletKind.BUYER, walletId, "REFUND", 3_000, 3_000, "REFUND:7");
+        long ledgerId = insertLedger(WalletKind.BUYER, walletId, "REFUND_REVERT", 3_000, 0, "REFUND_REVERT:7");
+        insertOrderRefund(7L, 100L, 1L, 3_000, "COMPLETED");
+
+        // when
+        List<Map<String, Object>> mismatches = sut.findMismatches();
+
+        // then
+        assertThat(mismatches)
+                .extracting(row -> row.get("check_item"), row -> row.get("ledger_id"))
+                .containsExactly(tuple("REVERT_LEDGER_WITHOUT_RECORD", ledgerId));
+    }
+
+    @Test
     void 어긋남이_있으면_데이터를_모두_지운_뒤_실패한다() {
         // given
         long walletId = insertWallet(WalletKind.BUYER, 1L, 6_000);
@@ -502,8 +621,15 @@ class WalletTestDataCleanerIntegrationTest extends AbstractIntegrationTest {
                 """, refundId, orderId, buyerId, amount, status);
     }
 
+    private void insertOrderRefundRevert(long refundId, long orderId, long buyerId, long amount, String status) {
+        jdbcTemplate.update("""
+                INSERT INTO wallet_order_refund_revert (refund_id, order_id, buyer_id, amount, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, NOW(6), NOW(6))
+                """, refundId, orderId, buyerId, amount, status);
+    }
+
     private long countWalletRows() {
-        return Stream.of("wallet_order_refund", "wallet_order_payment", "wallet_charge", "buyer_wallet_ledger",
+        return Stream.of("wallet_order_refund_revert", "wallet_order_refund", "wallet_order_payment", "wallet_charge", "buyer_wallet_ledger",
                         "seller_wallet_ledger", "buyer_wallet", "seller_wallet")
                 .mapToLong(table -> jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class))
                 .sum();

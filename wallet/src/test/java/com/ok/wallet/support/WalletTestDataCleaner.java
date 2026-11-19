@@ -25,6 +25,7 @@ public class WalletTestDataCleaner {
     // 원장이 지갑을 외래 키로 참조하므로 원장을 먼저 지운다.
     // 검사 SQL이 짝을 맞춰 보는 새 표를 만들면 여기에도 넣는다. 빠지면 앞 시험의 기록이 남아 다음 시험의 검사가 엉뚱하게 실패한다
     private static final List<String> DELETE_SQLS = List.of(
+            "DELETE FROM wallet_order_refund_revert",
             "DELETE FROM wallet_order_refund",
             "DELETE FROM wallet_order_payment",
             "DELETE FROM wallet_charge",

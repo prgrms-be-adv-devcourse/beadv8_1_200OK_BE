@@ -80,6 +80,22 @@ public class BuyerWallet extends BaseTime {
         return increase(BuyerWalletLedgerType.REFUND, amount, referenceKey);
     }
 
+    /**
+     * 환불 반환으로 돌려준 금액을 다시 가져오고 되돌리기 원장을 반환한다. 환불 모듈이 요청한 되돌리기를 처리할 때 호출된다.
+     * 잔액이 모자라면 가져오지 않고 실패로 답하기로 했으므로, 호출하는 쪽이 {@link #hasEnoughBalance}로 먼저 확인한다.
+     * referenceKey는 "REFUND_REVERT:{환불 ID}" 형식이며, 모든 지갑을 통틀어 한 번만 쓰여야 한다.
+     *
+     * @throws IllegalStateException 잔액이 모자라면. 확인을 빠뜨린 코드의 버그라 API 오류로 바꾸지 않는다
+     */
+    public BuyerWalletLedger revertRefund(long amount, String referenceKey) {
+        validate(amount, referenceKey);
+        if (this.balance < amount) {
+            throw new IllegalStateException("되돌릴 금액이 잔액보다 큽니다. balance=" + this.balance + ", amount=" + amount);
+        }
+        this.balance -= amount;
+        return BuyerWalletLedger.create(this.id, BuyerWalletLedgerType.REFUND_REVERT, amount, this.balance, referenceKey);
+    }
+
     private BuyerWalletLedger increase(BuyerWalletLedgerType type, long amount, String referenceKey) {
         validate(amount, referenceKey);
         // 금액은 PG 승인 한도 안에서 들어오므로 넘칠 일이 없다.

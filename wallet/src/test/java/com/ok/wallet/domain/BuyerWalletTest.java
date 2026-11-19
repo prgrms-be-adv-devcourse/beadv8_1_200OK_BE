@@ -4,11 +4,15 @@ import com.ok.common.exception.RestApiException;
 import com.ok.wallet.exception.WalletErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.stream.Stream;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class BuyerWalletTest {
     @Test
@@ -99,6 +103,66 @@ class BuyerWalletTest {
         assertThat(wallet.getBalance()).isEqualTo(10_000);
         assertThat(ledger.getType()).isEqualTo(BuyerWalletLedgerType.REFUND);
         assertThat(ledger.getBalanceAfter()).isEqualTo(10_000);
+    }
+
+    @Test
+    void 환불을_되돌리면_잔액이_줄고_되돌리기_원장을_반환한다() {
+        // given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // when
+        BuyerWalletLedger sut = wallet.revertRefund(3_000, "REFUND_REVERT:1");
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getBalance()).isEqualTo(7_000);
+            softly.assertThat(sut.getType()).isEqualTo(BuyerWalletLedgerType.REFUND_REVERT);
+            softly.assertThat(sut.getAmount()).isEqualTo(3_000);
+            softly.assertThat(sut.getBalanceAfter()).isEqualTo(7_000);
+            softly.assertThat(sut.getReferenceKey()).isEqualTo("REFUND_REVERT:1");
+        });
+    }
+
+    @Test
+    void 잔액과_같은_금액은_되돌릴_수_있다() {
+        // given
+        BuyerWallet wallet = walletWithBalance(3_000);
+
+        // when
+        BuyerWalletLedger sut = wallet.revertRefund(3_000, "REFUND_REVERT:1");
+
+        // then
+        assertThat(sut.getBalanceAfter()).isZero();
+    }
+
+    @Test
+    void 잔액보다_많이_되돌리면_가져오지_않고_예외가_난다() {
+        // given
+        BuyerWallet wallet = walletWithBalance(2_999);
+
+        // when & then: 잔액을 마이너스로 두지 않기로 해 호출하는 쪽이 먼저 확인한다. 빠뜨렸으면 코드의 버그다
+        assertThatThrownBy(() -> wallet.revertRefund(3_000, "REFUND_REVERT:1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("되돌릴 금액이 잔액보다 큽니다. balance=2999, amount=3000");
+        assertThat(wallet.getBalance()).isEqualTo(2_999);
+    }
+
+    @ParameterizedTest
+    @MethodSource("되돌릴_수_없는_금액")
+    void 되돌릴_금액이_0_이하면_잔액을_바꾸지_않는다(long amount) {
+        // given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // when & then
+        assertThatThrownBy(() -> wallet.revertRefund(amount, "REFUND_REVERT:1"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_AMOUNT));
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+    }
+
+    static Stream<Long> 되돌릴_수_없는_금액() {
+        return Stream.of(0L, -1_000L);
     }
 
     @ParameterizedTest
