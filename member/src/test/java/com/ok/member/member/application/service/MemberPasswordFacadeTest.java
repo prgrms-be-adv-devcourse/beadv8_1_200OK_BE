@@ -1,15 +1,22 @@
 package com.ok.member.member.application.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.ok.common.exception.RestApiException;
 import com.ok.member.member.application.dto.PasswordChangeCommand;
 import com.ok.member.member.application.dto.TokenVersionChange;
 import com.ok.member.member.application.port.out.TokenVersionRecorder;
 import com.ok.member.member.exception.MemberErrorCode;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -51,6 +58,20 @@ class MemberPasswordFacadeTest {
     @InjectMocks
     MemberPasswordFacade memberPasswordFacade;
 
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    private final Logger logger = (Logger) LoggerFactory.getLogger(MemberPasswordFacade.class);
+
+    @BeforeEach
+    void setUp() {
+        logs.start();
+        logger.addAppender(logs);
+    }
+
+    @AfterEach
+    void tearDown() {
+        logger.detachAppender(logs);
+    }
+
     @Test
     void 현재_비밀번호가_맞으면_확인에_쓴_해시로_바꾸고_올린_토큰_버전을_저장소에_남긴다() {
         // given: 서비스가 그사이 비밀번호가 바뀌었는지 볼 수 있도록 확인에 쓴 해시를 그대로 넘겨야 한다
@@ -75,10 +96,14 @@ class MemberPasswordFacadeTest {
         given(tokenVersionRecordPolicy.remainingTtl(CHANGED_AT)).willReturn(Optional.of(TTL));
         willThrow(new QueryTimeoutException("Redis 응답 없음")).given(tokenVersionRecorder).record(MEMBER_ID, 2L, TTL);
 
-        // when & then
+        // when & then: 예상한 장애라 원인 한 줄만 남기고 스택은 쌓지 않는다
         assertThatCode(() -> memberPasswordFacade.changePassword(MEMBER_ID,
                 new PasswordChangeCommand("password1!", "newPassword1!")))
                 .doesNotThrowAnyException();
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNull();
+        });
     }
 
     @Test
@@ -91,10 +116,15 @@ class MemberPasswordFacadeTest {
         willThrow(new IllegalArgumentException("TTL은 1밀리초 이상이어야 합니다."))
                 .given(tokenVersionRecorder).record(MEMBER_ID, 2L, TTL);
 
-        // when & then
+        // when & then: 버그라 원인을 찾을 수 있게 스택을 함께 남긴다
         assertThatCode(() -> memberPasswordFacade.changePassword(MEMBER_ID,
                 new PasswordChangeCommand("password1!", "newPassword1!")))
                 .doesNotThrowAnyException();
+        assertThat(logs.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getThrowableProxy()).isNotNull();
+            assertThat(event.getThrowableProxy().getClassName()).isEqualTo(IllegalArgumentException.class.getName());
+        });
     }
 
     @Test

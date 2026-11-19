@@ -8,6 +8,7 @@ import com.ok.member.member.application.port.out.TokenVersionRecorder;
 import com.ok.member.member.exception.MemberErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -52,9 +53,15 @@ public class MemberPasswordFacade implements MemberPasswordChangeUseCase {
         tokenVersionRecordPolicy.remainingTtl(change.changedAt()).ifPresent(ttl -> {
             try {
                 tokenVersionRecorder.record(change.memberId(), change.tokenVersion(), ttl);
-            } catch (RuntimeException e) {
+            } catch (DataAccessException e) {
+                // 저장소 장애는 예상한 실패라 원인 한 줄이면 된다. 장애 동안 요청마다 스택이 쌓이지 않게 한다
                 log.warn("비밀번호는 바뀌었지만 토큰 버전을 저장소에 남기지 못했다. 다시 채우기가 메운다. memberId={}, causeType={}, cause={}",
                         change.memberId(), e.getClass().getName(), e.getMessage());
+            } catch (RuntimeException e) {
+                // 그 밖의 예외는 버그라 원인을 찾을 수 있게 스택과 함께 남긴다. 응답은 위와 같은 이유로 성공으로 둔다.
+                // 예외를 처리하고 계속 진행하므로 레벨은 ERROR가 아니라 WARN이다(서비스 로그 규칙)
+                log.warn("비밀번호는 바뀌었지만 예상하지 못한 예외로 토큰 버전을 남기지 못했다. 다시 채우기가 메운다. memberId={}",
+                        change.memberId(), e);
             }
         });
     }
