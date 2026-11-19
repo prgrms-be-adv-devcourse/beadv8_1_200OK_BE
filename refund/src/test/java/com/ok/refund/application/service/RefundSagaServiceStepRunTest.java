@@ -256,7 +256,7 @@ class RefundSagaServiceStepRunTest {
         then(walletRefundRequestPort).should(never()).requestRevert(any());
     }
 
-    // 주문 422(수량 합계 초과·같은 refundId에 다른 내용)는 환불·주문 기록이 어긋난 것이라 다시 해도 같다(#554).
+    // 주문 422(수량 합계 초과·같은 refundId에 다른 내용·이미 되돌린 환불)는 환불·주문 기록이 어긋난 것이라 다시 해도 같다(#554).
     // 5번 다시 보내지 않고 첫 실패에서 주문 줄을 멈춘다. 주문 반영은 첫 단계라 돈이 나가기 전이고 회수도 하지 않는다
     @Test
     void 주문이_기록이_어긋났다고_답하면_다시_시도하지_않고_주문_줄을_바로_멈춘다() {

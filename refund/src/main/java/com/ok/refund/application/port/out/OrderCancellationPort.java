@@ -5,7 +5,7 @@ package com.ok.refund.application.port.out;
  * 주문은 이 값으로 구매확정 금액에서 취소분을 빼고, 뺀 배송비를 판매자 몫으로 정산에 보낸다(주문팀 합의).
  * 조회({@link OrderQueryPort})와 나눈 이유: 조회는 승인 전에, 이 호출은 승인 커밋 뒤에 쓰여 부르는 시점과 실패 의미가 다르다.
  * 주문 실제 API(#542)는 {@code POST /internal/v1/orders/items/{orderItemId}/refunds}, 본문 refundId·quantity·deductedShippingFee,
- * 성공 204이고 반영할 수 없으면 409(이미 출고됨) 또는 422(수량 합계 초과, 같은 refundId인데 내용이 다름, 주문 #737)로 답한다.
+ * 성공 204이고 반영할 수 없으면 409(이미 출고됨) 또는 422(수량 합계 초과, 같은 refundId인데 내용이 다름, 이미 되돌린 환불, 주문 #737·#604)로 답한다.
  */
 public interface OrderCancellationPort {
 

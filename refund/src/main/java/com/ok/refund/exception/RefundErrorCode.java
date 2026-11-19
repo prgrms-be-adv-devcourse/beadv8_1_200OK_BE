@@ -28,9 +28,9 @@ public enum RefundErrorCode implements ErrorCode {
 
     // 주문 모듈 호출
     ORDER_API_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "Order API failed", "주문 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."),
-    // 주문이 취소 반영을 422로 막음: 수량 합계 초과 또는 같은 refundId에 다른 내용(#554, 주문 #737). 환불과 주문 기록이 어긋난 것이라
+    // 주문이 취소 반영을 422로 막음: 수량 합계 초과, 같은 refundId에 다른 내용, 이미 되돌린 환불(#554, 주문 #737·#604). 환불과 주문 기록이 어긋난 것이라
     // 다시 해도 같아 단계를 바로 멈추고 사람이 본다. 주문 반영은 첫 단계라 돈·재고가 움직이기 전이고, 되돌릴 것도 없다.
-    // 두 이유는 가르지 않는다. 이유 이름은 응답 type에만 오는데 about:blank일 수 있어 믿을 수 없고, 둘 다 사람이 보는 것은 같다.
+    // 이유는 가르지 않는다. 이유 이름은 응답 type에만 오는데 about:blank일 수 있어 믿을 수 없고, 모두 사람이 보는 것은 같다.
     // 판매자 응답은 상품 거절(PRODUCT_RELEASE_REFUSED)과 같게 409로 둔다
     ORDER_RECORD_CONFLICT(HttpStatus.CONFLICT, "Order record conflict", "주문 기록과 맞지 않아 확인이 필요합니다. 관리자에게 문의해 주세요."),
 

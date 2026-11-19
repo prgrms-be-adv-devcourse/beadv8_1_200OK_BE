@@ -308,7 +308,7 @@ class RefundOrderHttpAdapterTest {
         assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
     }
 
-    // 주문은 기록이 어긋난 두 경우(수량 합계 초과, 같은 refundId에 다른 내용)를 422로 답한다(#554, 주문 #737).
+    // 주문은 기록이 어긋난 경우(수량 합계 초과, 같은 refundId에 다른 내용, 이미 되돌린 환불)를 422로 답한다(#554, 주문 #737·#604).
     // 거절(구매자에게 "출고됨")도, 다시 시도할 일시 실패(ORDER_API_FAILED)도 아니라 따로 둔 코드로 바꾼다. 이유 이름(type)은 보지 않는다
     @Test
     void 취소_반영이_422면_기록_어긋남으로_바꾼다() {
