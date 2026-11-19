@@ -20,6 +20,10 @@ public record PayoutBlockedOrderResult(
         // 초과 청구 근거 (#570). 원인에 초과 청구가 없거나 근거를 계산할 수 없으면 null
         //   막힌 순간 = 금액 검사 때 저장한 값, 지금 = 목록을 볼 때 계산한 값
         PayoutOverchargeEvidenceResult evidenceAtBlock,
-        PayoutOverchargeEvidenceResult evidenceNow
+        PayoutOverchargeEvidenceResult evidenceNow,
+        // 해결 대기 조정 합계 (#723): 지금 해결하면 확인한 조정이 될 조정을 판매 대금·수수료로 나눠 더함 (원). 없으면 0
+        //   나눈 이유: 수수료 불일치를 맞게 고치면(대금 +700, 수수료 −700) 하나로 더하면 0이라 들어간 것이 안 보임
+        long pendingSaleAmountAdjustment,
+        long pendingSaleFeeAdjustment
 ) {
 }

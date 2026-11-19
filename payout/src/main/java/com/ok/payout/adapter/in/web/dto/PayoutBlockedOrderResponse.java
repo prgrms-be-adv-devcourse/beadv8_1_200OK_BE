@@ -46,7 +46,16 @@ public record PayoutBlockedOrderResponse(
 
         @Schema(description = "지금의 초과 청구 근거: 목록을 볼 때 계산한 값. 막힌 순간 값과 비교해 데이터가 바뀌었는지 봄. "
                 + "원인에 초과 청구가 없거나 계산할 수 없으면 null", nullable = true)
-        PayoutOverchargeEvidenceResponse evidenceNow
+        PayoutOverchargeEvidenceResponse evidenceNow,
+
+        @Schema(description = "해결하면 금액 검사에 들어갈 판매 대금(SALE_AMOUNT) 조정 합계 (원). "
+                + "같은 주문의 해결 안 된 금액 불일치·수수료 불일치 실패 뒤에 넣은 조정만 더함. 없으면 0. 지금 근거(evidenceNow) 합계에는 섞지 않음",
+                example = "-9700")
+        long pendingSaleAmountAdjustment,
+
+        @Schema(description = "해결하면 금액 검사에 들어갈 수수료(SALE_FEE) 조정 합계 (원). 조건은 pendingSaleAmountAdjustment와 같음. 없으면 0",
+                example = "-300")
+        long pendingSaleFeeAdjustment
 ) {
 
     public static PayoutBlockedOrderResponse from(PayoutBlockedOrderResult result) {
@@ -57,6 +66,7 @@ public record PayoutBlockedOrderResponse(
         return new PayoutBlockedOrderResponse(result.orderId(), result.status(), result.failedRunCount(),
                 result.lastFailedAt(), result.sellerIds(), result.reasons(), result.categories(), causes,
                 PayoutOverchargeEvidenceResponse.from(result.evidenceAtBlock()),
-                PayoutOverchargeEvidenceResponse.from(result.evidenceNow()));
+                PayoutOverchargeEvidenceResponse.from(result.evidenceNow()),
+                result.pendingSaleAmountAdjustment(), result.pendingSaleFeeAdjustment());
     }
 }

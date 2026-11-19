@@ -9,6 +9,7 @@ import com.ok.payout.application.port.out.DepositCheckReviewRow;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
 import com.ok.payout.application.port.out.OverchargeCandidateRow;
+import com.ok.payout.application.port.out.PendingAdjustmentRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
 import com.ok.payout.application.port.out.PayoutResolutionRequestRow;
 import com.ok.payout.application.port.out.PayoutResolutionRow;
@@ -79,6 +80,10 @@ import static com.ok.payout.domain.QPayoutWalletDeductionConflict.payoutWalletDe
 @Repository
 @RequiredArgsConstructor
 public class PayoutQuerydslRepository implements PayoutQueryRepository {
+
+    // 관리자가 보고 조정을 넣는 금액 불일치 사유 (#291 결정 4번). 확인한 조정·해결 대기 조정(#723)이 함께 씀
+    private static final List<PayoutFailureReason> ADJUSTMENT_CONFIRMING_REASONS =
+            List.of(PayoutFailureReason.AMOUNT_MISMATCH, PayoutFailureReason.FEE_MISMATCH);
 
     // 주문별 실패 횟수 SQL의 공통 앞부분 (countFailedRunsByOrder·countFailedRunsOfOrder가 함께 씀, 조건 설명은 countFailedRunsByOrder 주석)
     // 두 메서드가 같은 문자열을 써야 스냅샷의 멈춤 판정과 해결 API의 멈춤 판정이 어긋나지 않음. 끝은 WHERE 조건 뒤라 "AND ..." 또는 "GROUP BY"를 붙임
@@ -510,6 +515,27 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                     .fetchOne();
             return Objects.requireNonNullElse(count, 0L);
         });
+    }
+
+    // 막힌 주문의 해결 대기 조정 합계 (#723): 한 페이지 주문 ID로 한 번만 조회 (주문마다 따로 조회하지 않음, payout/CLAUDE.md 설계 전제)
+    // 판매 대금·수수료만 셈: 배송비는 조정할 수 없음(#291 결정 6번)
+    // order_id로 시작하는 유니크 인덱스(uk_payout_candidate_items_order_id_ship_seller_id_adjustment_id)로 그 주문들의 후보만 읽음
+    @Override
+    public List<PendingAdjustmentRow> sumPendingAdjustmentsByOrderIds(Collection<Long> orderIds) {
+        if (orderIds.isEmpty()) {
+            return List.of();
+        }
+        return queryFactory
+                .select(Projections.constructor(PendingAdjustmentRow.class,
+                        payoutCandidateItem.orderId,
+                        payoutCandidateItem.eventType,
+                        payoutCandidateItem.amount.sumLong()))
+                .from(payoutCandidateItem)
+                .where(payoutCandidateItem.orderId.in(orderIds),
+                        payoutCandidateItem.eventType.in(PayoutEventType.SALE_AMOUNT, PayoutEventType.SALE_FEE),
+                        pendingAdjustment())
+                .groupBy(payoutCandidateItem.orderId, payoutCandidateItem.eventType)
+                .fetch();
     }
 
     @Override
@@ -1231,11 +1257,38 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                 .and(JPAExpressions.selectOne()
                         .from(checkedResolution)
                         .join(checkedFailure).on(checkedFailure.id.eq(checkedResolution.failureId))
-                        .where(checkedFailure.orderId.eq(payoutCandidateItem.orderId),
-                                checkedFailure.reason.in(PayoutFailureReason.AMOUNT_MISMATCH, PayoutFailureReason.FEE_MISMATCH),
-                                checkedFailure.createdAt.loe(payoutCandidateItem.createdAt),
+                        .where(amountFailureBeforeAdjustment(checkedFailure),
                                 checkedResolution.createdAt.gt(payoutCandidateItem.createdAt))
                         .exists());
+    }
+
+    // 확인한 조정 조건 1·3번 앞쪽(#291 결정 4번): f가 같은 주문의 금액 불일치 실패이고 f.생성 시각 ≤ 조정.생성 시각
+    // 확인한 조정(confirmedAdjustment)과 해결 대기 조정(pendingAdjustment, #723)이 함께 씀
+    //   두 곳이 따로 쓰면 사유를 하나 더할 때 한쪽만 바뀌어, 화면의 대기 합계와 해결 뒤 실제 검사가 어긋남
+    // failure는 부르는 쪽 별칭 (바깥 쿼리의 payoutFailure와 섞이지 않게)
+    private BooleanExpression amountFailureBeforeAdjustment(QPayoutFailure failure) {
+        return failure.orderId.eq(payoutCandidateItem.orderId)
+                .and(failure.reason.in(ADJUSTMENT_CONFIRMING_REASONS))
+                .and(failure.createdAt.loe(payoutCandidateItem.createdAt));
+    }
+
+    // 해결 대기 조정 (#723): 지금 해결하면 확인한 조정이 될 조정
+    //   = 같은 주문에 해결 안 된 금액 불일치 실패 f가 있고 f ≤ 조정, 그리고 아직 확인한 조정이 아님
+    //   해결은 그 주문의 해결 안 된 실패를 모두 해결하고 해결 시각은 늘 조정 뒤라(r > 조정), 해결하면 위 f가 확인한 조정 조건을 채움
+    // 다음 정산 실행의 검사에 반드시 든다는 뜻은 아님: 실행 중(스냅샷 뒤)에 넣고 해결한 조정은 그 실행 검사에서 빠질 수 있음(checkedCandidate 주석)
+    private BooleanExpression pendingAdjustment() {
+        QPayoutFailure pendingFailure = new QPayoutFailure("pendingFailure");
+        QPayoutFailureResolution pendingFailureResolution = new QPayoutFailureResolution("pendingFailureResolution");
+        return payoutCandidateItem.adjustmentId.gt(PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)
+                .and(JPAExpressions.selectOne()
+                        .from(pendingFailure)
+                        .where(amountFailureBeforeAdjustment(pendingFailure),
+                                JPAExpressions.selectOne()
+                                        .from(pendingFailureResolution)
+                                        .where(pendingFailureResolution.failureId.eq(pendingFailure.id))
+                                        .notExists())
+                        .exists())
+                .and(confirmedAdjustment().not());
     }
 
     // 이번 스냅샷 후보들의 주문 ID (금액 검사 집계 쿼리의 IN 조건)

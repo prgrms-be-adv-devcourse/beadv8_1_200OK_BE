@@ -206,6 +206,10 @@ public interface PayoutQueryRepository {
     // orderId가 null이면 전체, statuses가 비면 세 상태 모두 (#723)
     Page<BlockedOrderRow> findBlockedOrders(Long orderId, Collection<PayoutBlockedStatus> statuses, Pageable pageable);
 
+    // 막힌 주문의 해결 대기 조정 합계 (#723): 지금 해결하면 확인한 조정이 될 조정을 주문·종류(판매 대금·수수료)별로 더함
+    // 줄이 없으면 그 주문·종류는 0. orderIds가 비면 조회하지 않고 빈 목록
+    List<PendingAdjustmentRow> sumPendingAdjustmentsByOrderIds(Collection<Long> orderIds);
+
     // 그 주문들의 원인 (#569, 막힌 주문 표의 하위 표). 주문 ID, 실패 시각 최신순. orderIds가 비면 빈 목록
     List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds);
 

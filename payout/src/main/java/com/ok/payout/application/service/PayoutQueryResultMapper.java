@@ -74,7 +74,8 @@ final class PayoutQueryResultMapper {
     // 판매자·사유·범주 목록은 원인에서 모아 중복을 뺌 (판매자는 작은 번호부터, 사유·범주는 원인 순서대로)
     // 근거는 막힌 순간 = 표에 저장한 값(row), 지금 = 서비스가 볼 때 계산한 값(evidenceNow) (#570). 없으면 null
     static PayoutBlockedOrderResult toBlockedOrderResult(BlockedOrderRow row, List<PayoutBlockedOrderCause> causes,
-                                                         PayoutOverchargeEvidence evidenceNow) {
+                                                         PayoutOverchargeEvidence evidenceNow,
+                                                         long pendingSaleAmountAdjustment, long pendingSaleFeeAdjustment) {
         Set<Long> sellerIds = new TreeSet<>();
         Set<String> reasons = new LinkedHashSet<>();
         Set<String> categories = new LinkedHashSet<>();
@@ -89,7 +90,8 @@ final class PayoutQueryResultMapper {
         }
         return new PayoutBlockedOrderResult(row.orderId(), row.status().name(), row.failedRunCount(),
                 row.lastFailedAt(), new ArrayList<>(sellerIds), new ArrayList<>(reasons), new ArrayList<>(categories),
-                causeResults, toEvidenceResult(row.overchargeEvidence()), toEvidenceResult(evidenceNow));
+                causeResults, toEvidenceResult(row.overchargeEvidence()), toEvidenceResult(evidenceNow),
+                pendingSaleAmountAdjustment, pendingSaleFeeAdjustment);
     }
 
     // 관리자 대사 확인 목록 1줄 (#621). 이유는 입구가 domain enum을 모르게 이름 문자열로 바꿈
