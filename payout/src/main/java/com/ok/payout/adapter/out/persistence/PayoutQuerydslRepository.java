@@ -477,10 +477,18 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 막힌 주문 목록 (#569): 집계 표만 읽음 (원본 실패 기록을 다시 계산하지 않음, payout/CLAUDE.md 설계 전제)
-    // 정렬은 인덱스 (status, last_failed_at)의 뒷자리를 씀. 상태로 거르지 않아 인덱스로 정렬을 다 하지는 못하지만,
+    // 정렬은 인덱스 (status, last_failed_at)의 뒷자리를 씀. 상태를 여럿 고르거나 안 고르면 인덱스로 정렬을 다 하지는 못하지만,
     //   표는 막힌 주문 수만큼이라 운영 기간과 상관없이 작음
+    // 주문 ID 조건(#723)은 기본 키(order_id)로 한 줄만 읽음
     @Override
-    public Page<BlockedOrderRow> findBlockedOrders(Pageable pageable) {
+    public Page<BlockedOrderRow> findBlockedOrders(Long orderId, Collection<PayoutBlockedStatus> statuses, Pageable pageable) {
+        BooleanBuilder condition = new BooleanBuilder(notPendingBlockedOrder());
+        if (orderId != null) {
+            condition.and(payoutBlockedOrder.orderId.eq(orderId));
+        }
+        if (!statuses.isEmpty()) {
+            condition.and(payoutBlockedOrder.status.in(statuses));
+        }
         List<BlockedOrderRow> content = queryFactory
                 .select(Projections.constructor(BlockedOrderRow.class,
                         payoutBlockedOrder.orderId,
@@ -489,7 +497,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutBlockedOrder.lastFailedAt,
                         payoutBlockedOrder.overchargeEvidence))
                 .from(payoutBlockedOrder)
-                .where(notPendingBlockedOrder())
+                .where(condition)
                 .orderBy(payoutBlockedOrder.lastFailedAt.desc(), payoutBlockedOrder.orderId.desc())
                 .offset(pageable.getOffset())
                 .limit(pageable.getPageSize())
@@ -498,7 +506,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         return PageableExecutionUtils.getPage(content, pageable, () -> {
             Long count = queryFactory.select(payoutBlockedOrder.count())
                     .from(payoutBlockedOrder)
-                    .where(notPendingBlockedOrder())
+                    .where(condition)
                     .fetchOne();
             return Objects.requireNonNullElse(count, 0L);
         });

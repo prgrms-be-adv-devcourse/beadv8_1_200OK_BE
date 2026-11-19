@@ -8,6 +8,7 @@ import com.ok.payout.application.port.out.OverchargeCandidateRow;
 import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.domain.PayoutBlockedOrderCause;
+import com.ok.payout.domain.PayoutBlockedStatus;
 import com.ok.payout.domain.PayoutFailureReason;
 import com.ok.payout.domain.PayoutOverchargeEvidence;
 import lombok.RequiredArgsConstructor;
@@ -76,7 +77,13 @@ public class PayoutBlockedOrderService implements PayoutBlockedOrderUseCase {
     @Override
     @Transactional(readOnly = true)
     public Page<PayoutBlockedOrderResult> getBlockedOrders(PayoutBlockedOrderSearchQuery query) {
-        Page<BlockedOrderRow> page = payoutQueryRepository.findBlockedOrders(PageRequest.of(query.page(), query.size()));
+        // 상태 이름은 요청 DTO가 LOCKED·STOPPED·RESOLVED만 받으므로 그대로 바꿈 (PENDING은 들어오지 않음)
+        List<PayoutBlockedStatus> statuses = new ArrayList<>();
+        for (String status : query.statuses()) {
+            statuses.add(PayoutBlockedStatus.valueOf(status));
+        }
+        Page<BlockedOrderRow> page = payoutQueryRepository.findBlockedOrders(
+                query.orderId(), statuses, PageRequest.of(query.page(), query.size()));
         List<Long> orderIds = new ArrayList<>();
         for (BlockedOrderRow row : page.getContent()) {
             orderIds.add(row.orderId());

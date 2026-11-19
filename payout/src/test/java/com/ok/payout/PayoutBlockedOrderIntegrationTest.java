@@ -545,6 +545,75 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableEntity());                             // 422
     }
 
+    // ---------- 주문 ID·상태 조건 (#723) ----------
+
+    @Test
+    void 관리자_목록에_주문_ID를_주면_그_주문_줄만_나오고_막히지_않은_주문이면_빈_목록이다() throws Exception {
+        // given: 막힌 주문 둘
+        Long run = runCompleted();
+        long target = nextOrderId();
+        insertFailure(run, insertCandidate(target), target, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        long other = nextOrderId();
+        insertFailure(run, insertCandidate(other), other, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        blockedOrderUseCase.refresh();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 고른 주문 한 줄
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(target)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) target)));
+
+        // when & then: 막히지 않은 주문 ID는 빈 목록
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(nextOrderId())).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
+    void 관리자_목록에_상태를_주면_그_상태만_나오고_주문_ID와_함께_주면_둘_다_맞는_줄만_나온다() throws Exception {
+        // given: 잠김 하나, 해결됨 하나 (해결은 다음 갱신 전까지 RESOLVED)
+        Long run = runCompleted();
+        long locked = nextOrderId();
+        insertFailure(run, insertCandidate(locked), locked, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        long resolved = nextOrderId();
+        insertFailure(run, insertCandidate(resolved), resolved, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        blockedOrderUseCase.refresh();
+        resolve(resolved);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 아직 안 푼 것만 (여러 값)
+        mockMvc.perform(blockedOrdersRequest().param("status", "LOCKED").param("status", "STOPPED")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) locked)));
+
+        // when & then: 해결됨만
+        mockMvc.perform(blockedOrdersRequest().param("status", "RESOLVED").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) resolved)));
+
+        // when & then: 주문 ID와 상태가 맞지 않으면 빈 목록
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(locked)).param("status", "RESOLVED")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
+    void 관리자_목록은_예비_상태나_없는_상태_값이면_422다() throws Exception {
+        // given
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        mockMvc.perform(blockedOrdersRequest().param("status", "PENDING").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(blockedOrdersRequest().param("status", "LOCKED").param("status", "DONE")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(blockedOrdersRequest().param("orderId", "0").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
     // ---------- 초과 청구 근거 (#570) ----------
 
     @Test
