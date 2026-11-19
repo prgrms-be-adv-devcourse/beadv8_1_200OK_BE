@@ -925,9 +925,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 정렬은 후보 생성 시각 최신순 고정. 같은 시각에 생긴 후보가 여러 건(대금·수수료·배송비가 함께 생김)이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
     // 정산 ID는 payout_item과 LEFT JOIN으로 가져옴 (payout_item.candidate_id가 유니크라 후보 한 건이 여러 줄로 늘지 않음)
     @Override
-    public Page<CandidateRow> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
+    public Page<CandidateRow> searchCandidates(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
                                                boolean unsettledOnly, boolean sellerShareOnly, Pageable pageable) {
-        BooleanBuilder condition = candidateSearchCondition(sellerId, from, to, unsettledOnly, sellerShareOnly);
+        BooleanBuilder condition = candidateSearchCondition(orderId, sellerId, from, to, unsettledOnly, sellerShareOnly);
         List<CandidateRow> content = queryFactory
                 .select(Projections.constructor(CandidateRow.class,
                         payoutCandidateItem.id,
@@ -1048,15 +1048,24 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 정산후보 목록 조건. 기간은 정산 목록과 같은 규칙: from 포함, to 미포함
+    // 주문 ID(#723)는 uk_payout_candidate_items_order_id_ship_seller_id_adjustment_id(order_id로 시작)로 그 주문 몇 줄만 읽음
+    // from·to가 null이면 그쪽 경계를 걸지 않음 (주문 ID로 찾을 때만 null이 옴)
     // 미정산 판단은 정산 배치(unsettledInPeriod)와 같은 기준: payout_item에 같은 candidate_id가 없으면 미정산
-    private BooleanBuilder candidateSearchCondition(Long sellerId, LocalDateTime from, LocalDateTime to,
+    private BooleanBuilder candidateSearchCondition(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
                                                     boolean unsettledOnly, boolean sellerShareOnly) {
         BooleanBuilder condition = new BooleanBuilder();
+        if (orderId != null) {
+            condition.and(payoutCandidateItem.orderId.eq(orderId));
+        }
         if (sellerId != null) {
             condition.and(payoutCandidateItem.sellerId.eq(sellerId));
         }
-        condition.and(payoutCandidateItem.createdAt.goe(from));
-        condition.and(payoutCandidateItem.createdAt.lt(to));
+        if (from != null) {
+            condition.and(payoutCandidateItem.createdAt.goe(from));
+        }
+        if (to != null) {
+            condition.and(payoutCandidateItem.createdAt.lt(to));
+        }
         if (unsettledOnly) {
             condition.and(JPAExpressions.selectOne()
                     .from(payoutItem)

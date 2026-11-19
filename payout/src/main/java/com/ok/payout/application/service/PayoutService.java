@@ -1172,7 +1172,7 @@ public class PayoutService implements PayoutUseCase {
     @Override
     @Transactional(readOnly = true)
     public Page<PayoutCandidateResult> searchCandidatesForAdmin(PayoutCandidateSearchQuery query) {
-        return searchCandidates(query.sellerId(), query.from(), query.to(), query.unsettledOnly(), false,
+        return searchCandidates(query.orderId(), query.sellerId(), query.from(), query.to(), query.unsettledOnly(), false,
                 query.page(), query.size());
     }
 
@@ -1189,14 +1189,16 @@ public class PayoutService implements PayoutUseCase {
     public Page<PayoutCandidateResult> searchCandidatesForSeller(Long sellerId, PayoutSellerCandidateSearchQuery query) {
         // 판매자 목록은 요청에 대상 ID가 없음: 토큰의 회원 ID로만 조회해서 URL·파라미터를 바꿔도 남의 후보를 요청할 수 없음
         // 후보의 seller_id는 판매한 판매자 회원 ID라서, 정산 목록(payeeId)과 달리 번호 체계 전제(TODO)가 필요 없음
-        return searchCandidates(sellerId, query.from(), query.to(), query.unsettledOnly(), true,
+        // 주문 ID 조건은 관리자 조회에만 있음 (#723). 판매자 조회는 늘 기간 필수
+        return searchCandidates(null, sellerId, query.from(), query.to(), query.unsettledOnly(), true,
                 query.page(), query.size());
     }
 
     // 관리자·판매자 정산후보 조회의 공통 부분. 둘은 조건만 다르고 조회 방식은 같음
-    private Page<PayoutCandidateResult> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
+    private Page<PayoutCandidateResult> searchCandidates(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
                                                          boolean unsettledOnly, boolean sellerShareOnly, int page, int size) {
-        return payoutQueryRepository.searchCandidates(sellerId, from, to, unsettledOnly, sellerShareOnly, PageRequest.of(page, size))
+        return payoutQueryRepository.searchCandidates(orderId, sellerId, from, to, unsettledOnly, sellerShareOnly,
+                        PageRequest.of(page, size))
                 .map(PayoutQueryResultMapper::toCandidateResult);
     }
 

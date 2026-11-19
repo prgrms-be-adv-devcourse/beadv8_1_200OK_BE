@@ -18,14 +18,16 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 // 관리자 정산후보 요청 DTO는 정산 목록 요청(PayoutSearchRequest)의 기간·페이지 검증을 복사해 둔 것이라 같은 경우를 그대로 확인함
 // 한쪽 규칙만 바뀌면 여기서 드러나도록 PayoutSearchRequestTest와 테스트 구성을 맞춤 (미정산만 여부 기본값·전달만 추가)
+// 예외 (#723): 이 요청만 주문 ID를 주면 기간이 없어도 됨. 그래서 기간이 빠졌을 때의 검증 항목 이름이 다른 요청(from·to)과 다름
 class PayoutCandidateSearchRequestTest {
 
     private static final LocalDateTime JAN_1 = LocalDateTime.of(2026, 1, 1, 0, 0);
     private static final LocalDateTime OCT_1 = LocalDateTime.of(2026, 10, 1, 0, 0);
     private static final LocalDateTime NOV_1 = LocalDateTime.of(2026, 11, 1, 0, 0);
 
-    // 기간 검증에 관련된 검증 항목 이름 (필드 2개의 @NotNull, 검증 메서드 2개의 @AssertTrue)
-    private static final List<String> PERIOD_PROPERTIES = List.of("from", "to", "periodValid", "periodWithinMaxRange");
+    // 기간 검증에 관련된 검증 항목 이름 (검증 메서드 3개의 @AssertTrue)
+    private static final List<String> PERIOD_PROPERTIES =
+            List.of("periodPresentWithoutOrderId", "periodValid", "periodWithinMaxRange");
 
     private static ValidatorFactory validatorFactory;
     private static Validator validator;
@@ -44,7 +46,7 @@ class PayoutCandidateSearchRequestTest {
     @Test
     void 생략된_값은_기본값으로_채운다() {
         // when
-        PayoutCandidateSearchRequest sut = new PayoutCandidateSearchRequest(null, OCT_1, NOV_1, null, null, null);
+        PayoutCandidateSearchRequest sut = new PayoutCandidateSearchRequest(null, null, OCT_1, NOV_1, null, null, null);
 
         // then
         assertSoftly(softly -> {
@@ -58,7 +60,8 @@ class PayoutCandidateSearchRequestTest {
     void 조회_조건을_조회_Query로_그대로_옮긴다() {
         // given: page와 size에 일부러 다른 숫자(2, 30)를 넣고, unsettledOnly는 기본값(false)과 다른 true를 넣음
         //        같은 값이면 바뀌어 옮겨지거나 빠져도 티가 안 나서 실수를 못 잡음. from과 to도 같은 이유로 다른 날짜를 넣음
-        PayoutCandidateSearchRequest request = new PayoutCandidateSearchRequest(7L, OCT_1, NOV_1, true, 2, 30);
+        //        sellerId(7)와 orderId(900)도 같은 Long이라 서로 다른 값을 넣음
+        PayoutCandidateSearchRequest request = new PayoutCandidateSearchRequest(7L, 900L, OCT_1, NOV_1, true, 2, 30);
 
         // when
         PayoutCandidateSearchQuery sut = request.toQuery();
@@ -67,6 +70,7 @@ class PayoutCandidateSearchRequestTest {
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.sellerId()).isEqualTo(7L);
+            softly.assertThat(sut.orderId()).isEqualTo(900L);
             softly.assertThat(sut.unsettledOnly()).isTrue();
             softly.assertThat(sut.from()).isEqualTo(OCT_1);
             softly.assertThat(sut.to()).isEqualTo(NOV_1);
@@ -112,7 +116,7 @@ class PayoutCandidateSearchRequestTest {
     }
 
     @Test
-    void 시작_시각이_없으면_필수값으로만_거절한다() {
+    void 주문_ID가_없고_시작_시각이_없으면_필수값으로만_거절한다() {
         // given
         PayoutCandidateSearchRequest request = periodRequest(null, NOV_1);
 
@@ -120,11 +124,11 @@ class PayoutCandidateSearchRequestTest {
         List<String> violations = periodViolations(request);
 
         // then: 순서·길이 검증까지 함께 걸리면 오류 메시지가 겹치므로 필수값 오류 하나만 나와야 함
-        assertThat(violations).containsExactly("from");
+        assertThat(violations).containsExactly("periodPresentWithoutOrderId");
     }
 
     @Test
-    void 종료_시각이_없으면_필수값으로만_거절한다() {
+    void 주문_ID가_없고_종료_시각이_없으면_필수값으로만_거절한다() {
         // given
         PayoutCandidateSearchRequest request = periodRequest(OCT_1, null);
 
@@ -132,11 +136,11 @@ class PayoutCandidateSearchRequestTest {
         List<String> violations = periodViolations(request);
 
         // then: 순서·길이 검증까지 함께 걸리면 오류 메시지가 겹치므로 필수값 오류 하나만 나와야 함
-        assertThat(violations).containsExactly("to");
+        assertThat(violations).containsExactly("periodPresentWithoutOrderId");
     }
 
     @Test
-    void 시작과_종료가_모두_없으면_둘_다_필수값으로_거절한다() {
+    void 주문_ID가_없고_시작과_종료가_모두_없으면_필수값으로_거절한다() {
         // given
         PayoutCandidateSearchRequest request = periodRequest(null, null);
 
@@ -144,7 +148,30 @@ class PayoutCandidateSearchRequestTest {
         List<String> violations = periodViolations(request);
 
         // then
-        assertThat(violations).containsExactlyInAnyOrder("from", "to");
+        assertThat(violations).containsExactly("periodPresentWithoutOrderId");
+    }
+
+    @Test
+    void 주문_ID가_있으면_기간이_없어도_통과한다() {
+        // given
+        PayoutCandidateSearchRequest request = new PayoutCandidateSearchRequest(null, 900L, null, null, null, null, null);
+
+        // when
+        List<String> violations = periodViolations(request);
+
+        // then
+        assertThat(violations).isEmpty();
+    }
+
+    @Test
+    void 주문_ID가_있으면_기간을_한쪽만_줘도_통과하고_둘_다_주면_순서와_길이를_검사한다() {
+        // given
+        PayoutCandidateSearchRequest fromOnly = new PayoutCandidateSearchRequest(null, 900L, OCT_1, null, null, null, null);
+        PayoutCandidateSearchRequest reversed = new PayoutCandidateSearchRequest(null, 900L, NOV_1, OCT_1, null, null, null);
+
+        // when & then
+        assertThat(periodViolations(fromOnly)).isEmpty();
+        assertThat(periodViolations(reversed)).containsExactly("periodValid");
     }
 
     @Test
@@ -173,10 +200,10 @@ class PayoutCandidateSearchRequestTest {
 
     // 기간만 바꾼 요청 (판매자·미정산만 여부·페이지는 생략값)
     private PayoutCandidateSearchRequest periodRequest(LocalDateTime from, LocalDateTime to) {
-        return new PayoutCandidateSearchRequest(null, from, to, null, null, null);
+        return new PayoutCandidateSearchRequest(null, null, from, to, null, null, null);
     }
 
-    // 검증 결과 중 기간 관련 항목 이름만 모음 (필드 2개의 @NotNull, 검증 메서드 2개의 @AssertTrue)
+    // 검증 결과 중 기간 관련 항목 이름만 모음 (검증 메서드 3개의 @AssertTrue)
     private List<String> periodViolations(PayoutCandidateSearchRequest request) {
         List<String> names = new ArrayList<>();
         for (ConstraintViolation<PayoutCandidateSearchRequest> violation : validator.validate(request)) {

@@ -95,6 +95,9 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     private LocalDateTime listFrom;
     private LocalDateTime listTo;
 
+    // 주문 A: 대금·수수료·조정 3건이 있는 주문 (주문 ID 조건 확인용, #723)
+    private long orderA;
+
     // 배치가 만든 정산 ID (DB가 매기므로 배치 후 조회해서 채움)
     private Long seller7PayoutId;
     private Long systemPayoutId;
@@ -111,6 +114,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
         listTo = now.plusDays(1);
 
         long orderItemA = nextOrderItemId();
+        orderA = orderItemA;   // 이 테스트는 주문 ID = 주문항목 ID (insertCandidate 주석)
         insertCandidate(PayoutEventType.SALE_AMOUNT, orderItemA, SELLER_7, 9_700L, oldCreatedAt);
         insertCandidate(PayoutEventType.SALE_FEE, orderItemA, SELLER_7, 300L, oldCreatedAt);
         insertAdjustment(PayoutEventType.SALE_AMOUNT, orderItemA, SELLER_7, -2_000L, 4L, ADMIN_ID, "금액 오입력 정정", oldCreatedAt);
@@ -294,13 +298,60 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
     // 요청: 관리자, 기간 없음
     // 확인: 422이고 오류 목록에 from, to가 나오는지 (후보 테이블은 커서 기간 없이 조회하지 못하게 막음)
+    // 주문 ID도 없으면 기간 필수 (#723 전에는 from·to 필드 오류였고, 주문 ID 예외를 넣으며 한 검사로 바뀜)
     @Test
-    void 기간을_빼고_조회하면_422이고_from과_to가_오류로_나온다() throws Exception {
+    void 주문_ID와_기간을_모두_빼고_조회하면_422다() throws Exception {
         // when & then
         mockMvc.perform(get("/api/v1/admin/payouts/candidates")
                         .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
                 .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.errors[*].path").value(containsInAnyOrder("from", "to")));
+                .andExpect(jsonPath("$.errors[*].path").value(contains("periodPresentWithoutOrderId")));
+    }
+
+    // ---------- 주문 ID 조건 (#723) ----------
+
+    // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
+    // 요청: 관리자, orderId = 주문 A, 기간 없음
+    // 확인: 주문 A의 대금·수수료·조정 3건만 나오는지 (다른 주문 E·D는 빠짐)
+    @Test
+    void 관리자가_주문_ID만_주면_기간_없이_그_주문의_후보가_조정까지_나온다() throws Exception {
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/candidates")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN"))
+                        .param("orderId", String.valueOf(orderA)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) orderA, (int) orderA, (int) orderA)))
+                .andExpect(jsonPath("$.content[*].eventType")
+                        .value(containsInAnyOrder("SALE_AMOUNT", "SALE_FEE", "SALE_AMOUNT")))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].amount").value(contains(-2_000)));
+    }
+
+    // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
+    // 요청: 관리자, orderId = 주문 A, 기간 = 1일 전 ~ 내일 (주문 A의 후보는 모두 20일 전)
+    // 확인: 주문 ID와 기간을 함께 주면 둘 다 적용되어 빈 목록인지 (기간을 몰래 무시하지 않음)
+    @Test
+    void 관리자가_주문_ID와_기간을_함께_주면_둘_다_적용한다() throws Exception {
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/candidates")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN"))
+                        .param("orderId", String.valueOf(orderA))
+                        .param("from", recentCreatedAt.toString())
+                        .param("to", listTo.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    // API: GET /api/v1/payouts/me/candidates (판매자 본인 정산후보 조회)
+    // 요청: 판매자 7, orderId만 주고 기간 없음
+    // 확인: 판매자 조회는 주문 ID 예외가 없어 그대로 422인지 (주문 ID는 관리자 조회에만 있음)
+    @Test
+    void 판매자_조회는_주문_ID를_줘도_기간이_없으면_422다() throws Exception {
+        // when & then
+        mockMvc.perform(get("/api/v1/payouts/me/candidates")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER_7, "SELLER"))
+                        .param("orderId", String.valueOf(orderA)))
+                .andExpect(status().isUnprocessableEntity());
     }
 
     // ---------- 역할 확인 (@PreAuthorize) ----------

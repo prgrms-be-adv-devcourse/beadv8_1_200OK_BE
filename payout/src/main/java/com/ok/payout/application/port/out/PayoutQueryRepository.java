@@ -115,11 +115,12 @@ public interface PayoutQueryRepository {
     Page<Payout> searchPayouts(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to,
                               Pageable pageable);
 
-    // 정산후보 목록 (관리자·판매자 조회). sellerId가 null이면 전체 판매자
+    // 정산후보 목록 (관리자·판매자 조회). sellerId가 null이면 전체 판매자, orderId가 null이면 전체 주문
+    // from·to는 null이면 그쪽 경계를 걸지 않음: 관리자가 주문 ID로 찾을 때만 null이 옴(#723). 판매자 조회는 요청 DTO가 늘 기간을 채움
     // sellerShareOnly면 시스템 몫(수수료) 후보를 뺌 (판매자 조회용)
     // 정렬은 후보 생성 시각 최신순 고정. 같은 시각에 생긴 후보가 여러 건(대금·수수료·배송비가 함께 생김)이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
     // 정산 ID는 payout_item과 LEFT JOIN으로 가져옴 (payout_item.candidate_id가 유니크라 후보 한 건이 여러 줄로 늘지 않음)
-    Page<CandidateRow> searchCandidates(Long sellerId, LocalDateTime from, LocalDateTime to,
+    Page<CandidateRow> searchCandidates(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
                                          boolean unsettledOnly, boolean sellerShareOnly, Pageable pageable);
 
     // 정산 1건의 항목을 정산후보와 함께 페이지 단위로 조회 (항목마다 후보를 따로 조회하지 않도록 조인 1번)

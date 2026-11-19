@@ -6,9 +6,11 @@ import java.time.LocalDateTime;
 public record PayoutCandidateSearchQuery(
         // 판매자 회원 ID. 생략하면 전체 판매자
         Long sellerId,
-        // 후보 생성 시각 하한, 포함 (평소 건은 구매확정 직후, 조정 건은 조정한 시각)
+        // 주문 ID (#723). 주면 기간 없이 그 주문의 후보 전부 (요청 DTO가 "주문 ID가 없으면 기간 필수"를 검사)
+        Long orderId,
+        // 후보 생성 시각 하한, 포함 (평소 건은 구매확정 직후, 조정 건은 조정한 시각). 주문 ID가 있으면 null일 수 있음
         LocalDateTime from,
-        // 후보 생성 시각 상한, 미포함
+        // 후보 생성 시각 상한, 미포함. 주문 ID가 있으면 null일 수 있음
         LocalDateTime to,
         // true면 아직 정산 전인 후보만, false면 전부
         boolean unsettledOnly,
