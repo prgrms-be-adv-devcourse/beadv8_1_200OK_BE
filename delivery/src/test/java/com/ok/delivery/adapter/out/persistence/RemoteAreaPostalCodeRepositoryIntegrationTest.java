@@ -103,7 +103,7 @@ class RemoteAreaPostalCodeRepositoryIntegrationTest extends AbstractIntegrationT
         postalCodeRepository.saveAndFlush(RemoteAreaPostalCode.of(TEST_POSTAL_CODE, "JEJU_ISLANDS", 2));
 
         // when
-        Optional<RemoteAreaPostalCode> sut = postalCodeRepository.findByPostalCodeAndDeletedAtIsNull(TEST_POSTAL_CODE);
+        Optional<RemoteAreaPostalCode> sut = postalCodeRepository.findActive(TEST_POSTAL_CODE);
 
         // then
         assertThat(sut).isPresent();
@@ -116,7 +116,7 @@ class RemoteAreaPostalCodeRepositoryIntegrationTest extends AbstractIntegrationT
         jdbcTemplate.update("UPDATE remote_area_postal_code SET deleted_at = NOW(6) WHERE postal_code = ?", TEST_POSTAL_CODE);
 
         // when
-        Optional<RemoteAreaPostalCode> active = postalCodeRepository.findByPostalCodeAndDeletedAtIsNull(TEST_POSTAL_CODE);
+        Optional<RemoteAreaPostalCode> active = postalCodeRepository.findActive(TEST_POSTAL_CODE);
         Optional<RemoteAreaPostalCode> any = postalCodeRepository.findById(TEST_POSTAL_CODE);
 
         // then

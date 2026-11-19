@@ -56,7 +56,7 @@ class DeliveryRegionServiceTest {
     @Test
     void 등록되지_않은_우편번호는_일반_지역으로_판정한다() {
         // given
-        given(postalCodeRepository.findByPostalCodeAndDeletedAtIsNull("06236")).willReturn(Optional.empty());
+        given(postalCodeRepository.findActive("06236")).willReturn(Optional.empty());
 
         // when
         RegionResult sut = deliveryRegionService.resolve("06236");
@@ -73,7 +73,7 @@ class DeliveryRegionServiceTest {
     @Test
     void 등록된_우편번호는_그룹의_추가_운임과_우편번호의_추가_소요일로_판정한다() {
         // given
-        given(postalCodeRepository.findByPostalCodeAndDeletedAtIsNull("40200")).willReturn(Optional.of(RemoteAreaPostalCode.of("40200", "ULLEUNG", 2)));
+        given(postalCodeRepository.findActive("40200")).willReturn(Optional.of(RemoteAreaPostalCode.of("40200", "ULLEUNG", 2)));
         given(regionGroupRepository.findById("ULLEUNG")).willReturn(Optional.of(
                 RegionGroup.builder().code("ULLEUNG").name("울릉도").surcharge(5_000).build()));
 
@@ -92,7 +92,7 @@ class DeliveryRegionServiceTest {
     @Test
     void 지역_그룹_행이_없으면_일반_지역으로_숨기지_않고_실패한다() {
         // given
-        given(postalCodeRepository.findByPostalCodeAndDeletedAtIsNull("40200")).willReturn(Optional.of(RemoteAreaPostalCode.of("40200", "ULLEUNG", 2)));
+        given(postalCodeRepository.findActive("40200")).willReturn(Optional.of(RemoteAreaPostalCode.of("40200", "ULLEUNG", 2)));
         given(regionGroupRepository.findById("ULLEUNG")).willReturn(Optional.empty());
 
         // when & then
@@ -117,7 +117,7 @@ class DeliveryRegionServiceTest {
                 SellerOriginPostalCode.create(10L, "63200", occurredAt),
                 SellerOriginPostalCode.create(20L, "06236", occurredAt),
                 SellerOriginPostalCode.create(40L, null, occurredAt)));
-        given(postalCodeRepository.findAllByPostalCodeInAndRegionGroupAndDeletedAtIsNull(Set.of("63200", "06236"), "JEJU_MAIN"))
+        given(postalCodeRepository.findActiveIn(Set.of("63200", "06236"), "JEJU_MAIN"))
                 .willReturn(List.of(RemoteAreaPostalCode.of("63200", "JEJU_MAIN", 1)));
 
         // when
@@ -153,7 +153,7 @@ class DeliveryRegionServiceTest {
         // given
         given(sellerOriginPostalCodeRepository.findAllBySellerIdIn(List.of(10L))).willReturn(List.of(
                 SellerOriginPostalCode.create(10L, "63200", LocalDateTime.of(2026, 11, 19, 12, 0))));
-        given(postalCodeRepository.findAllByPostalCodeInAndRegionGroupAndDeletedAtIsNull(Set.of("63200"), "JEJU_MAIN"))
+        given(postalCodeRepository.findActiveIn(Set.of("63200"), "JEJU_MAIN"))
                 .willReturn(List.of(RemoteAreaPostalCode.of("63200", "JEJU_MAIN", 1)));
 
         // when

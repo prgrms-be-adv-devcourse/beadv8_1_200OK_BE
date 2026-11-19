@@ -56,7 +56,7 @@ public class DeliveryRegionService implements DeliveryRegionUseCase {
         if (postalCode == null) {
             throw new IllegalArgumentException("우편번호는 필수입니다.");
         }
-        return postalCodeRepository.findByPostalCodeAndDeletedAtIsNull(postalCode)
+        return postalCodeRepository.findActive(postalCode)
                 .map(this::toResult)
                 .orElseGet(RegionResult::general);
     }
@@ -159,7 +159,7 @@ public class DeliveryRegionService implements DeliveryRegionUseCase {
             return Set.of();
         }
         Set<String> jejuMainPostalCodes = postalCodeRepository
-                .findAllByPostalCodeInAndRegionGroupAndDeletedAtIsNull(new HashSet<>(originPostalCodes.values()), RegionGroup.JEJU_MAIN_CODE).stream()
+                .findActiveIn(new HashSet<>(originPostalCodes.values()), RegionGroup.JEJU_MAIN_CODE).stream()
                 .map(RemoteAreaPostalCode::getPostalCode)
                 .collect(Collectors.toSet());
         return originPostalCodes.entrySet().stream()
