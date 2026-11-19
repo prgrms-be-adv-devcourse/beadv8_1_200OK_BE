@@ -4,6 +4,8 @@ import com.jayway.jsonpath.JsonPath;
 import com.ok.order.OrderSchema;
 import com.ok.order.cart.application.service.CartService;
 import com.ok.order.order.application.dto.ProductOption;
+import com.ok.order.order.application.port.in.OrderOutboxRelayUseCase;
+import com.ok.order.order.application.service.OrderOutboxRelayFacade;
 import com.ok.order.order.domain.SellerShippingFee;
 import com.ok.order.order.exception.OrderErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
@@ -12,14 +14,17 @@ import com.ok.testsupport.FakeProductPort;
 import com.ok.testsupport.FakeWalletPort;
 import com.ok.testsupport.OrderKafkaTopicReader;
 import com.ok.testsupport.TestAccessTokens;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -30,6 +35,10 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -88,6 +97,16 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JsonMapper jsonMapper;
+
+    @Autowired
+    OrderOutboxRelayUseCase orderOutboxRelayUseCase;
+
+    @Autowired
+    MeterRegistry meterRegistry;
+
+    @Autowired
+    @Qualifier(OrderOutboxRelayFacade.RELAY_EXECUTOR)
+    ThreadPoolTaskExecutor relayExecutor;
 
     private MockMvc mockMvc;
     private OrderKafkaTopicReader orderCreatedReader;
@@ -160,6 +179,68 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(message.get("totalAmount").asLong()).isEqualTo(TOTAL_AMOUNT);
             softly.assertThat(message.get("orderSummary").asString()).isEqualTo("사과");
         });
+    }
+
+    // 재발송 스케줄러는 테스트에서 꺼져 있어(module-test.yml) 위 테스트의 메시지는 커밋 직후 발송으로만 나간다.
+    // 그 발송 대기열이 가득 차면 주문 응답이 기다리지 않고, 결제 요청은 PENDING으로 남아 재발송이 보낸다(#715, #794)
+    @Test
+    void 커밋_직후_발송_대기열이_가득_차도_주문은_기다리지_않고_만들어지고_거절을_세며_결제_요청은_재발송이_보낸다() throws Exception {
+        // given: 전용 실행기의 스레드를 모두 막고 대기열을 빈 작업으로 채운다
+        double rejectedBefore = rejectedCount();
+        CountDownLatch release = new CountDownLatch(1);
+        ThreadPoolExecutor pool = relayExecutor.getThreadPoolExecutor();
+        Long orderId;
+        try {
+            for (int i = 0; i < relayExecutor.getMaxPoolSize(); i++) {
+                pool.execute(() -> awaitQuietly(release));
+            }
+            while (pool.getQueue().remainingCapacity() > 0) {
+                pool.execute(() -> { });
+            }
+
+            // when: 대기열 자리를 기다리면 이 시간 안에 끝나지 않는다
+            orderId = CompletableFuture.supplyAsync(this::createOrderWithFullQueue).get(5, TimeUnit.SECONDS);
+
+            // then
+            Long createdOrderId = orderId;
+            assertSoftly(softly -> {
+                softly.assertThat(createdOutboxStatus(createdOrderId)).isEqualTo("PENDING");
+                softly.assertThat(rejectedCount() - rejectedBefore).isEqualTo(1.0);
+            });
+        } finally {
+            release.countDown();
+        }
+
+        // 막아 둔 작업이 끝난 뒤 재발송이 보낸다. 다른 테스트가 남긴 줄이 앞에 있어도 이 줄까지 닿게 넉넉히 집는다
+        orderOutboxRelayUseCase.relayPending(1_000, Duration.ZERO);
+        Long createdOrderId = orderId;
+        assertSoftly(softly -> {
+            softly.assertThat(orderCreatedReader.readValuesFor(String.valueOf(createdOrderId), READ_DURATION)).hasSize(1);
+            softly.assertThat(createdOutboxStatus(createdOrderId)).isEqualTo("SENT");
+        });
+    }
+
+    private Long createOrderWithFullQueue() {
+        try {
+            return orderId(createOrder("key-queue-full").andExpect(status().isCreated()));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private double rejectedCount() {
+        return meterRegistry.get(OrderOutboxRelayFacade.SEND_DROPPED_METRIC)
+                .tag("reason", OrderOutboxRelayFacade.DROP_REASON_REJECTED)
+                .counter()
+                .count();
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Test
@@ -271,6 +352,12 @@ class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
     private Integer countCreatedOutbox(Long orderId) {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + OrderSchema.NAME
                 + ".order_outbox WHERE topic = ? AND message_key = ?", Integer.class, ORDER_CREATED_TOPIC,
+                String.valueOf(orderId));
+    }
+
+    private String createdOutboxStatus(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT status FROM " + OrderSchema.NAME
+                + ".order_outbox WHERE topic = ? AND message_key = ?", String.class, ORDER_CREATED_TOPIC,
                 String.valueOf(orderId));
     }
 

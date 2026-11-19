@@ -1,6 +1,7 @@
 package com.ok.order.order.adapter.in.event;
 
 import com.ok.order.OrderSchema;
+import com.ok.order.order.application.port.in.CompletePaymentUseCase;
 import com.ok.order.order.application.service.OrderService;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderLine;
@@ -46,6 +47,9 @@ class ShipmentKafkaIntegrationTest extends AbstractIntegrationTest {
     private static final Duration READ_DURATION = Duration.ofSeconds(3);
     // 다시 시도(1·2·4초)를 다 쓰고 기록될 때까지 넉넉히 기다린다
     private static final Duration WAIT_TIMEOUT = Duration.ofSeconds(30);
+
+    @Autowired
+    CompletePaymentUseCase completePayment;
 
     @Autowired
     OrderService orderService;
@@ -98,7 +102,7 @@ class ShipmentKafkaIntegrationTest extends AbstractIntegrationTest {
         Long orderId = pendingOrder();
 
         // when
-        orderService.completePayment(orderId);
+        completePayment.completePayment(orderId);
 
         // then
         List<String> messages = orderPaidReader.readValuesFor(String.valueOf(orderId), READ_DURATION);

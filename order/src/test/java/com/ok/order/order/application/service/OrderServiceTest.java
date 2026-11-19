@@ -14,6 +14,7 @@ import com.ok.order.order.application.port.out.OrderRepository;
 import com.ok.order.order.application.dto.OrderDetailItemResult;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
+import com.ok.order.order.application.dto.AutoConfirmPurchaseResult;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
@@ -88,15 +89,16 @@ class OrderServiceTest {
     }
 
     @Test
-    void 주문_생성_이벤트에는_주문_ID_구매자_결제_총액_주문_요약을_담는다() {
+    void 주문_생성_이벤트에는_주문_ID_구매자_결제_총액_주문_요약을_담고_남긴_outbox_줄_ID를_돌려준다() {
         // given
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(savedOrder(10L)));
+        given(orderEventPublisher.publishOrderCreatedEvent(10L, 1L, 20_000L, "사과")).willReturn(77L);
 
         // when
-        sut.publishCreated(10L);
+        Long outboxId = sut.publishCreated(10L);
 
         // then
-        then(orderEventPublisher).should().publishOrderCreatedEvent(10L, 1L, 20_000L, "사과");
+        assertThat(outboxId).isEqualTo(77L);
     }
 
     @Test
@@ -210,16 +212,16 @@ class OrderServiceTest {
         Order order = savedOrder(10L);
         order.markPaymentRequested(NOW.minusMinutes(30));
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+        given(orderEventPublisher.publishPaymentExpireRequested(10L, 1L, 20_000L)).willReturn(77L);
 
         // when
-        boolean requested = sut.requestPaymentExpire(10L);
+        Optional<Long> outboxId = sut.requestPaymentExpire(10L);
 
         // then
         assertSoftly(softly -> {
-            softly.assertThat(requested).isTrue();
+            softly.assertThat(outboxId).contains(77L);
             softly.assertThat(order.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
         });
-        then(orderEventPublisher).should().publishPaymentExpireRequested(10L, 1L, 20_000L);
     }
 
     @Test
@@ -230,10 +232,10 @@ class OrderServiceTest {
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
-        boolean requested = sut.requestPaymentExpire(10L);
+        Optional<Long> outboxId = sut.requestPaymentExpire(10L);
 
         // then
-        assertThat(requested).isFalse();
+        assertThat(outboxId).isEmpty();
         then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong(), anyLong());
     }
 
@@ -246,10 +248,10 @@ class OrderServiceTest {
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
 
         // when
-        boolean requested = sut.requestPaymentExpire(10L);
+        Optional<Long> outboxId = sut.requestPaymentExpire(10L);
 
         // then
-        assertThat(requested).isFalse();
+        assertThat(outboxId).isEmpty();
         then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong(), anyLong());
     }
 
@@ -259,10 +261,10 @@ class OrderServiceTest {
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.empty());
 
         // when
-        boolean requested = sut.requestPaymentExpire(10L);
+        Optional<Long> outboxId = sut.requestPaymentExpire(10L);
 
         // then
-        assertThat(requested).isFalse();
+        assertThat(outboxId).isEmpty();
         then(orderEventPublisher).should(never()).publishPaymentExpireRequested(anyLong(), anyLong(), anyLong());
     }
 
@@ -684,16 +686,17 @@ class OrderServiceTest {
         // given
         Order order = deliveredOrder(NOW.minusDays(1));
         given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
+        given(orderEventPublisher.publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 0L)).willReturn(77L);
 
         // when
-        sut.confirmPurchase(1L, 10L, 1L);
+        Optional<Long> outboxId = sut.confirmPurchase(1L, 10L, 1L);
 
         // then
         assertSoftly(softly -> {
+            softly.assertThat(outboxId).contains(77L);
             softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
             softly.assertThat(order.getAllItems().get(0).getConfirmedAt()).isEqualTo(NOW);
         });
-        then(orderEventPublisher).should().publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 0L);
     }
 
     @Test
@@ -763,13 +766,13 @@ class OrderServiceTest {
     void 배송_완료_3일이_지난_상품은_자동_구매확정되고_이벤트를_발행한다() {
         // given
         given(orderRepository.findById(10L)).willReturn(Optional.of(deliveredOrder(NOW.minusDays(4))));
+        given(orderEventPublisher.publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 0L)).willReturn(77L);
 
         // when
-        int confirmed = sut.autoConfirmPurchases(10L);
+        AutoConfirmPurchaseResult result = sut.autoConfirmPurchases(10L);
 
         // then
-        assertThat(confirmed).isEqualTo(1);
-        then(orderEventPublisher).should().publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 0L);
+        assertThat(result).isEqualTo(new AutoConfirmPurchaseResult(1, List.of(77L)));
     }
 
     @Test
@@ -778,10 +781,10 @@ class OrderServiceTest {
         given(orderRepository.findById(10L)).willReturn(Optional.of(deliveredOrder(NOW.minusDays(2))));
 
         // when
-        int confirmed = sut.autoConfirmPurchases(10L);
+        AutoConfirmPurchaseResult result = sut.autoConfirmPurchases(10L);
 
         // then
-        assertThat(confirmed).isZero();
+        assertThat(result).isEqualTo(new AutoConfirmPurchaseResult(0, List.of()));
         then(orderEventPublisher).should(never())
                 .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
     }
@@ -792,7 +795,7 @@ class OrderServiceTest {
         given(orderRepository.findById(10L)).willReturn(Optional.empty());
 
         // when & then
-        assertThat(sut.autoConfirmPurchases(10L)).isZero();
+        assertThat(sut.autoConfirmPurchases(10L)).isEqualTo(new AutoConfirmPurchaseResult(0, List.of()));
     }
 
 
@@ -807,11 +810,13 @@ class OrderServiceTest {
         order.applyShippingFee(100L, new SellerShippingFee(3_000L, null, 3_000L, 0L));
         ReflectionTestUtils.setField(order.getAllItems().get(0), "id", 1L);
         given(orderRepository.findByIdForUpdate(10L)).willReturn(Optional.of(order));
+        given(orderEventPublisher.publishOrderPaidEvent(any())).willReturn(77L);
 
         // when
-        sut.completePayment(10L);
+        Optional<Long> outboxId = sut.completePayment(10L);
 
         // then
+        assertThat(outboxId).contains(77L);
         ArgumentCaptor<PaidOrderMessage> captor = ArgumentCaptor.forClass(PaidOrderMessage.class);
         then(orderEventPublisher).should().publishOrderPaidEvent(captor.capture());
         PaidOrderMessage message = captor.getValue();
@@ -884,10 +889,13 @@ class OrderServiceTest {
         given(orderRepository.findByIdAndBuyerId(10L, 1L)).willReturn(Optional.of(order));
 
         // when
-        sut.confirmPurchase(1L, 10L, 1L);
+        Optional<Long> outboxId = sut.confirmPurchase(1L, 10L, 1L);
 
         // then
-        assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+        assertSoftly(softly -> {
+            softly.assertThat(outboxId).isEmpty();
+            softly.assertThat(order.getAllItems().get(0).getStatus()).isEqualTo(OrderItemStatus.PURCHASE_CONFIRMED);
+        });
         then(orderEventPublisher).should(never())
                 .publishOrderProductConfirmedEvent(anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
     }
@@ -909,13 +917,16 @@ class OrderServiceTest {
         // given
         Order order = paidOrderWithRefund();
         given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+        given(orderEventPublisher.publishRefundReverted(7L, 10L, 1L)).willReturn(77L);
 
         // when
-        sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 1));
+        Long outboxId = sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 1));
 
         // then
-        assertThat(order.getAllItems().get(0).refundedQuantity()).isZero();
-        then(orderEventPublisher).should().publishRefundReverted(7L, 10L, 1L);
+        assertSoftly(softly -> {
+            softly.assertThat(outboxId).isEqualTo(77L);
+            softly.assertThat(order.getAllItems().get(0).refundedQuantity()).isZero();
+        });
         then(orderEventPublisher).should(never()).publishRefundRevertFailed(anyLong(), anyLong(), anyLong(), anyString());
     }
 
@@ -924,14 +935,17 @@ class OrderServiceTest {
         // given: 기록은 1개인데 2개를 되돌려 달라고 함
         Order order = paidOrderWithRefund();
         given(orderRepository.findByOrderItemIdForUpdate(1L)).willReturn(Optional.of(order));
+        given(orderEventPublisher.publishRefundRevertFailed(7L, 10L, 1L, RefundRevertOutcome.QUANTITY_MISMATCH.name()))
+                .willReturn(77L);
 
         // when
-        sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 2));
+        Long outboxId = sut.revertRefund(new RevertOrderItemRefundCommand(7L, 10L, 1L, 2));
 
         // then
-        assertThat(order.getAllItems().get(0).refundedQuantity()).isEqualTo(1);
-        then(orderEventPublisher).should()
-                .publishRefundRevertFailed(7L, 10L, 1L, RefundRevertOutcome.QUANTITY_MISMATCH.name());
+        assertSoftly(softly -> {
+            softly.assertThat(outboxId).isEqualTo(77L);
+            softly.assertThat(order.getAllItems().get(0).refundedQuantity()).isEqualTo(1);
+        });
         then(orderEventPublisher).should(never()).publishRefundReverted(anyLong(), anyLong(), anyLong());
     }
 

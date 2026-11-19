@@ -29,17 +29,17 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
 
     // 지갑은 Kafka로만 받는다(#640). 지갑은 주문 ID로 처리 기록을 남겨 다시 보내져도 한 번만 차감한다(#602).
     @Override
-    public void publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount, String orderSummary) {
+    public Long publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount, String orderSummary) {
         // 키를 orderId로 둬 지갑의 결제 결과(키 orderId)와 같은 기준으로 한 주문의 메시지가 같은 파티션에 순서대로 쌓인다
-        outboxRecorder.record(OrderTopics.ORDER_CREATED, String.valueOf(orderId),
+        return outboxRecorder.record(OrderTopics.ORDER_CREATED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderCreatedMessage(orderId, buyerId, totalAmount, orderSummary)));
     }
 
     // 정산은 Kafka로 받는다(#663). 정산이 orderItemId로 중복을 막으므로 다시 보내져도 정산 후보는 하나다(#600).
     // 키를 orderItemId로 둬 같은 주문 상품의 메시지가 같은 파티션에 쌓인다. 정산의 중복 방지 기준과 같다
     @Override
-    public void publishOrderProductConfirmedEvent(Long orderId, Long orderItemId, Long sellerId, Long totalItemPrice, Long sellerShippingPrice) {
-        outboxRecorder.record(OrderTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(orderItemId),
+    public Long publishOrderProductConfirmedEvent(Long orderId, Long orderItemId, Long sellerId, Long totalItemPrice, Long sellerShippingPrice) {
+        return outboxRecorder.record(OrderTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(orderItemId),
                 jsonMapper.writeValueAsString(new OrderProductConfirmedMessage(
                         orderId, orderItemId, sellerId, totalItemPrice, sellerShippingPrice)));
     }
@@ -47,7 +47,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     // 배송은 Kafka로 받는다(배송 #644). 배송이 (주문, 판매자)로 중복을 막으므로 다시 보내져도 배송은 판매자마다 하나다(#603).
     // 키를 orderId로 둬 같은 주문의 메시지가 같은 파티션에 순서대로 쌓인다
     @Override
-    public void publishOrderPaidEvent(PaidOrderMessage message) {
+    public Long publishOrderPaidEvent(PaidOrderMessage message) {
         OrderPaidMessage.ShippingAddress shippingAddress = new OrderPaidMessage.ShippingAddress(
                 message.recipientName(),
                 message.recipientPhone(),
@@ -68,7 +68,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
                     group.sellerId(), group.baseShippingFee(), group.freeShippingThreshold(), group.regionSurcharge(), items));
         }
 
-        outboxRecorder.record(OrderTopics.ORDER_PAID, String.valueOf(message.orderId()),
+        return outboxRecorder.record(OrderTopics.ORDER_PAID, String.valueOf(message.orderId()),
                 jsonMapper.writeValueAsString(new OrderPaidMessage(
                         message.orderId(), message.buyerId(), message.paidAt(), shippingAddress, sellerOrders)));
     }
@@ -77,22 +77,22 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     // 키는 orderId다. 순서는 같은 토픽 안에서만 지켜지므로 만료 요청이 주문 생성(order.order-created.v1)보다 먼저 도착할 수 있다.
     // 그래도 지갑이 만료 실패를 먼저 기록해 두어 늦게 온 주문 생성은 차감하지 않는다
     @Override
-    public void publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount) {
-        outboxRecorder.record(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED, String.valueOf(orderId),
+    public Long publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount) {
+        return outboxRecorder.record(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderPaymentExpireRequestedMessage(orderId, buyerId, totalAmount)));
     }
 
     // 환불이 Kafka로만 받는다(환불 #622). 키는 환불이 보낸 요청과 같은 orderId라 한 주문의 요청과 결과가 같은 기준으로 쌓인다(#604).
     // 다시 보내져도 환불이 이미 끝난 되돌리기 줄이면 넘기므로 한 번만 반영된다
     @Override
-    public void publishRefundReverted(Long refundId, Long orderId, Long orderItemId) {
-        outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERTED, String.valueOf(orderId),
+    public Long publishRefundReverted(Long refundId, Long orderId, Long orderItemId) {
+        return outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERTED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderRefundRevertedMessage(refundId, orderId, orderItemId)));
     }
 
     @Override
-    public void publishRefundRevertFailed(Long refundId, Long orderId, Long orderItemId, String reason) {
-        outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERT_FAILED, String.valueOf(orderId),
+    public Long publishRefundRevertFailed(Long refundId, Long orderId, Long orderItemId, String reason) {
+        return outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERT_FAILED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderRefundRevertFailedMessage(refundId, orderId, orderItemId, reason)));
     }
 }

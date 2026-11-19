@@ -6,12 +6,18 @@ import com.ok.order.cart.application.port.in.GetSelectedCartItemsUseCase;
 import com.ok.order.order.application.dto.CheckoutResult;
 import com.ok.order.order.application.dto.CreateOrderCommand;
 import com.ok.order.order.application.dto.ProductOption;
+import com.ok.order.order.application.dto.RevertOrderItemRefundCommand;
 import com.ok.order.order.application.dto.StockItem;
+import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.CancelStalePaymentPendingOrderUseCase;
+import com.ok.order.order.application.port.in.CompletePaymentUseCase;
+import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.CreateOrderUseCase;
 import com.ok.order.order.application.port.in.FailPaymentUseCase;
 import com.ok.order.order.application.port.in.GetCheckoutUseCase;
+import com.ok.order.order.application.port.in.RequestPaymentExpireUseCase;
 import com.ok.order.order.application.port.in.RetryStockReleaseUseCase;
+import com.ok.order.order.application.port.in.RevertOrderItemRefundUseCase;
 import com.ok.order.order.application.port.out.DeliveryPort;
 import com.ok.order.order.application.port.out.ProductPort;
 import com.ok.order.order.application.port.out.WalletPort;
@@ -35,7 +41,8 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, FailPaymentUseCase,
-        CancelStalePaymentPendingOrderUseCase, RetryStockReleaseUseCase {
+        CancelStalePaymentPendingOrderUseCase, RetryStockReleaseUseCase, CompletePaymentUseCase, ConfirmPurchaseUseCase,
+        AutoConfirmPurchaseUseCase, RequestPaymentExpireUseCase, RevertOrderItemRefundUseCase {
 
     private final GetSelectedCartItemsUseCase getSelectedCartItems;
     private final OrderService orderService;
@@ -225,6 +232,41 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         if (shouldReleaseStock) {
             releaseStockAndRecord(orderId);
         }
+    }
+
+    @Override
+    public void completePayment(Long orderId) {
+        orderService.completePayment(orderId);
+    }
+
+    @Override
+    public void confirmPurchase(Long buyerId, Long orderId, Long orderItemId) {
+        orderService.confirmPurchase(buyerId, orderId, orderItemId);
+    }
+
+    @Override
+    public List<Long> findOrderIdsToAutoConfirm() {
+        return orderService.findOrderIdsToAutoConfirm();
+    }
+
+    @Override
+    public int autoConfirmPurchases(Long orderId) {
+        return orderService.autoConfirmPurchases(orderId).confirmedCount();
+    }
+
+    @Override
+    public List<Long> findPaymentExpireDueOrderIds() {
+        return orderService.findPaymentExpireDueOrderIds();
+    }
+
+    @Override
+    public boolean requestPaymentExpire(Long orderId) {
+        return orderService.requestPaymentExpire(orderId).isPresent();
+    }
+
+    @Override
+    public void revertRefund(RevertOrderItemRefundCommand command) {
+        orderService.revertRefund(command);
     }
 
     @Override

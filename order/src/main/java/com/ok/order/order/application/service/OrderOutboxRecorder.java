@@ -38,7 +38,7 @@ public class OrderOutboxRecorder implements OrderOutboxRecordUseCase {
     }
 
     @Override
-    public void record(String topic, String messageKey, String payload) {
+    public Long record(String topic, String messageKey, String payload) {
         // 트랜잭션이 없으면 save가 예외를 내므로, 아래 동기화 등록은 항상 트랜잭션 안에서 일어난다
         Long outboxId = orderOutboxService.save(topic, messageKey, payload);
         // 대기열에서 기다린 시간을 재는 발송 쪽과 같은 Clock으로 시각을 남긴다. createdAt은 JPA 감사가 Clock 없이 채운다
@@ -58,5 +58,6 @@ public class OrderOutboxRecorder implements OrderOutboxRecordUseCase {
                 }
             }
         });
+        return outboxId;
     }
 }

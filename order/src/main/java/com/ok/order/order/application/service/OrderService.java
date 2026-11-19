@@ -9,6 +9,7 @@ import com.ok.order.order.domain.OrderSellerGroup;
 import com.ok.order.order.domain.OrderStatus;
 import com.ok.order.order.domain.RefundRevertOutcome;
 import com.ok.order.order.exception.OrderErrorCode;
+import com.ok.order.order.application.dto.AutoConfirmPurchaseResult;
 import com.ok.order.order.application.dto.OrderDetailResult;
 import com.ok.order.order.application.dto.OrderItemForRefundResult;
 import com.ok.order.order.application.dto.OrderSummaryResult;
@@ -16,15 +17,10 @@ import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.RecordOrderItemRefundCommand;
 import com.ok.order.order.application.dto.ReviewCandidateResult;
 import com.ok.order.order.application.dto.RevertOrderItemRefundCommand;
-import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
-import com.ok.order.order.application.port.in.CompletePaymentUseCase;
-import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
 import com.ok.order.order.application.port.in.GetOrderItemForRefundUseCase;
 import com.ok.order.order.application.port.in.GetOrderUseCase;
 import com.ok.order.order.application.port.in.GetReviewCandidatesUseCase;
 import com.ok.order.order.application.port.in.RecordOrderItemRefundUseCase;
-import com.ok.order.order.application.port.in.RequestPaymentExpireUseCase;
-import com.ok.order.order.application.port.in.RevertOrderItemRefundUseCase;
 import com.ok.order.order.application.port.in.UpdateShippingStatusUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
 import com.ok.order.order.application.port.out.OrderRepository;
@@ -47,9 +43,8 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, UpdateShippingStatusUseCase,
-        GetReviewCandidatesUseCase, ConfirmPurchaseUseCase, AutoConfirmPurchaseUseCase, GetOrderItemForRefundUseCase,
-        RecordOrderItemRefundUseCase, RequestPaymentExpireUseCase, RevertOrderItemRefundUseCase {
+public class OrderService implements GetOrderUseCase, UpdateShippingStatusUseCase, GetReviewCandidatesUseCase,
+        GetOrderItemForRefundUseCase, RecordOrderItemRefundUseCase {
 
     private final OrderRepository orderRepository;
     private final OrderEventPublisher orderEventPublisher;
@@ -96,12 +91,13 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
 
     // 주문 생성 이벤트 발행(지갑에 결제 요청). 요청 시각을 같은 트랜잭션에 기록해 이벤트 발행 기록과 어긋나지 않게 한다.
     // 정리 스케줄러의 취소와 같은 잠금으로 줄을 세워, 취소된 주문에 결제를 요청하지 않는다(#402)
+    // 남긴 outbox 줄 ID를 돌려준다
     @Transactional
-    public void publishCreated(Long orderId) {
+    public Long publishCreated(Long orderId) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
         order.markPaymentRequested(LocalDateTime.now(clock));
-        orderEventPublisher.publishOrderCreatedEvent(
+        return orderEventPublisher.publishOrderCreatedEvent(
                 order.getId(), order.getBuyerId(), order.getTotalAmount(), order.orderSummary());
     }
 
@@ -185,32 +181,31 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     }
 
     // 결제 만료 요청 대상 주문 ID(#656). 결과가 올 때까지 정리 스케줄러가 돌 때마다 다시 대상이 된다
-    @Override
     public List<Long> findPaymentExpireDueOrderIds() {
         return orderRepository.findPaymentExpireDueOrderIds(
                 OrderStatus.PAYMENT_PENDING, LocalDateTime.now(clock).minus(PAYMENT_TIMEOUT));
     }
 
     // 결제 만료 요청(#656). 주문은 바꾸지 않고 요청만 outbox에 남긴다. 결제 완료·실패와 같은 잠금으로 줄을 세워,
-    // 조회 뒤 결과가 먼저 커밋됐으면 요청하지 않는다(요청해도 지갑은 처음 결과를 다시 보내지만 쓸데없는 메시지다)
+    // 조회 뒤 결과가 먼저 커밋됐으면 요청하지 않는다(요청해도 지갑은 처음 결과를 다시 보내지만 쓸데없는 메시지다).
+    // 요청했으면 남긴 outbox 줄 ID를 돌려준다
     @Transactional
-    @Override
-    public boolean requestPaymentExpire(Long orderId) {
+    public Optional<Long> requestPaymentExpire(Long orderId) {
         Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.warn("[ORDER_PAYMENT_EXPIRE_ORDER_NOT_FOUND] 결제 만료를 요청할 주문이 없습니다. orderId={}", orderId);
-            return false;
+            return Optional.empty();
         }
         Order order = found.get();
         if (!order.isPaymentExpireDue(LocalDateTime.now(clock).minus(PAYMENT_TIMEOUT))) {
             log.info("[ORDER_PAYMENT_EXPIRE_SKIPPED] 결제 만료 요청 대상이 아니게 된 주문입니다. orderId={}, status={}",
                     orderId, order.getStatus());
-            return false;
+            return Optional.empty();
         }
         log.warn("[ORDER_PAYMENT_EXPIRE_REQUESTED] 결제 요청 뒤 결과가 없어 지갑에 결제 만료를 요청합니다. orderId={}, paymentRequestedAt={}",
                 orderId, order.getPaymentRequestedAt());
-        orderEventPublisher.publishPaymentExpireRequested(order.getId(), order.getBuyerId(), order.getTotalAmount());
-        return true;
+        return Optional.of(orderEventPublisher.publishPaymentExpireRequested(
+                order.getId(), order.getBuyerId(), order.getTotalAmount()));
     }
 
     // 내 주문 목록 (최신순). 취소된 주문은 구매자가 만든 적 없는 결과라 보여 주지 않는다
@@ -239,16 +234,15 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         return OrderItemForRefundResult.from(order, item);
     }
 
-    // 결제 완료
+    // 결제 완료. 결제 완료로 바꿨으면 남긴 outbox 줄 ID를 돌려준다
     @Transactional
-    @Override
-    public void completePayment(Long orderId) {
+    public Optional<Long> completePayment(Long orderId) {
         // 결제 실패와 동시에 처리되면 둘 다 결제 대기를 읽고 나중 커밋이 앞의 상태를 덮어쓴다(#398).
         // 잠금으로 늦게 온 쪽이 바뀐 상태를 읽게 해, 아래 상태 분기가 항상 최신 상태로 동작하게 한다
         Optional<Order> found = orderRepository.findByIdForUpdate(orderId);
         if (found.isEmpty()) {
             log.error("[ORDER_PAYMENT_ORDER_NOT_FOUND] 결제 완료 대상 주문이 없습니다. orderId={}", orderId);
-            return;
+            return Optional.empty();
         }
         Order order = found.get();
 
@@ -262,14 +256,14 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             } else {
                 log.info("[ORDER_PAYMENT_ALREADY_HANDLED] 이미 처리된 주문입니다. orderId={}, status={}", orderId, order.getStatus());
             }
-            return;
+            return Optional.empty();
         }
 
         order.markPaid();
         removeOrderedCartItems.removeOrderItems(order.getBuyerId(), orderedOptionIds(order));
 
         // 배송이 판매자별 배송을 만들도록 결제 완료를 알림 (같은 트랜잭션이라 결제 완료 저장과 함께 기록됨)
-        orderEventPublisher.publishOrderPaidEvent(PaidOrderMessage.from(order, LocalDateTime.now(clock)));
+        return Optional.of(orderEventPublisher.publishOrderPaidEvent(PaidOrderMessage.from(order, LocalDateTime.now(clock))));
     }
 
     @Transactional
@@ -354,10 +348,9 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         return results;
     }
 
-    // 구매자 구매확정
+    // 구매자 구매확정. 정산에 보낼 메시지를 남겼으면 그 outbox 줄 ID를 돌려준다
     @Transactional
-    @Override
-    public void confirmPurchase(Long buyerId, Long orderId, Long orderItemId) {
+    public Optional<Long> confirmPurchase(Long buyerId, Long orderId, Long orderItemId) {
         // 내 주문이 아니면
         Order order = orderRepository.findByIdAndBuyerId(orderId, buyerId)
                 .orElseThrow(() -> new RestApiException(OrderErrorCode.ORDER_NOT_FOUND));
@@ -372,27 +365,27 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
             throw new RestApiException(OrderErrorCode.PURCHASE_CONFIRM_NOT_ALLOWED);
         }
 
-        publishConfirmed(order, item);
+        return publishConfirmed(order, item);
     }
 
     // 구매확정 이벤트 발행
     // 환불 반영된 수량은 상품 금액에서 빼고, 환불에서 뺀 배송비는 판매자 몫 배송비에 더한다(#28)
-    private void publishConfirmed(Order order, OrderItem item) {
+    private Optional<Long> publishConfirmed(Order order, OrderItem item) {
         // 모두 환불된 상품은 정산할 금액이 없다. 0원 정산 후보를 만들지 않도록 보내지 않는다.
         // #658부터 모두 환불된 상품은 배송 완료가 되지 않아 여기 오지 않지만, 그 전에 배송 완료된 상품이 남아 있어 지운다면 데이터부터 확인한다
         if (item.isFullyRefunded()) {
             log.info("[ORDER_CONFIRM_SKIPPED_FULLY_REFUNDED] 모두 환불된 주문 상품이라 구매확정 이벤트를 보내지 않습니다. orderId={}, orderItemId={}",
                     order.getId(), item.getId());
-            return;
+            return Optional.empty();
         }
         OrderSellerGroup group = item.getSellerGroup();
-        orderEventPublisher.publishOrderProductConfirmedEvent(
+        return Optional.of(orderEventPublisher.publishOrderProductConfirmedEvent(
                 order.getId(),
                 item.getId(),
                 group.getSellerId(),
                 item.confirmedItemAmount(),
                 group.shippingFeeForPayout()
-        );
+        ));
     }
 
     // 환불 취소 반영 (환불 모듈 내부 API용).
@@ -427,9 +420,9 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
     // 환불 취소 기록 되돌리기 (환불이 Kafka로 요청, #604).
     // 기록과 같은 이유로 READ COMMITTED로 주문을 잠근다. 리스너가 트랜잭션 없이 부르므로 이 격리 수준이 그대로 적용된다.
     // 잠그면 같은 주문의 배송 시작·구매확정과 차례로 처리돼, 출고·구매확정 판단이 최신 상태를 본다
+    // 남긴 outbox 줄 ID를 돌려준다(되돌림이든 실패든 하나)
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    @Override
-    public void revertRefund(RevertOrderItemRefundCommand command) {
+    public Long revertRefund(RevertOrderItemRefundCommand command) {
         Optional<OrderItem> item = orderRepository.findByOrderItemIdForUpdate(command.orderItemId())
                 .filter(order -> order.getId().equals(command.orderId()))
                 .flatMap(order -> order.findItem(command.orderItemId()));
@@ -442,37 +435,35 @@ public class OrderService implements GetOrderUseCase, CompletePaymentUseCase, Up
         if (outcome.isReverted()) {
             log.info("[ORDER_REFUND_REVERTED] 환불 취소 기록을 되돌렸습니다. orderId={}, orderItemId={}, refundId={}, quantity={}, 결과={}",
                     command.orderId(), command.orderItemId(), command.refundId(), command.quantity(), outcome);
-            orderEventPublisher.publishRefundReverted(command.refundId(), command.orderId(), command.orderItemId());
-            return;
+            return orderEventPublisher.publishRefundReverted(command.refundId(), command.orderId(), command.orderItemId());
         }
         // 환불이 처리 중으로 멈춰 사람이 보는 경우라 WARN으로 남긴다
         log.warn("[ORDER_REFUND_REVERT_REJECTED] 환불 취소 기록을 되돌리지 않습니다. orderId={}, orderItemId={}, refundId={}, quantity={}, 이유={}",
                 command.orderId(), command.orderItemId(), command.refundId(), command.quantity(), outcome);
-        orderEventPublisher.publishRefundRevertFailed(command.refundId(), command.orderId(), command.orderItemId(), outcome.name());
+        return orderEventPublisher.publishRefundRevertFailed(command.refundId(), command.orderId(), command.orderItemId(), outcome.name());
     }
 
     // 자동 구매확정 대상 주문 ID
-    @Override
     public List<Long> findOrderIdsToAutoConfirm() {
         return orderRepository.findOrderIdsToAutoConfirm(OrderItemStatus.DELIVERED, autoConfirmDeadline());
     }
 
     // 주문 하나의 자동 구매확정 (주문마다 트랜잭션을 나눠, 한 주문이 실패해도 다른 주문은 진행)
     @Transactional
-    @Override
-    public int autoConfirmPurchases(Long orderId) {
+    public AutoConfirmPurchaseResult autoConfirmPurchases(Long orderId) {
         Optional<Order> found = orderRepository.findById(orderId);
         if (found.isEmpty()) {
             log.warn("[ORDER_AUTO_CONFIRM_ORDER_NOT_FOUND] 자동 구매확정 대상 주문이 없습니다. orderId={}", orderId);
-            return 0;
+            return new AutoConfirmPurchaseResult(0, List.of());
         }
         Order order = found.get();
 
         List<OrderItem> confirmed = order.confirmPurchasesDeliveredBefore(autoConfirmDeadline(), LocalDateTime.now(clock));
+        List<Long> outboxIds = new ArrayList<>();
         for (OrderItem item : confirmed) {
-            publishConfirmed(order, item);
+            publishConfirmed(order, item).ifPresent(outboxIds::add);
         }
-        return confirmed.size();
+        return new AutoConfirmPurchaseResult(confirmed.size(), outboxIds);
     }
 
     // 지금으로부터 3일 전

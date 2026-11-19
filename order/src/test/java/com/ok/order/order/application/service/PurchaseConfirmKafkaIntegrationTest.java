@@ -1,6 +1,8 @@
 package com.ok.order.order.application.service;
 
 import com.ok.order.OrderSchema;
+import com.ok.order.order.application.port.in.AutoConfirmPurchaseUseCase;
+import com.ok.order.order.application.port.in.ConfirmPurchaseUseCase;
 import com.ok.order.order.domain.Order;
 import com.ok.order.order.domain.OrderLine;
 import com.ok.order.order.domain.SellerShippingFee;
@@ -36,7 +38,13 @@ class PurchaseConfirmKafkaIntegrationTest extends AbstractIntegrationTest {
     private static final Duration READ_DURATION = Duration.ofSeconds(3);
 
     @Autowired
-    OrderService sut;
+    ConfirmPurchaseUseCase confirmPurchase;
+
+    @Autowired
+    AutoConfirmPurchaseUseCase autoConfirmPurchase;
+
+    @Autowired
+    OrderService orderService;
 
     @Autowired
     TransactionTemplate transactionTemplate;
@@ -86,7 +94,7 @@ class PurchaseConfirmKafkaIntegrationTest extends AbstractIntegrationTest {
         Long orderItemId = orderItemIdOf(orderId);
 
         // when
-        sut.confirmPurchase(BUYER_ID, orderId, orderItemId);
+        confirmPurchase.confirmPurchase(BUYER_ID, orderId, orderItemId);
 
         // then: 상품 10,000원 × 2개, 판매자 묶음 배송비 3,000원
         List<String> messages = reader.readValuesFor(String.valueOf(orderItemId), READ_DURATION);
@@ -109,7 +117,7 @@ class PurchaseConfirmKafkaIntegrationTest extends AbstractIntegrationTest {
 
         // when
         transactionTemplate.executeWithoutResult(status -> {
-            sut.confirmPurchase(BUYER_ID, orderId, orderItemId);
+            confirmPurchase.confirmPurchase(BUYER_ID, orderId, orderItemId);
             status.setRollbackOnly();
         });
 
@@ -124,7 +132,7 @@ class PurchaseConfirmKafkaIntegrationTest extends AbstractIntegrationTest {
         Long orderItemId = orderItemIdOf(orderId);
 
         // when
-        int confirmed = sut.autoConfirmPurchases(orderId);
+        int confirmed = autoConfirmPurchase.autoConfirmPurchases(orderId);
 
         // then
         assertSoftly(softly -> {
@@ -141,10 +149,10 @@ class PurchaseConfirmKafkaIntegrationTest extends AbstractIntegrationTest {
         order.assignIdempotencyKey("key-600-" + System.nanoTime());
         order.registerShippingAddress("홍길동", "010-1234-5678", "06236", "서울 강남구 테헤란로 1", "101호", null);
         order.agreeThirdPartyProvision(true);
-        Long orderId = sut.create(order);
-        sut.completePayment(orderId);
-        sut.startShipping(orderId, SELLER_ID);
-        sut.completeDelivery(orderId, SELLER_ID, deliveredAt);
+        Long orderId = orderService.create(order);
+        orderService.completePayment(orderId);
+        orderService.startShipping(orderId, SELLER_ID);
+        orderService.completeDelivery(orderId, SELLER_ID, deliveredAt);
         return orderId;
     }
 

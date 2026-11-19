@@ -12,7 +12,8 @@ public interface OrderOutboxRecordUseCase {
      *
      * @param messageKey Kafka 메시지 키(업무 식별자). 같은 키의 메시지는 같은 파티션으로 가서 순서가 지켜진다
      * @param payload    보낼 메시지 본문(JSON). 기록한 시점의 값이 그대로 나간다
+     * @return 남긴 outbox 줄 ID
      * @throws org.springframework.transaction.IllegalTransactionStateException 트랜잭션 밖에서 부르면
      */
-    void record(String topic, String messageKey, String payload);
+    Long record(String topic, String messageKey, String payload);
 }

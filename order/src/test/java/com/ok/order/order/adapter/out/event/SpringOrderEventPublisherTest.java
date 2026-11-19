@@ -17,8 +17,11 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 
 @ExtendWith(MockitoExtension.class)
@@ -108,5 +111,17 @@ class SpringOrderEventPublisherTest {
             softly.assertThat(item.get("quantity").asInt()).isEqualTo(2);
             softly.assertThat(item.get("unitPrice").asLong()).isEqualTo(10_000L);
         });
+    }
+
+    @Test
+    void 남긴_outbox_줄_ID를_돌려준다() {
+        // given
+        given(outboxRecorder.record(eq("order.order-created.v1"), eq("10"), anyString())).willReturn(77L);
+
+        // when
+        Long outboxId = sut.publishOrderCreatedEvent(10L, 1L, 23_000L, "사과 외 1건");
+
+        // then
+        assertThat(outboxId).isEqualTo(77L);
     }
 }
