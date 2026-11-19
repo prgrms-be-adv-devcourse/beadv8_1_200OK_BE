@@ -347,7 +347,7 @@ class PayoutServiceTest {
     }
 
     @Test
-    void 판매자는_뽑혔는데_후보가_없으면_무한_반복_대신_예외로_멈춘다() {
+    void 판매자는_뽑혔는데_후보가_없으면_조건_불일치로_보고_예외로_멈춘다() {
         // given: 두 조회 조건이 어긋난 상황 (판매자 조회 결과는 있는데 후보 조회 결과가 없음)
         List<Long> sellerIds = List.of(10L);
         given(payoutQueryRepository.findUndraftedSellerIds(SNAPSHOT_ID, null, 100)).willReturn(sellerIds);

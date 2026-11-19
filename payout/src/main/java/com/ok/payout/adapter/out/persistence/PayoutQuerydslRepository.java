@@ -1079,9 +1079,9 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 두 draft 조회가 공유하는 조건: 이번 스냅샷 목록의 줄 중, 아직 draft로 옮기지 않았고, 실패로 기록되지 않은 줄
-    // 처리한 후보는 draft 항목에 들어가 다음 회차에서 자동으로 빠지므로, 언젠가 0명이 되어 Step이 끝남
+    // 판매자 번호가 앞으로만 가므로(커서, #304) 언젠가 0명이 되어 Step이 끝남
     // 한 곳에서만 정의해서 두 쿼리의 조건이 어긋나지 않게 강제함
-    // (어긋나면 판매자는 뽑히는데 후보가 0건 → draft()가 계속 0보다 큰 값 반환 → tasklet 무한 반복)
+    // (어긋나면 판매자는 뽑히는데 후보가 0건 → draft()가 UNSETTLED_CANDIDATES_NOT_FOUND로 멈춤. 멈추지 않으면 커서가 그 판매자를 지나쳐 verify가 draft 누락으로 주문을 잠금)
     // "정산 항목(payout_item)에 없는 후보" 기준을 쓰면 안 됨: draft 결과는 아직 payout_item에 없어 같은 판매자를 반복 처리함
     // 두 조회 모두 스냅샷 항목(payout_snapshot_item)에서 출발함 (#304): 정산후보 표에서 출발하면 쌓인 과거 후보까지 읽음
     // ①(이번 스냅샷 목록에 있는 후보만, 배치 도중 새로 생긴 후보는 제외)은 스냅샷 항목에서 출발하는 것으로 지켜짐

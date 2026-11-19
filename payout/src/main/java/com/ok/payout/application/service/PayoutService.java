@@ -492,7 +492,8 @@ public class PayoutService implements PayoutUseCase {
         }
 
         List<PayoutCandidateItem> candidates = payoutQueryRepository.findUndraftedCandidates(snapshotId, sellerIds);
-        // 판매자는 뽑혔는데 후보가 0건 = 두 조회 조건 불일치(버그). 그대로 두면 같은 판매자가 계속 뽑혀 무한 반복되므로 실패시킴
+        // 판매자는 뽑혔는데 후보가 0건 = 두 조회 조건 불일치(버그). 그대로 두면 커서가 이 판매자들을 지나쳐, 후보가 draft에도 실패에도 없이 남음
+        //   → verify가 "draft 누락"으로 그 주문들을 잠가 관리자가 풀어야 함. 원인이 분명한 여기서 멈추는 편이 뒷수습이 적음
         if (candidates.isEmpty()) {
             throw new RestApiException(PayoutErrorCode.UNSETTLED_CANDIDATES_NOT_FOUND);
         }
