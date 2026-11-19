@@ -97,9 +97,10 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 			product.changeVisibility(command.visibility().toDomain());
 		}
 		Product saved = productRepository.save(product);
-		productSearchIndexer.index(saved);
-		// 판정기(Jev)는 작업자가 트랜잭션 밖에서 부른다. 등록은 대기열에 넣기만 해서 판정기가 실패해도 등록은 성공한다
+		// 판정기(Jev)는 작업자가 트랜잭션 밖에서 부른다. 등록은 대기열에 넣기만 해서 판정기가 실패해도 등록은 성공한다.
+		// 판정 요청을 검색 행보다 먼저 쓰는 이유는 update와 같다
 		productTagJudgmentRepository.request(saved.getId(), requestedAt());
+		productSearchIndexer.index(saved);
 		return saved.getId();
 	}
 
@@ -143,13 +144,16 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 					}
 				});
 
-		// 가격·재고만 바뀌어도 다시 계산한다. 바뀐 필드를 가리는 조건이 계산 비용보다 버그를 만들기 쉽다
-		productSearchIndexer.index(product);
 		// 태그 판정은 상품명과 옵션명만 보므로 둘이 그대로면 다시 판정하지 않는다(#746). 판정은 외부 호출이라 검색 행과 달리 비용이 크다.
-		// 옵션은 순서가 아니라 이름 집합으로 본다. 판정이 옵션 순서에 기대는 정보가 아니다
+		// 옵션은 순서가 아니라 이름 집합으로 본다. 판정이 옵션 순서에 기대는 정보가 아니다.
+		// 판정 요청을 검색 행보다 먼저 쓴다. 작업자의 결과 저장(ProductTagService.complete)이 판정 행 → 검색 행 순서로 잠그므로,
+		// 반대로 하면 같은 상품을 동시에 다룰 때 교착이 난다. request()는 네이티브 쿼리라 실행 직전에 세션을 flush하므로
+		// 검색 행 변경(index)이 이보다 앞에 있으면 검색 행이 먼저 잠긴다
 		if (!product.getName().equals(nameBefore) || !activeOptionNames(product).equals(optionNamesBefore)) {
 			productTagJudgmentRepository.request(product.getId(), requestedAt());
 		}
+		// 가격·재고만 바뀌어도 다시 계산한다. 바뀐 필드를 가리는 조건이 계산 비용보다 버그를 만들기 쉽다
+		productSearchIndexer.index(product);
 	}
 
 	@Override

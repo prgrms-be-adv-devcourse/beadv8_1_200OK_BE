@@ -12,6 +12,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
@@ -174,6 +177,30 @@ class ProductTagJudgmentIntegrationTest extends AbstractIntegrationTest {
 		});
 	}
 
+	// complete()는 중간에 멈출 수 없어, 같은 잠금 순서(판정 행 → 검색 행)를 쓰는 트랜잭션으로 작업자를 대신한다.
+	// 판매자 수정이 검색 행을 먼저 잠그면 작업자의 검색 행 UPDATE에서 교착(1213)이 나 한쪽이 실패한다
+	@Test
+	void 작업자가_판정_결과를_저장하는_동안_판매자가_상품명을_고쳐도_교착_없이_둘_다_끝난다() throws Exception {
+		// given
+		Long productId = create("제주 감귤", "2kg 소과");
+		CountDownLatch workerLocked = new CountDownLatch(1);
+		CompletableFuture<Void> worker = CompletableFuture.runAsync(() -> transactionTemplate.executeWithoutResult(status -> {
+			jdbcTemplate.queryForList("SELECT id FROM " + JUDGMENT_TABLE + " WHERE product_id = ? FOR UPDATE", productId);
+			workerLocked.countDown();
+			awaitLockWait();
+			jdbcTemplate.update("UPDATE " + SEARCH_TABLE + " SET keywords = ? WHERE product_id = ?", "아이 간식", productId);
+		}));
+		assertThat(workerLocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+		// when
+		ResultActions sellerUpdate = update(productId, "제주 한라봉", "2kg 소과");
+
+		// then
+		worker.get(10, TimeUnit.SECONDS);
+		sellerUpdate.andExpect(status().isNoContent());
+		assertThat(judgment(productId).getStatus()).isEqualTo(ProductTagJudgmentStatus.PENDING);
+	}
+
 	@Test
 	void 수정할_때_상품명과_옵션명이_그대로면_판정을_다시_요청하지_않는다() throws Exception {
 		// given
@@ -327,6 +354,22 @@ class ProductTagJudgmentIntegrationTest extends AbstractIntegrationTest {
 			.header(HttpHeaders.AUTHORIZATION, tokens.bearer(SELLER_ID, "SELLER"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(body));
+	}
+
+	// 판매자 트랜잭션이 작업자가 쥔 판정 행 잠금을 기다리기 시작할 때까지 기다린다. 그 전에 작업자가 끝나면 두 트랜잭션이 겹치지 않는다.
+	// 테스트 계정에 PROCESS 권한이 없어 INNODB_TRX는 못 보고, 권한 없이 같은 계정의 스레드가 보이는 PROCESSLIST로 판정 행 INSERT가 실행 중인지 본다
+	private void awaitLockWait() {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+		while (System.nanoTime() < deadline) {
+			Integer waiting = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.PROCESSLIST "
+				+ "WHERE ID <> CONNECTION_ID() AND COMMAND = 'Query' AND INFO LIKE 'INSERT INTO %product_tag_judgment%'",
+				Integer.class);
+			if (waiting != null && waiting > 0) {
+				return;
+			}
+			Thread.onSpinWait();
+		}
+		throw new IllegalStateException("판매자 수정이 잠금 대기에 들어가지 않았습니다.");
 	}
 
 	private int version(Long productId) {
