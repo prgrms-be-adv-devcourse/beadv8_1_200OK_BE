@@ -5,10 +5,10 @@ import org.springframework.data.domain.Page;
 
 import java.util.List;
 
-@Schema(description = "정산 페이지 응답 (정산 목록, 정산 항목 조회에서 사용)")
+@Schema(description = "정산 모듈 목록 공용 페이지 응답 (정산·정산 항목·정산후보·막힌 주문·해결 기록 등 목록 API가 함께 씀)")
 public record PayoutPageResponse<T>(
 
-        @Schema(description = "현재 페이지의 정산 또는 정산 항목")
+        @Schema(description = "현재 페이지의 줄 목록. 줄의 모양은 각 API의 응답 설명을 따름")
         List<T> content,
 
         @Schema(description = "현재 페이지 번호 (0부터)", example = "0")

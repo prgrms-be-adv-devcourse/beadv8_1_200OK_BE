@@ -38,7 +38,8 @@ public record PayoutSellerCandidateResponse(
         @Schema(description = "정산된 후보면 그 정산 ID(본인 정산), 정산 전이면 null", example = "12", nullable = true)
         Long payoutId,
 
-        @Schema(description = "관리자가 금액을 직접 고친 조정 건이면 조정 사유, 구매확정으로 생긴 평소 건이면 null", nullable = true)
+        // nullable = true를 두지 않음: 객체 칸에 붙이면 Swagger 문서에 "type": "null"로 적혀 코드 생성기가 늘 null인 칸으로 읽음 (#723). 없을 수 있다는 것은 설명에 적음
+        @Schema(description = "관리자가 금액을 직접 고친 조정 건이면 조정 사유, 구매확정으로 생긴 평소 건이면 null")
         PayoutSellerAdjustmentResponse adjustment
 ) {
 

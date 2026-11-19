@@ -30,9 +30,11 @@ public record PayoutAdjustmentCreateRequest(
         Long amount,
 
         // 255는 정산후보 reason 컬럼 길이(VARCHAR(255))와 맞춤
-        @Schema(description = "조정 사유 (255자 이하, 앞뒤 공백 제거)", example = "금액 오입력 정정")
-        @NotBlank(message = "조정 사유는 필수입니다.")
-        @Size(max = 255, message = "조정 사유는 255자 이하여야 합니다.")
+        // @NotBlank 대신 @NotNull + @Size(min = 1): 해결 메모(PayoutOrderResolveRequest)와 같은 이유 (#723)
+        @Schema(description = "조정 사유 (필수, 공백만은 안 됨, 1~255자, 앞뒤 공백 제거)", example = "금액 오입력 정정",
+                requiredMode = Schema.RequiredMode.REQUIRED)
+        @NotNull(message = "조정 사유는 필수입니다.")
+        @Size(min = 1, max = 255, message = "조정 사유는 1자 이상 255자 이하여야 합니다.")
         String reason
 ) {
 

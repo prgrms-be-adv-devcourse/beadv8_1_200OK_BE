@@ -65,7 +65,7 @@ public record PayoutCandidateSearchRequest(
         size = size == null ? DEFAULT_SIZE : size;
     }
 
-    // 주문 ID가 없으면 기간 둘 다 필수 (#723 전에는 @NotNull 두 개였음. 주문 ID가 있을 때만 풀려고 클래스 단위 검사로 바꿈)
+    // 주문 ID가 없으면 기간 둘 다 필수 (#723): 주문 ID가 있을 때만 풀어야 해서 필드의 @NotNull이 아니라 클래스 단위 검사로 둠
     // 주문 ID가 있으면 기간은 하나만 줘도 됨: 준 쪽만 걸어 그 주문의 후보를 더 좁힘
     @Schema(hidden = true)
     @AssertTrue(message = "주문 ID가 없으면 조회 시작 시각과 종료 시각은 필수입니다.")

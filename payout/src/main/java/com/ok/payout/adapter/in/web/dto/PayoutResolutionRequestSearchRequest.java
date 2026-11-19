@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 // 기간·페이지 규칙(필수, 최대 1년, 기본값, 상한)은 정산 목록 요청(PayoutSearchRequest)과 같음. 한쪽을 바꾸면 함께 바꿈
 //   기간 필수인 이유: 해결 기록은 쌓기만 해서, 기간 없이 부르면 운영 시작 이후 기록을 전부 읽음 (payout/CLAUDE.md 설계 전제)
 // TODO(논의 필요): 같은 기간·페이지 검증이 정산 목록·정산후보 요청 4곳에 이어 5곳째 복사됨 (#198 리뷰 지적, PayoutCandidateSearchRequest 주석)
+//   공용 검증(공통 부모나 검증기)으로 모을지, 모은다면 정산후보 요청의 주문 ID 예외(#723)를 어떻게 둘지 정해야 함
 @Schema(description = "해결 기록 전체 목록 조회 조건")
 public record PayoutResolutionRequestSearchRequest(
 

@@ -22,7 +22,7 @@ public record PayoutSellerDetailResponse(
         @Schema(description = "시스템(플랫폼) 몫 정산 여부. 판매자는 본인 정산만 볼 수 있어 항상 false", example = "false")
         boolean system,
 
-        @Schema(description = "정산 금액 (원). 0원 이하일 수 있음", example = "13000")
+        @Schema(description = "정산 금액 (원). 이 정산 항목 금액의 합과 같음(판매 수수료는 이미 빠져 있음). 0원 이하일 수 있음", example = "13000")
         Long amount,
 
         @Schema(description = "정산 확정 시각", example = "2026-10-15T03:00:00")
@@ -39,7 +39,8 @@ public record PayoutSellerDetailResponse(
 
         @Schema(description = "이 정산이 대금을 치른 주문상품에서 떼어 간 판매 수수료 합계 (원, 정산된 수수료 조정 포함)."
                 + "0원 이하로 보류됐다가 이번에 정산된 대금의 수수료도 들어감. 수수료가 없으면 0. "
-                + "지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 이 값이 바뀜", example = "300")
+                + "지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 이 값이 바뀜. "
+                + "참고용 값: 정산 금액(amount)과 항목 금액에 이미 반영되어 있으니 정산 금액에서 다시 빼지 말 것", example = "300")
         Long sellerFeeAmount,
 
         @Schema(description = "위 수수료 항목 수 (원래 수수료 + 정산된 수수료 조정). 수수료가 없으면 0", example = "1")

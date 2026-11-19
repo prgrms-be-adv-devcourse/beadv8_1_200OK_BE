@@ -33,7 +33,8 @@ public record PayoutItemResponse(
         @Schema(description = "정산후보 생성 시각. 평소 건은 구매확정 직후, 조정 건은 조정한 시각", example = "2026-10-14T15:20:00")
         LocalDateTime candidateCreatedAt,
 
-        @Schema(description = "관리자 조정 정보. 평소 건이면 null", nullable = true)
+        // nullable = true를 두지 않음: 객체 칸에 붙이면 Swagger 문서에 "type": "null"로 적혀 코드 생성기가 늘 null인 칸으로 읽음 (#723). 없을 수 있다는 것은 설명에 적음
+        @Schema(description = "관리자 조정 정보. 평소 건이면 null")
         PayoutAdjustmentResponse adjustment
 ) {
 

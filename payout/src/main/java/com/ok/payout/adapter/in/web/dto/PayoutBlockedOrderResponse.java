@@ -41,12 +41,12 @@ public record PayoutBlockedOrderResponse(
 
         @Schema(description = "막힌 순간의 초과 청구 근거: 그 막힘을 만든 금액 검사 때 계산한 값(실패 상세 글과 같음). "
                 + "원인에 초과 청구가 없거나 계산할 수 없으면 null. 예전 막힘의 값은 해결 기록 조회의 상세 글로 봄. "
-                + "RESOLVED 줄은 해결 뒤 다시 실패했으면 그 실패 때 값으로 바뀌어 있을 수 있음(다음 정산 실행이 끝나면 정리됨)",
-                nullable = true)
+                + "RESOLVED 줄은 해결 뒤 다시 실패했으면 그 실패 때 값으로 바뀌어 있을 수 있음(다음 정산 실행이 끝나면 정리됨)")
+        // nullable = true를 두지 않음: 객체 칸에 붙이면 Swagger 문서에 "type": "null"로 적혀 코드 생성기가 늘 null인 칸으로 읽음 (#723). 없을 수 있다는 것은 설명에 적음
         PayoutOverchargeEvidenceResponse evidenceAtBlock,
 
         @Schema(description = "지금의 초과 청구 근거: 목록을 볼 때 계산한 값. 막힌 순간 값과 비교해 데이터가 바뀌었는지 봄. "
-                + "원인에 초과 청구가 없거나 계산할 수 없으면 null", nullable = true)
+                + "원인에 초과 청구가 없거나 계산할 수 없으면 null")
         PayoutOverchargeEvidenceResponse evidenceNow,
 
         @Schema(description = "해결하면 금액 검사에 들어갈 판매 대금(SALE_AMOUNT) 조정 합계 (원). "
