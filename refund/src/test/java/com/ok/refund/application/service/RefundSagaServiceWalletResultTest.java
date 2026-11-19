@@ -649,9 +649,31 @@ class RefundSagaServiceWalletResultTest {
         // when
         sut.recordWalletRefundFailure(failed(ORDER_ID, 2_001L, AMOUNT, "PAYMENT_NOT_FOUND"));
 
-        // then
+        // then: 처음 기록은 그대로고 뒤에 온 실패 값은 WARN 로그에만 남는다
         then(refundStepPersistencePort).should(never()).update(any());
         then(refundStepPersistencePort).should(never()).findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT);
+        assertThat(logged(Level.WARN, "buyerId=2001")).isTrue();
+    }
+
+    // 지갑 실패 경로인데 되돌리기 줄이 이미 끝났으면(예: 주문이 이미 구매확정이라 거절) 고치지 않고, 맞는 값의 늦은 완료와 같은 뜻으로 알린다
+    @Test
+    void 되돌리기_줄이_이미_끝난_지갑_실패_경로에_어긋난_완료가_오면_고치지_않고_약속_위반으로_알린다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "PAYMENT_NOT_FOUND"), null);
+        RefundStep orderRevert = step(RefundStepType.ORDER_REVERT, RefundStepStatus.STOPPED, 1, "ALREADY_CONFIRMED");
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER_REVERT)).willReturn(Optional.of(orderRevert));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, 2_001L, AMOUNT));
+
+        // then
+        then(refundStepPersistencePort).should(never()).update(any());
+        assertSoftly(softly -> {
+            softly.assertThat(orderRevert.getLastReason()).isEqualTo("ALREADY_CONFIRMED");
+            softly.assertThat(logged(Level.WARN, "이미 끝나 그대로 둠")).isTrue();
+        });
     }
 
     @Test
@@ -726,10 +748,46 @@ class RefundSagaServiceWalletResultTest {
         // when
         sut.completeAfterWalletRefund(completed(ORDER_ID, AMOUNT - 1));
 
-        // then
+        // then: DB에는 쓰지 않으므로 지갑 값은 WARN 로그에만 남는다(#761)
         then(refundPersistencePort).should(never()).findByIdForUpdate(any());
         then(refundPersistencePort).should(never()).update(any());
         then(productStockReleasePort).should(never()).releaseStock(any());
+        assertThat(logged(Level.WARN, "amount=" + (AMOUNT - 1))).isTrue();
+    }
+
+    // 지갑 줄이 없는 환불(있을 수 없는 상태)에 어긋난 완료가 오면 기록할 곳이 없어 WARN 로그에 지갑 값을 남긴다(#761)
+    @Test
+    void 지갑_줄이_없는_환불에_어긋난_완료가_오면_WARN에_지갑_값을_남긴다() {
+        // given: 단계 줄이 하나도 없는 환불(스텁하지 않아 모든 조회가 빈 값)
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, 2_001L, AMOUNT));
+
+        // then
+        then(refundStepPersistencePort).should(never()).update(any());
+        assertThat(logged(Level.WARN, "buyerId=2001")).isTrue();
+    }
+
+    // 잠그기 전에는 불일치였는데 그사이 환불이 실패로 끝났다(예: 주문 되돌림 결과가 먼저 커밋됨). 처음부터 실패였을 때와 같이
+    // 지갑 값이 든 WARN을 남긴다. 경쟁할 때만 INFO로 묻히면 실패 환불은 찾기 알람에도 안 떠 흔적이 없다(#761 검토)
+    @Test
+    void 잠그기_전에_불일치였는데_그사이_실패로_끝나면_WARN에_지갑_값을_남긴다() {
+        // given
+        given(refundPersistencePort.findById(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.PROCESSING)));
+        given(refundPersistencePort.findByIdForUpdate(REFUND_ID)).willReturn(Optional.of(refund(RefundStatus.FAILED)));
+        givenSteps(step(RefundStepType.WALLET, RefundStepStatus.STOPPED, 1, "PAYMENT_NOT_FOUND"), null);
+
+        // when
+        sut.completeAfterWalletRefund(completed(ORDER_ID, 2_001L, AMOUNT));
+
+        // then
+        then(refundStepPersistencePort).should(never()).update(any());
+        assertSoftly(softly -> {
+            softly.assertThat(logged(Level.WARN, "buyerId=2001")).isTrue();
+            softly.assertThat(logged(Level.INFO, "사이 환불이 바뀌어")).isFalse();
+        });
     }
 
     @Test

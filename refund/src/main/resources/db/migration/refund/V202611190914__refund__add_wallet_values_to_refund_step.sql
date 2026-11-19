@@ -24,7 +24,8 @@ ALTER TABLE refund_step
         OR (wallet_result IS NOT NULL AND wallet_amount IS NOT NULL)),
     -- 결과 종류는 COMPLETED·FAILED만(대소문자까지 같게) 받는다. 다른 값이 들어가면 앱이 그 행을 읽지 못해 그 환불의 지갑 결과 처리가 막힌다.
     -- 실패면 이유가 꼭 있고 완료면 없다. 각 갈래에 IS NOT NULL을 둔 이유: NULL과 비교하면 결과가 "모름"이 되는데,
-    -- CHECK는 "거짓"일 때만 거절해 결과 없이 이유만 있는 행이 통과한다
+    -- CHECK는 "거짓"일 때만 거절해 결과 없이 이유만 있는 행이 통과한다. TRIM은 띄어쓰기만 지워 탭·줄바꿈만 든 이유는 통과한다(앱은 막음).
+    -- 손으로 이유를 넣을 때는 글자가 든 값을 넣는다
     ADD CONSTRAINT ck_refund_step_wallet_reason_wallet_result CHECK (
         (wallet_result IS NULL AND wallet_reason IS NULL)
         OR (wallet_result IS NOT NULL AND wallet_result COLLATE utf8mb4_bin = 'COMPLETED' AND wallet_reason IS NULL)

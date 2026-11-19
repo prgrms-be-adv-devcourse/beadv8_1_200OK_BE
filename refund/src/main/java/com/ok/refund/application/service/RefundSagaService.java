@@ -98,7 +98,9 @@ public class RefundSagaService implements RefundSagaUseCase {
         // 지갑 줄이 이미 다른 이유로 멈춰 있어 처음 이유를 그대로 둔 경우
         ALREADY_STOPPED,
         // 지갑 줄이 없어 남길 곳이 없는 경우(있을 수 없는 상태, #616 결정 13)
-        NO_WALLET_STEP
+        NO_WALLET_STEP,
+        // 잠그기 전에는 불일치였는데 잠근 뒤 다시 보니 정책이 넘기라고 함. 넘김 로그는 이미 남겼다(결과 불일치 기록에서만 씀, #761)
+        SKIPPED_ON_RECHECK
     }
 
     // 다음 단계 줄을 준비한 결과(#616 결정 14). CALL만 다른 모듈을 부른다.
@@ -152,8 +154,15 @@ public class RefundSagaService implements RefundSagaUseCase {
     private record WalletFailureMarked(MarkOutcome outcome, Refund orderRevertTarget) {
     }
 
-    // 지갑 결과 불일치를 잠근 구간에서 기록한 결과. orderRevertStopped: 지갑 실패 경로의 주문 되돌리기 줄을 늦게 온 어긋난 완료로 멈춤(#761 검토)
-    private record MismatchMarked(MarkOutcome outcome, boolean orderRevertStopped) {
+    // 지갑 결과 불일치를 잠근 구간에서 기록한 결과와, 지갑 실패 경로의 주문 되돌리기 줄을 어떻게 했는지(#761 검토)
+    private record MismatchMarked(MarkOutcome outcome, LateRevert lateRevert) {
+    }
+
+    // 늦게 온 어긋난 완료로 주문 되돌리기 줄을 어떻게 했는지. NONE: 되돌리기 줄 없음(지갑 실패 경로 아님), STOPPED: 멈춤, ALREADY_ENDED: 이미 끝나 그대로
+    private enum LateRevert {
+        NONE,
+        STOPPED,
+        ALREADY_ENDED
     }
 
     // 주문 되돌리기 결과를 잠근 구간에서 거른 판단과, 로그에 남길 그때의 환불·되돌리기 줄 상태(없으면 null)
@@ -1174,10 +1183,18 @@ public class RefundSagaService implements RefundSagaUseCase {
                     messageOrderId, messageBuyerId, messageAmount, walletReason);
             if (isAfterWalletSuccess(again)) {
                 logIgnoredAfterWalletSuccess(locked, productStep, "결과 불일치", report);
-                return new MismatchMarked(MarkOutcome.AFTER_WALLET_SUCCESS, false);
+                return new MismatchMarked(MarkOutcome.AFTER_WALLET_SUCCESS, LateRevert.NONE);
+            }
+            if (again.decision() == WalletResultPolicy.Decision.SKIP) {
+                // 잠그기 전에는 불일치였는데 그사이 환불이 바뀌어 넘기게 됐다(예: 주문 되돌림 결과가 먼저 커밋돼 실패로 끝남).
+                // 처음부터 넘김이었을 때와 같은 로그(수준·지갑 값)를 남긴다. 그러지 않으면 경쟁할 때만 INFO로 묻힌다(#761 검토).
+                // 아무것도 쓰지 않고 넘기는 경우라 잠근 구간 안에서 남겨도 커밋 전후로 결과가 달라지지 않는다
+                logSkipped(again.skipReason(), kind, refundId, new Snapshot(locked, productStep, walletStep.orElse(null)),
+                        walletReason, report);
+                return new MismatchMarked(MarkOutcome.SKIPPED_ON_RECHECK, LateRevert.NONE);
             }
             if (again.decision() != WalletResultPolicy.Decision.MISMATCH) {
-                return new MismatchMarked(MarkOutcome.CHANGED, false);
+                return new MismatchMarked(MarkOutcome.CHANGED, LateRevert.NONE);
             }
             // 환불 행은 바꾸지 않는다(불일치는 지갑 줄에만 남는다, 결정 3). 환불 행은 단계 줄을 지키려고 잠근 것이다
             MarkOutcome stopped = stopWalletStepForMismatch(walletStep, report);
@@ -1185,16 +1202,16 @@ public class RefundSagaService implements RefundSagaUseCase {
             // 되돌리기 줄을 멈춘다(startProductStep의 WALLET_COMPLETED_LATE, #622). 멈추지 않으면 주문이 되돌린 뒤 실패로 끝나 찾기 알람에서 빠지고
             // DB에 흔적이 남지 않는다(#761 검토). 재고 줄이 있으면 재고 거절의 회수 경로라 지갑 실패 경로가 아니다(startProductStep과 같은 기준).
             // 지금은 재고 줄이 있으면 정책이 불일치 대신 넘김을 답해 여기 오지 않는다. 재고 줄 검사는 정책이 바뀌어도 회수 경로를 멈추지 않게 둔 방어다
-            boolean orderRevertStopped = stopped == MarkOutcome.ALREADY_STOPPED && kind == WalletResultPolicy.Kind.COMPLETED
-                    && productStep == null && stopOrderRevertForLateCompletion(refundId);
-            return new MismatchMarked(stopped, orderRevertStopped);
+            LateRevert lateRevert = stopped == MarkOutcome.ALREADY_STOPPED && kind == WalletResultPolicy.Kind.COMPLETED
+                    && productStep == null ? stopOrderRevertForLateCompletion(refundId) : LateRevert.NONE;
+            return new MismatchMarked(stopped, lateRevert);
         });
         MarkOutcome outcome = marked.outcome();
-        if (outcome == MarkOutcome.AFTER_WALLET_SUCCESS) {
+        if (outcome == MarkOutcome.AFTER_WALLET_SUCCESS || outcome == MarkOutcome.SKIPPED_ON_RECHECK) {
             return;
         }
         if (outcome == MarkOutcome.ALREADY_STOPPED) {
-            logMismatchOnStoppedWallet(refundId, report, marked.orderRevertStopped());
+            logMismatchOnStoppedWallet(refundId, report, marked.lateRevert());
             return;
         }
         if (outcome == MarkOutcome.NO_WALLET_STEP) {
@@ -1212,7 +1229,11 @@ public class RefundSagaService implements RefundSagaUseCase {
                 refund.getRefundAmount(), messageAmount, walletReason);
     }
 
-    // 지갑 결과 메시지의 값을 저장·로그용 묶음으로 만든다. 받는 곳(리스너)이 값을 먼저 걸러 정상 흐름에서는 실패하지 않는다
+    // 지갑 결과 메시지의 값을 저장·로그용 묶음으로 만든다. 넘김 로그를 남길 때도 먼저 만든다.
+    // 받는 곳(RefundWalletKafkaListener.requireIds·requireReason)이 빈 번호, 0원 이하, 빈 이유, 100자 넘는 이유를 같은 기준으로 먼저 걸러
+    // 정상 흐름에서는 실패하지 않는다. 그래도 실패하면 IllegalArgumentException이고, Kafka 오류 처리기가 다시 시도하지 않는 예외라
+    // 같은 메시지를 되풀이하는 일은 없다(PR #771 봇 리뷰). 이유 100자 한도는 두 곳에 있다: 도메인 RefundStep.MAX_REASON_LENGTH와
+    // 리스너의 MAX_REASON_LENGTH(입력 어댑터는 도메인을 몰라 따로 둠). 두 값이 같은지는 RefundWalletKafkaListenerTest가 지킨다
     private static WalletReport reportOf(WalletResultPolicy.Kind kind, Long orderId, Long buyerId, long amount, String walletReason) {
         return kind == WalletResultPolicy.Kind.COMPLETED
                 ? WalletReport.completed(orderId, buyerId, amount)
@@ -1233,23 +1254,29 @@ public class RefundSagaService implements RefundSagaUseCase {
     }
 
     // 지갑 실패 경로의 끝나지 않은 주문 되돌리기 줄을 늦게 온 지갑 완료로 멈춘다(startProductStep과 같은 처리, #622). 잠근 구간 안에서만 부른다.
-    // 되돌리기 줄이 없거나 이미 끝났으면 바꾸지 않는다
-    private boolean stopOrderRevertForLateCompletion(Long refundId) {
+    // 되돌리기 줄이 없으면 바꾸지 않고, 이미 끝났으면(예: 주문이 이미 구매확정이라 거절) 끝 상태라 고치지 않는다. 로그 문구가 달라 결과를 나눠 돌려준다
+    private LateRevert stopOrderRevertForLateCompletion(Long refundId) {
         Optional<RefundStep> orderRevert = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER_REVERT);
-        if (orderRevert.isEmpty() || !orderRevert.get().stop(WALLET_COMPLETED_LATE)) {
-            return false;
+        if (orderRevert.isEmpty()) {
+            return LateRevert.NONE;
+        }
+        if (!orderRevert.get().stop(WALLET_COMPLETED_LATE)) {
+            return LateRevert.ALREADY_ENDED;
         }
         refundStepPersistencePort.update(orderRevert.get());
-        return true;
+        return LateRevert.STOPPED;
     }
 
     // 이미 멈춘 지갑 줄에 결과 불일치가 온 경우를 남긴다. 구간이 커밋된 뒤에 부른다. 처음 기록은 그대로라 값은 여기에만 남는다.
     // 같은 어긋난 값이 다시 온 정상 중복일 수도 있지만, 우리 쪽 사정(발행 횟수 소진·만료·막힘)으로 먼저 멈춘 줄에 온 지갑의 첫 답일 수도 있어
-    // 가르지 않고 값과 함께 WARN으로 남긴다(#761 결정: 끝난 줄은 값도 채우지 않음)
-    private static void logMismatchOnStoppedWallet(Long refundId, WalletReport report, boolean orderRevertStopped) {
-        String what = orderRevertStopped
-                ? "지갑 실패로 되돌리던 주문 되돌리기 줄을 멈춤(지갑 약속 위반, 돈이 나갔을 수 있음. 주문·돈을 사람이 맞춰야 함)"
-                : "처음 이유와 값은 그대로 둠";
+    // 가르지 않고 값과 함께 WARN으로 남긴다(#761 결정: 끝난 줄은 값도 채우지 않음).
+    // 지갑 실패 경로(되돌리기 줄 있음)면 맞는 값의 늦은 완료(logProductNotStarted)와 같은 뜻의 문구를 남긴다
+    private static void logMismatchOnStoppedWallet(Long refundId, WalletReport report, LateRevert lateRevert) {
+        String what = switch (lateRevert) {
+            case STOPPED -> "지갑 실패로 되돌리던 주문 되돌리기 줄을 멈춤(지갑 약속 위반, 돈이 나갔을 수 있음. 주문·돈을 사람이 맞춰야 함)";
+            case ALREADY_ENDED -> "지갑 실패로 되돌리던 주문 되돌리기 줄은 이미 끝나 그대로 둠(지갑 약속 위반, 돈이 나갔을 수 있음. 주문·돈을 사람이 맞춰야 함)";
+            case NONE -> "처음 이유와 값은 그대로 둠";
+        };
         log.warn("지갑 줄이 이미 멈춘 환불에 환불과 다른 지갑 결과가 옴. {}(확인 필요). refundId={}, 지갑 값={}", what, refundId, report);
     }
 
