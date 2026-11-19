@@ -32,6 +32,9 @@ public class RefundStep {
     /** 시도 중 만료가 반복돼 횟수를 다 쓰고 멈출 때 남기는 이유 */
     public static final String IN_PROGRESS_EXPIRED = "IN_PROGRESS_EXPIRED";
 
+    /** 다른 모듈이 알려 준 금액·주문·구매자가 환불과 다를 때 남기는 이유. 다른 모듈의 이유와 겹치지 않게 대문자 상수로 둔다 */
+    public static final String RESULT_MISMATCH = "RESULT_MISMATCH";
+
     // TODO(#577): 설정 파일로 뺄지 정한다. 지금은 알람 간격(1분)과 맞춘 임시 값이다
     private static final Duration RETRY_DELAY = Duration.ofMinutes(1);
     // 시도 중인 채로 이 시간이 지나면 멈춘 시도(시도하던 서버가 죽었거나 실패 기록마저 실패함)로 보고 다시 집는다(#576).
@@ -62,11 +65,13 @@ public class RefundStep {
     // 결과를 처음 기다리기 시작한 시각. 다시 보내도(resendAfterResultTimeout) 바꾸지 않는다(#577).
     // nextCheckAt은 다시 보낼 때마다 밀려 처음부터 기다린 시간을 알 수 없어서 따로 둔다. 결과 대기가 된 적 없으면 null
     private LocalDateTime awaitingSince;
+    // 결과 불일치로 이 줄을 처음 멈출 때 지갑이 보낸 값(#761). 불일치가 아닌 줄은 null이다. 이미 멈춘 줄에 뒤늦게 온 결과는 채우지 않는다
+    private WalletReport walletReport;
     private final LocalDateTime createdAt;
 
     private RefundStep(Long id, Long refundId, RefundStepType type, RefundStepStatus status,
                        int attemptCount, LocalDateTime nextCheckAt, String lastReason,
-                       LocalDateTime awaitingSince, LocalDateTime createdAt) {
+                       LocalDateTime awaitingSince, WalletReport walletReport, LocalDateTime createdAt) {
         this.id = id;
         this.refundId = refundId;
         this.type = type;
@@ -75,13 +80,14 @@ public class RefundStep {
         this.nextCheckAt = nextCheckAt;
         this.lastReason = lastReason;
         this.awaitingSince = awaitingSince;
+        this.walletReport = walletReport;
         this.createdAt = createdAt;
     }
 
     /** 단계 차례가 되어 첫 시도를 시작하며 만든다. */
     public static RefundStep start(Long refundId, RefundStepType type, LocalDateTime now) {
         return new RefundStep(null, refundId, type, RefundStepStatus.IN_PROGRESS, 1,
-                now.plus(IN_PROGRESS_EXPIRY), null, null, now);
+                now.plus(IN_PROGRESS_EXPIRY), null, null, null, now);
     }
 
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
@@ -91,13 +97,27 @@ public class RefundStep {
         return restore(id, refundId, type, status, attemptCount, nextCheckAt, lastReason, null, createdAt);
     }
 
-    /** 결과를 처음 기다리기 시작한 시각까지 되살린다. 영속 어댑터가 쓴다. */
+    /** 결과를 처음 기다리기 시작한 시각까지 되살린다(지갑이 보낸 값 없음). */
     public static RefundStep restore(Long id, Long refundId, RefundStepType type,
                                      RefundStepStatus status, int attemptCount,
                                      LocalDateTime nextCheckAt, String lastReason,
                                      LocalDateTime awaitingSince, LocalDateTime createdAt) {
+        return restore(id, refundId, type, status, attemptCount, nextCheckAt, lastReason, awaitingSince, null, createdAt);
+    }
+
+    /**
+     * 지갑이 보낸 값(#761)까지 모든 칸을 되살린다. 영속 어댑터가 쓴다.
+     * 값은 묶음({@link WalletReport})으로 받는다. 주문·구매자가 이웃한 Long 인자로 오면 순서가 바뀌어도 컴파일되기 때문이다
+     *
+     * @param walletReport 결과 불일치로 처음 멈출 때 남긴 지갑 값. 없으면 {@code null}
+     */
+    public static RefundStep restore(Long id, Long refundId, RefundStepType type,
+                                     RefundStepStatus status, int attemptCount,
+                                     LocalDateTime nextCheckAt, String lastReason,
+                                     LocalDateTime awaitingSince, WalletReport walletReport,
+                                     LocalDateTime createdAt) {
         return new RefundStep(id, refundId, type, status, attemptCount, nextCheckAt,
-                lastReason, awaitingSince, createdAt);
+                lastReason, awaitingSince, walletReport, createdAt);
     }
 
     /** 다시 시도를 시작한다. READY일 때만 되고, 이미 시도 중이면 다른 곳이 하고 있으므로 false. */
@@ -277,6 +297,23 @@ public class RefundStep {
         lastReason = normalized;
         status = RefundStepStatus.STOPPED;
         nextCheckAt = null;
+        return true;
+    }
+
+    /**
+     * 지갑 결과가 환불과 달라(결과 불일치) 멈추면서 지갑이 보낸 값을 함께 남긴다(#761). 이유는 {@link #RESULT_MISMATCH}로 정해져 있다.
+     * 멈추기와 값 남기기를 한 메서드로 묶은 이유: 따로 부르면 이미 멈춘 줄에 값만 덮어쓰는 길이 생겨 처음 기록이 바뀔 수 있다.
+     * 이미 끝난 줄(성공·거절됨·멈춤)이면 {@link #stop}처럼 이유도 값도 바꾸지 않고 false를 돌려준다.
+     * 그래서 우리 쪽 사정(발행 횟수 소진, 만료, 막힘)으로 먼저 멈춘 줄에 온 지갑의 첫 답도 남기지 않는다. 부르는 쪽이 로그에 값을 남긴다
+     */
+    public boolean stopForMismatch(WalletReport report) {
+        if (report == null) {
+            throw new IllegalArgumentException("결과 불일치로 멈출 때는 지갑이 보낸 값이 있어야 합니다.");
+        }
+        if (!stop(RESULT_MISMATCH)) {
+            return false;
+        }
+        walletReport = report;
         return true;
     }
 

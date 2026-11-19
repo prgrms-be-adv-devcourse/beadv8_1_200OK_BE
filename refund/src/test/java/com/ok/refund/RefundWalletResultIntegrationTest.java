@@ -15,6 +15,7 @@ import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
 import com.ok.refund.domain.RefundStatus;
+import com.ok.refund.domain.WalletReport;
 import com.ok.refund.exception.RefundErrorCode;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeOrderCancellationPort;
@@ -189,6 +190,9 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(productStep.getStatus()).isEqualTo(RefundStepStatus.SUCCEEDED);
             softly.assertThat(productStep.getAttemptCount()).isEqualTo(1);
             softly.assertThat(productStep.getLastReason()).isNull();
+            // 불일치가 아닌 줄은 지갑이 보낸 값 칸이 비어 있다(#761)
+            softly.assertThat(walletStep.getWalletReport()).isNull();
+            softly.assertThat(productStep.getWalletReport()).isNull();
         });
     }
 
@@ -298,8 +302,33 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
         assertSoftly(softly -> {
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
             softly.assertThat(walletStep.getLastReason()).isEqualTo("RESULT_MISMATCH");
+            // 지갑이 보낸 값이 실제 DB에 남는다(#761). 관리자가 환불 값(10,000원)과 나란히 본다
+            softly.assertThat(walletStep.getWalletReport()).isEqualTo(WalletReport.completed(ORDER_ID, BUYER_ID, 9_000L));
         });
         assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+    }
+
+    // 지갑이 "못 돌려줬다"고 했는데 금액이 환불과 다르다. 이유 칸은 RESULT_MISMATCH라 지갑의 실패 이유가 가려지므로
+    // 실패 이유까지 값 칸에 남는지 실제 DB로 본다(#761)
+    @Test
+    void 금액이_다른_실패_메시지는_지갑의_실패_이유까지_지갑_줄에_남긴다() throws Exception {
+        // given: 10,000원을 돌려줘야 하는데 9,000원을 못 돌려줬다는 답이 왔다
+        Long refundId = requestedRefundId();
+        approve(refundId).andExpect(status().isOk());
+
+        // when
+        walletResultSender.sendFailed(refundId, 9_000L, "PAYMENT_NOT_FOUND");
+
+        // then
+        RefundWalletResultSender.awaitUntil("불일치가 기록되지 않았습니다",
+                () -> stepOf(refundId, RefundStepType.WALLET).getStatus() == RefundStepStatus.STOPPED);
+        RefundStep walletStep = stepOf(refundId, RefundStepType.WALLET);
+        assertThat(walletStep).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(walletStep.getLastReason()).isEqualTo("RESULT_MISMATCH");
+            softly.assertThat(walletStep.getWalletReport())
+                    .isEqualTo(WalletReport.failed(ORDER_ID, BUYER_ID, 9_000L, "PAYMENT_NOT_FOUND"));
+        });
     }
 
     // 불일치는 메시지 하나가 틀렸다는 표시라, 뒤에 맞는 완료 메시지가 오면 완료로 진행한다.
@@ -324,6 +353,9 @@ class RefundWalletResultIntegrationTest extends AbstractIntegrationTest {
                         tuple(RefundStepType.WALLET, RefundStepStatus.STOPPED, "RESULT_MISMATCH"),
                         tuple(RefundStepType.PRODUCT, RefundStepStatus.SUCCEEDED, null));
         assertThat(productStockReleasePort.releasedOf(refundId)).isPresent();
+        // 환불이 완료로 끝나도 처음 어긋난 값(9,000원)은 지갑 줄에 남는다(#761, 재고·완료 단계의 update가 지우지 않음)
+        assertThat(stepOf(refundId, RefundStepType.WALLET).getWalletReport())
+                .isEqualTo(WalletReport.completed(ORDER_ID, BUYER_ID, 9_000L));
     }
 
     // 멈춘 지갑 줄에 다른 이유의 실패가 와도 처음 이유를 둔다. 뒤 메시지로 덮으면 불일치 같은 처음 흔적이 사라진다(#574 결정 9)

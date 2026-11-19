@@ -21,6 +21,7 @@ final class RefundStepMapper {
                 entity.getNextCheckAt(),
                 entity.getLastReason(),
                 entity.getAwaitingSince(),
+                entity.walletReport(),
                 entity.getCreatedAt());
     }
 
@@ -33,13 +34,14 @@ final class RefundStepMapper {
         return entity;
     }
 
-    // 바뀔 수 있는 칸만 옮긴다: 상태, 시도 횟수, 다시 볼 시각, 마지막 이유, 결과를 처음 기다리기 시작한 시각
+    // 바뀔 수 있는 칸만 옮긴다: 상태, 시도 횟수, 다시 볼 시각, 마지막 이유, 결과를 처음 기다리기 시작한 시각, 지갑이 보낸 값(#761)
     static void applyMutableState(RefundStep step, RefundStepJpaEntity entity) {
         entity.changeMutableState(
                 step.getStatus(),
                 step.getAttemptCount(),
                 step.getNextCheckAt(),
                 step.getLastReason(),
-                step.getAwaitingSince());
+                step.getAwaitingSince(),
+                step.getWalletReport());
     }
 }

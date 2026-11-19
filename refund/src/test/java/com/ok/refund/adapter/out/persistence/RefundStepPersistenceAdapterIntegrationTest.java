@@ -8,6 +8,7 @@ import com.ok.refund.domain.RefundShippingFee;
 import com.ok.refund.domain.RefundStep;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
+import com.ok.refund.domain.WalletReport;
 import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -296,6 +297,81 @@ class RefundStepPersistenceAdapterIntegrationTest extends AbstractIntegrationTes
             softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.AWAITING_RESULT);
             softly.assertThat(sut.getAwaitingSince()).isEqualTo(NOW.plusSeconds(3));
         });
+    }
+
+    // 지갑이 보낸 값(#761)이 수정 저장으로 들어가고 칸마다 제자리로 다시 읽힌다. 주문·구매자는 서로 다른 값을 써서 뒤바뀌면 걸리게 한다.
+    // 실패 메시지 값으로 봐서 실패 이유 칸까지 확인한다. 마이그레이션의 CHECK도 이 저장으로 함께 지나간다
+    @Test
+    void 결과_불일치로_멈춘_지갑_줄의_지갑_값이_저장되고_다시_읽힌다() {
+        // given
+        WalletReport report = WalletReport.failed(1_000L, 6L, 9_000L, "PAYMENT_NOT_FOUND");
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            return refundStepPersistencePort.saveNew(RefundStep.start(refundId, RefundStepType.WALLET, NOW));
+        });
+
+        // when
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+            wallet.stopForMismatch(report);
+            refundStepPersistencePort.update(wallet);
+            return wallet;
+        });
+
+        // then
+        RefundStep sut = inTransaction(() ->
+                refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET)).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(sut.getLastReason()).isEqualTo(RefundStep.RESULT_MISMATCH);
+            softly.assertThat(sut.getWalletReport()).isEqualTo(report);
+        });
+    }
+
+    // 값이 있는 줄을 다시 읽어 그대로 update해도 값이 남는다. 매퍼가 수정 때 값 칸을 옮기지 않으면 NULL로 덮이는데,
+    // CHECK는 다섯 칸이 함께 비는 것을 막지 않아 조용히 사라진다(#761 검토)
+    @Test
+    void 지갑_값이_있는_줄을_다시_update해도_값이_사라지지_않는다() {
+        // given
+        WalletReport report = WalletReport.completed(1_000L, 6L, 10_000L);
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            RefundStep wallet = RefundStep.start(refundId, RefundStepType.WALLET, NOW);
+            wallet.stopForMismatch(report);
+            return refundStepPersistencePort.saveNew(wallet);
+        });
+
+        // when
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            RefundStep wallet = refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET).orElseThrow();
+            refundStepPersistencePort.update(wallet);
+            return wallet;
+        });
+
+        // then
+        RefundStep sut = inTransaction(() ->
+                refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.WALLET)).orElseThrow();
+        assertThat(sut.getWalletReport()).isEqualTo(report);
+    }
+
+    // 지갑이 아닌 줄과 불일치가 아닌 줄은 값 칸이 모두 비어 있다
+    @Test
+    void 불일치가_아닌_줄은_지갑_값이_없다() {
+        // given
+        inTransaction(() -> {
+            refundPersistencePort.findByIdForUpdate(refundId);
+            return refundStepPersistencePort.saveNew(RefundStep.start(refundId, RefundStepType.ORDER, NOW));
+        });
+
+        // when
+        RefundStep sut = inTransaction(() ->
+                refundStepPersistencePort.findByRefundIdAndType(refundId, RefundStepType.ORDER)).orElseThrow();
+
+        // then
+        assertThat(sut.getWalletReport()).isNull();
     }
 
     // 경우 3: 환불 행을 잠그지 않고 단계 행을 만들면, 같은 환불을 다른 곳이 처리하는 중에도 끼어들 수 있어 막는다

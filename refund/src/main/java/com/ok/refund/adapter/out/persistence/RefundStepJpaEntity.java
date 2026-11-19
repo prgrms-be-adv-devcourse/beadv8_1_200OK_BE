@@ -4,6 +4,7 @@ import com.ok.common.jpa.entity.BaseTime;
 import com.ok.refund.RefundSchema;
 import com.ok.refund.domain.RefundStepStatus;
 import com.ok.refund.domain.RefundStepType;
+import com.ok.refund.domain.WalletReport;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -62,6 +63,24 @@ public class RefundStepJpaEntity extends BaseTime {
     @Column(name = "awaiting_since")
     private LocalDateTime awaitingSince;
 
+    // 아래 다섯 칸은 결과 불일치로 지갑 줄을 처음 멈출 때 지갑이 보낸 값이다(#761). 함께 차거나 함께 빈다(DB CHECK).
+    // 결과 종류는 enum 이름이 그대로 DB 값이라 WalletReport.Result의 이름을 바꾸면 저장된 행을 읽지 못한다
+    @Enumerated(EnumType.STRING)
+    @Column(name = "wallet_result", length = 30)
+    private WalletReport.Result walletResult;
+
+    @Column(name = "wallet_order_id")
+    private Long walletOrderId;
+
+    @Column(name = "wallet_buyer_id")
+    private Long walletBuyerId;
+
+    @Column(name = "wallet_amount")
+    private Long walletAmount;
+
+    @Column(name = "wallet_reason", length = 100)
+    private String walletReason;
+
     // 새 행 저장용. ID와 생성·수정 시각은 DB(IDENTITY)와 감사 리스너가 채우므로 받지 않는다.
     // 바뀌는 칸은 changeMutableState로 따로 채운다(매퍼가 새 행과 수정에 같은 규칙을 쓰게 하려고)
     RefundStepJpaEntity(Long refundId, RefundStepType step) {
@@ -70,18 +89,34 @@ public class RefundStepJpaEntity extends BaseTime {
     }
 
     // 바뀔 수 있는 칸만 받는다. 어느 환불의 어느 단계인지는 만들 때 정해지고 바뀌지 않아,
-    // 여기서 받지 않는 것으로 수정 때 다른 환불·단계로 덮어쓰는 일을 막는다
+    // 여기서 받지 않는 것으로 수정 때 다른 환불·단계로 덮어쓰는 일을 막는다.
+    // 지갑이 보낸 값도 여기서 받는다. 줄을 만들 때가 아니라 결과가 올 때 생기기 때문이다. 수정할 때마다 함께 옮겨야
+    // 다른 칸을 고친 update가 값을 NULL로 덮지 않는다(CHECK는 다섯 칸이 함께 비는 것을 막지 않아 조용히 사라진다)
     void changeMutableState(
             RefundStepStatus status,
             int attemptCount,
             LocalDateTime nextCheckAt,
             String lastReason,
-            LocalDateTime awaitingSince
+            LocalDateTime awaitingSince,
+            WalletReport walletReport
     ) {
         this.status = status;
         this.attemptCount = attemptCount;
         this.nextCheckAt = nextCheckAt;
         this.lastReason = lastReason;
         this.awaitingSince = awaitingSince;
+        this.walletResult = walletReport == null ? null : walletReport.result();
+        this.walletOrderId = walletReport == null ? null : walletReport.orderId();
+        this.walletBuyerId = walletReport == null ? null : walletReport.buyerId();
+        this.walletAmount = walletReport == null ? null : walletReport.amount();
+        this.walletReason = walletReport == null ? null : walletReport.reason();
+    }
+
+    // 지갑이 보낸 값을 도메인 묶음으로 돌려준다. 결과 종류가 비어 있으면 값이 없는 줄이다(다섯 칸이 함께 빔, DB CHECK)
+    WalletReport walletReport() {
+        if (walletResult == null) {
+            return null;
+        }
+        return new WalletReport(walletResult, walletOrderId, walletBuyerId, walletAmount, walletReason);
     }
 }

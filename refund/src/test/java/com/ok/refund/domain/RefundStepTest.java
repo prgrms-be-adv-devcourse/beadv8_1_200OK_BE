@@ -42,6 +42,81 @@ class RefundStepTest {
         });
     }
 
+    // 결과 불일치로 처음 멈출 때 지갑이 보낸 값을 함께 남긴다(#761). 예: 지갑이 "구매자 6번에게 10,000원 완료"를 보냄
+    @Test
+    void 결과_불일치로_멈추면_이유와_지갑이_보낸_값을_함께_남긴다() {
+        // given
+        RefundStep sut = stepWith(RefundStepStatus.AWAITING_RESULT);
+        WalletReport report = WalletReport.completed(1_000L, 6L, 10_000L);
+
+        // when
+        boolean changed = sut.stopForMismatch(report);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isTrue();
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(sut.getLastReason()).isEqualTo(RefundStep.RESULT_MISMATCH);
+            softly.assertThat(sut.getNextCheckAt()).isNull();
+            softly.assertThat(sut.getWalletReport()).isEqualTo(report);
+        });
+    }
+
+    // 이미 멈춘 줄은 이유도 값도 바꾸지 않는다. 처음 기록을 지키려는 것이다(우리 쪽 사정으로 먼저 멈춘 줄에 온 지갑의 첫 답도 남기지 않음)
+    @Test
+    void 이미_멈춘_줄은_결과_불일치가_와도_이유와_값을_바꾸지_않는다() {
+        // given
+        RefundStep sut = stepWith(RefundStepStatus.STOPPED);
+
+        // when
+        boolean changed = sut.stopForMismatch(WalletReport.completed(1_000L, 6L, 10_000L));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getLastReason()).isEqualTo("처음 이유");
+            softly.assertThat(sut.getWalletReport()).isNull();
+        });
+    }
+
+    // 처음 남긴 값 A가 있는 줄에 다른 값 B로 다시 불러도 A가 그대로다(처음 기록 보호)
+    @Test
+    void 결과_불일치로_멈춘_줄에_다른_값이_다시_와도_처음_값을_지킨다() {
+        // given
+        RefundStep sut = stepWith(RefundStepStatus.AWAITING_RESULT);
+        WalletReport first = WalletReport.completed(1_000L, 6L, 10_000L);
+        sut.stopForMismatch(first);
+
+        // when
+        boolean changed = sut.stopForMismatch(WalletReport.completed(1_000L, 8L, 3_000L));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(changed).isFalse();
+            softly.assertThat(sut.getWalletReport()).isEqualTo(first);
+        });
+    }
+
+    @Test
+    void 결과_불일치로_멈출_때_지갑_값이_없으면_막는다() {
+        // given
+        RefundStep sut = stepWith(RefundStepStatus.AWAITING_RESULT);
+
+        // when & then
+        assertThatThrownBy(() -> sut.stopForMismatch(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("결과 불일치로 멈출 때는 지갑이 보낸 값이 있어야 합니다.");
+    }
+
+    @Test
+    void 보통_단계_줄은_지갑이_보낸_값이_없다() {
+        // when
+        RefundStep sut = RefundStep.start(10L, RefundStepType.WALLET, NOW);
+
+        // then
+        assertThat(sut.getWalletReport()).isNull();
+    }
+
     static Stream<Arguments> 끝난_단계와_전이() {
         Stream.Builder<Arguments> builder = Stream.builder();
         for (RefundStepStatus status : new RefundStepStatus[]{

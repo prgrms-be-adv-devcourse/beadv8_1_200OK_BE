@@ -6,7 +6,7 @@ import java.util.Objects;
  * 지갑이 보낸 예치금 반환 결과(완료·실패)를 받을지 거르는 정책이다(#616). 받음·불일치·넘김만 답하고 다음 단계는 정하지 않는다.
  * 다음 단계는 {@link RefundSagaPlan} 한 곳에서 정한다. 여기서 다음 단계까지 정하면 순서 판단이 두 곳으로 갈라진다(#575 결정 5).
  * 지휘자는 잠그기 전에 먼저 읽은 값으로 한 번, 잠근 뒤 다시 읽은 값으로 한 번 부른다. 읽은 뒤 잠그기 전에 상태가 바뀔 수 있어서다.
- * 지갑 반환 답 전용이다. 되돌리기(돈 다시 가져오기) 답은 결과의 구매자·금액이 지갑 기록 값이라 비교 기준이 달라 따로 거른다(#546·#572).
+ * 지갑 반환 답 전용이다. 되돌리기(돈 다시 가져오기) 답은 보는 단계 줄과 넘기는 경우가 달라 따로 거른다(#546).
  */
 public final class WalletResultPolicy {
 
@@ -99,7 +99,7 @@ public final class WalletResultPolicy {
         if (kind == Kind.FAILED && productStep != null) {
             return Verdict.skip(SkipReason.AFTER_WALLET_SUCCESS);
         }
-        if (!matches(refund, orderId, buyerId, amount)) {
+        if (!matchesRefund(refund, orderId, buyerId, amount)) {
             return productStep != null ? Verdict.skip(SkipReason.AFTER_WALLET_SUCCESS) : Verdict.mismatch();
         }
         if (kind == Kind.FAILED && walletStep != null && walletStep.isStoppedWith(reason)) {
@@ -108,9 +108,12 @@ public final class WalletResultPolicy {
         return Verdict.accept();
     }
 
-    // 지갑 결과의 주문·구매자·금액이 모두 환불과 같은지 본다. 완료·실패 메시지가 같은 기준을 쓰게 한 곳에 둔다.
-    // ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
-    private static boolean matches(Refund refund, Long orderId, Long buyerId, long amount) {
+    /**
+     * 지갑 결과의 주문·구매자·금액이 모두 환불과 같은지 본다. 완료·실패 메시지가 같은 기준을 쓰게 한 곳에 둔다.
+     * 지휘자가 넘기는 결과(이미 완료된 환불)의 로그 수준을 가를 때도 같은 기준을 쓴다(#761).
+     * ID는 equals로 비교한다(Long을 ==로 비교하면 캐시 범위 밖 값에서 같아도 다르다고 나온다)
+     */
+    public static boolean matchesRefund(Refund refund, Long orderId, Long buyerId, long amount) {
         return Objects.equals(refund.getOrderId(), orderId)
                 && Objects.equals(refund.getBuyerId(), buyerId)
                 && refund.getRefundAmount() == amount;
