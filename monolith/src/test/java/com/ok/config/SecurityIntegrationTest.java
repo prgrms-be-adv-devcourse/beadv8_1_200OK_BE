@@ -383,10 +383,13 @@ class SecurityIntegrationTest extends AbstractIntegrationTest {
                 Arguments.of(HttpMethod.POST, "/api/v1/members/signup"),
                 Arguments.of(HttpMethod.POST, "/api/v1/auth/reissue"),
                 Arguments.of(HttpMethod.POST, "/api/v1/auth/logout"),
+                // 비밀값이 틀려도 컨트롤러가 403으로 거절할 뿐, 보안 필터에서 401로 막히지 않아야 한다
+                Arguments.of(HttpMethod.POST, "/api/v1/carrier-notifications/wrong-secret"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products/999999"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products/categories"),
                 Arguments.of(HttpMethod.GET, "/api/v1/products/999999/reviews"),
+                Arguments.of(HttpMethod.GET, "/api/v1/products/999999/review-keywords"),
                 Arguments.of(HttpMethod.GET, "/api/v1/stores/999999")
         );
     }
