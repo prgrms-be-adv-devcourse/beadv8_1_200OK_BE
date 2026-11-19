@@ -190,6 +190,18 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     // API: GET /api/v1/payouts/me/candidates (판매자 본인 정산후보 조회)
+    // 요청: 판매자 7
+    // 확인: 조정 상태 칸(#791)이 판매자 응답에는 아예 없는지 (판매자에게 금액 검사 상태를 보여 줄 이유가 없음)
+    @Test
+    void 판매자_응답에는_조정_상태_칸이_없다() throws Exception {
+        // when & then
+        mockMvc.perform(sellerRequest(SELLER_7, "BUYER", "SELLER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].amount").value(contains(-2_000)))
+                .andExpect(jsonPath("$.content[0].adjustmentCheckStatus").doesNotExist());
+    }
+
+    // API: GET /api/v1/payouts/me/candidates (판매자 본인 정산후보 조회)
     // 요청: 판매자 7, unsettledOnly=true
     // 확인: 정산 전인 E 1건만 나오는지
     @Test
@@ -268,6 +280,18 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
+    // 요청: 관리자, sellerId=7, 기간만 (주문 ID 없음)
+    // 확인: 조정 후보 C가 있어도 조정 상태(#791)는 null인지 (기간 조회에서는 조정마다 실패·해결 기록을 찾아보지 않음)
+    @Test
+    void 관리자가_기간으로_조회하면_조정_상태가_null이다() throws Exception {
+        // when & then
+        mockMvc.perform(adminRequest(ADMIN_ID, "ADMIN").param("sellerId", String.valueOf(SELLER_7)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].amount").value(contains(-2_000)))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains(nullValue())));
+    }
+
+    // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
     // 요청: 관리자, unsettledOnly=true
     // 확인: 전체 판매자 중 정산 전인 E 1건만 나오는지
     @Test
@@ -325,6 +349,21 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[*].eventType")
                         .value(containsInAnyOrder("SALE_AMOUNT", "SALE_FEE", "SALE_AMOUNT")))
                 .andExpect(jsonPath("$.content[?(@.adjustment != null)].amount").value(contains(-2_000)));
+    }
+
+    // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
+    // 요청: 관리자, orderId = 주문 A (실패 기록이 없는 주문)
+    // 확인: 막힘과 상관없는 조정 C는 검사 밖(UNCHECKED), 원래 후보 두 건은 조정 상태 null인지 (#791)
+    @Test
+    void 관리자가_주문_ID로_보면_막힘과_상관없는_조정은_검사_밖이고_원래_후보는_null이다() throws Exception {
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/candidates")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN"))
+                        .param("orderId", String.valueOf(orderA)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment == null)].adjustmentCheckStatus")
+                        .value(contains(nullValue(), nullValue())));
     }
 
     // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)

@@ -216,6 +216,14 @@ public interface PayoutQueryRepository {
     // 줄이 없으면 그 주문·종류는 0. orderIds가 비면 조회하지 않고 빈 목록
     List<PendingAdjustmentRow> sumPendingAdjustmentsByOrderIds(Collection<Long> orderIds);
 
+    // 정산후보 조회의 조정 상태 (#791): 주어진 후보 중 관리자가 확인한 조정(금액 검사에 들어감)인 후보 ID
+    // 판정은 금액 검사와 같은 확인한 조정 조건. candidateIds가 비면 조회하지 않고 빈 목록
+    List<Long> findConfirmedAdjustmentCandidateIds(Collection<Long> candidateIds);
+
+    // 정산후보 조회의 조정 상태 (#791): 주어진 후보 중 해결 대기 조정(해결하면 확인한 조정이 됨)인 후보 ID
+    // 판정은 막힌 주문 목록의 대기 합계(sumPendingAdjustmentsByOrderIds)와 같은 조건. candidateIds가 비면 빈 목록
+    List<Long> findAwaitingResolutionAdjustmentCandidateIds(Collection<Long> candidateIds);
+
     // 그 주문들의 원인 (#569, 막힌 주문 표의 하위 표). 주문 ID, 실패 시각 최신순. orderIds가 비면 빈 목록
     List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds);
 

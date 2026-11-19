@@ -23,6 +23,7 @@ import com.ok.payout.application.port.out.PayoutCandidateItemRepository;
 import com.ok.payout.application.port.out.PayoutFailureRepository;
 import com.ok.payout.application.port.out.PayoutQueryRepository;
 import com.ok.payout.application.port.out.AdjustmentCandidateRow;
+import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.CountAndAmount;
 import com.ok.payout.application.port.out.DraftItemRow;
 import com.ok.payout.application.port.out.FailureRow;
@@ -1172,8 +1173,24 @@ public class PayoutService implements PayoutUseCase {
     @Override
     @Transactional(readOnly = true)
     public Page<PayoutCandidateResult> searchCandidatesForAdmin(PayoutCandidateSearchQuery query) {
-        return searchCandidates(query.orderId(), query.sellerId(), query.from(), query.to(), query.unsettledOnly(), false,
-                query.page(), query.size());
+        Page<CandidateRow> rows = searchCandidateRows(query.orderId(), query.sellerId(), query.from(), query.to(),
+                query.unsettledOnly(), false, query.page(), query.size());
+        // 조정 상태(#791)는 주문 ID로 볼 때만 채움: 조정 줄마다 실패·해결 기록을 찾아봐야 해서,
+        //   기간으로 판매자 전체를 볼 때 느려지지 않게 (payout/CLAUDE.md 규모 전제). 주문 ID와 기간을 함께 줘도 채움
+        if (query.orderId() == null) {
+            return rows.map(PayoutQueryResultMapper::toCandidateResult);
+        }
+        // 한 페이지 조정 줄 ID로 판정 조회 두 번 (줄마다 따로 조회하지 않음)
+        List<Long> adjustmentCandidateIds = new ArrayList<>();
+        for (CandidateRow row : rows.getContent()) {
+            if (row.adjustmentId() != PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID) {
+                adjustmentCandidateIds.add(row.candidateId());
+            }
+        }
+        Set<Long> confirmedIds = new HashSet<>(payoutQueryRepository.findConfirmedAdjustmentCandidateIds(adjustmentCandidateIds));
+        Set<Long> awaitingIds = new HashSet<>(
+                payoutQueryRepository.findAwaitingResolutionAdjustmentCandidateIds(adjustmentCandidateIds));
+        return rows.map(row -> PayoutQueryResultMapper.toCandidateResult(row, confirmedIds, awaitingIds));
     }
 
     /**
@@ -1190,21 +1207,22 @@ public class PayoutService implements PayoutUseCase {
         // 판매자 목록은 요청에 대상 ID가 없음: 토큰의 회원 ID로만 조회해서 URL·파라미터를 바꿔도 남의 후보를 요청할 수 없음
         // 후보의 seller_id는 판매한 판매자 회원 ID라서, 정산 목록(payeeId)과 달리 번호 체계 전제(TODO)가 필요 없음
         // 주문 ID 조건은 관리자 조회에만 있음 (#723). 판매자 조회는 늘 기간 필수
-        return searchCandidates(null, sellerId, query.from(), query.to(), query.unsettledOnly(), true,
-                query.page(), query.size());
+        // 조정 상태(#791)는 채우지 않음: 판매자에게 금액 검사 상태를 보여 줄 이유가 없음
+        return searchCandidateRows(null, sellerId, query.from(), query.to(), query.unsettledOnly(), true,
+                query.page(), query.size())
+                .map(PayoutQueryResultMapper::toCandidateResult);
     }
 
     // 관리자·판매자 정산후보 조회의 공통 부분. 둘은 조건만 다르고 조회 방식은 같음
-    private Page<PayoutCandidateResult> searchCandidates(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
-                                                         boolean unsettledOnly, boolean sellerShareOnly, int page, int size) {
+    private Page<CandidateRow> searchCandidateRows(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
+                                                   boolean unsettledOnly, boolean sellerShareOnly, int page, int size) {
         // 주문 ID도 기간도 없으면 정산후보 표 전체를 읽음 (payout/CLAUDE.md 규모 전제). 요청 DTO가 먼저 막지만(#723),
         //   저장소는 기간이 null이면 그쪽 경계를 걸지 않으므로 다른 입구가 생겨도 여기서 한 번 더 막음 (사용자 입력이 아니라 표준 예외)
         if (orderId == null && (from == null || to == null)) {
             throw new IllegalArgumentException("주문 ID가 없으면 조회 기간(from, to)이 모두 필요합니다.");
         }
         return payoutQueryRepository.searchCandidates(orderId, sellerId, from, to, unsettledOnly, sellerShareOnly,
-                        PageRequest.of(page, size))
-                .map(PayoutQueryResultMapper::toCandidateResult);
+                PageRequest.of(page, size));
     }
 
     private Payout findPayout(Long payoutId) {

@@ -737,6 +737,154 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(0));
     }
 
+    // ---------- 정산후보 조회의 조정 상태 (#791) ----------
+
+    // #791 이슈 예시: 결제 30,000, 판매 40,000(대금 38,800 / 수수료 1,200)으로 멈춤. 맞는 값 29,100 / 900
+    @Test
+    void 해결_전_조정은_해결_대기에서_확인됨이_되고_해결_뒤_넣은_조정은_검사_밖이다() throws Exception {
+        // given: 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when: 관리자 A가 실패 뒤 대금 −9,700 / 수수료 −300을 넣음
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -300L);
+
+        // then: 둘 다 해결 대기, 원래 후보는 null. 해결 대기 조정의 합이 목록의 대기 합계와 같음
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null && @.eventType == 'SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null && @.eventType == 'SALE_FEE')].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")))
+                .andExpect(jsonPath("$.content[?(@.adjustment == null)].adjustmentCheckStatus")
+                        .value(contains(nullValue(), nullValue())));
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(-9_700))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(-300));
+
+        // when: 다시 처리한 뒤, 관리자 C가 "조정이 빠졌나" 하고 사유를 바꿔 대금 −9,700을 또 넣음
+        resolve(order);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L, "조정 다시 넣음");
+
+        // then: A의 두 조정은 확인됨, C의 조정은 해결 뒤라 검사 밖
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_FEE')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '조정 다시 넣음')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")));
+    }
+
+    // 해결 → 다시 멈춤 → 다시 해결: 첫 해결 전 조정은 계속 확인됨, 해결 뒤 조정은 다시 해결해도 검사 밖(새 실패가 그 조정보다 늦음)
+    @Test
+    void 다시_막힌_주문에서도_해결_뒤_넣은_조정은_검사_밖으로_남고_새_실패_뒤_조정은_해결_대기다() throws Exception {
+        // given: 멈춘 뒤 35,000으로만 고치는 조정(대금 −4,850 / 수수료 −150)을 넣고 해결
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -4_850L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -150L);
+        resolve(order);
+        // 해결 뒤 넣은 조정 (검사 밖이라 다음 검사 합계에 안 들어감 → 35,000으로 다시 3번 실패해 멈춤)
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -100L, "해결 뒤 조정");
+        runCompleted(3);
+
+        // when: 다시 멈춘 뒤 나머지를 고치는 조정(대금 −4,850 / 수수료 −150)
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -4_850L, "두 번째 정정");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -150L, "두 번째 정정");
+
+        // then
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '해결 뒤 조정')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '두 번째 정정')].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION", "AWAITING_RESOLUTION")));
+
+        // when: 다시 해결
+        resolve(order);
+
+        // then: 두 번째 정정은 확인됨, 해결 뒤 조정은 그대로 검사 밖
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '두 번째 정정')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED", "CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '해결 뒤 조정')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")));
+    }
+
+    // 실패 전에 미리 넣은 조정은 해결해도 확인한 조정이 아님 (#291 결정 4번의 하한)
+    @Test
+    void 실패_전에_미리_넣은_조정은_검사_밖이다() throws Exception {
+        // given: 실패보다 30일 앞서 넣은 조정 −9,700, 그 뒤 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        insertAdjustmentCandidate(order, orderItem, -9_700L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+
+        // when & then
+        mockMvc.perform(candidatesOfOrder(tokens.bearer(ADMIN_ID, "ADMIN"), order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+    }
+
+    // 금액 불일치는 주문을 잠그지 않아, 1번만 실패한 주문에 넣은 조정도 해결 대기 (막힌 뒤 해결하면 확인됨)
+    @Test
+    void 한_번만_실패해_아직_막히지_않은_주문에_넣은_조정도_해결_대기다() throws Exception {
+        // given: 초과 청구로 1번 실패
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+
+        // then
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")));
+    }
+
+    // 사유를 거름: 결제 기록 없음(DEDUCTION_MISSING) 실패 뒤에 넣은 조정은 해결해도 금액 검사에 들어가지 않음
+    @Test
+    void 결제_기록_없음_실패_뒤에_넣은_조정은_해결해도_검사_밖이다() throws Exception {
+        // given: 결제 기록 없이 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_700L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].reasons").value(contains("DEDUCTION_MISSING")));
+
+        // when: 조정을 넣고 해결
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -1_000L);
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+        resolve(order);
+
+        // then
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+    }
+
     @Test
     void 관리자_목록은_예비_상태나_없는_상태_값이면_422다() throws Exception {
         // given
@@ -962,8 +1110,14 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
 
     // 관리자 조정 API로 조정을 넣음 (#291): 생성 시각이 지금이라 앞서 생긴 실패 뒤에 들어감 (확인한 조정 순서 그대로)
     private void postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount) throws Exception {
+        postAdjustment(admin, orderItemId, eventType, amount, "금액 정정 " + eventType.name());
+    }
+
+    // 사유를 정해 넣음: 같은 주문 항목·종류·금액·사유면 409라, 같은 금액을 또 넣는 경우는 사유를 바꿈 (#791 예시)
+    private void postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount, String reason)
+            throws Exception {
         String body = "{\"orderItemId\":" + orderItemId + ",\"eventType\":\"" + eventType.name()
-                + "\",\"amount\":" + amount + ",\"reason\":\"금액 정정 " + eventType.name() + "\"}";
+                + "\",\"amount\":" + amount + ",\"reason\":\"" + reason + "\"}";
         mockMvc.perform(post("/api/v1/admin/payouts/adjustments")
                         .header(HttpHeaders.AUTHORIZATION, admin)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -973,6 +1127,14 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
 
     private MockHttpServletRequestBuilder blockedOrdersRequest() {
         return get("/api/v1/admin/payouts/blocked-orders");
+    }
+
+    // 관리자 정산후보 조회를 주문 ID로 (#791 조정 상태는 이때만 채움)
+    private MockHttpServletRequestBuilder candidatesOfOrder(String admin, long orderId) {
+        return get("/api/v1/admin/payouts/candidates")
+                .param("orderId", String.valueOf(orderId))
+                .param("size", "100")
+                .header(HttpHeaders.AUTHORIZATION, admin);
     }
 
     // 실패 시각을 정해 넣음 (정렬 확인용)

@@ -55,6 +55,7 @@ interface PayoutAdminControllerSpec {
                목록 줄의 원인(causes)과 근거(evidenceAtBlock·evidenceNow의 혼자 넘는 주문상품 aloneOverItems, 이미 지급 settledItems)를 함께 보고 실제로 금액이 틀린 상품을 고릅니다.
                틀린 상품이 아직 대기 중이면 원인에는 없고 정산후보 조회에만 나옵니다. 배송비(SALE_SHIPPING_FEE)는 조정할 수 없습니다(배송비가 틀렸으면 개발자에게 알립니다).
                조정을 넣기 전에 그 줄의 pendingSaleAmountAdjustment·pendingSaleFeeAdjustment를 먼저 봅니다. 0이 아니면 누군가 이미 넣은 조정이 있고, 해결하면 검사에 들어갑니다. 같은 조정을 또 넣지 마세요.
+               정산후보 조회의 조정 줄마다 adjustmentCheckStatus(CONFIRMED·AWAITING_RESOLUTION·UNCHECKED)로 이미 넣은 조정이 검사에 들어가는지도 봅니다. 판매자가 여럿인 주문이면 조정 줄의 sellerId가 틀린 상품의 판매자와 같은지도 봅니다.
             4. 조정(POST /api/v1/admin/payouts/adjustments)을 넣습니다. 판매 금액을 바꿀 때는 판매 대금(SALE_AMOUNT)과 수수료(SALE_FEE)를 함께 넣습니다.
                판매 금액 = 판매 대금 + 수수료, 수수료 = 판매 금액 × 3%(원 미만 버림)입니다. 예) 맞는 판매 금액이 30,000이면 수수료 900, 판매 대금 29,100.
                맞는 판매 금액은 그 상품의 실제 가격(주문 정보)으로 정합니다. 결제 금액에는 다른 상품·배송비가 들어 있을 수 있어, 결제 금액에 맞추는 값이 아닙니다.
@@ -69,6 +70,7 @@ interface PayoutAdminControllerSpec {
                줄이 빠진 뒤 정산됐는지는 정산후보 조회(orderId)의 settled로 봅니다.
 
             해결됨(RESOLVED) 줄에는 다시 처리 버튼을 두지 않습니다(409). 이 줄에서는 조정도 넣지 마세요. 해결한 뒤에 넣은 조정은 검사에 들어가지 않고 지급에만 들어가, 판매자 돈이 검사 없이 바뀝니다.
+            해결한 뒤에 넣은 조정은 정산후보 조회(orderId)에서 adjustmentCheckStatus=UNCHECKED로 보입니다. 잘못 넣었으면 다음 정산 실행 전에 반대 금액의 조정(사유를 다르게)으로 상쇄합니다.
             조정이 빠졌다고 보이면 다시 막힌 뒤(LOCKED·STOPPED) 넣습니다. 예외는 실패 전에 미리 넣은 조정을 상쇄할 때뿐입니다(조정 API 설명의 순서).
             막힌 주문 목록이 비어 있다고 정상이라는 뜻은 아닙니다. 잠그지 않는 사유(결제 기록 없음·금액 불일치·예상하지 못한 오류)로 1~2번 실패한 주문은 아직 막힌 주문이 아니라 목록에 없습니다.
             이때는 정산후보 조회(orderId)의 settled·candidateCreatedAt으로 대기 중인지 정산됐는지 봅니다. 1~2번 실패한 기록은 지금 관리자 API로 볼 수 없습니다.
@@ -176,7 +178,11 @@ interface PayoutAdminControllerSpec {
             orderId를 주면 기간 없이 그 주문의 정산후보를 모두 봅니다(대기 중·정산됨·조정 포함). 막힌 주문을 조정할 때 상품별 금액을 보는 용도입니다.
             orderId와 기간을 함께 주면 둘 다 적용합니다. 한 주문이라도 페이지로 나뉘니 size=100을 주거나 모든 페이지를 읽으세요.
             settled=false인 후보에는 15일 대기 중인 상품, 이번 실행 대상인데 아직 정산되지 않은 상품, 막혀서(실패) 정산에서 빠진 상품, 판매자 합계가 0원 이하라 보류된 상품이 함께 있습니다.
-            조정 후보(adjustment가 있음)가 금액 검사에 들어가는지는 이 응답만으로 가릴 수 없습니다. 막힌 주문 목록(orderId)의 pendingSaleAmountAdjustment·pendingSaleFeeAdjustment로 봅니다.
+            orderId를 주면 조정 후보(adjustment가 있음)마다 adjustmentCheckStatus로 금액 검사에 들어가는지 알려 줍니다. 기간만 주면 null입니다(조정마다 실패·해결 기록을 찾아봐야 해서 주문 하나를 볼 때만 채움).
+            - CONFIRMED 확인됨: 금액 불일치(AMOUNT_MISMATCH·FEE_MISMATCH) 실패 뒤, 해결 전에 넣고 해결한 조정입니다. 금액 검사에 들어갑니다. 해결할 때 확인됐다는 뜻이라, 정산 실행 중에 넣고 해결한 조정은 그 실행 검사에서는 빠지고 다음 실행부터 들어갑니다.
+            - AWAITING_RESOLUTION 해결 대기: 해결 안 된 금액 불일치 실패 뒤에 넣은 조정입니다. 막힌 주문(LOCKED·STOPPED)을 다시 처리로 풀면 확인됨이 됩니다. 1~2번만 실패해 아직 막히지 않은 주문은 다시 처리할 수 없어(409), 막힌 뒤에 풉니다. 한 주문의 해결 대기 조정을 판매 대금·수수료별로 더하면 막힌 주문 목록의 pendingSaleAmountAdjustment·pendingSaleFeeAdjustment와 같습니다.
+            - UNCHECKED 검사 밖: 그 밖의 조정입니다(실패 전에 미리 넣음, 해결 뒤에 넣음, 막힘과 상관없이 넣음). 금액 검사 없이 지급에만 들어갑니다. 막힘과 상관없는 보상 조정이면 정상이지만, 막힌 주문을 고치려고 넣은 조정이 이 값이면 검사 없이 지급됩니다.
+            판매자가 여럿인 주문이면 조정 줄의 sellerId가 금액이 틀린 상품의 판매자와 같은지 봅니다. 막힌 주문 목록의 대기 합계는 주문 단위라 판매자를 가리지 않습니다.
             원인의 failedAt은 같은 원인 중 가장 늦은 실패 시각이라, 조정 시각과 비교해 "미리 넣은 조정"을 가리는 기준으로 쓰지 마세요.
             """)
     @ApiResponses({
@@ -501,6 +507,7 @@ interface PayoutAdminControllerSpec {
             수수료 불일치를 맞게 고치면 두 값이 서로 반대 부호로 나옵니다(예: 대금 +700, 수수료 −700).
             두 값이 0인데 조정을 넣었다면: 해결됨(RESOLVED) 줄이거나, 막힌 이유가 금액·수수료 불일치가 아니거나, 실패 전에 미리 넣었거나, 다른 주문에 넣었거나, 같은 종류 조정끼리 서로 상쇄돼 합이 0인 것입니다. 미리 넣은 조정은 조정 API 설명대로 상쇄합니다.
             두 값은 주문 단위 합계라, 판매자가 여럿인 주문에서 어느 판매자 상품에 넣었는지는 알려 주지 않습니다. 정산후보 조회(orderId)의 sellerId로 확인하세요.
+            조정 하나하나가 검사에 들어가는지는 정산후보 조회(orderId)의 adjustmentCheckStatus로 봅니다. 해결 대기(AWAITING_RESOLUTION) 조정의 합이 이 두 값입니다.
             근거(evidenceNow)의 후보 합계에는 해결 전 조정이 들어가지 않습니다. 정산 실행이 도는 중(매일 11:00 정기 실행, 관리자 수동 실행)에는 다음 실행이 끝날 때까지 값이 잠시 어긋날 수 있습니다.
             """)
     @ApiResponses({

@@ -23,6 +23,9 @@ public record PayoutCandidateResult(
         // 정산된 후보면 그 정산 ID, 아직 정산 전이면 null. 수수료 후보면 시스템 몫 정산 ID (수수료 후보는 관리자 조회에만 나옴)
         Long payoutId,
         // 관리자 조정 건이면 조정 정보, 평소 건이면 null
-        PayoutAdjustmentResult adjustment
+        PayoutAdjustmentResult adjustment,
+        // 조정이 금액 검사에 들어가는지 (#791): CONFIRMED 확인됨, AWAITING_RESOLUTION 해결 대기, UNCHECKED 검사 밖
+        //   관리자가 주문 ID로 조회한 조정 건에만 채움. 평소 건, 기간 조회, 판매자 조회는 null
+        String adjustmentCheckStatus
 ) {
 }

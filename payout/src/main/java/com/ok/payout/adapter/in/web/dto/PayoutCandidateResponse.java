@@ -39,7 +39,15 @@ public record PayoutCandidateResponse(
 
         // nullable = true를 두지 않음: 객체 칸에 붙이면 Swagger 문서에 "type": "null"로 적혀 코드 생성기가 늘 null인 칸으로 읽음 (#723). 없을 수 있다는 것은 설명에 적음
         @Schema(description = "관리자 조정 정보. 평소 건이면 null")
-        PayoutAdjustmentResponse adjustment
+        PayoutAdjustmentResponse adjustment,
+
+        // 문자열 칸이라 nullable = true를 붙여도 위 객체 칸 문제가 없음
+        @Schema(description = "조정이 금액 검사에 들어가는지. orderId로 조회한 조정 건에만 나오고, 평소 건과 기간만 준 조회에서는 null. "
+                + "CONFIRMED 확인됨: 금액 불일치 실패 뒤·해결 전에 넣고 해결한 조정이라 금액 검사에 들어감. "
+                + "AWAITING_RESOLUTION 해결 대기: 해결 안 된 금액 불일치 실패 뒤에 넣은 조정이라, 해결하면 확인됨이 됨. "
+                + "UNCHECKED 검사 밖: 그 밖의 조정(실패 전에 미리 넣음, 해결 뒤에 넣음, 막힘과 상관없는 조정)이라 금액 검사 없이 지급에만 들어감",
+                example = "CONFIRMED", nullable = true, allowableValues = {"CONFIRMED", "AWAITING_RESOLUTION", "UNCHECKED"})
+        String adjustmentCheckStatus
 ) {
 
     public static PayoutCandidateResponse from(PayoutCandidateResult result) {
@@ -48,6 +56,6 @@ public record PayoutCandidateResponse(
                 : PayoutAdjustmentResponse.from(result.adjustment());
         return new PayoutCandidateResponse(result.candidateId(), result.eventType(), result.orderId(),
                 result.orderItemId(), result.sellerId(), result.amount(), result.candidateCreatedAt(),
-                result.settled(), result.payoutId(), adjustment);
+                result.settled(), result.payoutId(), adjustment, result.adjustmentCheckStatus());
     }
 }

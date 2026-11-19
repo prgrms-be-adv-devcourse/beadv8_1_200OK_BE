@@ -45,7 +45,33 @@ final class PayoutQueryResultMapper {
                 row.orderItemId(), row.sellerId(), row.amount(), row.candidateCreatedAt(), adjustment);
     }
 
+    // 조정 상태 값 (#791). 응답은 문자열이라 컨트롤러가 이 값을 몰라도 됨 (domain 타입을 쓰지 않음, api.md)
+    static final String ADJUSTMENT_CONFIRMED = "CONFIRMED";
+    static final String ADJUSTMENT_AWAITING_RESOLUTION = "AWAITING_RESOLUTION";
+    static final String ADJUSTMENT_UNCHECKED = "UNCHECKED";
+
+    // 조정 상태를 채우지 않는 조회(기간 조회, 판매자 조회)용
     static PayoutCandidateResult toCandidateResult(CandidateRow row) {
+        return toCandidateResult(row, null);
+    }
+
+    // 조정 상태를 채우는 조회(관리자 주문 ID 조회)용
+    // 검사 밖(UNCHECKED)은 조건을 따로 쓰지 않고 "조정인데 확인됨도 해결 대기도 아님"으로 정함:
+    //   따로 쓰면 저장소의 두 판정과 경계(같은 시각, 사유)가 어긋날 수 있음. 해결 대기 조건이 "확인됨 아님"을 포함해 둘은 겹치지 않음
+    static PayoutCandidateResult toCandidateResult(CandidateRow row, Set<Long> confirmedIds, Set<Long> awaitingIds) {
+        if (row.adjustmentId() == PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID) {
+            return toCandidateResult(row, null);
+        }
+        String status = ADJUSTMENT_UNCHECKED;
+        if (confirmedIds.contains(row.candidateId())) {
+            status = ADJUSTMENT_CONFIRMED;
+        } else if (awaitingIds.contains(row.candidateId())) {
+            status = ADJUSTMENT_AWAITING_RESOLUTION;
+        }
+        return toCandidateResult(row, status);
+    }
+
+    private static PayoutCandidateResult toCandidateResult(CandidateRow row, String adjustmentCheckStatus) {
         PayoutAdjustmentResult adjustment = null;
         // 평소 건은 adjustmentId가 0 (PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID)
         if (row.adjustmentId() != PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID) {
@@ -53,7 +79,7 @@ final class PayoutQueryResultMapper {
         }
         return new PayoutCandidateResult(row.candidateId(), row.eventType().name(), row.orderId(), row.orderItemId(),
                 row.sellerId(), row.amount(), row.candidateCreatedAt(), row.payoutId() != null, row.payoutId(),
-                adjustment);
+                adjustment, adjustmentCheckStatus);
     }
 
     // 범주는 DB에 없고 사유가 들고 있어 여기서 꺼냄 (#391, PayoutFailureReason.category)
