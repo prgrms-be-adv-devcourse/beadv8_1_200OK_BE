@@ -10,6 +10,8 @@ import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 // 결제 결과는 한 번 기록하면 바뀌지 않으므로 넣기와 조회만 둔다.
@@ -30,4 +32,6 @@ public interface WalletOrderPaymentJpaRepository extends Repository<WalletOrderP
     Optional<WalletOrderPayment> findForShareByOrderId(Long orderId);
 
     Optional<WalletOrderPayment> findByOrderId(Long orderId);
+
+    List<WalletOrderPayment> findByOrderIdIn(Collection<Long> orderIds);
 }

@@ -6,9 +6,11 @@ import com.ok.wallet.application.dto.LedgerHistoryResult;
 import com.ok.wallet.application.port.in.WalletLedgerUseCase;
 import com.ok.wallet.application.port.out.BuyerWalletLedgerQueryRepository;
 import com.ok.wallet.application.port.out.BuyerWalletRepository;
+import com.ok.wallet.application.port.out.WalletOrderPaymentRepository;
 import com.ok.wallet.application.port.out.WalletOrderRefundRepository;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.domain.BuyerWalletLedgerType;
+import com.ok.wallet.domain.WalletOrderPayment;
 import com.ok.wallet.domain.WalletOrderRefund;
 import com.ok.wallet.exception.WalletErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -45,6 +48,7 @@ public class WalletLedgerService implements WalletLedgerUseCase {
     private final BuyerWalletRepository buyerWalletRepository;
     private final BuyerWalletLedgerQueryRepository ledgerQueryRepository;
     private final WalletOrderRefundRepository walletOrderRefundRepository;
+    private final WalletOrderPaymentRepository walletOrderPaymentRepository;
 
     @Override
     public Page<LedgerHistoryResult> getHistory(LedgerHistoryQuery query) {
@@ -58,9 +62,36 @@ public class WalletLedgerService implements WalletLedgerUseCase {
                 .orElseGet(() -> Page.empty(pageable));
     }
 
+    // 근거 키는 원장마다 하나뿐이라, 줄별 주문 ID를 근거 키로 모아 두고 주문 요약을 붙인다
     private Page<LedgerHistoryResult> toResults(Page<BuyerWalletLedger> ledgers) {
         Map<String, Long> refundOrderIdByKey = orderIdsOfRefunds(ledgers.getContent());
-        return ledgers.map(ledger -> toResult(ledger, orderIdOf(ledger, refundOrderIdByKey)));
+        Map<String, Long> orderIdByKey = new HashMap<>();
+        for (BuyerWalletLedger ledger : ledgers.getContent()) {
+            Long orderId = orderIdOf(ledger, refundOrderIdByKey);
+            if (orderId != null) {
+                orderIdByKey.put(ledger.getReferenceKey(), orderId);
+            }
+        }
+        Map<Long, String> summaryByOrderId = orderSummariesOf(orderIdByKey.values());
+        return ledgers.map(ledger -> {
+            Long orderId = orderIdByKey.get(ledger.getReferenceKey());
+            return toResult(ledger, orderId, orderId == null ? null : summaryByOrderId.get(orderId));
+        });
+    }
+
+    // 주문 요약은 결제 처리 기록에만 있어, 반환·되돌리기 줄도 주문 ID로 같은 기록을 찾는다. 한 페이지 분을 한 번에 읽는다.
+    // 요약 칸이 생기기 전 결제는 요약이 없어 빠진다
+    private Map<Long, String> orderSummariesOf(Collection<Long> orderIds) {
+        if (orderIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, String> summaryByOrderId = new HashMap<>();
+        for (WalletOrderPayment payment : walletOrderPaymentRepository.findAllByOrderIdIn(Set.copyOf(orderIds))) {
+            if (payment.getOrderSummary() != null) {
+                summaryByOrderId.put(payment.getOrderId(), payment.getOrderSummary());
+            }
+        }
+        return summaryByOrderId;
     }
 
     // 반환·되돌리기 원장의 근거 키에는 환불 ID만 있어, 반환 처리 기록에서 주문 ID를 찾아 근거 키별로 돌려준다.
@@ -125,9 +156,9 @@ public class WalletLedgerService implements WalletLedgerUseCase {
         return to == null ? null : to.plusDays(1).atStartOfDay();
     }
 
-    private static LedgerHistoryResult toResult(BuyerWalletLedger ledger, Long orderId) {
+    private static LedgerHistoryResult toResult(BuyerWalletLedger ledger, Long orderId, String orderSummary) {
         return new LedgerHistoryResult(
-                ledger.getCreatedAt(), ledger.getType().name(), orderId,
+                ledger.getCreatedAt(), ledger.getType().name(), orderId, orderSummary,
                 ledger.getAmount(), ledger.getBalanceAfter());
     }
 

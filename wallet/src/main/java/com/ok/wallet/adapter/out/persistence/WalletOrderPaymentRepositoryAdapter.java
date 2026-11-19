@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -31,5 +33,10 @@ public class WalletOrderPaymentRepositoryAdapter implements WalletOrderPaymentRe
     @Override
     public Optional<WalletOrderPayment> findByOrderId(Long orderId) {
         return walletOrderPaymentJpaRepository.findByOrderId(orderId);
+    }
+
+    @Override
+    public List<WalletOrderPayment> findAllByOrderIdIn(Collection<Long> orderIds) {
+        return walletOrderPaymentJpaRepository.findByOrderIdIn(orderIds);
     }
 }

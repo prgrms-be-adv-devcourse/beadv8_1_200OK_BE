@@ -18,6 +18,11 @@ public record LedgerHistoryResponse(
                 + "환불 기록을 찾지 못한 드문 경우에도 null", example = "1234")
         Long orderId,
 
+        @Schema(description = "주문 요약 (첫 상품 이름 + 나머지 상품 개수, 주문 시점 이름, 최대 120자). "
+                + "결제·환불 반환·환불 되돌리기 내역에 있고 충전이면 null. 요약을 저장하기 전 결제는 null",
+                example = "사과 외 3건")
+        String orderSummary,
+
         @Schema(description = "금액 (원, 항상 양수). 충전·환불 반환은 +, 결제·환불 되돌리기는 -로 표시", example = "30000")
         long amount,
 
@@ -26,6 +31,7 @@ public record LedgerHistoryResponse(
 ) {
     public static LedgerHistoryResponse from(LedgerHistoryResult result) {
         return new LedgerHistoryResponse(
-                result.occurredAt(), result.type(), result.orderId(), result.amount(), result.balanceAfter());
+                result.occurredAt(), result.type(), result.orderId(), result.orderSummary(),
+                result.amount(), result.balanceAfter());
     }
 }

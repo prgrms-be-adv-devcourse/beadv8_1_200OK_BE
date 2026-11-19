@@ -3,6 +3,8 @@ package com.ok.wallet.application.port.out;
 import com.ok.wallet.domain.WalletOrderPayment;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -22,4 +24,7 @@ public interface WalletOrderPaymentRepository {
     // 잠그지 않고 읽는다. 처리 기록은 바뀌지 않아 환불 반환처럼 결제가 끝난 뒤에 읽을 때는 최신 값과 같다.
     // 기록이 없을 수도 있는 조회라 잠금 조회를 쓰면 빈 구간까지 잠긴다
     Optional<WalletOrderPayment> findByOrderId(Long orderId);
+
+    // 이용 내역 한 페이지의 줄에 주문 요약을 붙이려고 여러 주문의 처리 기록을 한 번에 읽는다. 없는 주문은 빠진다.
+    List<WalletOrderPayment> findAllByOrderIdIn(Collection<Long> orderIds);
 }

@@ -201,6 +201,49 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 결제_환불_반환_되돌리기_내역에_결제_처리_기록의_주문_요약이_함께_나온다() throws Exception {
+        // Given: 주문 1001을 결제하고 일부 환불했다가 되돌림. 요약은 결제 처리 기록에만 있다
+        Long walletId = createWallet(MEMBER_ID);
+        insertPaymentRecord(1001L, 10_000, "사과 외 3건");
+        insertRefundRecord(REFUND_ID, 1001L, 3_000);
+        insertLedger(walletId, "CHARGE", 10_000, 10_000, "CHARGE:pay-1", at(9, 12));
+        insertLedger(walletId, "PAYMENT", 10_000, 0, "PAYMENT:1001", at(10, 12));
+        insertLedger(walletId, "REFUND", 3_000, 3_000, "REFUND:" + REFUND_ID, at(11, 12));
+        insertLedger(walletId, "REFUND_REVERT", 3_000, 0, "REFUND_REVERT:" + REFUND_ID, at(12, 12));
+
+        // When & Then
+        mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(4))
+                .andExpect(jsonPath("$.content[0].type").value("REFUND_REVERT"))
+                .andExpect(jsonPath("$.content[0].orderSummary").value("사과 외 3건"))
+                .andExpect(jsonPath("$.content[1].type").value("REFUND"))
+                .andExpect(jsonPath("$.content[1].orderSummary").value("사과 외 3건"))
+                .andExpect(jsonPath("$.content[2].type").value("PAYMENT"))
+                .andExpect(jsonPath("$.content[2].orderSummary").value("사과 외 3건"))
+                .andExpect(jsonPath("$.content[3].type").value("CHARGE"))
+                .andExpect(jsonPath("$.content[3].orderSummary").value(nullValue()));
+    }
+
+    @Test
+    void 요약을_저장하기_전_결제는_주문_ID는_나오고_주문_요약만_비어서_나온다() throws Exception {
+        // Given: 요약 칸이 생기기 전 결제(요약 없음)와 처리 기록조차 없는 결제
+        Long walletId = createWallet(MEMBER_ID);
+        insertPaymentRecord(1001L, 3_000, null);
+        insertLedger(walletId, "PAYMENT", 3_000, 7_000, "PAYMENT:1001", at(10, 12));
+        insertLedger(walletId, "PAYMENT", 2_000, 5_000, "PAYMENT:1002", at(11, 12));
+
+        // When & Then
+        mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[0].orderId").value(1002))
+                .andExpect(jsonPath("$.content[0].orderSummary").value(nullValue()))
+                .andExpect(jsonPath("$.content[1].orderId").value(1001))
+                .andExpect(jsonPath("$.content[1].orderSummary").value(nullValue()));
+    }
+
+    @Test
     void 환불_반환_유형으로_조회하면_반환_내역만_응답한다() throws Exception {
         // Given
         Long walletId = createWallet(MEMBER_ID);
@@ -301,9 +344,19 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
                 """, refundId, orderId, MEMBER_ID, amount, now, now);
     }
 
+    private void insertPaymentRecord(Long orderId, long amount, String orderSummary) {
+        LocalDateTime now = at(10, 12);
+        jdbcTemplate.update("""
+                INSERT INTO wallet_order_payment
+                    (order_id, buyer_id, amount, order_summary, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'PAID', ?, ?)
+                """, orderId, MEMBER_ID, amount, orderSummary, now, now);
+    }
+
     // FK 때문에 원장을 지갑보다 먼저 지운다. 이 클래스의 회원 데이터만 지운다.
     private void cleanUp() {
         jdbcTemplate.update("DELETE FROM wallet_order_refund WHERE buyer_id = ?", MEMBER_ID);
+        jdbcTemplate.update("DELETE FROM wallet_order_payment WHERE buyer_id = ?", MEMBER_ID);
         for (Long memberId : List.of(MEMBER_ID, OTHER_MEMBER_ID)) {
             jdbcTemplate.update("""
                     DELETE l FROM buyer_wallet_ledger l
