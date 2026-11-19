@@ -46,3 +46,17 @@ related: [644, 703, 715]
 - 리스너의 `min-age`는 `DeliveryOutboxRelayScheduler`와 같은 키·같은 기본값이어야 한다. 한쪽만 바꾸면 중복을 막는 기준이 어긋난다.
 - 꺼낼 때 `min-age` 안이었어도 브로커 확인 대기(최대 10초) 동안 발송 작업이 같은 줄을 집을 수 있다. 이 겹침은 #644부터 있던 것이고 주문이 중복을 무시하는 전제(#603)로 둔다.
 - 모듈 테스트(`DeliveryModuleTest`)는 `common`의 `AsyncConfig`가 걸러지므로 `MdcTaskDecorator`를 테스트 설정에서 직접 등록한다.
+
+## 후속 (2026-11-20)
+
+#796에서 즉시 발송을 커밋 뒤 리스너 대신 `ShipmentFacade`에서 시작하도록 바꿨다. 위 결정 중 리스너가 전제였던 것은 아래처럼 바뀌었다. 대기열의 역할, 실행기, 대기열 길이 지표, 설정 위치, 기본값은 그대로다.
+
+| 결정 | 바뀐 선택 | 이유 |
+|---|---|---|
+| 가득 찼을 때 | 실행기는 기본 거절(`TaskRejectedException`)을 쓰고, 넘기는 `ShipmentFacade`가 잡아 `reason=rejected`를 1 올린다. `DropAndCountPolicy`는 지웠다 | Facade는 서비스 트랜잭션이 끝나 커넥션을 반납한 뒤(`open-in-view: false`) 넘기므로 잡을 곳이 생겼고 커넥션을 쥔 채 처리하는 코드도 없다. 거절 정책 클래스 하나가 줄고, 거절 처리가 호출하는 코드에서 보인다. 로그 대신 지표로만 세는 것은 몰릴 때 건마다 로그가 쌓이지 않게 하려는 것으로 그대로 둔다 |
+| 기록 시각의 출처 | 발행 구현체가 아니라 `ShipmentFacade`가 서비스가 돌아온 직후 같은 `Clock`으로 잰다. `DeliveryOutboxRecordedEvent`는 지웠다 | 발행 구현체는 이제 줄을 남기고 id만 돌려준다. 예전에는 트랜잭션 안에서 줄을 남긴 시각이었고 이제는 커밋 뒤 시각이라 트랜잭션의 남은 시간만큼 늦게 잰다. `min-age`(10초)에 비해 작아 그대로 둔다 |
+| 판단 위치 | `DeliveryOutboxRelayFacade.send`(`@Async`) 본문 앞. 리스너(`DeliveryOutboxSendListener`)는 지웠다 | `@Async` 메서드 본문이 곧 대기열에서 꺼낸 뒤 실행되는 곳이다. `min-age`는 스케줄러와 같은 키·기본값을 읽는다 |
+
+- 위 "버린 대안"의 `AbortPolicy`가 이번에 고른 방식이다. 버린 이유(리스너라 잡을 곳이 없음)가 없어졌다.
+- 출고 뒤 택배사 추적 요청(`CarrierTrackingRequestedEvent`, 공용 `event` 실행기)도 같은 이유로 `ShipmentFacade`가 직접 한다. 택배사 구현체가 호출을 자기 스레드에서 하므로 출고 API는 택배사를 기다리지 않는다.
+- 건드릴 때 주의: 진입점이 트랜잭션 안에서 `ShipmentFacade`를 부르면 커밋 전에 넘겨 발송 스레드가 아직 안 보이는 줄을 건너뛴다(줄은 발송 작업이 보낸다). outbox를 남기는 서비스는 입력 포트를 구현하지 않아야 진입점이 Facade를 거친다(`ArchitectureTest`).

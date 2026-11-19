@@ -30,6 +30,7 @@ import com.ok.delivery.DeliverySchema;
 import com.ok.delivery.adapter.in.event.CarrierDeliveredEvent;
 import com.ok.delivery.adapter.out.carrier.MockCarrierClient;
 import com.ok.delivery.adapter.out.carrier.TrackerCarrierClient;
+import com.ok.delivery.application.port.out.DeliveryEventPublisher;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -47,6 +48,11 @@ class ArchitectureTest {
             "use ApplicationEventPublisher",
             javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
                     .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(ApplicationEventPublisher.class)));
+
+    private static final DescribedPredicate<JavaClass> outbox를_남기는 = DescribedPredicate.describe(
+            "record outbox through DeliveryEventPublisher",
+            javaClass -> javaClass.getDirectDependenciesFromSelf().stream()
+                    .anyMatch(dependency -> dependency.getTargetClass().isAssignableTo(DeliveryEventPublisher.class)));
 
     // 레이어
 
@@ -81,6 +87,15 @@ class ArchitectureTest {
                     "com.ok.delivery.application.service..", "com.ok.delivery.application.port.out..",
                     "com.ok.delivery.adapter.out..", "com.ok.delivery.domain..")
             .because("컨트롤러와 리스너는 외부 입력의 진입점이다. 트랜잭션과 도메인 처리는 유스케이스 구현에 맡기고, 구현이 바뀌어도 진입점이 바뀌지 않게 한다 (delivery 헥사고날 구조, docs/DEVELOPMENT.md)");
+
+    // 입력 어댑터는 입력 포트만 알므로(위 규칙), outbox를 남기는 서비스가 입력 포트를 구현하지 않으면 진입점은 언제나 Facade를 거친다
+    @ArchTest
+    static final ArchRule outbox를_남기는_서비스는_입력_포트를_구현하지_않는다 = noClasses()
+            .that(outbox를_남기는)
+            .and().resideInAPackage("..application.service..")
+            .should().implement(resideInAPackage("..application.port.in.."))
+            .because("발행 진입점(출고 API, 결제 완료 리스너, 택배사 알림)이 서비스를 바로 부르면 커밋 뒤 즉시 발송이 빠져 메시지가 발송 작업 주기(30초)만큼 늦게 나간다. "
+                    + "Facade가 서비스 트랜잭션이 끝난 뒤 남긴 줄을 발송 실행기로 넘긴다 (#796, docs/DEVELOPMENT.md)");
 
     @ArchTest
     static final ArchRule application은_영속_기술에_의존하지_않는다 = noClasses()
