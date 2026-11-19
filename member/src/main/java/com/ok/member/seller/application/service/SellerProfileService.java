@@ -21,7 +21,7 @@ import java.time.temporal.ChronoUnit;
 
 /**
  * 판매자의 상점 프로필 조회·등록·수정을 처리한다.
- * 판매자 여부는 컨트롤러가 토큰의 SELLER 권한으로 확인한다.
+ * 본인 프로필의 판매자 여부는 컨트롤러가 토큰의 SELLER 권한으로 확인하고, 상점 프로필 조회는 누구나 할 수 있다.
  */
 @Service
 @RequiredArgsConstructor
@@ -39,6 +39,12 @@ public class SellerProfileService implements SellerProfileUseCase {
     @Override
     public SellerProfileResult getMyProfile(Long memberId) {
         return toResult(findProfile(memberId));
+    }
+
+    @Override
+    public SellerProfileResult getStoreProfile(Long sellerId) {
+        // 판매자 ID를 따로 두지 않고 회원 ID를 쓴다. 회원당 프로필이 하나(member_id 유니크)라 회원 ID로 상점이 정해진다
+        return toResult(findProfile(sellerId));
     }
 
     @Override

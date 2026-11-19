@@ -6,7 +6,8 @@ import com.ok.member.seller.application.dto.SellerProfileResult;
 
 /**
  * 판매자의 상점 프로필 조회·등록·수정 유스케이스.
- * 판매자 여부는 컨트롤러가 토큰의 SELLER 권한으로 확인한다.
+ * 본인 프로필의 판매자 여부는 컨트롤러가 토큰의 SELLER 권한으로 확인한다.
+ * 상점 프로필 조회({@link #getStoreProfile})는 상품 상세처럼 누구나 호출할 수 있다.
  */
 public interface SellerProfileUseCase {
 
@@ -16,6 +17,14 @@ public interface SellerProfileUseCase {
      * @throws RestApiException 프로필을 등록하지 않았으면 {@code SELLER_PROFILE_NOT_FOUND}
      */
     SellerProfileResult getMyProfile(Long memberId);
+
+    /**
+     * 상점·상품 상세 화면에 보여 줄 판매자의 상점 프로필을 반환한다.
+     *
+     * @param sellerId 판매자 회원 id (상품의 {@code sellerId}와 같은 값)
+     * @throws RestApiException 프로필을 등록하지 않았으면 {@code SELLER_PROFILE_NOT_FOUND}
+     */
+    SellerProfileResult getStoreProfile(Long sellerId);
 
     /**
      * 판매자 프로필을 등록한다. 한 회원은 프로필(상점)을 하나만 가진다.

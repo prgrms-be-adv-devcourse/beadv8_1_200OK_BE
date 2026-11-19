@@ -64,7 +64,10 @@ public class SecurityConfig {
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/categories", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews", TokenUse.IGNORED),
-            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/review-keywords", TokenUse.IGNORED)
+            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/review-keywords", TokenUse.IGNORED),
+            // 상품 상세에 함께 보이는 상점 프로필 (#740). /sellers/{id}/profile로 두면 /sellers/me/profile도 이 패턴에 걸려
+            // 판매자 본인 API가 토큰을 읽지 못하므로, 판매자 API와 겹치지 않는 /stores 아래에 둔다
+            new PublicEndpoint(HttpMethod.GET, "/api/v1/stores/{sellerId}", TokenUse.IGNORED)
     );
 
     /**
