@@ -754,8 +754,8 @@ com.ok.wallet
 
 **Kafka 수신과 실패 기록**
 
-- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`, 그룹 `wallet.payout-deposit`, #579)과 환불 반환 요청(`refund.refund-approved.v1`, 키 `orderId`, 그룹 `wallet.refund-return`, #34), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 그룹 `wallet.deposit-check-reply`, #613), 주문 생성(`order.order-created.v1`, 키 `orderId`, 그룹 `wallet.order-payment`, #614), 결제 만료 요청(`order.order-payment-expire-requested.v1`, 키 `orderId`, 그룹 `wallet.payment-expire`, #693)입니다. 토픽 이름과 그룹은 `WalletKafkaTopics`에 있고, 그룹은 리스너마다 하나입니다(#669).
-- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`), 주문 결제 결과(`wallet.wallet-payment-completed.v1` / `wallet.wallet-payment-failed.v1`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 지갑은 다른 모듈과 Spring 이벤트를 주고받지 않습니다.
+- 지갑이 Kafka로 받는 메시지는 정산금 확정(`payout.seller-payout-created.v1`, 키 `payoutId`, 그룹 `wallet.payout-deposit`, #579)과 환불 반환 요청(`refund.refund-approved.v1`, 키 `orderId`, 그룹 `wallet.refund-return`, #34), 환불 되돌리기 요청(`refund.refund-wallet-revert-requested.v1`, 키 `orderId`, 그룹 `wallet.refund-revert`, #611), 정산금 입금 확인 요청(`payout.payout-deposit-check-requested.v1`, 키 `checkId`, 그룹 `wallet.deposit-check-reply`, #613), 주문 생성(`order.order-created.v1`, 키 `orderId`, 그룹 `wallet.order-payment`, #614), 결제 만료 요청(`order.order-payment-expire-requested.v1`, 키 `orderId`, 그룹 `wallet.payment-expire`, #693)입니다. 토픽 이름과 그룹은 `WalletKafkaTopics`에 있고, 그룹은 리스너마다 하나입니다(#669).
+- 지갑이 Kafka로 보내는 메시지는 환불 반환 결과(`wallet.wallet-refund-completed.v1` / `wallet.wallet-refund-failed.v1`, 키 `orderId`), 환불 되돌리기 결과(`wallet.wallet-refund-reverted.v1` / `wallet.wallet-refund-revert-failed.v1`, 키 `orderId`)와 정산금 입금 확인 답(`wallet.payout-deposit-checked.v1`, 키 `checkId`), 주문 결제 결과(`wallet.wallet-payment-completed.v1` / `wallet.wallet-payment-failed.v1`, 키 `orderId`)입니다. 토픽 이름은 `adapter/out/event`의 `WalletOutboundTopics`에 있고, 앱이 시작할 때 토픽을 만듭니다. 지갑은 다른 모듈과 Spring 이벤트를 주고받지 않습니다.
 - 지갑 리스너는 지갑 전용 수신 설정(`WalletKafkaConsumerConfig.LISTENER_CONTAINER_FACTORY`)을 씁니다. 그룹(`groupId`)과 수신 설정(`containerFactory`)을 `@KafkaListener`마다 적습니다. 빠뜨리면 그룹은 앱 이름으로 바뀌어 monolith에서 다른 모듈과 메시지를 나눠 갖고, 실패한 메시지는 기본 설정대로 로그만 남기고 건너뜁니다.
 - 일시적 실패는 1·2·4초 간격으로 3번 다시 시도합니다. 값이 틀린 메시지(`IllegalArgumentException`)와 JSON으로 읽지 못한 메시지는 다시 해도 같아서 바로 넘깁니다.
 - 처리 뒤 결과를 Kafka로 보내다 잠깐 실패하면(Kafka가 다시 하면 될 수 있다고 알린 오류, 저장 확인 10초 초과) 1초부터 두 배씩, 최대 1분 간격으로 간격 합 30분까지 다시 시도합니다(#638). 시도마다 `[WALLET_SEND_RETRY]` WARN 로그를 남깁니다. 처리 기록이 있어 돈은 다시 움직이지 않고 처음 결과만 다시 보냅니다. 메시지 크기 초과처럼 다시 해도 안 되는 보내기 실패는 1·2·4초 규칙을 따릅니다.
@@ -767,9 +767,21 @@ com.ok.wallet
 **환불 반환**
 
 - 환불 반환은 결제와 같이 처리 기록(`wallet_order_refund`, 환불 ID 유니크)을 먼저 넣어 보고 판단합니다. 같은 환불이 다시 오면 돈은 다시 주지 않고 처음 결과(금액 포함)를 다시 보냅니다. 금액이 달라도 처음 기록이 기준이라, 환불이 자기 금액과 비교해 어긋남을 잡습니다.
-- 거절은 다시 해도 결과가 같은 경우만입니다: 그 주문·구매자의 성공한 결제가 없음(`PAYMENT_NOT_FOUND`), 같은 주문의 반환 합계가 결제 금액을 넘음(`REFUND_TOTAL_EXCEEDED`). 환불은 지갑 거절을 받으면 주문 취소를 되돌리므로, DB 장애 같은 일시적 문제는 거절로 보내지 않고 다시 시도합니다. 보유 한도로는 거절하지 않습니다.
+- 거절은 다시 해도 결과가 같은 경우만입니다: 그 주문·구매자의 성공한 결제가 없음(`PAYMENT_NOT_FOUND`), 같은 주문의 반환 합계가 결제 금액을 넘음(`REFUND_TOTAL_EXCEEDED`), 환불이 이미 되돌리기를 요청한 환불(`REFUND_REVERTED`, 아래 환불 되돌리기). 환불은 지갑 거절을 받으면 주문 취소를 되돌리므로, DB 장애 같은 일시적 문제는 거절로 보내지 않고 다시 시도합니다. 보유 한도로는 거절하지 않습니다.
 - 반환 합계는 지갑을 잠근 뒤 잠금 조회로 읽습니다. 일반 조회는 잠금을 기다리기 전의 스냅샷을 봐서 방금 끝난 반환을 빼고 셉니다. 반환 트랜잭션은 READ COMMITTED로 돕니다. 기본 격리 수준에서는 반환 기록이 없는 주문을 잠금 조회할 때 빈 구간까지 잠겨, 이웃한 주문의 첫 반환끼리 교착이 납니다.
 - 결과는 반환이 커밋된 뒤, 메시지를 읽음 처리하기 전에 보내고 브로커 저장 확인을 기다립니다(`OrderRefundService`는 트랜잭션 없음). 보내기가 실패하면 예외로 같은 요청을 다시 받아 처음 결과를 다시 보내므로 outbox를 두지 않습니다.
+
+**환불 되돌리기**
+
+- 환불이 실패 처리로 보내는 되돌리기 요청을 받아, 반환으로 돌려준 예치금을 다시 가져옵니다(#611). 원장 유형은 `REFUND_REVERT`(잔액 감소), 근거 키는 `REFUND_REVERT:{refundId}`입니다.
+- 가져올 구매자와 금액은 요청 값이 아니라 반환 처리 기록(`wallet_order_refund`)의 값입니다. 다른 구매자에게 잘못 돌려준 반환도 돈을 받은 지갑에서 가져오고, 결과 메시지에도 이 값을 넣습니다. 요청 값과 다르면 경고 로그를 남깁니다.
+- 되돌리기도 처리 기록(`wallet_order_refund_revert`, 환불 ID 유니크)을 먼저 넣어 보고 판단합니다. 같은 요청이 다시 오면 처음 결과를 다시 보냅니다. 잔액 부족으로 실패한 뒤 잔액이 채워져도 결과를 바꾸지 않습니다.
+- 잔액이 모자라면 잔액을 마이너스로 두지 않고 가져오지 않은 채 실패(`INSUFFICIENT_BALANCE`)를 보냅니다.
+- 돌려준 적 없는 환불(반환 기록이 없거나 거절)은 원장을 바꾸지 않고 다시 가져옴으로 답합니다. 반환 기록이 없으면 반환 거절(`REFUND_REVERTED`)을 먼저 넣습니다. 되돌리기와 반환 요청은 토픽이 달라 순서가 바뀌어 올 수 있는데, 반환 기록이 환불 하나에 한 건이라 늦게 온 반환 요청은 이 거절을 처음 결과로 받고 돈을 주지 않습니다.
+- 돌려준 뒤 되돌린 환불에 같은 반환 요청이 다시 오면 처음 결과(돌려줌) 대신 `REFUND_REVERTED` 거절로 답합니다. 되돌리기에 실패한 환불은 돈이 구매자에게 있어 처음 결과를 그대로 보냅니다.
+- 다시 가져온 환불은 반환 합계에서 뺍니다. 빼지 않으면 같은 상품을 새 환불로 돌려줄 때 합계 초과로 막힙니다. 되돌리기에 실패한 환불은 그대로 셉니다.
+- 잠금 순서는 반환과 같이 지갑 다음 기록입니다. 반환 기록은 바뀌지 않아 잠그지 않고 읽어 가져올 지갑을 먼저 정합니다. 트랜잭션 격리 수준(READ COMMITTED)과 결과 보내는 때(`OrderRefundRevertService`는 트랜잭션 없음)는 반환과 같습니다.
+- 판매자 지갑은 건드리지 않습니다(반환 때도 건드리지 않음). 이용 내역에 되돌리기 줄을 보여 주는 일은 #609와 같은 방식으로 따로 합니다.
 
 **주문 결제**
 
