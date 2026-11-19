@@ -4,10 +4,12 @@ import com.ok.payout.application.port.in.PayoutCandidateResult;
 import com.ok.payout.application.port.in.PayoutItemResult;
 import com.ok.payout.application.port.out.CandidateRow;
 import com.ok.payout.application.port.out.PayoutItemRow;
+import com.ok.payout.domain.PayoutAdjustmentCheckStatus;
 import com.ok.payout.domain.PayoutEventType;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -142,6 +144,47 @@ class PayoutQueryResultMapperTest {
             softly.assertThat(sut.adjustment().adjustmentId()).isEqualTo(4L);
             softly.assertThat(sut.adjustment().adminId()).isEqualTo(1L);
             softly.assertThat(sut.adjustment().reason()).isEqualTo("금액 오입력 정정");
+        });
+    }
+
+    // 조정 상태 (#791): 두 ID 목록에 없으면 검사 밖, 둘 다 있으면 확인됨을 먼저 봄
+    @Test
+    void 조정_상태는_확인됨을_먼저_보고_두_목록에_없으면_검사_밖이다() {
+        // given
+        Set<Long> confirmedIds = Set.of(1L, 3L);
+        Set<Long> awaitingIds = Set.of(2L, 3L);
+
+        // when & then
+        assertSoftly(softly -> {
+            softly.assertThat(PayoutQueryResultMapper.adjustmentCheckStatus(1L, confirmedIds, awaitingIds))
+                    .isEqualTo(PayoutAdjustmentCheckStatus.CONFIRMED);
+            softly.assertThat(PayoutQueryResultMapper.adjustmentCheckStatus(2L, confirmedIds, awaitingIds))
+                    .isEqualTo(PayoutAdjustmentCheckStatus.AWAITING_RESOLUTION);
+            softly.assertThat(PayoutQueryResultMapper.adjustmentCheckStatus(3L, confirmedIds, awaitingIds))
+                    .isEqualTo(PayoutAdjustmentCheckStatus.CONFIRMED);
+            softly.assertThat(PayoutQueryResultMapper.adjustmentCheckStatus(4L, confirmedIds, awaitingIds))
+                    .isEqualTo(PayoutAdjustmentCheckStatus.UNCHECKED);
+        });
+    }
+
+    @Test
+    void 조정_상태는_조정_건에만_이름으로_담고_평소_건은_null이다() {
+        // given
+        CandidateRow adjustmentRow = new CandidateRow(55L, PayoutEventType.SALE_AMOUNT, 300L, 900L, 7L, -2_000L,
+                CANDIDATE_CREATED_AT, 4L, 1L, "금액 오입력 정정", null);
+        CandidateRow originalRow = new CandidateRow(56L, PayoutEventType.SALE_AMOUNT, 300L, 900L, 7L, 9_700L,
+                CANDIDATE_CREATED_AT, 0L, null, null, null);
+
+        // when
+        PayoutCandidateResult adjustment = PayoutQueryResultMapper.toCandidateResult(adjustmentRow,
+                PayoutAdjustmentCheckStatus.AWAITING_RESOLUTION);
+        PayoutCandidateResult original = PayoutQueryResultMapper.toCandidateResult(originalRow,
+                PayoutAdjustmentCheckStatus.UNCHECKED);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(adjustment.adjustmentCheckStatus()).isEqualTo("AWAITING_RESOLUTION");
+            softly.assertThat(original.adjustmentCheckStatus()).isNull();
         });
     }
 

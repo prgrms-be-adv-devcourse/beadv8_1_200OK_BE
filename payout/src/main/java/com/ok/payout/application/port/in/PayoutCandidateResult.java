@@ -24,7 +24,7 @@ public record PayoutCandidateResult(
         Long payoutId,
         // 관리자 조정 건이면 조정 정보, 평소 건이면 null
         PayoutAdjustmentResult adjustment,
-        // 조정이 금액 검사에 들어가는지 (#791): CONFIRMED 확인됨, AWAITING_RESOLUTION 해결 대기, UNCHECKED 검사 밖
+        // 조정이 금액 검사에 들어가는지 (#791, PayoutAdjustmentCheckStatus 이름). 컨트롤러는 domain enum을 쓸 수 없어 문자열로 넘김
         //   관리자가 주문 ID로 조회한 조정 건에만 채움. 평소 건, 기간 조회, 판매자 조회는 null
         String adjustmentCheckStatus
 ) {

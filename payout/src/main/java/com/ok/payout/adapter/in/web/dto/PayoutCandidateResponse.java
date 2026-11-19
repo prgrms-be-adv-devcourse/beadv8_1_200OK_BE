@@ -42,11 +42,13 @@ public record PayoutCandidateResponse(
         PayoutAdjustmentResponse adjustment,
 
         // 문자열 칸이라 nullable = true를 붙여도 위 객체 칸 문제가 없음
+        // allowableValues는 두지 않음: 문서(OpenAPI 3.1)에 "type": ["string", "null"]과 null 없는 enum이 함께 적혀,
+        //   엄격한 검증기·코드 생성기가 null 응답을 enum 위반으로 읽음 (#791에서 /v3/api-docs로 확인). 값 목록은 설명에 적음
         @Schema(description = "조정이 금액 검사에 들어가는지. orderId로 조회한 조정 건에만 나오고, 평소 건과 기간만 준 조회에서는 null. "
-                + "CONFIRMED 확인됨: 금액 불일치 실패 뒤·해결 전에 넣고 해결한 조정이라 금액 검사에 들어감. "
-                + "AWAITING_RESOLUTION 해결 대기: 해결 안 된 금액 불일치 실패 뒤에 넣은 조정이라, 해결하면 확인됨이 됨. "
+                + "CONFIRMED 확인됨: 금액·수수료 불일치 실패 뒤·해결 전에 넣고 해결한 조정이라 금액 검사에 들어감. "
+                + "AWAITING_RESOLUTION 해결 대기: 해결 안 된 금액·수수료 불일치 실패 뒤에 넣은 조정이라, 막힌 주문을 해결하면 확인됨이 됨. "
                 + "UNCHECKED 검사 밖: 그 밖의 조정(실패 전에 미리 넣음, 해결 뒤에 넣음, 막힘과 상관없는 조정)이라 금액 검사 없이 지급에만 들어감",
-                example = "CONFIRMED", nullable = true, allowableValues = {"CONFIRMED", "AWAITING_RESOLUTION", "UNCHECKED"})
+                example = "CONFIRMED", nullable = true)
         String adjustmentCheckStatus
 ) {
 

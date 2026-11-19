@@ -630,7 +630,7 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     // 정산후보 조회의 조정 상태 (#791): 한 페이지 후보 ID(기본 키)로만 읽음. 정산후보 조회가 주문 ID로 볼 때만 부름 (payout/CLAUDE.md 규모 전제)
     // 금액 검사와 같은 confirmedAdjustment()를 씀: 규칙을 따로 쓰면 화면 표시와 실제 검사가 어긋남
     //   스냅샷 범위(checkedCandidate의 snapshotId)는 걸지 않음: "지금" 기준이라 막힌 주문 목록의 "지금" 근거(snapshotId null)와 같음
-    // select 절의 조건식(CASE WHEN EXISTS) 대신 where로 두 번 읽음: JPQL select의 조건식 지원에 기대지 않으려고 (정산후보 조회의 정산 여부와 같은 이유)
+    // select 절의 조건식(CASE WHEN EXISTS) 대신 where로 두 번 읽음: JPQL select의 조건식 지원에 기대지 않으려고 (findOverchargeCandidates의 정산 여부와 같은 이유)
     @Override
     public List<Long> findConfirmedAdjustmentCandidateIds(Collection<Long> candidateIds) {
         if (candidateIds.isEmpty()) {

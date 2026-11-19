@@ -874,15 +874,40 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
                 .andExpect(jsonPath("$.content[0].reasons").value(contains("DEDUCTION_MISSING")));
 
-        // when: 조정을 넣고 해결
+        // when: 실패 뒤 조정을 넣음
         postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -1_000L);
+
+        // then: 금액 불일치 실패가 아니라 해결 대기도 아님
         mockMvc.perform(candidatesOfOrder(admin, order))
                 .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+
+        // when: 해결
         resolve(order);
 
-        // then
+        // then: 해결해도 확인됨이 되지 않음
         mockMvc.perform(candidatesOfOrder(admin, order))
                 .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+    }
+
+    // 주문 ID와 기간을 함께 줘도 조정 상태를 채움 (기간만 줄 때만 null)
+    @Test
+    void 주문_ID와_기간을_함께_줘도_조정_상태가_나온다() throws Exception {
+        // given: 초과 청구로 1번 실패한 뒤 조정
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+
+        // when & then: 조정 시각(지금)을 포함하는 기간
+        mockMvc.perform(candidatesOfOrder(admin, order)
+                        .param("from", LocalDateTime.now().minusDays(1).withNano(0).toString())
+                        .param("to", LocalDateTime.now().plusDays(1).withNano(0).toString()))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")));
     }
 
     @Test

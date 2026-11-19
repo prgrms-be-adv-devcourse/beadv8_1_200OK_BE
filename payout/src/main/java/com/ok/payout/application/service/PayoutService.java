@@ -1190,7 +1190,8 @@ public class PayoutService implements PayoutUseCase {
         Set<Long> confirmedIds = new HashSet<>(payoutQueryRepository.findConfirmedAdjustmentCandidateIds(adjustmentCandidateIds));
         Set<Long> awaitingIds = new HashSet<>(
                 payoutQueryRepository.findAwaitingResolutionAdjustmentCandidateIds(adjustmentCandidateIds));
-        return rows.map(row -> PayoutQueryResultMapper.toCandidateResult(row, confirmedIds, awaitingIds));
+        return rows.map(row -> PayoutQueryResultMapper.toCandidateResult(row,
+                PayoutQueryResultMapper.adjustmentCheckStatus(row.candidateId(), confirmedIds, awaitingIds)));
     }
 
     /**
