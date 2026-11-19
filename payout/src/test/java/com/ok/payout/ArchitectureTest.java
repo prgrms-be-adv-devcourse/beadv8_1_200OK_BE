@@ -50,11 +50,11 @@ import jakarta.persistence.Table;
  * <ul>
  *   <li>{@code domain}: 엔티티와 정책, {@code domain.type}(배치 입구와 엔티티가 같이 쓰는 enum). 바깥 레이어와 저장소·메시징·배치·웹 기술을 모른다 (엔티티라 JPA·Hibernate 애노테이션은 쓴다).</li>
  *   <li>{@code application}: {@code port.in}(유스케이스와 그 입출력 값 Command·Query·Result), {@code port.out}(저장소·발행 포트와 그 값 Row·발행 값), {@code service}(유스케이스 구현).</li>
- *   <li>{@code adapter.in}: {@code web}(컨트롤러), {@code event}(Spring·Kafka 리스너), {@code batch}(잡 설정·실행기·스케줄러).</li>
+ *   <li>{@code adapter.in}: {@code web}(컨트롤러), {@code event}(Kafka 리스너), {@code batch}(잡 설정·실행기·스케줄러).</li>
  *   <li>{@code adapter.out}: {@code persistence}(JPA·QueryDSL 구현), {@code event}(Kafka 발행 구현).</li>
  * </ul>
  */
-@AnalyzeClasses(packages = {"com.ok.payout", "com.ok.common.event"}, importOptions = ImportOption.DoNotIncludeTests.class)
+@AnalyzeClasses(packages = "com.ok.payout", importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
 
     // 레이어
@@ -239,18 +239,18 @@ class ArchitectureTest {
             .because("서비스는 출력 포트만 알고 발행 구현체가 그 포트를 구현해야 발행 방식(Spring 이벤트, Kafka, outbox)을 바꿔도 서비스가 바뀌지 않는다 (정산 헥사고날 구조, 이슈 #441)");
 
     // 메서드 호출뿐 아니라 필드·매개변수·상속으로 쓰는 것까지 잡도록 "의존" 기준으로 검사한다
-    // 받는 쪽(adapter.in.event)만 계약 타입을 쓴다. common.event 안의 상호 참조는 계약 타입 내부의 일이다
-    // 보내는 쪽(adapter.out.event)은 지갑 Spring 이벤트 발행을 지워(#588) Kafka 메시지 DTO만 쓰므로 허용하지 않는다
+    // 보내는 쪽은 지갑 Spring 이벤트 발행을 지워(#588), 받는 쪽은 Spring 이벤트 입구를 지워(#781) 둘 다 정산 Kafka 메시지 DTO만 쓴다
+    // 공통 이벤트 클래스를 다시 쓰면 다른 모듈과 클래스를 같이 쓰게 되어 모듈을 따로 떼어낼 수 없으므로 어느 패키지에서도 막는다
+    // common.event는 배송이 아직 써서 지우지 않았으므로(#343) 클래스가 남아 있는 동안 이 규칙이 필요하다
     @ArchTest
-    static final ArchRule 이벤트_클래스는_이벤트_어댑터만_사용한다 = noClasses()
-            .that().resideOutsideOfPackages("..adapter.in.event..", "com.ok.common.event..")
+    static final ArchRule 정산은_공통_이벤트_클래스를_쓰지_않는다 = noClasses()
             .should().dependOnClassesThat().resideInAPackage("com.ok.common.event..")
-            .because("모듈 간 계약 타입이 비즈니스 코드에 섞이지 않게 한다. 리스너는 이벤트를 Command나 값으로 바꿔 유스케이스를 호출하고, "
-                    + "발행 포트는 값을 받는다 (정산 헥사고날 구조, 이슈 #441)");
+            .because("정산은 Kafka로만 주고받고 메시지 모양은 정산 DTO로 읽는다. 공통 이벤트 클래스(common.event)를 같이 쓰면 모듈을 따로 떼어낼 수 없다 "
+                    + "(정산 헥사고날 구조 이슈 #441, Spring 이벤트 입구 삭제 이슈 #781)");
 
     // 이름과 위치
 
-    // @AnalyzeClasses(com.ok.payout, com.ok.common.event)는 정산 모듈 안이지만 다른 패키지(예: com.ok.relay)에 둔 클래스를 보지 못한다.
+    // @AnalyzeClasses(com.ok.payout)는 정산 모듈 안이지만 다른 패키지(예: com.ok.relay)에 둔 클래스를 보지 못한다.
     // Spring은 그 클래스도 빈으로 묶어 정산 포트를 구현하게 할 수 있으므로, 모듈 출력 전체를 따로 가져와 아래 @Test에서 검사한다.
     // @ArchTest 필드로 두면 위의 가져오기 범위가 적용되어 의미가 없다
     static final ArchRule 정산_모듈_클래스는_com_ok_payout에_있다 = classes()

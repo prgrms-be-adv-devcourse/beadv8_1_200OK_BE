@@ -1,7 +1,8 @@
 package com.ok.payout;
 
-import com.ok.common.event.OrderProductConfirmedEvent;
-import com.ok.common.event.WalletPaymentCompletedEvent;
+import com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage;
+import com.ok.payout.adapter.in.event.dto.WalletPaymentCompletedMessage;
+import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.domain.Payout;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
@@ -22,9 +23,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -34,12 +34,12 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.awaitility.Awaitility.await;
 
 // 통합 테스트: 금액 검사(#195)를 실제 이벤트 경로로 확인
-// PayoutSettleIntegrationTest는 후보·차감 기록을 SQL로 직접 넣지만, 여기서는 주문·지갑이 보내는 이벤트를 그대로 발행해
+// PayoutSettleIntegrationTest는 후보·차감 기록을 SQL로 직접 넣지만, 여기서는 주문·지갑이 보내는 메시지를 Kafka 토픽에 그대로 넣어(#781)
 // 정산 리스너가 만든 후보(수수료 계산·배송비 1건 규칙 포함)와 차감 기록으로 Job을 돌린다
 // → "정상 주문은 금액 검사에 걸리지 않는다"는 전제를 실제 후보 생성 규칙으로 확인
 //   (차감액 = 주문 결제 금액 = 상품 금액 합 + 판매자 묶음 배송비 합, 후보 합계 = 상품 금액 합 + 배송비 후보)
-// - 리스너(@ApplicationModuleListener)는 커밋 후 비동기로 실행되므로 트랜잭션 안에서 발행하고 결과를 await()로 기다린다
-// - 정산은 생성 15일 뒤가 대상이라 후보가 만들어진 뒤 created_at을 과거로 옮긴다 (PayoutDepositIntegrationTest와 같은 방식)
+// - 리스너는 별도 스레드에서 받으므로 결과를 await()로 기다린다
+// - 정산은 생성 15일 뒤가 대상이라 후보가 만들어진 뒤 created_at을 과거로 옮긴다 (SQL로 직접 바꿈, 아래 backdateCandidates)
 // - 정산·스냅샷·실패 기록은 조회 하한이 정산이 있는 스냅샷(정기 실행)에서 구해지므로, 정산·스냅샷을 비워 하한 기준을 초기화하려고 테스트 전후로 전부 비운다
 class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
 
@@ -57,10 +57,7 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
     private static final long BUYER_ID = 3_100L;
 
     @Autowired
-    private ApplicationEventPublisher eventPublisher;
-
-    @Autowired
-    private TransactionTemplate transactionTemplate;
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Autowired
     private PayoutJobRunner payoutJobRunner;
@@ -180,20 +177,19 @@ class PayoutAmountCheckFlowIntegrationTest extends AbstractIntegrationTest {
 
     // ---------- 도우미 ----------
 
-    // 지갑이 주문 결제 금액을 차감했다는 이벤트 → 정산 리스너가 차감 기록을 남김
+    // 지갑이 주문 결제 금액을 차감했다는 메시지(키 orderId) → 정산 리스너가 차감 기록을 남김
     private void givenPayment(long orderId, long amount) {
-        transactionTemplate.executeWithoutResult(status -> eventPublisher.publishEvent(
-                new WalletPaymentCompletedEvent(orderId, BUYER_ID, amount, LocalDateTime.now())));
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(orderId),
+                new WalletPaymentCompletedMessage(orderId, BUYER_ID, amount, LocalDateTime.now()));
         await().atMost(TIMEOUT).until(() -> deductionRepository.existsByOrderId(orderId));
     }
 
-    // 주문 모듈이 보내는 구매확정 이벤트 → 정산 리스너가 대금·수수료(·배송비) 후보를 만듦
-    // 한 건씩 처리가 끝날 때까지 기다린 뒤 다음 이벤트를 보냄:
-    //   같은 판매자 묶음의 이벤트가 리스너에서 동시에 처리되면 배송비 UK에 걸려 한쪽이 롤백되고 재처리를 기다리게 됨
-    //   (PayoutCandidateService 주석의 동시 처리 경우. 이 테스트가 보려는 금액 검사와 상관없는 경합이라 피함)
+    // 주문 모듈이 보내는 구매확정 메시지(키 orderItemId) → 정산 리스너가 대금·수수료(·배송비) 후보를 만듦
+    // 한 건씩 처리가 끝날 때까지 기다린 뒤 다음 메시지를 보냄:
+    //   한 파티션 안에서는 리스너가 하나씩 처리해 배송비 UK 경합은 없지만, 어느 메시지에서 멈췄는지 바로 보이게 하려고 건마다 확인한다
     private void givenConfirmed(long orderId, long orderItemId, long sellerId, long itemPrice, long sellerShippingPrice) {
-        transactionTemplate.executeWithoutResult(status -> eventPublisher.publishEvent(
-                new OrderProductConfirmedEvent(orderId, orderItemId, sellerId, itemPrice, sellerShippingPrice)));
+        kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(orderItemId),
+                new OrderProductConfirmedMessage(orderId, orderItemId, sellerId, itemPrice, sellerShippingPrice));
         await().atMost(TIMEOUT).until(() -> candidateRepository.existsByOrderItemIdAndEventTypeInAndAdjustmentId(
                 orderItemId, PayoutEventType.PURCHASE_CONFIRMED_TYPES, PayoutCandidateItem.NO_ADMIN_ADJUSTMENT_ID));
     }

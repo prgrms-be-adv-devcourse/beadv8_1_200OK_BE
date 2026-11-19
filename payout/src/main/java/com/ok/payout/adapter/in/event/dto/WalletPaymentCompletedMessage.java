@@ -20,7 +20,7 @@ public record WalletPaymentCompletedMessage(
 ) {
 
     // 값 검사는 입구(PayoutInboundEventValidator)가 한다.
-    // Kafka로 받으면 null과 음수가 모두 입구까지 오고, Spring 이벤트로 받으면 공통 이벤트 생성자가 null을 먼저 거절해 음수만 온다
+    // JSON에서 빠진 필드는 null로 읽혀 null과 음수가 모두 입구까지 온다
     public WalletPaymentCompletedCommand toCommand() {
         return new WalletPaymentCompletedCommand(orderId, buyerId, amount, paidAt);
     }

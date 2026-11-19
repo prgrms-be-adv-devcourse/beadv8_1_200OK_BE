@@ -1,6 +1,7 @@
 package com.ok.payout;
 
-import com.ok.common.event.OrderProductConfirmedEvent;
+import com.ok.payout.adapter.in.event.dto.OrderProductConfirmedMessage;
+import com.ok.payout.config.PayoutTopics;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutEventType;
 import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
@@ -8,9 +9,8 @@ import com.ok.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -21,8 +21,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.awaitility.Awaitility.await;
 
-// 통합 테스트: 실제 Spring 컨텍스트 + MySQL 컨테이너에서 이벤트 발행 → 리스너 → 저장까지 확인
-// @ApplicationModuleListener는 커밋 후 별도 스레드(비동기)에서 실행되므로, 결과는 await()로 기다린 뒤 확인한다
+// 통합 테스트: 실제 Spring 컨텍스트 + MySQL·Kafka 컨테이너에서 구매확정 메시지 → 정산 리스너 → 저장까지 확인
+// 운영과 같은 길로 시험하려고 주문이 보낼 메시지를 테스트가 구매확정 토픽에 직접 넣는다 (#781, PayoutKafkaReceiveIntegrationTest와 같은 방식)
+// 리스너는 별도 스레드에서 받으므로, 결과는 await()로 기다린 뒤 확인한다
 // 테스트마다 겹치지 않는 주문 ID를 쓰고, 정리할 때도 그 주문의 데이터만 지운다 (병렬 실행 시 간섭 방지)
 class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
 
@@ -40,10 +41,7 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     private static final Long OTHER_SELLER_ID = 20L;
 
     @Autowired
-    private ApplicationEventPublisher eventPublisher;
-
-    @Autowired
-    private TransactionTemplate transactionTemplate;
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -66,15 +64,14 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 구매확정_이벤트를_발행하면_정산후보가_생성된다() {
+    void 구매확정_메시지를_받으면_정산후보가_생성된다() {
         // given
         Long orderId = nextOrderId();
         Long orderItemId = nextOrderItemId();
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(orderId, orderItemId, SELLER_ID, 10_000L, 3_000L);
+        OrderProductConfirmedMessage message = new OrderProductConfirmedMessage(orderId, orderItemId, SELLER_ID, 10_000L, 3_000L);
 
         // when
-        // 주문 쪽처럼 트랜잭션 안에서 발행 (커밋되어야 리스너가 실행됨)
-        publishInTransaction(event);
+        send(message);
 
         // then: 리스너가 저장을 끝낼 때까지 최대 10초 동안 반복 확인
         // 배송비 행은 주문상품 ID가 없으므로 주문 ID로 조회
@@ -90,38 +87,40 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 같은_구매확정_이벤트를_두_번_받아도_정산후보_수는_그대로고_실패로_남지_않는다() {
-        // given: 첫 번째 이벤트로 정산 후보 3건 생성
+    void 같은_구매확정_메시지를_두_번_받아도_정산후보_수는_그대로고_뒤_메시지를_막지_않는다() {
+        // given: 첫 번째 메시지로 정산 후보 3건 생성
         Long orderId = nextOrderId();
         Long orderItemId = nextOrderItemId();
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(orderId, orderItemId, SELLER_ID, 10_000L, 3_000L);
-        publishInTransaction(event);
+        OrderProductConfirmedMessage message = new OrderProductConfirmedMessage(orderId, orderItemId, SELLER_ID, 10_000L, 3_000L);
+        send(message);
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(repository.findAllByOrderId(orderId)).hasSize(3));
 
-        // when: 같은 이벤트를 한 번 더 발행 (재발행 상황)
-        publishInTransaction(event);
+        // when: 같은 메시지를 한 번 더 보내고(재전달 상황), 뒤이어 다른 주문 하나를 보냄
+        send(message);
+        Long laterOrderId = sendLaterOrder();
 
         // then
-        // 1) 두 번째 처리까지 완료(COMPLETED)될 때까지 기다림 → 리스너가 실제로 두 번 실행됐다는 증거
-        await().atMost(TIMEOUT).until(() -> countPublications(orderItemId, "COMPLETED") == 2);
+        // 1) 뒤 주문이 처리될 때까지 기다림. 테스트 브로커는 파티션이 하나라 보낸 순서대로 처리되므로, 뒤 주문이 처리됐으면 중복 메시지도 처리가 끝난 것이다
+        //    중복 처리에서 예외가 났다면 정산 오류 처리기가 같은 메시지를 약 31초 동안 다시 시도해 뒤 주문이 TIMEOUT 안에 처리되지 않는다
+        //    (Spring 이벤트 때 "실패(FAILED)로 남지 않음"을 보던 것을 Kafka에서는 이렇게 본다)
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(repository.findAllByOrderId(laterOrderId)).hasSize(2));
         // 2) 정산 후보는 그대로 3건
         assertThat(repository.findAllByOrderId(orderId)).hasSize(3);
-        // 3) 중복이 실패(FAILED)로 남지 않음 (리뷰 지적 사항)
-        assertThat(countPublications(orderItemId, "FAILED")).isZero();
     }
 
     @Test
-    void 같은_주문상품에_관리자_조정_후보가_있어도_구매확정_이벤트는_정상_처리된다() {
+    void 같은_주문상품에_관리자_조정_후보가_있어도_구매확정_메시지는_정상_처리된다() {
         // given: 같은 주문상품·같은 타입의 조정 후보가 먼저 있음 (조정 번호 1)
         Long orderId = nextOrderId();
         Long orderItemId = nextOrderItemId();
         repository.save(PayoutCandidateItem.manualAdjustment(
                 PayoutEventType.SALE_AMOUNT, orderId, orderItemId, SELLER_ID, 200L, 1L, 99L, "테스트 조정"));
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(orderId, orderItemId, SELLER_ID, 10_000L, 3_000L);
+        OrderProductConfirmedMessage message = new OrderProductConfirmedMessage(orderId, orderItemId, SELLER_ID, 10_000L, 3_000L);
 
         // when
-        publishInTransaction(event);
+        send(message);
 
         // then: 조정 후보 1건 + 구매확정 후보 3건 (조정 후보 때문에 무시되지 않음)
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -137,37 +136,38 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 잘못된_값의_이벤트는_정산후보를_만들지_않고_실패로_남지_않는다() {
-        // given
+    void 잘못된_값의_구매확정_메시지는_정산후보를_만들지_않고_뒤_메시지를_막지_않는다() {
+        // given: 상품 금액이 음수인 메시지 (필드가 빠진 메시지는 PayoutKafkaReceiveIntegrationTest가 확인)
         Long orderId = nextOrderId();
         Long orderItemId = nextOrderItemId();
-        OrderProductConfirmedEvent event = new OrderProductConfirmedEvent(orderId, orderItemId, SELLER_ID, -1L, 3_000L);
+        OrderProductConfirmedMessage message = new OrderProductConfirmedMessage(orderId, orderItemId, SELLER_ID, -1L, 3_000L);
 
-        // when
-        publishInTransaction(event);
+        // when: 잘못된 메시지 뒤에 정상 주문 하나를 보냄
+        send(message);
+        Long laterOrderId = sendLaterOrder();
 
         // then
-        // 1) 리스너가 실제로 실행되어 정상 종료했는지: event_publication이 COMPLETED로 바뀔 때까지 기다림
-        //    (입구가 값을 확인해 로그만 남기고 돌아오므로 예외 없이 끝남)
-        await().atMost(TIMEOUT).until(() -> countPublications(orderItemId, "COMPLETED") == 1);
+        // 1) 뒤 주문이 처리될 때까지 기다림. 파티션이 하나라 이때 잘못된 메시지의 처리도 끝났다
+        //    입구가 IllegalArgumentException을 던지면 정산 오류 처리기가 다시 시도하지 않고 넘기므로 TIMEOUT 안에 처리된다
+        //    (값이 틀린 메시지는 다시 처리해도 결과가 같아 재처리 대상이 아님. 예외를 던지는지는 입구 단위 테스트가 확인한다)
+        await().atMost(TIMEOUT).untilAsserted(() ->
+                assertThat(repository.findAllByOrderId(laterOrderId)).hasSize(2));
         // 2) 이 주문의 정산 후보는 저장되지 않음
         assertThat(repository.findAllByOrderId(orderId)).isEmpty();
-        // 3) 값이 틀린 이벤트는 다시 처리해도 결과가 같으므로 FAILED로 남지 않아 재처리 대상이 아님
-        assertThat(countPublications(orderItemId, "FAILED")).isZero();
     }
 
     @Test
     void 같은_판매자_묶음의_상품이_여러_개_구매확정돼도_배송비_후보는_1건만_생성된다() {
-        // given: 주문 1건, 판매자 1명, 상품 2개 (묶음 배송비 3,000원이 두 이벤트에 똑같이 실려 옴)
+        // given: 주문 1건, 판매자 1명, 상품 2개 (묶음 배송비 3,000원이 두 메시지에 똑같이 실려 옴)
         Long orderId = nextOrderId();
         Long firstOrderItemId = nextOrderItemId();
         Long secondOrderItemId = nextOrderItemId();
 
-        // when: 앞 상품 처리가 끝난 뒤 다음 상품을 발행 (동시 처리는 DB UK가 막는 것을 영속성 테스트에서 확인)
-        publishInTransaction(new OrderProductConfirmedEvent(orderId, firstOrderItemId, SELLER_ID, 10_000L, 3_000L));
+        // when: 앞 상품 처리가 끝난 뒤 다음 상품을 보냄 (동시 처리는 DB UK가 막는 것을 영속성 테스트에서 확인)
+        send(new OrderProductConfirmedMessage(orderId, firstOrderItemId, SELLER_ID, 10_000L, 3_000L));
         await().atMost(TIMEOUT).untilAsserted(() ->
                 assertThat(repository.findAllByOrderId(orderId)).hasSize(3));
-        publishInTransaction(new OrderProductConfirmedEvent(orderId, secondOrderItemId, SELLER_ID, 5_000L, 3_000L));
+        send(new OrderProductConfirmedMessage(orderId, secondOrderItemId, SELLER_ID, 5_000L, 3_000L));
 
         // then: 대금·수수료는 상품마다 2건씩, 배송비는 1건
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -191,8 +191,8 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
         Long otherSellerOrderItemId = nextOrderItemId();
 
         // when
-        publishInTransaction(new OrderProductConfirmedEvent(orderId, sellerOrderItemId, SELLER_ID, 10_000L, 3_000L));
-        publishInTransaction(new OrderProductConfirmedEvent(orderId, otherSellerOrderItemId, OTHER_SELLER_ID, 20_000L, 2_500L));
+        send(new OrderProductConfirmedMessage(orderId, sellerOrderItemId, SELLER_ID, 10_000L, 3_000L));
+        send(new OrderProductConfirmedMessage(orderId, otherSellerOrderItemId, OTHER_SELLER_ID, 20_000L, 2_500L));
 
         // then: 배송비 후보가 판매자마다 1건, 각자의 묶음 배송비로 생성됨
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -217,19 +217,15 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
         return ORDER_ITEM_ID_SEQ.incrementAndGet();
     }
 
-    // 트랜잭션 안에서 이벤트 발행 (커밋 후 리스너 실행)
-    private void publishInTransaction(OrderProductConfirmedEvent event) {
-        transactionTemplate.executeWithoutResult(status -> eventPublisher.publishEvent(event));
+    // 주문이 보내는 것처럼 구매확정 토픽에 넣음. 키는 orderItemId (#339 합의)
+    private void send(OrderProductConfirmedMessage message) {
+        kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(message.orderItemId()), message);
     }
 
-    // event_publication에서 해당 주문항목 이벤트 중 특정 상태(COMPLETED, FAILED 등)인 건수
-    // JSON_EXTRACT로 orderItemId 값을 직접 꺼내 비교 → JSON 필드 순서나 공백이 바뀌어도 영향 없음
-    private int countPublications(Long orderItemId, String status) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM event_publication " +
-                        "WHERE status = ? AND JSON_EXTRACT(serialized_event, '$.orderItemId') = ?",
-                Integer.class,
-                status, orderItemId);
-        return count == null ? 0 : count;
+    // 앞 메시지의 처리가 끝났는지 알려고 뒤에 보내는 정상 주문 (무료배송이라 후보는 대금·수수료 2건)
+    private Long sendLaterOrder() {
+        Long laterOrderId = nextOrderId();
+        send(new OrderProductConfirmedMessage(laterOrderId, nextOrderItemId(), SELLER_ID, 10_000L, 0L));
+        return laterOrderId;
     }
 }
