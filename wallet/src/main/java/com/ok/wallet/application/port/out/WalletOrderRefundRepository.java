@@ -15,6 +15,10 @@ public interface WalletOrderRefundRepository {
     int insertIfAbsent(Long refundId, Long orderId, Long buyerId, long amount, String status, String failureReason,
                        LocalDateTime now);
 
+    // 처리 기록을 잠그지 않고 읽는다. 기록은 한 번 들어가면 바뀌지 않아, 있으면 그 값이 끝까지 맞다.
+    // 없다는 답은 읽은 순간의 것이라, 없을 때 무언가를 정하려면 insertIfAbsent로 다시 확인한다.
+    Optional<WalletOrderRefund> findByRefundId(Long refundId);
+
     // 이미 있는 처리 기록을 최신 커밋 데이터로 읽는다. 기록이 있을 때(insertIfAbsent가 0)만 부른다.
     Optional<WalletOrderRefund> findForShareByRefundId(Long refundId);
 

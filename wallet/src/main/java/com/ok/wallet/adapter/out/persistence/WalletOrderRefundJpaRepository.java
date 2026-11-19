@@ -27,6 +27,8 @@ public interface WalletOrderRefundJpaRepository extends Repository<WalletOrderRe
                        @Param("amount") long amount, @Param("status") String status,
                        @Param("failureReason") String failureReason, @Param("now") LocalDateTime now);
 
+    Optional<WalletOrderRefund> findByRefundId(Long refundId);
+
     @Lock(LockModeType.PESSIMISTIC_READ)
     Optional<WalletOrderRefund> findForShareByRefundId(Long refundId);
 

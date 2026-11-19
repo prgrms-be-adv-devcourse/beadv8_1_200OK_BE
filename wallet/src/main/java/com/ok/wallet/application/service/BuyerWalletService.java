@@ -3,17 +3,22 @@ package com.ok.wallet.application.service;
 import com.ok.wallet.application.dto.BuyerBalanceResult;
 import com.ok.wallet.application.dto.OrderPaymentResult;
 import com.ok.wallet.application.dto.OrderRefundResult;
+import com.ok.wallet.application.dto.OrderRefundRevertResult;
 import com.ok.wallet.application.port.in.BuyerWalletUseCase;
 import com.ok.wallet.application.port.out.BuyerWalletLedgerRepository;
 import com.ok.wallet.application.port.out.BuyerWalletRepository;
 import com.ok.wallet.application.port.out.WalletOrderPaymentRepository;
 import com.ok.wallet.application.port.out.WalletOrderRefundRepository;
+import com.ok.wallet.application.port.out.WalletOrderRefundRevertRepository;
 import com.ok.wallet.domain.BuyerWallet;
 import com.ok.wallet.domain.BuyerWalletLedger;
 import com.ok.wallet.domain.WalletOrderPayment;
 import com.ok.wallet.domain.WalletOrderPaymentStatus;
 import com.ok.wallet.domain.WalletOrderRefund;
 import com.ok.wallet.domain.WalletOrderRefundFailureReason;
+import com.ok.wallet.domain.WalletOrderRefundRevert;
+import com.ok.wallet.domain.WalletOrderRefundRevertFailureReason;
+import com.ok.wallet.domain.WalletOrderRefundRevertStatus;
 import com.ok.wallet.domain.WalletOrderRefundStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +39,7 @@ public class BuyerWalletService implements BuyerWalletUseCase {
     private final BuyerWalletLedgerRepository buyerWalletLedgerRepository;
     private final WalletOrderPaymentRepository walletOrderPaymentRepository;
     private final WalletOrderRefundRepository walletOrderRefundRepository;
+    private final WalletOrderRefundRevertRepository walletOrderRefundRevertRepository;
     // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
     // 지갑 생성 시각을 LocalDateTime.now()로 직접 만들면 실행 환경의 시간대를 따라가고, 테스트에서 값을 고정할 수 없다 (#93)
     private final Clock clock;
@@ -247,5 +253,79 @@ public class BuyerWalletService implements BuyerWalletUseCase {
             return OrderRefundResult.alreadyProcessed(processed);
         }
         return OrderRefundResult.processed(refundId, orderId, memberId, amount, status, failureReason);
+    }
+
+    /**
+     * 환불 반환으로 돌려준 예치금을 다시 가져오고, 지갑의 되돌리기 처리 결과를 기록한다.
+     * 요청의 구매자·금액이 아니라 반환 처리 기록의 구매자·금액으로 가져온다. 다른 구매자에게 잘못 돌려준 반환도 돈을 받은 지갑에서 가져와야 한다.
+     * 잔액이 모자라면 마이너스로 두지 않고 가져오지 않은 채 실패로 기록한다.
+     * 같은 되돌리기가 다시 오면 처음 결과를 그대로 돌려주고 아무것도 바꾸지 않는다.
+     *
+     * <p>돌려준 적 없는 환불은 원장을 바꾸지 않고 다시 가져옴으로 기록한다. 반환 기록이 아예 없으면 반환 거절({@code REFUND_REVERTED})을
+     * 먼저 넣는다. 되돌리기와 반환 요청은 토픽이 달라 순서가 바뀌어 올 수 있는데, 반환 기록이 환불 하나에 한 건이라
+     * 뒤에 온 같은 환불의 반환 요청은 이 거절을 처음 결과로 받고 돈을 주지 않는다.
+     *
+     * <p>환불·주문·회원 ID는 null이 아니고 금액은 0보다 커야 한다. 호출하는 쪽이 걸러 넘기며, 아니면 IllegalArgumentException을 던진다.
+     *
+     * <p>잠금 순서는 반환 처리와 같이 지갑 → 기록이다. 반환 기록은 바뀌지 않아 잠그지 않고 읽어 가져올 지갑을 먼저 정한다.
+     * READ COMMITTED를 쓰는 이유는 반환 처리와 같다.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderRefundRevertResult revertRefundForOrder(Long refundId, Long orderId, Long memberId, long amount) {
+        // 반환 거절을 넣을 때 INSERT IGNORE가 NULL·CHECK 위반도 오류 없이 넘기므로 잘못된 값이 기록되지 않게 먼저 막는다
+        if (refundId == null || orderId == null || memberId == null) {
+            throw new IllegalArgumentException("환불 ID, 주문 ID, 회원 ID는 필수입니다. refundId=" + refundId
+                    + ", orderId=" + orderId + ", memberId=" + memberId);
+        }
+        if (amount <= 0) {
+            throw new IllegalArgumentException("되돌릴 금액은 0보다 커야 합니다. amount=" + amount);
+        }
+        WalletOrderRefund refund = walletOrderRefundRepository.findByRefundId(refundId)
+                .orElseGet(() -> blockRefund(refundId, orderId, memberId, amount));
+        if (!refund.isCompleted()) {
+            return recordRevert(refund, WalletOrderRefundRevertStatus.REVERTED, null);
+        }
+
+        // 지갑을 먼저 잠가 같은 구매자의 되돌리기·반환·충전·결제를 순서대로 처리하고, 잠근 뒤의 잔액으로 가져올 수 있는지 정한다
+        BuyerWallet wallet = getOrCreate(refund.getBuyerId());
+        OrderRefundRevertResult result = wallet.hasEnoughBalance(refund.getAmount())
+                ? recordRevert(refund, WalletOrderRefundRevertStatus.REVERTED, null)
+                : recordRevert(refund, WalletOrderRefundRevertStatus.FAILED,
+                        WalletOrderRefundRevertFailureReason.INSUFFICIENT_BALANCE);
+        if (!result.alreadyProcessed() && result.reverted()) {
+            // 원장 근거 키는 마지막 안전장치로 남긴다 (같은 되돌리기가 두 번 기록되려 하면 유니크 제약이 막는다)
+            buyerWalletLedgerRepository.save(
+                    wallet.revertRefund(refund.getAmount(), RefundRevertReferenceKey.of(refundId)));
+        }
+        return result;
+    }
+
+    // 반환 기록이 없으면 거절을 넣어 뒤에 올 반환 요청을 막는다. 그사이 반환 요청이 먼저 기록했으면 그 기록을 따른다
+    private WalletOrderRefund blockRefund(Long refundId, Long orderId, Long memberId, long amount) {
+        walletOrderRefundRepository.insertIfAbsent(refundId, orderId, memberId, amount,
+                WalletOrderRefundStatus.FAILED.name(), WalletOrderRefundFailureReason.REFUND_REVERTED.name(),
+                LocalDateTime.now(clock));
+        // 넣었든 다른 요청이 먼저 넣었든 기록은 있다. 없다면 중복이 아닌 이유로 넣기가 무시된 것이라 500으로 드러낸다
+        return walletOrderRefundRepository.findForShareByRefundId(refundId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "환불 되돌리기 중 반환 거절을 넣었는데 반환 기록이 없습니다. refundId=" + refundId
+                                + ", orderId=" + orderId + ", memberId=" + memberId + ", amount=" + amount));
+    }
+
+    // 되돌리기 기록을 넣어 보고, 이미 있으면 처음 기록을 돌려준다(반환 처리와 같은 방식)
+    private OrderRefundRevertResult recordRevert(WalletOrderRefund refund, WalletOrderRefundRevertStatus status,
+                                                 WalletOrderRefundRevertFailureReason failureReason) {
+        int inserted = walletOrderRefundRevertRepository.insertIfAbsent(refund.getRefundId(), refund.getOrderId(),
+                refund.getBuyerId(), refund.getAmount(), status.name(),
+                failureReason == null ? null : failureReason.name(), LocalDateTime.now(clock));
+        if (inserted == 0) {
+            WalletOrderRefundRevert processed = walletOrderRefundRevertRepository.findForShareByRefundId(refund.getRefundId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "환불 되돌리기 처리 기록 넣기 결과가 0건인데 기록이 없습니다. 중복이 아닌 이유로 넣기가 무시됐을 수 있습니다. refundId="
+                                    + refund.getRefundId()));
+            return OrderRefundRevertResult.alreadyProcessed(processed);
+        }
+        return OrderRefundRevertResult.processed(refund.getRefundId(), refund.getOrderId(), refund.getBuyerId(),
+                refund.getAmount(), status, failureReason);
     }
 }

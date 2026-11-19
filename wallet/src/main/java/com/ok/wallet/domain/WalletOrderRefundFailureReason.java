@@ -5,6 +5,7 @@ package com.ok.wallet.domain;
  * 다시 해도 결과가 같은 경우만 둔다. 환불은 지갑 실패를 받으면 주문 취소를 되돌리므로, 일시적인 문제는 사유로 만들지 않는다.
  */
 public enum WalletOrderRefundFailureReason {
-    PAYMENT_NOT_FOUND,    // 그 주문·구매자의 성공한 결제 기록이 없음
-    REFUND_TOTAL_EXCEEDED // 같은 주문의 반환 합계가 결제 금액을 넘음
+    PAYMENT_NOT_FOUND,     // 그 주문·구매자의 성공한 결제 기록이 없음
+    REFUND_TOTAL_EXCEEDED, // 같은 주문의 반환 합계가 결제 금액을 넘음
+    REFUND_REVERTED        // 환불이 이미 되돌리기를 요청한 환불. 되돌리기와 반환은 토픽이 달라 순서가 바뀌어 올 수 있다
 }

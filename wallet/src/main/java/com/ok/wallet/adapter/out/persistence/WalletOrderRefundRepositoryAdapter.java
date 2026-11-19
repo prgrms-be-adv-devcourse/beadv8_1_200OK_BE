@@ -26,6 +26,11 @@ public class WalletOrderRefundRepositoryAdapter implements WalletOrderRefundRepo
     }
 
     @Override
+    public Optional<WalletOrderRefund> findByRefundId(Long refundId) {
+        return walletOrderRefundJpaRepository.findByRefundId(refundId);
+    }
+
+    @Override
     public Optional<WalletOrderRefund> findForShareByRefundId(Long refundId) {
         return walletOrderRefundJpaRepository.findForShareByRefundId(refundId);
     }
