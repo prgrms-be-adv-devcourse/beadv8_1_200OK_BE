@@ -22,6 +22,7 @@ import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.fixture.ShipmentFixture;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeCarrierClient;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -108,6 +109,9 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     @Qualifier(DeliveryAsyncConfig.OUTBOX_SEND_EXECUTOR)
     AsyncTaskExecutor outboxSendExecutor;
+
+    @Autowired
+    MeterRegistry meterRegistry;
 
     private DeliveryTopicReader createdReader;
     private DeliveryTopicReader dispatchedReader;
@@ -347,6 +351,37 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 즉시_발송_대기열이_가득_차면_출고는_기다리지_않고_성공하고_줄은_PENDING으로_남아_발송_작업이_보낸다() {
+        // given: 발송 스레드를 모두 붙잡은 뒤 대기열을 채운다
+        ThreadPoolTaskExecutor executor = (ThreadPoolTaskExecutor) outboxSendExecutor;
+        CountDownLatch release = new CountDownLatch(1);
+        Shipment shipment = savePreparing();
+        double rejectedBefore = rejectedCount();
+        try {
+            for (int i = 0; i < executor.getMaxPoolSize(); i++) {
+                executor.execute(() -> awaitLatch(release));
+            }
+            await().atMost(Duration.ofSeconds(5)).until(() -> executor.getActiveCount() == executor.getMaxPoolSize());
+            for (int i = 0; i < executor.getQueueCapacity(); i++) {
+                executor.execute(() -> { });
+            }
+
+            // when
+            shipmentUseCase.dispatch(dispatchCommand(shipment));
+
+            // then: 출고가 돌아왔을 때 이미 버린 것으로 세어져 있다
+            assertThat(rejectedCount()).isEqualTo(rejectedBefore + 1);
+            assertThat(deliveryOutboxRepository.findAll().getFirst().getStatus()).isEqualTo(DeliveryOutboxStatus.PENDING);
+        } finally {
+            release.countDown();
+        }
+        awaitOutboxSendIdle();
+        assertThat(deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE, NO_MIN_AGE)).isEqualTo(1);
+        assertThat(dispatchedReader.readValuesFor(String.valueOf(shipment.getOrderId()), READ_DURATION)).hasSize(1);
+        assertThat(deliveryOutboxRepository.findAll().getFirst().getStatus()).isEqualTo(DeliveryOutboxStatus.SENT);
+    }
+
+    @Test
     void 즉시_발송이_보낸_줄은_발송_작업이_다시_보내지_않는다() {
         // given
         Shipment shipment = savePreparing();
@@ -488,6 +523,13 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
         }
+    }
+
+    private double rejectedCount() {
+        return meterRegistry.get(DeliveryAsyncConfig.OUTBOX_SEND_DROPPED_METRIC)
+                .tag("reason", DeliveryAsyncConfig.DROP_REASON_REJECTED)
+                .counter()
+                .count();
     }
 
     private void awaitOutboxSendIdle() {
