@@ -10,7 +10,10 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.jpa.repository.Lock;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaMethod;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -30,6 +34,7 @@ import com.tngtech.archunit.library.GeneralCodingRules;
 
 import com.ok.common.exception.ErrorCode;
 import com.ok.order.OrderSchema;
+import com.ok.order.order.application.port.out.OrderEventPublisher;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -142,6 +147,59 @@ class ArchitectureTest {
             .should().implement(resideInAPackage("com.ok.order.*.application.port.out.."))
             .because("서비스는 출력 포트만 알고, adapter.out의 구현체가 발행 방식을 맡는다. "
                     + "발행 방식(스프링 이벤트, 메시지 브로커)을 바꿀 때 구현체만 바꾸게 한다 (헥사고날 구조 #438)");
+
+    // outbox(#666, #795)
+
+    @ArchTest
+    static final ArchRule 출력_어댑터는_입력_포트를_부르지_않는다 = noClasses()
+            .that().resideInAPackage("com.ok.order.*.adapter.out..")
+            .should().dependOnClassesThat().resideInAPackage("com.ok.order.*.application.port.in..")
+            .because("출력 어댑터가 입력 포트로 되돌아오면 업무 흐름(발송 시작 등)이 어댑터 뒤에 숨고 포트의 구현을 갈아 끼울 수 없다. "
+                    + "발행 구현체는 출력 포트(OrderOutboxRepository)로 저장만 한다 (#795)");
+
+    // 진입점(adapter.in)은 입력 포트만 알아 어느 구현이 불리는지 정적으로 보이지 않는다. 그래서 반대쪽에서 막는다:
+    // 입력 포트를 구현한 메서드가 같은 클래스 안에서 outbox를 남기면, 진입점이 Facade를 거치지 않고 서비스를 부르는 모양이다
+    @ArchTest
+    static final ArchRule 입력_포트_구현은_outbox를_직접_남기지_않는다 = methods()
+            .that().areDeclaredInClassesThat().resideInAPackage("com.ok.order.*.application.service..")
+            .should(new ArchCondition<JavaMethod>("not record outbox in the same class when implementing an input port") {
+                @Override
+                public void check(JavaMethod method, ConditionEvents events) {
+                    boolean implementsInputPort = method.getOwner().getAllRawInterfaces().stream()
+                            .filter(resideInAPackage("com.ok.order.*.application.port.in.."))
+                            .anyMatch(port -> port.getMethods().stream().anyMatch(portMethod ->
+                                    portMethod.getName().equals(method.getName())
+                                            && portMethod.getRawParameterTypes().equals(method.getRawParameterTypes())));
+                    if (!implementsInputPort) {
+                        return;
+                    }
+                    boolean records = recordsOutbox(method, new HashSet<>());
+                    events.add(new SimpleConditionEvent(method, !records, method.getFullName()
+                            + (records ? " records" : " does not record") + " outbox via OrderEventPublisher"));
+                }
+            })
+            .because("outbox를 남기는 @Transactional 서비스는 Facade가 불러야, 커밋하고 커넥션을 돌려준 뒤 Facade가 남긴 줄을 바로 보낸다. "
+                    + "진입점이 서비스를 바로 부르면 메시지가 재발송 주기(min-age 뒤)까지 늦는다 (#795)");
+
+    // 같은 클래스 안의 호출(private 도우미 포함)을 따라가 OrderEventPublisher 호출에 닿는지 본다
+    private static boolean recordsOutbox(JavaMethod method, Set<JavaMethod> visited) {
+        if (!visited.add(method)) {
+            return false;
+        }
+        for (JavaMethodCall call : method.getMethodCallsFromSelf()) {
+            JavaClass target = call.getTargetOwner();
+            if (target.isAssignableTo(OrderEventPublisher.class)) {
+                return true;
+            }
+            if (target.equals(method.getOwner())) {
+                Optional<JavaMethod> callee = call.getTarget().resolveMember();
+                if (callee.isPresent() && recordsOutbox(callee.get(), visited)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 
     // 영속성
 
