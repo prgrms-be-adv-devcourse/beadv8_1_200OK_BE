@@ -353,9 +353,33 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         // when
         blockedOrderUseCase.refresh();
 
-        // then: 반영 표시 뒤의 실패만 읽어 운영 기간 전체를 매번 읽지 않음 (앞 주문은 범위 맞추기 #583 몫)
+        // then: 반영 표시 뒤의 실패만 읽어 운영 기간 전체를 매번 읽지 않음
+        //   앞 주문처럼 표에서 빠진 막힌 주문은 사람이 반영 표시를 내려 다시 판정시킴 (#583, 아래 테스트)
         assertThat(blockedOrderRepository.findById(before)).isEmpty();
         assertThat(blockedOrderRepository.findById(after)).isPresent();
+        assertThat(refreshRepository.findById(PayoutBlockedOrderRefresh.SINGLE_ROW_ID))
+                .get().extracting(PayoutBlockedOrderRefresh::getLastFailureId)
+                .isEqualTo(payoutQueryRepository.findMaxFailureId());
+    }
+
+    @Test
+    void 표에서_빠진_막힌_주문은_반영_표시를_그_실패_앞으로_내리면_다음_갱신에_다시_들어간다() throws Exception {
+        // given: 원본으로는 잠겼는데 표에 줄이 없고, 그 실패가 반영 표시 앞에 있음 (사람이 DB를 건드려 생기는 상황, #583)
+        Long run = runCompleted();
+        long missing = nextOrderId();
+        insertFailure(run, insertCandidate(missing), missing, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 빠짐");
+        long missingFailureId = payoutQueryRepository.findMaxFailureId();
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = ?", missingFailureId);
+        blockedOrderUseCase.refresh();
+        assertThat(blockedOrderRepository.findById(missing)).isEmpty();
+
+        // when: 사람이 반영 표시를 그 주문의 실패 기록 바로 앞으로 내리고, 다음 갱신이 돎
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = ?", missingFailureId - 1);
+        blockedOrderUseCase.refresh();
+
+        // then: 그 주문이 원본 판정대로 표에 다시 들어가고, 반영 표시는 다시 가장 큰 실패 기록까지 올라감
+        assertThat(blockedOrderRepository.findById(missing)).get()
+                .extracting(PayoutBlockedOrder::getStatus).isEqualTo(PayoutBlockedStatus.LOCKED);
         assertThat(refreshRepository.findById(PayoutBlockedOrderRefresh.SINGLE_ROW_ID))
                 .get().extracting(PayoutBlockedOrderRefresh::getLastFailureId)
                 .isEqualTo(payoutQueryRepository.findMaxFailureId());

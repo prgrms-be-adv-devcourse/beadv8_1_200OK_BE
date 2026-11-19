@@ -67,7 +67,9 @@ public class PayoutBlockedOrderRefreshService {
     }
 
     // 원본을 읽어 주문마다 판정. 판정에서 예외가 난 주문은 [정산-시스템문제]로 남기고 결과에서 뺌
-    //   건너뛴 주문이 표에 없던 새 주문이면 반영 표시가 지나가 다시 보지 않음 → 버그를 고친 뒤 범위 맞추기(#583)로 바로잡음
+    //   건너뛴 주문이 표에 없던 새 주문이면 반영 표시가 지나가 다시 보지 않음
+    //   → 버그를 고친 뒤 사람이 반영 표시(payout_blocked_order_refresh.last_failure_id)를 그 주문의 실패 기록 ID 앞으로 내리면 다음 갱신이 다시 판정함 (#583)
+    //     표에서 빠진 막힌 주문은 사람이 코드·데이터를 건드렸을 때만 생겨, 관리자 API 대신 원인을 아는 사람이 이렇게 고침
     private Map<Long, JudgedOrder> judgeOrders(List<Long> orderIds) {
         Set<Long> lockedOrderIds = payoutQueryRepository.findLockedOrderIds(orderIds);
         Map<Long, Long> failedRunCounts = payoutQueryRepository.countFailedRunsOfOrders(orderIds);
