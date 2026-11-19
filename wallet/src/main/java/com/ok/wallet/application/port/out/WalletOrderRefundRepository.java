@@ -22,7 +22,8 @@ public interface WalletOrderRefundRepository {
     // 이미 있는 처리 기록을 최신 커밋 데이터로 읽는다. 기록이 있을 때(insertIfAbsent가 0)만 부른다.
     Optional<WalletOrderRefund> findForShareByRefundId(Long refundId);
 
-    // 주문에 이미 돌려준 금액의 합계. 거절한 기록은 세지 않는다. 기록이 없으면 0.
+    // 주문에 이미 돌려준 금액의 합계. 거절한 기록과 되돌리기로 다시 가져온 기록은 세지 않는다. 기록이 없으면 0.
+    // 다시 가져온 환불을 세면 같은 상품을 새 환불로 돌려줄 때 합계 초과로 막힌다.
     // 최신 커밋 데이터로 읽는다. 일반 조회는 지갑 잠금을 기다리기 전에 잡힌 스냅샷을 보므로,
     // 같은 주문의 다른 환불이 방금 돌려준 금액을 빼고 더해 결제 금액보다 많이 돌려줄 수 있다.
     long sumCompletedAmountForShareByOrderId(Long orderId);

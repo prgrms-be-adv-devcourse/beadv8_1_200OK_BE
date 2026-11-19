@@ -2,6 +2,7 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.wallet.WalletSchema;
 import com.ok.wallet.domain.WalletOrderRefundRevert;
+import com.ok.wallet.domain.WalletOrderRefundRevertStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -10,6 +11,7 @@ import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 // 되돌리기 결과는 한 번 기록하면 바뀌지 않으므로 넣기와 조회만 둔다.
@@ -25,6 +27,12 @@ public interface WalletOrderRefundRevertJpaRepository extends Repository<WalletO
                        @Param("amount") long amount, @Param("status") String status,
                        @Param("failureReason") String failureReason, @Param("now") LocalDateTime now);
 
+    Optional<WalletOrderRefundRevert> findByRefundId(Long refundId);
+
     @Lock(LockModeType.PESSIMISTIC_READ)
     Optional<WalletOrderRefundRevert> findForShareByRefundId(Long refundId);
+
+    // 반환 합계에서 다시 가져온 환불을 빼려고 읽는다. 잠그는 이유는 WalletOrderRefundJpaRepository.findForShareByOrderIdAndStatus와 같다
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    List<WalletOrderRefundRevert> findForShareByOrderIdAndStatus(Long orderId, WalletOrderRefundRevertStatus status);
 }

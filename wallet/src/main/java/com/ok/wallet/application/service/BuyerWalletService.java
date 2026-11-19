@@ -250,7 +250,15 @@ public class BuyerWalletService implements BuyerWalletUseCase {
                     .orElseThrow(() -> new IllegalStateException(
                             "환불 반환 처리 기록 넣기 결과가 0건인데 기록이 없습니다. 중복이 아닌 이유로 넣기가 무시됐을 수 있습니다. refundId="
                                     + refundId + ", orderId=" + orderId + ", memberId=" + memberId + ", amount=" + amount));
-            return OrderRefundResult.alreadyProcessed(processed);
+            // 되돌리기 기록은 바뀌지 않아 잠그지 않고 본다. 되돌리기와 동시에 오면 처음 결과(돌려줌)가 나갈 수 있는데,
+            // 환불은 이미 끝난 환불의 반환 결과를 기록만 하고 넘기므로 어느 쪽이 나가도 된다
+            boolean revertedAfterRefund = processed.isCompleted()
+                    && walletOrderRefundRevertRepository.findByRefundId(refundId)
+                    .filter(WalletOrderRefundRevert::isReverted)
+                    .isPresent();
+            return revertedAfterRefund
+                    ? OrderRefundResult.revertedAfterRefund(processed)
+                    : OrderRefundResult.alreadyProcessed(processed);
         }
         return OrderRefundResult.processed(refundId, orderId, memberId, amount, status, failureReason);
     }

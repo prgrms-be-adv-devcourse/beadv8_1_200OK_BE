@@ -5,7 +5,8 @@ package com.ok.wallet.adapter.out.event.dto;
  * 환불은 사유가 비었거나 100자를 넘으면 받지 않는다.
  *
  * @param amount 환불이 요청한 금액 그대로(원). 환불은 이 값을 자기 금액과 비교한다
- * @param reason 거절 사유. {@code PAYMENT_NOT_FOUND}(결제 기록 없음), {@code REFUND_TOTAL_EXCEEDED}(반환 합계가 결제 금액 초과)
+ * @param reason 거절 사유. {@code PAYMENT_NOT_FOUND}(결제 기록 없음), {@code REFUND_TOTAL_EXCEEDED}(반환 합계가 결제 금액 초과),
+ *               {@code REFUND_REVERTED}(환불이 되돌리기를 요청한 환불)
  */
 public record WalletRefundFailedMessage(
         Long refundId,

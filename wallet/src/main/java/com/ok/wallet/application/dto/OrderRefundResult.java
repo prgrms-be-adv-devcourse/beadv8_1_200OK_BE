@@ -31,6 +31,15 @@ public record OrderRefundResult(
                 refund.getStatus(), refund.getFailureReason(), true);
     }
 
+    /**
+     * 돌려준 뒤 되돌리기로 다시 가져온 환불에 같은 반환 요청이 다시 온 결과를 만든다.
+     * 처음 결과(돌려줌)를 그대로 보내면 환불은 돈이 구매자에게 있다고 보게 되어, 되돌렸다는 거절로 답한다.
+     */
+    public static OrderRefundResult revertedAfterRefund(WalletOrderRefund refund) {
+        return new OrderRefundResult(refund.getRefundId(), refund.getOrderId(), refund.getBuyerId(), refund.getAmount(),
+                WalletOrderRefundStatus.FAILED, WalletOrderRefundFailureReason.REFUND_REVERTED, true);
+    }
+
     public boolean completed() {
         return status == WalletOrderRefundStatus.COMPLETED;
     }

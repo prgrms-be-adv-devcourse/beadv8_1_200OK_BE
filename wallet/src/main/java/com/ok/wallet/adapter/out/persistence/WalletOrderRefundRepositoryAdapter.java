@@ -2,12 +2,16 @@ package com.ok.wallet.adapter.out.persistence;
 
 import com.ok.wallet.application.port.out.WalletOrderRefundRepository;
 import com.ok.wallet.domain.WalletOrderRefund;
+import com.ok.wallet.domain.WalletOrderRefundRevert;
+import com.ok.wallet.domain.WalletOrderRefundRevertStatus;
 import com.ok.wallet.domain.WalletOrderRefundStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 출력 포트 {@link WalletOrderRefundRepository}를 {@link WalletOrderRefundJpaRepository}에 넘겨 구현한다.
@@ -17,6 +21,7 @@ import java.util.Optional;
 public class WalletOrderRefundRepositoryAdapter implements WalletOrderRefundRepository {
 
     private final WalletOrderRefundJpaRepository walletOrderRefundJpaRepository;
+    private final WalletOrderRefundRevertJpaRepository walletOrderRefundRevertJpaRepository;
 
     @Override
     public int insertIfAbsent(Long refundId, Long orderId, Long buyerId, long amount, String status,
@@ -37,8 +42,13 @@ public class WalletOrderRefundRepositoryAdapter implements WalletOrderRefundRepo
 
     @Override
     public long sumCompletedAmountForShareByOrderId(Long orderId) {
+        Set<Long> revertedRefundIds = walletOrderRefundRevertJpaRepository
+                .findForShareByOrderIdAndStatus(orderId, WalletOrderRefundRevertStatus.REVERTED).stream()
+                .map(WalletOrderRefundRevert::getRefundId)
+                .collect(Collectors.toSet());
         return walletOrderRefundJpaRepository
                 .findForShareByOrderIdAndStatus(orderId, WalletOrderRefundStatus.COMPLETED).stream()
+                .filter(refund -> !revertedRefundIds.contains(refund.getRefundId()))
                 .mapToLong(WalletOrderRefund::getAmount)
                 .sum();
     }

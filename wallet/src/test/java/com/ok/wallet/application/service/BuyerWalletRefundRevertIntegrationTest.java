@@ -225,6 +225,72 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
         });
     }
 
+    @Test
+    void 돌려준_뒤_되돌린_환불에_같은_반환_요청이_다시_오면_돈을_주지_않고_되돌린_환불로_거절한다() {
+        // given
+        refundedOrder(1L, 7_000);
+        buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
+
+        // when
+        OrderRefundResult sut = buyerWalletService.refundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
+
+        // then: 처음 결과(돌려줌)를 다시 보내면 환불은 돈이 구매자에게 있다고 본다
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.status()).isEqualTo(WalletOrderRefundStatus.FAILED);
+            softly.assertThat(sut.failureReason()).isEqualTo(WalletOrderRefundFailureReason.REFUND_REVERTED);
+            softly.assertThat(sut.amount()).isEqualTo(7_000);
+            softly.assertThat(sut.alreadyProcessed()).isTrue();
+            softly.assertThat(balanceOf(BUYER_ID)).isEqualTo(15_000);
+            softly.assertThat(refundRecord(1L)).isEqualTo("COMPLETED|");
+        });
+    }
+
+    @Test
+    void 되돌리기에_실패한_환불에_같은_반환_요청이_다시_오면_처음_결과를_돌려준다() {
+        // given: 잔액 부족으로 되돌리지 못해 돈은 아직 구매자에게 있음
+        refundedOrder(1L, 7_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000);
+        buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
+
+        // when
+        OrderRefundResult sut = buyerWalletService.refundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
+
+        // then
+        assertThat(sut.status()).isEqualTo(WalletOrderRefundStatus.COMPLETED);
+        assertThat(balanceOf(BUYER_ID)).isEqualTo(2_000);
+    }
+
+    @Test
+    void 다시_가져온_뒤_같은_주문의_새_환불은_합계_초과_없이_돌려준다() {
+        // given: 결제 금액 35,000원을 모두 돌려준 뒤 되돌림
+        refundedOrder(1L, 35_000);
+        buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 35_000);
+
+        // when: 같은 상품을 새 환불로 다시 돌려줌
+        OrderRefundResult sut = buyerWalletService.refundForOrder(2L, ORDER_ID, BUYER_ID, 35_000);
+
+        // then
+        assertThat(sut.status()).isEqualTo(WalletOrderRefundStatus.COMPLETED);
+        assertThat(balanceOf(BUYER_ID)).isEqualTo(50_000);
+    }
+
+    @Test
+    void 되돌리지_못한_환불은_반환_합계에_그대로_센다() {
+        // given: 35,000원을 모두 돌려줬는데 구매자가 써서 되돌리지 못함
+        refundedOrder(1L, 35_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 40_000);
+        buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 35_000);
+
+        // when
+        OrderRefundResult sut = buyerWalletService.refundForOrder(2L, ORDER_ID, BUYER_ID, 1_000);
+
+        // then: 돈이 구매자에게 남아 있으므로 더 돌려주면 결제 금액을 넘는다
+        assertThat(sut.status()).isEqualTo(WalletOrderRefundStatus.FAILED);
+        assertThat(sut.failureReason()).isEqualTo(WalletOrderRefundFailureReason.REFUND_TOTAL_EXCEEDED);
+        assertThat(balanceOf(BUYER_ID)).isEqualTo(10_000);
+    }
+
     @ParameterizedTest
     @MethodSource("잘못된_되돌리기_요청")
     void 값이_잘못된_요청은_기록하지_않고_예외가_난다(Long refundId, Long orderId, Long memberId, long amount,
@@ -314,6 +380,35 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
         // then: 되돌리기 -5,000, 반환 +5,000, 충전 +5,000, 결제 -5,000. 원장 이어짐과 짝은 정리 단계의 검사가 확인한다
         assertThat(balanceOf(BUYER_ID)).isEqualTo(20_000);
         assertThat(countLedgersByType("REFUND_REVERT")).isEqualTo(5);
+    }
+
+    @Test
+    void 같은_주문의_되돌리기와_새_환불이_동시에_와도_결제_금액보다_많이_돌려주지_않는다() throws Exception {
+        // given: 35,000원 결제한 주문에 10,000원씩 세 번 돌려줌
+        paidOrder();
+        for (long refundId = 1; refundId <= 3; refundId++) {
+            buyerWalletService.refundForOrder(refundId, ORDER_ID, BUYER_ID, 10_000);
+        }
+        List<Callable<Object>> requests = new ArrayList<>();
+        for (long refundId = 1; refundId <= 3; refundId++) {
+            long id = refundId;
+            requests.add(() -> buyerWalletService.revertRefundForOrder(id, ORDER_ID, BUYER_ID, 10_000));
+        }
+        for (long refundId = 4; refundId <= 8; refundId++) {
+            long id = refundId;
+            requests.add(() -> buyerWalletService.refundForOrder(id, ORDER_ID, BUYER_ID, 10_000));
+        }
+
+        // when
+        runConcurrently(requests);
+
+        // then: 어느 순서로 처리되든 다시 가져오지 않은 반환의 합은 결제 금액 이하다
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COALESCE(SUM(r.amount), 0) FROM wallet_order_refund r
+                WHERE r.order_id = ? AND r.status = 'COMPLETED'
+                  AND NOT EXISTS (SELECT 1 FROM wallet_order_refund_revert v
+                                  WHERE v.refund_id = r.refund_id AND v.status = 'REVERTED')
+                """, Long.class, ORDER_ID)).isLessThanOrEqualTo(35_000L);
     }
 
     // 50,000원을 충전하고 35,000원을 결제한다 → 잔액 15,000원
