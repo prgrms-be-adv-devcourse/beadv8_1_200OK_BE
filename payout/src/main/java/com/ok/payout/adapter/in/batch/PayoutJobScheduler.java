@@ -15,8 +15,10 @@ public class PayoutJobScheduler {
 
     private final PayoutJobRunner payoutJobRunner;
 
-    // 매일 새벽 2시(한국 시간) 정산 Job 실행. 결과 상태를 로그로 남김 (실패 원인은 Spring Batch가 로그로 남김, 알림은 #52)
-    @Scheduled(cron = "0 0 2 * * *", zone = "Asia/Seoul")
+    // 매일 오전 11시(한국 시간) 정산 Job 실행. 결과 상태를 로그로 남김 (실패 원인은 Spring Batch가 로그로 남김, 알림은 #52)
+    // 배포 서버가 9~18시에만 켜져 새벽 2시에서 옮김. 켜진 직후는 피하고 대사(12:00)보다 앞서도록 11시로 정함 (#650)
+    // 정산 범위는 실행 날짜로 정해서(PayoutJobRunner) 같은 날 안에서 시각을 옮겨도 정산되는 후보는 같음
+    @Scheduled(cron = "0 0 11 * * *", zone = "Asia/Seoul")
     public void runDaily() throws Exception {
         JobExecution execution;
         try {

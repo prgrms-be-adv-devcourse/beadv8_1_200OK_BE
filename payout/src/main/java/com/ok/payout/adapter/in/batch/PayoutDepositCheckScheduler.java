@@ -33,8 +33,8 @@ public class PayoutDepositCheckScheduler {
     private final LockingTaskExecutor lockingTaskExecutor;
     private final Clock clock;
 
-    // 실행 시각은 설정 값으로 둠. 기본 12:00은 지갑과 합의한 시각(PR #548 문서 4-1절)이고, 정산이 02:00에 끝난다는 전제로 정함
-    // 정산 Job 시각을 배포 서버가 켜진 시간으로 옮기면(#308 11/15 댓글 2-2) 코드를 고치지 않고 이 값을 정산이 끝난 뒤로 바꿈
+    // 실행 시각은 설정 값으로 둠. 기본 12:00은 지갑과 합의한 시각(PR #548 문서 4-1절)
+    // 정산 Job이 11:00에 시작해 12:00 전에 끝난다는 전제로 그대로 둠 (#650). 정산이 더 오래 걸리면 끝나지 않은 정산은 다음 날 물음
     @Scheduled(cron = "${payout.deposit-check.cron:0 0 12 * * *}", zone = "Asia/Seoul")
     public void runDaily() {
         LockConfiguration lockConfig = new LockConfiguration(clock.instant(), LOCK_NAME, LOCK_AT_MOST_FOR, LOCK_AT_LEAST_FOR);

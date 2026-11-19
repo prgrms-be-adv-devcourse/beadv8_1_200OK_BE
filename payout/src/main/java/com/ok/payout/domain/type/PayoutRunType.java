@@ -5,7 +5,7 @@ package com.ok.payout.domain.type;
 // 배치 입구가 domain 중 PayoutPolicy와 이 패키지만 알 수 있게 하려는 것이다. 웹·이벤트 입구는 이 패키지도 쓰지 않는다.
 public enum PayoutRunType {
 
-    // 새벽 2시 정기 스케줄러가 시작한 실행
+    // 정기 스케줄러가 시작한 실행
     SCHEDULED,
 
     // 관리자 실행 API가 시작한 실행
