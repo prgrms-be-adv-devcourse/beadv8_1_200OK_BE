@@ -244,6 +244,22 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 다른_구매자가_결제한_주문이면_주문_요약을_붙이지_않는다() throws Exception {
+        // Given: 반환 기록은 내 것인데 결제 기록의 구매자가 다르다. 반환 규칙상 생기지 않지만 데이터가 어긋난 경우를 가정한다
+        Long walletId = createWallet(MEMBER_ID);
+        insertPaymentRecord(1001L, OTHER_MEMBER_ID, 10_000, "남의 상품 외 1건");
+        insertRefundRecord(REFUND_ID, 1001L, 3_000);
+        insertLedger(walletId, "REFUND", 3_000, 3_000, "REFUND:" + REFUND_ID, at(11, 12));
+
+        // When & Then
+        mockMvc.perform(get(LEDGERS_URL).header(HttpHeaders.AUTHORIZATION, bearer(MEMBER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].orderId").value(1001))
+                .andExpect(jsonPath("$.content[0].orderSummary").value(nullValue()));
+    }
+
+    @Test
     void 환불_반환_유형으로_조회하면_반환_내역만_응답한다() throws Exception {
         // Given
         Long walletId = createWallet(MEMBER_ID);
@@ -345,18 +361,22 @@ class WalletLedgerApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     private void insertPaymentRecord(Long orderId, long amount, String orderSummary) {
+        insertPaymentRecord(orderId, MEMBER_ID, amount, orderSummary);
+    }
+
+    private void insertPaymentRecord(Long orderId, Long buyerId, long amount, String orderSummary) {
         LocalDateTime now = at(10, 12);
         jdbcTemplate.update("""
                 INSERT INTO wallet_order_payment
                     (order_id, buyer_id, amount, order_summary, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'PAID', ?, ?)
-                """, orderId, MEMBER_ID, amount, orderSummary, now, now);
+                """, orderId, buyerId, amount, orderSummary, now, now);
     }
 
     // FK 때문에 원장을 지갑보다 먼저 지운다. 이 클래스의 회원 데이터만 지운다.
     private void cleanUp() {
         jdbcTemplate.update("DELETE FROM wallet_order_refund WHERE buyer_id = ?", MEMBER_ID);
-        jdbcTemplate.update("DELETE FROM wallet_order_payment WHERE buyer_id = ?", MEMBER_ID);
+        jdbcTemplate.update("DELETE FROM wallet_order_payment WHERE buyer_id IN (?, ?)", MEMBER_ID, OTHER_MEMBER_ID);
         for (Long memberId : List.of(MEMBER_ID, OTHER_MEMBER_ID)) {
             jdbcTemplate.update("""
                     DELETE l FROM buyer_wallet_ledger l

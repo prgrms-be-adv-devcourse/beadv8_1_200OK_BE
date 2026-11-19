@@ -57,13 +57,13 @@ public class WalletLedgerService implements WalletLedgerUseCase {
         Pageable pageable = PageRequest.of(query.page(), query.size());
 
         return buyerWalletRepository.findByMemberId(query.memberId())
-                .map(wallet -> toResults(ledgerQueryRepository.findHistory(
+                .map(wallet -> toResults(query.memberId(), ledgerQueryRepository.findHistory(
                         wallet.getId(), startOf(query.from()), endOf(query.to()), types, pageable)))
                 .orElseGet(() -> Page.empty(pageable));
     }
 
     // 근거 키는 원장마다 하나뿐이라, 줄별 주문 ID를 근거 키로 모아 두고 주문 요약을 붙인다
-    private Page<LedgerHistoryResult> toResults(Page<BuyerWalletLedger> ledgers) {
+    private Page<LedgerHistoryResult> toResults(Long memberId, Page<BuyerWalletLedger> ledgers) {
         Map<String, Long> refundOrderIdByKey = orderIdsOfRefunds(ledgers.getContent());
         Map<String, Long> orderIdByKey = new HashMap<>();
         for (BuyerWalletLedger ledger : ledgers.getContent()) {
@@ -72,7 +72,7 @@ public class WalletLedgerService implements WalletLedgerUseCase {
                 orderIdByKey.put(ledger.getReferenceKey(), orderId);
             }
         }
-        Map<Long, String> summaryByOrderId = orderSummariesOf(orderIdByKey.values());
+        Map<Long, String> summaryByOrderId = orderSummariesOf(memberId, orderIdByKey.values());
         return ledgers.map(ledger -> {
             Long orderId = orderIdByKey.get(ledger.getReferenceKey());
             return toResult(ledger, orderId, orderId == null ? null : summaryByOrderId.get(orderId));
@@ -80,13 +80,20 @@ public class WalletLedgerService implements WalletLedgerUseCase {
     }
 
     // 주문 요약은 결제 처리 기록에만 있어, 반환·되돌리기 줄도 주문 ID로 같은 기록을 찾는다. 한 페이지 분을 한 번에 읽는다.
-    // 요약 칸이 생기기 전 결제는 요약이 없어 빠진다
-    private Map<Long, String> orderSummariesOf(Collection<Long> orderIds) {
+    // 요약 칸이 생기기 전 결제는 요약이 없어 빠진다.
+    // 지갑 주인이 결제한 주문의 요약만 붙인다. 반환은 결제한 구매자에게만 돌려주므로(refundForOrder) 지금은 늘 같지만,
+    // 그 규칙에 기대면 규칙이 바뀌거나 데이터가 어긋났을 때 다른 사람의 상품 이름이 보인다
+    private Map<Long, String> orderSummariesOf(Long memberId, Collection<Long> orderIds) {
         if (orderIds.isEmpty()) {
             return Map.of();
         }
         Map<Long, String> summaryByOrderId = new HashMap<>();
         for (WalletOrderPayment payment : walletOrderPaymentRepository.findAllByOrderIdIn(Set.copyOf(orderIds))) {
+            if (!payment.getBuyerId().equals(memberId)) {
+                log.warn("[LEDGER_ORDER_BUYER_MISMATCH] 이용 내역의 주문을 다른 구매자가 결제했습니다. 요약을 붙이지 않습니다. "
+                        + "orderId={}, memberId={}, paymentBuyerId={}", payment.getOrderId(), memberId, payment.getBuyerId());
+                continue;
+            }
             if (payment.getOrderSummary() != null) {
                 summaryByOrderId.put(payment.getOrderId(), payment.getOrderSummary());
             }

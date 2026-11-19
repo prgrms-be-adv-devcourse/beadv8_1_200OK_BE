@@ -40,4 +40,5 @@ related: [34, 611, 614, 680, 32]
 
 - 줄과 주문 번호는 근거 키로 짝짓는다. 한 환불의 반환(`REFUND:{refundId}`)과 되돌리기(`REFUND_REVERT:{refundId}`)는 환불 ID가 같아, 환불 ID로 짝지으면 같은 페이지에서 한쪽이 덮인다. 원장 근거 키가 전체에서 하나뿐이라는 전제(유니크 제약)에 기댄다.
 - 원장 유형을 새로 만들면 `WalletLedgerService`의 보여 주는 유형, API 문서(`LedgerHistoryRequest`·`LedgerHistoryResponse`), 잔액 검사 SQL을 함께 정한다. switch 문이 유형을 모두 다뤄 빠뜨리면 컴파일이 막힌다.
+- 주문 요약은 결제 처리 기록의 구매자가 지갑 주인과 같을 때만 붙인다. 지금은 반환이 결제한 구매자에게만 돌려줘(`BuyerWalletService.refundForOrder`) 늘 같지만, 그 규칙에 기대지 않으려는 확인이다(PR 리뷰 반영). 반환 규칙을 바꿔도 이 확인은 지우지 않는다.
 - 결제 처리 기록 넣기는 네이티브 SQL이라 칸을 더하면 `WalletOrderPaymentJpaRepository.insertIfAbsent`도 고친다. 만료로 먼저 남기는 기록은 요약을 넣지 않는다.
