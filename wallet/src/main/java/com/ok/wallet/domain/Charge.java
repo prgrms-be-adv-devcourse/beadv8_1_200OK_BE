@@ -136,26 +136,16 @@ public class Charge extends BaseTime {
     }
 
     /**
-     * 관리자가 토스 결제 취소를 요청한 것을 남긴다. 처리 중인 건만 남긴다.
-     * 이미 표시가 있으면 앞선 요청이 토스에서 아직 처리 중이거나 결과를 모르는 것이라 그대로 둔다.
-     *
-     * @return 이 요청이 표시를 새로 남겼으면 true. 표시를 지울 수 있는 것은 이 요청뿐이다
+     * 관리자가 토스 결제 취소를 요청한 것을 남긴다. 처리 중인 건만 남기고, 이미 있으면 처음 요청한 시각을 둔다.
+     * 표시는 취소가 기록되면 끝나고 코드로 지우지 않는다. 거절을 받은 요청은 다른 요청의 취소가 토스에서
+     * 아직 진행 중인지 알 수 없어서, 지우면 그 사이 잔액이 반영돼 환불과 함께 일어날 수 있다.
      */
-    public boolean requestPaymentCancel(LocalDateTime requestedAt) {
+    public void requestPaymentCancel(LocalDateTime requestedAt) {
         if (status != ChargeStatus.IN_PROGRESS) {
             throw new IllegalStateException("처리 중인 충전 건만 결제 취소를 요청할 수 있습니다. chargeNo=" + chargeNo + ", status=" + status);
         }
-        if (paymentCancelRequestedAt != null) {
-            return false;
-        }
-        paymentCancelRequestedAt = requestedAt;
-        return true;
-    }
-
-    /** 토스가 취소를 거절해 취소 요청 표시를 지운다. 표시를 새로 남긴 요청만 부른다. */
-    public void clearPaymentCancelRequest() {
-        if (status == ChargeStatus.IN_PROGRESS) {
-            paymentCancelRequestedAt = null;
+        if (paymentCancelRequestedAt == null) {
+            paymentCancelRequestedAt = requestedAt;
         }
     }
 

@@ -113,11 +113,13 @@ public class ChargeAdminService implements ChargeAdminUseCase {
         }
         // 처리 중 건은 토스를 부르기 전에 잠그고 취소 요청을 남긴다. 토스 취소를 기다리는 사이 다른 관리자의 반영이나
         // 늦게 온 승인 응답이 완료하면 환불과 잔액 증가가 함께 일어나므로, 표시가 있는 건은 완료·실패로 바꾸지 않는다
-        boolean ownsCancelRequest = charge.isHeldForReview() && chargeTransaction.requestPaymentCancel(chargeNo);
+        if (charge.isHeldForReview()) {
+            chargeTransaction.requestPaymentCancel(chargeNo);
+        }
         TossCancelResult cancel = cancel(found.paymentKey(), chargeNo, reason);
         return switch (cancel) {
             case TossCancelResult.Canceled canceled -> recordPaymentCanceled(adminId, chargeNo, reason);
-            case TossCancelResult.Rejected rejected -> handleRejected(adminId, chargeNo, reason, ownsCancelRequest, rejected);
+            case TossCancelResult.Rejected rejected -> handleRejected(adminId, chargeNo, reason, rejected);
             // 응답만으로는 취소됐는지 확실하지 않아, 토스에 다시 물어 전액 취소된 것을 확인한 뒤에만 기록한다.
             // 확인하지 못하면 환불됐을 수도 있어 표시를 남겨 두고, 결제 취소만 다시 할 수 있게 한다
             case TossCancelResult.AlreadyCanceled alreadyCanceled -> recordIfCanceled(adminId, chargeNo, reason);
@@ -135,30 +137,14 @@ public class ChargeAdminService implements ChargeAdminUseCase {
         }
     }
 
-    // 거절은 이번 요청이 취소되지 않았다는 뜻일 뿐이다. 앞서 결과를 모른 취소가 토스에서 늦게 끝났을 수 있어 다시 묻고,
-    // 취소됐으면 기록한다. 표시는 이 요청이 새로 남겼고 토스가 승인 상태 그대로일 때만 지운다.
-    // 앞선 요청의 표시는 그 요청이 토스에서 아직 처리 중일 수 있어(조회에는 승인 상태로 보일 수 있음) 지우지 않는다
-    private ChargeAdminResult handleRejected(
-            Long adminId, String chargeNo, String reason, boolean ownsCancelRequest, TossCancelResult.Rejected rejected) {
-        if (lookup(chargeNo) instanceof TossPaymentLookupResult.Found found) {
-            if (found.status() == TossPaymentStatus.CANCELED) {
-                return recordPaymentCanceled(adminId, chargeNo, reason);
-            }
-            if (found.status() == TossPaymentStatus.DONE && ownsCancelRequest) {
-                releaseCancelRequest(chargeNo);
-            }
+    // 거절은 이번 요청이 취소되지 않았다는 뜻일 뿐이다. 앞서 결과를 모른 취소나 다른 관리자의 취소가 토스에서 끝났을 수 있어
+    // 다시 묻고, 취소됐으면 기록한다. 취소 요청 표시는 남긴다(지우는 절차는 개발 문서의 충전 관리자 처리)
+    private ChargeAdminResult handleRejected(Long adminId, String chargeNo, String reason, TossCancelResult.Rejected rejected) {
+        if (lookup(chargeNo) instanceof TossPaymentLookupResult.Found found && found.status() == TossPaymentStatus.CANCELED) {
+            return recordPaymentCanceled(adminId, chargeNo, reason);
         }
         throw new RestApiException(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED,
                 "토스가 결제 취소를 거절했습니다. code=" + rejected.code() + ", message=" + rejected.message());
-    }
-
-    // 표시를 지우지 못해도 관리자에게는 토스의 거절 이유를 알린다. 남은 표시는 개발 문서의 절차대로 사람이 지운다
-    private void releaseCancelRequest(String chargeNo) {
-        try {
-            chargeTransaction.clearPaymentCancelRequest(chargeNo);
-        } catch (RuntimeException e) {
-            log.warn("토스가 결제 취소를 거절했지만 취소 요청 표시를 지우지 못했습니다. chargeNo={}", chargeNo, e);
-        }
     }
 
     private ChargeAdminResult recordIfCanceled(Long adminId, String chargeNo, String reason) {

@@ -184,25 +184,17 @@ class ChargeTransactionService {
      * 관리자가 토스 결제 취소를 요청한 것을 남긴다. 토스를 부르기 전에 충전 건을 잠그고 남기므로,
      * 같은 건의 잔액 반영과 겹쳐도 한쪽만 된다.
      *
-     * @return 이 요청이 표시를 새로 남겼으면 true, 앞선 요청의 표시가 이미 있으면 false
      * @throws RestApiException 그 사이 처리 중이 아니게 됐으면 {@code CHARGE_NOT_ADMIN_HANDLEABLE}
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public boolean requestPaymentCancel(String chargeNo) {
+    public void requestPaymentCancel(String chargeNo) {
         Charge charge = chargeRepository.findForUpdateByChargeNo(chargeNo)
                 .orElseThrow(() -> new RestApiException(WalletErrorCode.CHARGE_NOT_FOUND));
         if (charge.getStatus() != ChargeStatus.IN_PROGRESS) {
             throw new RestApiException(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE,
                     "처리하는 사이 충전 건 상태가 바뀌었습니다. 현재 상태: " + charge.getStatus());
         }
-        return charge.requestPaymentCancel(LocalDateTime.now(clock));
-    }
-
-    /** 토스가 결제 취소를 거절해 취소 요청 표시를 지운다. 잔액 반영이나 실패 처리를 다시 고를 수 있게 된다. */
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public void clearPaymentCancelRequest(String chargeNo) {
-        chargeRepository.findForUpdateByChargeNo(chargeNo)
-                .ifPresent(Charge::clearPaymentCancelRequest);
+        charge.requestPaymentCancel(LocalDateTime.now(clock));
     }
 
     /**

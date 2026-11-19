@@ -26,6 +26,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -405,14 +411,23 @@ class ChargeAdminServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 토스가_취소를_거절한_건은_다시_반영할_수_있다() {
+    void 토스가_취소를_거절한_건은_사람이_표시를_지워야_다시_반영할_수_있다() {
         // given
         String chargeNo = heldCharge(PAYMENT_KEY);
         givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
         given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString()))
                 .willReturn(new TossCancelResult.Rejected("EXCEED_MAX_REFUND_DUE", "환불 가능한 기간이 지났습니다."));
         assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
-                .isInstanceOf(RestApiException.class);
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED));
+        assertThatThrownBy(() -> chargeAdminService.complete(ADMIN_ID, chargeNo))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
+        // 개발 문서의 절차: 토스에서 승인 상태이고 진행 중인 취소가 없음을 확인한 뒤 표시를 지운다
+        jdbcTemplate.update("""
+                UPDATE wallet_charge SET payment_cancel_requested_at = NULL
+                WHERE charge_no = ? AND status = 'IN_PROGRESS'
+                """, chargeNo);
 
         // when
         ChargeAdminResult sut = chargeAdminService.complete(ADMIN_ID, chargeNo);
@@ -487,6 +502,50 @@ class ChargeAdminServiceIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> chargeAdminService.complete(OTHER_ADMIN_ID, chargeNo))
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_NOT_ADMIN_HANDLEABLE));
+    }
+
+    @Test
+    void 두_관리자가_동시에_취소해_한쪽이_거절돼도_다른_쪽_취소가_진행_중이면_잔액에_반영하지_않는다() throws Exception {
+        // given: 관리자 B의 토스 취소가 진행 중인 사이 관리자 A의 취소가 거절되고 늦은 승인 응답이 들어온 뒤, B의 취소가 성공한다
+        String chargeNo = heldCharge(PAYMENT_KEY);
+        givenLookup(chargeNo, found(PAYMENT_KEY, TossPaymentStatus.DONE, AMOUNT));
+        ExecutorService otherAdmin = Executors.newSingleThreadExecutor();
+        CountDownLatch otherCancelSent = new CountDownLatch(1);
+        CountDownLatch otherCancelMayFinish = new CountDownLatch(1);
+        AtomicReference<Future<ChargeAdminResult>> otherCancel = new AtomicReference<>();
+        AtomicInteger cancelCalls = new AtomicInteger();
+        given(tossPaymentsClient.cancel(anyString(), anyString(), anyString(), anyString())).willAnswer(invocation -> {
+            if (cancelCalls.incrementAndGet() == 1) {
+                otherCancel.set(otherAdmin.submit(() -> chargeAdminService.cancelPayment(OTHER_ADMIN_ID, chargeNo, REASON)));
+                assertThat(otherCancelSent.await(10, TimeUnit.SECONDS)).isTrue();
+                return new TossCancelResult.Rejected("NOT_CANCELABLE_PAYMENT", "취소 할 수 없는 결제 입니다.");
+            }
+            otherCancelSent.countDown();
+            assertThat(otherCancelMayFinish.await(10, TimeUnit.SECONDS)).isTrue();
+            return new TossCancelResult.Canceled();
+        });
+
+        try {
+            // when
+            assertThatThrownBy(() -> chargeAdminService.cancelPayment(ADMIN_ID, chargeNo, REASON))
+                    .isInstanceOfSatisfying(RestApiException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.CHARGE_PAYMENT_CANCEL_REJECTED));
+            String lateApprovalStatus = chargeTransaction.complete(MEMBER_ID, chargeNo, PAYMENT_KEY).status();
+            otherCancelMayFinish.countDown();
+            ChargeAdminResult sut = otherCancel.get().get(10, TimeUnit.SECONDS);
+
+            // then
+            assertThat(sut).isNotNull();
+            assertSoftly(softly -> {
+                softly.assertThat(lateApprovalStatus).isEqualTo("IN_PROGRESS");
+                softly.assertThat(sut.status()).isEqualTo("FAILED");
+                softly.assertThat(sut.paymentCanceledAt()).isNotNull();
+                softly.assertThat(balanceOrZero(MEMBER_ID)).isZero();
+            });
+        } finally {
+            otherCancelMayFinish.countDown();
+            otherAdmin.shutdownNow();
+        }
     }
 
     @Test
