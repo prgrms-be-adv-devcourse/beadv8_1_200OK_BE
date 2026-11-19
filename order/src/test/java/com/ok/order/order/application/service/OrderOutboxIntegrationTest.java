@@ -8,6 +8,7 @@ import com.ok.order.order.domain.OrderOutboxStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.OrderKafkaTestConfiguration;
 import com.ok.testsupport.OrderKafkaTopicReader;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,9 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     KafkaConnectionDetails kafkaConnectionDetails;
+
+    @Autowired
+    MeterRegistry meterRegistry;
 
     @Autowired
     @Qualifier(OrderOutboxRelayFacade.RELAY_EXECUTOR)
@@ -204,8 +208,9 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
     // 커밋 직후 콜백은 DB 커넥션을 돌려주기 전이라, 대기열 자리를 기다리면 커넥션을 쥔 채 멈춘다(#715, 2차 부하테스트).
     // 전용 실행기의 스레드를 막고 대기열을 가득 채운 뒤 남겨, 기다리지 않고 끝나는지와 줄이 재발송으로 나가는지 본다
     @Test
-    void 커밋_직후_발송_대기열이_가득_차도_기다리지_않고_끝나고_줄은_재발송이_보낸다() throws Exception {
+    void 커밋_직후_발송_대기열이_가득_차도_기다리지_않고_끝나고_거절을_세며_줄은_재발송이_보낸다() throws Exception {
         // given: 스레드를 모두 막고 대기열을 빈 작업으로 채운다
+        double rejectedBefore = rejectedCount();
         CountDownLatch release = new CountDownLatch(1);
         ThreadPoolExecutor pool = relayExecutor.getThreadPoolExecutor();
         try {
@@ -221,8 +226,11 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
                     status -> sut.record(TOPIC, key, "{\"orderId\":13}")));
             commit.get(5, TimeUnit.SECONDS);
 
-            // then: 바로 보내지 못하고 PENDING으로 남는다
-            assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.PENDING);
+            // then: 바로 보내지 못하고 PENDING으로 남고, 거절한 건수를 센다
+            assertSoftly(softly -> {
+                softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.PENDING);
+                softly.assertThat(rejectedCount() - rejectedBefore).isEqualTo(1.0);
+            });
         } finally {
             release.countDown();
         }
@@ -233,6 +241,13 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(reader.readValuesFor(key, READ_DURATION)).containsExactly("{\"orderId\":13}");
             softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.SENT);
         });
+    }
+
+    private double rejectedCount() {
+        return meterRegistry.get(OrderOutboxRelayFacade.SEND_DROPPED_METRIC)
+                .tag("reason", OrderOutboxRelayFacade.DROP_REASON_REJECTED)
+                .counter()
+                .count();
     }
 
     private static void awaitQuietly(CountDownLatch latch) {

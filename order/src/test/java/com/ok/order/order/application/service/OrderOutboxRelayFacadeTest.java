@@ -2,16 +2,23 @@ package com.ok.order.order.application.service;
 
 import com.ok.order.order.application.dto.OrderOutboxMessage;
 import com.ok.order.order.application.port.out.OrderMessageSender;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -29,6 +36,7 @@ class OrderOutboxRelayFacadeTest {
 
     private static final String TOPIC = "order.test.v1";
     private static final Duration MIN_AGE = Duration.ofSeconds(10);
+    private static final Instant NOW = Instant.parse("2026-11-20T01:00:00Z");
 
     @Mock
     OrderOutboxService orderOutboxService;
@@ -36,8 +44,14 @@ class OrderOutboxRelayFacadeTest {
     @Mock
     OrderMessageSender orderMessageSender;
 
-    @InjectMocks
-    OrderOutboxRelayFacade sut;
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private OrderOutboxRelayFacade sut;
+
+    @BeforeEach
+    void setUp() {
+        sut = new OrderOutboxRelayFacade(orderOutboxService, orderMessageSender, Clock.fixed(NOW, ZoneOffset.UTC), MIN_AGE,
+                meterRegistry);
+    }
 
     private static OrderOutboxMessage message(long id, String key) {
         return new OrderOutboxMessage(id, TOPIC, key, "{\"id\":" + id + "}", 0);
@@ -102,11 +116,46 @@ class OrderOutboxRelayFacadeTest {
         given(orderOutboxService.findPendingById(1L)).willReturn(Optional.of(message(1L, "10")));
 
         // when
-        sut.relayAfterCommit(1L);
+        sut.relayAfterCommit(1L, NOW);
 
         // then
         then(orderMessageSender).should().send(TOPIC, "10", "{\"id\":1}");
         then(orderOutboxService).should().markSent(1L);
+    }
+
+    @ParameterizedTest
+    @MethodSource("min_age보다_짧게_기다린_시간")
+    void 대기열에서_min_age보다_짧게_기다렸으면_보낸다(Duration waited) {
+        // given
+        given(orderOutboxService.findPendingById(1L)).willReturn(Optional.of(message(1L, "10")));
+
+        // when
+        sut.relayAfterCommit(1L, NOW.minus(waited));
+
+        // then
+        then(orderMessageSender).should().send(TOPIC, "10", "{\"id\":1}");
+        assertThat(staleCount()).isZero();
+    }
+
+    static Stream<Duration> min_age보다_짧게_기다린_시간() {
+        return Stream.of(Duration.ZERO, Duration.ofMillis(9_999));
+    }
+
+    // 재발송은 min-age가 지난 줄을 집으므로, 그보다 오래 기다린 작업이 보내면 재발송과 겹쳐 받는 쪽이 중복을 받는다(#794)
+    @ParameterizedTest
+    @MethodSource("min_age_이상_기다린_시간")
+    void 대기열에서_min_age_이상_기다렸으면_줄을_읽지_않고_재발송에_맡긴다(Duration waited) {
+        // when
+        sut.relayAfterCommit(1L, NOW.minus(waited));
+
+        // then: 줄을 읽지도 않는다(대기열이 밀렸을 때 커넥션을 쓰지 않음)
+        then(orderOutboxService).shouldHaveNoInteractions();
+        then(orderMessageSender).shouldHaveNoInteractions();
+        assertThat(staleCount()).isEqualTo(1.0);
+    }
+
+    static Stream<Duration> min_age_이상_기다린_시간() {
+        return Stream.of(MIN_AGE, Duration.ofSeconds(17));
     }
 
     @Test
@@ -115,7 +164,7 @@ class OrderOutboxRelayFacadeTest {
         given(orderOutboxService.findPendingById(1L)).willReturn(Optional.empty());
 
         // when
-        sut.relayAfterCommit(1L);
+        sut.relayAfterCommit(1L, NOW);
 
         // then
         then(orderMessageSender).should(never()).send(anyString(), anyString(), anyString());
@@ -128,7 +177,7 @@ class OrderOutboxRelayFacadeTest {
         willThrow(new IllegalStateException("브로커 거절")).given(orderMessageSender).send(TOPIC, "10", "{\"id\":1}");
 
         // when & then
-        assertThatCode(() -> sut.relayAfterCommit(1L)).doesNotThrowAnyException();
+        assertThatCode(() -> sut.relayAfterCommit(1L, NOW)).doesNotThrowAnyException();
         then(orderOutboxService).should().recordFailure(eq(1L), anyString());
         then(orderOutboxService).should(never()).markSent(anyLong());
     }
@@ -144,5 +193,12 @@ class OrderOutboxRelayFacadeTest {
 
         // then
         assertThat(sut).isEqualTo("IllegalStateException: 주문 Kafka 발행에 실패했습니다 / TimeoutException");
+    }
+
+    private double staleCount() {
+        return meterRegistry.get(OrderOutboxRelayFacade.SEND_DROPPED_METRIC)
+                .tag("reason", OrderOutboxRelayFacade.DROP_REASON_STALE)
+                .counter()
+                .count();
     }
 }
