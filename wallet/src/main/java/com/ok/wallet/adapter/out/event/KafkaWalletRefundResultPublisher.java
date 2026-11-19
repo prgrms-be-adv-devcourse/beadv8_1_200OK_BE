@@ -2,8 +2,11 @@ package com.ok.wallet.adapter.out.event;
 
 import com.ok.wallet.adapter.out.event.dto.WalletRefundCompletedMessage;
 import com.ok.wallet.adapter.out.event.dto.WalletRefundFailedMessage;
+import com.ok.wallet.adapter.out.event.dto.WalletRefundRevertFailedMessage;
+import com.ok.wallet.adapter.out.event.dto.WalletRefundRevertedMessage;
 import com.ok.wallet.application.port.out.WalletRefundResultPublisher;
 import com.ok.wallet.domain.WalletOrderRefundFailureReason;
+import com.ok.wallet.domain.WalletOrderRefundRevertFailureReason;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -29,7 +32,20 @@ class KafkaWalletRefundResultPublisher implements WalletRefundResultPublisher {
                 new WalletRefundFailedMessage(refundId, orderId, buyerId, amount, reason.name()));
     }
 
-    // 키를 orderId로 두면 같은 주문의 결과가 같은 파티션으로 가 보낸 순서대로 받는다. 받는 요청(refund.refund-approved.v1)의 키와 같다
+    @Override
+    public void publishRefundReverted(Long refundId, Long orderId, Long buyerId, long amount) {
+        send(WalletOutboundTopics.WALLET_REFUND_REVERTED, refundId, orderId,
+                new WalletRefundRevertedMessage(refundId, orderId, buyerId, amount));
+    }
+
+    @Override
+    public void publishRefundRevertFailed(Long refundId, Long orderId, Long buyerId, long amount,
+                                          WalletOrderRefundRevertFailureReason reason) {
+        send(WalletOutboundTopics.WALLET_REFUND_REVERT_FAILED, refundId, orderId,
+                new WalletRefundRevertFailedMessage(refundId, orderId, buyerId, amount, reason.name()));
+    }
+
+    // 키를 orderId로 두면 같은 주문의 결과가 같은 파티션으로 가 보낸 순서대로 받는다. 받는 요청(반환·되돌리기)의 키와 같다
     private void send(String topic, Long refundId, Long orderId, Object message) {
         walletKafkaSender.send(topic, String.valueOf(orderId), message,
                 "환불 반환 결과를 보내지 못했습니다. topic=" + topic + ", refundId=" + refundId);

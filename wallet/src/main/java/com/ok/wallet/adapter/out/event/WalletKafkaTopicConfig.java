@@ -23,6 +23,16 @@ class WalletKafkaTopicConfig {
         return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_FAILED).build();
     }
 
+    @Bean
+    NewTopic walletRefundRevertedTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_REVERTED).build();
+    }
+
+    @Bean
+    NewTopic walletRefundRevertFailedTopic() {
+        return TopicBuilder.name(WalletOutboundTopics.WALLET_REFUND_REVERT_FAILED).build();
+    }
+
     // 정산이 결제 완료를 받으려고 미리 만드는 빈 이름이 walletPaymentCompletedTopic이라 겹치지 않게 한 단어를 더한다
     @Bean
     NewTopic walletOutboundPaymentCompletedTopic() {

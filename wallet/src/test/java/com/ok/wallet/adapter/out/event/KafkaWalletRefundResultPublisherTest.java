@@ -1,7 +1,10 @@
 package com.ok.wallet.adapter.out.event;
 
 import com.ok.wallet.adapter.out.event.dto.WalletRefundFailedMessage;
+import com.ok.wallet.adapter.out.event.dto.WalletRefundRevertFailedMessage;
+import com.ok.wallet.adapter.out.event.dto.WalletRefundRevertedMessage;
 import com.ok.wallet.domain.WalletOrderRefundFailureReason;
+import com.ok.wallet.domain.WalletOrderRefundRevertFailureReason;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -116,6 +119,38 @@ class KafkaWalletRefundResultPublisherTest {
                 WalletOrderRefundFailureReason.PAYMENT_NOT_FOUND))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("환불 반환 결과를 보내지 못했습니다. topic=wallet.wallet-refund-failed.v1, refundId=7")
+                .hasCause(rejected);
+    }
+
+    @Test
+    void 다시_가져옴_결과를_보내지_못해도_토픽과_refundId를_담은_예외를_던진다() {
+        // given
+        KafkaException rejected = new KafkaException("브로커 거절");
+        given(kafkaTemplate.send(WalletOutboundTopics.WALLET_REFUND_REVERTED, "10",
+                new WalletRefundRevertedMessage(7L, 10L, 1L, 7_000)))
+                .willReturn(CompletableFuture.failedFuture(rejected));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishRefundReverted(7L, 10L, 1L, 7_000))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불 반환 결과를 보내지 못했습니다. topic=wallet.wallet-refund-reverted.v1, refundId=7")
+                .hasCause(rejected);
+    }
+
+    @Test
+    void 되돌리기_실패_결과를_보내지_못해도_토픽과_refundId를_담은_예외를_던진다() {
+        // given
+        KafkaException rejected = new KafkaException("브로커 거절");
+        given(kafkaTemplate.send(WalletOutboundTopics.WALLET_REFUND_REVERT_FAILED, "10",
+                new WalletRefundRevertFailedMessage(7L, 10L, 1L, 7_000,
+                        WalletOrderRefundRevertFailureReason.INSUFFICIENT_BALANCE.name())))
+                .willReturn(CompletableFuture.failedFuture(rejected));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishRefundRevertFailed(7L, 10L, 1L, 7_000,
+                WalletOrderRefundRevertFailureReason.INSUFFICIENT_BALANCE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("환불 반환 결과를 보내지 못했습니다. topic=wallet.wallet-refund-revert-failed.v1, refundId=7")
                 .hasCause(rejected);
     }
 

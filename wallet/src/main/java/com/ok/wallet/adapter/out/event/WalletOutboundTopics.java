@@ -9,6 +9,10 @@ public final class WalletOutboundTopics {
     public static final String WALLET_REFUND_COMPLETED = "wallet.wallet-refund-completed.v1";
     /** 지갑 → 환불: 예치금 반환을 거절함. 키는 orderId, 값은 {@link com.ok.wallet.adapter.out.event.dto.WalletRefundFailedMessage} */
     public static final String WALLET_REFUND_FAILED = "wallet.wallet-refund-failed.v1";
+    /** 지갑 → 환불: 돌려준 예치금을 다시 가져옴(돌려준 적 없는 환불 포함). 키는 orderId, 값은 {@link com.ok.wallet.adapter.out.event.dto.WalletRefundRevertedMessage} */
+    public static final String WALLET_REFUND_REVERTED = "wallet.wallet-refund-reverted.v1";
+    /** 지갑 → 환불: 돌려준 예치금을 다시 가져오지 못함. 키는 orderId, 값은 {@link com.ok.wallet.adapter.out.event.dto.WalletRefundRevertFailedMessage} */
+    public static final String WALLET_REFUND_REVERT_FAILED = "wallet.wallet-refund-revert-failed.v1";
     /** 지갑 → 주문, 정산: 주문 결제 금액을 차감함. 키는 orderId, 값은 {@link com.ok.wallet.adapter.out.event.dto.WalletPaymentCompletedMessage} */
     public static final String WALLET_PAYMENT_COMPLETED = "wallet.wallet-payment-completed.v1";
     /** 지갑 → 주문: 주문 결제 금액을 차감하지 못함. 키는 orderId, 값은 {@link com.ok.wallet.adapter.out.event.dto.WalletPaymentFailedMessage} */
