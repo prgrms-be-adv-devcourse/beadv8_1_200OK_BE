@@ -34,33 +34,34 @@ public class OutboxDeliveryEventPublisher implements DeliveryEventPublisher {
     private final Clock clock;
 
     @Override
-    public void publishShipmentCreated(Long shipmentId, Long orderId, Long sellerId, List<Long> orderItemIds,
+    public Long publishShipmentCreated(Long shipmentId, Long orderId, Long sellerId, List<Long> orderItemIds,
                                        LocalDateTime createdAt) {
         ShipmentCreatedMessage message = new ShipmentCreatedMessage(shipmentId, orderId, sellerId, orderItemIds, createdAt);
-        record(DeliveryOutboxEventType.SHIPMENT_CREATED, orderId, message);
+        return record(DeliveryOutboxEventType.SHIPMENT_CREATED, orderId, message);
     }
 
     @Override
-    public void publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
+    public Long publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
                                           String carrier, String trackingNumber, LocalDateTime shippedAt) {
         // 메시지를 먼저 만들어 값 검사를 통과한 뒤에만 outbox 줄을 남긴다
         ShipmentDispatchedMessage message = new ShipmentDispatchedMessage(
                 shipmentId, orderId, sellerId, carrier, trackingNumber, shippedAt);
         // 키를 orderId로 두면 같은 주문의 배송 메시지가 같은 파티션으로 가서 순서가 지켜진다 (#644 메시지 약속)
-        record(DeliveryOutboxEventType.SHIPMENT_DISPATCHED, orderId, message);
+        return record(DeliveryOutboxEventType.SHIPMENT_DISPATCHED, orderId, message);
     }
 
     @Override
-    public void publishShipmentDelivered(Long shipmentId, Long orderId, Long sellerId, LocalDateTime deliveredAt) {
+    public Long publishShipmentDelivered(Long shipmentId, Long orderId, Long sellerId, LocalDateTime deliveredAt) {
         ShipmentDeliveredMessage message = new ShipmentDeliveredMessage(shipmentId, orderId, sellerId, deliveredAt);
-        record(DeliveryOutboxEventType.SHIPMENT_DELIVERED, orderId, message);
+        return record(DeliveryOutboxEventType.SHIPMENT_DELIVERED, orderId, message);
     }
 
-    private void record(DeliveryOutboxEventType eventType, Long orderId, Object message) {
+    private Long record(DeliveryOutboxEventType eventType, Long orderId, Object message) {
         DeliveryOutbox outbox = deliveryOutboxRepository.save(
                 DeliveryOutbox.pending(eventType, String.valueOf(orderId), jsonMapper.writeValueAsString(message)));
         // 기다린 시간을 재는 리스너와 같은 Clock으로 시각을 남긴다. createdAt은 JPA 감사가 Clock 없이 채워 테스트에서 기준이 어긋날 수 있다
         applicationEventPublisher.publishEvent(new DeliveryOutboxRecordedEvent(outbox.getId(), clock.instant()));
+        return outbox.getId();
     }
 
 }

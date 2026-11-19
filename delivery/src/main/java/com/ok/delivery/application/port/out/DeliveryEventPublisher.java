@@ -15,8 +15,9 @@ public interface DeliveryEventPublisher {
      *
      * @param orderItemIds 이 배송에 담긴 주문 상품 ID 목록
      * @param createdAt    배송이 만들어진 시각
+     * @return 남긴 outbox 줄 id
      */
-    void publishShipmentCreated(Long shipmentId, Long orderId, Long sellerId, List<Long> orderItemIds,
+    Long publishShipmentCreated(Long shipmentId, Long orderId, Long sellerId, List<Long> orderItemIds,
                                 LocalDateTime createdAt);
 
     /**
@@ -24,13 +25,16 @@ public interface DeliveryEventPublisher {
      *
      * @param carrier   택배사 코드
      * @param shippedAt 송장 등록(배송 시작) 시각
+     * @return 남긴 outbox 줄 id
      */
-    void publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
+    Long publishShipmentDispatched(Long shipmentId, Long orderId, Long sellerId,
                                    String carrier, String trackingNumber, LocalDateTime shippedAt);
 
     /**
      * 배송 완료를 알린다. 주문은 이 이벤트로 판매자 묶음을 배송 완료로 바꾸고, 완료 시각을 자동 구매확정 기준으로 쓴다.
+     *
+     * @return 남긴 outbox 줄 id
      */
-    void publishShipmentDelivered(Long shipmentId, Long orderId, Long sellerId, LocalDateTime deliveredAt);
+    Long publishShipmentDelivered(Long shipmentId, Long orderId, Long sellerId, LocalDateTime deliveredAt);
 
 }

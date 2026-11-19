@@ -6,6 +6,7 @@ import com.ok.delivery.application.dto.RegionResult;
 import com.ok.delivery.application.dto.SellerShipmentCommand;
 import com.ok.delivery.application.dto.ShipmentCreateCommand;
 import com.ok.delivery.application.dto.ShipmentDispatchCommand;
+import com.ok.delivery.application.dto.ShipmentDispatchResult;
 import com.ok.delivery.application.dto.ShipmentItemCommand;
 import com.ok.delivery.application.port.out.DeliveryEventPublisher;
 import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestRepository;
@@ -228,13 +229,17 @@ class ShipmentServiceTest {
                 new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null),
                 List.of(seller(10L, 101L), twoItemSeller));
 
+        given(deliveryEventPublisher.publishShipmentCreated(any(), eq(1L), eq(10L), any(), any())).willReturn(70L);
+        given(deliveryEventPublisher.publishShipmentCreated(any(), eq(1L), eq(20L), any(), any())).willReturn(71L);
+
         // when
-        shipmentService.create(command);
+        List<Long> sut = shipmentService.create(command);
 
         // then: ID와 생성 시각은 저장소가 채우므로 목 저장소에서는 비어 있다. 실제 값은 DeliveryOutboxKafkaIntegrationTest가 본다
         then(deliveryEventPublisher).should().publishShipmentCreated(any(), eq(1L), eq(10L), eq(List.of(101L)), any());
         then(deliveryEventPublisher).should().publishShipmentCreated(any(), eq(1L), eq(20L), eq(List.of(201L, 202L)), any());
         then(deliveryEventPublisher).shouldHaveNoMoreInteractions();
+        assertThat(sut).containsExactly(70L, 71L);
     }
 
     @Test
@@ -243,24 +248,28 @@ class ShipmentServiceTest {
         given(shipmentRepository.existsByOrderId(1L)).willReturn(true);
 
         // when
-        shipmentService.create(command(seller(10L, 101L)));
+        List<Long> sut = shipmentService.create(command(seller(10L, 101L)));
 
         // then
         then(shipmentRepository).should(never()).saveAll(any());
         then(deliveryEventPublisher).shouldHaveNoInteractions();
+        assertThat(sut).isEmpty();
     }
 
     @Test
     void 출고하면_송장_정보와_출고_시각으로_배송_시작_이벤트를_발행한다() {
         // given
         given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipment(2L, 10L, item(1L)), 1L)));
+        given(deliveryEventPublisher.publishShipmentDispatched(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", FRIDAY_NOON))
+                .willReturn(70L);
 
         // when
-        shipmentService.dispatch(DISPATCH_COMMAND);
+        ShipmentDispatchResult sut = shipmentService.dispatch(DISPATCH_COMMAND);
 
         // then
         then(deliveryEventPublisher).should()
                 .publishShipmentDispatched(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", FRIDAY_NOON);
+        assertThat(sut.outboxId()).isEqualTo(70L);
     }
 
     @Test
@@ -307,11 +316,13 @@ class ShipmentServiceTest {
         // shipment·주문·판매자 id를 서로 다르게 두어 인자 순서가 바뀌면 잡히게 한다 (fixture는 주문 1, 판매자 10)
         given(shipmentRepository.findByIdForUpdate(5L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.SHIPPING), 5L)));
 
+        given(deliveryEventPublisher.publishShipmentDelivered(5L, 1L, 10L, FRIDAY_NOON)).willReturn(70L);
+
         // when
-        shipmentService.deliver(5L);
+        Long sut = shipmentService.deliver(5L);
 
         // then
-        then(deliveryEventPublisher).should().publishShipmentDelivered(5L, 1L, 10L, FRIDAY_NOON);
+        assertThat(sut).isEqualTo(70L);
     }
 
     @Test

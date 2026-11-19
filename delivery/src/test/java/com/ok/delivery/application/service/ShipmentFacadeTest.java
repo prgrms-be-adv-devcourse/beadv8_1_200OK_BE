@@ -24,7 +24,7 @@ class ShipmentFacadeTest {
 
     private static final ShipmentDispatchCommand DISPATCH_COMMAND = new ShipmentDispatchCommand(1L, 10L, "CJ_LOGISTICS", "1234567890");
     private static final ShipmentDispatchResult DISPATCHED = new ShipmentDispatchResult(
-            1L, "SHIPPING", "CJ_LOGISTICS", "1234567890", LocalDateTime.of(2026, 11, 20, 10, 0));
+            1L, "SHIPPING", "CJ_LOGISTICS", "1234567890", LocalDateTime.of(2026, 11, 20, 10, 0), 100L);
 
     @Mock
     ShipmentService shipmentService;

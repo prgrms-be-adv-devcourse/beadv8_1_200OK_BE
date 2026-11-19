@@ -199,6 +199,24 @@ class OutboxDeliveryEventPublisherTest {
         then(applicationEventPublisher).shouldHaveNoInteractions();
     }
 
+    @Test
+    void 알리면_남긴_outbox_줄_id를_돌려준다() {
+        // given
+        LocalDateTime at = LocalDateTime.of(2026, 10, 23, 15, 0);
+
+        // when
+        Long created = sut.publishShipmentCreated(1L, 2L, 10L, List.of(101L), at);
+        Long dispatched = sut.publishShipmentDispatched(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", at);
+        Long delivered = sut.publishShipmentDelivered(1L, 2L, 10L, at);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(created).isEqualTo(OUTBOX_ID);
+            softly.assertThat(dispatched).isEqualTo(OUTBOX_ID);
+            softly.assertThat(delivered).isEqualTo(OUTBOX_ID);
+        });
+    }
+
     private DeliveryOutbox savedOutbox() {
         ArgumentCaptor<DeliveryOutbox> captor = ArgumentCaptor.forClass(DeliveryOutbox.class);
         then(deliveryOutboxRepository).should().save(captor.capture());

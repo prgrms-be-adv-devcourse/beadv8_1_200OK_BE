@@ -65,13 +65,18 @@ public class ShipmentService {
     private final DeliveryEventPublisher deliveryEventPublisher;
     private final Clock clock;
 
+    /**
+     * 결제 완료된 주문으로 판매자별 shipment를 만든다. 계약은 {@link com.ok.delivery.application.port.in.ShipmentUseCase#create}를 따른다.
+     *
+     * @return 판매자마다 남긴 배송 생성 outbox 줄 id. 이미 처리된 주문이면 비어 있다
+     */
     @Transactional
-    public void create(ShipmentCreateCommand command) {
+    public List<Long> create(ShipmentCreateCommand command) {
         // 판매자 묶음 전체를 한 트랜잭션에 저장하므로 주문 단위로 확인하면 된다.
         // 동시에 두 번 처리되는 드문 경우는 (order_id, seller_id) 유니크 제약이 막고, 실패한 쪽은 재처리 때 이 확인에서 무시된다
         if (shipmentRepository.existsByOrderId(command.orderId())) {
             log.info("이미 처리된 결제 완료 이벤트, 무시. orderId={}", command.orderId());
-            return;
+            return List.of();
         }
         Address address = command.address().toAddress();
         RegionResult region = deliveryRegionService.resolve(address.getPostalCode());
@@ -84,9 +89,11 @@ public class ShipmentService {
                 .toList();
         shipmentRepository.saveAll(shipments);
         // ID는 IDENTITY라 저장하면서, 생성 시각은 Auditing이 저장 직전에 채운다. 메시지가 DB에 남은 생성 시각과 같도록 저장한 값을 보낸다
-        shipments.forEach(shipment -> deliveryEventPublisher.publishShipmentCreated(
-                shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
-                shipment.getItems().stream().map(ShipmentItem::getOrderItemId).toList(), shipment.getCreatedAt()));
+        return shipments.stream()
+                .map(shipment -> deliveryEventPublisher.publishShipmentCreated(
+                        shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
+                        shipment.getItems().stream().map(ShipmentItem::getOrderItemId).toList(), shipment.getCreatedAt()))
+                .toList();
     }
 
     @Transactional
@@ -101,9 +108,9 @@ public class ShipmentService {
         addressChangeRequestRepository.findAllByShipmentIdAndStatus(shipment.getId(), AddressChangeStatus.PENDING)
                 .forEach(request -> request.reject(now));
         // 송장번호 중복 확인(flush)을 통과한 뒤에 발행한다. 실패해 롤백되면 커밋 후 수신하는 주문에는 전달되지 않는다
-        deliveryEventPublisher.publishShipmentDispatched(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
+        Long outboxId = deliveryEventPublisher.publishShipmentDispatched(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
                 shipment.getCarrier().name(), shipment.getTrackingNumber(), shipment.getShippedAt());
-        return ShipmentDispatchResult.from(shipment);
+        return ShipmentDispatchResult.of(shipment, outboxId);
     }
 
     /**
@@ -125,12 +132,17 @@ public class ShipmentService {
                 .map(ShippingShipmentResult::from);
     }
 
+    /**
+     * 택배사의 배송 완료 알림을 반영한다. 계약은 {@link com.ok.delivery.application.port.in.ShipmentUseCase#deliver}를 따른다.
+     *
+     * @return 남긴 배송 완료 outbox 줄 id
+     */
     @Transactional
-    public void deliver(Long shipmentId) {
+    public Long deliver(Long shipmentId) {
         Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
                 .orElseThrow(() -> new RestApiException(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
         shipment.deliver(LocalDateTime.now(clock));
-        deliveryEventPublisher.publishShipmentDelivered(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
+        return deliveryEventPublisher.publishShipmentDelivered(shipment.getId(), shipment.getOrderId(), shipment.getSellerId(),
                 shipment.getDeliveredAt());
     }
 
