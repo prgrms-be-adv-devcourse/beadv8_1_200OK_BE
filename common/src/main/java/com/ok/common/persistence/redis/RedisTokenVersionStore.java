@@ -4,6 +4,7 @@ import com.ok.common.security.TokenVersionStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.function.Supplier;
 
 /**
  * {@link TokenVersionStore}를 Redis로 구현한다.
@@ -44,7 +46,7 @@ class RedisTokenVersionStore implements TokenVersionStore {
 
     @Override
     public OptionalLong findMinVersion(long memberId) {
-        String value = redisTemplate.opsForValue().get(key(memberId));
+        String value = translateStopped(() -> redisTemplate.opsForValue().get(key(memberId)));
         if (value == null) {
             return OptionalLong.empty();
         }
@@ -64,7 +66,19 @@ class RedisTokenVersionStore implements TokenVersionStore {
             throw new IllegalArgumentException("TTL은 1밀리초 이상이어야 합니다.");
         }
         // 읽고 비교하고 쓰는 일을 스크립트 하나로 해 다른 쓰기가 끼어들지 못하게 한다. 키가 하나라 클러스터에서도 한 노드에서 돈다
-        redisTemplate.execute(SAVE_IF_HIGHER, List.of(key(memberId)), Long.toString(version), Long.toString(ttl.toMillis()));
+        translateStopped(() -> redisTemplate.execute(SAVE_IF_HIGHER, List.of(key(memberId)),
+                Long.toString(version), Long.toString(ttl.toMillis())));
+    }
+
+    // 앱 종료 중 연결 팩토리가 먼저 멈추면 Spring Data Redis가 변환하지 않은 IllegalStateException이 나온다.
+    // 이것도 저장소에 닿지 못한 것이라 계약대로 DataAccessException으로 올린다. 그대로 두면 검증기의 장애 시 통과가 적용되지 않아
+    // 종료 직전 남은 인증 요청이 500이 된다. 그 밖의 예외는 버그라 감싸지 않고 그대로 드러낸다
+    private static <T> T translateStopped(Supplier<T> redisCall) {
+        try {
+            return redisCall.get();
+        } catch (IllegalStateException e) {
+            throw new RedisConnectionFailureException("토큰 버전 저장소의 Redis 연결을 쓸 수 없습니다.", e);
+        }
     }
 
     private static String key(long memberId) {

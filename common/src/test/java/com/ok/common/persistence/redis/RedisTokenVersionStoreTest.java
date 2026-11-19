@@ -169,6 +169,27 @@ class RedisTokenVersionStoreTest {
                 .isInstanceOf(DataAccessException.class);
     }
 
+    // 앱 종료 중 남은 요청이 이미 멈춘 연결 팩토리를 쓰는 상황. 검증기는 DataAccessException만 장애로 보므로
+    // 다른 예외가 나가면 장애 시 통과가 적용되지 않고 인증 요청이 500이 된다
+    @Test
+    void 연결_팩토리가_멈춘_뒤에도_조회와_저장_모두_DataAccessException으로_올린다() {
+        // given
+        TokenVersionStore stoppedSut = storeWithStoppedConnectionFactory();
+
+        // when & then
+        assertThatThrownBy(() -> stoppedSut.findMinVersion(MEMBER_ID)).isInstanceOf(DataAccessException.class);
+        assertThatThrownBy(() -> stoppedSut.saveMinVersion(MEMBER_ID, 1L, Duration.ofMinutes(31)))
+                .isInstanceOf(DataAccessException.class);
+    }
+
+    private TokenVersionStore storeWithStoppedConnectionFactory() {
+        brokenConnectionFactory = new LettuceConnectionFactory(new RedisStandaloneConfiguration("localhost", 1));
+        brokenConnectionFactory.afterPropertiesSet();
+        StringRedisTemplate template = new StringRedisTemplate(brokenConnectionFactory);
+        brokenConnectionFactory.stop();
+        return new RedisTokenVersionStore(template);
+    }
+
     // 접속할 수 없는 포트로 향하는 저장소로 Redis 장애를 흉내 낸다. 명령 제한 시간을 짧게 둬 테스트가 오래 걸리지 않게 한다
     private TokenVersionStore storeWithBrokenRedis() {
         brokenConnectionFactory = new LettuceConnectionFactory(new RedisStandaloneConfiguration("localhost", 1),
