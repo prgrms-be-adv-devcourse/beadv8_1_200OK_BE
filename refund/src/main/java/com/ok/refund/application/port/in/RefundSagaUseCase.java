@@ -16,6 +16,7 @@ public interface RefundSagaUseCase {
      * @param approved 승인 구간이 돌려준 결과. 주문·지갑·재고 호출 값을 여기서 꺼낸다
      * @return 마지막 상태(돈이 있으면 처리 중, 0원이면 완료, 주문 거절이면 거절)
      * @throws com.ok.common.exception.RestApiException 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED},
+     *                                                  주문이 기록이 어긋났다고 답하면 {@code ORDER_RECORD_CONFLICT}(주문 줄을 바로 멈춤),
      *                                                  0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED} (처리 중으로 남는다)
      * @throws IllegalStateException                    지갑 반환 요청을 보내지 못했으면 (처리 중으로 남는다, 주문은 이미 반영됐다)
      */

@@ -81,11 +81,12 @@ public class RefundSagaService implements RefundSagaUseCase {
     // 지갑 실패로 주문 되돌리기를 시작한 뒤 같은 refundId의 지갑 완료가 와 되돌리기 줄을 멈출 때 남기는 이유(#622 투표). 돈이 나갔을 수 있다는 표시다
     static final String WALLET_COMPLETED_LATE = "WALLET_COMPLETED_LATE";
     // 다시 해도 결과가 같은 다른 모듈 실패(#576). 이 실패는 다시 시도하지 않고 단계를 바로 멈춘다.
-    // 상품이 해제할 수 없다고 답한 경우(409 해제 가능 수량 초과·같은 refundId인데 내용이 다름, 404 재고 기록 없음)다.
-    // 주문 409는 예외가 아니라 거절 결과로 오고, 지갑 발행 실패는 Kafka 쪽 일시 실패라 여기 넣지 않는다.
+    // 상품이 해제할 수 없다고 답한 경우(409 해제 가능 수량 초과·같은 refundId인데 내용이 다름, 404 재고 기록 없음)와
+    // 주문이 기록이 어긋났다고 답한 경우(422 수량 합계 초과·같은 refundId인데 내용이 다름, #554)다.
+    // 주문 409(이미 출고됨)는 예외가 아니라 거절 결과로 오고, 지갑 발행 실패는 Kafka 쪽 일시 실패라 여기 넣지 않는다.
     // 이 목록은 "다시 시도하지 않음"만 뜻한다. 돈을 다시 가져올지는 WALLET_REVERT_TRIGGER 하나로 따로 본다(#546)
     static final Set<String> NON_RETRYABLE_FAILURES = Set.of(RefundErrorCode.PRODUCT_RELEASE_REFUSED.name(),
-            RefundErrorCode.PRODUCT_STOCK_NOT_FOUND.name());
+            RefundErrorCode.PRODUCT_STOCK_NOT_FOUND.name(), RefundErrorCode.ORDER_RECORD_CONFLICT.name());
     // 돈을 다시 가져오는 재고 실패 이유(#546). 상품 409만이다. 404는 주소 설정 오류와 가를 수 없어 넣지 않는다(봇 리뷰, 사용자 결정).
     // 위 목록에 다른 코드가 더해져도 돈이 움직이지 않게 따로 둔다. 돈을 움직이는 조건이라 좁게 둔다
     static final String WALLET_REVERT_TRIGGER = RefundErrorCode.PRODUCT_RELEASE_REFUSED.name();
@@ -955,8 +956,8 @@ public class RefundSagaService implements RefundSagaUseCase {
 
     // 주문이 취소 반영을 거절하면(409) 처리 중이던 환불을 거절로 끝낸다. 자기 행만 잠그는 새 구간이다(완료와 같은 이유).
     // 사유는 출고 거절과 같은 문구를 쓴다. 가장 흔한 원인이 승인 사이의 출고이고, 구매자에게는 "취소할 수 없다"는 결과면 충분하다.
-    // WARN으로 남기는 이유: 환불은 409의 원인을 구분하지 못한다. "이미 출고됨"은 드물게 있는 정상 경쟁이지만,
-    // "수량 초과"나 "refundId 충돌"은 환불 쪽 버그다. 정상처럼 보이는 경로라도 사람이 확인하도록 모두 WARN으로 남긴다.
+    // 주문은 409를 "이미 출고됨"에만 쓴다. 기록이 어긋난 "수량 합계 초과"·"refundId 충돌"은 422라 여기 오지 않고 주문 줄을 멈춘다(#554, 주문 #737).
+    // WARN으로 남기는 이유: 승인 사이의 출고는 드물게 있는 정상 경쟁이지만, 돈을 돌려주려던 환불이 닫히는 일이라 사람이 확인할 수 있게 남긴다.
     // 예외 없이 넘기는 확인 필요한 이상이라 ERROR(처리되지 못한 예외)가 아니라 WARN이다(service.md 로그 표, #544에서 지갑 결과 로그와 맞춤).
     // 주문의 설명 문장은 로그에만 남기고 DB에는 저장하지 않는다. 예외를 던지지 않는 경로라 여기서 로그를 남긴다.
     // 로그는 거절 구간이 커밋된 뒤에 남긴다. 구간이 실패했는데 "거절로 끝냄"이 남으면 실제와 어긋나기 때문이다.

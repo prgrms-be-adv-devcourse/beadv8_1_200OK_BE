@@ -74,10 +74,13 @@ public class RefundOrderHttpAdapter implements OrderQueryPort, OrderCancellation
     }
 
     // 주문 ②(#542 실제 API): POST /internal/v1/orders/items/{orderItemId}/refunds, 본문 refundId·quantity·deductedShippingFee, 성공 204.
-    // 2xx는 전부 반영됨으로 본다. 409는 거절됨, 그 밖의 오류 상태와 응답 없음(연결 실패·타임아웃)은 ORDER_API_FAILED다.
-    // 409를 이유와 상관없이 전부 거절로 보는 이유: 주문은 409를 세 가지(이미 출고됨, 수량 초과, 같은 refundId인데 내용이 다름)에 쓰는데
-    // 이유 이름은 ProblemDetail의 type에만 오고, type은 PROBLEM_BASE_URI 설정이 기본값이면 about:blank라 환불이 이유를 가를 수 없다(11/13 결정).
-    // 어느 이유든 같은 요청을 다시 보내도 낫지 않으므로 다시 시도 대상이 아니라 거절로 끝내는 것이 맞다.
+    // 2xx는 전부 반영됨으로 본다. 409는 거절됨, 422는 ORDER_RECORD_CONFLICT, 그 밖의 오류 상태와 응답 없음(연결 실패·타임아웃)은 ORDER_API_FAILED다.
+    // 주문은 409를 "이미 출고됨"에만 쓰고, 기록이 어긋난 두 경우(수량 합계 초과, 같은 refundId인데 내용이 다름)는 422로 답한다(#554 요청, 주문 #737).
+    // 409는 정상 경쟁이라 거절로 끝낸다. 422는 환불·주문 기록이 어긋난 것이라 구매자에게 "출고됨"으로 닫지 않고, 예외로 올려
+    // 지휘자가 다시 시도하지 않고 단계를 멈추게 한다(NON_RETRYABLE_FAILURES). 둘 다 같은 요청을 다시 보내도 낫지 않는다.
+    // 422 안의 두 이유는 가르지 않는다. 이유 이름은 ProblemDetail의 type에만 오고, type은 PROBLEM_BASE_URI 설정이 기본값이면 about:blank다.
+    // 상품 422(RefundProductHttpAdapter)와 숫자만 같고 뜻이 다르다. 상품 422는 우리가 보낸 값의 형식 오류라 표준 예외로 다시 시도하지만,
+    // 주문 422는 주문이 쌓아 둔 기록과 어긋난 상태 충돌이라 상품 409처럼 에러 코드로 던지고 바로 멈춘다
     // detail 문장은 로그용으로만 돌려준다. 문구는 바뀔 수 있어 판단에 쓰지 않고 DB에도 남기지 않는다.
     // exchange를 쓰는 이유: retrieve()는 오류 상태를 예외로 바꿔 409의 본문을 꺼내기 불편하다. exchange는 기본 상태 처리를 건너뛰므로
     // 오류 상태를 여기서 직접 ORDER_API_FAILED로 바꾼다(응답을 못 받은 IOException은 InternalRestClient의 인터셉터가 같은 코드로 바꾼다)
@@ -93,6 +96,9 @@ public class RefundOrderHttpAdapter implements OrderQueryPort, OrderCancellation
                         }
                         if (response.getStatusCode().value() == 409) {
                             return OrderCancellationResult.rejected(readDetail(response));
+                        }
+                        if (response.getStatusCode().value() == 422) {
+                            throw new RestApiException(RefundErrorCode.ORDER_RECORD_CONFLICT);
                         }
                         throw new RestApiException(RefundErrorCode.ORDER_API_FAILED);
                     });

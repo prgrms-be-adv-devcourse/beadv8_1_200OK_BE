@@ -982,6 +982,31 @@ class RefundApiIntegrationTest extends AbstractIntegrationTest {
                 .containsExactly(tuple(RefundStepType.ORDER, RefundStepStatus.READY, "ORDER_API_FAILED"));
     }
 
+    // 주문에 이 refundId로 다른 내용이 이미 남아 있으면(예: 환불 DB만 초기화돼 번호가 다시 쓰임) 주문은 422로 답한다(주문 #737).
+    // "출고됨"으로 거절해 닫지 않고, 다시 시도하지도 않고 주문 줄을 바로 멈춰 처리 중으로 남긴다. 판매자는 409를 받는다(#554)
+    @Test
+    void 승인_뒤_주문이_기록이_어긋났다고_답하면_409이고_주문_줄을_멈춰_처리_중으로_남긴다() throws Exception {
+        // given: 주문에는 같은 refundId로 감자 2개 취소가 이미 남아 있다. 이번 환불은 1개다
+        Long refundId = requestedRefundId(POTATO_ORDER_ITEM_ID);
+        orderCancellationPort.reflectCancellation(new OrderCancellation(refundId, POTATO_ORDER_ITEM_ID, 2, 0L));
+
+        // when & then
+        approve(POTATO_SELLER_ID, refundId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/refund/order-record-conflict")));
+        Refund sut = onlyRefund();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(RefundStatus.PROCESSING);
+            softly.assertThat(sut.getRejectReason()).isNull();
+        });
+        // 주문 반영 전이라 지갑·재고는 부르지 않는다. 다음 단계 줄도 없다
+        assertThat(productStockReleasePort.releasedOf(refundId)).isEmpty();
+        assertThat(refundStepPersistencePort.findAllByRefundId(refundId))
+                .extracting(RefundStep::getType, RefundStep::getStatus, RefundStep::getLastReason)
+                .containsExactly(tuple(RefundStepType.ORDER, RefundStepStatus.STOPPED, "ORDER_RECORD_CONFLICT"));
+    }
+
     // 0원 환불은 지갑을 거치지 않아 승인 요청 안에서 재고 복구까지 간다. 재고가 실패하면 판매자는 503을 받고 환불은 처리 중에 머문다(#414, Swagger 약속)
     // 판매자 8이 주문 30에 배추(301) 3,000원 + 감자(302) 27,000원 = 30,000원을 팔아 무료배송(기준 30,000원)이었다.
     // 배추를 취소하면 27,000원이 남아 무료배송이 깨지고 기본 배송비 3,000원을 빼 3,000 - 3,000 = 0원 환불이다

@@ -79,7 +79,7 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                          요청됨이 아니면 {@code INVALID_REFUND_STATE},
      *                          승인 때 주문 호출이 실패하면 {@code ORDER_API_FAILED}, 주문 상품이 없으면 {@code ORDER_ITEM_NOT_FOUND},
      *                          거절인데 사유가 비었으면 {@code REJECT_REASON_REQUIRED}
-     * @throws RestApiException 승인은 커밋됐는데 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED},
+     * @throws RestApiException 승인은 커밋됐는데 주문 취소 반영이 실패하면 {@code ORDER_API_FAILED}, 주문이 기록이 어긋났다고 답하면 {@code ORDER_RECORD_CONFLICT},
      *                          0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}, 상품이 다시 해도 같은 이유로 거절하면
      *                          {@code PRODUCT_RELEASE_REFUSED}, 재고 배정 기록이 없으면 {@code PRODUCT_STOCK_NOT_FOUND} (모두 처리 중으로 남는다.
      *                          돌려줄 돈이 있으면 재고 복구는 지갑 완료 메시지를 받은 뒤라 이 응답에 오지 않는다)
@@ -143,7 +143,7 @@ public class DecideRefundService implements DecideRefundUseCase {
      *                               주문 상태가 null이거나 모르는 값이면 (주문 모듈 쪽 문제, 요청됨 그대로 남는다),
      *                               지갑 반환 요청을 보내지 못했으면 (승인은 이미 커밋돼 처리 중으로 남는다, 주문은 이미 반영됐고 재고는 부르지 않는다)
      * @throws IllegalArgumentException 배송비 판단대로면 돌려줄 금액이 음수가 되면 (계산 버그, 커밋 전에 막혀 요청됨으로 남는다)
-     * @throws RestApiException      주문 취소 반영이 실패하면 {@code ORDER_API_FAILED}, 0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}
+     * @throws RestApiException      주문 취소 반영이 실패하면 {@code ORDER_API_FAILED}, 주문이 기록이 어긋났다고 답하면 {@code ORDER_RECORD_CONFLICT}, 0원 환불의 재고 복구가 실패하면 {@code PRODUCT_API_FAILED}
      *                               (승인은 이미 커밋돼 처리 중으로 남는다)
      */
     RefundResult approve(Long refundId, Long sellerId, RefundableOrderItem orderItem) {

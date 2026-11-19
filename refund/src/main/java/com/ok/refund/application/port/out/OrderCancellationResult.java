@@ -2,7 +2,7 @@ package com.ok.refund.application.port.out;
 
 /**
  * 주문에 취소 반영을 요청한 결과. 주문이 받아 줬는지(반영됨), 막았는지(거절됨)만 알린다.
- * 응답을 아예 못 받았거나 그 밖의 오류 상태는 결과가 아니라 예외({@code ORDER_API_FAILED})로 알린다. 다시 시도하면 낫는 일시적 실패와,
+ * 응답을 아예 못 받았거나 그 밖의 오류 상태는 결과가 아니라 예외({@code ORDER_API_FAILED}, 기록 어긋남 422는 {@code ORDER_RECORD_CONFLICT})로 알린다. 다시 시도하면 낫는 일시적 실패와,
  * 다시 보내도 같은 답이 오는 주문의 거절을 서비스가 다르게 다루려고 나눴다.
  *
  * @param rejected    주문이 반영을 막았으면 true

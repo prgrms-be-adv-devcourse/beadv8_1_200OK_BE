@@ -256,6 +256,53 @@ class RefundSagaServiceStepRunTest {
         then(walletRefundRequestPort).should(never()).requestRevert(any());
     }
 
+    // 주문 422(수량 합계 초과·같은 refundId에 다른 내용)는 환불·주문 기록이 어긋난 것이라 다시 해도 같다(#554).
+    // 5번 다시 보내지 않고 첫 실패에서 주문 줄을 멈춘다. 주문 반영은 첫 단계라 돈이 나가기 전이고 회수도 하지 않는다
+    @Test
+    void 주문이_기록이_어긋났다고_답하면_다시_시도하지_않고_주문_줄을_바로_멈춘다() {
+        // given: 첫 시도 중인 주문 줄
+        givenRecordable(RefundStepType.ORDER);
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
+            throw new RestApiException(RefundErrorCode.ORDER_RECORD_CONFLICT);
+        })).isInstanceOfSatisfying(RestApiException.class,
+                e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_RECORD_CONFLICT));
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep order = captor.getValue();
+        assertThat(order).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(order.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(order.getLastReason()).isEqualTo("ORDER_RECORD_CONFLICT");
+        });
+        then(refundStepPersistencePort).should(never()).saveNew(any());
+        then(walletRefundRequestPort).should(never()).requestRevert(any());
+    }
+
+    // 첫 시도는 주문 장애(ORDER_API_FAILED)로 실패해 알람이 다시 부른 두 번째 시도에서 422가 와도 남은 3번을 쓰지 않고 멈춘다
+    @Test
+    void 다시_진행한_주문_줄에서_기록이_어긋났다고_답해도_바로_멈춘다() {
+        // given: 두 번째 시도 중인 주문 줄
+        givenProcessingRefund();
+        RefundStep secondTry = RefundStep.restore(1L, REFUND_ID, RefundStepType.ORDER, RefundStepStatus.IN_PROGRESS,
+                2, NOW.plusMinutes(1), "ORDER_API_FAILED", NOW.minusMinutes(5));
+        given(refundStepPersistencePort.findByRefundIdAndType(REFUND_ID, RefundStepType.ORDER)).willReturn(Optional.of(secondTry));
+
+        // when & then
+        assertThatThrownBy(() -> sut.runStep(REFUND_ID, RefundStepType.ORDER, () -> {
+            throw new RestApiException(RefundErrorCode.ORDER_RECORD_CONFLICT);
+        })).isInstanceOf(RestApiException.class);
+        ArgumentCaptor<RefundStep> captor = ArgumentCaptor.forClass(RefundStep.class);
+        then(refundStepPersistencePort).should().update(captor.capture());
+        RefundStep order = captor.getValue();
+        assertThat(order).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(order.getStatus()).isEqualTo(RefundStepStatus.STOPPED);
+            softly.assertThat(order.getLastReason()).isEqualTo("ORDER_RECORD_CONFLICT");
+        });
+    }
+
     // 몇 분짜리 상품 장애로 5번을 다 써 멈춘 재고는 돈을 가져가지 않는다(11/16 결정). 사람이 본다
     @Test
     void 재고가_시도_횟수를_다_써서_멈추면_회수하지_않는다() {

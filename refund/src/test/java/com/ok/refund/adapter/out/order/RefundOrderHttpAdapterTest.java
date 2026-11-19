@@ -308,7 +308,22 @@ class RefundOrderHttpAdapterTest {
         assertThat(path.get()).isEqualTo("/internal/v1/orders/items/101/refunds");
     }
 
-    // 409만 거절 결과다. 404 같은 그 밖의 오류 상태는 일시적 실패와 같은 코드다.
+    // 주문은 기록이 어긋난 두 경우(수량 합계 초과, 같은 refundId에 다른 내용)를 422로 답한다(#554, 주문 #737).
+    // 거절(구매자에게 "출고됨")도, 다시 시도할 일시 실패(ORDER_API_FAILED)도 아니라 따로 둔 코드로 바꾼다. 이유 이름(type)은 보지 않는다
+    @Test
+    void 취소_반영이_422면_기록_어긋남으로_바꾼다() {
+        // given
+        status.set(422);
+        body.set("""
+                { "type": "about:blank", "title": "Unprocessable Entity", "status": 422, "detail": "환불 수량 합계가 주문 수량을 넘습니다." }""");
+
+        // when & then
+        assertThatThrownBy(() -> sut.reflectCancellation(new OrderCancellation(7L, 101L, 1, 0L)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(RefundErrorCode.ORDER_RECORD_CONFLICT));
+    }
+
+    // 409만 거절 결과이고 422는 기록 어긋남이다. 404 같은 그 밖의 오류 상태는 일시적 실패와 같은 코드다.
     // 4xx 전체나 404를 반영됨·거절로 잘못 묶으면 주문이 모르는 취소의 돈이 나가거나 환불이 잘못 닫히므로 상태마다 확인한다
     @ParameterizedTest
     @MethodSource("_409가_아닌_오류_상태")

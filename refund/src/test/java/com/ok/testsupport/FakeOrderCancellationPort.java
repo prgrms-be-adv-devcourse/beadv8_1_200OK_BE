@@ -18,7 +18,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * 주문 모듈 취소 반영 API(주문 ②, #542) 대신 반영된 값을 메모리에 남기는 Fake.
  * 통합 테스트는 웹 서버 없이(MOCK) 돌아 HTTP로 부를 수 없어 대신 쓴다.
  * 실제 주문처럼 같은 refundId·같은 내용으로 다시 오면 더하지 않고 반영됨으로 답하고(출고 표시보다 먼저 본다),
- * 같은 refundId인데 내용이 다르거나 {@link #markShipped}로 출고 표시한 상품이면 거절됨으로 답한다.
+ * {@link #markShipped}로 출고 표시한 상품이면 거절됨(409)으로 답한다. 같은 refundId인데 내용이 다르면 실제 어댑터가 주문 422를 바꾸는 것처럼
+ * {@code ORDER_RECORD_CONFLICT}를 던진다(#554, 주문 #737).
  * {@code AbstractIntegrationTest}의 {@code @ComponentScan}이 주워 가고 {@code @Primary}로 실제 어댑터를 대신한다.
  * 테스트마다 {@link #clear}로 비운다. 동시 요청 테스트에서도 쓰도록 동시성 컬렉션을 쓴다.
  */
@@ -70,18 +71,18 @@ public class FakeOrderCancellationPort implements OrderCancellationPort {
             if (previous.equals(cancellation)) {
                 return OrderCancellationResult.reflected();
             }
-            return OrderCancellationResult.rejected("같은 refundId로 다른 내용의 요청이 이미 반영되어 있습니다.");
+            throw new RestApiException(RefundErrorCode.ORDER_RECORD_CONFLICT);
         }
         if (shippedOrderItemIds.contains(cancellation.orderItemId())) {
             return OrderCancellationResult.rejected("이미 출고된 상품입니다.");
         }
         // 동시에 같은 refundId가 두 번 오면 위 확인을 둘 다 지나칠 수 있다(확인과 저장 사이 틈, #578).
-        // 저장 결과로 다시 가른다: 먼저 들어간 값과 같으면 반영됨, 다르면 실제 주문처럼 거절됨. 잠금 없이 키 하나 단위로 원자적이다.
+        // 저장 결과로 다시 가른다: 먼저 들어간 값과 같으면 반영됨, 다르면 실제 주문처럼 기록 어긋남(422). 잠금 없이 키 하나 단위로 원자적이다.
         // 차례로 부르는 테스트는 위 previous 확인에서 먼저 걸려 이 분기에 닿지 않는다. 두 스레드가 확인과 저장 사이에 겹치는 순간을
         // 매번 만들 수 없어(통과해도 고친 것을 증명하지 못함) 테스트를 두지 않았다
         OrderCancellation raced = reflected.putIfAbsent(cancellation.refundId(), cancellation);
         if (raced != null && !raced.equals(cancellation)) {
-            return OrderCancellationResult.rejected("같은 refundId로 다른 내용의 요청이 이미 반영되어 있습니다.");
+            throw new RestApiException(RefundErrorCode.ORDER_RECORD_CONFLICT);
         }
         Runnable action = afterReflect.getAndSet(null);
         if (action != null) {
