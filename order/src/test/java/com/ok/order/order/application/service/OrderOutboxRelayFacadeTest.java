@@ -116,7 +116,7 @@ class OrderOutboxRelayFacadeTest {
         given(orderOutboxService.findPendingById(1L)).willReturn(Optional.of(message(1L, "10")));
 
         // when
-        sut.relayAfterCommit(1L, NOW);
+        sut.sendAsync(1L, NOW);
 
         // then
         then(orderMessageSender).should().send(TOPIC, "10", "{\"id\":1}");
@@ -130,7 +130,7 @@ class OrderOutboxRelayFacadeTest {
         given(orderOutboxService.findPendingById(1L)).willReturn(Optional.of(message(1L, "10")));
 
         // when
-        sut.relayAfterCommit(1L, NOW.minus(waited));
+        sut.sendAsync(1L, NOW.minus(waited));
 
         // then
         then(orderMessageSender).should().send(TOPIC, "10", "{\"id\":1}");
@@ -146,7 +146,7 @@ class OrderOutboxRelayFacadeTest {
     @MethodSource("min_age_이상_기다린_시간")
     void 대기열에서_min_age_이상_기다렸으면_줄을_읽지_않고_재발송에_맡긴다(Duration waited) {
         // when
-        sut.relayAfterCommit(1L, NOW.minus(waited));
+        sut.sendAsync(1L, NOW.minus(waited));
 
         // then: 줄을 읽지도 않는다(대기열이 밀렸을 때 커넥션을 쓰지 않음)
         then(orderOutboxService).shouldHaveNoInteractions();
@@ -164,7 +164,7 @@ class OrderOutboxRelayFacadeTest {
         given(orderOutboxService.findPendingById(1L)).willReturn(Optional.empty());
 
         // when
-        sut.relayAfterCommit(1L, NOW);
+        sut.sendAsync(1L, NOW);
 
         // then
         then(orderMessageSender).should(never()).send(anyString(), anyString(), anyString());
@@ -177,7 +177,7 @@ class OrderOutboxRelayFacadeTest {
         willThrow(new IllegalStateException("브로커 거절")).given(orderMessageSender).send(TOPIC, "10", "{\"id\":1}");
 
         // when & then
-        assertThatCode(() -> sut.relayAfterCommit(1L, NOW)).doesNotThrowAnyException();
+        assertThatCode(() -> sut.sendAsync(1L, NOW)).doesNotThrowAnyException();
         then(orderOutboxService).should().recordFailure(eq(1L), anyString());
         then(orderOutboxService).should(never()).markSent(anyLong());
     }

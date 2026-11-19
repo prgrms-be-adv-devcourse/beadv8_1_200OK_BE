@@ -24,7 +24,7 @@ import java.util.List;
  * 줄마다 확인 대기 시간만큼 기다리다 실패할 뿐이고, 멈추면 같은 키의 뒤 줄이 앞 줄보다 먼저 나가지 않는다.
  * 대신 같은 줄이 계속 실패하면 뒤 줄이 모두 기다리므로 {@link #ESCALATE_ATTEMPT_COUNT}번을 넘으면 ERROR로 남긴다(회원 outbox와 같음).
  *
- * <p>커밋 직후 발송({@link #relayAfterCommit})은 방금 남긴 줄 하나만 보낸다. 앞 줄이 실패해 남아 있어도 기다리지 않으므로,
+ * <p>커밋 직후 발송({@link #sendAsync})은 Facade가 서비스 커밋 뒤 부르고, 방금 남긴 줄 하나만 보낸다. 앞 줄이 실패해 남아 있어도 기다리지 않으므로,
  * 같은 키의 메시지가 짧은 간격으로 이어지면 순서가 뒤집힐 수 있다. 지금 주문 메시지는 같은 키가 몇 분 이상 간격을 두고 나온다.
  * 커밋 직후 발송을 하지 않고 재발송에 맡긴 건수는 {@value #SEND_DROPPED_METRIC}로 센다.
  */
@@ -54,6 +54,7 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
     private final Clock clock;
     private final Duration minAge;
     private final Counter staleDropped;
+    private final Counter rejectedDropped;
 
     // min-age는 재발송이 줄을 고르는 기준과 같은 값을 쓴다(OrderOutboxRelayScheduler와 같은 키, 같은 기본값)
     public OrderOutboxRelayFacade(OrderOutboxService orderOutboxService,
@@ -68,6 +69,10 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
         this.staleDropped = Counter.builder(SEND_DROPPED_METRIC)
                 .description("주문 outbox 커밋 직후 발송을 하지 않고 재발송에 맡긴 건수")
                 .tag("reason", DROP_REASON_STALE)
+                .register(meterRegistry);
+        this.rejectedDropped = Counter.builder(SEND_DROPPED_METRIC)
+                .description("주문 outbox 커밋 직후 발송을 하지 않고 재발송에 맡긴 건수")
+                .tag("reason", DROP_REASON_REJECTED)
                 .register(meterRegistry);
     }
 
@@ -91,10 +96,10 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
      *
      * @param recordedAt 줄을 남긴 시각. 대기열에서 기다린 시간을 잴 때 쓰므로 이 클래스와 같은 {@link Clock}으로 잰 값이어야 한다
      * @throws org.springframework.core.task.TaskRejectedException 전용 실행기의 대기열이 가득 차 작업을 받지 못하면.
-     *         호출한 쪽이 잡아 재발송에 맡긴다
+     *         호출한 쪽이 잡아 {@link #countRejected}로 세고 재발송에 맡긴다
      */
     @Async(RELAY_EXECUTOR)
-    public void relayAfterCommit(Long outboxId, Instant recordedAt) {
+    public void sendAsync(Long outboxId, Instant recordedAt) {
         // 줄을 남긴 지 min-age가 지났으면 재발송이 이미 같은 줄을 집었을 수 있어, 함께 보내 중복을 만들지 않게 재발송에 맡긴다(#794).
         // 줄을 읽기 전에 거르므로 대기열이 밀렸을 때 커넥션도 쓰지 않는다
         if (!Duration.between(recordedAt, clock.instant()).minus(minAge).isNegative()) {
@@ -107,6 +112,13 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
             // 줄 읽기·기록이 DB 오류로 실패해도 줄은 PENDING으로 남아 재발송이 보낸다
             log.warn("[ORDER_OUTBOX_SEND_FAILED] 커밋 직후 발송을 마치지 못해 재발송에 맡깁니다. outboxId={}", outboxId, e);
         }
+    }
+
+    /**
+     * 대기열이 가득 차 {@link #sendAsync}가 거절된 건수를 센다. 줄은 PENDING으로 남아 재발송이 보낸다.
+     */
+    public void countRejected() {
+        rejectedDropped.increment();
     }
 
     // 보내고 결과를 줄에 남긴다. 보냈으면 true

@@ -3,6 +3,7 @@ package com.ok.order.order.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.order.cart.application.dto.SelectedCartItem;
 import com.ok.order.cart.application.port.in.GetSelectedCartItemsUseCase;
+import com.ok.order.order.application.dto.AutoConfirmPurchaseResult;
 import com.ok.order.order.application.dto.CheckoutResult;
 import com.ok.order.order.application.dto.CreateOrderCommand;
 import com.ok.order.order.application.dto.ProductOption;
@@ -28,9 +29,11 @@ import com.ok.order.order.domain.SellerShippingFee;
 import com.ok.order.order.exception.OrderErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -49,6 +52,9 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
     private final ProductPort productPort;
     private final DeliveryPort deliveryPort;
     private final WalletPort walletPort;
+    private final OrderOutboxRelayFacade orderOutboxRelayFacade;
+    // 남긴 시각을 대기열에서 기다린 시간을 재는 발송 쪽과 같은 Clock으로 잰다 (전역 ClockConfig)
+    private final Clock clock;
 
     private static final int IDEMPOTENCY_KEY_MAX_LENGTH = 64;
     private static final String IDEMPOTENCY_KEY_CONSTRAINT = "uk_orders_buyer_id_idempotency_key";
@@ -112,13 +118,16 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
         log.info("주문 생성 완료, orderId={}", orderId);
 
         // 재고 선점 + 이벤트 발행 (실패하면 되돌리기)
+        Long outboxId;
         try {
             productPort.allocateStock(orderId, toStockItems(order));
-            orderService.publishCreated(orderId);
+            outboxId = orderService.publishCreated(orderId);
         } catch (RuntimeException e) {
             cancelCreatedOrder(orderId);
             throw e;
         }
+        // 결제 요청은 이미 커밋됐다. 보상 try 밖에서 보내야 발송 쪽 예외가 커밋된 주문을 취소하지 않는다
+        sendAfterCommit(outboxId);
 
         return orderId;
     }
@@ -236,12 +245,12 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
 
     @Override
     public void completePayment(Long orderId) {
-        orderService.completePayment(orderId);
+        orderService.completePayment(orderId).ifPresent(this::sendAfterCommit);
     }
 
     @Override
     public void confirmPurchase(Long buyerId, Long orderId, Long orderItemId) {
-        orderService.confirmPurchase(buyerId, orderId, orderItemId);
+        orderService.confirmPurchase(buyerId, orderId, orderItemId).ifPresent(this::sendAfterCommit);
     }
 
     @Override
@@ -251,7 +260,9 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
 
     @Override
     public int autoConfirmPurchases(Long orderId) {
-        return orderService.autoConfirmPurchases(orderId).confirmedCount();
+        AutoConfirmPurchaseResult result = orderService.autoConfirmPurchases(orderId);
+        result.outboxIds().forEach(this::sendAfterCommit);
+        return result.confirmedCount();
     }
 
     @Override
@@ -261,12 +272,25 @@ public class OrderFacade implements GetCheckoutUseCase, CreateOrderUseCase, Fail
 
     @Override
     public boolean requestPaymentExpire(Long orderId) {
-        return orderService.requestPaymentExpire(orderId).isPresent();
+        Optional<Long> outboxId = orderService.requestPaymentExpire(orderId);
+        outboxId.ifPresent(this::sendAfterCommit);
+        return outboxId.isPresent();
     }
 
     @Override
     public void revertRefund(RevertOrderItemRefundCommand command) {
-        orderService.revertRefund(command);
+        sendAfterCommit(orderService.revertRefund(command));
+    }
+
+    // 서비스 트랜잭션이 커밋되고 커넥션을 돌려준 뒤 방금 남긴 줄을 보낸다(#795). 보내기는 전용 실행기의 다른 스레드라
+    // 요청이 브로커 확인을 기다리지 않는다. 대기열이 가득 차면 기다리지 않고 넘어간다. 줄은 PENDING으로 남아 재발송이 보내고,
+    // 몰릴 때 건마다 로그를 쓰지 않도록 건수만 센다(#715, #794)
+    private void sendAfterCommit(Long outboxId) {
+        try {
+            orderOutboxRelayFacade.sendAsync(outboxId, clock.instant());
+        } catch (TaskRejectedException e) {
+            orderOutboxRelayFacade.countRejected();
+        }
     }
 
     @Override

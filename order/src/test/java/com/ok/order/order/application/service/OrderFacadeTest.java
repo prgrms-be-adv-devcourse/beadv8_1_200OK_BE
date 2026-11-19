@@ -3,9 +3,11 @@ package com.ok.order.order.application.service;
 import com.ok.common.exception.RestApiException;
 import com.ok.order.cart.application.dto.SelectedCartItem;
 import com.ok.order.cart.application.port.in.GetSelectedCartItemsUseCase;
+import com.ok.order.order.application.dto.AutoConfirmPurchaseResult;
 import com.ok.order.order.application.dto.CheckoutResult;
 import com.ok.order.order.application.dto.CreateOrderCommand;
 import com.ok.order.order.application.dto.ProductOption;
+import com.ok.order.order.application.dto.RevertOrderItemRefundCommand;
 import com.ok.order.order.application.dto.StockItem;
 import com.ok.order.order.application.port.out.DeliveryPort;
 import com.ok.order.order.application.port.out.ProductPort;
@@ -18,6 +20,7 @@ import com.ok.order.order.exception.OrderErrorCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -25,8 +28,11 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +52,7 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class OrderFacadeTest {
@@ -55,6 +62,8 @@ class OrderFacadeTest {
     @Mock ProductPort productPort;
     @Mock WalletPort walletPort;
     @Mock DeliveryPort deliveryPort;
+    @Mock OrderOutboxRelayFacade orderOutboxRelayFacade;
+    @Mock Clock clock;
 
     @InjectMocks OrderFacade sut;
 
@@ -65,6 +74,7 @@ class OrderFacadeTest {
     static final Long SELLER_ID = 100L;
     static final String ZIP_CODE = "06236";
     static final String IDEMPOTENCY_KEY = "3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f";
+    static final Instant NOW = Instant.parse("2026-11-20T01:00:00Z");
 
     // 상품 모듈 옵션 한 건 (옵션 ID, 판매자, 가격, 재고, 구매 가능 여부)
     private ProductOption option(Long optionId, Long sellerId, long salePrice, int stock, boolean purchasable) {
@@ -351,6 +361,8 @@ class OrderFacadeTest {
         shippingFee(3_000L, 3_000L);
         given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
         given(orderService.create(any(Order.class))).willReturn(10L);
+        given(orderService.publishCreated(10L)).willReturn(77L);
+        given(clock.instant()).willReturn(NOW);
 
         // when
         Long orderId = sut.createOrder(command(16_000L));
@@ -385,10 +397,33 @@ class OrderFacadeTest {
             softly.assertThat(group.getRemoteAreaFee()).isEqualTo(3_000L);
         });
 
-        // then: 재고 선점 요청과 이벤트 발행
+        // then: 재고 선점 요청과 이벤트 발행, 결제 요청을 커밋한 뒤 남긴 줄을 바로 보낸다
         then(productPort).should().allocateStock(eq(10L), stockItemsCaptor.capture());
         assertThat(stockItemsCaptor.getValue()).containsExactly(new StockItem(11L, 1));
-        then(orderService).should().publishCreated(10L);
+        InOrder publishThenSend = inOrder(orderService, orderOutboxRelayFacade);
+        publishThenSend.verify(orderService).publishCreated(10L);
+        publishThenSend.verify(orderOutboxRelayFacade).sendAsync(77L, NOW);
+    }
+
+    // 결제 요청은 커밋됐고 줄은 PENDING이라 재발송이 보낸다. 주문을 취소하거나 오류로 답하면 안 된다(#715, #794)
+    @Test
+    void 결제_요청을_커밋한_뒤_발송_대기열이_가득_차도_주문을_돌려주고_거절만_센다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        given(orderService.publishCreated(10L)).willReturn(77L);
+        willThrow(new TaskRejectedException("가득 참")).given(orderOutboxRelayFacade).sendAsync(eq(77L), any());
+
+        // when
+        Long orderId = sut.createOrder(command(10_000L));
+
+        // then
+        assertThat(orderId).isEqualTo(10L);
+        then(orderOutboxRelayFacade).should().countRejected();
+        then(orderService).should(never()).cancel(anyLong());
     }
 
     // ---------- 주문 생성 멱등키 ----------
@@ -580,5 +615,95 @@ class OrderFacadeTest {
         // when & then
         assertThatCode(() -> sut.retryStockRelease(10L)).doesNotThrowAnyException();
         then(orderService).should(never()).markStockReleased(anyLong());
+    }
+
+    // ---------- 커밋 직후 발송 (#795) ----------
+
+    @Test
+    void 결제_완료를_커밋하면_남긴_줄을_바로_보낸다() {
+        // given
+        given(orderService.completePayment(10L)).willReturn(Optional.of(77L));
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+    }
+
+    @Test
+    void 결제_완료로_바꾸지_않았으면_보내지_않는다() {
+        // given: 이미 처리된 주문
+        given(orderService.completePayment(10L)).willReturn(Optional.empty());
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        then(orderOutboxRelayFacade).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 구매확정을_커밋하면_남긴_줄을_바로_보낸다() {
+        // given
+        given(orderService.confirmPurchase(BUYER_ID, 10L, 1L)).willReturn(Optional.of(77L));
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        sut.confirmPurchase(BUYER_ID, 10L, 1L);
+
+        // then
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+    }
+
+    @Test
+    void 자동_구매확정은_남긴_줄을_모두_보내고_확정한_상품_수를_돌려준다() {
+        // given: 상품 셋을 확정했고, 모두 환불된 하나는 보내지 않아 줄은 둘이다
+        given(orderService.autoConfirmPurchases(10L)).willReturn(new AutoConfirmPurchaseResult(3, List.of(77L, 78L)));
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        int confirmed = sut.autoConfirmPurchases(10L);
+
+        // then
+        assertThat(confirmed).isEqualTo(3);
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+        then(orderOutboxRelayFacade).should().sendAsync(78L, NOW);
+    }
+
+    @ParameterizedTest
+    @MethodSource("결제_만료_요청_결과")
+    void 결제_만료를_요청했을_때만_남긴_줄을_보낸다(Optional<Long> outboxId, boolean expected) {
+        // given
+        given(orderService.requestPaymentExpire(10L)).willReturn(outboxId);
+        outboxId.ifPresent(id -> given(clock.instant()).willReturn(NOW));
+
+        // when
+        boolean requested = sut.requestPaymentExpire(10L);
+
+        // then
+        assertThat(requested).isEqualTo(expected);
+        then(orderOutboxRelayFacade).should(outboxId.isPresent() ? times(1) : never()).sendAsync(77L, NOW);
+    }
+
+    static Stream<Arguments> 결제_만료_요청_결과() {
+        return Stream.of(
+                Arguments.of(Optional.of(77L), true),
+                Arguments.of(Optional.empty(), false));
+    }
+
+    @Test
+    void 환불_되돌리기_결과를_커밋하면_남긴_줄을_바로_보낸다() {
+        // given
+        RevertOrderItemRefundCommand command = new RevertOrderItemRefundCommand(7L, 10L, 1L, 1);
+        given(orderService.revertRefund(command)).willReturn(77L);
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        sut.revertRefund(command);
+
+        // then
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
     }
 }

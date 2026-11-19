@@ -3,14 +3,19 @@ package com.ok.order.order.adapter.out.event;
 import com.ok.order.order.application.dto.PaidItemMessage;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.PaidSellerGroupMessage;
-import com.ok.order.order.application.port.in.OrderOutboxRecordUseCase;
+import com.ok.order.order.application.port.out.OrderOutboxRepository;
+import com.ok.order.order.domain.OrderOutbox;
+import com.ok.order.order.domain.OrderOutboxStatus;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -19,18 +24,29 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 
 @ExtendWith(MockitoExtension.class)
-class SpringOrderEventPublisherTest {
+class OutboxOrderEventPublisherTest {
 
-    @Mock OrderOutboxRecordUseCase outboxRecorder;
+    @Mock OrderOutboxRepository orderOutboxRepository;
     @Spy JsonMapper jsonMapper = JsonMapper.builder().build();
 
-    @InjectMocks SpringOrderEventPublisher sut;
+    @InjectMocks OutboxOrderEventPublisher sut;
+
+    @Captor ArgumentCaptor<OrderOutbox> outboxCaptor;
+
+    // 저장소가 줄에 ID 77을 매긴다
+    @BeforeEach
+    void setUp() {
+        given(orderOutboxRepository.save(any(OrderOutbox.class))).willAnswer(invocation -> {
+            OrderOutbox outbox = invocation.getArgument(0);
+            ReflectionTestUtils.setField(outbox, "id", 77L);
+            return outbox;
+        });
+    }
 
     @Test
     void 주문_생성은_지갑이_받는_모양으로_Kafka_outbox에_남긴다() {
@@ -38,9 +54,7 @@ class SpringOrderEventPublisherTest {
         sut.publishOrderCreatedEvent(10L, 1L, 23_000L, "사과 외 1건");
 
         // then
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        then(outboxRecorder).should().record(eq("order.order-created.v1"), eq("10"), payload.capture());
-        JsonNode json = jsonMapper.readTree(payload.getValue());
+        JsonNode json = jsonMapper.readTree(savedPayload("order.order-created.v1", "10"));
         assertSoftly(softly -> {
             softly.assertThat(json.get("orderId").asLong()).isEqualTo(10L);
             softly.assertThat(json.get("buyerId").asLong()).isEqualTo(1L);
@@ -56,9 +70,7 @@ class SpringOrderEventPublisherTest {
         sut.publishOrderProductConfirmedEvent(10L, 1L, 100L, 20_000L, 3_000L);
 
         // then
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        then(outboxRecorder).should().record(eq("order.order-product-confirmed.v1"), eq("1"), payload.capture());
-        JsonNode json = jsonMapper.readTree(payload.getValue());
+        JsonNode json = jsonMapper.readTree(savedPayload("order.order-product-confirmed.v1", "1"));
         assertSoftly(softly -> {
             softly.assertThat(json.get("orderId").asLong()).isEqualTo(10L);
             softly.assertThat(json.get("orderItemId").asLong()).isEqualTo(1L);
@@ -83,9 +95,7 @@ class SpringOrderEventPublisherTest {
         sut.publishOrderPaidEvent(message);
 
         // then
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        then(outboxRecorder).should().record(eq("order.order-paid.v1"), eq("10"), payload.capture());
-        JsonNode json = jsonMapper.readTree(payload.getValue());
+        JsonNode json = jsonMapper.readTree(savedPayload("order.order-paid.v1", "10"));
         JsonNode address = json.get("shippingAddress");
         JsonNode sellerOrder = json.get("sellerOrders").get(0);
         JsonNode item = sellerOrder.get("items").get(0);
@@ -115,13 +125,23 @@ class SpringOrderEventPublisherTest {
 
     @Test
     void 남긴_outbox_줄_ID를_돌려준다() {
-        // given
-        given(outboxRecorder.record(eq("order.order-created.v1"), eq("10"), anyString())).willReturn(77L);
-
         // when
         Long outboxId = sut.publishOrderCreatedEvent(10L, 1L, 23_000L, "사과 외 1건");
 
         // then
         assertThat(outboxId).isEqualTo(77L);
+    }
+
+    // 저장한 줄의 토픽과 키를 확인하고 본문을 돌려준다
+    private String savedPayload(String topic, String messageKey) {
+        then(orderOutboxRepository).should().save(outboxCaptor.capture());
+        OrderOutbox saved = outboxCaptor.getValue();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(saved.getTopic()).isEqualTo(topic);
+            softly.assertThat(saved.getMessageKey()).isEqualTo(messageKey);
+            softly.assertThat(saved.getStatus()).isEqualTo(OrderOutboxStatus.PENDING);
+        });
+        return saved.getPayload();
     }
 }

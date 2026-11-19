@@ -1,24 +1,22 @@
 package com.ok.order.order.application.service;
 
 import com.ok.order.order.adapter.out.persistence.OrderOutboxJpaRepository;
-import com.ok.order.order.application.port.in.OrderOutboxRecordUseCase;
 import com.ok.order.order.application.port.in.OrderOutboxRelayUseCase;
+import com.ok.order.order.application.port.out.OrderEventPublisher;
 import com.ok.order.order.domain.OrderOutbox;
 import com.ok.order.order.domain.OrderOutboxStatus;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.OrderKafkaTestConfiguration;
 import com.ok.testsupport.OrderKafkaTopicReader;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -26,7 +24,6 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -47,7 +44,10 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
     private static final Duration NO_MIN_AGE = Duration.ZERO;
 
     @Autowired
-    OrderOutboxRecordUseCase sut;
+    OrderEventPublisher orderEventPublisher;
+
+    @Autowired
+    OrderOutboxRelayFacade orderOutboxRelayFacade;
 
     @Autowired
     OrderOutboxRelayUseCase orderOutboxRelayUseCase;
@@ -65,11 +65,7 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
     KafkaConnectionDetails kafkaConnectionDetails;
 
     @Autowired
-    MeterRegistry meterRegistry;
-
-    @Autowired
-    @Qualifier(OrderOutboxRelayFacade.RELAY_EXECUTOR)
-    ThreadPoolTaskExecutor relayExecutor;
+    Clock clock;
 
     private OrderKafkaTopicReader reader;
     private String key;
@@ -86,10 +82,14 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
         orderOutboxRepository.deleteAllInBatch();
     }
 
+    // 서비스가 커밋한 뒤 Facade가 부르는 커밋 직후 발송. 진입점부터의 경로는 주문 생성 API·구매확정 등 Kafka 통합 테스트가 본다
     @Test
-    void 커밋되면_바로_키와_JSON_객체로_한_건_나가고_줄이_보냄이_된다() {
+    void 커밋된_줄을_바로_보내면_키와_JSON_객체로_한_건_나가고_줄이_보냄이_된다() {
+        // given
+        Long outboxId = orderOutboxRepository.save(OrderOutbox.pending(TOPIC, key, "{\"orderId\":10,\"name\":\"사과\"}")).getId();
+
         // when
-        transactionTemplate.executeWithoutResult(status -> sut.record(TOPIC, key, "{\"orderId\":10,\"name\":\"사과\"}"));
+        orderOutboxRelayFacade.sendAsync(outboxId, clock.instant());
 
         // then: 문자열로 한 번 더 감싸지 않은 JSON 객체 그대로 나간다
         List<String> values = reader.readValuesFor(key, READ_DURATION);
@@ -98,26 +98,37 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 트랜잭션이_롤백되면_줄도_메시지도_남지_않는다() {
+    void 트랜잭션이_롤백되면_남긴_줄도_사라진다() {
+        // given
+        long orderId = uniqueOrderId();
+
         // when
         transactionTemplate.executeWithoutResult(status -> {
-            sut.record(TOPIC, key, "{\"orderId\":11}");
+            orderEventPublisher.publishPaymentExpireRequested(orderId, 1L, 10_000L);
             status.setRollbackOnly();
         });
 
         // then
-        assertSoftly(softly -> {
-            softly.assertThat(reader.readValuesFor(key, READ_DURATION)).isEmpty();
-            softly.assertThat(orderOutboxRepository.findAll()).extracting(OrderOutbox::getMessageKey).doesNotContain(key);
-        });
+        assertThat(orderOutboxRepository.findAll()).extracting(OrderOutbox::getMessageKey)
+                .doesNotContain(String.valueOf(orderId));
     }
 
     // 주문 변경과 따로 커밋되면 롤백된 변경의 메시지가 나가거나 커밋된 변경의 메시지가 안 나갈 수 있어 막는다
     @Test
-    void 트랜잭션_밖에서_남기면_예외를_던진다() {
+    void 트랜잭션_밖에서_남기면_예외를_던지고_줄을_남기지_않는다() {
+        // given
+        long orderId = uniqueOrderId();
+
         // when & then
-        assertThatThrownBy(() -> sut.record(TOPIC, key, "{\"orderId\":12}"))
+        assertThatThrownBy(() -> orderEventPublisher.publishPaymentExpireRequested(orderId, 1L, 10_000L))
                 .isInstanceOf(IllegalTransactionStateException.class);
+        assertThat(orderOutboxRepository.findAll()).extracting(OrderOutbox::getMessageKey)
+                .doesNotContain(String.valueOf(orderId));
+    }
+
+    // 다른 테스트의 주문과 겹치지 않는 키
+    private static long uniqueOrderId() {
+        return 9_000_000_000L + (System.nanoTime() % 1_000_000_000L);
     }
 
     @Test
@@ -203,51 +214,6 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sut.getSentAt()).isNotNull();
             softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
         });
-    }
-
-    // 커밋 직후 콜백은 DB 커넥션을 돌려주기 전이라, 대기열 자리를 기다리면 커넥션을 쥔 채 멈춘다(#715, 2차 부하테스트).
-    // 전용 실행기의 스레드를 막고 대기열을 가득 채운 뒤 남겨, 기다리지 않고 끝나는지와 줄이 재발송으로 나가는지 본다
-    @Test
-    void 커밋_직후_발송_대기열이_가득_차도_기다리지_않고_끝나고_거절을_세며_줄은_재발송이_보낸다() throws Exception {
-        // given: 스레드를 모두 막고 대기열을 빈 작업으로 채운다
-        double rejectedBefore = rejectedCount();
-        CountDownLatch release = new CountDownLatch(1);
-        ThreadPoolExecutor pool = relayExecutor.getThreadPoolExecutor();
-        try {
-            for (int i = 0; i < relayExecutor.getMaxPoolSize(); i++) {
-                pool.execute(() -> awaitQuietly(release));
-            }
-            while (pool.getQueue().remainingCapacity() > 0) {
-                pool.execute(() -> { });
-            }
-
-            // when: 기다리면 이 시간 안에 끝나지 않는다
-            CompletableFuture<Void> commit = CompletableFuture.runAsync(() -> transactionTemplate.executeWithoutResult(
-                    status -> sut.record(TOPIC, key, "{\"orderId\":13}")));
-            commit.get(5, TimeUnit.SECONDS);
-
-            // then: 바로 보내지 못하고 PENDING으로 남고, 거절한 건수를 센다
-            assertSoftly(softly -> {
-                softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.PENDING);
-                softly.assertThat(rejectedCount() - rejectedBefore).isEqualTo(1.0);
-            });
-        } finally {
-            release.countDown();
-        }
-
-        // 막아 둔 작업이 끝난 뒤 재발송이 보낸다
-        orderOutboxRelayUseCase.relayPending(100, NO_MIN_AGE);
-        assertSoftly(softly -> {
-            softly.assertThat(reader.readValuesFor(key, READ_DURATION)).containsExactly("{\"orderId\":13}");
-            softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.SENT);
-        });
-    }
-
-    private double rejectedCount() {
-        return meterRegistry.get(OrderOutboxRelayFacade.SEND_DROPPED_METRIC)
-                .tag("reason", OrderOutboxRelayFacade.DROP_REASON_REJECTED)
-                .counter()
-                .count();
     }
 
     private static void awaitQuietly(CountDownLatch latch) {

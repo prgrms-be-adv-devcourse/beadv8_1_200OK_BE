@@ -9,29 +9,37 @@ import com.ok.order.order.adapter.out.event.dto.OrderRefundRevertedMessage;
 import com.ok.order.order.application.dto.PaidItemMessage;
 import com.ok.order.order.application.dto.PaidOrderMessage;
 import com.ok.order.order.application.dto.PaidSellerGroupMessage;
-import com.ok.order.order.application.port.in.OrderOutboxRecordUseCase;
 import com.ok.order.order.application.port.out.OrderEventPublisher;
+import com.ok.order.order.application.port.out.OrderOutboxRepository;
+import com.ok.order.order.domain.OrderOutbox;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 주문이 Kafka로 보낼 메시지를 JSON으로 바꿔 outbox에 남긴다 (#666, #795).
+ * 보내기는 서비스가 커밋한 뒤 Facade가 남긴 줄 ID로 시작하고, 그때 보내지 못한 줄은 재발송 스케줄러가 보낸다.
+ */
 @Component
 @RequiredArgsConstructor
-public class SpringOrderEventPublisher implements OrderEventPublisher {
+// MANDATORY: 부른 쪽(주문 변경)의 트랜잭션에 합류하고, 트랜잭션이 없으면 예외를 낸다.
+// 따로 커밋되면 롤백된 주문 변경의 메시지가 나가거나, 커밋된 변경의 메시지가 안 나갈 수 있어서 같은 트랜잭션을 강제한다
+@Transactional(propagation = Propagation.MANDATORY)
+public class OutboxOrderEventPublisher implements OrderEventPublisher {
 
-    // Kafka로 보낼 메시지를 outbox에 남기고(#666), 메시지 DTO를 JSON으로 바꾼다.
-    // 토픽별 전환(#600, #602, #603)이 각자 자기 메서드만 고치도록 의존성을 먼저 둔다
-    private final OrderOutboxRecordUseCase outboxRecorder;
+    private final OrderOutboxRepository orderOutboxRepository;
     private final JsonMapper jsonMapper;
 
     // 지갑은 Kafka로만 받는다(#640). 지갑은 주문 ID로 처리 기록을 남겨 다시 보내져도 한 번만 차감한다(#602).
     @Override
     public Long publishOrderCreatedEvent(Long orderId, Long buyerId, Long totalAmount, String orderSummary) {
         // 키를 orderId로 둬 지갑의 결제 결과(키 orderId)와 같은 기준으로 한 주문의 메시지가 같은 파티션에 순서대로 쌓인다
-        return outboxRecorder.record(OrderTopics.ORDER_CREATED, String.valueOf(orderId),
+        return record(OrderTopics.ORDER_CREATED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderCreatedMessage(orderId, buyerId, totalAmount, orderSummary)));
     }
 
@@ -39,7 +47,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     // 키를 orderItemId로 둬 같은 주문 상품의 메시지가 같은 파티션에 쌓인다. 정산의 중복 방지 기준과 같다
     @Override
     public Long publishOrderProductConfirmedEvent(Long orderId, Long orderItemId, Long sellerId, Long totalItemPrice, Long sellerShippingPrice) {
-        return outboxRecorder.record(OrderTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(orderItemId),
+        return record(OrderTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(orderItemId),
                 jsonMapper.writeValueAsString(new OrderProductConfirmedMessage(
                         orderId, orderItemId, sellerId, totalItemPrice, sellerShippingPrice)));
     }
@@ -68,7 +76,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
                     group.sellerId(), group.baseShippingFee(), group.freeShippingThreshold(), group.regionSurcharge(), items));
         }
 
-        return outboxRecorder.record(OrderTopics.ORDER_PAID, String.valueOf(message.orderId()),
+        return record(OrderTopics.ORDER_PAID, String.valueOf(message.orderId()),
                 jsonMapper.writeValueAsString(new OrderPaidMessage(
                         message.orderId(), message.buyerId(), message.paidAt(), shippingAddress, sellerOrders)));
     }
@@ -78,7 +86,7 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     // 그래도 지갑이 만료 실패를 먼저 기록해 두어 늦게 온 주문 생성은 차감하지 않는다
     @Override
     public Long publishPaymentExpireRequested(Long orderId, Long buyerId, Long totalAmount) {
-        return outboxRecorder.record(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED, String.valueOf(orderId),
+        return record(OrderTopics.ORDER_PAYMENT_EXPIRE_REQUESTED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderPaymentExpireRequestedMessage(orderId, buyerId, totalAmount)));
     }
 
@@ -86,13 +94,17 @@ public class SpringOrderEventPublisher implements OrderEventPublisher {
     // 다시 보내져도 환불이 이미 끝난 되돌리기 줄이면 넘기므로 한 번만 반영된다
     @Override
     public Long publishRefundReverted(Long refundId, Long orderId, Long orderItemId) {
-        return outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERTED, String.valueOf(orderId),
+        return record(OrderTopics.ORDER_REFUND_REVERTED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderRefundRevertedMessage(refundId, orderId, orderItemId)));
     }
 
     @Override
     public Long publishRefundRevertFailed(Long refundId, Long orderId, Long orderItemId, String reason) {
-        return outboxRecorder.record(OrderTopics.ORDER_REFUND_REVERT_FAILED, String.valueOf(orderId),
+        return record(OrderTopics.ORDER_REFUND_REVERT_FAILED, String.valueOf(orderId),
                 jsonMapper.writeValueAsString(new OrderRefundRevertFailedMessage(refundId, orderId, orderItemId, reason)));
+    }
+
+    private Long record(String topic, String messageKey, String payload) {
+        return orderOutboxRepository.save(OrderOutbox.pending(topic, messageKey, payload)).getId();
     }
 }
