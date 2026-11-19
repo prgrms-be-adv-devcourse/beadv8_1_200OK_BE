@@ -54,7 +54,7 @@ class RefundReturnIntegrationTest extends AbstractIntegrationTest {
     void 환불이_보낸_반환_요청을_지갑이_받아_구매자에게_돌려준다() {
         // given: 구매자가 50,000원을 충전하고 이 주문에 35,000원을 결제했다
         buyerWalletService.chargeByPayment(BUYER_ID, "pay-" + BUYER_ID + "-" + ORDER_ID, 50_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000, null);
 
         // when: 환불이 판매자 승인 뒤에 부르는 것과 같은 보내기로 7,000원 반환을 요청한다
         walletRefundRequestPort.requestRefund(new WalletRefundRequest(REFUND_ID, ORDER_ID, BUYER_ID, SELLER_ID, 7_000));

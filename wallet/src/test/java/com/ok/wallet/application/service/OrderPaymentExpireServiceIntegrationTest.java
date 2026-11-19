@@ -84,7 +84,7 @@ class OrderPaymentExpireServiceIntegrationTest extends AbstractIntegrationTest {
         long buyerId = nextId();
         long orderId = nextId();
         charger.charge(buyerId, "pay-" + orderId, 10_000);
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // when
         orderPaymentUseCase.expireAndSendResult(new OrderPaymentExpireCommand(orderId, buyerId, 3_000L));
@@ -102,7 +102,7 @@ class OrderPaymentExpireServiceIntegrationTest extends AbstractIntegrationTest {
         // given
         long buyerId = nextId();
         long orderId = nextId();
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // when
         orderPaymentUseCase.expireAndSendResult(new OrderPaymentExpireCommand(orderId, buyerId, 3_000L));
@@ -138,7 +138,7 @@ class OrderPaymentExpireServiceIntegrationTest extends AbstractIntegrationTest {
         orderPaymentUseCase.expireAndSendResult(new OrderPaymentExpireCommand(orderId, buyerId, 3_000L));
 
         // when: 주문 생성 메시지가 만료 요청보다 늦게 도착함(토픽이 달라 순서가 지켜지지 않는다)
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // then
         assertThat(messagesFor(FAILED_TOPIC, orderId, 2)).containsExactly(
@@ -180,7 +180,7 @@ class OrderPaymentExpireServiceIntegrationTest extends AbstractIntegrationTest {
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<?> pay = executor.submit(() -> {
                 start.await();
-                orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+                orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
                 return null;
             });
             Future<?> expire = executor.submit(() -> {

@@ -73,7 +73,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         charger.charge(buyerId, "pay-" + orderId, 10_000);
 
         // when
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // then
         assertThat(balanceOf(buyerId)).isEqualTo(7_000);
@@ -88,13 +88,43 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void 결제하면_주문_요약을_처리_기록에_남긴다() {
+        // given
+        long buyerId = nextId();
+        long orderId = nextId();
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
+
+        // when
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, "사과 외 3건"));
+
+        // then
+        assertThat(orderSummaryOf(orderId)).isEqualTo("사과 외 3건");
+    }
+
+    @Test
+    void 주문_요약이_칸_길이를_넘어도_결제하고_잘라서_남긴다() {
+        // given
+        long buyerId = nextId();
+        long orderId = nextId();
+        charger.charge(buyerId, "pay-" + orderId, 10_000);
+        String longSummary = "가".repeat(200);
+
+        // when
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, longSummary));
+
+        // then
+        assertThat(balanceOf(buyerId)).isEqualTo(7_000);
+        assertThat(orderSummaryOf(orderId)).isEqualTo("가".repeat(120));
+    }
+
+    @Test
     void 잔액이_부족하면_차감하지_않고_잔액_부족_실패_메시지를_보낸다() {
         // given
         long buyerId = nextId();
         long orderId = nextId();
 
         // when
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // then
         assertThat(balanceOf(buyerId)).isZero();
@@ -109,7 +139,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         long orderId = nextId();
 
         // when
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 0L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 0L, null));
 
         // then: 주문이 결제 대기로 멈추지 않도록 실패를 알린다
         assertThat(messagesFor(FAILED_TOPIC, orderId, 1))
@@ -123,10 +153,10 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         long buyerId = nextId();
         long orderId = nextId();
         charger.charge(buyerId, "pay-" + orderId, 10_000);
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // when: 결과 보내기가 실패해 같은 주문을 다시 받은 경우
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 5_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 5_000L, null));
 
         // then: 처음과 똑같은 메시지가 두 번 나가야 받는 쪽이 같은 결과로 보고 한 번만 반영한다
         List<String> messages = messagesFor(COMPLETED_TOPIC, orderId, 2);
@@ -141,11 +171,11 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         // given: 잔액 부족으로 실패한 뒤 충전함
         long buyerId = nextId();
         long orderId = nextId();
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
         charger.charge(buyerId, "pay-" + orderId, 10_000);
 
         // when
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // then: 주문은 이미 실패로 처리됐으므로 돈이 빠지면 안 된다
         String failed = failedJson(orderId, buyerId, "INSUFFICIENT_BALANCE");
@@ -159,10 +189,10 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         long buyerId = nextId();
         long orderId = nextId();
         charger.charge(buyerId, "pay-" + orderId, 10_000);
-        buyerWalletService.payForOrder(buyerId, orderId, 3_000L);
+        buyerWalletService.payForOrder(buyerId, orderId, 3_000L, null);
 
         // when
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // then: 같은 처리 기록을 써서 한 번만 차감되고 처음 결과가 나간다
         assertThat(messagesFor(COMPLETED_TOPIC, orderId, 1)).singleElement().asString().contains("\"amount\":3000");
@@ -173,7 +203,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
     void 구매자_ID가_없으면_기록하지_않고_예외가_난다() {
         // given
         long orderId = nextId();
-        OrderPaymentCommand command = new OrderPaymentCommand(orderId, null, 3_000L);
+        OrderPaymentCommand command = new OrderPaymentCommand(orderId, null, 3_000L, null);
 
         // when & then: 결과를 알릴 구매자를 몰라 실패 기록에 남겨 사람이 보게 한다
         assertThatThrownBy(() -> orderPaymentUseCase.payAndSendResult(command))
@@ -188,10 +218,10 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         long buyerId = nextId();
         long orderId = nextId();
         charger.charge(buyerId, "pay-" + orderId, 10_000);
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 3_000L, null));
 
         // when: 금액이 빠진 채 같은 주문이 다시 옴
-        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 0L));
+        orderPaymentUseCase.payAndSendResult(new OrderPaymentCommand(orderId, buyerId, 0L, null));
 
         // then: 처리할 수 없는 요청 실패가 아니라 처음 결과(결제 완료)를 다시 보낸다
         List<String> messages = messagesFor(COMPLETED_TOPIC, orderId, 2);
@@ -206,7 +236,7 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
         long buyerId = nextId();
         long orderId = nextId();
         charger.charge(buyerId, "pay-" + orderId, 10_000);
-        OrderPaymentCommand command = new OrderPaymentCommand(orderId, buyerId, 3_000L);
+        OrderPaymentCommand command = new OrderPaymentCommand(orderId, buyerId, 3_000L, null);
 
         // when & then
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(
@@ -227,6 +257,11 @@ class OrderPaymentServiceIntegrationTest extends AbstractIntegrationTest {
     private LocalDateTime recordedAt(long orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT created_at FROM wallet_order_payment WHERE order_id = ?", LocalDateTime.class, orderId);
+    }
+
+    private String orderSummaryOf(long orderId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT order_summary FROM wallet_order_payment WHERE order_id = ?", String.class, orderId);
     }
 
     private long countPaymentRecords(long orderId) {

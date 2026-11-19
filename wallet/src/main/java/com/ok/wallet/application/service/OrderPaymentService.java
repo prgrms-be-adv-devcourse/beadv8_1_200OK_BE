@@ -51,7 +51,7 @@ public class OrderPaymentService implements OrderPaymentUseCase {
 
         // 트랜잭션 없이 부르므로 payForOrder가 돌아오면 차감은 커밋돼 있다
         OrderPaymentResult result = buyerWalletService.payForOrder(
-                command.buyerId(), command.orderId(), command.amount());
+                command.buyerId(), command.orderId(), command.amount(), command.orderSummary());
         // 위에서 기록이 없었어도 같은 주문이 동시에 와서 먼저 처리됐을 수 있다. 그때는 처리 기록 넣기가 걸러 처음 결과가 온다
         if (result.alreadyProcessed()) {
             logAlreadyProcessed(command.buyerId(), command.amount(), result);

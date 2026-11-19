@@ -120,7 +120,7 @@ class OrderRefundServiceIntegrationTest extends AbstractIntegrationTest {
     // 50,000원을 충전하고 주문을 결제한다
     private void paidOrder(long buyerId, long orderId, long amount) {
         charger.charge(buyerId, "pay-" + orderId, 50_000);
-        buyerWalletService.payForOrder(buyerId, orderId, amount);
+        buyerWalletService.payForOrder(buyerId, orderId, amount, null);
     }
 
     private List<String> messagesFor(String topic, long orderId, int expectedCount) {

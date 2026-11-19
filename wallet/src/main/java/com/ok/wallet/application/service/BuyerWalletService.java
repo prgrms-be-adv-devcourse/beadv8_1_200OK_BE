@@ -111,9 +111,11 @@ public class BuyerWalletService implements BuyerWalletUseCase {
      * <p>같은 주문인지는 처리 기록을 먼저 넣어 보고 판단한다(#360). 일반 조회로 판단하면, 이 메서드가 이미 열린 트랜잭션(주문 생성 리스너)에
      * 합류할 때 잠금 전에 잡힌 스냅샷 때문에 동시에 먼저 끝난 결제를 못 보고 다시 차감하려다 원장 유니크 제약에 걸려 예외로 끝났다.
      * 넣기는 스냅샷이 아니라 유니크 제약으로 판단하므로, 호출하는 쪽의 트랜잭션·격리 수준과 상관없이 중복을 막는다.
+     *
+     * @param orderSummary 이용 내역에 보일 주문 요약. 처리 기록에 함께 남기고, 비었거나 길어도 결제는 한다
      */
     @Transactional
-    public OrderPaymentResult payForOrder(Long memberId, Long orderId, long amount) {
+    public OrderPaymentResult payForOrder(Long memberId, Long orderId, long amount, String orderSummary) {
         // 호출하는 쪽(OrderPaymentService)이 값을 걸러 넘긴다. 처리 기록 넣기(INSERT IGNORE)는 NULL·CHECK 위반도 오류 없이 넘기므로
         // 잘못된 값이 기록되지 않게 여기서 먼저 표준 예외로 막는다
         if (memberId == null || orderId == null) {
@@ -127,8 +129,8 @@ public class BuyerWalletService implements BuyerWalletUseCase {
         WalletOrderPaymentStatus status = enoughBalance ? WalletOrderPaymentStatus.PAID : WalletOrderPaymentStatus.FAILED;
         // DB는 마이크로초까지 저장한다. 자르지 않으면 처음 결과와 기록에서 다시 읽은 결과의 시각이 달라진다
         LocalDateTime processedAt = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
-        int inserted = walletOrderPaymentRepository.insertIfAbsent(
-                orderId, memberId, amount, status.name(), processedAt);
+        int inserted = walletOrderPaymentRepository.insertIfAbsent(orderId, memberId, amount,
+                WalletOrderPayment.normalizeOrderSummary(orderSummary), status.name(), processedAt);
         if (inserted == 0) {
             // 이미 처리된 주문이다. 기록은 넣기를 거쳐 있음이 확인됐으므로 없을 수 없다. 없다면 코드·DB의 이상이라 500으로 드러낸다
             // IGNORE는 중복이 아닌 오류(CHECK 위반 등)로 넣기를 건너뛰어도 0을 돌려주므로, 원인을 좁힐 수 있게 그 가능성을 메시지에 남긴다
@@ -170,7 +172,7 @@ public class BuyerWalletService implements BuyerWalletUseCase {
         getOrCreate(memberId);
         LocalDateTime processedAt = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS);
         int inserted = walletOrderPaymentRepository.insertIfAbsent(
-                orderId, memberId, amount, WalletOrderPaymentStatus.EXPIRED.name(), processedAt);
+                orderId, memberId, amount, null, WalletOrderPaymentStatus.EXPIRED.name(), processedAt);
         if (inserted == 0) {
             WalletOrderPayment processed = walletOrderPaymentRepository.findForShareByOrderId(orderId)
                     .orElseThrow(() -> new IllegalStateException(

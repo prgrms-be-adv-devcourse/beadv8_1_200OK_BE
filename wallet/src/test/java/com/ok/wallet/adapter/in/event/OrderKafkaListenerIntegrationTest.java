@@ -63,7 +63,7 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 주문_생성을_Kafka로_받으면_차감하고_완료_메시지를_보낸다() {
+    void 주문_생성을_Kafka로_받으면_차감하고_주문_요약을_남긴_뒤_완료_메시지를_보낸다() {
         // given
         long buyerId = nextId();
         long orderId = nextId();
@@ -76,6 +76,9 @@ class OrderKafkaListenerIntegrationTest extends AbstractIntegrationTest {
         assertThat(resultsFor(COMPLETED_TOPIC, orderId, 1)).singleElement().asString()
                 .startsWith("{\"orderId\":" + orderId + ",\"buyerId\":" + buyerId + ",\"amount\":3000,\"paidAt\":");
         assertThat(balanceOf(buyerId)).isEqualTo(7_000);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT order_summary FROM wallet_order_payment WHERE order_id = ?", String.class, orderId))
+                .isEqualTo("사과 외 2건");
     }
 
     @Test

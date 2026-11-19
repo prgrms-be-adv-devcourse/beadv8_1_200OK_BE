@@ -7,7 +7,7 @@ package com.ok.wallet.adapter.in.event.dto;
  *
  * @param totalAmount  결제할 금액(원). 상품 + 배송비 + 도서산간 운임
  * @param orderSummary 이용 내역에 보일 주문 요약. 첫 상품 이름 + 나머지 상품 개수(예: "사과 외 3건")이고 주문 시점의 이름이다.
- *                     지금은 받기만 하고 저장·표시는 #609에서 한다. 결제에 쓰지 않아 비었거나 이상해도 결제는 한다
+ *                     결제에 쓰지 않아 비었거나 이상해도 결제는 한다
  */
 public record OrderCreatedMessage(
         Long orderId,

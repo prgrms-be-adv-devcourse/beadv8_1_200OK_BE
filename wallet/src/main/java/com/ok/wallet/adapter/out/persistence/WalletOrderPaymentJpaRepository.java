@@ -19,11 +19,12 @@ public interface WalletOrderPaymentJpaRepository extends Repository<WalletOrderP
     // BaseTime을 거치지 않아 시각을 직접 받으므로, 엔티티에 NOT NULL 컬럼이 늘면 이 쿼리도 고친다
     @Modifying
     @Query(value = "INSERT IGNORE INTO " + WalletSchema.NAME + """
-            .wallet_order_payment (order_id, buyer_id, amount, status, created_at, updated_at)
-            VALUES (:orderId, :buyerId, :amount, :status, :now, :now)
+            .wallet_order_payment (order_id, buyer_id, amount, order_summary, status, created_at, updated_at)
+            VALUES (:orderId, :buyerId, :amount, :orderSummary, :status, :now, :now)
             """, nativeQuery = true)
     int insertIfAbsent(@Param("orderId") Long orderId, @Param("buyerId") Long buyerId, @Param("amount") long amount,
-                       @Param("status") String status, @Param("now") LocalDateTime now);
+                       @Param("orderSummary") String orderSummary, @Param("status") String status,
+                       @Param("now") LocalDateTime now);
 
     @Lock(LockModeType.PESSIMISTIC_READ)
     Optional<WalletOrderPayment> findForShareByOrderId(Long orderId);

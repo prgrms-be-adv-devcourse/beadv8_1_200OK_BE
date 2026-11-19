@@ -27,6 +27,7 @@ public class OrderKafkaListener {
         // 주문·구매자 ID가 없으면 서비스가 IllegalArgumentException을 던지고, 지갑 오류 처리기가 다시 시도하지 않고 원문과 함께 실패 기록에 남긴다.
         // DB 오류나 결과 보내기 실패는 예외를 그대로 전파한다. 지갑 오류 처리기가 다시 시도하고, 그때 서비스가 처음 결과를 다시 보낸다
         orderPaymentUseCase.payAndSendResult(
-                new OrderPaymentCommand(message.orderId(), message.buyerId(), message.totalAmount()));
+                new OrderPaymentCommand(
+                        message.orderId(), message.buyerId(), message.totalAmount(), message.orderSummary()));
     }
 }

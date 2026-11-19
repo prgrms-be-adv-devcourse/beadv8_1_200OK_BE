@@ -94,7 +94,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     void 잔액_부족으로_결제에_실패한_주문은_결제_없음으로_거절한다() {
         // given
         charger.charge(BUYER_ID, "pay-1", 1_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000, null);
 
         // when
         OrderRefundResult sut = buyerWalletService.refundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
@@ -224,7 +224,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     void 보유_한도를_넘어도_돌려준다() {
         // given: 100,000원 결제 뒤 다시 충전해 잔액이 한도(500,000원)에 닿음
         charger.charge(BUYER_ID, "pay-1", 500_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 100_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 100_000, null);
         charger.charge(BUYER_ID, "pay-2", 100_000);
 
         // when
@@ -327,7 +327,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
                 charger.charge(BUYER_ID, paymentKey, 1_000);
                 return null;
             });
-            requests.add(() -> buyerWalletService.payForOrder(BUYER_ID, orderId, 1_000));
+            requests.add(() -> buyerWalletService.payForOrder(BUYER_ID, orderId, 1_000, null));
         }
 
         // when
@@ -373,7 +373,7 @@ class BuyerWalletRefundIntegrationTest extends AbstractIntegrationTest {
     // 50,000원을 충전하고 주문을 결제한다. 충전 건 없이 충전 원장만 만드는 것은 정리 도우미가 허용한다(한 방향 검사)
     private void paidOrder(Long buyerId, Long orderId, long amount) {
         charger.charge(buyerId, "pay-" + buyerId + "-" + orderId, 50_000);
-        buyerWalletService.payForOrder(buyerId, orderId, amount);
+        buyerWalletService.payForOrder(buyerId, orderId, amount, null);
     }
 
     private <T> List<T> runConcurrently(List<Callable<T>> tasks) throws Exception {

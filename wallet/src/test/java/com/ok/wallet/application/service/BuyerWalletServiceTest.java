@@ -277,7 +277,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         charger.charge(memberId, "pay-30", 10_000);
 
         // When
-        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_001L, 3_000);
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_001L, 3_000, null);
 
         // Then
         assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.PAID);
@@ -295,7 +295,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         charger.charge(memberId, "pay-31", 10_000);
 
         // When
-        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_002L, 20_000);
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_002L, 20_000, null);
 
         // Then: 예외가 아니라 결과로 돌려줘야 같은 트랜잭션에서 실패 이벤트를 발행할 수 있다
         assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.FAILED);
@@ -310,7 +310,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         Long memberId = 32L;
 
         // When
-        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_003L, 3_000);
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_003L, 3_000, null);
 
         // Then
         assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.FAILED);
@@ -323,10 +323,10 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Given
         Long memberId = 33L;
         charger.charge(memberId, "pay-33", 10_000);
-        OrderPaymentResult first = buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
+        OrderPaymentResult first = buyerWalletService.payForOrder(memberId, 1_004L, 3_000, null);
 
         // When: 주문 생성 이벤트가 재발행됨
-        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_004L, 3_000);
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_004L, 3_000, null);
 
         // Then
         assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.PAID);
@@ -341,10 +341,10 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
         // Given
         Long memberId = 38L;
         charger.charge(memberId, "pay-38", 10_000);
-        buyerWalletService.payForOrder(memberId, 1_008L, 3_000);
+        buyerWalletService.payForOrder(memberId, 1_008L, 3_000, null);
 
         // When: 같은 주문이 다른 구매자·금액으로 다시 옴
-        OrderPaymentResult result = buyerWalletService.payForOrder(39L, 1_008L, 5_000);
+        OrderPaymentResult result = buyerWalletService.payForOrder(39L, 1_008L, 5_000, null);
 
         // Then: 다시 보내는 결과가 처음 결과와 같아야 주문·정산이 어긋나지 않는다
         assertThat(result.buyerId()).isEqualTo(memberId);
@@ -370,7 +370,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
                 results.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();
-                    return buyerWalletService.payForOrder(memberId, 1_005L, 3_000);
+                    return buyerWalletService.payForOrder(memberId, 1_005L, 3_000, null);
                 }));
             }
             ready.await();
@@ -410,7 +410,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
                 results.add(executor.submit(() -> {
                     ready.countDown();
                     start.await();
-                    return transactionTemplate.execute(status -> buyerWalletService.payForOrder(memberId, 1_007L, 3_000));
+                    return transactionTemplate.execute(status -> buyerWalletService.payForOrder(memberId, 1_007L, 3_000, null));
                 }));
             }
             ready.await();
@@ -441,21 +441,21 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
             Long memberId = 600L + i;
             memberIds.add(memberId);
             charger.charge(memberId, "pay-600-" + i, 10_000);
-            buyerWalletService.payForOrder(memberId, paidOrderId(i), 3_000);
+            buyerWalletService.payForOrder(memberId, paidOrderId(i), 3_000, null);
         }
         List<Callable<OrderPaymentResult>> payments = new ArrayList<>();
         for (int i = 0; i < memberCount; i++) {
             Long owner = memberIds.get(i);
             long paidOrderId = paidOrderId(i);
             // 이미 결제한 주문의 재전달: 중복 넣기의 확인 잠금이 그 주문 앞 빈 구간까지 잡을 수 있다
-            payments.add(() -> buyerWalletService.payForOrder(owner, paidOrderId, 3_000));
-            payments.add(() -> buyerWalletService.payForOrder(owner, paidOrderId, 3_000));
+            payments.add(() -> buyerWalletService.payForOrder(owner, paidOrderId, 3_000, null));
+            payments.add(() -> buyerWalletService.payForOrder(owner, paidOrderId, 3_000, null));
             // 같은 빈 구간에 서로 다른 두 회원의 새 주문이 동시에 들어간다. 없는 행을 잠금 읽기로 확인했다면
             // 두 트랜잭션이 같은 빈 구간을 잠근 뒤 서로의 넣기를 기다려 교착이 나는 조합이다
             Long nextMember = memberIds.get((i + 1) % memberCount);
             Long secondNextMember = memberIds.get((i + 2) % memberCount);
-            payments.add(() -> buyerWalletService.payForOrder(nextMember, paidOrderId - 5, 1_000));
-            payments.add(() -> buyerWalletService.payForOrder(secondNextMember, paidOrderId - 3, 1_000));
+            payments.add(() -> buyerWalletService.payForOrder(nextMember, paidOrderId - 5, 1_000, null));
+            payments.add(() -> buyerWalletService.payForOrder(secondNextMember, paidOrderId - 3, 1_000, null));
         }
         ExecutorService executor = Executors.newFixedThreadPool(payments.size());
         CountDownLatch ready = new CountDownLatch(payments.size());
@@ -522,7 +522,7 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
                 String paymentKey = "pay-35-" + i;
                 results.add(executor.submit(() -> {
                     start.await();
-                    buyerWalletService.payForOrder(memberId, orderId, 1_000);
+                    buyerWalletService.payForOrder(memberId, orderId, 1_000, null);
                     return null;
                 }));
                 results.add(executor.submit(() -> {
@@ -549,11 +549,11 @@ class BuyerWalletServiceTest extends AbstractIntegrationTest {
     void 잔액_부족으로_실패한_주문은_충전_후_같은_주문이_다시_와도_차감하지_않는다() {
         // Given: 잔액 부족으로 실패한 뒤 충전함
         Long memberId = 36L;
-        buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
+        buyerWalletService.payForOrder(memberId, 1_006L, 3_000, null);
         charger.charge(memberId, "pay-36", 10_000);
 
         // When: 같은 주문이 재전달됨
-        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_006L, 3_000);
+        OrderPaymentResult result = buyerWalletService.payForOrder(memberId, 1_006L, 3_000, null);
 
         // Then: 주문은 이미 실패로 처리됐으므로 돈이 빠지면 안 된다
         assertThat(result.status()).isEqualTo(WalletOrderPaymentStatus.FAILED);

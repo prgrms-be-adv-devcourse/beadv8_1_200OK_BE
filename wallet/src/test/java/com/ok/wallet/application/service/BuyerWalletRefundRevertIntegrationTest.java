@@ -81,7 +81,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
     void 잔액이_모자라면_가져오지_않고_잔액_부족으로_실패한다() {
         // given: 7,000원을 돌려받은 뒤 다른 주문에 20,000원을 써서 잔액 2,000원
         refundedOrder(1L, 7_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000, null);
 
         // when
         OrderRefundRevertResult sut = buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
@@ -101,7 +101,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
     void 잔액과_되돌릴_금액이_같으면_모두_가져온다() {
         // given: 잔액 22,000원 중 15,000원을 써서 반환 금액 7,000원만 남음
         refundedOrder(1L, 7_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 15_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 15_000, null);
 
         // when
         OrderRefundRevertResult sut = buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
@@ -209,7 +209,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
     void 잔액_부족으로_실패한_되돌리기는_잔액이_채워진_뒤_다시_와도_처음_실패를_돌려준다() {
         // given: 잔액 부족으로 실패한 뒤 충전해 잔액이 충분해짐
         refundedOrder(1L, 7_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000, null);
         buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
         charger.charge(BUYER_ID, "pay-after", 10_000);
 
@@ -250,7 +250,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
     void 되돌리기에_실패한_환불에_같은_반환_요청이_다시_오면_처음_결과를_돌려준다() {
         // given: 잔액 부족으로 되돌리지 못해 돈은 아직 구매자에게 있음
         refundedOrder(1L, 7_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 20_000, null);
         buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 7_000);
 
         // when
@@ -279,7 +279,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
     void 되돌리지_못한_환불은_반환_합계에_그대로_센다() {
         // given: 35,000원을 모두 돌려줬는데 구매자가 써서 되돌리지 못함
         refundedOrder(1L, 35_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 40_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID + 1, 40_000, null);
         buyerWalletService.revertRefundForOrder(1L, ORDER_ID, BUYER_ID, 35_000);
 
         // when
@@ -371,7 +371,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
                 charger.charge(BUYER_ID, paymentKey, 1_000);
                 return null;
             });
-            requests.add(() -> buyerWalletService.payForOrder(BUYER_ID, orderId, 1_000));
+            requests.add(() -> buyerWalletService.payForOrder(BUYER_ID, orderId, 1_000, null));
         }
 
         // when
@@ -414,7 +414,7 @@ class BuyerWalletRefundRevertIntegrationTest extends AbstractIntegrationTest {
     // 50,000원을 충전하고 35,000원을 결제한다 → 잔액 15,000원
     private void paidOrder() {
         charger.charge(BUYER_ID, "pay-" + BUYER_ID, 50_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000, null);
     }
 
     private void refundedOrder(Long refundId, long amount) {

@@ -26,6 +26,8 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class WalletOrderPayment extends BaseTime {
+    public static final int MAX_ORDER_SUMMARY_LENGTH = 120;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -39,11 +41,32 @@ public class WalletOrderPayment extends BaseTime {
     @Column(nullable = false)
     private long amount;
 
+    // 이용 내역에 보일 주문 요약(예: "사과 외 3건"). 이 칸이 생기기 전 기록과 만료로 먼저 남긴 기록에는 없다
+    @Column(length = MAX_ORDER_SUMMARY_LENGTH)
+    private String orderSummary;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private WalletOrderPaymentStatus status;
 
     public boolean isPaid() {
         return status == WalletOrderPaymentStatus.PAID;
+    }
+
+    /**
+     * 주문이 보낸 요약을 저장할 값으로 바꾼다. 비었으면 null, 칸 길이를 넘으면 앞에서부터 칸 길이만큼 자른다.
+     * 요약은 보여 주기에만 쓰므로 이상한 값이어도 결제를 막지 않는다. 넣기가 IGNORE라 긴 값도 DB가 잘라 넣지만,
+     * 경고로만 남는 그 동작에 기대지 않고 저장할 값을 여기서 정한다.
+     * 길이는 DB처럼 글자 수로 센다. 자바 문자 수로 자르면 이모지 같은 글자가 반으로 잘린다.
+     */
+    public static String normalizeOrderSummary(String orderSummary) {
+        if (orderSummary == null || orderSummary.isBlank()) {
+            return null;
+        }
+        String stripped = orderSummary.strip();
+        if (stripped.codePointCount(0, stripped.length()) <= MAX_ORDER_SUMMARY_LENGTH) {
+            return stripped;
+        }
+        return stripped.substring(0, stripped.offsetByCodePoints(0, MAX_ORDER_SUMMARY_LENGTH));
     }
 }

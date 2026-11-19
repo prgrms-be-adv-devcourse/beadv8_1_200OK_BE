@@ -101,7 +101,7 @@ class WalletRefundRevertKafkaListenerIntegrationTest extends AbstractIntegration
         long orderId = nextId();
         long refundId = nextId();
         refundedOrder(buyerId, orderId, refundId, 7_000);
-        buyerWalletService.payForOrder(buyerId, nextId(), 20_000);
+        buyerWalletService.payForOrder(buyerId, nextId(), 20_000, null);
 
         // when
         sendRevertRequested(orderId, revertRequested(refundId, orderId, buyerId, 7_000L));
@@ -184,7 +184,7 @@ class WalletRefundRevertKafkaListenerIntegrationTest extends AbstractIntegration
     // 50,000원을 충전하고 35,000원을 결제한 뒤 반환한다
     private void refundedOrder(long buyerId, long orderId, long refundId, long amount) {
         charger.charge(buyerId, "pay-" + orderId, 50_000);
-        buyerWalletService.payForOrder(buyerId, orderId, 35_000);
+        buyerWalletService.payForOrder(buyerId, orderId, 35_000, null);
         buyerWalletService.refundForOrder(refundId, orderId, buyerId, amount);
     }
 

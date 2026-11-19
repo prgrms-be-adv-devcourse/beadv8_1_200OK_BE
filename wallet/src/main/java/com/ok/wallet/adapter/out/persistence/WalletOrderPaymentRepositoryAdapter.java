@@ -18,8 +18,9 @@ public class WalletOrderPaymentRepositoryAdapter implements WalletOrderPaymentRe
     private final WalletOrderPaymentJpaRepository walletOrderPaymentJpaRepository;
 
     @Override
-    public int insertIfAbsent(Long orderId, Long buyerId, long amount, String status, LocalDateTime now) {
-        return walletOrderPaymentJpaRepository.insertIfAbsent(orderId, buyerId, amount, status, now);
+    public int insertIfAbsent(Long orderId, Long buyerId, long amount, String orderSummary, String status,
+                              LocalDateTime now) {
+        return walletOrderPaymentJpaRepository.insertIfAbsent(orderId, buyerId, amount, orderSummary, status, now);
     }
 
     @Override

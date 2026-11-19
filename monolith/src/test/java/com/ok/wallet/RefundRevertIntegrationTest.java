@@ -54,7 +54,7 @@ class RefundRevertIntegrationTest extends AbstractIntegrationTest {
     void 환불이_보낸_되돌리기_요청을_지갑이_받아_돌려준_예치금을_다시_가져온다() {
         // given: 50,000원 충전, 35,000원 결제, 7,000원 반환 → 잔액 22,000원
         buyerWalletService.chargeByPayment(BUYER_ID, "pay-" + BUYER_ID + "-" + ORDER_ID, 50_000);
-        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000);
+        buyerWalletService.payForOrder(BUYER_ID, ORDER_ID, 35_000, null);
         buyerWalletService.refundForOrder(REFUND_ID, ORDER_ID, BUYER_ID, 7_000);
 
         // when: 환불이 재고 거절 뒤에 부르는 것과 같은 보내기로 되돌리기를 요청한다
