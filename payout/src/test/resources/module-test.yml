@@ -2,3 +2,10 @@ payout:
   skip-wait-run:
     # 대기 건너뛰기 통합 테스트를 위해 켠다. 꺼짐 동작은 PayoutJobRunnerTest(단위)에서 확인한다 (#485)
     enabled: true
+  outbox-resend:
+    # 5분마다 돌면 테스트가 PENDING으로 되돌린 줄을 함께 보내 상태 확인이 흔들린다. 재발송은 테스트가 resendPending()을 직접 부른다 (#636)
+    # fixedDelay에는 cron처럼 "-"(끄기)가 없어 테스트 실행 시간보다 충분히 긴 값을 둔다
+    fixed-delay: PT24H
+  deposit-check:
+    # 낮 12:00에 테스트를 돌리면 진짜 대사가 테스트 DB에서 돈다. 대사는 테스트가 runCheck()를 직접 부른다 (#636)
+    cron: "-"
