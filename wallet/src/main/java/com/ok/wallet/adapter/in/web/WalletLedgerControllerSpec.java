@@ -13,8 +13,8 @@ import org.springframework.http.ResponseEntity;
 interface WalletLedgerControllerSpec {
     @Operation(summary = "본인 이용 내역 조회",
             description = "로그인한 회원의 예치금 이용 내역을 최신순으로 페이지 단위로 조회한다. "
-                    + "기간(시작일·종료일 모두 포함)과 유형(CHARGE·PAYMENT)으로 거를 수 있고, 지갑이 없으면 빈 목록이다. "
-                    + "결제 내역에는 주문 상세로 이동할 수 있도록 주문 ID가 함께 온다.")
+                    + "기간(시작일·종료일 모두 포함)과 유형(CHARGE·PAYMENT·REFUND·REFUND_REVERT)으로 거를 수 있고, "
+                    + "지갑이 없으면 빈 목록이다. 결제·환불 반환·환불 되돌리기 내역에는 주문 상세로 이동할 수 있도록 주문 ID가 함께 온다.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공"),
             @ApiResponse(responseCode = "401", description = "로그인 필요"),

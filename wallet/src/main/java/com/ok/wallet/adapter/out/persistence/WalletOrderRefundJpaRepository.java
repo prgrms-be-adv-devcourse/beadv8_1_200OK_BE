@@ -11,6 +11,7 @@ import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -28,6 +29,8 @@ public interface WalletOrderRefundJpaRepository extends Repository<WalletOrderRe
                        @Param("failureReason") String failureReason, @Param("now") LocalDateTime now);
 
     Optional<WalletOrderRefund> findByRefundId(Long refundId);
+
+    List<WalletOrderRefund> findByRefundIdIn(Collection<Long> refundIds);
 
     @Lock(LockModeType.PESSIMISTIC_READ)
     Optional<WalletOrderRefund> findForShareByRefundId(Long refundId);

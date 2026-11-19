@@ -19,8 +19,9 @@ public record LedgerHistoryRequest(
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
         LocalDate to,
 
-        @Schema(description = "유형 (CHARGE: 충전, PAYMENT: 결제). 없거나 빈 값이면 전체, 대소문자를 구분함",
-                allowableValues = {"CHARGE", "PAYMENT"}, example = "PAYMENT")
+        @Schema(description = "유형 (CHARGE: 충전, PAYMENT: 결제, REFUND: 환불 반환, "
+                + "REFUND_REVERT: 환불 되돌리기로 반환한 금액을 다시 가져감). 없거나 빈 값이면 전체, 대소문자를 구분함",
+                allowableValues = {"CHARGE", "PAYMENT", "REFUND", "REFUND_REVERT"}, example = "PAYMENT")
         String type,
 
         @Schema(description = "페이지 번호 (0부터, 기본 0)", example = "0")

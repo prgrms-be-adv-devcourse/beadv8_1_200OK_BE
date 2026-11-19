@@ -13,4 +13,8 @@ final class RefundRevertReferenceKey {
     static String of(Long refundId) {
         return PREFIX + refundId;
     }
+
+    static Long refundIdOf(String referenceKey) {
+        return RefundReferenceKey.refundIdAfter(PREFIX, referenceKey);
+    }
 }

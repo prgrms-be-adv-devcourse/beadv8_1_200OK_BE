@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -33,6 +35,11 @@ public class WalletOrderRefundRepositoryAdapter implements WalletOrderRefundRepo
     @Override
     public Optional<WalletOrderRefund> findByRefundId(Long refundId) {
         return walletOrderRefundJpaRepository.findByRefundId(refundId);
+    }
+
+    @Override
+    public List<WalletOrderRefund> findAllByRefundIdIn(Collection<Long> refundIds) {
+        return walletOrderRefundJpaRepository.findByRefundIdIn(refundIds);
     }
 
     @Override

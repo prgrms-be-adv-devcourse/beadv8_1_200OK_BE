@@ -3,6 +3,8 @@ package com.ok.wallet.application.port.out;
 import com.ok.wallet.domain.WalletOrderRefund;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -18,6 +20,9 @@ public interface WalletOrderRefundRepository {
     // 처리 기록을 잠그지 않고 읽는다. 기록은 한 번 들어가면 바뀌지 않아, 있으면 그 값이 끝까지 맞다.
     // 없다는 답은 읽은 순간의 것이라, 없을 때 무언가를 정하려면 insertIfAbsent로 다시 확인한다.
     Optional<WalletOrderRefund> findByRefundId(Long refundId);
+
+    // 이용 내역 한 페이지의 반환·되돌리기 줄에 주문 번호를 붙이려고 여러 환불의 처리 기록을 한 번에 읽는다. 없는 환불은 빠진다.
+    List<WalletOrderRefund> findAllByRefundIdIn(Collection<Long> refundIds);
 
     // 이미 있는 처리 기록을 최신 커밋 데이터로 읽는다. 기록이 있을 때(insertIfAbsent가 0)만 부른다.
     Optional<WalletOrderRefund> findForShareByRefundId(Long refundId);
