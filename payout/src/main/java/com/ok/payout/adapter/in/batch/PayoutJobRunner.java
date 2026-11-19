@@ -42,7 +42,8 @@ public class PayoutJobRunner {
 
     // 현재 시각 기준 (전역 ClockConfig, JVM 시간대 = Asia/Seoul)
     // requestedAt의 날짜가 곧 정산 실행일(runDate)이 되어 정산 범위를 정하므로, 실행 환경과 상관없이 같은 시간대여야 함
-    // 예) 스케줄러는 02:00 KST에 실행되는데 now()가 UTC(전날 17:00)를 주면 실행일이 하루 앞당겨져 다른 후보가 정산됨 (#93)
+    // 예) 관리자가 01:00 KST에 실행했는데 now()가 UTC(전날 16:00)를 주면 실행일이 하루 앞당겨져 다른 후보가 정산됨 (#93)
+    // KST 00~09시 실행이 이 경우에 해당함. 정기 스케줄러(11:00 KST = 02:00 UTC)는 날짜가 같아 걸리지 않음
     private final Clock clock;
 
     // 대기 건너뛰기 실행 허용 여부 (payout.skip-wait-run.enabled, 기본 꺼짐, #485)
