@@ -49,6 +49,7 @@ import org.springframework.web.context.WebApplicationContext;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -743,8 +744,12 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
         insertFailure(runs.get(0), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
         insertFailure(runs.get(1), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
         resolve(order);
-        List<Long> resolutionIds = jdbcTemplate.queryForList(
-                "SELECT id FROM payout_failure_resolution WHERE order_id = ? ORDER BY id", Long.class, order);
+        // 해결 기록은 쌓기만 하는 표라 앱 코드로 시각을 바꿀 수 없어 UPDATE만 JDBC로 함. 줄 ID는 리포지토리로 얻음
+        List<Long> resolutionIds = new ArrayList<>();
+        for (PayoutFailureResolution resolution : resolutionRepository.findAllByOrderId(order)) {
+            resolutionIds.add(resolution.getId());
+        }
+        Collections.sort(resolutionIds);
         jdbcTemplate.update("UPDATE payout_failure_resolution SET created_at = ? WHERE id = ?",
                 LocalDateTime.of(2026, 11, 22, 23, 59, 59, 999_990_000), resolutionIds.get(0));
         jdbcTemplate.update("UPDATE payout_failure_resolution SET created_at = ? WHERE id = ?",

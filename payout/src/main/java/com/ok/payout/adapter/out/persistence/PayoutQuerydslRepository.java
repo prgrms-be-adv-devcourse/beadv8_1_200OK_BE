@@ -488,11 +488,15 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
     }
 
     // 해결 기록 전체 목록 (#723): 두 번 읽음
-    //   1. 기간 안 요청 번호와 해결 시각(가장 이른 줄)을 idx_payout_failure_resolution_created_at_resolution_request_id만으로 고름
+    //   1. 기간 안 요청 번호와 해결 시각(가장 이른 줄)을 idx_payout_failure_resolution_created_at_resolution_request_id로 고름
     //      (관리자로 거를 때만 표를 다시 읽음). 묶은 결과를 다 가져와 개수·페이지를 자바에서 냄:
-    //      Querydsl은 묶은 결과의 개수를 바로 세지 못하고, 요청 번호·시각·ID만 가져와 줄이 작음
-    //      가정: 막힌 주문 하루 100건이 다 해결되면 1년(최대 기간) 36,500줄. 페이지마다 이 인덱스 범위를 한 번 읽음
+    //      기간을 요청의 가장 이른 줄(HAVING)로 판정해서 countDistinct로 바로 셀 수 없음. 가져오는 것은 요청 번호·시각·ID뿐
+    //      (미확인) 가정: 막힌 주문 하루 100건이 다 해결되면 1년(최대 기간) 요청 36,500개.
+    //        해결 1번은 그 주문의 해결 안 된 실패 수만큼 줄을 남겨(보통 상품·종류 × 실패 횟수) 인덱스 항목은 그 10~20배.
+    //        페이지마다 이 범위를 한 번 읽음. 대량 데이터로 실행 계획을 본 적은 없음
     //   2. 고른 페이지의 요청(최대 100개)만 메모·주문·푼 실패 수를 묶어 읽음
+    //      읽는 시각 범위를 그 페이지 요청들의 가장 이른 시각 ~ 가장 늦은 시각 + 여유로 좁힘:
+    //      요청 번호로 시작하는 인덱스가 없어, 기간 전체로 읽으면 1번과 같은 양을 한 번 더 읽음
     // 기간 판정은 요청의 가장 이른 줄로 함: 줄마다 판정하면 경계에 걸친 요청이 두 기간으로 갈라져 푼 실패 수가 덜 셈
     //   그러려고 줄을 앞뒤로 RESOLUTION_REQUEST_SCAN_SLACK만큼 넓게 읽음. 한 요청의 줄은 한 트랜잭션에서 저장되어(PayoutFailureResolutionService) 시각 차이가 아주 작음
     @Override
@@ -518,8 +522,17 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
         int start = (int) Math.min(pageable.getOffset(), requests.size());
         int end = Math.min(start + pageable.getPageSize(), requests.size());
         List<String> pageRequestIds = new ArrayList<>();
+        LocalDateTime pageEarliest = null;
+        LocalDateTime pageLatest = null;
         for (Tuple request : requests.subList(start, end)) {
             pageRequestIds.add(request.get(payoutFailureResolution.resolutionRequestId));
+            LocalDateTime resolvedAt = request.get(payoutFailureResolution.createdAt.min());
+            if (pageEarliest == null || resolvedAt.isBefore(pageEarliest)) {
+                pageEarliest = resolvedAt;
+            }
+            if (pageLatest == null || resolvedAt.isAfter(pageLatest)) {
+                pageLatest = resolvedAt;
+            }
         }
         if (pageRequestIds.isEmpty()) {
             return new PageImpl<>(List.of(), pageable, requests.size());
@@ -535,9 +548,10 @@ public class PayoutQuerydslRepository implements PayoutQueryRepository {
                         payoutFailureResolution.memo,
                         payoutFailureResolution.count()))
                 .from(payoutFailureResolution)
+                // 요청의 줄은 그 요청의 가장 이른 시각부터 시작하고 여유(1분) 안에 끝남 (위 전제)
                 .where(payoutFailureResolution.resolutionRequestId.in(pageRequestIds),
-                        payoutFailureResolution.createdAt.goe(scanFrom),
-                        payoutFailureResolution.createdAt.lt(scanTo))
+                        payoutFailureResolution.createdAt.goe(pageEarliest),
+                        payoutFailureResolution.createdAt.lt(pageLatest.plus(RESOLUTION_REQUEST_SCAN_SLACK)))
                 .groupBy(payoutFailureResolution.resolutionRequestId,
                         payoutFailureResolution.orderId,
                         payoutFailureResolution.method,

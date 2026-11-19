@@ -298,7 +298,7 @@ class PayoutCandidateQueryIntegrationTest extends AbstractIntegrationTest {
     // API: GET /api/v1/admin/payouts/candidates (관리자 정산후보 조회)
     // 요청: 관리자, 기간 없음
     // 확인: 422이고 오류 목록에 from, to가 나오는지 (후보 테이블은 커서 기간 없이 조회하지 못하게 막음)
-    // 주문 ID도 없으면 기간 필수 (#723 전에는 from·to 필드 오류였고, 주문 ID 예외를 넣으며 한 검사로 바뀜)
+    // 주문 ID도 없으면 기간 필수 (#723): 주문 ID가 있을 때만 기간을 풀려고 필드 검사가 아니라 클래스 단위 검사 하나로 막음
     @Test
     void 주문_ID와_기간을_모두_빼고_조회하면_422다() throws Exception {
         // when & then

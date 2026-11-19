@@ -28,6 +28,7 @@ import com.ok.payout.application.port.out.PayoutSystemDraftItemRepository;
 import com.ok.payout.application.port.in.PayoutAdjustmentCreateCommand;
 import com.ok.payout.application.port.in.PayoutDetailResult;
 import com.ok.payout.application.port.in.PayoutDraftResult;
+import com.ok.payout.application.port.in.PayoutCandidateSearchQuery;
 import com.ok.payout.application.port.in.PayoutItemSearchQuery;
 import com.ok.payout.application.port.in.PayoutSearchQuery;
 import com.ok.payout.application.port.in.PayoutSellerSearchQuery;
@@ -759,6 +760,19 @@ class PayoutServiceTest {
                 .isInstanceOfSatisfying(RestApiException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo(PayoutErrorCode.SHIPPING_FEE_ADJUSTMENT_NOT_SUPPORTED));
         then(payoutCandidateItemRepository).should(never()).saveAll(any());
+    }
+
+    // 저장소는 기간이 null이면 그쪽 경계를 걸지 않음(#723). 주문 ID도 기간도 없이 오면 표 전체를 읽으므로 서비스가 막음
+    @Test
+    void 관리자_정산후보_조회에_주문_ID도_기간도_없으면_조회하지_않고_거절한다() {
+        // given
+        PayoutCandidateSearchQuery query = new PayoutCandidateSearchQuery(null, null, null, null, false, 0, 20);
+
+        // when & then
+        assertThatThrownBy(() -> sut.searchCandidatesForAdmin(query))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("주문 ID가 없으면 조회 기간(from, to)이 모두 필요합니다.");
+        then(payoutQueryRepository).shouldHaveNoInteractions();
     }
 
     @Test

@@ -21,6 +21,7 @@ class PayoutResolutionRequestSearchRequestTest {
         PayoutResolutionRequestSearchRequest sut = new PayoutResolutionRequestSearchRequest(NOV_16, NOV_23, null, null, null);
 
         // then
+        assertThat(sut).isNotNull();
         assertSoftly(softly -> {
             softly.assertThat(sut.adminId()).isNull();   // 생략하면 전체 관리자
             softly.assertThat(sut.page()).isEqualTo(0);

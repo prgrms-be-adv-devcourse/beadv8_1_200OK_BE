@@ -615,7 +615,7 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
         runCompleted(3);
         String admin = tokens.bearer(ADMIN_ID, "ADMIN");
 
-        // then: 조정 전에는 두 합계 0, 지금 합계 40,000
+        // when & then: 조정 전에는 두 합계 0, 지금 합계 40,000
         mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
                 .andExpect(jsonPath("$.content[0].status").value("STOPPED"))
                 .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(40_000))
@@ -665,6 +665,57 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.content[0].evidenceNow").value(nullValue()))
                 .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(700))
                 .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(-700));
+    }
+
+    @Test
+    void 한_페이지에_막힌_주문이_여럿이면_대기_합계가_주문마다_따로_나온다() throws Exception {
+        // given: 같은 금액 불일치로 멈춘 주문 둘. 첫째에만 조정을 넣음
+        long adjusted = nextOrderId();
+        long adjustedItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(adjusted, PayoutEventType.SALE_AMOUNT, adjustedItem, 38_800L);
+        insertCandidateOf(adjusted, PayoutEventType.SALE_FEE, adjustedItem, 1_200L);
+        givenDeduction(adjusted, 30_000L);
+        long untouched = nextOrderId();
+        long untouchedItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(untouched, PayoutEventType.SALE_AMOUNT, untouchedItem, 38_800L);
+        insertCandidateOf(untouched, PayoutEventType.SALE_FEE, untouchedItem, 1_200L);
+        givenDeduction(untouched, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, adjustedItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+        postAdjustment(admin, adjustedItem, PayoutEventType.SALE_FEE, -300L);
+
+        // when & then: 주문 ID 조건 없이 한 페이지로 불러도 조정은 넣은 주문에만 잡힘
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + adjusted + ")].pendingSaleAmountAdjustment").value(contains(-9_700)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + adjusted + ")].pendingSaleFeeAdjustment").value(contains(-300)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + untouched + ")].pendingSaleAmountAdjustment").value(contains(0)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + untouched + ")].pendingSaleFeeAdjustment").value(contains(0)));
+    }
+
+    // 확인한 조정(실패 뒤·해결 전에 넣고 해결함)은 다시 막혀도 대기 합계에서 빠짐: 이미 금액 검사에 들어가 있어 두 번 세지 않게
+    @Test
+    void 이미_확인된_조정은_다시_막혀도_대기_합계에_들어가지_않는다() throws Exception {
+        // given: 멈춘 뒤 판매 금액을 35,000으로만 고치는 조정(대금 −4,850 / 수수료 −150, 35,000의 3% = 1,050)을 넣고 해결
+        //        → 수수료 비율은 맞지만 아직 넘쳐(35,000 > 30,000) 다시 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -4_850L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -150L);
+        resolve(order);
+        runCompleted(3);
+
+        // when & then: 다시 멈춘 줄의 대기 합계는 0, 확인된 −5,000은 지금 합계(40,000 − 4,850 − 150)에 들어가 있음
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].status").value("STOPPED"))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(35_000))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(0))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(0));
     }
 
     @Test
