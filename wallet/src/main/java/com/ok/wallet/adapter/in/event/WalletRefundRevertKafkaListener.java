@@ -10,10 +10,11 @@ import org.springframework.stereotype.Component;
 /**
  * 환불이 Kafka로 보내는 되돌리기 요청을 받아 돌려준 예치금을 다시 가져오고 결과를 환불에 보낸다.
  * 같은 환불이 여러 번 와도 서비스가 refundId로 한 번만 가져오고, 올 때마다 처음 결과를 다시 보낸다.
+ * 이름 앞에 Wallet을 붙인 이유: 주문 모듈에도 같은 요청을 받는 RefundRevertKafkaListener가 있어 한 앱(monolith)에서 빈 이름이 겹친다.
  */
 @Component
 @RequiredArgsConstructor
-public class RefundRevertKafkaListener {
+public class WalletRefundRevertKafkaListener {
     private final OrderRefundRevertUseCase orderRefundRevertUseCase;
 
     // 메시지에 보내는 쪽 클래스 이름(타입 헤더)이 없어서 읽을 타입을 리스너가 정한다

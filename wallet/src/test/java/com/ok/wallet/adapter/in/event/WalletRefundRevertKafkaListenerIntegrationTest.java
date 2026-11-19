@@ -25,7 +25,7 @@ import static org.awaitility.Awaitility.await;
 // 통합 테스트: 환불이 Kafka로 보낸 되돌리기 요청을 지갑 리스너가 받아 처리하고, 결과를 환불이 받을 토픽에 약속한 모양(#611)으로 보내는지 확인한다
 // - 환불 코드는 쓰지 않고, 환불이 보낼 JSON을 테스트가 토픽에 직접 넣고 나간 JSON을 문자열 그대로 읽는다
 // - 테스트 브로커는 파티션이 하나라 같은 키로 보낸 메시지는 보낸 순서대로 처리된다
-class RefundRevertKafkaListenerIntegrationTest extends AbstractIntegrationTest {
+class WalletRefundRevertKafkaListenerIntegrationTest extends AbstractIntegrationTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
     private static final String REVERTED_TOPIC = "wallet.wallet-refund-reverted.v1";
     private static final String REVERT_FAILED_TOPIC = "wallet.wallet-refund-revert-failed.v1";
