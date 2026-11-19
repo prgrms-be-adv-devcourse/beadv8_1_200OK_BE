@@ -22,4 +22,11 @@ public interface OrderOutboxRepository {
      */
     List<OrderOutbox> findByStatusAndCreatedAtBeforeOrderByIdAsc(OrderOutboxStatus status, LocalDateTime createdBefore,
                                                                   Pageable pageable);
+
+    /**
+     * 줄이 아직 PENDING일 때만 "보냄"으로 바꾼다.
+     *
+     * @return 바꾼 줄 수. 다른 발송이 먼저 "보냄"으로 바꿨으면 0
+     */
+    int markSentIfPending(Long id, LocalDateTime sentAt);
 }

@@ -53,9 +53,14 @@ public class OrderOutboxService {
                 .map(OrderOutboxService::toMessage);
     }
 
+    /**
+     * 줄을 "보냄"으로 바꾼다.
+     *
+     * @return 다른 발송이 먼저 "보냄"으로 바꿨으면 false. 이때 메시지는 두 번 나간 것이다
+     */
     @Transactional
-    void markSent(Long outboxId) {
-        get(outboxId).markSent(LocalDateTime.now(clock));
+    boolean markSent(Long outboxId) {
+        return orderOutboxRepository.markSentIfPending(outboxId, LocalDateTime.now(clock)) == 1;
     }
 
     @Transactional

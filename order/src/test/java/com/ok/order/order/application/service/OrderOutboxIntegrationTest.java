@@ -20,6 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -49,6 +50,9 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     OrderOutboxRelayUseCase orderOutboxRelayUseCase;
+
+    @Autowired
+    OrderOutboxService orderOutboxService;
 
     @Autowired
     OrderOutboxJpaRepository orderOutboxRepository;
@@ -144,6 +148,56 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(sent).isZero();
             softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.PENDING);
             softly.assertThat(reader.readValuesFor(key, READ_DURATION)).isEmpty();
+        });
+    }
+
+    @Test
+    void 같은_줄을_두_번_보냄으로_바꾸면_뒤에_온_쪽은_중복을_알고_처음_보낸_시각이_남는다() {
+        // given: 커밋 직후 발송과 재발송이 같은 줄을 함께 보낸 경우. 먼저 끝난 쪽이 보냄으로 바꿨다
+        Long outboxId = orderOutboxRepository.save(OrderOutbox.pending(TOPIC, key, "{\"orderId\":15}")).getId();
+        boolean first = orderOutboxService.markSent(outboxId);
+        LocalDateTime firstSentAt = orderOutboxRepository.findById(outboxId).orElseThrow().getSentAt();
+
+        // when
+        boolean sut = orderOutboxService.markSent(outboxId);
+
+        // then
+        OrderOutbox outbox = orderOutboxRepository.findById(outboxId).orElseThrow();
+        assertThat(outbox).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(first).isTrue();
+            softly.assertThat(sut).isFalse();
+            softly.assertThat(outbox.getStatus()).isEqualTo(OrderOutboxStatus.SENT);
+            softly.assertThat(outbox.getSentAt()).isEqualTo(firstSentAt);
+        });
+    }
+
+    @Test
+    void 실패를_기록하려고_읽은_사이에_다른_발송이_보냄으로_바꿔도_실패_기록이_보냄을_되돌리지_않는다() throws Exception {
+        // given: 커밋 직후 발송이 실패를 기록하려고 줄을 읽은 뒤, 재발송이 같은 줄을 보내고 보냄으로 커밋한 경우
+        Long outboxId = orderOutboxRepository.save(OrderOutbox.pending(TOPIC, key, "{\"orderId\":16}")).getId();
+        CountDownLatch loaded = new CountDownLatch(1);
+        CountDownLatch sentCommitted = new CountDownLatch(1);
+        CompletableFuture<Void> failureRecording = CompletableFuture.runAsync(() -> transactionTemplate.executeWithoutResult(status -> {
+            OrderOutbox stale = orderOutboxRepository.findById(outboxId).orElseThrow();
+            loaded.countDown();
+            awaitQuietly(sentCommitted);
+            stale.recordFailure("브로커 확인 대기 시간 초과");
+        }));
+        assertThat(loaded.await(10, TimeUnit.SECONDS)).isTrue();
+        orderOutboxService.markSent(outboxId);
+        sentCommitted.countDown();
+
+        // when
+        failureRecording.get(10, TimeUnit.SECONDS);
+
+        // then: 읽은 값 전체를 덮어쓰면 status가 PENDING으로 돌아가 한 번 더 나간다
+        OrderOutbox sut = orderOutboxRepository.findById(outboxId).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(OrderOutboxStatus.SENT);
+            softly.assertThat(sut.getSentAt()).isNotNull();
+            softly.assertThat(sut.getAttemptCount()).isEqualTo(1);
         });
     }
 

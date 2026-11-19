@@ -5,7 +5,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.time.LocalDateTime;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -13,8 +12,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 class OrderOutboxTest {
-
-    private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 16, 12, 0);
 
     @Test
     void 보낼_메시지는_보낼_차례로_시작한다() {
@@ -46,22 +43,6 @@ class OrderOutboxTest {
                 Arguments.of("order.test.v1", "10", null),
                 Arguments.of("t".repeat(250), "10", "{}"),
                 Arguments.of("order.test.v1", "k".repeat(256), "{}"));
-    }
-
-    @Test
-    void 두_번_보냄으로_표시해도_처음_보낸_시각이_남는다() {
-        // given
-        OrderOutbox sut = OrderOutbox.pending("order.test.v1", "10", "{}");
-        sut.markSent(NOW);
-
-        // when
-        sut.markSent(NOW.plusMinutes(1));
-
-        // then
-        assertSoftly(softly -> {
-            softly.assertThat(sut.isPending()).isFalse();
-            softly.assertThat(sut.getSentAt()).isEqualTo(NOW);
-        });
     }
 
     @Test

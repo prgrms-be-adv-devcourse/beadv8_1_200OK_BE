@@ -80,7 +80,10 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
             return false;
         }
         // 보낸 뒤 "보냄" 기록이 실패하면 예외가 올라가고, 줄은 PENDING으로 남아 한 번 더 나간다. 받는 쪽은 업무 키로 중복을 거른다
-        orderOutboxService.markSent(message.outboxId());
+        if (!orderOutboxService.markSent(message.outboxId())) {
+            log.info("다른 발송이 먼저 보낸 줄을 한 번 더 보냄, 받는 쪽이 업무 키로 중복을 거름. outboxId={}, topic={}, key={}",
+                    message.outboxId(), message.topic(), message.messageKey());
+        }
         return true;
     }
 

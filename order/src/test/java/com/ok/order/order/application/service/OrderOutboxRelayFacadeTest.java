@@ -82,6 +82,21 @@ class OrderOutboxRelayFacadeTest {
     }
 
     @Test
+    void 다른_발송이_먼저_보냄으로_바꾼_줄이_있어도_그_회차를_멈추지_않는다() {
+        // given: 첫 줄은 커밋 직후 발송이 먼저 보냄으로 바꿨다
+        given(orderOutboxService.findPending(100, MIN_AGE)).willReturn(List.of(message(1L, "10"), message(2L, "11")));
+        given(orderOutboxService.markSent(1L)).willReturn(false);
+        given(orderOutboxService.markSent(2L)).willReturn(true);
+
+        // when
+        int sent = sut.relayPending(100, MIN_AGE);
+
+        // then
+        assertThat(sent).isEqualTo(2);
+        then(orderMessageSender).should().send(TOPIC, "11", "{\"id\":2}");
+    }
+
+    @Test
     void 커밋_직후_발송은_방금_남긴_줄을_보내고_보냄으로_표시한다() {
         // given
         given(orderOutboxService.findPendingById(1L)).willReturn(Optional.of(message(1L, "10")));

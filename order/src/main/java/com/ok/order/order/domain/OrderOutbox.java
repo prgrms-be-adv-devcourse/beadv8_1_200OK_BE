@@ -13,6 +13,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 import java.time.LocalDateTime;
 
@@ -21,9 +22,12 @@ import java.time.LocalDateTime;
  * 주문 변경과 같은 트랜잭션에서 저장해, 커밋되면 반드시 보내고 롤백되면 보내지 않는다.
  * 메시지 종류 대신 토픽 이름을 그대로 담아, 보내는 쪽이 메시지 종류를 몰라도 되게 한다.
  * 보낸 줄은 지우지 않는다(무엇을 언제 보냈는지 남김, 회원·정산 outbox와 같음).
+ * "보냄" 기록은 커밋 직후 발송과 재발송이 겹쳐도 한쪽만 바꾸도록 저장소의 조건부 UPDATE({@code markSentIfPending})로 한다.
  */
 @Entity
 @Table(name = "order_outbox", catalog = OrderSchema.NAME)
+// 실패 기록이 줄을 읽은 뒤 다른 발송이 "보냄"으로 바꿀 수 있다. 바뀐 열만 UPDATE해야 실패 기록이 status를 PENDING으로 되돌리지 않는다
+@DynamicUpdate
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class OrderOutbox extends BaseTime {
@@ -88,15 +92,6 @@ public class OrderOutbox extends BaseTime {
 
     public boolean isPending() {
         return status == OrderOutboxStatus.PENDING;
-    }
-
-    // 브로커가 저장을 확인했다. 커밋 직후 발송과 재발송이 같은 줄을 함께 보냈으면 처음 보낸 시각을 남긴다
-    public void markSent(LocalDateTime sentAt) {
-        if (status == OrderOutboxStatus.SENT) {
-            return;
-        }
-        this.status = OrderOutboxStatus.SENT;
-        this.sentAt = sentAt;
     }
 
     /**
