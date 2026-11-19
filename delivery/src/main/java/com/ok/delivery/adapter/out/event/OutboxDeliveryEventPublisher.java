@@ -14,6 +14,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -31,6 +32,7 @@ public class OutboxDeliveryEventPublisher implements DeliveryEventPublisher {
     private final ApplicationEventPublisher applicationEventPublisher;
     // 앱의 JSON 설정(날짜는 ISO-8601 문자열)을 그대로 쓰려고 부트가 만든 것을 받는다
     private final JsonMapper jsonMapper;
+    private final Clock clock;
 
     @Override
     public void publishShipmentCreated(Long shipmentId, Long orderId, Long sellerId, List<Long> orderItemIds,
@@ -59,7 +61,8 @@ public class OutboxDeliveryEventPublisher implements DeliveryEventPublisher {
     private void record(DeliveryOutboxEventType eventType, Long orderId, Object message) {
         DeliveryOutbox outbox = deliveryOutboxRepository.save(
                 DeliveryOutbox.pending(eventType, String.valueOf(orderId), jsonMapper.writeValueAsString(message)));
-        applicationEventPublisher.publishEvent(new DeliveryOutboxRecordedEvent(outbox.getId()));
+        // 기다린 시간을 재는 리스너와 같은 Clock으로 시각을 남긴다. createdAt은 JPA 감사가 Clock 없이 채워 테스트에서 기준이 어긋날 수 있다
+        applicationEventPublisher.publishEvent(new DeliveryOutboxRecordedEvent(outbox.getId(), clock.instant()));
     }
 
 }

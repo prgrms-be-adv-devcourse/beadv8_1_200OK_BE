@@ -17,7 +17,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,6 +36,8 @@ class OutboxDeliveryEventPublisherTest {
 
     private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
     private static final Long OUTBOX_ID = 7L;
+    private static final Instant NOW = Instant.parse("2026-10-19T01:00:00Z");
+    private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
     @Mock
     DeliveryOutboxRepository deliveryOutboxRepository;
@@ -44,7 +49,7 @@ class OutboxDeliveryEventPublisherTest {
 
     @BeforeEach
     void setUp() {
-        sut = new OutboxDeliveryEventPublisher(deliveryOutboxRepository, applicationEventPublisher, JSON_MAPPER);
+        sut = new OutboxDeliveryEventPublisher(deliveryOutboxRepository, applicationEventPublisher, JSON_MAPPER, CLOCK);
         // 저장하면 DB가 id를 채우는 것을 흉내 낸다. 값 검사에서 실패하는 테스트는 저장까지 가지 않아 lenient로 둔다
         lenient().when(deliveryOutboxRepository.save(any())).thenAnswer(invocation -> {
             DeliveryOutbox outbox = invocation.getArgument(0);
@@ -80,7 +85,7 @@ class OutboxDeliveryEventPublisherTest {
             softly.assertThat(payload.get("orderItemIds").toString()).isEqualTo("[101,102]");
             softly.assertThat(payload.get("createdAt").asString()).isEqualTo("2026-10-19T10:00:00.123456");
         });
-        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
+        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID, NOW));
         then(applicationEventPublisher).shouldHaveNoMoreInteractions();
     }
 
@@ -132,7 +137,7 @@ class OutboxDeliveryEventPublisherTest {
         // then
         then(applicationEventPublisher).should()
                 .publishEvent(new CarrierTrackingRequestedEvent(1L, "CJ_LOGISTICS", "1234567890"));
-        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
+        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID, NOW));
         then(applicationEventPublisher).shouldHaveNoMoreInteractions();
     }
 
@@ -183,7 +188,7 @@ class OutboxDeliveryEventPublisherTest {
         sut.publishShipmentDelivered(1L, 2L, 10L, deliveredAt);
 
         // then
-        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID));
+        then(applicationEventPublisher).should().publishEvent(new DeliveryOutboxRecordedEvent(OUTBOX_ID, NOW));
         then(applicationEventPublisher).shouldHaveNoMoreInteractions();
     }
 
