@@ -94,15 +94,17 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
 
         // when: 같은 메시지를 한 번 더 보내고(재전달 상황), 뒤이어 다른 주문 하나를 보냄
         send(message);
-        Long laterOrderId = sendLaterOrder();
+        Long laterOrderId = sendLaterOrderAfter(message);
 
         // then
-        // 1) 뒤 주문이 처리될 때까지 기다림. 테스트 브로커는 파티션이 하나라 보낸 순서대로 처리되므로, 뒤 주문이 처리됐으면 중복 메시지도 처리가 끝난 것이다
+        // 1) 뒤 주문이 처리될 때까지 기다림. 뒤 주문은 앞 메시지와 같은 키로 보내 같은 파티션에서 보낸 순서대로 처리되므로, 뒤 주문이 처리됐으면 중복 메시지도 처리가 끝난 것이다
         //    중복 처리에서 예외가 났다면 정산 오류 처리기가 같은 메시지를 약 31초 동안 다시 시도해 뒤 주문이 TIMEOUT 안에 처리되지 않는다
         //    (Spring 이벤트 때 "실패(FAILED)로 남지 않음"을 보던 것을 Kafka에서는 이렇게 본다)
         await().atMost(TIMEOUT).until(() -> repository.existsByOrderId(laterOrderId));
         // 2) 차감 기록은 그대로 1건
         assertThat(countDeductions(orderId)).isEqualTo(1);
+        // 3) 같은 금액의 재전달은 충돌이 아니므로 충돌 기록이 없음
+        assertThat(conflictRepository.findAllByOrderId(orderId)).isEmpty();
     }
 
     @Test
@@ -113,10 +115,10 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
 
         // when: 잘못된 메시지 뒤에 정상 주문 하나를 보냄
         send(message);
-        Long laterOrderId = sendLaterOrder();
+        Long laterOrderId = sendLaterOrderAfter(message);
 
         // then
-        // 1) 뒤 주문이 처리될 때까지 기다림 → 잘못된 메시지의 처리도 끝났다는 증거. 이 뒤에야 "기록 없음"이 의미가 있다
+        // 1) 뒤 주문이 처리될 때까지 기다림 → 같은 키라 같은 파티션에서 순서대로 처리되므로 잘못된 메시지의 처리도 끝났다는 증거. 이 뒤에야 "기록 없음"이 의미가 있다
         //    입구가 IllegalArgumentException을 던지면 정산 오류 처리기가 다시 시도하지 않고 넘기므로 TIMEOUT 안에 처리된다
         //    (값이 틀린 메시지는 다시 처리해도 결과가 같아 재처리 대상이 아님. 예외를 던지는지는 입구 단위 테스트가 확인한다)
         await().atMost(TIMEOUT).until(() -> repository.existsByOrderId(laterOrderId));
@@ -144,12 +146,12 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
         await().atMost(TIMEOUT).until(() -> repository.existsByOrderId(orderId));
 
         // when: 같은 주문에 20,000 메시지가 두 번 오고(금액이 다른 메시지 + 그 재전달), 뒤이어 다른 주문 하나를 보냄
-        // 한 파티션 안에서는 리스너가 메시지를 하나씩 처리하므로 두 처리가 동시에 돌지 않는다
+        // 같은 키(orderId)는 같은 파티션에 들어가고, 한 파티션 안에서는 리스너가 메시지를 하나씩 처리하므로 두 처리가 동시에 돌지 않는다
         //   (동시 처리는 UK가 막는 경로라 아래 DB 테스트가 따로 확인함)
         WalletPaymentCompletedMessage conflicting = new WalletPaymentCompletedMessage(orderId, BUYER_ID, 20_000L, PAID_AT);
         send(conflicting);
         send(conflicting);
-        Long laterOrderId = sendLaterOrder();
+        Long laterOrderId = sendLaterOrderAfter(conflicting);
 
         // then
         // 1) 뒤 주문이 처리될 때까지 기다림 → 앞의 두 메시지 처리도 끝났다는 증거
@@ -184,13 +186,19 @@ class PayoutWalletDeductionIntegrationTest extends AbstractIntegrationTest {
 
     // 지갑이 보내는 것처럼 결제 완료 토픽에 넣음. 키는 orderId (#339 합의)
     private void send(WalletPaymentCompletedMessage message) {
-        kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, String.valueOf(message.orderId()), message);
+        send(message, String.valueOf(message.orderId()));
+    }
+
+    private void send(WalletPaymentCompletedMessage message, String key) {
+        kafkaTemplate.send(PayoutTopics.WALLET_PAYMENT_COMPLETED, key, message);
     }
 
     // 앞 메시지의 처리가 끝났는지 알려고 뒤에 보내는 정상 주문
-    private Long sendLaterOrder() {
+    // 앞 메시지와 같은 키로 보낸다. 같은 키는 같은 파티션에 들어가 보낸 순서대로 처리되므로, 토픽의 파티션 수가 늘어도 "뒤 주문이 처리됐으면 앞 메시지도 끝났다"가 성립한다
+    private Long sendLaterOrderAfter(WalletPaymentCompletedMessage previous) {
         Long laterOrderId = nextOrderId();
-        send(new WalletPaymentCompletedMessage(laterOrderId, BUYER_ID, 13_000L, PAID_AT));
+        send(new WalletPaymentCompletedMessage(laterOrderId, BUYER_ID, 13_000L, PAID_AT),
+                String.valueOf(previous.orderId()));
         return laterOrderId;
     }
 

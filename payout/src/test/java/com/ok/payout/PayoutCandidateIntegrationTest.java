@@ -98,10 +98,10 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
 
         // when: 같은 메시지를 한 번 더 보내고(재전달 상황), 뒤이어 다른 주문 하나를 보냄
         send(message);
-        Long laterOrderId = sendLaterOrder();
+        Long laterOrderId = sendLaterOrderAfter(message);
 
         // then
-        // 1) 뒤 주문이 처리될 때까지 기다림. 테스트 브로커는 파티션이 하나라 보낸 순서대로 처리되므로, 뒤 주문이 처리됐으면 중복 메시지도 처리가 끝난 것이다
+        // 1) 뒤 주문이 처리될 때까지 기다림. 뒤 주문은 앞 메시지와 같은 키로 보내 같은 파티션에서 보낸 순서대로 처리되므로, 뒤 주문이 처리됐으면 중복 메시지도 처리가 끝난 것이다
         //    중복 처리에서 예외가 났다면 정산 오류 처리기가 같은 메시지를 약 31초 동안 다시 시도해 뒤 주문이 TIMEOUT 안에 처리되지 않는다
         //    (Spring 이벤트 때 "실패(FAILED)로 남지 않음"을 보던 것을 Kafka에서는 이렇게 본다)
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -144,10 +144,10 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
 
         // when: 잘못된 메시지 뒤에 정상 주문 하나를 보냄
         send(message);
-        Long laterOrderId = sendLaterOrder();
+        Long laterOrderId = sendLaterOrderAfter(message);
 
         // then
-        // 1) 뒤 주문이 처리될 때까지 기다림. 파티션이 하나라 이때 잘못된 메시지의 처리도 끝났다
+        // 1) 뒤 주문이 처리될 때까지 기다림. 같은 키라 같은 파티션에서 순서대로 처리되므로 이때 잘못된 메시지의 처리도 끝났다
         //    입구가 IllegalArgumentException을 던지면 정산 오류 처리기가 다시 시도하지 않고 넘기므로 TIMEOUT 안에 처리된다
         //    (값이 틀린 메시지는 다시 처리해도 결과가 같아 재처리 대상이 아님. 예외를 던지는지는 입구 단위 테스트가 확인한다)
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -219,13 +219,19 @@ class PayoutCandidateIntegrationTest extends AbstractIntegrationTest {
 
     // 주문이 보내는 것처럼 구매확정 토픽에 넣음. 키는 orderItemId (#339 합의)
     private void send(OrderProductConfirmedMessage message) {
-        kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, String.valueOf(message.orderItemId()), message);
+        send(message, String.valueOf(message.orderItemId()));
+    }
+
+    private void send(OrderProductConfirmedMessage message, String key) {
+        kafkaTemplate.send(PayoutTopics.ORDER_PRODUCT_CONFIRMED, key, message);
     }
 
     // 앞 메시지의 처리가 끝났는지 알려고 뒤에 보내는 정상 주문 (무료배송이라 후보는 대금·수수료 2건)
-    private Long sendLaterOrder() {
+    // 앞 메시지와 같은 키로 보낸다. 같은 키는 같은 파티션에 들어가 보낸 순서대로 처리되므로, 토픽의 파티션 수가 늘어도 "뒤 주문이 처리됐으면 앞 메시지도 끝났다"가 성립한다
+    private Long sendLaterOrderAfter(OrderProductConfirmedMessage previous) {
         Long laterOrderId = nextOrderId();
-        send(new OrderProductConfirmedMessage(laterOrderId, nextOrderItemId(), SELLER_ID, 10_000L, 0L));
+        send(new OrderProductConfirmedMessage(laterOrderId, nextOrderItemId(), SELLER_ID, 10_000L, 0L),
+                String.valueOf(previous.orderItemId()));
         return laterOrderId;
     }
 }

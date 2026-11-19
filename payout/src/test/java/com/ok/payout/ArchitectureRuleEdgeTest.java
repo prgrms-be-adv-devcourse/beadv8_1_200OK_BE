@@ -10,6 +10,7 @@ import com.tngtech.archunit.lang.EvaluationResult;
 
 import com.ok.payout.adapter.in.batch.EdgeFakeBatchEntityUser;
 import com.ok.payout.adapter.in.batch.EdgeFakeBatchRunType;
+import com.ok.payout.adapter.in.event.EdgeFakeCommonEventUser;
 import com.ok.payout.adapter.in.event.EdgeFakeEventBatchUser;
 import com.ok.payout.adapter.in.shared.EdgeFakeBridge;
 import com.ok.payout.adapter.in.web.EdgeFakeWebRunType;
@@ -191,6 +192,18 @@ class ArchitectureRuleEdgeTest {
 
         // then
         assertViolationMentions(sut, EdgeFakeBatchEntityUser.class);
+    }
+
+    @Test
+    void 이벤트_입구가_공통_이벤트_클래스를_쓰면_실패한다() {
+        // given
+        JavaClasses classes = new ClassFileImporter().importClasses(EdgeFakeCommonEventUser.class);
+
+        // when
+        EvaluationResult sut = ArchitectureTest.정산은_공통_이벤트_클래스를_쓰지_않는다.evaluate(classes);
+
+        // then
+        assertViolationMentions(sut, EdgeFakeCommonEventUser.class);
     }
 
     // 위반이 있고, 그 보고서에 가짜 클래스 이름이 있어야 한다 (다른 이유로 실패한 것과 구분)
