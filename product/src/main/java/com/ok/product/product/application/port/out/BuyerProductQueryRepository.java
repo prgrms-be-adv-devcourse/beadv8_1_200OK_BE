@@ -24,10 +24,13 @@ public interface BuyerProductQueryRepository {
 	 * @param keyword  정규화한 검색어. 없으면 null
 	 * @param sort     {@link ProductSort#RELEVANCE}는 검색어가 있을 때만 쓴다. 한 글자 검색어면 보정 평점, 그다음 id 순이다
 	 * @param minScore 두 글자 이상 검색어일 때 이보다 점수가 낮은 상품은 결과와 개수에서 뺀다
+	 * @param suggestedItem 오타 교정 제안 품목({@code compact}). 두 글자 이상 검색어의 정확도순에서 상품명에 이 품목이 든 상품을
+	 *                      앞에 둔다. 결과와 개수는 바꾸지 않는다. 없으면 null
 	 * @throws IllegalArgumentException 검색어 없이 {@link ProductSort#RELEVANCE}를 넘기면
 	 * @throws org.springframework.dao.QueryTimeoutException SQL이 시간 제한을 넘으면
 	 */
 	Page<Long> findVisibleProductIds(ProductSearchKeyword keyword, ProductCategoryGroup categoryGroup,
-		ProductCategory category, ProductRegion region, ProductSort sort, double minScore, Pageable pageable);
+		ProductCategory category, ProductRegion region, ProductSort sort, double minScore, String suggestedItem,
+		Pageable pageable);
 
 }
