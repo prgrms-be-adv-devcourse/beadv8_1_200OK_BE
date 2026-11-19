@@ -15,10 +15,4 @@ public interface DeliveryOutboxRelayUseCase {
      */
     int relayPending(int batchSize, Duration minAge);
 
-    /**
-     * 줄 하나를 바로 보낸다. 이미 보낸 줄이면 아무것도 하지 않는다.
-     * 실패하면 예외를 올리지 않고 실패를 기록해 둔다. 줄은 PENDING으로 남아 {@link #relayPending}이 다시 보낸다.
-     */
-    void send(Long outboxId);
-
 }

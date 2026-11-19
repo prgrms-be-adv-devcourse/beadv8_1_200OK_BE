@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 
 /**
- * {@code DeliveryOutboxSendListener}가 커밋 직후 보내지 못한 배송 outbox 줄(발송 실패, 커밋 직후 서버 종료)을 정해진 주기(기본 30초)로 보낸다 (#644).
+ * 커밋 직후 즉시 발송({@code ShipmentFacade})이 보내지 못한 배송 outbox 줄(발송 실패, 대기열이 가득 차 거절, 커밋 직후 서버 종료)을 정해진 주기(기본 30초)로 보낸다 (#644).
  * 주기와 한 번에 보낼 줄 수, 대상이 될 최소 경과 시간은 {@code delivery.outbox.relay.cron}, {@code batch-size}, {@code min-age}로 바꾼다.
  * cron을 {@code -}로 두면 돌지 않는다(테스트는 끄고 직접 부른다).
  * 서버가 여러 대면 같은 줄을 함께 보낼 수 있다. 받는 쪽(주문)이 중복을 무시하므로(#603) 잠금을 두지 않는다.

@@ -1,24 +1,19 @@
 package com.ok.delivery.config;
 
 import com.ok.common.config.MdcTaskDecorator;
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
-import java.util.concurrent.RejectedExecutionHandler;
-import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * 배송 모듈이 쓰는 비동기 실행기를 등록한다. 값은 {@code delivery.outbox.send.*}에 있다 (#793).
  *
  * <p>공용 실행기({@code AsyncExecutorFactory})를 쓰지 않는 이유: 공용 실행기는 대기열이 차면 넘기는 스레드가 기다린다.
- * 이 실행기에 작업을 넘기는 곳은 커밋 뒤 콜백이라 DB 커넥션을 돌려주기 전이다. 요청 스레드가 커넥션을 쥔 채 기다리고,
- * 대기열을 비울 발송 스레드는 줄 읽기·"보냄" 기록에 커넥션이 필요해 서로 기다리다 커넥션 풀이 막힐 수 있다(주문 #715와 같은 문제).
- * 그래서 차면 기다리지 않고 버린다. 버린 줄은 outbox에 PENDING으로 남아 발송 작업({@code DeliveryOutboxRelayScheduler})이 보낸다.
+ * 대기열은 짧은 몰림을 흡수할 뿐이라, 차면 기다리지 않고 거절({@code TaskRejectedException})한다. 넘기는 {@code ShipmentFacade}가 잡아 세고 넘어가며,
+ * 거절한 줄은 outbox에 PENDING으로 남아 발송 작업({@code DeliveryOutboxRelayScheduler})이 보낸다.
  *
  * <p>대기열 길이는 Spring Boot가 {@code ThreadPoolTaskExecutor} 빈마다 붙이는 {@code executor.queued{name="delivery-outbox-send"}}로 본다.
  * 버린 건수는 {@value #OUTBOX_SEND_DROPPED_METRIC}로 센다.
@@ -36,6 +31,7 @@ public class DeliveryAsyncConfig {
      * {@value #DROP_REASON_STALE}이면 대기열에서 {@code min-age}보다 오래 기다려 보내지 않은 것이다.
      */
     public static final String OUTBOX_SEND_DROPPED_METRIC = "delivery.outbox.send.dropped";
+    public static final String OUTBOX_SEND_DROPPED_DESCRIPTION = "배송 outbox 즉시 발송을 하지 않고 발송 작업에 맡긴 건수";
     public static final String DROP_REASON_REJECTED = "rejected";
     public static final String DROP_REASON_STALE = "stale";
 
@@ -47,7 +43,6 @@ public class DeliveryAsyncConfig {
     @Bean(OUTBOX_SEND_EXECUTOR)
     public ThreadPoolTaskExecutor deliveryOutboxSendExecutor(
             MdcTaskDecorator mdcTaskDecorator,
-            MeterRegistry meterRegistry,
             @Value("${delivery.outbox.send.pool-size:2}") int poolSize,
             @Value("${delivery.outbox.send.queue-capacity:1000}") int queueCapacity) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -58,31 +53,8 @@ public class DeliveryAsyncConfig {
         executor.setThreadNamePrefix("delivery-outbox-");
         // 추적 키(traceId 등)를 발송 스레드로 넘긴다. 공용 실행기와 같은 데코레이터다
         executor.setTaskDecorator(mdcTaskDecorator);
-        executor.setRejectedExecutionHandler(new DropAndCountPolicy(Counter.builder(OUTBOX_SEND_DROPPED_METRIC)
-                .description("배송 outbox 즉시 발송을 하지 않고 발송 작업에 맡긴 건수")
-                .tag("reason", DROP_REASON_REJECTED)
-                .register(meterRegistry)));
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationMillis(TERMINATION_TIMEOUT.toMillis());
         return executor;
-    }
-
-    /**
-     * 받을 수 없는 작업을 예외 없이 버리고 건수만 센다.
-     * 예외를 던지면 안 되는 이유: 작업을 넘기는 곳이 Spring이 부르는 커밋 뒤 콜백이라 잡을 곳이 없다. 예외가 올라가면 이미 커밋된 요청이 실패 응답이 되고
-     * 같은 커밋의 다른 콜백이 실행되지 않는다. 로그를 남기지 않는 이유: 이 처리도 요청 스레드가 커넥션을 쥔 채 실행하므로, 몰릴 때 건마다 로그를 쓰면 그만큼 커넥션을 오래 잡는다.
-     */
-    static final class DropAndCountPolicy implements RejectedExecutionHandler {
-
-        private final Counter dropped;
-
-        DropAndCountPolicy(Counter dropped) {
-            this.dropped = dropped;
-        }
-
-        @Override
-        public void rejectedExecution(Runnable task, ThreadPoolExecutor executor) {
-            dropped.increment();
-        }
     }
 }

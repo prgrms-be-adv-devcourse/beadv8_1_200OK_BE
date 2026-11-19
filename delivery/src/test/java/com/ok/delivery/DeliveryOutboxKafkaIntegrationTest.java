@@ -12,6 +12,8 @@ import com.ok.delivery.application.dto.ShipmentDispatchCommand;
 import com.ok.delivery.application.dto.ShipmentItemCommand;
 import com.ok.delivery.application.port.in.DeliveryOutboxRelayUseCase;
 import com.ok.delivery.application.port.in.ShipmentUseCase;
+import com.ok.delivery.application.service.DeliveryOutboxRelayFacade;
+import com.ok.delivery.application.service.ShipmentService;
 import com.ok.delivery.config.DeliveryAsyncConfig;
 import com.ok.delivery.domain.Carrier;
 import com.ok.delivery.domain.DeliveryOutbox;
@@ -40,6 +42,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -60,7 +63,7 @@ import static org.awaitility.Awaitility.await;
 // 통합 테스트: 배송 생성·출고·배송 완료가 커밋되면 outbox 줄이 남고, 커밋 직후 실제 Kafka 토픽에 orderId를 키로 한 메시지가 한 건 나가는지,
 // 그때 못 보낸 줄을 발송 작업이 다시 보내는지 확인 (#644)
 // - 발송 스케줄러는 테스트에서 꺼져 있어(module-test.yml) 커밋 직후 나간 메시지는 즉시 발송이 보낸 것이다. 발송 작업은 유스케이스를 직접 부른다
-// - 발송 작업만 보려는 테스트는 outbox 줄을 저장소로 직접 남긴다. 그러면 즉시 발송 이벤트가 나가지 않는다
+// - 발송 작업만 보려는 테스트는 outbox 줄을 저장소로 직접 남긴다. 그러면 Facade를 거치지 않아 즉시 발송하지 않는다
 // - 다른 테스트의 메시지와 섞이지 않게 테스트마다 다른 주문 번호를 쓰고 토픽을 키(orderId)로 골라 센다
 class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
 
@@ -81,6 +84,15 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     DeliveryOutboxRelayUseCase deliveryOutboxRelayUseCase;
+
+    @Autowired
+    ShipmentService shipmentService;
+
+    @Autowired
+    DeliveryOutboxRelayFacade deliveryOutboxRelayFacade;
+
+    @Autowired
+    Clock clock;
 
     @Autowired
     ShipmentJpaRepository shipmentRepository;
@@ -203,7 +215,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
 
         // when
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            shipmentUseCase.create(createCommand(orderId));
+            shipmentService.create(createCommand(orderId));
             status.setRollbackOnly();
         });
 
@@ -262,7 +274,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
             // 오프셋 없는 ISO-8601 (#644 메시지 약속)
             softly.assertThat(sut.get("shippedAt").asString()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?");
         });
-        // 커밋 뒤 콜백은 요청 스레드에서 돌므로, 요청 스레드가 브로커 확인을 기다리지 않았는지 보낸 스레드로 확인한다
+        // 요청 스레드가 브로커 확인을 기다리지 않았는지 보낸 스레드로 확인한다
         assertThat(failableDeliveryMessageSender.lastSendThreadName()).startsWith("delivery-outbox-");
         awaitAllSent();
     }
@@ -300,7 +312,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
 
         // when
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            shipmentUseCase.deliver(shipment.getId());
+            shipmentService.deliver(shipment.getId());
             status.setRollbackOnly();
         });
 
@@ -311,12 +323,13 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void 출고_트랜잭션이_롤백되면_outbox_줄이_남지_않아_메시지가_나가지_않는다() {
-        // given: 출고를 바깥 트랜잭션 안에서 부르고 끝에 롤백한다 (출고는 바깥 트랜잭션에 합류한다)
+        // given: 출고 서비스를 바깥 트랜잭션 안에서 부르고 끝에 롤백한다 (출고는 바깥 트랜잭션에 합류한다).
+        // 진입점은 트랜잭션 없이 Facade를 부르므로, 트랜잭션 경계인 서비스로 outbox 줄이 같은 트랜잭션에 묶였는지 본다
         Shipment shipment = savePreparing();
 
         // when
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            shipmentUseCase.dispatch(dispatchCommand(shipment));
+            shipmentService.dispatch(dispatchCommand(shipment));
             status.setRollbackOnly();
         });
 
@@ -493,7 +506,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
         deliveryOutboxRelayUseCase.relayPending(BATCH_SIZE, NO_MIN_AGE);
 
         // when
-        deliveryOutboxRelayUseCase.send(outboxId);
+        deliveryOutboxRelayFacade.send(outboxId, clock.instant());
 
         // then
         assertThat(dispatchedReader.readValuesFor(String.valueOf(orderId), READ_DURATION)).hasSize(1);
@@ -544,7 +557,7 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
                 .allMatch(outbox -> outbox.getStatus() == DeliveryOutboxStatus.SENT));
     }
 
-    // 발행 구현체를 거치지 않아 즉시 발송 이벤트가 나가지 않는다. 발송 작업만 보려는 테스트가 쓴다
+    // Facade를 거치지 않아 즉시 발송하지 않는다. 발송 작업만 보려는 테스트가 쓴다
     private DeliveryOutbox savePendingDirectly(DeliveryOutboxEventType eventType, long orderId) {
         return deliveryOutboxRepository.save(
                 DeliveryOutbox.pending(eventType, String.valueOf(orderId), "{\"orderId\":%d}".formatted(orderId)));

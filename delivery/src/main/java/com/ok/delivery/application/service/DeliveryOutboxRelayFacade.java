@@ -3,11 +3,17 @@ package com.ok.delivery.application.service;
 import com.ok.delivery.application.dto.DeliveryOutboxMessage;
 import com.ok.delivery.application.port.in.DeliveryOutboxRelayUseCase;
 import com.ok.delivery.application.port.out.DeliveryMessageSender;
-import lombok.RequiredArgsConstructor;
+import com.ok.delivery.config.DeliveryAsyncConfig;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,7 +28,6 @@ import java.util.Optional;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class DeliveryOutboxRelayFacade implements DeliveryOutboxRelayUseCase {
 
     // 즉시 발송 1번과 발송 작업(30초 주기)의 실패를 합친 횟수다. 이만큼 실패하면(약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
@@ -33,6 +38,25 @@ public class DeliveryOutboxRelayFacade implements DeliveryOutboxRelayUseCase {
 
     private final DeliveryOutboxService deliveryOutboxService;
     private final DeliveryMessageSender deliveryMessageSender;
+    private final Clock clock;
+    private final Duration minAge;
+    private final Counter staleDropped;
+
+    // min-age는 발송 작업이 줄을 고르는 기준과 같은 값을 쓴다(DeliveryOutboxRelayScheduler와 같은 키, 같은 기본값)
+    public DeliveryOutboxRelayFacade(DeliveryOutboxService deliveryOutboxService,
+                                     DeliveryMessageSender deliveryMessageSender,
+                                     Clock clock,
+                                     @Value("${delivery.outbox.relay.min-age:10s}") Duration minAge,
+                                     MeterRegistry meterRegistry) {
+        this.deliveryOutboxService = deliveryOutboxService;
+        this.deliveryMessageSender = deliveryMessageSender;
+        this.clock = clock;
+        this.minAge = minAge;
+        this.staleDropped = Counter.builder(DeliveryAsyncConfig.OUTBOX_SEND_DROPPED_METRIC)
+                .description(DeliveryAsyncConfig.OUTBOX_SEND_DROPPED_DESCRIPTION)
+                .tag("reason", DeliveryAsyncConfig.DROP_REASON_STALE)
+                .register(meterRegistry);
+    }
 
     @Override
     public int relayPending(int batchSize, Duration minAge) {
@@ -52,8 +76,22 @@ public class DeliveryOutboxRelayFacade implements DeliveryOutboxRelayUseCase {
         return sent;
     }
 
-    @Override
-    public void send(Long outboxId) {
+    /**
+     * 커밋된 줄 하나를 배송 전용 실행기({@value DeliveryAsyncConfig#OUTBOX_SEND_EXECUTOR})에서 바로 보낸다. 이미 보낸 줄이면 아무것도 하지 않는다.
+     * 실패하면 예외를 올리지 않고 실패를 기록해 둔다. 줄은 PENDING으로 남아 {@link #relayPending}이 다시 보낸다.
+     *
+     * @param recordedAt 줄을 남긴 트랜잭션이 끝난 시각. 대기열에서 오래 기다린 작업을 DB를 읽지 않고 거르는 데 쓴다 (#793)
+     * @throws org.springframework.core.task.TaskRejectedException 대기열이 가득 찼거나 실행기가 종료 중이면. 호출한 쪽이 잡아 발송 작업에 맡긴다
+     */
+    @Async(DeliveryAsyncConfig.OUTBOX_SEND_EXECUTOR)
+    public void send(Long outboxId, Instant recordedAt) {
+        // 아래는 대기열에서 꺼낸 뒤 발송 스레드에서 돈다.
+        // 줄을 남긴 지 min-age가 지났으면 발송 작업이 이미 같은 줄을 집었을 수 있어, 함께 보내 중복을 만들지 않게 발송 작업에 맡긴다 (#793).
+        // 줄을 읽기 전에 거르므로 대기열이 밀렸을 때 커넥션도 쓰지 않는다
+        if (!Duration.between(recordedAt, clock.instant()).minus(minAge).isNegative()) {
+            staleDropped.increment();
+            return;
+        }
         Optional<DeliveryOutboxMessage> pending = deliveryOutboxService.findPendingById(outboxId);
         if (pending.isEmpty()) {
             return;

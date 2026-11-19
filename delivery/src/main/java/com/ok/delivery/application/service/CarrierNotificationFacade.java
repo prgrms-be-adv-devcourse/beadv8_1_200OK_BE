@@ -14,7 +14,7 @@ import java.util.Optional;
 
 /**
  * 택배사 알림을 트랜잭션 밖에서 처리한다. 택배사 조회는 외부 호출이라 DB 트랜잭션 안에서 하지 않고,
- * shipment 조회와 배송 완료 반영만 {@link ShipmentService}가 각자 트랜잭션으로 처리한다.
+ * shipment 조회는 {@link ShipmentService}가, 배송 완료 반영과 그 메시지 발송은 {@link ShipmentFacade}가 맡는다.
  */
 @Slf4j
 @Component
@@ -23,6 +23,7 @@ public class CarrierNotificationFacade implements CarrierNotificationUseCase {
 
     private final CarrierClient carrierClient;
     private final ShipmentService shipmentService;
+    private final ShipmentFacade shipmentFacade;
 
     @Override
     public void receive(CarrierNotificationCommand command) {
@@ -53,7 +54,7 @@ public class CarrierNotificationFacade implements CarrierNotificationUseCase {
     // 같은 알림이 동시에 오면 뒤따르는 쪽은 행 잠금을 기다렸다가 이미 배송 완료인 상태를 만난다. 결과가 같으므로 오류로 보지 않는다
     private void deliver(Long shipmentId) {
         try {
-            shipmentService.deliver(shipmentId);
+            shipmentFacade.deliver(shipmentId);
             log.info("택배사 알림으로 배송 완료를 반영했습니다. shipmentId={}", shipmentId);
         } catch (RestApiException e) {
             log.info("이미 반영된 배송 완료 알림, 무시. shipmentId={}", shipmentId);

@@ -33,6 +33,9 @@ class CarrierNotificationFacadeTest {
     @Mock
     ShipmentService shipmentService;
 
+    @Mock
+    ShipmentFacade shipmentFacade;
+
     @InjectMocks
     CarrierNotificationFacade sut;
 
@@ -46,7 +49,7 @@ class CarrierNotificationFacadeTest {
         sut.receive(COMMAND);
 
         // then
-        then(shipmentService).should().deliver(1L);
+        then(shipmentFacade).should().deliver(1L);
     }
 
     @Test
@@ -59,7 +62,7 @@ class CarrierNotificationFacadeTest {
         sut.receive(COMMAND);
 
         // then
-        then(shipmentService).should(never()).deliver(anyLong());
+        then(shipmentFacade).should(never()).deliver(anyLong());
     }
 
     @Test
@@ -72,6 +75,7 @@ class CarrierNotificationFacadeTest {
 
         // then
         then(shipmentService).shouldHaveNoInteractions();
+        then(shipmentFacade).shouldHaveNoInteractions();
         then(carrierClient).should(never()).isDelivered(any(), any());
     }
 
@@ -86,7 +90,7 @@ class CarrierNotificationFacadeTest {
 
         // then
         then(carrierClient).should(never()).isDelivered(any(), any());
-        then(shipmentService).should(never()).deliver(anyLong());
+        then(shipmentFacade).should(never()).deliver(anyLong());
     }
 
     @Test
@@ -97,7 +101,7 @@ class CarrierNotificationFacadeTest {
 
         // when & then
         assertThatCode(() -> sut.receive(COMMAND)).doesNotThrowAnyException();
-        then(shipmentService).should(never()).deliver(anyLong());
+        then(shipmentFacade).should(never()).deliver(anyLong());
     }
 
     @Test
@@ -105,7 +109,7 @@ class CarrierNotificationFacadeTest {
         // given
         givenShippingShipment();
         given(carrierClient.isDelivered(Carrier.CJ_LOGISTICS, "1234567890")).willReturn(true);
-        willThrow(new RestApiException(DeliveryErrorCode.INVALID_SHIPMENT_STATE)).given(shipmentService).deliver(1L);
+        willThrow(new RestApiException(DeliveryErrorCode.INVALID_SHIPMENT_STATE)).given(shipmentFacade).deliver(1L);
 
         // when & then
         assertThatCode(() -> sut.receive(COMMAND)).doesNotThrowAnyException();

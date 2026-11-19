@@ -1,9 +1,9 @@
 package com.ok.delivery.config;
 
 import com.ok.common.config.MdcTaskDecorator;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.CountDownLatch;
@@ -11,13 +11,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-// 실행기의 거절 정책은 Spring 없이 실제 스레드 풀로 확인한다. 빈 이름과 기본값은 DeliveryAsyncConfigIntegrationTest가 본다
+// 실행기가 가득 찼을 때 거절하는지는 Spring 없이 실제 스레드 풀로 확인한다. 빈 이름과 기본값은 DeliveryAsyncConfigIntegrationTest가 본다
 class DeliveryAsyncConfigTest {
 
-    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final CountDownLatch release = new CountDownLatch(1);
     private ThreadPoolTaskExecutor sut;
 
@@ -49,7 +48,7 @@ class DeliveryAsyncConfigTest {
     }
 
     @Test
-    void 대기열이_가득_차면_넘기는_스레드가_기다리지_않고_예외_없이_버리고_건수를_센다() throws InterruptedException {
+    void 대기열이_가득_차면_넘기는_스레드가_기다리지_않고_바로_거절한다() throws InterruptedException {
         // given: 스레드 1개가 작업을 붙잡고 대기열 1칸도 찬 상태
         sut = createExecutor(1, 1);
         CountDownLatch started = new CountDownLatch(1);
@@ -61,11 +60,10 @@ class DeliveryAsyncConfigTest {
         AtomicInteger ran = new AtomicInteger();
         sut.execute(ran::incrementAndGet);
 
-        // when & then: 기다리게 했다면 release를 풀기 전까지 돌아오지 않는다
-        assertThatCode(() -> sut.execute(ran::incrementAndGet)).doesNotThrowAnyException();
-        assertThat(droppedCount()).isEqualTo(1.0);
+        // when & then: 기다리게 했다면 release를 풀기 전까지 돌아오지 않는다. 거절은 넘긴 쪽(ShipmentFacade)이 잡아 센다
+        assertThatThrownBy(() -> sut.execute(ran::incrementAndGet)).isInstanceOf(TaskRejectedException.class);
 
-        // 버린 작업은 실행되지 않고, 대기열에 들어간 작업만 실행된다
+        // 거절한 작업은 실행되지 않고, 대기열에 들어간 작업만 실행된다
         release.countDown();
         sut.shutdown();
         assertThat(sut.getThreadPoolExecutor().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
@@ -73,28 +71,20 @@ class DeliveryAsyncConfigTest {
     }
 
     @Test
-    void 종료된_실행기에_넘긴_작업도_예외_없이_버리고_건수를_센다() {
+    void 종료된_실행기에_넘긴_작업도_거절한다() {
         // given
         sut = createExecutor(1, 1);
         sut.shutdown();
 
         // when & then
-        assertThatCode(() -> sut.execute(() -> { })).doesNotThrowAnyException();
-        assertThat(droppedCount()).isEqualTo(1.0);
+        assertThatThrownBy(() -> sut.execute(() -> { })).isInstanceOf(TaskRejectedException.class);
     }
 
     private ThreadPoolTaskExecutor createExecutor(int poolSize, int queueCapacity) {
         ThreadPoolTaskExecutor executor = new DeliveryAsyncConfig().deliveryOutboxSendExecutor(
-                new MdcTaskDecorator(), meterRegistry, poolSize, queueCapacity);
+                new MdcTaskDecorator(), poolSize, queueCapacity);
         executor.initialize();
         return executor;
-    }
-
-    private double droppedCount() {
-        return meterRegistry.get(DeliveryAsyncConfig.OUTBOX_SEND_DROPPED_METRIC)
-                .tag("reason", DeliveryAsyncConfig.DROP_REASON_REJECTED)
-                .counter()
-                .count();
     }
 
     private static void await(CountDownLatch latch) {
