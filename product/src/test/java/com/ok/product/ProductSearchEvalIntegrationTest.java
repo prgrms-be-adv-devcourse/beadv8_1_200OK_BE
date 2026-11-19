@@ -42,14 +42,14 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 	private static final double PRODUCTION_MIN_SCORE = 1.0;
 	// 시드와 평가셋이 고정이라 결과도 고정이다. 잰 값을 소수 둘째 자리에서 버린 값이라 0.01 이상 떨어지면 실패한다
 	private static final Map<String, Double> RECALL_FLOORS = Map.of(
-		"clean", 0.92,
-		"spacing", 0.93,
-		"typo", 0.80,
+		"clean", 0.97,
+		"spacing", 0.97,
+		"typo", 0.82,
 		"vague", 0.34);
 	private static final Map<String, Double> MRR_FLOORS = Map.of(
-		"clean", 0.87,
-		"spacing", 0.89,
-		"typo", 0.70,
+		"clean", 0.90,
+		"spacing", 0.92,
+		"typo", 0.73,
 		"vague", 0.46);
 
 	@Autowired

@@ -11,9 +11,9 @@ public final class SearchTextNormalizer {
 
 	/**
 	 * 검색 행 계산 규칙의 버전이다. 이 클래스의 정규화 규칙과 {@code search_item}을 고르는 품목 규칙을 함께 가리킨다.
-	 * 정규화 규칙, 품목 사전, 한 글자 품목 표 중 하나라도 바꾸면 올린다. 기동 때 백필이 이보다 낮은 버전으로 저장된 행을 다시 계산한다.
+	 * 정규화 규칙, 품목 사전, 한 글자 품목 표, 품목 동의어 표 중 하나라도 바꾸면 올린다. 기동 때 백필이 이보다 낮은 버전으로 저장된 행을 다시 계산한다.
 	 */
-	public static final int VERSION = 2;
+	public static final int VERSION = 3;
 
 	private static final char FIRST_SYLLABLE = '가';
 	private static final char LAST_SYLLABLE = '힣';

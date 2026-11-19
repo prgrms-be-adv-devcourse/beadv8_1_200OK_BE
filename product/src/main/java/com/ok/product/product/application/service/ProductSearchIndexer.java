@@ -62,11 +62,14 @@ public class ProductSearchIndexer {
 				searchBody, searchItem, SearchTextNormalizer.VERSION)));
 	}
 
-	// 설명(descriptionHtml)은 넣지 않는다. 실험에서 설명을 넣으면 무관한 상품이 결과에 더 많이 섞였다
+	// 설명(descriptionHtml)은 넣지 않는다. 실험에서 설명을 넣으면 무관한 상품이 결과에 더 많이 섞였다.
+	// 품목 동의어는 keywords가 아니라 여기에 넣는다. keywords는 태그 판정(#746)이 통째로 바꾸는 칼럼이라 거기 두면 판정 때마다 지워진다
 	private String searchBodySource(Product product) {
-		return Stream.concat(
+		return Stream.of(
 				product.activeOptions().stream().map(ProductOption::getName),
-				Stream.of(product.getCategory().getDescription()))
+				Stream.of(product.getCategory().getDescription()),
+				productItemDictionary.findSynonyms(product.getName()).stream())
+			.flatMap(Function.identity())
 			.collect(Collectors.joining(" "));
 	}
 }

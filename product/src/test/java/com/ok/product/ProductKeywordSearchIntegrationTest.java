@@ -182,6 +182,15 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 품목의_다른_이름으로_검색하면_그_품목의_상품이_1위다() {
+		// when
+		List<Long> sut = search("무청");
+
+		// then
+		assertThat(sut).first().isEqualTo(siraegi);
+	}
+
+	@Test
 	void 카테고리_한글명으로_찾는다() {
 		// when
 		List<Long> sut = search("버섯");
@@ -228,9 +237,10 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 			ProductSearchKeyword.from("청포도").orElseThrow(), null, null, null, ProductSort.RELEVANCE, lowFloor, pageable);
 
 		// then
+		// 샤인머스캣은 품목 동의어 "청포도"로 글자가 겹쳐 함께 남고, 자모로만 걸린 청도 복숭아만 빠진다
 		assertThat(typo).contains(grape, cheongdoPeach);
 		assertThat(sut.getContent()).containsExactly(grape);
-		assertThat(sut.getTotalElements()).isEqualTo(1);
+		assertThat(sut.getTotalElements()).isEqualTo(2);
 	}
 
 	@Test
@@ -253,11 +263,11 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 			ProductRegionCode.GYEONGBUK.toDomain(), ProductSort.RELEVANCE, lowFloor, pageable);
 
 		// then
-		assertThat(unfiltered.getContent()).containsExactly(grape);
+		// 샤인머스캣(경북)은 품목 동의어 "청포도"로 글자가 겹쳐 함께 나온다
+		assertThat(unfiltered.getContent()).containsExactly(grape, shineMuscat);
 		assertThat(jeju.getContent()).isEmpty();
 		assertThat(jeju.getTotalElements()).isZero();
-		assertThat(gyeongbuk.getContent()).containsExactly(grape);
-		assertThat(unfiltered.getContent()).doesNotContain(jejuPeach);
+		assertThat(gyeongbuk.getContent()).containsExactly(grape, shineMuscat);
 	}
 
 	@Test
