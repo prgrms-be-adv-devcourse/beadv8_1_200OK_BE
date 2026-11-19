@@ -29,15 +29,6 @@ class CarrierTrackingFacadeTest {
     CarrierTrackingFacade sut;
 
     @Test
-    void 송장_추적을_택배사에_요청한다() {
-        // when
-        sut.requestTracking(1L, "CJ_LOGISTICS", "1234567890");
-
-        // then
-        then(carrierClient).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890");
-    }
-
-    @Test
     void 배송_중인_shipment를_모두_다시_추적_요청한다() {
         // given
         given(shipmentService.getShippingShipments()).willReturn(List.of(

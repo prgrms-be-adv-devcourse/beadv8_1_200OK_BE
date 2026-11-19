@@ -1,5 +1,6 @@
 package com.ok.delivery;
 
+import com.ok.common.exception.RestApiException;
 import com.ok.delivery.adapter.out.event.DeliveryTopics;
 import com.ok.delivery.adapter.out.event.FailableDeliveryMessageSender;
 import com.ok.delivery.adapter.out.persistence.DeliveryOutboxJpaRepository;
@@ -17,6 +18,7 @@ import com.ok.delivery.domain.DeliveryOutbox;
 import com.ok.delivery.domain.DeliveryOutboxEventType;
 import com.ok.delivery.domain.DeliveryOutboxStatus;
 import com.ok.delivery.domain.Shipment;
+import com.ok.delivery.exception.DeliveryErrorCode;
 import com.ok.delivery.fixture.ShipmentFixture;
 import com.ok.testsupport.AbstractIntegrationTest;
 import com.ok.testsupport.FakeCarrierClient;
@@ -48,6 +50,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assertions.within;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -462,20 +465,19 @@ class DeliveryOutboxKafkaIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void 출고가_커밋된_뒤에만_택배사에_추적을_요청하고_롤백된_출고는_요청하지_않는다() {
-        // given: 롤백된 출고 하나와 커밋된 출고 하나
-        Shipment rolledBack = savePreparing();
-        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            shipmentUseCase.dispatch(dispatchCommand(rolledBack));
-            status.setRollbackOnly();
-        });
+    void 출고가_커밋되면_택배사에_추적을_요청하고_실패해_롤백된_출고는_요청하지_않는다() {
+        // given: 같은 송장번호로 두 번째 출고를 하면 송장번호 중복으로 롤백된다
         Shipment committed = savePreparing();
-
-        // when
+        Shipment rolledBack = savePreparing();
         shipmentUseCase.dispatch(dispatchCommand(committed));
+        ShipmentDispatchCommand duplicated = new ShipmentDispatchCommand(
+                rolledBack.getId(), SELLER_ID, "CJ_LOGISTICS", trackingNumber(committed.getOrderId()));
 
-        // then: 요청은 커밋 뒤 다른 스레드에서 가므로 기다린다. 롤백된 출고의 요청은 먼저 일어났더라도 이때까지 오지 않았어야 한다
-        await().atMost(Duration.ofSeconds(10)).until(() -> fakeCarrierClient.isRequested(committed.getId()));
+        // when & then
+        assertThatThrownBy(() -> shipmentUseCase.dispatch(duplicated))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.TRACKING_NUMBER_DUPLICATED));
+        assertThat(fakeCarrierClient.isRequested(committed.getId())).isTrue();
         assertThat(fakeCarrierClient.isRequested(rolledBack.getId())).isFalse();
     }
 

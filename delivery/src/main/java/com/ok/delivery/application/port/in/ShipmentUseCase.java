@@ -28,6 +28,7 @@ public interface ShipmentUseCase {
      * shipment 행 잠금 아래에서 처리하므로 환불의 취소 확정 예약과 동시에 실행돼도 한쪽만 성공한다.
      * 대기 중인 배송지 변경 요청은 송장 발행 후 바꿀 수 없으므로 고정 문구로 자동 거절한다.
      * 출고가 확정되면 주문이 배송 중으로 바뀌도록 배송 시작 이벤트를 발행한다.
+     * 출고가 커밋되면 택배사에 송장 추적을 요청한다. 요청이 실패해도 출고 결과는 그대로 돌려준다.
      *
      * @throws com.ok.common.exception.RestApiException 없거나 다른 판매자의 shipment면 {@code SHIPMENT_NOT_FOUND},
      *                          같은 택배사의 송장번호가 이미 쓰였으면 {@code TRACKING_NUMBER_DUPLICATED},

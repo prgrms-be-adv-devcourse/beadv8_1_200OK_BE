@@ -17,11 +17,6 @@ public class CarrierTrackingFacade implements CarrierTrackingUseCase {
     private final ShipmentService shipmentService;
 
     @Override
-    public void requestTracking(Long shipmentId, String carrier, String trackingNumber) {
-        carrierClient.requestTracking(shipmentId, carrier, trackingNumber);
-    }
-
-    @Override
     public void requestTrackingForShippingShipments() {
         shipmentService.getShippingShipments().forEach(shipment ->
                 carrierClient.requestTracking(shipment.shipmentId(), shipment.carrier(), shipment.trackingNumber()));

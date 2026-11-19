@@ -3,7 +3,6 @@ package com.ok.delivery.adapter.out.event;
 import com.ok.delivery.adapter.out.event.dto.ShipmentCreatedMessage;
 import com.ok.delivery.adapter.out.event.dto.ShipmentDeliveredMessage;
 import com.ok.delivery.adapter.out.event.dto.ShipmentDispatchedMessage;
-import com.ok.delivery.application.dto.CarrierTrackingRequestedEvent;
 import com.ok.delivery.application.dto.DeliveryOutboxRecordedEvent;
 import com.ok.delivery.application.port.out.DeliveryEventPublisher;
 import com.ok.delivery.application.port.out.DeliveryOutboxRepository;
@@ -49,7 +48,6 @@ public class OutboxDeliveryEventPublisher implements DeliveryEventPublisher {
                 shipmentId, orderId, sellerId, carrier, trackingNumber, shippedAt);
         // 키를 orderId로 두면 같은 주문의 배송 메시지가 같은 파티션으로 가서 순서가 지켜진다 (#644 메시지 약속)
         record(DeliveryOutboxEventType.SHIPMENT_DISPATCHED, orderId, message);
-        applicationEventPublisher.publishEvent(new CarrierTrackingRequestedEvent(shipmentId, carrier, trackingNumber));
     }
 
     @Override

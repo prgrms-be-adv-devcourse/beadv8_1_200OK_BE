@@ -16,7 +16,6 @@ import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestReposito
 import com.ok.delivery.application.port.out.ShipmentQueryRepository;
 import com.ok.delivery.application.port.out.ShipmentRepository;
 import com.ok.delivery.application.dto.LatestAddressChangeResult;
-import com.ok.delivery.application.port.in.ShipmentUseCase;
 import com.ok.delivery.application.port.out.DeliveryEventPublisher;
 import com.ok.delivery.application.dto.RegionResult;
 import com.ok.delivery.application.dto.SellerShipmentCommand;
@@ -51,7 +50,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ShipmentService implements ShipmentUseCase {
+public class ShipmentService {
 
     private static final String TRACKING_NUMBER_UNIQUE_CONSTRAINT = "uk_shipment_carrier_tracking_number";
     // 이슈 명세로 고정한 목록 페이지 크기. 클라이언트가 바꿀 수 없다
@@ -66,7 +65,6 @@ public class ShipmentService implements ShipmentUseCase {
     private final DeliveryEventPublisher deliveryEventPublisher;
     private final Clock clock;
 
-    @Override
     @Transactional
     public void create(ShipmentCreateCommand command) {
         // 판매자 묶음 전체를 한 트랜잭션에 저장하므로 주문 단위로 확인하면 된다.
@@ -91,7 +89,6 @@ public class ShipmentService implements ShipmentUseCase {
                 shipment.getItems().stream().map(ShipmentItem::getOrderItemId).toList(), shipment.getCreatedAt()));
     }
 
-    @Override
     @Transactional
     public ShipmentDispatchResult dispatch(ShipmentDispatchCommand command) {
         // 다른 판매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
@@ -128,7 +125,6 @@ public class ShipmentService implements ShipmentUseCase {
                 .map(ShippingShipmentResult::from);
     }
 
-    @Override
     @Transactional
     public void deliver(Long shipmentId) {
         Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
@@ -138,7 +134,6 @@ public class ShipmentService implements ShipmentUseCase {
                 shipment.getDeliveredAt());
     }
 
-    @Override
     @Transactional
     public void confirmPurchase(Long orderItemId) {
         // 주문은 배송이 알린 배송 완료 항목만 구매확정하므로 shipment가 없으면 데이터가 어긋난 것이다.
@@ -152,14 +147,12 @@ public class ShipmentService implements ShipmentUseCase {
         shipment.confirmPurchase(orderItemId, LocalDateTime.now(clock));
     }
 
-    @Override
     public Page<ShipmentSummaryResult> getBuyerShipments(Long buyerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findByBuyerId(buyerId, PageRequest.of(page, PAGE_SIZE));
         Map<Long, List<ShipmentItem>> itemsByShipmentId = itemsByShipmentId(idsOf(shipments));
         return shipments.map(shipment -> ShipmentSummaryResult.of(shipment, itemsByShipmentId.get(shipment.getId())));
     }
 
-    @Override
     public Page<SellerShipmentSummaryResult> getSellerShipments(Long sellerId, int page) {
         Page<Shipment> shipments = shipmentQueryRepository.findBySellerId(sellerId, PageRequest.of(page, PAGE_SIZE));
         List<Long> shipmentIds = idsOf(shipments);
@@ -171,7 +164,6 @@ public class ShipmentService implements ShipmentUseCase {
                 shipment, itemsByShipmentId.get(shipment.getId()), pendingShipmentIds.contains(shipment.getId())));
     }
 
-    @Override
     public ShipmentDetailResult getBuyerShipment(Long buyerId, Long shipmentId) {
         // 다른 구매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
         Shipment shipment = shipmentRepository.findById(shipmentId)
@@ -180,7 +172,6 @@ public class ShipmentService implements ShipmentUseCase {
         return toDetail(shipment);
     }
 
-    @Override
     public ShipmentDetailResult getSellerShipment(Long sellerId, Long shipmentId) {
         // 다른 판매자의 shipment는 존재 여부를 숨기려고 없는 것과 같게 응답한다
         Shipment shipment = shipmentRepository.findById(shipmentId)

@@ -1,6 +1,5 @@
 package com.ok.delivery.adapter.in.event;
 
-import com.ok.delivery.application.dto.CarrierTrackingRequestedEvent;
 import com.ok.delivery.application.port.in.CarrierTrackingUseCase;
 import com.ok.delivery.application.port.in.ShipmentUseCase;
 import org.junit.jupiter.api.Test;
@@ -22,18 +21,6 @@ class CarrierEventListenerTest {
 
     @InjectMocks
     CarrierEventListener sut;
-
-    @Test
-    void 출고_이벤트를_받으면_택배사에_송장_추적을_요청한다() {
-        // given
-        CarrierTrackingRequestedEvent event = new CarrierTrackingRequestedEvent(1L, "CJ_LOGISTICS", "1234567890");
-
-        // when
-        sut.on(event);
-
-        // then
-        then(carrierTrackingUseCase).should().requestTracking(1L, "CJ_LOGISTICS", "1234567890");
-    }
 
     @Test
     void 택배사의_배송_완료_알림을_받으면_배송_완료를_반영한다() {
