@@ -5,7 +5,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 
-@Schema(description = "막힌 주문의 원인 1건. 같은 주문의 다른 상품 때문에 함께 보류된 기록은 빠져 있고, 같은 기록은 1번만 나옴")
+@Schema(description = "막힌 주문의 원인 1건. 같은 주문의 다른 상품 때문에 함께 보류된 기록(ORDER_HELD 등)은 보통 빠져 있고, 같은 기록은 1번만 나옴. "
+        + "원인 기록이 이미 정산·해결로 빠지고 함께 보류 기록만 남은 주문은 그 기록이 나옴(원인이 비면 왜 막혔는지 알 수 없어서)")
 public record PayoutBlockedOrderCauseResponse(
 
         @Schema(description = "주문 항목 ID. 배송비 후보면 null", example = "1001", nullable = true)
@@ -18,7 +19,8 @@ public record PayoutBlockedOrderCauseResponse(
         @Schema(description = "실패 사유 (예: AMOUNT_MISMATCH, FEE_MISMATCH, VERIFY_MISMATCH, DEDUCTION_MISSING)", example = "FEE_MISMATCH")
         String reason,
 
-        @Schema(description = "실패 사유의 원인 범주", example = "SYSTEM",
+        @Schema(description = "실패 사유의 원인 범주 (누가 확인할지). SOURCE_DATA 원천 데이터 문제(다른 모듈에서 받은 지갑 결제·구매확정 금액이 없거나 안 맞음, 값을 보낸 쪽 확인), "
+                + "SYSTEM 시스템 문제(정산 코드·설정·일시적 오류일 가능성이 큼, 개발자 확인), RECONCILIATION 대사 문제(지금은 쓰는 사유 없음)", example = "SYSTEM",
                 allowableValues = {"SOURCE_DATA", "SYSTEM", "RECONCILIATION"})
         String category,
 

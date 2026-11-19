@@ -29,7 +29,8 @@ public record PayoutBlockedOrderResponse(
         @Schema(description = "원인에 나온 판매자 회원 ID (중복 없음)", example = "[7]")
         List<Long> sellerIds,
 
-        @Schema(description = "원인에 나온 실패 사유 (중복 없음)", example = "[\"FEE_MISMATCH\"]")
+        @Schema(description = "원인에 나온 실패 사유 (중복 없음). AMOUNT_MISMATCH·FEE_MISMATCH가 있으면 조정 뒤 해결, "
+                + "그 밖의 사유는 조정 없이 원인 확인 뒤 해결 (목록 API 설명의 표 참고)", example = "[\"FEE_MISMATCH\"]")
         List<String> reasons,
 
         @Schema(description = "원인에 나온 원인 범주 (중복 없음)", example = "[\"SYSTEM\"]")

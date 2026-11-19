@@ -12,7 +12,8 @@ public record PayoutOverchargeEvidenceResponse(
         @Schema(description = "결제(지갑 차감) 금액 (원)", example = "30000")
         long deductedAmount,
 
-        @Schema(description = "정산후보 합계 (원). 조정은 빼고, 아직 대기 중인 같은 주문 후보는 포함", example = "35000")
+        @Schema(description = "정산후보 합계 (원). 원래 후보(배송비·이미 정산·아직 대기 중인 같은 주문 후보 포함) + 관리자가 확인한 조정(실패 뒤·해결 전에 넣고 해결한 것). "
+                + "해결 전에 넣은 조정은 막힌 주문 목록의 조정 합계 칸에 따로 나옴. 막힌 순간 값은 그 실행 검사 범위, 지금 값은 범위 없이 계산", example = "35000")
         long candidateTotal,
 
         @Schema(description = "넘친 금액 = 후보 합계 - 결제 금액 (원). 지금 값은 초과가 풀렸으면 0이나 음수", example = "5000")

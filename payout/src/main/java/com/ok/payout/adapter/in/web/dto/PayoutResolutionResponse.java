@@ -37,7 +37,8 @@ public record PayoutResolutionResponse(
         @Schema(description = "실패 사유 (예: AMOUNT_MISMATCH, FEE_MISMATCH, VERIFY_MISMATCH, ORDER_HELD)", example = "AMOUNT_MISMATCH")
         String reason,
 
-        @Schema(description = "실패 사유의 원인 범주", example = "SOURCE_DATA",
+        @Schema(description = "실패 사유의 원인 범주 (누가 확인할지). SOURCE_DATA 원천 데이터 문제(다른 모듈에서 받은 지갑 결제·구매확정 금액이 없거나 안 맞음, 값을 보낸 쪽 확인), "
+                + "SYSTEM 시스템 문제(정산 코드·설정·일시적 오류일 가능성이 큼, 개발자 확인), RECONCILIATION 대사 문제(지금은 쓰는 사유 없음)", example = "SOURCE_DATA",
                 allowableValues = {"SOURCE_DATA", "SYSTEM", "RECONCILIATION"})
         String category,
 
