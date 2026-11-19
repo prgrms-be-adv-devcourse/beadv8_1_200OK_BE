@@ -4,6 +4,7 @@ import com.ok.order.order.domain.OrderOutbox;
 import com.ok.order.order.domain.OrderOutboxStatus;
 import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,7 +18,8 @@ public interface OrderOutboxRepository {
     Optional<OrderOutbox> findById(Long id);
 
     /**
-     * 상태가 {@code status}인 줄을 쌓인 순서(id)대로 조회한다.
+     * 상태가 {@code status}이고 {@code createdBefore} 전에 남긴 줄을 쌓인 순서(id)대로 조회한다.
      */
-    List<OrderOutbox> findByStatusOrderByIdAsc(OrderOutboxStatus status, Pageable pageable);
+    List<OrderOutbox> findByStatusAndCreatedAtBeforeOrderByIdAsc(OrderOutboxStatus status, LocalDateTime createdBefore,
+                                                                  Pageable pageable);
 }

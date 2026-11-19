@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -40,8 +41,8 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
     private final OrderMessageSender orderMessageSender;
 
     @Override
-    public int relayPending(int batchSize) {
-        List<OrderOutboxMessage> pending = orderOutboxService.findPending(batchSize);
+    public int relayPending(int batchSize, Duration minAge) {
+        List<OrderOutboxMessage> pending = orderOutboxService.findPending(batchSize, minAge);
         int sent = 0;
         for (OrderOutboxMessage message : pending) {
             if (!sendAndRecord(message)) {

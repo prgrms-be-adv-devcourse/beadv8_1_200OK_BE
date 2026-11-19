@@ -41,6 +41,8 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
     // 다시 보낸 중복까지 세려고 이 시간 동안 계속 읽는다. 발송은 저장 확인까지 기다린 뒤 끝나므로 정상이면 바로 읽힌다
     private static final Duration READ_DURATION = Duration.ofSeconds(3);
     private static final Duration WAIT_TIMEOUT = Duration.ofSeconds(10);
+    // 방금 남긴 줄도 재발송 대상으로 삼아, 경과 시간을 기다리지 않고 재발송을 확인한다
+    private static final Duration NO_MIN_AGE = Duration.ZERO;
 
     @Autowired
     OrderOutboxRecordUseCase sut;
@@ -117,7 +119,7 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
         orderOutboxRepository.save(OrderOutbox.pending(TOPIC, key, "{\"seq\":2}"));
 
         // when
-        int sent = orderOutboxRelayUseCase.relayPending(100);
+        int sent = orderOutboxRelayUseCase.relayPending(100, NO_MIN_AGE);
 
         // then
         assertSoftly(softly -> {
@@ -125,6 +127,23 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
             softly.assertThat(reader.readValuesFor(key, READ_DURATION)).containsExactly("{\"seq\":1}", "{\"seq\":2}");
             softly.assertThat(orderOutboxRepository.findAll()).filteredOn(outbox -> key.equals(outbox.getMessageKey()))
                     .extracting(OrderOutbox::getStatus).containsOnly(OrderOutboxStatus.SENT);
+        });
+    }
+
+    // 커밋 직후 발송이 대기열에서 밀린 사이 재발송이 같은 줄을 함께 보내면 받는 쪽이 중복을 받는다(#794)
+    @Test
+    void 재발송은_남긴_지_min_age가_지나지_않은_줄을_보내지_않는다() {
+        // given: 커밋 직후 발송이 아직 보내는 중일 수 있는 줄
+        orderOutboxRepository.save(OrderOutbox.pending(TOPIC, key, "{\"orderId\":14}"));
+
+        // when
+        int sent = orderOutboxRelayUseCase.relayPending(100, Duration.ofMinutes(1));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sent).isZero();
+            softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.PENDING);
+            softly.assertThat(reader.readValuesFor(key, READ_DURATION)).isEmpty();
         });
     }
 
@@ -155,7 +174,7 @@ class OrderOutboxIntegrationTest extends AbstractIntegrationTest {
         }
 
         // 막아 둔 작업이 끝난 뒤 재발송이 보낸다
-        orderOutboxRelayUseCase.relayPending(100);
+        orderOutboxRelayUseCase.relayPending(100, NO_MIN_AGE);
         assertSoftly(softly -> {
             softly.assertThat(reader.readValuesFor(key, READ_DURATION)).containsExactly("{\"orderId\":13}");
             softly.assertThat(statusOf(key)).isEqualTo(OrderOutboxStatus.SENT);

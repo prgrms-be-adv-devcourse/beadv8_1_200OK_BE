@@ -8,6 +8,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
@@ -27,6 +28,7 @@ import static org.mockito.Mockito.never;
 class OrderOutboxRelayFacadeTest {
 
     private static final String TOPIC = "order.test.v1";
+    private static final Duration MIN_AGE = Duration.ofSeconds(10);
 
     @Mock
     OrderOutboxService orderOutboxService;
@@ -44,10 +46,10 @@ class OrderOutboxRelayFacadeTest {
     @Test
     void 보낼_차례인_줄을_쌓인_순서대로_보내고_보냄으로_표시한다() {
         // given
-        given(orderOutboxService.findPending(100)).willReturn(List.of(message(1L, "10"), message(2L, "11")));
+        given(orderOutboxService.findPending(100, MIN_AGE)).willReturn(List.of(message(1L, "10"), message(2L, "11")));
 
         // when
-        int sent = sut.relayPending(100);
+        int sent = sut.relayPending(100, MIN_AGE);
 
         // then
         assertThat(sent).isEqualTo(2);
@@ -59,7 +61,7 @@ class OrderOutboxRelayFacadeTest {
     @Test
     void 한_줄이_실패하면_실패를_기록하고_그_회차는_뒤_줄을_보내지_않는다() {
         // given
-        given(orderOutboxService.findPending(100))
+        given(orderOutboxService.findPending(100, MIN_AGE))
                 .willReturn(List.of(message(1L, "10"), message(2L, "10"), message(3L, "11")));
         // 두 번째 줄만 실패한다. 인자마다 따로 stub하면 엄격한 stub 검사가 다른 인자의 호출을 오류로 본다
         willAnswer(invocation -> {
@@ -70,7 +72,7 @@ class OrderOutboxRelayFacadeTest {
         }).given(orderMessageSender).send(anyString(), anyString(), anyString());
 
         // when
-        int sent = sut.relayPending(100);
+        int sent = sut.relayPending(100, MIN_AGE);
 
         // then
         assertThat(sent).isEqualTo(1);

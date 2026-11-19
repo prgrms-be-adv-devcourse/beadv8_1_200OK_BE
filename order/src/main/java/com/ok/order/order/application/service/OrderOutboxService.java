@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -26,7 +27,7 @@ import java.util.Optional;
 public class OrderOutboxService {
 
     private final OrderOutboxRepository orderOutboxRepository;
-    // 보낸 시각 기준 (전역 ClockConfig)
+    // 보낸 시각과 재발송 대상 경과 시간의 기준 (전역 ClockConfig)
     private final Clock clock;
 
     // MANDATORY: 부른 쪽(주문 변경)의 트랜잭션에 합류하고, 트랜잭션이 없으면 예외를 낸다.
@@ -36,8 +37,10 @@ public class OrderOutboxService {
         return orderOutboxRepository.save(OrderOutbox.pending(topic, messageKey, payload)).getId();
     }
 
-    List<OrderOutboxMessage> findPending(int limit) {
-        return orderOutboxRepository.findByStatusOrderByIdAsc(OrderOutboxStatus.PENDING, PageRequest.ofSize(limit))
+    List<OrderOutboxMessage> findPending(int limit, Duration minAge) {
+        LocalDateTime createdBefore = LocalDateTime.now(clock).minus(minAge);
+        return orderOutboxRepository.findByStatusAndCreatedAtBeforeOrderByIdAsc(
+                        OrderOutboxStatus.PENDING, createdBefore, PageRequest.ofSize(limit))
                 .stream()
                 .map(OrderOutboxService::toMessage)
                 .toList();
