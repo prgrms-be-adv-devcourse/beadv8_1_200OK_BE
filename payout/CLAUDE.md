@@ -23,7 +23,7 @@
 | `application/port/out` | 출력 포트(`*Repository`, `*QueryRepository`, 발행 인터페이스)와 그 값(`*Row`, 발행 값 `SellerPayoutCreated`) |
 | `application/service` | 유스케이스 구현(`*Service`), 검증기, 조회 결과 변환(`PayoutQueryResultMapper`) |
 | `adapter/in/web` | 컨트롤러, `*Spec`, 요청·응답 DTO(`dto/`) |
-| `adapter/in/event` | Spring·Kafka 리스너, Kafka 메시지 DTO(`dto/`) |
+| `adapter/in/event` | Kafka 리스너, Kafka 메시지 DTO(`dto/`) |
 | `adapter/in/batch` | 정산 Job 설정, 시작기(`PayoutJobRunner`), 스케줄러 |
 | `adapter/out/persistence` | Spring Data JPA 저장소(`*JpaRepository`), Querydsl 조회, JPA로 할 수 없는 곳의 네이티브 SQL(아래 "주의") |
 | `adapter/out/event` | 이벤트 발행 구현체 |
@@ -43,7 +43,7 @@
 - 배치를 뺀 입구(web, event)는 배치 중 `PayoutJobRunner`만 쓴다. 배치는 `domain` 중 `PayoutPolicy`와 `domain/type`만 쓴다.
 - `domain/type`에는 enum만 두고, 정산의 다른 패키지와 JPA·Spring을 모른다. 웹·이벤트 입구는 `domain/type`도 쓰지 않는다(`api.md`: 컨트롤러는 domain 타입을 쓰지 않음).
 - `com.ok` 중 `payout`과 `common`만 안다.
-- `common.event`의 이벤트 클래스는 `adapter/in/event`에서만 쓴다. 보내는 쪽은 지갑 Spring 이벤트 발행을 지워(#588) Kafka 메시지 DTO만 쓴다.
+- 정산은 `common.event`를 쓰지 않는다. 받는 쪽은 Spring 입구를 지워(#781), 보내는 쪽은 지갑 Spring 이벤트 발행을 지워(#588) Kafka 메시지 DTO만 쓴다.
 - 발행 도구(`ApplicationEventPublisher`, `KafkaOperations`)는 `adapter/out/event`에서만 쓴다.
 
 **이유**: 입구와 외부 연결이 서비스를 거쳐서만 만나야 연동 방식(Spring 이벤트 → Kafka, 모듈 분리)을 바꿔도 서비스가 바뀌지 않는다. 이 규칙은 정산 `ArchitectureTest`가 검사한다.
