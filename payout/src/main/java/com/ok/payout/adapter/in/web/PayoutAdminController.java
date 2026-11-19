@@ -16,6 +16,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
@@ -167,6 +168,18 @@ public class PayoutAdminController implements PayoutAdminControllerSpec {
     ) {
         return ResponseEntity.ok(PayoutPageResponse.from(
                 payoutFailureResolutionUseCase.getResolutionRequests(orderId, request.toQuery())
+                        .map(PayoutResolutionRequestResponse::from)));
+    }
+
+    // 해결 기록 전체 목록 (#723): 기간 안 해결 요청을 주문과 상관없이 요청 1번 = 1줄로. 줄 모양은 주문별 묶음 보기와 같음
+    // 경로 /resolution-requests는 /{payoutId}와 겹쳐 보이지만, Spring은 글자가 고정된 경로를 먼저 고르므로 정산 ID로 오해하지 않음 (/blocked-orders와 같음)
+    @Override
+    @GetMapping("/resolution-requests")
+    public ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequestsInPeriod(
+            @Valid @ModelAttribute PayoutResolutionRequestSearchRequest request
+    ) {
+        return ResponseEntity.ok(PayoutPageResponse.from(
+                payoutFailureResolutionUseCase.getResolutionRequestsInPeriod(request.toQuery())
                         .map(PayoutResolutionRequestResponse::from)));
     }
 

@@ -65,6 +65,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.is;
@@ -683,7 +684,117 @@ class PayoutFailureResolutionIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());                                       // 403
     }
 
+    // ---------- 해결 기록 전체 목록 (#723) ----------
+
+    // 11/17 관리자 1이 주문 A(실패 3건)를, 11/18 관리자 2가 주문 B(실패 1건)를 풂. 해결 시각은 JDBC로 정해 둠
+    @Test
+    void 전체_목록은_기간_안_해결_요청을_최신순으로_주고_관리자로_거를_수_있다() throws Exception {
+        // given
+        List<Long> runs = runCompleted(3);
+        long orderA = nextOrderId();
+        long candidateA = insertCandidate(orderA, LocalDateTime.now().minusDays(30));
+        for (Long run : runs) {
+            insertFailure(run, candidateA, orderA, PayoutFailureReason.AMOUNT_MISMATCH);
+        }
+        PayoutOrderResolutionResult byAdmin1 = resolve(orderA);
+        long orderB = nextOrderId();
+        insertFailure(runs.get(0), insertCandidate(orderB, LocalDateTime.now().minusDays(30)), orderB,
+                PayoutFailureReason.VERIFY_MISMATCH);
+        PayoutOrderResolutionResult byAdmin2 = resolutionUseCase.resolveOrder(new PayoutOrderResolveCommand(orderB, 2L, MEMO));
+        setResolvedAt(orderA, LocalDateTime.of(2026, 11, 17, 10, 0));
+        setResolvedAt(orderB, LocalDateTime.of(2026, 11, 18, 10, 0));
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 11/16 ~ 11/23이면 2줄, 11/18이 먼저, 주문 A 줄은 푼 실패 3건
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.content[*].resolutionRequestId")
+                        .value(contains(byAdmin2.resolutionRequestId(), byAdmin1.resolutionRequestId())))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) orderB, (int) orderA)))
+                .andExpect(jsonPath("$.content[*].resolvedFailureCount").value(contains(1, 3)))
+                .andExpect(jsonPath("$.content[1].adminId").value(ADMIN_ID))
+                .andExpect(jsonPath("$.content[1].method").value("REPROCESS"))
+                .andExpect(jsonPath("$.content[1].memo").value(MEMO));
+
+        // when & then: 관리자 1만
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00")
+                        .param("adminId", String.valueOf(ADMIN_ID)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) orderA)));
+
+        // when & then: 11/18부터면 주문 B만, 크기 1로 나누면 2쪽
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-18T00:00:00", "2026-11-23T00:00:00")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) orderB)));
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00")
+                        .param("page", "1").param("size", "1").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) orderA)));
+    }
+
+    // 한 요청의 해결 기록 두 줄이 기간 경계(11/23 0시) 앞뒤로 찍힘 → 가장 이른 줄로 판정해 앞 기간에만 두 줄 다 들어감
+    @Test
+    void 경계에_걸친_해결_요청은_가장_이른_줄의_기간에만_나오고_푼_실패_수를_다_센다() throws Exception {
+        // given
+        List<Long> runs = runCompleted(2);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order, LocalDateTime.now().minusDays(30));
+        insertFailure(runs.get(0), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        insertFailure(runs.get(1), candidate, order, PayoutFailureReason.VERIFY_MISMATCH);
+        resolve(order);
+        List<Long> resolutionIds = jdbcTemplate.queryForList(
+                "SELECT id FROM payout_failure_resolution WHERE order_id = ? ORDER BY id", Long.class, order);
+        jdbcTemplate.update("UPDATE payout_failure_resolution SET created_at = ? WHERE id = ?",
+                LocalDateTime.of(2026, 11, 22, 23, 59, 59, 999_990_000), resolutionIds.get(0));
+        jdbcTemplate.update("UPDATE payout_failure_resolution SET created_at = ? WHERE id = ?",
+                LocalDateTime.of(2026, 11, 23, 0, 0, 0, 20_000), resolutionIds.get(1));
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 앞 기간에 한 줄, 푼 실패 2건
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].resolvedFailureCount").value(2));
+
+        // when & then: 뒤 기간에는 나오지 않음
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-23T00:00:00", "2026-11-30T00:00:00")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
+    void 전체_목록은_기간이_없거나_1년을_넘으면_422이고_관리자만_볼_수_있다() throws Exception {
+        // given
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        mockMvc.perform(get("/api/v1/admin/payouts/resolution-requests").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity())                              // 기간 없음
+                .andExpect(jsonPath("$.errors[*].path").value(containsInAnyOrder("from", "to")));
+        mockMvc.perform(allResolutionRequestsRequest("2026-01-01T00:00:00", "2027-01-01T00:00:01")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());                             // 1년 초과
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00").param("adminId", "0")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());                             // 관리자 ID 0
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00"))
+                .andExpect(status().isUnauthorized());                                    // 401
+        mockMvc.perform(allResolutionRequestsRequest("2026-11-16T00:00:00", "2026-11-23T00:00:00")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(7L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());                                       // 403
+    }
+
     // ---------- 도우미 ----------
+
+    private MockHttpServletRequestBuilder allResolutionRequestsRequest(String from, String to) {
+        return get("/api/v1/admin/payouts/resolution-requests").param("from", from).param("to", to);
+    }
+
+    // 그 주문의 해결 기록 시각을 정해 둠 (기간 조회 확인용. 해결 기록은 쌓기만 하는 표라 앱 코드로는 고칠 수 없어 JDBC로 준비)
+    private void setResolvedAt(long orderId, LocalDateTime resolvedAt) {
+        jdbcTemplate.update("UPDATE payout_failure_resolution SET created_at = ? WHERE order_id = ?", resolvedAt, orderId);
+    }
 
     private MockHttpServletRequestBuilder resolutionsRequest(long orderId) {
         return get("/api/v1/admin/payouts/orders/{orderId}/resolutions", orderId);

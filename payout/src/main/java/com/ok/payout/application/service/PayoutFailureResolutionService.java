@@ -5,6 +5,7 @@ import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
 import com.ok.payout.application.port.in.PayoutOrderResolutionResult;
 import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
 import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
+import com.ok.payout.application.port.in.PayoutResolutionRequestSearchQuery;
 import com.ok.payout.application.port.in.PayoutResolutionResult;
 import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
 import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
@@ -115,6 +116,14 @@ public class PayoutFailureResolutionService implements PayoutFailureResolutionUs
     @Transactional(readOnly = true)
     public Page<PayoutResolutionRequestResult> getResolutionRequests(Long orderId, PayoutResolutionSearchQuery query) {
         return payoutQueryRepository.findResolutionRequestsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionRequestResult);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionRequestResult> getResolutionRequestsInPeriod(PayoutResolutionRequestSearchQuery query) {
+        return payoutQueryRepository.findResolutionRequestsInPeriod(query.from(), query.to(), query.adminId(),
+                        PageRequest.of(query.page(), query.size()))
                 .map(PayoutQueryResultMapper::toResolutionRequestResult);
     }
 

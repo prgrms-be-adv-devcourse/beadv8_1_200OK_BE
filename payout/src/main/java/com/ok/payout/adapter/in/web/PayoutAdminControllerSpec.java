@@ -15,6 +15,7 @@ import com.ok.payout.adapter.in.web.dto.PayoutOrderResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutOrderResolveRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutPageResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestResponse;
+import com.ok.payout.adapter.in.web.dto.PayoutResolutionRequestSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionResponse;
 import com.ok.payout.adapter.in.web.dto.PayoutResolutionSearchRequest;
 import com.ok.payout.adapter.in.web.dto.PayoutRunResponse;
@@ -381,6 +382,38 @@ interface PayoutAdminControllerSpec {
     ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequests(
             @Parameter(description = "주문 ID", example = "100") Long orderId,
             @ParameterObject PayoutResolutionSearchRequest request
+    );
+
+    @Operation(summary = "해결 기록 전체 목록 (해결 요청 묶음)", description = """
+            관리자 전용입니다. 기간 안에 관리자가 "다시 처리"로 푼 기록을 주문과 상관없이 해결 요청 1번 = 1줄로, 해결 시각 최신순으로 조회합니다(같은 시각이면 나중에 저장한 요청이 먼저).
+            막힌 주문 목록의 해결됨(RESOLVED) 줄은 다음 정산 실행이 끝나면 빠지므로, 지난 해결을 돌아볼 때 이 목록을 씁니다.
+            기간(from, to)은 필수이고 최대 1년입니다. 해결 시각 기준이며 from은 포함, to는 포함하지 않습니다. adminId를 주면 그 관리자가 푼 것만 봅니다.
+            해결 시각은 그 요청에서 가장 이른 해결 기록의 시각이고, 기간도 이 시각으로 판정합니다(한 요청이 두 기간으로 갈라지지 않음).
+            줄 모양은 주문별 묶음 보기(GET /api/v1/admin/payouts/orders/{orderId}/resolution-requests)와 같습니다. 어느 실패 기록을 풀었는지는 GET /api/v1/admin/payouts/orders/{orderId}/resolutions에서 같은 요청 번호의 줄로 봅니다.
+            해결 방법(method)은 지금 REPROCESS(다시 처리)뿐입니다. 관리자 이름과 막혔던 이유는 이 목록에 없습니다(관리자 이름은 회원 모듈, 이유는 주문별 해결 기록에서 봄).
+            메모는 관리자가 입력한 글이라 화면에 출력할 때 HTML 이스케이프가 필요합니다.
+            """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공 (기간 안에 푼 기록이 없으면 빈 목록)"),
+            @ApiResponse(
+                    responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "403", description = "관리자가 아님",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "422", description = "요청 값 검증 실패 (기간 없음, 시작이 종료보다 늦음, 1년 초과, adminId·page·size 범위)",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400", description = "시각·숫자 형식이 틀림",
+                    content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+            )
+    })
+    ResponseEntity<PayoutPageResponse<PayoutResolutionRequestResponse>> getResolutionRequestsInPeriod(
+            @ParameterObject PayoutResolutionRequestSearchRequest request
     );
 
     @Operation(summary = "막힌 주문 목록 (잠김·멈춤)", description = """

@@ -17,4 +17,8 @@ public interface PayoutFailureResolutionUseCase {
 
     // 그 주문의 해결 기록을 해결 요청 1번 = 1줄로 묶어 조회 (#571). 해결 시각 최신순, 해결 기록이 없으면 빈 페이지
     Page<PayoutResolutionRequestResult> getResolutionRequests(Long orderId, PayoutResolutionSearchQuery query);
+
+    // 기간 안에 해결한 요청을 주문과 상관없이 요청 1번 = 1줄로 조회 (#723, 해결 기록 전체 목록). 줄 모양·정렬은 위와 같음
+    // 막힌 주문 목록의 해결됨 줄은 다음 정산 실행이 끝나면 빠지므로, 지난 해결을 돌아볼 때 씀
+    Page<PayoutResolutionRequestResult> getResolutionRequestsInPeriod(PayoutResolutionRequestSearchQuery query);
 }

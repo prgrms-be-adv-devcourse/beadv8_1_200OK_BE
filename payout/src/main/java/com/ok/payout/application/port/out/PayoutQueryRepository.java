@@ -200,6 +200,12 @@ public interface PayoutQueryRepository {
     // 정렬은 요청의 해결 시각(그 요청에서 가장 이른 줄) 최신순, 같으면 나중에 저장한 요청이 먼저
     Page<PayoutResolutionRequestRow> findResolutionRequestsByOrderId(Long orderId, Pageable pageable);
 
+    // 기간 안에 해결한 요청을 요청 1번 = 1줄로 페이지 단위로 조회 (#723, 해결 기록 전체 목록)
+    // 기간은 요청의 해결 시각(그 요청에서 가장 이른 줄) 기준 [from, to): 경계에 걸친 요청이 두 기간으로 갈라지지 않게
+    // adminId가 null이면 전체 관리자. 정렬은 주문별 묶음 보기와 같음 (해결 시각 최신순, 같으면 나중에 저장한 요청이 먼저)
+    Page<PayoutResolutionRequestRow> findResolutionRequestsInPeriod(LocalDateTime from, LocalDateTime to, Long adminId,
+                                                                    Pageable pageable);
+
     // 관리자 막힌 주문 목록 (#569): 막힌 주문 집계 표(#582)를 읽기만 함. 판정은 표가 정산 Job 끝에 끝내 둠
     // 예비(PENDING) 줄은 뺌 (#570): 금액 검사가 근거를 남기려고 넣은 줄이라 아직 막힌 주문이 아님 (개수에서도 뺌)
     // 정렬은 마지막 실패 시각 최신순, 같으면 주문 ID 역순 (한 실행에서 막힌 주문은 시각이 거의 같아 페이지를 넘겨도 순서가 흔들리지 않게)
