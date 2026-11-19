@@ -391,8 +391,8 @@ docker compose down                          # 종료 (data/mysql 은 유지됨)
 
 #### `.env` 읽는 순서 (모듈 단독 실행)
 
-1. 루트 `.env`: `AWS_*`, `TOSS_SECRET_KEY`처럼 모듈이 함께 쓰는 값입니다. 모듈 `bootRun`이 환경변수 `OK_ROOT_DIR`로 저장소 루트를 알려 줍니다(`ok.spring-module-conventions`). Gradle 밖(IDE, jar 직접 실행)에서는 이 값이 없어 현재 디렉터리의 `.env`만 읽습니다.
-2. 현재 디렉터리의 `.env`: `bootRun`의 작업 디렉터리가 모듈 폴더라서 `<모듈>/.env`, 곧 모듈의 DB 계정입니다. 나중에 읽은 값이 이기므로 모듈 값이 우선합니다.
+1. 루트 `.env`: `AWS_*`처럼 모듈이 함께 쓰는 값입니다. 모듈 `bootRun`이 환경변수 `OK_ROOT_DIR`로 저장소 루트를 알려 줍니다(`ok.spring-module-conventions`). Gradle 밖(IDE, jar 직접 실행)에서는 이 값이 없어 현재 디렉터리의 `.env`만 읽습니다.
+2. 현재 디렉터리의 `.env`: `bootRun`의 작업 디렉터리가 모듈 폴더라서 `<모듈>/.env`, 곧 모듈의 DB 계정과 그 모듈만 쓰는 값(wallet의 `TOSS_SECRET_KEY` 등)입니다. 나중에 읽은 값이 이기므로 모듈 값이 우선합니다. 빈 값으로 둔 키도 루트 값을 덮어씁니다.
 
 OS 환경변수는 두 파일보다 우선합니다(예: `DB_PORT=3307 ./gradlew :member:bootRun`). 어느 파일도 없으면 각 키의 기본값이 쓰입니다.
 
