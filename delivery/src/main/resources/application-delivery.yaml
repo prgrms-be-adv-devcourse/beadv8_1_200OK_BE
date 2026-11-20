@@ -89,15 +89,16 @@ delivery:
     # 커밋된 배송 outbox 줄을 바로 Kafka로 보내는 전용 실행기(DeliveryAsyncConfig, #644, #793).
     # 대기열이 가득 차면 기다리지 않고 버린다. 버린 줄은 PENDING으로 남아 아래 relay가 보낸다
     send:
-      # 브로커 확인을 기다리는 동안 DB 커넥션을 잡지 않고 확인이 수 ms라 2개로도 초당 수백 건을 보낸다. Hikari(기본 10)를 event(8)와 나눠 쓰므로 작게 둔다
-      pool-size: ${DELIVERY_OUTBOX_SEND_POOL_SIZE:2}
-      # 짧은 몰림만 흡수하면 된다. 오래 기다린 작업은 relay.min-age가 지나 보내지 않으므로 길게 둘 이유가 없다. 값은 #793 부하테스트로 정한다(지금은 측정 근거 없는 이전 값)
-      queue-capacity: ${DELIVERY_OUTBOX_SEND_QUEUE_CAPACITY:1000}
+      # 2→4로 포화 처리량이 초당 94→159건으로 늘었다. 더 늘려도 한계는 Hikari(기본 10) 풀이라 작게 둔다 (docs/decisions/delivery/793-outbox-send-drop-when-full.md)
+      pool-size: ${DELIVERY_OUTBOX_SEND_POOL_SIZE:4}
+      # 대기 시간(대기열/처리량)이 relay.min-age보다 짧아야 버리는(stale) 작업과 중복 발송이 없다. 느린 브로커(전송 1~2초)에서 20은 stale 0, 100 이상은 수천 건이었다
+      queue-capacity: ${DELIVERY_OUTBOX_SEND_QUEUE_CAPACITY:20}
     # 커밋 직후 바로 보내지 못한 배송 outbox 줄을 Kafka로 다시 보내는 주기와 한 번에 보낼 줄 수(DeliveryOutboxRelayScheduler, #644).
-    # 값을 빼면 스케줄러의 기본값(30초마다, 100줄, 10초)을 쓴다. cron을 "-"로 두면 보내지 않는다
+    # 값을 빼면 스케줄러의 기본값(5초마다, 300줄, 10초)을 쓴다. cron을 "-"로 두면 보내지 않는다.
+    # relay는 한 스레드로 초당 약 120줄을 보내 300줄이 2.5초라 5초 주기 안에 끝난다. 실행이 주기를 넘으면 cron이 회차를 건너뛴다
     relay:
-      cron: "*/30 * * * * *"
-      batch-size: 100
+      cron: "*/5 * * * * *"
+      batch-size: 300
       # 남은 지 이 시간이 지난 줄만 보낸다. 즉시 발송 중인 줄과 겹치지 않게 즉시 발송의 브로커 확인 대기 상한(10초)과 맞춘다
       min-age: 10s
   # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다

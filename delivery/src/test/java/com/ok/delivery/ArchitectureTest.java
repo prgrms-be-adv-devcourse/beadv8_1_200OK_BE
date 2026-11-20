@@ -94,7 +94,7 @@ class ArchitectureTest {
             .that(outbox를_남기는)
             .and().resideInAPackage("..application.service..")
             .should().implement(resideInAPackage("..application.port.in.."))
-            .because("발행 진입점(출고 API, 결제 완료 리스너, 택배사 알림)이 서비스를 바로 부르면 커밋 뒤 즉시 발송이 빠져 메시지가 발송 작업 주기(30초)만큼 늦게 나간다. "
+            .because("발행 진입점(출고 API, 결제 완료 리스너, 택배사 알림)이 서비스를 바로 부르면 커밋 뒤 즉시 발송이 빠져 메시지가 발송 작업 주기(5초)만큼 늦게 나간다. "
                     + "Facade가 서비스 트랜잭션이 끝난 뒤 남긴 줄을 발송 실행기로 넘긴다 (#796, docs/DEVELOPMENT.md)");
 
     @ArchTest

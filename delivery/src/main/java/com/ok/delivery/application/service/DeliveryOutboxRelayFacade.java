@@ -30,8 +30,8 @@ import java.util.Optional;
 @Component
 public class DeliveryOutboxRelayFacade implements DeliveryOutboxRelayUseCase {
 
-    // 즉시 발송 1번과 발송 작업(30초 주기)의 실패를 합친 횟수다. 이만큼 실패하면(약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
-    static final int ESCALATE_ATTEMPT_COUNT = 10;
+    // 즉시 발송 1번과 발송 작업(5초 주기)의 실패를 합친 횟수다. 이만큼 실패하면(약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
+    static final int ESCALATE_ATTEMPT_COUNT = 60;
 
     // 원인이 서로를 가리키는 순환이 있어도 끝나도록 따라가는 단계에 상한을 둔다. 실제 사슬은 3~4단계다
     private static final int MAX_CAUSE_DEPTH = 20;
@@ -127,7 +127,7 @@ public class DeliveryOutboxRelayFacade implements DeliveryOutboxRelayUseCase {
         }
     }
 
-    // 예외를 다시 던지지 않고 줄에 남긴다. 던지면 스케줄러가 30초마다 같은 오류를 찍고, 실패 횟수도 남지 않는다.
+    // 예외를 다시 던지지 않고 줄에 남긴다. 던지면 스케줄러가 주기마다 같은 오류를 찍고, 실패 횟수도 남지 않는다.
     // 기록보다 로그를 먼저 남긴다(호출한 쪽). 기록이 DB 오류로 실패해도 원래 발송 실패 원인이 로그에 남게 하려는 것이다
     private void recordFailure(DeliveryOutboxMessage message, RuntimeException sendFailure) {
         try {

@@ -1,10 +1,10 @@
 ---
 issue: 793
 module: delivery
-summary: 배송 outbox 즉시 발송 실행기를 전용으로 두고, 대기열이 차면 기다리지 않고 버리며 min-age가 지난 작업은 보내지 않음
-status: 진행 중
+summary: 배송 outbox 즉시 발송 실행기를 전용으로 두고, 대기열이 차면 기다리지 않고 버리며 min-age가 지난 작업은 보내지 않음. 기본값은 부하테스트로 정함(스레드 4, 대기열 20, relay 5초·300줄)
+status: 확정
 date: 2026-11-20
-paths: [delivery/src/main/java/com/ok/delivery/config/DeliveryAsyncConfig.java, delivery/src/main/java/com/ok/delivery/adapter/in/event/DeliveryOutboxSendListener.java, delivery/src/main/java/com/ok/delivery/application/dto/DeliveryOutboxRecordedEvent.java]
+paths: [delivery/src/main/java/com/ok/delivery/config/DeliveryAsyncConfig.java, delivery/src/main/java/com/ok/delivery/adapter/in/event/DeliveryOutboxSendListener.java, delivery/src/main/java/com/ok/delivery/application/dto/DeliveryOutboxRecordedEvent.java, delivery/src/main/resources/application-delivery.yaml, delivery/src/main/java/com/ok/delivery/adapter/in/scheduler/DeliveryOutboxRelayScheduler.java]
 related: [644, 703, 715]
 ---
 
@@ -60,3 +60,38 @@ related: [644, 703, 715]
 - 위 "버린 대안"의 `AbortPolicy`가 이번에 고른 방식이다. 버린 이유(리스너라 잡을 곳이 없음)가 없어졌다.
 - 출고 뒤 택배사 추적 요청(`CarrierTrackingRequestedEvent`, 공용 `event` 실행기)도 같은 이유로 `ShipmentFacade`가 직접 한다. 택배사 구현체가 호출을 자기 스레드에서 하므로 출고 API는 택배사를 기다리지 않는다.
 - 건드릴 때 주의: 진입점이 트랜잭션 안에서 `ShipmentFacade`를 부르면 커밋 전에 넘겨 발송 스레드가 아직 안 보이는 줄을 건너뛴다(줄은 발송 작업이 보낸다). outbox를 남기는 서비스는 입력 포트를 구현하지 않아야 진입점이 Facade를 거친다(`ArchitectureTest`).
+
+## 후속: 기본값 (2026-11-20)
+
+부하테스트로 기본값을 정했다. 노트북 1대, 배송 앱 단독(Hikari 10), 출고 1건이 outbox 2줄이다. [측정]은 잰 값, [추론]은 측정값에서 계산한 값이다.
+
+| 설정 | 이전 | 새 값 | 이유 |
+|---|---|---|---|
+| `send.pool-size` | 2 | 4 | 포화 처리량 초당 94→159건 [측정]. 2배가 아닌 것은 Hikari 활성 평균 8.5/10이라 한계가 커넥션 풀이어서다 [추론]. 평소 부하에서 대기열 0일 때 버림 1812→273건 [측정] |
+| `send.queue-capacity` | 1000 | 20 | 대기 시간이 `min-age`를 넘지 않는다(아래). 과부하에서 대기열 크기는 처리량을 바꾸지 않고(스레드 4는 0~1000 모두 초당 156~168건) 지연만 늘린다 [측정] |
+| `relay.batch-size` | 100 | 300 | relay는 한 스레드로 초당 약 122줄을 보내 300줄이 2.5초다 [측정]. 1000줄은 한 번 8.1초라 주기를 넘겨 cron이 회차를 건너뛰었다 [측정] |
+| `relay.cron` | 30초 | 5초 | 과부하 3분 뒤 남은 약 42,000줄을 이전 값은 약 3.5시간, 새 값은 약 12분에 비운다 [추론]. 2000줄은 34초(33~36, 3회)에 비웠다 [측정] |
+| `min-age` | 10초 | 그대로 | 대기열 크기를 이 값에 맞췄다 |
+| ERROR 기준 실패 횟수 | 10 | 60 | 주기가 6배 짧아져 같은 약 5분을 뜻하게 맞췄다 |
+
+**대기열과 `min-age`.** 대기열에서 기다리는 시간은 대기열 크기/처리량으로 맞는다(실측 p50과 비교: 스레드 2·대기열 300은 3.2초 대 3.2초, 스레드 4·대기열 1000은 6.3초 대 6.1초) [측정]. 이 값이 `min-age`(10초)를 넘으면 꺼낸 작업을 버린다(stale). 꺼낸 뒤 보내는 동안 relay가 같은 줄을 집는 겹침도 있어, 지킬 조건은 "대기 + 발송 시간 < `min-age`"다 [추론].
+
+| 조건 (출고 초당 50건 = 발송 초당 100건) | 예측 대기 | stale | 겹침 |
+|---|---|---|---|
+| 평소, 스레드 4·대기열 20 (3회) | 0.1초 | 0 | 0 (버림 0~6건/18,000줄) |
+| 과부하(출고 초당 200건), 스레드 2·대기열 1000 | 10.7초 | 1854 | 0 |
+| 과부하, 스레드 4·대기열 1000 | 6.3초 | 0 | 0 |
+| 느린 브로커(전송 1~2초), 스레드 2·대기열 20 | 11.1초 | 146 | 0 |
+| 느린 브로커, 스레드 4·대기열 20 | 6.5초 | 0 | 0 |
+| 느린 브로커, 스레드 4·대기열 100 (3회) | 32.3초 | 약 1355 | 0~4 |
+| 느린 브로커, 스레드 4·대기열 300 | 96.8초 | 4921 | 0 |
+
+relay 주기는 stale에 영향이 없다 [측정]. 과부하 때 API p95는 스레드 2→4에서 26→36ms(반복 범위 27~50ms)로 늘었다 [측정].
+
+**확신을 낮추는 것.**
+- 대부분 조건을 1회만 쟀고 반복한 조건도 범위가 넓다(처리량 150~168, API p95 27~50ms).
+- 노트북 1대라 배경 프로세스와 Kafka가 CPU를 나눠 썼다.
+- 앱 단독, Hikari 10 기준이다. (미확인) monolith는 모듈들이 풀을 나눠 써서 스레드 4의 비용이 더 클 수 있다.
+- relay 처리량(초당 122줄)은 배경 부하 초당 25건에서만 쟀고, 과부하와 겹친 relay는 재지 않았다.
+- 측정은 리스너 경로(#796 전) 코드에서 했다. 발송 작업 하나가 하는 일(줄 읽기, Kafka 전송, 보냄 기록)은 같아 값을 그대로 쓴다 [추론].
+- relay는 스케줄러 스레드 1개를 다른 `@Scheduled`와 나눠 쓴다. 300줄/5초면 적체 동안 그 스레드를 약 50% 쓴다 [추론].

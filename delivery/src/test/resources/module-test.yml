@@ -5,5 +5,5 @@ delivery:
       secret: test-webhook-secret
   outbox:
     relay:
-      # 30초마다 돌면 테스트가 직접 보내는 중에 같은 줄을 함께 보내 메시지 건수가 흔들린다. 테스트는 DeliveryOutboxRelayUseCase를 직접 부른다
+      # 주기마다 돌면 테스트가 직접 보내는 중에 같은 줄을 함께 보내 메시지 건수가 흔들린다. 테스트는 DeliveryOutboxRelayUseCase를 직접 부른다
       cron: "-"

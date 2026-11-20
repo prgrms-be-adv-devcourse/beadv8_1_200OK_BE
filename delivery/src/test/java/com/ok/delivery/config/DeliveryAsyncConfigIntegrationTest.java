@@ -11,7 +11,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
-// 통합 테스트: @Async가 찾는 이름으로 배송 전용 실행기가 등록되고, 설정이 없을 때 기본값(스레드 2, 대기열 1000)을 쓰며,
+// 통합 테스트: @Async가 찾는 이름으로 배송 전용 실행기가 등록되고, 설정이 없을 때 기본값(스레드 4, 대기열 20)을 쓰며,
 // 운영에서 볼 대기열 길이 지표가 붙는지 확인 (#793)
 class DeliveryAsyncConfigIntegrationTest extends AbstractIntegrationTest {
 
@@ -27,9 +27,9 @@ class DeliveryAsyncConfigIntegrationTest extends AbstractIntegrationTest {
         // then
         assertThat(sut).isNotNull();
         assertSoftly(softly -> {
-            softly.assertThat(sut.getCorePoolSize()).isEqualTo(2);
-            softly.assertThat(sut.getMaxPoolSize()).isEqualTo(2);
-            softly.assertThat(sut.getQueueCapacity()).isEqualTo(1000);
+            softly.assertThat(sut.getCorePoolSize()).isEqualTo(4);
+            softly.assertThat(sut.getMaxPoolSize()).isEqualTo(4);
+            softly.assertThat(sut.getQueueCapacity()).isEqualTo(20);
             softly.assertThat(sut.getThreadNamePrefix()).isEqualTo("delivery-outbox-");
         });
     }

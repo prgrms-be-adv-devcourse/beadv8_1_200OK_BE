@@ -38,13 +38,13 @@ public class DeliveryAsyncConfig {
     // 앱 종료 때 남은 발송을 기다리는 시간. 공용 실행기 기본값과 같고 브로커 확인 대기 상한(10초)과 같다. 못 보낸 줄은 PENDING으로 남아 재시작 뒤 발송 작업이 보낸다
     private static final Duration TERMINATION_TIMEOUT = Duration.ofSeconds(10);
 
-    // 발송 하나는 짧은 트랜잭션 두 번(줄 읽기, "보냄" 기록)에만 커넥션을 쓰고 브로커 확인 중에는 잡지 않는다. 확인이 수 ms라 2개로도 초당 수백 건을 보낸다.
-    // 대기열 크기는 #793 부하테스트로 정한다. 그때까지는 공용 실행기를 쓰던 때의 값(2, 1000)을 그대로 둔다
+    // 발송 하나는 짧은 트랜잭션 두 번(줄 읽기, "보냄" 기록)에만 커넥션을 쓰고 브로커 확인 중에는 잡지 않는다. 스레드 4개, 대기열 20은 #793 부하테스트로 정했다.
+    // 대기열에서 기다리는 시간(대기열/처리량)이 relay min-age보다 짧아야 오래 기다려 버리는 작업이 없다 (docs/decisions/delivery/793-outbox-send-drop-when-full.md)
     @Bean(OUTBOX_SEND_EXECUTOR)
     public ThreadPoolTaskExecutor deliveryOutboxSendExecutor(
             MdcTaskDecorator mdcTaskDecorator,
-            @Value("${delivery.outbox.send.pool-size:2}") int poolSize,
-            @Value("${delivery.outbox.send.queue-capacity:1000}") int queueCapacity) {
+            @Value("${delivery.outbox.send.pool-size:4}") int poolSize,
+            @Value("${delivery.outbox.send.queue-capacity:20}") int queueCapacity) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         // 대기열이 있는 풀은 대기열이 차야 코어를 넘어 늘어나므로, 최대 크기를 코어와 같게 둔다(공용 실행기와 같음)
         executor.setCorePoolSize(poolSize);
