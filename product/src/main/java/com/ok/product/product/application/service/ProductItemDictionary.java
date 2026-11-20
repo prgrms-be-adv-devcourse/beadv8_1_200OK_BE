@@ -23,7 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
  * 고른 값은 {@code product_search.search_item}에 저장되고, 1글자 검색어("귤")는 이 값과의 정확 일치로 찾는다.
  * MySQL ngram FULLTEXT는 1글자 단어를 인덱싱하지 않아 FULLTEXT로는 1글자 검색어를 찾지 못하기 때문이다.
  * 품목 사전 파일에는 품목만 둔다. 오타 교정 제안(F7, {@link #suggest(String)})도 같은 파일을 쓴다.
- * 파일이 없거나, 품목이 하나도 없거나, 품목이 20자를 넘거나, 한 글자 품목 표가 품목 사전과 맞지 않으면 앱이 뜨지 않는다.
+ * 품목의 다른 이름은 동의어 표({@code product-search/item-synonyms.json})에 따로 두고 {@link #findSynonyms(String)}로 꺼낸다.
+ * 파일이 없거나, 품목이 하나도 없거나, 품목이 20자를 넘거나, 한 글자 품목 표나 동의어 표가 품목 사전과 맞지 않으면 앱이 뜨지 않는다.
  */
 @Component
 public class ProductItemDictionary {
@@ -34,22 +35,31 @@ public class ProductItemDictionary {
 	// 한 글자 품목 표를 품목 사전과 따로 두는 이유는 F7이 품목 사전을 품목 목록으로만 읽기 때문이다.
 	// 글자를 포함하는지로 자동으로 묶지 않고 사람이 고른 표를 쓰는 이유는 배추가 "배"로, 감자가 "감"으로 찾히면 안 되기 때문이다
 	private static final String SINGLE_CHAR_LOCATION = "product-search/single-char-items.json";
+	// 동의어를 품목 사전에 섞지 않는 이유도 같다. 섞으면 F7이 "무청"을 품목으로 보고 그 근처 오타를 "무청"으로 제안한다
+	private static final String SYNONYM_LOCATION = "product-search/item-synonyms.json";
 
 	private final List<String> items;
 	private final Map<String, String> singleCharItemByItem;
+	private final Map<String, List<String>> synonymsByItem;
 	// 사전 파일 순서를 지켜야 제안 후보가 여럿일 때 늘 같은 품목을 고른다
 	private final List<SuggestionCandidate> suggestionCandidates;
 
 	public ProductItemDictionary() {
-		this(read(), readSingleCharItems());
+		this(read(), readMap(SINGLE_CHAR_LOCATION), readMap(SYNONYM_LOCATION));
+	}
+
+	ProductItemDictionary(List<String> items, Map<String, List<String>> singleCharItems) {
+		this(items, singleCharItems, Map.of());
 	}
 
 	/**
-	 * 품목 사전과 한 글자 품목 표로 사전을 만든다. 테스트에서 파일 대신 작은 사전을 넣을 때 쓴다.
+	 * 품목 사전, 한 글자 품목 표, 동의어 표로 사전을 만든다. 테스트에서 파일 대신 작은 사전을 넣을 때 쓴다.
 	 *
 	 * @param singleCharItems 한 글자 품목을 키로, 그 글자로 찾을 품목을 값으로 둔 표
+	 * @param synonyms        품목을 키로, 그 품목의 다른 이름을 값으로 둔 표
 	 */
-	ProductItemDictionary(List<String> items, Map<String, List<String>> singleCharItems) {
+	ProductItemDictionary(List<String> items, Map<String, List<String>> singleCharItems,
+		Map<String, List<String>> synonyms) {
 		this.items = items.stream()
 			.map(SearchTextNormalizer::compact)
 			.filter(item -> !item.isEmpty())
@@ -66,6 +76,7 @@ public class ProductItemDictionary {
 					+ ", location=" + LOCATION);
 			});
 		this.singleCharItemByItem = toSingleCharItemByItem(singleCharItems);
+		this.synonymsByItem = toSynonymsByItem(synonyms);
 		// 한 글자 품목은 자모가 두세 개뿐이라 "배2"처럼 글자 하나 붙은 검색어에도 맞아 엉뚱한 제안이 되므로 후보에서 뺀다
 		this.suggestionCandidates = this.items.stream()
 			.filter(item -> item.codePointCount(0, item.length()) >= 2)
@@ -97,6 +108,15 @@ public class ProductItemDictionary {
 	 */
 	public Optional<String> findSingleCharItem(String productName) {
 		return findLongestItem(productName).map(singleCharItemByItem::get);
+	}
+
+	/**
+	 * 상품명의 품목({@link #findLongestItem(String)})의 다른 이름을 고른다. 검색 행의 본문에 더해 "오트밀"로 귀리 상품을 찾게 한다.
+	 *
+	 * @return 동의어 표에 적힌 그대로의 다른 이름. 상품명에 품목이 없거나 표에 없는 품목이면 빈 목록
+	 */
+	public List<String> findSynonyms(String productName) {
+		return findLongestItem(productName).map(item -> synonymsByItem.getOrDefault(item, List.of())).orElse(List.of());
 	}
 
 	/**
@@ -150,10 +170,10 @@ public class ProductItemDictionary {
 				throw new IllegalStateException("한 글자 품목 표의 키가 한 글자가 아닙니다. key=" + entry.getKey()
 					+ ", location=" + SINGLE_CHAR_LOCATION);
 			}
-			requireInItems(singleCharItem);
+			requireInItems(singleCharItem, "한 글자 품목 표", SINGLE_CHAR_LOCATION);
 			for (String rawItem : entry.getValue()) {
 				String item = SearchTextNormalizer.compact(rawItem);
-				requireInItems(item);
+				requireInItems(item, "한 글자 품목 표", SINGLE_CHAR_LOCATION);
 				if (singleCharItemByItem.putIfAbsent(item, singleCharItem) != null) {
 					throw new IllegalStateException("한 글자 품목 표에 같은 품목이 두 번 있습니다. item=" + item
 						+ ", location=" + SINGLE_CHAR_LOCATION);
@@ -163,10 +183,26 @@ public class ProductItemDictionary {
 		return Map.copyOf(singleCharItemByItem);
 	}
 
-	private void requireInItems(String item) {
+	// 키는 findLongestItem이 돌려주는 compact 형태로 맞춘다. 값은 검색 행 본문에 그대로 넣고 정규화는 색인할 때 한다
+	private Map<String, List<String>> toSynonymsByItem(Map<String, List<String>> synonyms) {
+		Map<String, List<String>> synonymsByItem = new HashMap<>();
+		for (Map.Entry<String, List<String>> entry : synonyms.entrySet()) {
+			String item = SearchTextNormalizer.compact(entry.getKey());
+			requireInItems(item, "동의어 표", SYNONYM_LOCATION);
+			if (entry.getValue().isEmpty()
+				|| entry.getValue().stream().anyMatch(synonym -> SearchTextNormalizer.compact(synonym).isEmpty())) {
+				throw new IllegalStateException("동의어 표에 빈 동의어가 있습니다. item=" + item + ", location=" + SYNONYM_LOCATION);
+			}
+			if (synonymsByItem.putIfAbsent(item, List.copyOf(entry.getValue())) != null) {
+				throw new IllegalStateException("동의어 표에 같은 품목이 두 번 있습니다. item=" + item + ", location=" + SYNONYM_LOCATION);
+			}
+		}
+		return Map.copyOf(synonymsByItem);
+	}
+
+	private void requireInItems(String item, String table, String location) {
 		if (!items.contains(item)) {
-			throw new IllegalStateException("한 글자 품목 표에 품목 사전에 없는 품목이 있습니다. item=" + item
-				+ ", location=" + SINGLE_CHAR_LOCATION);
+			throw new IllegalStateException(table + "에 품목 사전에 없는 품목이 있습니다. item=" + item + ", location=" + location);
 		}
 	}
 
@@ -180,12 +216,12 @@ public class ProductItemDictionary {
 		}
 	}
 
-	private static Map<String, List<String>> readSingleCharItems() {
-		try (InputStream input = new ClassPathResource(SINGLE_CHAR_LOCATION).getInputStream()) {
+	private static Map<String, List<String>> readMap(String location) {
+		try (InputStream input = new ClassPathResource(location).getInputStream()) {
 			return JsonMapper.shared().readValue(input, new TypeReference<>() {
 			});
 		} catch (IOException e) {
-			throw new UncheckedIOException("한 글자 품목 표 파일을 읽지 못했습니다. location=" + SINGLE_CHAR_LOCATION, e);
+			throw new UncheckedIOException("품목 표 파일을 읽지 못했습니다. location=" + location, e);
 		}
 	}
 

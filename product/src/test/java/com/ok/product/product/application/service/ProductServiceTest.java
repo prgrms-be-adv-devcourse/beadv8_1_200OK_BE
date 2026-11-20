@@ -259,7 +259,7 @@ class ProductServiceTest {
 		// given
 		PageRequest pageable = PageRequest.of(0, 20);
 		given(buyerProductQueryRepository.findVisibleProductIds(null, null, null, null, ProductSort.LATEST, MIN_SCORE,
-			pageable)).willReturn(new PageImpl<>(List.of(PRODUCT_ID), pageable, 1));
+			null, pageable)).willReturn(new PageImpl<>(List.of(PRODUCT_ID), pageable, 1));
 		given(productRepository.findAllById(List.of(PRODUCT_ID))).willReturn(List.of(productWithId(PRODUCT_ID)));
 
 		// when
@@ -280,7 +280,7 @@ class ProductServiceTest {
 		// given
 		PageRequest pageable = PageRequest.of(0, 20);
 		given(buyerProductQueryRepository.findVisibleProductIds(null, null, null, null, ProductSort.LATEST, MIN_SCORE,
-			pageable)).willReturn(new PageImpl<>(List.of(), pageable, 0));
+			null, pageable)).willReturn(new PageImpl<>(List.of(), pageable, 0));
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
@@ -295,7 +295,7 @@ class ProductServiceTest {
 		// given
 		PageRequest pageable = PageRequest.of(1, 3);
 		given(buyerProductQueryRepository.findVisibleProductIds(any(), eq(null), eq(ProductCategory.FRUIT),
-			eq(ProductRegion.JEJU), eq(ProductSort.PRICE_ASC), eq(MIN_SCORE), eq(pageable)))
+			eq(ProductRegion.JEJU), eq(ProductSort.PRICE_ASC), eq(MIN_SCORE), eq(null), eq(pageable)))
 			.willReturn(new PageImpl<>(List.of(30L, 10L, 20L), pageable, 7));
 		// 저장소는 ID 순서를 지키지 않는다
 		given(productRepository.findAllById(List.of(30L, 10L, 20L)))
@@ -310,17 +310,17 @@ class ProductServiceTest {
 		assertThat(sut.getTotalElements()).isEqualTo(7);
 		ArgumentCaptor<ProductSearchKeyword> captor = ArgumentCaptor.forClass(ProductSearchKeyword.class);
 		then(buyerProductQueryRepository).should()
-			.findVisibleProductIds(captor.capture(), any(), any(), any(), any(), anyDouble(), any());
+			.findVisibleProductIds(captor.capture(), any(), any(), any(), any(), anyDouble(), any(), any());
 		assertThat(captor.getValue()).isEqualTo(new ProductSearchKeyword("샤인 머스캣", "샤인머스캣", "ㅅㅑㅇㅣㄴㅁㅓㅅㅡㅋㅐㅅ", false));
 		then(productSearchLogRecorder).should(never()).record(any());
 	}
 
 	@Test
-	void 검색어가_있는_첫_페이지는_원문과_정규화한_검색어와_전체_결과_수와_제안_여부로_로그를_남긴다() {
+	void 오타_교정_제안이_있으면_제안_품목으로_순서를_정하게_넘기고_첫_페이지는_원문과_정규화한_검색어와_전체_결과_수와_제안_여부로_로그를_남긴다() {
 		// given
 		PageRequest pageable = PageRequest.of(0, 2);
 		given(buyerProductQueryRepository.findVisibleProductIds(any(), any(), any(), any(), any(), anyDouble(),
-			eq(pageable))).willReturn(new PageImpl<>(List.of(10L, 20L), pageable, 5));
+			eq("고춧가루"), eq(pageable))).willReturn(new PageImpl<>(List.of(10L, 20L), pageable, 5));
 		given(productRepository.findAllById(List.of(10L, 20L)))
 			.willReturn(List.of(productWithId(10L), productWithId(20L)));
 
@@ -349,7 +349,8 @@ class ProductServiceTest {
 		// given
 		PageRequest pageable = PageRequest.of(0, 20);
 		given(buyerProductQueryRepository.findVisibleProductIds(any(), eq(null), eq(null), eq(null),
-			eq(ProductSort.RELEVANCE), eq(MIN_SCORE), eq(pageable))).willReturn(new PageImpl<>(List.of(), pageable, 0));
+			eq(ProductSort.RELEVANCE), eq(MIN_SCORE), eq(null), eq(pageable)))
+			.willReturn(new PageImpl<>(List.of(), pageable, 0));
 
 		// when
 		Page<ProductSummaryResult> sut = service.searchVisibleProducts(
@@ -364,7 +365,8 @@ class ProductServiceTest {
 	void 목록_SQL이_시간_제한을_넘으면_PRODUCT_SEARCH_TIMEOUT이고_로그에_검색어_원문을_남기지_않으며_검색어_로그도_남기지_않는다(CapturedOutput output) {
 		// given
 		String keyword = "제주 하우스감귤";
-		given(buyerProductQueryRepository.findVisibleProductIds(any(), any(), any(), any(), any(), anyDouble(), any()))
+		given(buyerProductQueryRepository.findVisibleProductIds(any(), any(), any(), any(), any(), anyDouble(), any(),
+			any()))
 			.willThrow(new QueryTimeoutException("Statement cancelled due to timeout"));
 
 		// when & then

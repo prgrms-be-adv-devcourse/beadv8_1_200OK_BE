@@ -182,6 +182,15 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 품목의_다른_이름으로_검색하면_그_품목의_상품이_1위다() {
+		// when
+		List<Long> sut = search("무청");
+
+		// then
+		assertThat(sut).first().isEqualTo(siraegi);
+	}
+
+	@Test
 	void 카테고리_한글명으로_찾는다() {
 		// when
 		List<Long> sut = search("버섯");
@@ -197,11 +206,11 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		// 한 페이지를 1개로 해야 첫 페이지가 다 차서 전체 개수를 따로 센다
 		PageRequest pageable = PageRequest.of(0, 1);
 		Page<Long> lowFloor = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
-			ProductSort.RELEVANCE, 0.1, pageable);
+			ProductSort.RELEVANCE, 0.1, null, pageable);
 
 		// when
 		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
-			ProductSort.RELEVANCE, 0.5, pageable);
+			ProductSort.RELEVANCE, 0.5, null, pageable);
 
 		// then
 		// 하한이 낮으면 자모 조각 하나만 겹친 상품(샤인머스캣, 시금치)까지 개수에 든다
@@ -221,16 +230,18 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		// "청뽀도"는 두 상품 모두와 글자 조각이 겹치지 않아 자모로만 찾는다. 청도 복숭아도 자모로 걸린다는 것을 먼저 확인한다
 		List<Long> typo = buyerProductQueryRepository.findVisibleProductIds(
 			ProductSearchKeyword.from("청뽀도").orElseThrow(), null, null, null, ProductSort.RELEVANCE, lowFloor,
-			PageRequest.of(0, 20)).getContent();
+			null, PageRequest.of(0, 20)).getContent();
 
 		// when
 		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(
-			ProductSearchKeyword.from("청포도").orElseThrow(), null, null, null, ProductSort.RELEVANCE, lowFloor, pageable);
+			ProductSearchKeyword.from("청포도").orElseThrow(), null, null, null, ProductSort.RELEVANCE, lowFloor, null,
+			pageable);
 
 		// then
+		// 샤인머스캣은 품목 동의어 "청포도"로 글자가 겹쳐 함께 남고, 자모로만 걸린 청도 복숭아만 빠진다
 		assertThat(typo).contains(grape, cheongdoPeach);
 		assertThat(sut.getContent()).containsExactly(grape);
-		assertThat(sut.getTotalElements()).isEqualTo(1);
+		assertThat(sut.getTotalElements()).isEqualTo(2);
 	}
 
 	@Test
@@ -246,18 +257,18 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 		// when
 		Page<Long> unfiltered = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
-			ProductSort.RELEVANCE, lowFloor, pageable);
+			ProductSort.RELEVANCE, lowFloor, null, pageable);
 		Page<Long> jeju = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null,
-			ProductRegionCode.JEJU.toDomain(), ProductSort.RELEVANCE, lowFloor, pageable);
+			ProductRegionCode.JEJU.toDomain(), ProductSort.RELEVANCE, lowFloor, null, pageable);
 		Page<Long> gyeongbuk = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null,
-			ProductRegionCode.GYEONGBUK.toDomain(), ProductSort.RELEVANCE, lowFloor, pageable);
+			ProductRegionCode.GYEONGBUK.toDomain(), ProductSort.RELEVANCE, lowFloor, null, pageable);
 
 		// then
-		assertThat(unfiltered.getContent()).containsExactly(grape);
+		// 샤인머스캣(경북)은 품목 동의어 "청포도"로 글자가 겹쳐 함께 나온다
+		assertThat(unfiltered.getContent()).containsExactly(grape, shineMuscat);
 		assertThat(jeju.getContent()).isEmpty();
 		assertThat(jeju.getTotalElements()).isZero();
-		assertThat(gyeongbuk.getContent()).containsExactly(grape);
-		assertThat(unfiltered.getContent()).doesNotContain(jejuPeach);
+		assertThat(gyeongbuk.getContent()).containsExactly(grape, shineMuscat);
 	}
 
 	@Test
@@ -271,7 +282,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 
 		// when
 		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(ProductSearchKeyword.from("사과").orElseThrow(),
-			null, null, null, ProductSort.RELEVANCE, 0.5, pageable);
+			null, null, null, ProductSort.RELEVANCE, 0.5, null, pageable);
 
 		// then
 		assertThat(sut.getContent()).containsExactly(apple);
@@ -314,6 +325,29 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(jsonPath("$.suggestion").value("고춧가루"))
 			.andExpect(jsonPath("$.content[*].productId").value(
 				contains(typoResult.stream().map(Long::intValue).toArray())));
+	}
+
+	@Test
+	void 오타_교정_제안이_있으면_제안_품목_상품을_글자가_더_겹친_상품보다_위에_두고_전체_개수는_그대로다() {
+		// given
+		Long powder = create("영양 태양초 고춧가루 1kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.GYEONGBUK, "고운 1kg");
+		Long pepper = create("청양고추 풋고추 꽈리고추 1kg", ProductCategoryCode.VEGETABLE, ProductRegionCode.CHUNGNAM,
+			"고추 1kg");
+		ProductSearchKeyword keyword = ProductSearchKeyword.from("고추가루").orElseThrow();
+		PageRequest pageable = PageRequest.of(0, 20);
+		// 제안 없이 점수로만 정하면 "고추"가 상품명과 옵션명에 여러 번 겹친 고추 상품이 고춧가루보다 위라는 것을 먼저 확인한다
+		Page<Long> withoutSuggestion = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
+			ProductSort.RELEVANCE, 0.5, null, pageable);
+		assertThat(withoutSuggestion.getContent()).containsSubsequence(pepper, powder);
+
+		// when
+		Page<Long> sut = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
+			ProductSort.RELEVANCE, 0.5, "고춧가루", pageable);
+
+		// then
+		assertThat(sut.getContent()).first().isEqualTo(powder);
+		assertThat(sut.getContent()).containsExactlyInAnyOrderElementsOf(withoutSuggestion.getContent());
+		assertThat(sut.getTotalElements()).isEqualTo(withoutSuggestion.getTotalElements());
 	}
 
 	@ParameterizedTest
@@ -431,7 +465,7 @@ class ProductKeywordSearchIntegrationTest extends AbstractIntegrationTest {
 		ProductSearchKeyword keyword = ProductSearchKeyword.from("시레기").orElseThrow();
 		// 하한이 낮으면 자모 조각 하나만 겹친 상품(샤인머스캣, 시금치)까지 나온다
 		Page<Long> lowFloor = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
-			sort.toDomain(), 0.1, PageRequest.of(0, 20));
+			sort.toDomain(), 0.1, null, PageRequest.of(0, 20));
 
 		// when
 		Page<ProductSummaryResult> sut = productService.searchVisibleProducts(
