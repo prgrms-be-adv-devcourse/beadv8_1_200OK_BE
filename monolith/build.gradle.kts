@@ -20,8 +20,6 @@ dependencies {
     testImplementation(project(path = ":common", configuration = "testSupportElements"))
     testImplementation(project(path = ":delivery", configuration = "testSupportElements")) // 택배사 Fake(FakeCarrierClient)
 
-    runtimeOnly("org.springframework.modulith:spring-modulith-runtime")
-
     // Querydsl Q클래스 생성 (annotation processor)
     annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")

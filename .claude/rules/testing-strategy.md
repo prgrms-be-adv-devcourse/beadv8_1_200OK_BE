@@ -17,7 +17,6 @@ paths:
 | 도메인 단위 | 엔티티, 값 객체, 정책 등 Spring 없이 돌릴 수 있는 순수 로직 | 순수 JUnit + AssertJ |
 | 서비스 단위 | 분기, 예외, 이벤트 발행, 외부 경계 호출, 실패 경로 | Mockito |
 | 통합 | Controller → Service → Repository 전체 흐름, 영속성·쿼리·제약·트랜잭션 | `AbstractIntegrationTest` 상속 |
-| 모듈 | 한 모듈 안의 이벤트 연동 (이벤트 계약이 있는 모듈마다 둔다) | `@ApplicationModuleTest` |
 | 구조 | 모듈 안 레이어 의존 방향, 클래스 이름·위치, 엔티티 스키마(ArchUnit). 모듈 간 의존은 `build.gradle.kts` 선언으로 정해지고 리뷰에서 확인한다 | 모듈마다 `ArchitectureTest` |
 
 - Controller는 통합 테스트로만 검증한다. `@WebMvcTest`, `@DataJpaTest`는 쓰지 않는다.
@@ -42,7 +41,6 @@ class OrderServiceIntegrationTest { ... }
 - 이름 접미사는 종류별로 정한다.
   - 도메인·서비스 단위: `*Test`
   - 통합: `*IntegrationTest`
-  - 모듈: `*ModuleTest`
 
 **이유**: JUnit 5는 `public`을 요구하지 않아 붙이면 노출만 늘고, 접미사로 테스트 종류를 이름만 보고 안다.
 
@@ -50,9 +48,6 @@ class OrderServiceIntegrationTest { ... }
 // O
 class WalletTest { ... }
 class MemberSignupIntegrationTest extends AbstractIntegrationTest { ... }
-
-@ApplicationModuleTest
-class WalletModuleTest { ... }
 
 // X
 public class WalletTest { ... }

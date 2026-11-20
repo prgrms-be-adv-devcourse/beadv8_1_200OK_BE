@@ -11,7 +11,7 @@ import org.springframework.core.env.Environment;
 /**
  * 모듈 스키마마다 Flyway 인스턴스와 이력 테이블을 하나씩 만드는 정적 도우미.
  *
- * <p>모듈 테스트({@code @ApplicationModuleTest})가 모듈 밖(common) 클래스의 빈을 걸러 내므로 빈이 아니라 정적 도우미로 둔다.
+ * <p>빈이 아니라 정적 도우미로 둔다(Spring Modulith 모듈 테스트가 common 빈을 걸러 내던 때의 구조, #827에서 Modulith 제거).
  * 실행 방식은 {@link #STANDALONE_PROPERTY} 하나로 갈린다.
  */
 public final class ModuleFlyway {

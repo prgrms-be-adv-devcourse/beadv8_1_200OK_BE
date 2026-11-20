@@ -90,13 +90,6 @@ dependencies {
 }
 """)
 
-        write("src/main/java/com/ok/$name/package-info.java", """
-@ApplicationModule(displayName = "$title")
-package com.ok.$name;
-
-import org.springframework.modulith.ApplicationModule;
-""")
-
         write("src/main/java/com/ok/$appClass.java", """
 package com.ok;
 
@@ -107,7 +100,7 @@ import com.ok.common.StandaloneApplication;
 /**
  * $title 모듈을 단독으로 띄우는 앱 클래스.
  *
- * <p>Spring Modulith가 앱 클래스의 패키지를 모듈 루트로 보므로 {@code com.ok}에 둔다.
+ * <p>common({@code com.ok.common})과 모듈 패키지를 함께 스캔하도록 {@code com.ok}에 둔다.
  * monolith에서 모든 모듈의 앱 클래스가 함께 보이므로 이름을 모듈마다 달리하고, 함께 스캔되므로 {@code main}과 {@code @SpringBootApplication} 외에는 얹지 않는다.
  */
 @SpringBootApplication

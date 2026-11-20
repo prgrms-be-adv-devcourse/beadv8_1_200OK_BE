@@ -5,7 +5,7 @@ Spring Boot 4 / Java 25 기반 백엔드입니다. 도메인별 Gradle 서브프
 | 구분 | 내용 |
 |---|---|
 | 언어 / 빌드 | Java 25, Gradle 멀티 모듈 (Kotlin DSL) |
-| 프레임워크 | Spring Boot 4, Spring Modulith, Spring Batch |
+| 프레임워크 | Spring Boot 4, Spring Batch |
 | 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway |
 
 기술 스택의 자세한 내용은 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)에 있습니다.

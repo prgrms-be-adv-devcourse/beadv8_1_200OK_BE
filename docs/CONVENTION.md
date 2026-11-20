@@ -109,7 +109,7 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 
 `com.ok` 바로 아래 패키지가 하나의 모듈이다. 모듈 목록과 설명은 [`DEVELOPMENT.md`](DEVELOPMENT.md)의 모듈 구조를 본다.
 
-헥사고날 구조(`application`, `adapter/in`, `adapter/out`) 모듈은 2.1의 레이어 패키지·발행 인터페이스 위치와 2.3의 DTO 위치 대신 [`DEVELOPMENT.md`의 모듈별 구조](DEVELOPMENT.md#6-모듈-구조-gradle-서브프로젝트--spring-modulith)와 그 모듈의 `ArchitectureTest`를 따른다. 모듈 간 규칙(2.2), `common`(2.4), 네이밍(3절)은 그대로 따르되, 모듈 문서가 따로 정한 것은 그 문서가 우선한다. 어느 모듈이 헥사고날 구조인지는 루트 `CLAUDE.md`에 있다.
+헥사고날 구조(`application`, `adapter/in`, `adapter/out`) 모듈은 2.1의 레이어 패키지·발행 인터페이스 위치와 2.3의 DTO 위치 대신 [`DEVELOPMENT.md`의 모듈별 구조](DEVELOPMENT.md#6-모듈-구조-gradle-서브프로젝트)와 그 모듈의 `ArchitectureTest`를 따른다. 모듈 간 규칙(2.2), `common`(2.4), 네이밍(3절)은 그대로 따르되, 모듈 문서가 따로 정한 것은 그 문서가 우선한다. 어느 모듈이 헥사고날 구조인지는 루트 `CLAUDE.md`에 있다.
 
 ### 2.1 모듈 내부 구조
 
@@ -136,7 +136,7 @@ paldo-gotgan 프로젝트에서 기능을 구현할 때 팀이 지키는 기준�
 하위 도메인이 없는 모듈은 경로가 단순한 편이 낫다.
 설정과 리스너를 서비스·도메인과 구분하면 역할별로 코드를 찾기 쉽다.
 리스너는 컨트롤러처럼 외부 입력이 들어오는 진입점이므로, 트랜잭션과 도메인 처리는 서비스에 맡긴다.
-서비스가 발행 인터페이스에만 의존하고 구현체가 그 인터페이스를 구현하면(의존성 역전) 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 모듈 밖에서는 Modulith가 접근을 막는다.
+서비스가 발행 인터페이스에만 의존하고 구현체가 그 인터페이스를 구현하면(의존성 역전) 발행 방식(스프링 이벤트, 메시지 브로커, 아웃박스)을 바꿔도 서비스는 바뀌지 않고, 모듈 간 계약 타입이 비즈니스 코드에 섞이지 않는다. 인터페이스를 `event`에 두면 리스너(event → service)와 순환 의존이 생기므로 서비스 쪽에 두고, 다른 패키지의 구현체가 구현해야 하므로 `public`으로 둔다. 도메인 모듈끼리는 Gradle 의존(`project(...)`)을 걸지 않으므로 다른 모듈에서는 이 인터페이스를 볼 수 없다.
 발행 인터페이스는 "어떤 일이 일어났다"는 업무 개념이라 발행 방식을 바꿔도(예: Kafka) 개수가 늘지 않는다. 바뀌는 것은 `event`의 구현체뿐이라 하위 패키지를 따로 두지 않는다.
 같은 모듈이라도 하위 도메인은 역할과 성격이 다르다(예: member 모듈의 회원과 판매자). 한 인터페이스에 모으면 한 하위 도메인의 기능이 늘 때 다른 하위 도메인의 서비스가 쓰지 않는 메서드까지 함께 커지므로, 발행하는 하위 도메인마다 둔다. 같은 이유로, 한 인터페이스를 여러 서비스가 쓰는데 서비스마다 쓰는 메서드가 갈리면 유스케이스 기준으로 나눈다.
 받는 모듈 기준으로 나누면 발행하는 쪽이 누가 받는지 알아야 해서, 이벤트로 결합을 낮춘 의미가 없어진다. 이벤트마다 나누면 인터페이스가 이벤트 수만큼 늘고, 한 서비스가 발행 인터페이스를 여러 개 주입받게 된다.
@@ -184,9 +184,9 @@ com.ok.wallet
 - 다른 모듈에 공개할 클래스는 **모듈의 최상위 패키지**에 둔다. 하위 패키지(예: `order.internal`)는 다른 모듈에서 접근할 수 없다.
 - 이벤트 DTO는 공개하지 않는다. 받는 모듈은 보내는 모듈의 클래스를 import하지 않고 자기 DTO를 둔다(2.1).
 - 모듈 간 순환 의존은 금지한다. `common`은 도메인 모듈을 import하지 않는다.
-- 모듈 간 연동은 가능하면 이벤트(`@ApplicationModuleListener`)로 한다.
+- 모듈 간 연동은 Kafka 메시지(보내는 쪽은 outbox)로 하고, 즉시 결과가 필요한 조회만 내부 HTTP(`/internal/**`)로 한다.
 - 모듈은 Gradle 서브프로젝트다. 도메인 모듈끼리는 `project(...)` 의존을 걸지 않는다. 다른 도메인 모듈은 `build.gradle.kts`에 `project(...)`로 선언하지 않으면 컴파일할 수 없다. 선언은 PR diff에서 바로 보이므로 리뷰에서 확인한다. 공용 코드는 `common`에 둔다.
-- 각 모듈 패키지의 `package-info.java`는 모듈 선언이므로 지우지 않는다. 새 모듈은 `./gradlew createModule -PmoduleName=<이름>`으로 만든다. 모듈 안의 구조 규칙은 모듈별 `ArchitectureTest`가 검사한다.
+- 새 모듈은 `./gradlew createModule -PmoduleName=<이름>`으로 만든다. 모듈 안의 구조 규칙은 모듈별 `ArchitectureTest`가 검사한다.
 
 **이유**: 모듈 경계를 지켜야 모듈을 독립적으로 이해하고 바꿀 수 있다. 순환 의존이 있으면 모듈을 따로 테스트하거나 분리할 수 없고, 이벤트로 연동하면 모듈 간 결합이 낮아진다. 도메인 모듈 간 `project(...)` 의존은 선언해야만 컴파일되고 선언은 PR diff에 보이므로, 규칙을 어기는 변경은 리뷰에서 먼저 걸린다.
 
@@ -745,7 +745,6 @@ public MediaInfo upload(MediaPurpose purpose, MultipartFile file) {
 - 현재 시각은 `Clock`을 주입받아 `LocalDateTime.now(clock)`처럼 얻는다. `LocalDateTime.now()`를 직접 호출하지 않는다.
 - 테스트에서는 고정된 시각의 `Clock`을 사용한다.
 - `Clock` 빈은 `com.ok.common.config.ClockConfig`에 있다. JVM 기본 시간대(Asia/Seoul로 고정)를 따른다.
-- 모듈 테스트(`@ApplicationModuleTest`)에서는 `testsupport/TestClockConfiguration`을 `@Import`한다.
 
 **이유**: 시각에 의존하는 로직을 현재 시각과 상관없이 같은 결과로 테스트할 수 있다. 또한 `LocalDateTime.now()`는 JVM의 기본 타임존을 사용하므로, 앱의 타임존 설정(`APP_TIME_ZONE`)과 어긋날 수 있다. `Clock` 빈을 한 곳(`ClockConfig`)에 두고, JVM 시간대와 `APP_TIME_ZONE`을 모두 Asia/Seoul로 고정해 이를 막는다.
 
@@ -853,7 +852,7 @@ V202610091620__member_create_member.sql
 - 이미 적용된 마이그레이션은 수정하지 않는다. 변경이 필요하면 새 버전 파일을 추가한다. 로컬에서만 쓴 파일이면 `data/mysql`을 지우고 다시 적용해도 된다.
 - 개발 환경(dev 프로파일)은 `out-of-order`를 허용해서 늦은 버전이 먼저 병합되어도 적용한다. 운영은 순서대로 적용되도록 허용하지 않는다.
 - 운영은 `main`의 코드로 실행되므로, 새 마이그레이션의 버전은 `main`에 이미 있는 가장 최신 버전보다 뒤여야 한다. 병합 전에 `main`을 합쳐서 확인하고, 뒤처졌으면 아직 병합되지 않은 내 파일의 버전을 현재 시각으로 바꾼다.
-- 이벤트 발행 기록 테이블 마이그레이션(`...common__create_event_publication_table.sql`)은 Spring Modulith가 쓰므로 지우지 않는다.
+- 이벤트 발행 기록 테이블 마이그레이션(`...common__create_event_publication_table.sql`)은 이미 적용된 마이그레이션이라 지우지 않는다. Spring Modulith를 걷어 낸 뒤(#827) 이 테이블은 쓰지 않는다.
 - 다른 모듈의 테이블을 외래키로 참조하거나 수정하는 마이그레이션은 쓰지 않는다. 모듈마다 자기 스키마에 적용되므로 다른 스키마의 테이블을 모른다.
 
 **이유**: 이미 적용된 파일을 수정하면 체크섬이 달라져 앱이 기동하지 않는다. 개발 환경은 여러 브랜치의 병합 시점이 달라질 수 있어서 순서를 허용한다. 운영은 순서대로 적용되므로, 운영 DB에 이미 적용된 버전보다 오래된 파일이 나중에 올라가면 오류가 난다.
@@ -1068,7 +1067,6 @@ Wallet result = Wallet.create(memberId, WalletType.BUYER);
 | 도메인 단위 테스트 | 핵심 비즈니스 로직. 엔티티, 값 객체, 정책 클래스, 알고리즘 등 Spring 없이 돌릴 수 있는 순수 로직 전부 | 순수 JUnit + AssertJ (Spring 없이) |
 | 서비스 단위 테스트 | 유스케이스의 분기, 예외, 협력 동작(이벤트 발행, 외부 경계 호출, 실패 경로) | Mockito |
 | 통합 테스트 | Controller → Service → Repository 전체 흐름, 실제 DB가 필요한 것(영속성, 쿼리, 제약, 트랜잭션) | `AbstractIntegrationTest` 상속 |
-| 모듈 테스트 | 한 모듈 안의 이벤트 연동. 이벤트 발행·수신 같은 모듈 외부 계약이 있는 모듈마다 모듈 테스트 클래스를 둔다 | `@ApplicationModuleTest` |
 | 구조 테스트 | 모듈 안의 레이어 의존 방향과 클래스 이름·위치, 엔티티 스키마(ArchUnit). 모듈 간 의존은 `build.gradle.kts` 선언으로 정해지고 리뷰에서 확인한다 | 모듈마다 `ArchitectureTest` |
 
 **이유**: 통합 테스트가 레이어를 통과하며 흐름과 DB 동작을 검증하므로, 저장소와 컨트롤러를 따로 테스트하면 같은 것을 다시 검증하게 된다. 컨트롤러는 단위 테스트와 통합 테스트가 검증하는 내용이 크게 다르지 않다. 반면 서비스의 분기와 실패 경로는 통합 시나리오로 모두 덮으면 너무 많아지므로 단위 테스트가 맡는다. 핵심 비즈니스 로직은 가장 중요하므로 Spring 없이 빠르고 촘촘하게 먼저 검증한다. 또한 스프링 컨텍스트는 설정이 조금이라도 다르면 새로 뜨고(8~10초), `AbstractIntegrationTest`를 상속한 테스트는 컨텍스트 하나를 공유하므로, 컨텍스트가 이미 떠 있으면 테스트 11개가 약 2초에 끝난다.
@@ -1221,7 +1219,6 @@ assertThatThrownBy(() -> CartItem.create(cart, 1L, 1L, 0))
 - 클래스 이름은 테스트 종류에 따라 접미사를 붙인다.
   - 도메인·서비스 단위 테스트: `*Test`
   - `AbstractIntegrationTest`를 상속한 통합 테스트: `*IntegrationTest`
-  - `@ApplicationModuleTest` 모듈 테스트: `*ModuleTest`
 
 **이유**: JUnit 5는 `public`을 요구하지 않으므로 붙이면 노출만 늘어난다. 접미사로 테스트 종류를 이름만 보고 알 수 있다.
 
@@ -1230,9 +1227,6 @@ assertThatThrownBy(() -> CartItem.create(cart, 1L, 1L, 0))
 class WalletTest { ... }
 class WalletServiceTest { ... }
 class MemberSignupIntegrationTest extends AbstractIntegrationTest { ... }
-
-@ApplicationModuleTest
-class WalletModuleTest { ... }
 
 // 나쁜 예: 불필요한 public, 통합 테스트인데 접미사가 *Test
 public class WalletTest { ... }

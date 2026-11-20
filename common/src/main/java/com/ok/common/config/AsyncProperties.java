@@ -31,7 +31,7 @@ import java.util.Map;
  * <p>값이 잘못되면 기동 시점에 바로 실패하도록 생성자에서 검증한다.
  * {@code @DefaultValue}를 두어 yaml을 가져오지 않는 테스트나 모듈 단독 실행에서도 기동이 막히지 않게 한다.
  *
- * @param defaultExecutor 이름을 지정하지 않은 {@code @Async}({@code @ApplicationModuleListener} 포함)가 쓰는 실행기 이름.
+ * @param defaultExecutor 이름을 지정하지 않은 {@code @Async}가 쓰는 실행기 이름.
  *                        {@code executors}에 없으면 기동이 실패한다.
  * @param executors       실행기 이름별 설정. {@value #EVENT_EXECUTOR}는 설정이 없어도 기본값으로 항상 있다.
  */

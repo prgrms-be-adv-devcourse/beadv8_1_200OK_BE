@@ -1,7 +1,6 @@
 [versions]
 spring-boot = "4.1.1"
 dependency-management = "1.1.7"
-spring-modulith = "2.1.1"
 aws-sdk = "2.55.12"
 querydsl = "7.7"
 springdoc = "3.1.1"
@@ -13,7 +12,6 @@ shedlock = "7.11.0"
 [libraries]
 spring-boot-gradle-plugin = { module = "org.springframework.boot:spring-boot-gradle-plugin", version.ref = "spring-boot" }
 dependency-management-plugin = { module = "io.spring.gradle:dependency-management-plugin", version.ref = "dependency-management" }
-spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "spring-modulith" }
 aws-sdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
 querydsl-jpa = { module = "io.github.openfeign.querydsl:querydsl-jpa", version.ref = "querydsl" }
 querydsl-apt = { module = "io.github.openfeign.querydsl:querydsl-apt", version.ref = "querydsl" }

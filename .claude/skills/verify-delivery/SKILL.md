@@ -5,7 +5,7 @@ description: paldo-gotgan 의 delivery 모듈(헥사고날, 포트 8086 기본)�
 
 # delivery 검증 (verify-delivery)
 
-delivery 모듈을 `./gradlew :delivery:bootRun` 으로 단독 실행해 사용자 경로(HTTP)로 구동하고, 응답과 DB 행을 증거로 남긴다. 기존 `*ApiIntegrationTest`(Testcontainers), `DeliveryModuleTest`, `FakeCarrierClient` 는 테스트 하니스이고, 이 스킬은 실제 앱을 띄워 쓰는 쪽이다. 기능별 레시피는 [features/README.md](features/README.md) 를 먼저 읽는다.
+delivery 모듈을 `./gradlew :delivery:bootRun` 으로 단독 실행해 사용자 경로(HTTP)로 구동하고, 응답과 DB 행을 증거로 남긴다. 기존 `*ApiIntegrationTest`(Testcontainers), `DeliveryOutboxRecordIntegrationTest`, `FakeCarrierClient` 는 테스트 하니스이고, 이 스킬은 실제 앱을 띄워 쓰는 쪽이다. 기능별 레시피는 [features/README.md](features/README.md) 를 먼저 읽는다.
 
 ## 표면과 격리 (먼저 읽는다)
 

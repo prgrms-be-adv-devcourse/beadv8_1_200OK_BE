@@ -15,10 +15,9 @@ import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
- * {@code @Async}와 {@code @ApplicationModuleListener}가 쓰는 실행기를 등록한다.
+ * {@code @Async}가 쓰는 실행기를 등록한다.
  *
- * <p>앱이 {@code @EnableAsync}를 켜지 않아도 Spring Modulith가 자동으로 켜 주므로({@code EventPublicationAutoConfiguration}),
- * {@code @ApplicationModuleListener}는 원래도 비동기로 실행된다. 다만 이름을 지정하지 않은 {@code @Async}는 모두
+ * <p>이름을 지정하지 않은 {@code @Async}는 모두
  * Boot의 기본 실행기({@code applicationTaskExecutor}: 코어 8, 대기열 무제한) 하나를 공유한다. 그러면 느린 작업이 다른 비동기 작업을 지연시키고,
  * 밀린 작업이 대기열에 메모리로 쌓인다. 이 설정은 그 공유 풀을 용도별 전용 실행기로 나누고, 스레드 수·대기열·동시 실행 상한을 yml로 관리하게 한다.
  *
@@ -66,7 +65,7 @@ public class AsyncConfig {
                 return defaultExecutor;
             }
 
-            // 비동기 리스너의 예외는 호출한 쪽으로 전달되지 않는다. 이벤트 기록은 Modulith가 미완료로 남기므로 원인을 찾을 수 있게 로그를 남긴다.
+            // 비동기 리스너의 예외는 호출한 쪽으로 전달되지 않으므로 원인을 찾을 수 있게 로그를 남긴다.
             // 이벤트에는 수령인 이름·전화번호·주소 같은 개인정보가 담길 수 있어 파라미터 값은 남기지 않고 타입 이름만 남긴다
             @Override
             public AsyncUncaughtExceptionHandler getAsyncUncaughtExceptionHandler() {
