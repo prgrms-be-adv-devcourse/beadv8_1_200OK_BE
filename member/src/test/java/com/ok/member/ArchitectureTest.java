@@ -64,7 +64,7 @@ class ArchitectureTest {
     // member 모듈의 하위 도메인. 아래 헥사고날 규칙을 하위 도메인마다 검사한다.
     // 새 하위 도메인을 만들면 여기에 더한다. 빠뜨리면 하위_도메인_목록_밖에_클래스를_두지_않는다 규칙이 실패한다
     private static final List<Subdomain> SUBDOMAINS = List.of(
-            new Subdomain("seller"), new Subdomain("member"), new Subdomain("auth"));
+            new Subdomain("seller"), new Subdomain("member"), new Subdomain("auth"), new Subdomain("wish"));
 
     // 다른 하위 도메인을 부를 수 있는 위치. 하위 도메인 사이 호출을 출력 어댑터에만 두어 의존이 한 곳에서 보이게 한다
     private static final String ANY_SUBDOMAIN_ADAPTER_OUT = "com.ok.member.*.adapter.out..";
