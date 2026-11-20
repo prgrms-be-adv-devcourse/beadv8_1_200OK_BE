@@ -1,0 +1,112 @@
+package com.ok.wallet;
+
+import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
+import com.ok.wallet.application.service.BuyerWalletService;
+import com.ok.wallet.support.WalletTestCharger;
+import com.ok.wallet.support.WalletTestDataCleaner;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+// 토큰으로 본인 잔액 API를 호출해, 토큰 검증과 응답 값을 실제와 같게 확인한다.
+class WalletBalanceApiIntegrationTest extends AbstractIntegrationTest {
+    private static final Long MEMBER_ID = 9_101L;
+    private static final Long OTHER_MEMBER_ID = 9_102L;
+    private static final String BALANCE_URL = "/api/v1/wallets/me/balance";
+
+    @Autowired
+    WebApplicationContext context;
+
+    @Autowired
+    TestAccessTokens tokens;
+
+    @Autowired
+    BuyerWalletService buyerWalletService;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    private MockMvc mockMvc;
+
+    private WalletTestCharger charger;
+
+    @BeforeEach
+    void setUp() {
+        charger = new WalletTestCharger(jdbcTemplate, buyerWalletService);
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        new WalletTestDataCleaner(jdbcTemplate).deleteAll();
+    }
+
+    @AfterEach
+    void tearDown() {
+        new WalletTestDataCleaner(jdbcTemplate).verifyAndDeleteAll();
+    }
+
+    @Test
+    void 토큰_없이_잔액을_조회하면_401() throws Exception {
+        mockMvc.perform(get(BALANCE_URL))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 관리자_토큰으로_잔액을_조회하면_403() throws Exception {
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
+    // 승인된 판매자 토큰은 BUYER와 SELLER를 함께 가져 구매자 API도 그대로 쓴다
+    @Test
+    void 판매자_토큰으로도_잔액을_조회할_수_있다() throws Exception {
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "BUYER", "SELLER")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void 지갑이_없으면_잔액_0원과_보유_한도를_응답한다() throws Exception {
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "BUYER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(0))
+                .andExpect(jsonPath("$.maxBalance").value(500_000));
+    }
+
+    @Test
+    void 충전한_만큼의_잔액을_응답한다() throws Exception {
+        // Given
+        charger.charge(MEMBER_ID, "pay-balance-1", 30_000);
+
+        // When & Then
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(MEMBER_ID, "BUYER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(30_000))
+                .andExpect(jsonPath("$.maxBalance").value(500_000));
+    }
+
+    @Test
+    void 다른_회원의_잔액이_아니라_토큰의_회원_잔액을_응답한다() throws Exception {
+        // Given: 두 회원의 잔액이 다름
+        charger.charge(MEMBER_ID, "pay-balance-1", 30_000);
+        charger.charge(OTHER_MEMBER_ID, "pay-balance-2", 10_000);
+
+        // When & Then: 토큰의 회원 잔액만 보인다
+        mockMvc.perform(get(BALANCE_URL)
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(OTHER_MEMBER_ID, "BUYER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(10_000));
+    }
+}

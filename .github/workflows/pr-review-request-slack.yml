@@ -1,0 +1,53 @@
+name: PR Review Request Slack Notification
+
+on:
+  pull_request:
+    # 초안에서 지정한 리뷰어는 review_requested가 다시 오지 않으므로, 준비 완료로 바꿀 때 알린다.
+    types: [review_requested, ready_for_review]
+
+jobs:
+  notify:
+    # 초안 PR은 리뷰를 받을 준비가 되지 않았으므로 알리지 않는다.
+    if: ${{ !github.event.pull_request.draft }}
+    # 리뷰어를 여러 명 지정하면 리뷰어마다 이벤트가 따로 온다.
+    # 같은 PR의 실행은 마지막 하나만 남기고, 그 실행이 현재 리뷰어 전체를 한 번에 보낸다.
+    # job 단위로 두어야 if로 건너뛴 초안 실행이 진행 중인 실행을 취소하지 않는다.
+    concurrency:
+      group: pr-review-request-slack-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: 리뷰어 지정이 끝날 때까지 대기
+        run: sleep 15
+
+      - name: Slack으로 리뷰 요청 알림 전송
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL 시크릿이 없어 알림을 보내지 않는다."
+            exit 0
+          fi
+
+          # 대기하는 동안 추가된 리뷰어까지 담으려고 이벤트 값이 아니라 PR의 현재 상태를 조회한다.
+          pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
+          reviewers=$(echo "$pr" | jq -r '[.requested_reviewers[].login, (.requested_teams[].slug | "team/" + .)] | map("`" + . + "`") | join(", ")')
+          if [ -z "$reviewers" ]; then
+            echo "남은 리뷰 요청이 없어 알림을 보내지 않는다."
+            exit 0
+          fi
+
+          # PR 제목은 사용자 입력이라 셸에 끼워 넣지 않고 jq로 JSON을 만든다. Slack 링크 문법을 깨는 문자는 이스케이프한다.
+          payload=$(echo "$pr" | jq --arg reviewers "$reviewers" '
+            def esc: gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
+            {
+              text: ":eyes: 리뷰 요청 <\(.html_url)|#\(.number) \(.title | esc)>\n작성자: `\(.user.login)`\n리뷰어: \($reviewers)"
+            }')
+
+          # 앞선 실행은 취소되므로 이 전송이 실패하면 알림이 사라진다. 일시 장애는 재시도하고, 실패하면 Slack 응답을 남긴다.
+          curl -sS --fail-with-body --retry 2 -X POST -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"

@@ -1,0 +1,42 @@
+package com.ok.wallet.adapter.out.persistence;
+
+import com.ok.wallet.application.port.out.WalletOrderPaymentRepository;
+import com.ok.wallet.domain.WalletOrderPayment;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * 출력 포트 {@link WalletOrderPaymentRepository}를 {@link WalletOrderPaymentJpaRepository}에 넘겨 구현한다.
+ */
+@Component
+@RequiredArgsConstructor
+public class WalletOrderPaymentRepositoryAdapter implements WalletOrderPaymentRepository {
+
+    private final WalletOrderPaymentJpaRepository walletOrderPaymentJpaRepository;
+
+    @Override
+    public int insertIfAbsent(Long orderId, Long buyerId, long amount, String orderSummary, String status,
+                              LocalDateTime now) {
+        return walletOrderPaymentJpaRepository.insertIfAbsent(orderId, buyerId, amount, orderSummary, status, now);
+    }
+
+    @Override
+    public Optional<WalletOrderPayment> findForShareByOrderId(Long orderId) {
+        return walletOrderPaymentJpaRepository.findForShareByOrderId(orderId);
+    }
+
+    @Override
+    public Optional<WalletOrderPayment> findByOrderId(Long orderId) {
+        return walletOrderPaymentJpaRepository.findByOrderId(orderId);
+    }
+
+    @Override
+    public List<WalletOrderPayment> findAllByOrderIdIn(Collection<Long> orderIds) {
+        return walletOrderPaymentJpaRepository.findByOrderIdIn(orderIds);
+    }
+}

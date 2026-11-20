@@ -1,0 +1,29 @@
+meta {
+  name: 재고 배정
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "orderId": {{orderId}},
+    "items": [
+      { "optionId": {{optionA}}, "quantity": 1 },
+      { "optionId": {{optionA}}, "quantity": 1 }
+    ]
+  }
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  같은 옵션 두 줄은 합쳐서 배정합니다 (옵션 A 2개). 성공하면 본문 없이 204 입니다.
+}

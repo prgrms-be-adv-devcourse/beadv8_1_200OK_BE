@@ -1,0 +1,57 @@
+plugins {
+    id("ok.java-conventions")
+    `java-library`
+}
+
+dependencies {
+    api("org.springframework.boot:spring-boot-starter-webmvc")
+    api("org.springframework.boot:spring-boot-starter-actuator") // 컨테이너 헬스체크(/actuator/health)와 지표 노출
+    api("io.micrometer:micrometer-registry-prometheus") // 지표를 Prometheus 형식으로 노출(/actuator/prometheus) (#374)
+    api("org.springframework.boot:spring-boot-starter-validation")
+    api("org.springframework.boot:spring-boot-starter-security")
+    api("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
+    api("org.springframework.boot:spring-boot-starter-data-jpa")
+    runtimeOnly("org.hibernate.orm:hibernate-micrometer") // Hibernate 통계를 Micrometer 지표로 노출(hibernate.* 지표). Boot가 이 클래스가 있을 때만 자동으로 바인딩한다 (#509)
+    api("org.springframework.boot:spring-boot-starter-flyway")
+    api("org.flywaydb:flyway-mysql")
+    api(libs.querydsl.jpa)
+    api(libs.springdoc.webmvc.ui)
+    api("org.springframework.modulith:spring-modulith-starter-core")
+    api("org.springframework.modulith:spring-modulith-starter-jpa") // 이벤트 발행 기록(event_publication)
+    api("org.springframework.boot:spring-boot-starter-data-redis") // 캐시·락 등 Redis 연결 기반 (#319)
+    api("software.amazon.awssdk:s3")
+    api(libs.owasp.html.sanitizer)
+    // 모듈 간 이벤트를 메시지 브로커로 옮길 기반 (#318). 접속 설정은 DB처럼 monolith와 모듈 yaml이 각자 갖는다
+    // 모든 모듈이 같은 브로커를 쓰는 공통 인프라라 common의 api로 연다(#288). 연결은 처음 쓸 때 맺어 쓰지 않는 모듈의 비용은 거의 없다
+    api("org.springframework.boot:spring-boot-starter-kafka")
+
+    // 실행마다 traceId를 두는 Job 리스너(trace 패키지)용. Batch는 payout만 쓰므로 common이 다른 모듈에 끌어오지 않는다
+    compileOnly("org.springframework.batch:spring-batch-core")
+
+    runtimeOnly("com.mysql:mysql-connector-j")
+
+    annotationProcessor(variantOf(libs.querydsl.apt) { classifier("jpa") })
+    annotationProcessor("jakarta.persistence:jakarta.persistence-api")
+    annotationProcessor("jakarta.annotation:jakarta.annotation-api")
+}
+
+// 떠 있는 Redis·Kafka가 필요한 테스트(@Tag("infraTest"), #530)는 기본 test(CI 포함)에서 뺀다
+tasks.test {
+    useJUnitPlatform {
+        excludeTags("infraTest")
+    }
+}
+
+val infraTest by tasks.registering(Test::class) {
+    description = "compose로 띄운 실제 Redis·Kafka에 앱과 같은 접속 설정으로 붙는지 확인한다"
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("infraTest")
+    }
+    // 인프라 상태는 Gradle이 모르는 입력이라 매번 다시 돌린다
+    outputs.upToDateWhen { false }
+    // 공통 설정의 jacocoTestReport가 일반 test(Testcontainers)를 먼저 돌려서 뗀다
+    setFinalizedBy(emptyList<Any>())
+}

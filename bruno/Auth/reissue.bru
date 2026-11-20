@@ -1,0 +1,31 @@
+meta {
+  name: 토큰 재발급
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/reissue
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "refreshToken": "{{refreshToken}}"
+  }
+}
+
+script:post-response {
+  // 사용한 Refresh Token은 다시 쓸 수 없으므로, 새로 받은 두 토큰으로 변수를 바꾼다
+  if (res.getStatus() === 200) {
+    bru.setVar("accessToken", res.getBody().accessToken);
+    bru.setVar("refreshToken", res.getBody().refreshToken);
+  }
+}
+
+docs {
+  로그인으로 받은 Refresh Token으로 새 Access Token과 Refresh Token을 발급합니다.
+  Access Token이 만료되어 401(token-expired)을 받았을 때 보냅니다.
+  같은 Refresh Token으로 두 번 보내면 두 번째는 401입니다.
+}

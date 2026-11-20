@@ -1,0 +1,19 @@
+meta {
+  name: 리뷰 삭제
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/reviews/{{reviewId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  다시 삭제하면 404입니다. 상품의 리뷰 수와 별점 합계에서 빠집니다.
+}

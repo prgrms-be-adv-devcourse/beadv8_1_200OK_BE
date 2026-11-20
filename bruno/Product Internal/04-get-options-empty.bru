@@ -1,0 +1,23 @@
+meta {
+  name: 조회 실패 - 옵션 ID 없음
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/internal/v1/products/options?optionIds=
+  body: none
+  auth: none
+}
+
+params:query {
+  optionIds: 
+}
+
+assert {
+  res.status: eq 400
+}
+
+docs {
+  optionIds 가 비었거나 100개를 넘으면 400 입니다.
+}

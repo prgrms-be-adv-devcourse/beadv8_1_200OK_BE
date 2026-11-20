@@ -1,0 +1,442 @@
+package com.ok.delivery.application.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.delivery.application.dto.AddressCommand;
+import com.ok.delivery.application.dto.RegionResult;
+import com.ok.delivery.application.dto.SellerShipmentCommand;
+import com.ok.delivery.application.dto.ShipmentCreateCommand;
+import com.ok.delivery.application.dto.ShipmentDispatchCommand;
+import com.ok.delivery.application.dto.ShipmentDispatchResult;
+import com.ok.delivery.application.dto.ShipmentItemCommand;
+import com.ok.delivery.application.port.out.DeliveryEventPublisher;
+import com.ok.delivery.application.port.out.ShipmentAddressChangeRequestRepository;
+import com.ok.delivery.application.port.out.ShipmentQueryRepository;
+import com.ok.delivery.application.port.out.ShipmentRepository;
+import com.ok.delivery.domain.Carrier;
+import com.ok.delivery.domain.DeliveryDatePolicy;
+import com.ok.delivery.domain.SellerShippingSetting;
+import com.ok.delivery.domain.Shipment;
+import com.ok.delivery.domain.ShipmentItem;
+import com.ok.delivery.domain.ShipmentStatus;
+import com.ok.delivery.domain.WeekendBusinessDayCalendar;
+import com.ok.delivery.exception.DeliveryErrorCode;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+import static com.ok.delivery.fixture.RegionSurchargeStubs.chargeDestinationSurcharge;
+import static com.ok.delivery.fixture.ShipmentFixture.item;
+import static com.ok.delivery.fixture.ShipmentFixture.shipment;
+import static com.ok.delivery.fixture.ShipmentFixture.shipmentIn;
+import static com.ok.delivery.fixture.ShipmentFixture.withId;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
+
+@ExtendWith(MockitoExtension.class)
+class ShipmentServiceTest {
+
+    // 2026-10-16(금) 12:00 결제. 마감 13:00 판매자는 당일 출고, 마감 11:00 판매자는 다음 영업일(월) 출고
+    private static final LocalDateTime FRIDAY_NOON = LocalDateTime.of(2026, 10, 16, 12, 0);
+    private static final LocalDate NEXT_MONDAY = LocalDate.of(2026, 10, 19);
+    private static final LocalDate NEXT_TUESDAY = LocalDate.of(2026, 10, 20);
+    private static final LocalDate NEXT_WEDNESDAY = LocalDate.of(2026, 10, 21);
+    private static final LocalDate NEXT_THURSDAY = LocalDate.of(2026, 10, 22);
+
+    private static final String POSTAL_CODE = "06236";
+    private static final ShipmentDispatchCommand DISPATCH_COMMAND = new ShipmentDispatchCommand(1L, 10L, "CJ_LOGISTICS", "1234567890");
+
+    @Mock
+    ShipmentRepository shipmentRepository;
+
+    @Mock
+    ShipmentAddressChangeRequestRepository addressChangeRequestRepository;
+
+    @Mock
+    ShipmentQueryRepository shipmentQueryRepository;
+
+    @Mock
+    DeliveryRegionService deliveryRegionService;
+
+    @Mock
+    SellerShippingSettingService sellerShippingSettingService;
+
+    @Mock
+    DeliveryEventPublisher deliveryEventPublisher;
+
+    @Captor
+    ArgumentCaptor<List<Shipment>> shipmentsCaptor;
+
+    ShipmentService shipmentService;
+
+    @BeforeEach
+    void setUp() {
+        // 날짜 계산은 실제 정책으로 두고, 서비스가 판매자 설정의 마감 시간을 넘기는지 확인한다
+        // 출고 예정일은 결제 시각 기준이라 Clock을 쓰지 않는다. Clock은 송장 등록(dispatch)에서만 쓴다
+        Clock clock = Clock.fixed(FRIDAY_NOON.atZone(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        shipmentService = new ShipmentService(shipmentRepository, shipmentQueryRepository, addressChangeRequestRepository, deliveryRegionService,
+                new DeliveryDatePolicy(new WeekendBusinessDayCalendar()), sellerShippingSettingService,
+                deliveryEventPublisher, clock);
+        chargeDestinationSurcharge(deliveryRegionService);
+    }
+
+    @Test
+    void 판매자_설정의_마감_시간으로_판매자마다_도착_예정일을_계산한다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L, 20L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0)),
+                20L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(11, 0))));
+        ShipmentCreateCommand command = new ShipmentCreateCommand(1L, 100L, FRIDAY_NOON,
+                new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null),
+                List.of(seller(10L, 101L), seller(20L, 201L)));
+
+        // when
+        shipmentService.create(command);
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        List<Shipment> sut = shipmentsCaptor.getValue();
+        assertThat(sut).hasSize(2);
+        assertSoftly(softly -> {
+            softly.assertThat(sut.get(0).getSellerId()).isEqualTo(10L);
+            softly.assertThat(sut.get(0).getEstimatedShipDate()).isEqualTo(FRIDAY_NOON.toLocalDate());
+            softly.assertThat(sut.get(0).getEstimatedDeliveryStart()).isEqualTo(NEXT_TUESDAY);
+            softly.assertThat(sut.get(0).getEstimatedDeliveryEnd()).isEqualTo(NEXT_WEDNESDAY);
+            softly.assertThat(sut.get(1).getSellerId()).isEqualTo(20L);
+            softly.assertThat(sut.get(1).getEstimatedShipDate()).isEqualTo(NEXT_MONDAY);
+            softly.assertThat(sut.get(1).getEstimatedDeliveryStart()).isEqualTo(NEXT_WEDNESDAY);
+            softly.assertThat(sut.get(1).getEstimatedDeliveryEnd()).isEqualTo(NEXT_THURSDAY);
+        });
+    }
+
+    @Test
+    void 무료배송_기준이_없는_판매자도_shipment를_만든다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, null, LocalTime.of(13, 0))));
+        ShipmentCreateCommand command = command(seller(10L, 3_000L, null, 0L, 1_000_000L));
+
+        // when
+        shipmentService.create(command);
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        Shipment sut = shipmentsCaptor.getValue().get(0);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getFreeShippingThreshold()).isNull();
+            softly.assertThat(sut.getBaseShippingFee()).isEqualTo(3_000);
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(3_000);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("부과_배송비_사례")
+    void 결제_시점_값으로_부과_배송비를_계산해_저장한다(Long baseShippingFee, Long freeShippingThreshold, Long regionSurcharge,
+                                  long unitPrice, int expectedCharged) {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        // 판매자 설정이 결제 뒤에 바뀌었어도 부과 금액은 이벤트 값으로 계산해야 한다
+        given(sellerShippingSettingService.getSettings(List.of(10L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(9_000, 1, LocalTime.of(13, 0))));
+        ShipmentCreateCommand command = command(seller(10L, baseShippingFee, freeShippingThreshold, regionSurcharge, unitPrice));
+
+        // when
+        shipmentService.create(command);
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        Shipment sut = shipmentsCaptor.getValue().get(0);
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getChargedShippingFee()).isEqualTo(expectedCharged);
+            softly.assertThat(sut.getBaseShippingFee()).isEqualTo(baseShippingFee.intValue());
+            softly.assertThat(sut.getRegionSurcharge()).isEqualTo(regionSurcharge.intValue());
+        });
+    }
+
+    static Stream<Arguments> 부과_배송비_사례() {
+        return Stream.of(
+                // 기준 미달이면 기본 배송비
+                Arguments.of(3_000L, 50_000L, 0L, 49_999L, 3_000),
+                // 기준 이상이면 기본 배송비는 0원
+                Arguments.of(3_000L, 50_000L, 0L, 50_000L, 0),
+                // 무료배송이어도 추가 운임은 붙는다
+                Arguments.of(3_000L, 50_000L, 3_000L, 50_000L, 3_000),
+                Arguments.of(3_000L, 50_000L, 3_000L, 10_000L, 6_000),
+                // 기준이 0이면 항상 무료, 없으면 항상 기본 배송비
+                Arguments.of(3_000L, 0L, 0L, 1L, 0),
+                Arguments.of(3_000L, null, 3_000L, 10_000_000L, 6_000)
+        );
+    }
+
+    @Test
+    void 판매자_묶음의_상품_금액_합계로_무료배송을_판정한다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0))));
+        // 20,000원 x 2개 + 10,000원 x 1개 = 50,000원
+        SellerShipmentCommand seller = new SellerShipmentCommand(10L, 3_000L, 50_000L, 0L, List.of(
+                new ShipmentItemCommand(101L, "상품", null, 2, 20_000L),
+                new ShipmentItemCommand(102L, "상품", null, 1, 10_000L)));
+
+        // when
+        shipmentService.create(command(seller));
+
+        // then
+        then(shipmentRepository).should().saveAll(shipmentsCaptor.capture());
+        assertThat(shipmentsCaptor.getValue().get(0).getChargedShippingFee()).isZero();
+    }
+
+    @Test
+    void 판매자마다_자기_주문_상품으로_배송_생성을_알린다() {
+        // given
+        given(deliveryRegionService.resolve(POSTAL_CODE)).willReturn(RegionResult.general());
+        given(sellerShippingSettingService.getSettings(List.of(10L, 20L))).willReturn(Map.of(
+                10L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0)),
+                20L, new SellerShippingSetting(3_000, 50_000, LocalTime.of(13, 0))));
+        SellerShipmentCommand twoItemSeller = new SellerShipmentCommand(20L, 3_000L, 50_000L, 0L, List.of(
+                new ShipmentItemCommand(201L, "상품", null, 1, 10_000L),
+                new ShipmentItemCommand(202L, "상품", null, 1, 10_000L)));
+        ShipmentCreateCommand command = new ShipmentCreateCommand(1L, 100L, FRIDAY_NOON,
+                new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null),
+                List.of(seller(10L, 101L), twoItemSeller));
+
+        given(deliveryEventPublisher.publishShipmentCreated(any(), eq(1L), eq(10L), any(), any())).willReturn(70L);
+        given(deliveryEventPublisher.publishShipmentCreated(any(), eq(1L), eq(20L), any(), any())).willReturn(71L);
+
+        // when
+        List<Long> sut = shipmentService.create(command);
+
+        // then: ID와 생성 시각은 저장소가 채우므로 목 저장소에서는 비어 있다. 실제 값은 DeliveryOutboxKafkaIntegrationTest가 본다
+        then(deliveryEventPublisher).should().publishShipmentCreated(any(), eq(1L), eq(10L), eq(List.of(101L)), any());
+        then(deliveryEventPublisher).should().publishShipmentCreated(any(), eq(1L), eq(20L), eq(List.of(201L, 202L)), any());
+        then(deliveryEventPublisher).shouldHaveNoMoreInteractions();
+        assertThat(sut).containsExactly(70L, 71L);
+    }
+
+    @Test
+    void 이미_처리한_주문이면_shipment를_만들지_않고_배송_생성도_알리지_않는다() {
+        // given
+        given(shipmentRepository.existsByOrderId(1L)).willReturn(true);
+
+        // when
+        List<Long> sut = shipmentService.create(command(seller(10L, 101L)));
+
+        // then
+        then(shipmentRepository).should(never()).saveAll(any());
+        then(deliveryEventPublisher).shouldHaveNoInteractions();
+        assertThat(sut).isEmpty();
+    }
+
+    @Test
+    void 출고하면_송장_정보와_출고_시각으로_배송_시작_이벤트를_발행한다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipment(2L, 10L, item(1L)), 1L)));
+        given(deliveryEventPublisher.publishShipmentDispatched(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", FRIDAY_NOON))
+                .willReturn(70L);
+
+        // when
+        ShipmentDispatchResult sut = shipmentService.dispatch(DISPATCH_COMMAND);
+
+        // then
+        then(deliveryEventPublisher).should()
+                .publishShipmentDispatched(1L, 2L, 10L, "CJ_LOGISTICS", "1234567890", FRIDAY_NOON);
+        assertThat(sut.outboxId()).isEqualTo(70L);
+    }
+
+    @Test
+    void 송장번호가_중복되어_출고에_실패하면_배송_시작_이벤트를_발행하지_않는다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
+        willThrow(new DataIntegrityViolationException("Duplicate entry for key 'shipment.uk_shipment_carrier_tracking_number'"))
+                .given(shipmentRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
+                .isInstanceOf(RestApiException.class);
+        then(deliveryEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 송장번호_UNIQUE_제약_위반이면_TRACKING_NUMBER_DUPLICATED로_바꾼다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
+        willThrow(new DataIntegrityViolationException("Duplicate entry for key 'shipment.uk_shipment_carrier_tracking_number'"))
+                .given(shipmentRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.TRACKING_NUMBER_DUPLICATED));
+    }
+
+    @Test
+    void 송장번호가_아닌_제약_위반은_원래_예외를_그대로_던진다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(shipment(1L, 10L, item(1L))));
+        DataIntegrityViolationException violation = new DataIntegrityViolationException("Check constraint 'ck_shipment_fee' is violated.");
+        willThrow(violation).given(shipmentRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.dispatch(DISPATCH_COMMAND))
+                .isSameAs(violation);
+    }
+
+    @Test
+    void 배송_완료를_반영하면_완료_시각으로_배송_완료_이벤트를_발행한다() {
+        // given
+        // shipment·주문·판매자 id를 서로 다르게 두어 인자 순서가 바뀌면 잡히게 한다 (fixture는 주문 1, 판매자 10)
+        given(shipmentRepository.findByIdForUpdate(5L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.SHIPPING), 5L)));
+
+        given(deliveryEventPublisher.publishShipmentDelivered(5L, 1L, 10L, FRIDAY_NOON)).willReturn(70L);
+
+        // when
+        Long sut = shipmentService.deliver(5L);
+
+        // then
+        assertThat(sut).isEqualTo(70L);
+    }
+
+    @Test
+    void 배송_완료를_반영할_shipment가_없으면_SHIPMENT_NOT_FOUND다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.deliver(1L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.SHIPMENT_NOT_FOUND));
+    }
+
+    @Test
+    void 이미_배송_완료된_shipment면_INVALID_SHIPMENT_STATE이고_이벤트를_다시_발행하지_않는다() {
+        // given
+        given(shipmentRepository.findByIdForUpdate(1L)).willReturn(Optional.of(withId(shipmentIn(ShipmentStatus.DELIVERED), 1L)));
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.deliver(1L))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(DeliveryErrorCode.INVALID_SHIPMENT_STATE));
+        then(deliveryEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 항목이_하나인_shipment를_구매확정하면_지금_시각으로_거래완료된다() {
+        // given
+        Shipment sut = deliveredShipment(item(101L));
+        given(shipmentRepository.findByOrderItemIdForUpdate(101L)).willReturn(Optional.of(sut));
+
+        // when
+        shipmentService.confirmPurchase(101L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.COMPLETED);
+            softly.assertThat(sut.getCompletedAt()).isEqualTo(FRIDAY_NOON);
+        });
+    }
+
+    @Test
+    void 항목이_둘이면_두_번째_구매확정에서_거래완료된다() {
+        // given
+        Shipment sut = deliveredShipment(item(101L), item(102L));
+        given(shipmentRepository.findByOrderItemIdForUpdate(101L)).willReturn(Optional.of(sut));
+        given(shipmentRepository.findByOrderItemIdForUpdate(102L)).willReturn(Optional.of(sut));
+
+        // when
+        shipmentService.confirmPurchase(101L);
+        ShipmentStatus afterFirst = sut.getStatus();
+        shipmentService.confirmPurchase(102L);
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(afterFirst).isEqualTo(ShipmentStatus.DELIVERED);
+            softly.assertThat(sut.getStatus()).isEqualTo(ShipmentStatus.COMPLETED);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("repeatedConfirmations")
+    void 같은_구매확정이_다시_와도_예외_없이_결과가_같다(List<Long> orderItemIds, ShipmentStatus expectedStatus) {
+        // given
+        Shipment sut = deliveredShipment(item(101L), item(102L));
+        orderItemIds.stream().distinct().forEach(id ->
+                given(shipmentRepository.findByOrderItemIdForUpdate(id)).willReturn(Optional.of(sut)));
+
+        // when
+        orderItemIds.forEach(shipmentService::confirmPurchase);
+
+        // then
+        assertThat(sut.getStatus()).isEqualTo(expectedStatus);
+    }
+
+    static Stream<Arguments> repeatedConfirmations() {
+        return Stream.of(
+                // 확정된 항목을 다시 확정: 다른 항목이 남아 배송 완료 그대로
+                Arguments.of(List.of(101L, 101L), ShipmentStatus.DELIVERED),
+                // 거래완료된 뒤 다시 확정: 거래완료 그대로
+                Arguments.of(List.of(101L, 102L, 102L), ShipmentStatus.COMPLETED));
+    }
+
+    @Test
+    void 구매확정할_주문_상품이_담긴_shipment가_없으면_IllegalArgumentException이다() {
+        // given
+        given(shipmentRepository.findByOrderItemIdForUpdate(999L)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> shipmentService.confirmPurchase(999L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("구매확정할 주문 상품이 담긴 shipment가 없습니다. orderItemId=999");
+    }
+
+    private static Shipment deliveredShipment(ShipmentItem... items) {
+        Shipment shipment = shipment(items);
+        shipment.dispatch(Carrier.CJ_LOGISTICS, "1234567890", FRIDAY_NOON);
+        shipment.deliver(FRIDAY_NOON);
+        return shipment;
+    }
+
+    private static ShipmentCreateCommand command(SellerShipmentCommand seller) {
+        return new ShipmentCreateCommand(1L, 100L, FRIDAY_NOON,
+                new AddressCommand("홍길동", "010-1234-5678", POSTAL_CODE, "주소", "상세 주소", null), List.of(seller));
+    }
+
+    private static SellerShipmentCommand seller(Long sellerId, Long baseShippingFee, Long freeShippingThreshold,
+                                                Long regionSurcharge, long unitPrice) {
+        return new SellerShipmentCommand(sellerId, baseShippingFee, freeShippingThreshold, regionSurcharge,
+                List.of(new ShipmentItemCommand(101L, "상품", null, 1, unitPrice)));
+    }
+
+    private static SellerShipmentCommand seller(Long sellerId, Long orderItemId) {
+        return new SellerShipmentCommand(sellerId, 3_000L, 50_000L, 0L,
+                List.of(new ShipmentItemCommand(orderItemId, "상품", null, 1, 10_000L)));
+    }
+}

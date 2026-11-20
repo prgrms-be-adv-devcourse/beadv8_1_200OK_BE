@@ -1,0 +1,31 @@
+meta {
+  name: 미디어 업로드 (작은 이미지, 확대 안 됨)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/media/:purpose
+  body: multipartForm
+  auth: none
+}
+
+params:path {
+  purpose: MEMBER_PROFILE
+}
+
+body:multipart-form {
+  file: @file(files/sample.png)
+}
+
+assert {
+  res.status: eq 201
+  res.body.mediaId: isNumber
+  res.body.url: contains /member_profile/
+  res.body.url: endsWith .jpg
+}
+
+docs {
+  16x16 png 를 올립니다. 크기는 16x16 그대로이고 jpg 로만 변환됩니다.
+  응답 url 을 열어 16x16 인지 확인하면 확대 방지가 동작하는 것입니다.
+}

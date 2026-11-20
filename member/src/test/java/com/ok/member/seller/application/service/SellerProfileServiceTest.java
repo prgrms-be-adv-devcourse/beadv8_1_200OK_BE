@@ -1,0 +1,228 @@
+package com.ok.member.seller.application.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.common.media.MediaUrlResolver;
+import com.ok.member.seller.domain.SellerProfile;
+import com.ok.member.seller.exception.SellerErrorCode;
+import com.ok.member.seller.application.port.out.SellerEventPublisher;
+import com.ok.member.seller.application.port.out.SellerProfileRepository;
+import com.ok.member.seller.application.dto.SellerProfileCommand;
+import com.ok.member.seller.application.dto.SellerProfileResult;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+
+import java.sql.SQLIntegrityConstraintViolationException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
+
+@ExtendWith(MockitoExtension.class)
+class SellerProfileServiceTest {
+
+    private static final Long MEMBER_ID = 1L;
+    private static final String BASE_URL = "https://bucket.s3.ap-northeast-2.amazonaws.com/";
+    private static final String IMAGE_KEY = "seller_profile/3f2a9c1e-7b4d-4e8a-9f0c-1d2e3f4a5b6c.jpg";
+
+    // 출고지 변경 시각은 고정 시계로 만든다. 나노초는 마이크로초로 잘려 메시지에 실려야 한다
+    private static final Instant NOW = Instant.parse("2026-11-15T01:00:00.123456789Z");
+    private static final LocalDateTime NOW_MICROS = LocalDateTime.of(2026, 11, 15, 10, 0, 0, 123_456_000);
+
+    @Mock
+    SellerProfileRepository sellerProfileRepository;
+
+    @Mock
+    SellerEventPublisher sellerEventPublisher;
+
+    SellerProfileService sellerProfileService;
+
+    @BeforeEach
+    void setUp() {
+        // URL 변환은 값 계산뿐이라 실제 객체를 쓴다
+        MediaUrlResolver mediaUrlResolver = new MediaUrlResolver("bucket", "ap-northeast-2");
+        // 중복 검증기는 목 리포지토리를 그대로 쓰므로 실제 객체로 둔다 (변환 규칙 자체는 SellerProfileDuplicateValidatorTest가 확인)
+        sellerProfileService = new SellerProfileService(sellerProfileRepository,
+                new SellerProfileDuplicateValidator(sellerProfileRepository),
+                new SellerProfileImageUrlValidator(mediaUrlResolver), mediaUrlResolver,
+                sellerEventPublisher, Clock.fixed(NOW, ZoneId.of("Asia/Seoul")));
+    }
+
+    @Test
+    void 등록하면_출고지_우편번호를_변경_시각과_함께_알린다() {
+        // given
+        given(sellerProfileRepository.saveAndFlush(any(SellerProfile.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        sellerProfileService.register(MEMBER_ID, command(null, "37421"));
+
+        // then: 판매자 ID는 회원 ID와 같은 값이다
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "37421", NOW_MICROS);
+    }
+
+    @Test
+    void 수정으로_출고지_우편번호가_바뀌면_알린다() {
+        // given
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+
+        // when
+        sellerProfileService.update(MEMBER_ID, command(null, "06236"));
+
+        // then
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "06236", NOW_MICROS);
+    }
+
+    @Test
+    void 출고지_우편번호를_그대로_두고_수정해도_현재_값을_알린다() {
+        // given: 상호명·소개만 바뀌는 수정. 사본이 어긋났어도 다음 저장 때 맞춰지도록 저장마다 보낸다(#651)
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "옛 상호", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+
+        // when
+        sellerProfileService.update(MEMBER_ID, command(null, "37421"));
+
+        // then: 메시지의 발생 시각은 프로필에 남긴 저장 시각과 같다
+        then(sellerEventPublisher).should().publishOriginPostalCodeChanged(MEMBER_ID, "37421", NOW_MICROS);
+        assertThat(profile.getProfileSavedAt()).isEqualTo(NOW_MICROS);
+    }
+
+    @Test
+    void 출고지_우편번호_형식이_틀리면_저장도_알림도_하지_않는다() {
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.register(MEMBER_ID, command(null, "3742")))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_ORIGIN_POSTAL_CODE));
+        then(sellerProfileRepository).should(never()).saveAndFlush(any());
+        then(sellerEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 등록하면_사진은_key로_저장하고_URL로_돌려준다() {
+        // given
+        given(sellerProfileRepository.saveAndFlush(any(SellerProfile.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        SellerProfileResult result = sellerProfileService.register(MEMBER_ID, command(BASE_URL + IMAGE_KEY));
+
+        // then
+        ArgumentCaptor<SellerProfile> captor = ArgumentCaptor.forClass(SellerProfile.class);
+        then(sellerProfileRepository).should().saveAndFlush(captor.capture());
+        SellerProfile sut = captor.getValue();
+
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getMemberId()).isEqualTo(MEMBER_ID);
+            softly.assertThat(sut.getProfileImageKey()).isEqualTo(IMAGE_KEY);
+            softly.assertThat(result.profileImageUrl()).isEqualTo(BASE_URL + IMAGE_KEY);
+        });
+    }
+
+    @Test
+    void 이미_프로필이_있으면_다시_등록하지_않는다() {
+        // given
+        given(sellerProfileRepository.existsByMemberId(MEMBER_ID)).willReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.register(MEMBER_ID, command(null)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.SELLER_PROFILE_ALREADY_EXISTS));
+        then(sellerProfileRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 등록_버튼을_동시에_눌러_유니크_제약에_걸리면_중복_등록_오류로_바꾼다() {
+        // given: 사전 확인은 둘 다 통과했다
+        given(sellerProfileRepository.saveAndFlush(any(SellerProfile.class)))
+                .willThrow(new DataIntegrityViolationException("could not execute statement",
+                        new SQLIntegrityConstraintViolationException(
+                                "Duplicate entry for key 'uk_seller_profile_member_id'")));
+
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.register(MEMBER_ID, command(null)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.SELLER_PROFILE_ALREADY_EXISTS));
+    }
+
+    @Test
+    void 판매자_프로필용으로_올린_사진이_아니면_등록하지_않는다() {
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.register(MEMBER_ID, command(BASE_URL + "product/a.jpg")))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.INVALID_PROFILE_IMAGE_URL));
+        then(sellerProfileRepository).should(never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 수정할_때_사진_URL이_없으면_사진을_지운다() {
+        // given
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, IMAGE_KEY);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+
+        // when
+        SellerProfileResult result = sellerProfileService.update(MEMBER_ID, command(null));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(profile.getProfileImageKey()).isNull();
+            softly.assertThat(result.profileImageUrl()).isNull();
+        });
+    }
+
+    @Test
+    void 다른_탭이_먼저_수정해_버전이_맞지_않으면_409로_막고_출고지_메시지를_남기지_않는다() {
+        // given: 출고지를 바꾸는 수정인데, 다른 탭이 먼저 커밋해 버전 검사에서 걸린다
+        SellerProfile profile = SellerProfile.register(
+                MEMBER_ID, "청송 햇살농원", "김영수", "054-873-2210", "37421", null, null);
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.of(profile));
+        willThrow(new ObjectOptimisticLockingFailureException(SellerProfile.class, 1L))
+                .given(sellerProfileRepository).flush();
+
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.update(MEMBER_ID, command(null, "06236")))
+                .isInstanceOfSatisfying(RestApiException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(SellerErrorCode.SELLER_PROFILE_CONCURRENT_MODIFICATION));
+        then(sellerEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 프로필을_등록하지_않았으면_수정할_수_없다() {
+        // given
+        given(sellerProfileRepository.findByMemberId(MEMBER_ID)).willReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> sellerProfileService.update(MEMBER_ID, command(null)))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(SellerErrorCode.SELLER_PROFILE_NOT_FOUND));
+    }
+
+    private static SellerProfileCommand command(String profileImageUrl) {
+        return command(profileImageUrl, "37421");
+    }
+
+    private static SellerProfileCommand command(String profileImageUrl, String originPostalCode) {
+        return new SellerProfileCommand("청송 햇살농원", "김영수", "054-873-2210", originPostalCode,
+                "3대째 사과만 키우는 청송 부남면 과수원입니다.", profileImageUrl);
+    }
+
+}

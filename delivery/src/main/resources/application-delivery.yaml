@@ -1,0 +1,108 @@
+ok:
+  flyway:
+    standalone: true
+server:
+  port: ${SERVER_PORT:8086}
+spring:
+  application:
+    name: delivery
+  config:
+    # Kafka 접속·직렬화 설정은 common-kafka.yaml 한 곳에서 관리한다. 앱마다 다르면 서로 메시지를 읽지 못한다 (#538)
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-kafka.yaml,classpath:common-async.yaml
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_delivery?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:password}
+  jackson:
+    time-zone: ${APP_TIME_ZONE:Asia/Seoul}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+  flyway:
+    out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+app:
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION:ap-northeast-2}
+    bucket: ${S3_BUCKET:local-bucket}
+jwt:
+  issuer: paldo-gotgan
+  audience: paldo-gotgan-api
+  # 발급 모듈(member)의 JWKS 주소. 설정하면 공개키를 이 주소에서 받아 검증하고, 아래 verification-keys는 읽지 않는다.
+  # 비어 있으면(로컬 기본값) 아래 공개키 파일로 검증한다. 모듈을 따로 배포할 때 환경변수로 넣는다 (docs/DEVELOPMENT.md 8절)
+  jwk-set-uri: ${JWT_JWK_SET_URI:}
+  # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고른다. 키 교체 절차는 docs/DEVELOPMENT.md 8절
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+logging:
+  level:
+    com.ok: ${LOG_LEVEL_OK:INFO}
+delivery:
+  carrier:
+    # mock: 일정 시간 뒤 배송 완료를 알리는 가짜 택배사(기본). tracker: Delivery Tracker로 실제 배송 상태를 조회한다
+    type: ${DELIVERY_CARRIER_TYPE:mock}
+    tracker:
+      # 기본은 실제 서비스다. 시험할 때는 가짜 택배사(carrier-simulator) 주소로 바꿔 같은 어댑터로 붙는다 (#559)
+      base-url: ${DELIVERY_TRACKER_BASE_URL:https://apis.tracker.delivery/graphql}
+      auth-url: ${DELIVERY_TRACKER_AUTH_URL:https://auth.tracker.delivery/oauth2/token}
+      client-id: ${DELIVERY_TRACKER_CLIENT_ID:}
+      client-secret: ${DELIVERY_TRACKER_CLIENT_SECRET:}
+      # 무료 플랜은 웹훅이 없어 조회로 확인한다. 호출 제한이 확인되기 전까지 넉넉하게 둔다
+      poll-interval: ${DELIVERY_TRACKER_POLL_INTERVAL:5m}
+      # 택배사가 배송 상태 변경을 알려 올 우리 주소. 끝 경로가 아래 webhook.secret과 같아야 한다
+      # (예: https://<공개 주소>/api/v1/carrier-notifications/<secret>). 비어 있으면 알림을 등록하지 않고 조회만 한다 (#668)
+      callback-url: ${DELIVERY_TRACKER_CALLBACK_URL:}
+      webhook-expiration: ${DELIVERY_TRACKER_WEBHOOK_EXPIRATION:48h}
+      connect-timeout: 3s
+      read-timeout: 15s
+    webhook:
+      # 택배사 알림 주소의 끝 경로 비밀값. 비어 있으면 모든 알림을 거절한다. 환경 변수로만 주입하고 저장소에 두지 않는다
+      secret: ${DELIVERY_CARRIER_WEBHOOK_SECRET:}
+  outbox:
+    # 커밋된 배송 outbox 줄을 바로 Kafka로 보내는 전용 실행기(DeliveryAsyncConfig, #644, #793).
+    # 대기열이 가득 차면 기다리지 않고 버린다. 버린 줄은 PENDING으로 남아 아래 relay가 보낸다
+    send:
+      # 2→4로 포화 처리량이 초당 94→159건으로 늘었다. 더 늘려도 한계는 Hikari(기본 10) 풀이라 작게 둔다 (docs/decisions/delivery/793-outbox-send-drop-when-full.md)
+      pool-size: ${DELIVERY_OUTBOX_SEND_POOL_SIZE:4}
+      # 대기 시간(대기열/처리량)이 relay.min-age보다 짧아야 버리는(stale) 작업과 중복 발송이 없다. 느린 브로커(전송 1~2초)에서 20은 stale 0, 100 이상은 수천 건이었다
+      queue-capacity: ${DELIVERY_OUTBOX_SEND_QUEUE_CAPACITY:20}
+    # 커밋 직후 바로 보내지 못한 배송 outbox 줄을 Kafka로 다시 보내는 주기와 한 번에 보낼 줄 수(DeliveryOutboxRelayScheduler, #644).
+    # 값을 빼면 스케줄러의 기본값(5초마다, 300줄, 10초)을 쓴다. cron을 "-"로 두면 보내지 않는다.
+    # relay는 한 스레드로 초당 약 120줄을 보내 300줄이 2.5초라 5초 주기 안에 끝난다. 실행이 주기를 넘으면 cron이 회차를 건너뛴다
+    relay:
+      cron: "*/5 * * * * *"
+      batch-size: 300
+      # 남은 지 이 시간이 지난 줄만 보낸다. 즉시 발송 중인 줄과 겹치지 않게 즉시 발송의 브로커 확인 대기 상한(10초)과 맞춘다
+      min-age: 10s
+  # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
+  default-shipping:
+    base-shipping-fee: 3000
+    free-shipping-threshold: 50000
+    cutoff-time: "13:00"

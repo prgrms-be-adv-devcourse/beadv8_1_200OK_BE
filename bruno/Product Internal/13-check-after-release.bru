@@ -1,0 +1,25 @@
+meta {
+  name: 확인 - 해제 후 판매 가능 수량
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/internal/v1/products/options?optionIds={{optionA}},{{optionB}}
+  body: none
+  auth: none
+}
+
+params:query {
+  optionIds: {{optionA}},{{optionB}}
+}
+
+assert {
+  res.status: eq 200
+  res.body[0].availableStock: eq 10
+  res.body[1].availableStock: eq 1
+}
+
+docs {
+  옵션 A는 10으로 복구(두 번 해제해도 한 번만), 옵션 B는 재고 부족 롤백으로 1 그대로입니다.
+}

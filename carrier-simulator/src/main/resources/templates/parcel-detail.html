@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{layout :: head('송장 상세')}"></head>
+<body>
+<header th:replace="~{layout :: header}"></header>
+<main>
+    <h1>송장 <span class="mono" th:text="${parcel.trackingNumber}">901000000001</span></h1>
+    <div class="tiles">
+        <div class="tile"><div class="num" th:text="${parcel.status}">접수</div><div class="cap">현재 상태</div></div>
+        <div class="tile"><div class="num" th:text="${parcel.scenario}">정상</div><div class="cap">시나리오</div></div>
+        <div class="tile"><div class="num" th:text="${parcel.carrierId}">kr.cjlogistics</div><div class="cap">택배사</div></div>
+        <div class="tile"><div class="num" th:text="${parcel.queryCount}">0</div><div class="cap">조회받은 횟수</div></div>
+    </div>
+    <div class="panel" style="margin-bottom:16px">
+        <h2>알림 등록</h2>
+        <p th:if="${registrationUrl}">
+            <span class="mono" th:text="${registrationUrl}">http://localhost:8080/callback</span>
+            <span class="note" th:text="'만료 ' + ${registrationExpires}">만료 00:00:00</span>
+        </p>
+        <p class="note" th:unless="${registrationUrl}">등록이 없습니다. 이 송장은 상태가 바뀌어도 알림을 보내지 않습니다.</p>
+    </div>
+    <div class="panel">
+        <h2>사건 이력</h2>
+        <div class="scroll">
+            <table>
+                <thead>
+                <tr><th>상태</th><th>장소</th><th>설명</th><th>일어난 시각</th><th>처음 조회해 간 시각</th><th>알아채기까지</th></tr>
+                </thead>
+                <tbody>
+                <tr th:each="event : ${events}">
+                    <td th:text="${event.status}">접수</td>
+                    <td th:text="${event.location} ?: '-'">-</td>
+                    <td th:text="${event.description}">설명</td>
+                    <td th:text="${event.occurredAt}">00:00:00</td>
+                    <td th:text="${event.firstFetchedAt}">-</td>
+                    <td th:text="${event.latency}">-</td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(events)}"><td colspan="6" class="note">아직 조회되지 않는 송장입니다.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="note">"알아채기까지"는 사건이 일어난 뒤 받는 쪽이 처음으로 조회해 가기까지 걸린 시간입니다.</p>
+    </div>
+    <p style="margin-top:12px"><a href="/parcels">목록으로</a></p>
+</main>
+</body>
+</html>

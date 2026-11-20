@@ -1,0 +1,21 @@
+meta {
+  name: 상품 상세에서 리뷰 집계 확인
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/{{reviewProductId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.reviewCount: eq 1
+  res.body.averageRating: eq 3
+}
+
+docs {
+  별점 6(3점)으로 수정한 뒤라 평균이 3.0입니다.
+}

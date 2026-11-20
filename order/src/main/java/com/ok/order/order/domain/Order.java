@@ -1,0 +1,366 @@
+package com.ok.order.order.domain;
+
+import com.ok.order.OrderSchema;
+import com.ok.common.exception.RestApiException;
+import com.ok.common.jpa.entity.BaseTime;
+import com.ok.order.order.exception.OrderErrorCode;
+import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+@Entity
+@Table(name = "orders", catalog = OrderSchema.NAME)
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class Order extends BaseTime {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // 구매자 ID
+    @Column(nullable = false)
+    private Long buyerId;
+
+    // 주문 생성 멱등키 (Idempotency-Key 헤더), 키 도입 전 주문은 null
+    @Column(length = 64)
+    private String idempotencyKey;
+
+    // 주문 상태
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private OrderStatus status;
+
+    // 지갑에 결제를 요청한 시각(주문 생성 이벤트 발행 시각). 비어 있으면 아직 만드는 중이다(#402)
+    @Column(name = "payment_requested_at")
+    private LocalDateTime paymentRequestedAt;
+
+    // 재고 해제를 확인한 시각(#657). 취소·결제 실패인데 비어 있으면 정리 스케줄러가 재고 해제를 다시 부른다
+    @Column(name = "stock_released_at")
+    private LocalDateTime stockReleasedAt;
+
+    // 수령인 이름
+    @Column(nullable = false, length = 50)
+    private String recipientName;
+
+    // 수령인 연락처, 하이픈 포함 형식(000-0000-0000)
+    @Column(nullable = false, length = 20)
+    private String recipientPhone;
+
+    // 우편번호 (숫자 5자리)
+    @Column(nullable = false, length = 5)
+    private String zipCode;
+
+    // 기본 주소(도로명 또는 지번)
+    @Column(nullable = false, length = 200)
+    private String address;
+
+    // 상세 주소(동, 호수 등)
+    @Column(length = 100)
+    private String addressDetail;
+
+    // 배송 요청사항 (선택), 결제 완료 이벤트로 배송에 넘긴다
+    @Column(length = 255)
+    private String deliveryNote;
+
+    // 상품 금액 합계
+    @Column(nullable = false)
+    private long totalProductAmount;
+
+    // 배송비 합계
+    @Column(nullable = false)
+    private long totalShippingFee;
+
+    // 도서산간 추가 운임 합계
+    @Column(nullable = false)
+    private long totalRemoteAreaFee;
+
+    // 최종 결제 금액
+    @Column(nullable = false)
+    private long totalAmount;
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderSellerGroup> sellerGroups = new  ArrayList<>();
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderThirdPartyConsent> thirdPartyConsents = new  ArrayList<>();
+
+    // 주문서 한 줄(OrderLine)으로 주문 생성
+    public static Order create(Long buyerId, List<OrderLine> lines) {
+        // 주문할 상품이 없으면 주문 생성 불가
+        if (lines.isEmpty()) {
+            throw new RestApiException(OrderErrorCode.EMPTY_ORDER_ITEMS);
+        }
+
+        // 빈 주문 만들기 -> 처음 상태는 결제 대기
+        Order order = new Order();
+        order.buyerId = buyerId;
+        order.status = OrderStatus.PAYMENT_PENDING;
+
+        // 판매자별로 나누기
+        Map<Long, List<OrderLine>> linesBySeller = new LinkedHashMap<>();
+        for (OrderLine line : lines) {
+            Long sellerId = line.sellerId();
+
+            // 만약 처음 나온 판매자면 빈 목록 생성
+            if (!linesBySeller.containsKey(sellerId)) {
+                linesBySeller.put(sellerId, new ArrayList<>());
+            }
+
+            // 해당 판매자 목록에 상품 추가
+            linesBySeller.get(sellerId).add(line);
+        }
+
+        // 판매자별 주문 그룹 생성
+        for (Long sellerId : linesBySeller.keySet()) {
+            List<OrderLine> sellerLines = linesBySeller.get(sellerId);
+
+            OrderSellerGroup group = OrderSellerGroup.create(order, sellerId, sellerLines);
+
+            order.sellerGroups.add(group);
+        }
+
+        // 금액 합계 계산
+        order.calculateAmounts();
+
+        return order;
+    }
+
+    // 배송지 등록
+    public void registerShippingAddress(
+            String recipientName,
+            String recipientPhone,
+            String zipCode,
+            String address,
+            String addressDetail,
+            String deliveryNote
+    ) {
+        this.recipientName = recipientName;
+        this.recipientPhone = recipientPhone;
+        this.zipCode = zipCode;
+        this.address = address;
+        this.addressDetail = addressDetail;
+        this.deliveryNote = deliveryNote;
+    }
+
+    // 멱등키 기록: (구매자, 멱등키) 유니크 제약이 같은 요청의 중복 저장을 막는다
+    public void assignIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+    }
+
+    // 판매자에게 주문 정보 제공 동의
+    public void agreeThirdPartyProvision(boolean agreed) {
+        // 동의하지 않으면 주문 불가
+        if (!agreed) {
+            throw new RestApiException(OrderErrorCode.THIRD_PARTY_CONSENT_REQUIRED);
+        }
+
+        for (OrderSellerGroup group : sellerGroups) {
+            OrderThirdPartyConsent consent = OrderThirdPartyConsent.create(this, group.getSellerId());
+            thirdPartyConsents.add(consent);
+        }
+    }
+
+    private void calculateAmounts() {
+        long productAmount = 0;
+        long shippingFee = 0;
+        long remoteAreaFee = 0;
+
+        for (OrderSellerGroup group : sellerGroups) {
+            productAmount += group.productAmount();
+            shippingFee += group.getShippingFee();
+            remoteAreaFee += group.getRemoteAreaFee();
+        }
+
+        this.totalProductAmount = productAmount;
+        this.totalShippingFee = shippingFee;
+        this.totalRemoteAreaFee = remoteAreaFee;
+        this.totalAmount = productAmount + shippingFee + remoteAreaFee;
+    }
+
+    // 판매자별 상품 금액 합계: 배송 모듈이 무료배송 기준과 비교하는 값
+    public Map<Long, Long> getProductAmountsBySeller() {
+        Map<Long, Long> amounts = new LinkedHashMap<>();
+        for (OrderSellerGroup group : sellerGroups) {
+            amounts.put(group.getSellerId(), group.productAmount());
+        }
+        return amounts;
+    }
+
+    // 판매자 묶음의 배송비·도서산간 운임 적용 (배송 모듈이 계산한 값)
+    public void applyShippingFee(Long sellerId, SellerShippingFee fee) {
+        OrderSellerGroup target = null;
+        for (OrderSellerGroup group : sellerGroups) {
+            if (group.getSellerId().equals(sellerId)) {
+                target = group;
+            }
+        }
+        // 호출하는 쪽이 이 주문의 판매자로만 부르므로, 없으면 코드 버그다
+        if (target == null) {
+            throw new IllegalArgumentException("주문에 없는 판매자입니다. sellerId=" + sellerId);
+        }
+        target.applyShippingFee(fee);
+        calculateAmounts();
+    }
+
+    // 모든 묶음의 주문 상품을 한 목록으로 모으기
+    public List<OrderItem> getAllItems() {
+        List<OrderItem> allItems = new ArrayList<>();
+        for (OrderSellerGroup group : sellerGroups) {
+            allItems.addAll(group.getItems());
+        }
+        return allItems;
+    }
+
+    // 지갑 이용 내역에 보일 주문 요약(#602). 첫 주문 상품의 상품 이름에, 나머지가 있으면 " 외 N건"을 붙인다(예: "사과 외 3건").
+    // N은 나머지 주문 상품 줄 수다. 같은 상품도 옵션이 다르면 따로 센다.
+    // 상품 이름은 최대 100자라 자르지 않고 그대로 보낸다. 지갑은 120자까지 저장하고, 길면 화면에서 말줄임한다
+    public String orderSummary() {
+        List<OrderItem> items = getAllItems();
+        // 묶음과 주문 상품 목록은 DB에서 읽을 때 순서가 정해져 있지 않다. 주문서 순서대로 저장되므로 ID가 가장 작은 상품을 첫 상품으로 본다.
+        // 저장 전이라 ID가 없으면 담긴 순서의 첫 상품이다
+        OrderItem first = items.stream()
+                .min(Comparator.comparing(OrderItem::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElseThrow(() -> new IllegalStateException("주문 상품이 없는 주문입니다. orderId=" + id));
+        int others = items.size() - 1;
+        if (others == 0) {
+            return first.getProductName();
+        }
+        return first.getProductName() + " 외 " + others + "건";
+    }
+
+    // 결제 대기 상태인지
+    public boolean isPaymentPending() {
+        return status == OrderStatus.PAYMENT_PENDING;
+    }
+
+    // 결제 실패 상태인지
+    public boolean isPaymentFailed() {
+        return status == OrderStatus.PAYMENT_FAILED;
+    }
+
+    // 취소 상태인지
+    public boolean isCanceled() {
+        return status == OrderStatus.CANCELED;
+    }
+
+    // 아직 만드는 중인지: 결제 대기인데 지갑에 결제를 요청하기 전(재고 선점 중이거나 그 뒤 보상 취소까지 실패해 멈춤)
+    public boolean isBeingCreated() {
+        return status == OrderStatus.PAYMENT_PENDING && paymentRequestedAt == null;
+    }
+
+    // 지갑에 결제를 요청했다고 기록한다.
+    // 결제 대기일 때만 허용한다. 정리 스케줄러가 먼저 취소한 주문에 결제를 요청하면 취소된 주문에서 돈이 빠지기 때문이다(#402)
+    public void markPaymentRequested(LocalDateTime requestedAt) {
+        if (status != OrderStatus.PAYMENT_PENDING) {
+            throw new IllegalStateException("결제 대기가 아닌 주문에는 결제를 요청할 수 없습니다. status=" + status);
+        }
+        this.paymentRequestedAt = requestedAt;
+    }
+
+    // 결제를 요청하기 전에 기준보다 오래 멈췄는지(#402). 지갑이 모르는 주문이라 주문이 혼자 취소해도 된다
+    public boolean isStaleBeforePaymentRequest(LocalDateTime creatingDeadline) {
+        return isBeingCreated() && !getCreatedAt().isAfter(creatingDeadline);
+    }
+
+    // 결제를 요청하고 기준보다 오래 결과가 없는지(#656). 돈이 움직였는지는 지갑만 알아서, 주문은 취소하지 않고 지갑에 결제 만료를 요청한다
+    public boolean isPaymentExpireDue(LocalDateTime paymentDeadline) {
+        return status == OrderStatus.PAYMENT_PENDING && paymentRequestedAt != null
+                && !paymentRequestedAt.isAfter(paymentDeadline);
+    }
+
+    // 결제 완료
+    public void markPaid() {
+        this.status = OrderStatus.PAID;
+        for (OrderItem item : getAllItems()) {
+            item.markPreparing();
+        }
+    }
+
+    // 결제 실패 -> 주문과 상품 모두 결제 실패
+    public void markPaymentFailed() {
+        this.status = OrderStatus.PAYMENT_FAILED;
+        for (OrderItem item : getAllItems()) {
+            item.markPaymentFailed();
+        }
+    }
+
+    // 취소 -> 주문과 상품 모두 취소. 삭제하지 않고 남겨 실패 원인과 재고 해제 여부를 추적할 수 있게 한다(#401).
+    // 멱등키는 비운다. 멱등키는 성공한 주문이 두 번 생기지 않게 하려는 것이라, 실패한 주문 때문에 같은 키로 다시 주문하지 못하면 안 된다.
+    // 결제 대기일 때만 취소한다. 결제 결과를 받은 주문은 이미 돈이 오간 상태라, 누가 호출하든 취소로 덮지 않도록 주문이 직접 막는다
+    public boolean cancel() {
+        if (status != OrderStatus.PAYMENT_PENDING) {
+            return false;
+        }
+        this.status = OrderStatus.CANCELED;
+        this.idempotencyKey = null;
+        for (OrderItem item : getAllItems()) {
+            item.cancel();
+        }
+        return true;
+    }
+
+    // 재고를 풀어야 하는데 아직 해제를 확인하지 못했는지(#657).
+    // 취소와 결제 실패는 더 바뀌지 않는 상태라, 한 번 대상이 되면 해제를 확인할 때까지 대상으로 남는다
+    public boolean needsStockRelease() {
+        return (status == OrderStatus.CANCELED || status == OrderStatus.PAYMENT_FAILED) && stockReleasedAt == null;
+    }
+
+    // 재고 해제를 확인했다고 기록한다(#657). 이미 기록했거나 재고를 풀 상태가 아니면 그대로 둔다(처음 확인한 시각을 남긴다)
+    public void markStockReleased(LocalDateTime releasedAt) {
+        if (needsStockRelease()) {
+            this.stockReleasedAt = releasedAt;
+        }
+    }
+
+    // 판매자 묶음의 상품들을 '배송 중'으로 변경
+    public int markShipping(Long sellerId) {
+        for (OrderSellerGroup group : sellerGroups) {
+            if (group.getSellerId().equals(sellerId)) {
+                return group.markShipping();
+            }
+        }
+        return 0;
+    }
+
+    // 판매자 묶음의 상품들을 '배송 완료'로 변경
+    public int markDelivered(Long sellerId, LocalDateTime deliveredAt) {
+        for (OrderSellerGroup group : sellerGroups) {
+            if (group.getSellerId().equals(sellerId)) {
+                return group.markDelivered(deliveredAt);
+            }
+        }
+        return 0;
+    }
+
+    // 주문 안에서 주문 상품 하나 찾기
+    public Optional<OrderItem> findItem(Long orderItemId) {
+        for (OrderItem item : getAllItems()) {
+            if (orderItemId.equals(item.getId())) {
+                return Optional.of(item);
+            }
+        }
+        return Optional.empty();
+    }
+
+
+    // 자동 구매확정: 기준 시각 이전에 배송 완료된 상품을 확정하고, 확정된 상품을 돌려줌
+    public List<OrderItem> confirmPurchasesDeliveredBefore(LocalDateTime deadline, LocalDateTime now) {
+        List<OrderItem> confirmed = new ArrayList<>();
+        for (OrderItem item : getAllItems()) {
+            if (item.isDeliveredBefore(deadline) && item.confirmPurchase(now)) {
+                confirmed.add(item);
+            }
+        }
+        return confirmed;
+    }
+}

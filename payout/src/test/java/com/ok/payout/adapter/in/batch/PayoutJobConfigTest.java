@@ -1,0 +1,236 @@
+package com.ok.payout.adapter.in.batch;
+
+import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.application.port.in.PayoutDraftResult;
+import com.ok.payout.application.port.in.PayoutPublishResult;
+import com.ok.payout.application.port.in.PayoutVerifyResult;
+import com.ok.payout.application.port.in.PayoutUseCase;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.job.JobInstance;
+import org.springframework.batch.core.job.parameters.JobParameters;
+import org.springframework.batch.core.step.StepContribution;
+import org.springframework.batch.core.step.StepExecution;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
+
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.BDDMockito.given;
+
+// 단위 테스트: draftStep·verifyStep·publishStep tasklet이 결과를 배치 실행 기록(StepContribution)에 어떻게 남기는지와 전원 실패 판정만 확인 (#90, #290, #309)
+// 판매자 실패를 실제 Job 실행 중에 만들 방법이 없어(스냅샷 ID를 미리 알 수 없고, 테스트 DB 계정은 트리거를 만들 수 없음) 이 연결부를 따로 확인함
+// 판매자 단위 격리 자체(트랜잭션 분리, 실패 기록)는 PayoutSettleIntegrationTest에서 실제 DB로 확인
+@ExtendWith(MockitoExtension.class)
+class PayoutJobConfigTest {
+
+    private static final Long SNAPSHOT_ID = 12L;
+
+    @Mock
+    private PayoutUseCase payoutUseCase;
+
+    @Mock
+    private PayoutOutboxSendLock payoutOutboxSendLock;
+
+    @Test
+    void draft_회차에서_성공한_판매자는_write_count_실패한_판매자는_write_skip_count로_남기고_다음_회차를_부른다() throws Exception {
+        // given: 이번 회차 판매자 3명 중 1명 실패
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(3, 1, 30L));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutDraftTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then
+        assertThat(sut).isEqualTo(RepeatStatus.CONTINUABLE);
+        assertThat(contribution).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(contribution.getWriteCount()).isEqualTo(2L);
+            softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(1L);
+        });
+    }
+
+    @Test
+    void 이번_회차의_판매자가_모두_실패해도_다음_회차를_부른다() throws Exception {
+        // given: 판매자 2명 모두 실패 (실패한 판매자는 실패 기록 때문에 다음 회차에서 다시 뽑히지 않음)
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 2, 20L));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutDraftTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then: 판매자 수가 0이 아니면 계속. 끝내는 기준은 "남은 판매자 없음"이지 "성공한 판매자 없음"이 아님
+        assertThat(sut).isEqualTo(RepeatStatus.CONTINUABLE);
+    }
+
+    @Test
+    void draft_대상_판매자가_처음부터_없으면_draft_Step을_끝낸다() throws Exception {
+        // given: 정산 대상이 없는 날 (validate 실패만 있는 날도 draft 대상은 0명)
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, null));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutDraftTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then: 실패한 판매자가 없으니 전원 실패가 아님 → 정상 종료
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+    }
+
+    @Test
+    void draft_회차의_마지막_판매자를_Step_실행_기록에_남기고_다음_회차에_넘긴다() throws Exception {
+        // given: 1회차는 처음부터(null) 판매자 10·20, 2회차는 20 다음부터 판매자 30, 3회차는 남은 판매자 없음
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 0, 20L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 20L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(1, 0, 30L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 30L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, 30L));
+        StepExecution stepExecution = stepExecution();
+
+        // when
+        RepeatStatus sut = runRounds(stepExecution, 3);
+
+        // then: 회차마다 지난 회차의 마지막 판매자를 받아야 위 세 응답이 차례로 나옴 (다른 값을 넘기면 Mockito가 인자 불일치로 실패시킴)
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertSoftly(softly -> {
+            softly.assertThat(stepExecution.getWriteCount()).isEqualTo(3L);
+            softly.assertThat(stepExecution.getExecutionContext().getLong(PayoutJobConfig.DRAFT_LAST_SELLER_ID_KEY)).isEqualTo(30L);
+        });
+    }
+
+    @Test
+    void 일부_판매자라도_성공했으면_실패가_있어도_draft_Step을_끝낸다() throws Exception {
+        // given: 1회차 2명 중 1명 실패 → 2회차 남은 판매자 없음
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 1, 20L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 20L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, 20L));
+        StepExecution stepExecution = stepExecution();
+
+        // when
+        RepeatStatus sut = runRounds(stepExecution, 2);
+
+        // then: 정상 판매자 정산을 위해 COMPLETED 유지
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+    }
+
+    @Test
+    void 모든_판매자가_실패했으면_마지막_회차에서_draft_Step을_실패시킨다() {
+        // given: 1회차 2명, 2회차 1명 모두 실패 → 3회차 남은 판매자 없음
+        given(payoutUseCase.draft(SNAPSHOT_ID, null, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(2, 2, 20L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 20L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(1, 1, 30L));
+        given(payoutUseCase.draft(SNAPSHOT_ID, 30L, PayoutPolicy.PAYOUT_BATCH_PAYEE_SIZE)).willReturn(new PayoutDraftResult(0, 0, 30L));
+        StepExecution stepExecution = stepExecution();
+
+        // when & then: 지킬 정산이 없는 전원 실패라 Job을 FAILED로 드러냄 (앞 회차들의 실패 수가 Step에 누적된 것으로 판단)
+        assertThatThrownBy(() -> runRounds(stepExecution, 3))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("draft 대상 판매자가 모두 실패해 정산할 판매자가 없습니다. snapshotId=12, 실패 판매자 수=3");
+    }
+
+    // ---------- verifyStep (#290) ----------
+
+    @Test
+    void verify_결과의_정산할_항목_수는_write_count_새로_기록한_실패_수는_write_skip_count로_남긴다() throws Exception {
+        // given: 주문 1개가 걸려 후보 3건을 기록하고, 정산할 항목 5건이 남음
+        given(payoutUseCase.verify(SNAPSHOT_ID)).willReturn(new PayoutVerifyResult(5, 1, 3));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutVerifyTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then: 일부만 걸리면 정상 주문 정산을 위해 Step을 끝내고 commit으로 넘어감
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertSoftly(softly -> {
+            softly.assertThat(contribution.getWriteCount()).isEqualTo(5L);
+            softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(3L);
+        });
+    }
+
+    @Test
+    void 걸린_주문이_없어_정산할_항목이_0건이면_verify_Step을_끝낸다() throws Exception {
+        // given: 정산 대상이 없는 날 (validate 실패만 있는 날도 draft 항목은 0건)
+        given(payoutUseCase.verify(SNAPSHOT_ID)).willReturn(new PayoutVerifyResult(0, 0, 0));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutVerifyTasklet(SNAPSHOT_ID).execute(contribution, null);
+
+        // then
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+    }
+
+    // ---------- publishStep (#309) ----------
+
+    @Test
+    void 발송_실패가_있어도_publish_Step을_끝내고_보낸_수는_write_count_실패_수는_write_skip_count로_남긴다() throws Exception {
+        // given: 2줄 보냄, 1줄 실패, 멈춰서 시도 못 한 4줄 남음 (남은 줄은 실패가 아니라 skip에 넣지 않음)
+        given(payoutOutboxSendLock.publishPending()).willReturn(Optional.of(new PayoutPublishResult(2, 1, 4)));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutPublishTasklet().execute(contribution, null);
+
+        // then: 정산·지갑 입금은 이미 끝났으니 Step은 정상 종료, 실패한 줄은 다음 실행이 보냄
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertThat(contribution).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(contribution.getWriteCount()).isEqualTo(2L);
+            softly.assertThat(contribution.getWriteSkipCount()).isEqualTo(1L);
+        });
+    }
+
+    @Test
+    void 짧은_간격_재발송이_잠금을_잡고_있으면_publish_Step은_보내지_않고_0건으로_끝낸다() throws Exception {
+        // given: 재발송이 지금 같은 PENDING 줄을 보내는 중이라 잠금을 못 잡음 (#620)
+        given(payoutOutboxSendLock.publishPending()).willReturn(Optional.empty());
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutPublishTasklet().execute(contribution, null);
+
+        // then: Step은 실패하지 않고 보낸 수·실패 수 모두 0
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertThat(contribution).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(contribution.getWriteCount()).isZero();
+            softly.assertThat(contribution.getWriteSkipCount()).isZero();
+        });
+    }
+
+    @Test
+    void 잠금_표를_다루다_DB_오류가_나도_publish_Step은_실패하지_않고_0건으로_끝낸다() throws Exception {
+        // given: shedlock 표 UPDATE가 DB 오류로 실패함 (정산은 이미 확정됨)
+        given(payoutOutboxSendLock.publishPending()).willThrow(new IllegalStateException("DB 연결 끊김"));
+        StepContribution contribution = contribution();
+
+        // when
+        RepeatStatus sut = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutPublishTasklet().execute(contribution, null);
+
+        // then: 남은 줄은 PENDING이라 짧은 간격 재발송이 보냄
+        assertThat(sut).isEqualTo(RepeatStatus.FINISHED);
+        assertThat(contribution.getWriteCount()).isZero();
+    }
+
+    // 실제 Step처럼 tasklet을 회차마다 새 contribution으로 부르고, 끝난 회차의 수를 Step 실행 기록에 합산(apply)함
+    // 마지막 회차의 결과를 반환 (예외가 나면 그대로 던짐)
+    private RepeatStatus runRounds(StepExecution stepExecution, int rounds) throws Exception {
+        RepeatStatus status = null;
+        for (int round = 0; round < rounds; round++) {
+            StepContribution contribution = new StepContribution(stepExecution);
+            status = new PayoutJobConfig(payoutUseCase, payoutOutboxSendLock).payoutDraftTasklet(SNAPSHOT_ID).execute(contribution, null);
+            stepExecution.apply(contribution);
+        }
+        return status;
+    }
+
+    // tasklet에 넘길 실행 기록 (Spring 없이 직접 만듦)
+    private StepContribution contribution() {
+        return new StepContribution(stepExecution());
+    }
+
+    private StepExecution stepExecution() {
+        JobExecution jobExecution = new JobExecution(1L, new JobInstance(1L, "payoutJob"), new JobParameters());
+        return new StepExecution("payoutDraftStep", jobExecution);
+    }
+}

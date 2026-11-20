@@ -1,0 +1,32 @@
+# Prometheus 수집 설정. 로컬(docker-compose.yml)과 운영(deploy/compose.prod.yml)이 같은 파일을 마운트한다 (#374)
+# 수집 대상은 이 파일이 아니라 targets/ 아래 파일로 나눠서(app*.yml은 app 잡, cadvisor*.yml은 cadvisor 잡), 대상이 바뀌어도 이 파일은 고치지 않는다
+global:
+  # 15초면 부하테스트 때 지연·커넥션 풀 변화를 따라가기에 충분하고, 7일·2GB 보존 상한 안에서 저장량도 작다
+  scrape_interval: 15s
+
+scrape_configs:
+  # 앱. 모듈별 서버로 나뉘면 대상 파일(targets/prod/app.yml 등)에 항목만 추가한다
+  - job_name: app
+    # Spring Boot Actuator 경로. 기본값(/metrics)이 아니다
+    metrics_path: /actuator/prometheus
+    # honor_labels는 기본값(false)으로 둔다. 앱이 job·instance 같은 Prometheus 예약 라벨을 지표에 실어 와도
+    # 수집 대상의 값이 이기게 해 라벨이 뒤섞이지 않게 하려는 것이다
+    # 앱이 다는 application 라벨은 Prometheus가 같은 이름으로 붙이는 라벨이 없어 충돌하지 않고 그대로 남는다
+    # 단, 대상 파일의 labels에 application을 넣으면 충돌해서 앱 값이 exported_application으로 밀리므로 넣지 않는다
+    file_sd_configs:
+      # 파일은 컨테이너 안의 이 경로로 마운트된다. 파일을 고치면 재시작 없이 반영된다
+      # 같은 폴더에 cadvisor.yml이 함께 있어 *.yml이 아니라 app*.yml로 좁힌다(앱 경로로 cAdvisor를 긁지 않도록)
+      - files:
+          - /etc/prometheus/targets/app*.yml
+
+  # MySQL 지표. mysqld-exporter가 서비스 이름으로 닿는다 (로컬·운영 공통)
+  - job_name: mysql
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+
+  # 컨테이너 CPU 스로틀링·메모리 지표. cAdvisor가 서비스 이름으로 닿는다 (로컬 전용, 운영 배치는 후속 이슈)
+  # 기본 metrics_path(/metrics)를 쓴다. 대상은 targets/cadvisor.yml에서 고친다
+  - job_name: cadvisor
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/cadvisor*.yml

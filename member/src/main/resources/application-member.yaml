@@ -1,0 +1,87 @@
+ok:
+  flyway:
+    standalone: true
+server:
+  port: ${SERVER_PORT:8082}
+spring:
+  application:
+    name: member
+  config:
+    # Kafka 접속·직렬화 설정은 common-kafka.yaml 한 곳에서 관리한다. 앱마다 다르면 서로 메시지를 읽지 못한다 (#538)
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-kafka.yaml,classpath:common-async.yaml
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_member?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:password}
+  jackson:
+    time-zone: ${APP_TIME_ZONE:Asia/Seoul}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+  flyway:
+    out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+app:
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION:ap-northeast-2}
+    bucket: ${S3_BUCKET:local-bucket}
+jwt:
+  issuer: paldo-gotgan
+  audience: paldo-gotgan-api
+  # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고른다. 키 교체 절차는 docs/DEVELOPMENT.md 8절
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
+  # 서명용 개인키. 토큰을 발급하는 member에만 둔다 (다른 모듈 앱에는 두지 않는다)
+  signing:
+    key-id: rs256-v1
+    private-key: file:${OK_ROOT_DIR:.}/keys/rs256-v1-private.pem
+auth:
+  refresh-token:
+    # 만료된 Refresh Token 정리. 값을 빼면 스케줄러의 기본값(매시 정각, 1000행씩)을 쓴다.
+    # 부하 테스트처럼 짧게 돌릴 때는 AUTH_REFRESH_TOKEN_CLEANUP_CRON(예: "*/30 * * * * *"), AUTH_REFRESH_TOKEN_CLEANUP_BATCH_SIZE
+    # 환경 변수나 -D로 덮어쓴다. cron을 "-"로 두면 정리하지 않는다
+    cleanup:
+      cron: "0 0 * * * *"
+      batch-size: 1000
+member:
+  outbox:
+    # 회원 outbox에 쌓인 메시지를 Kafka로 보내는 주기와 한 번에 보낼 줄 수(MemberOutboxRelayScheduler, #560).
+    # 값을 빼면 스케줄러의 기본값(30초마다, 100줄)을 쓴다. cron을 "-"로 두면 보내지 않는다
+    relay:
+      cron: "*/30 * * * * *"
+      batch-size: 100
+  token-version:
+    # 토큰 검증기가 읽는 저장소(Redis)의 토큰 최소 버전을 회원 DB 값으로 다시 채우는 주기(TokenVersionResyncScheduler, #561).
+    # 값을 빼면 스케줄러의 기본값(30초마다)을 쓴다. cron을 "-"로 두면 다시 채우지 않는다
+    resync:
+      cron: "*/30 * * * * *"
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+logging:
+  level:
+    com.ok: ${LOG_LEVEL_OK:INFO}

@@ -1,0 +1,244 @@
+package com.ok.wallet.domain;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.wallet.exception.WalletErrorCode;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+
+class BuyerWalletTest {
+    @Test
+    void 지갑_생성_성공_테스트() {
+        // Given
+        Long memberId = 1L;
+
+        // When
+        BuyerWallet buyerWallet = BuyerWallet.create(memberId);
+
+        // Then
+        assertThat(buyerWallet.getMemberId()).isEqualTo(memberId);
+        assertThat(buyerWallet.getBalance()).isZero();
+    }
+
+    @Test
+    void memberId가_없으면_지갑을_생성할_수_없다() {
+        // When & Then
+        assertThatThrownBy(() -> BuyerWallet.create(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("memberId는 필수입니다.");
+    }
+
+    @Test
+    void 충전하면_잔액이_늘고_충전_원장을_반환한다() {
+        // Given
+        BuyerWallet wallet = BuyerWallet.create(1L);
+
+        // When
+        BuyerWalletLedger ledger = wallet.charge(10_000, "CHARGE:pay-1");
+
+        // Then
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+        assertThat(ledger.getType()).isEqualTo(BuyerWalletLedgerType.CHARGE);
+        assertThat(ledger.getAmount()).isEqualTo(10_000);
+        assertThat(ledger.getBalanceAfter()).isEqualTo(wallet.getBalance());
+        assertThat(ledger.getReferenceKey()).isEqualTo("CHARGE:pay-1");
+    }
+
+    @Test
+    void 결제하면_잔액이_줄고_결제_원장을_반환한다() {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When
+        BuyerWalletLedger ledger = wallet.pay(3_000, "PAYMENT:1");
+
+        // Then
+        assertThat(wallet.getBalance()).isEqualTo(7_000);
+        assertThat(ledger.getType()).isEqualTo(BuyerWalletLedgerType.PAYMENT);
+        assertThat(ledger.getAmount()).isEqualTo(3_000);
+        assertThat(ledger.getBalanceAfter()).isEqualTo(7_000);
+    }
+
+    @Test
+    void 잔액과_같은_금액은_결제할_수_있다() {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When
+        wallet.pay(10_000, "PAYMENT:1");
+
+        // Then
+        assertThat(wallet.getBalance()).isZero();
+    }
+
+    @Test
+    void 잔액이_부족하면_결제하지_않고_잔액도_바꾸지_않는다() {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When & Then
+        assertThatThrownBy(() -> wallet.pay(10_001, "PAYMENT:1"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INSUFFICIENT_BALANCE));
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+    }
+
+    @Test
+    void 환불하면_잔액이_늘고_환불_원장을_반환한다() {
+        // Given
+        BuyerWallet wallet = walletWithBalance(7_000);
+
+        // When
+        BuyerWalletLedger ledger = wallet.refund(3_000, "REFUND:1");
+
+        // Then
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+        assertThat(ledger.getType()).isEqualTo(BuyerWalletLedgerType.REFUND);
+        assertThat(ledger.getBalanceAfter()).isEqualTo(10_000);
+    }
+
+    @Test
+    void 환불을_되돌리면_잔액이_줄고_되돌리기_원장을_반환한다() {
+        // given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // when
+        BuyerWalletLedger sut = wallet.revertRefund(3_000, "REFUND_REVERT:1");
+
+        // then
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(wallet.getBalance()).isEqualTo(7_000);
+            softly.assertThat(sut.getType()).isEqualTo(BuyerWalletLedgerType.REFUND_REVERT);
+            softly.assertThat(sut.getAmount()).isEqualTo(3_000);
+            softly.assertThat(sut.getBalanceAfter()).isEqualTo(7_000);
+            softly.assertThat(sut.getReferenceKey()).isEqualTo("REFUND_REVERT:1");
+        });
+    }
+
+    @Test
+    void 잔액과_같은_금액은_되돌릴_수_있다() {
+        // given
+        BuyerWallet wallet = walletWithBalance(3_000);
+
+        // when
+        BuyerWalletLedger sut = wallet.revertRefund(3_000, "REFUND_REVERT:1");
+
+        // then
+        assertThat(sut.getBalanceAfter()).isZero();
+    }
+
+    @Test
+    void 잔액보다_많이_되돌리면_가져오지_않고_예외가_난다() {
+        // given
+        BuyerWallet wallet = walletWithBalance(2_999);
+
+        // when & then: 잔액을 마이너스로 두지 않기로 해 호출하는 쪽이 먼저 확인한다. 빠뜨렸으면 코드의 버그다
+        assertThatThrownBy(() -> wallet.revertRefund(3_000, "REFUND_REVERT:1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("되돌릴 금액이 잔액보다 큽니다. balance=2999, amount=3000");
+        assertThat(wallet.getBalance()).isEqualTo(2_999);
+    }
+
+    @ParameterizedTest
+    @MethodSource("되돌릴_수_없는_금액")
+    void 되돌릴_금액이_0_이하면_잔액을_바꾸지_않는다(long amount) {
+        // given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // when & then
+        assertThatThrownBy(() -> wallet.revertRefund(amount, "REFUND_REVERT:1"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_AMOUNT));
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+    }
+
+    static Stream<Long> 되돌릴_수_없는_금액() {
+        return Stream.of(0L, -1_000L);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1_000})
+    void 금액이_0_이하면_잔액을_바꾸지_않는다(long amount) {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When & Then
+        assertThatThrownBy(() -> wallet.charge(amount, "CHARGE:pay-1"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_AMOUNT));
+        assertThatThrownBy(() -> wallet.pay(amount, "PAYMENT:1"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_AMOUNT));
+        assertThatThrownBy(() -> wallet.refund(amount, "REFUND:1"))
+                .isInstanceOfSatisfying(RestApiException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(WalletErrorCode.INVALID_AMOUNT));
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" "})
+    void 근거_키가_없으면_잔액을_바꾸지_않는다(String referenceKey) {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When & Then
+        assertThatThrownBy(() -> wallet.charge(1_000, referenceKey))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(wallet.getBalance()).isEqualTo(10_000);
+    }
+
+    @Test
+    void 연속으로_변경하면_원장마다_그_시점의_잔액이_기록된다() {
+        // Given
+        BuyerWallet wallet = BuyerWallet.create(1L);
+
+        // When
+        BuyerWalletLedger first = wallet.charge(10_000, "CHARGE:pay-1");
+        BuyerWalletLedger second = wallet.pay(3_000, "PAYMENT:1");
+        BuyerWalletLedger third = wallet.refund(1_000, "REFUND:1");
+
+        // Then
+        assertThat(first.getBalanceAfter()).isEqualTo(10_000);
+        assertThat(second.getBalanceAfter()).isEqualTo(7_000);
+        assertThat(third.getBalanceAfter()).isEqualTo(8_000);
+        assertThat(wallet.getBalance()).isEqualTo(third.getBalanceAfter());
+    }
+
+    @Test
+    void 잔액이_결제_금액_이상이면_결제할_수_있다() {
+        // Given
+        BuyerWallet wallet = walletWithBalance(10_000);
+
+        // When & Then: 잔액과 같은 금액까지는 결제할 수 있다
+        assertThat(wallet.hasEnoughBalance(10_000)).isTrue();
+        assertThat(wallet.hasEnoughBalance(10_001)).isFalse();
+    }
+
+    private BuyerWallet walletWithBalance(long balance) {
+        BuyerWallet wallet = BuyerWallet.create(1L);
+        wallet.charge(balance, "CHARGE:setup");
+        return wallet;
+    }
+
+    @Test
+    void 아주_큰_금액이어도_넘침_없이_한도_초과로_판단한다() {
+        // 잔액 + 금액으로 계산하면 long 범위를 넘어 음수가 되어 한도 검사를 통과해 버린다
+        assertThat(BuyerWallet.exceedsMaxBalance(10_000, 9_223_372_036_854_770_000L)).isTrue();
+    }
+
+    @Test
+    void 한도에_정확히_맞으면_넘지_않는다() {
+        assertThat(BuyerWallet.exceedsMaxBalance(490_000, 10_000)).isFalse();
+        assertThat(BuyerWallet.exceedsMaxBalance(490_000, 20_000)).isTrue();
+    }
+}

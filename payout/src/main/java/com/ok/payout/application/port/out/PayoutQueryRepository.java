@@ -1,0 +1,234 @@
+package com.ok.payout.application.port.out;
+
+import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutBlockedOrderCause;
+import com.ok.payout.domain.PayoutBlockedStatus;
+import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutFailure;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * 정산 조회 전용 저장소 출력 포트. 구현은 {@code adapter.out.persistence}에 있다.
+ */
+public interface PayoutQueryRepository {
+
+    // 스냅샷 대상: [from, to) 기간 미정산 후보 전체 (판매자 구분 없이), 잠긴 주문의 후보는 뺌 (#195, #552부터 잠그는 사유는 수수료 불일치·결과 검증 불일치)
+    List<PayoutCandidateItem> findUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to);
+
+    // 스냅샷 대상 조건(기간 안 미정산)에는 맞지만 주문이 잠겨 뺀 후보 수 (스냅샷 생성 로그용)
+    // 위 조회와 같은 조건에서 잠금 조건만 뒤집어, "잠금 때문에 빠진 것"만 정확히 셈
+    long countLockedUnsettledCandidatesInPeriod(LocalDateTime from, LocalDateTime to);
+
+    // draftStep 회차마다 "이번에 처리할 판매자" 조회
+    // 스냅샷에서 아직 draft가 안 된 줄이 있는 판매자 ID를 afterSellerId(지난 회차 마지막 판매자, 첫 회차는 null)보다 큰 번호부터 번호 순으로 limit명
+    List<Long> findUndraftedSellerIds(Long snapshotId, Long afterSellerId, int limit);
+
+    // draftStep 회차마다 "그 판매자들의 처리할 후보" 조회 (대금·배송비·수수료 3종 모두)
+    List<PayoutCandidateItem> findUndraftedCandidates(Long snapshotId, List<Long> sellerIds);
+
+    // 스냅샷 항목 전체 (정산후보와 조인)
+    // 대상 전체를 메모리에 올리는 방식이라 createSnapshot과 같은 대량 처리 한계가 있음 (PayoutService.createSnapshot 주석 참고)
+    List<SnapshotItemRow> findSnapshotItemRows(Long snapshotId);
+
+    // 판매자 몫 draft 항목 전체 (묶인 헤더의 판매자 포함)
+    // 몫 구분(systemShare)은 조회한 테이블로 정해지는 값이라 select에 상수로 넣지 않고 Java에서 채움
+    List<DraftItemRow> findSellerDraftItemRows(Long snapshotId);
+
+    // 시스템 몫 draft 항목 전체 (수수료). 헤더가 없어 headerSellerId는 null
+    List<DraftItemRow> findSystemDraftItemRows(Long snapshotId);
+
+    // 이번 스냅샷 실패 기록 전체 (verify 판정, commitStep의 결과 검증 실패 제외에 씀)
+    List<FailureRow> findFailureRows(Long snapshotId);
+
+    // 판매자 draft 헤더마다 헤더 금액과 항목 금액 합계
+    // 헤더는 PayoutSellerDraft.create()가 항목을 더해 만든 값이라 정상이면 항상 같음 (다르면 draft를 만드는 코드 자체가 망가진 상태)
+    // 항목이 없는 헤더도 잡으려고 헤더 기준 LEFT JOIN (항목 합계 0)
+    List<SellerTotalRow> findSellerTotalRows(Long snapshotId);
+
+    // 판매자 draft 항목 중 묶인 헤더와 스냅샷 번호가 다른 항목의 후보 ID (정상이면 0건)
+    // 항목은 헤더의 번호를 복사해 만들어서 다르면 코드가 망가진 상태 (PayoutSellerDraftItem 생성자)
+    // 이번 스냅샷이 헤더 쪽이든 항목 쪽이든 찾음: 헤더 기준인 commitStep과 항목 기준인 verify가 서로 다른 항목을 보게 되므로
+    List<Long> findSellerDraftItemsWithMismatchedSnapshot(Long snapshotId);
+
+    // validateStep 차감 기록 검사: 이번 스냅샷 후보 중 그 주문의 지갑 차감 기록이 없는 후보 (→ 실패로 기록되어 이번 정산에서 빠짐)
+    // 이미 이번 스냅샷에 실패로 기록된 후보는 뺌 → 같은 스냅샷에 validate를 다시 실행해도 새로 저장할 게 없어 중복되지 않음
+    // 주문 단위 검사라 배송비 후보(order_item_id NULL)도 order_id로 함께 걸림
+    List<PayoutCandidateItem> findCandidatesWithoutDeduction(Long snapshotId);
+
+    // validateStep 금액 검사 대상(#195): 이번 스냅샷 후보 중 그 주문의 지갑 차감 기록이 있고, 아직 이번 스냅샷에 실패로 기록되지 않은 후보
+    // 차감 기록이 없는 주문은 차감 기록 검사(DEDUCTION_MISSING)가 먼저 빼므로 금액 검사를 하지 않음 (후보당 실패 기록 1건)
+    // 이미 실패로 기록된 후보를 빼는 이유는 findCandidatesWithoutDeduction과 같음 (같은 스냅샷 재검증 시 중복 방지)
+    List<PayoutCandidateItem> findCandidatesWithDeduction(Long snapshotId);
+
+    // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문마다 그 주문의 정산후보 금액 합계 (주문 ID → 합계)
+    // 스냅샷 밖 후보도 모두 더함: 이미 정산된 후보, 스냅샷 이후 새로 들어온 후보까지
+    //   이번 스냅샷 후보만 더하면, 같은 주문의 상품이 여러 날에 나눠 구매확정될 때 각 날의 합계는 작아 초과 청구를 못 잡음
+    // 조정 후보는 관리자가 확인한 것(금액 불일치 실패 → 조정 → 해결 순서)만 더함 (#291 결정 4번). 확인 안 한 조정은 뺌(#552: −조정이 초과 청구를 가리지 않게)
+    //   확인한 조정도 이번 스냅샷에 들었거나 이미 정산된 것만 더함 (Job 도중 넣은 조정이 검사엔 들고 지급엔 빠지지 않게)
+    Map<Long, Long> sumCandidateAmountByOrderInSnapshot(Long snapshotId);
+
+    // 초과 청구 검사용(#195): 이번 스냅샷에 후보가 있는 주문의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
+    // 차감 기록은 주문당 1건(UK order_id)이라 주문 ID가 겹치지 않음
+    Map<Long, Long> findDeductionAmountByOrderInSnapshot(Long snapshotId);
+
+    // 관리자 목록 "지금" 초과 청구 근거용(#570): 주문들의 지갑 차감액 (주문 ID → 차감액). 차감 기록이 없는 주문은 결과에 없음
+    // 위 조회는 스냅샷 기준이라 목록 한 페이지의 주문 ID로 따로 읽음 (차감 기록 UK order_id 인덱스). orderIds가 비면 빈 맵
+    Map<Long, Long> findDeductionAmountsByOrderIds(Collection<Long> orderIds);
+
+    // 수수료 검사용(#195): 이번 스냅샷에 후보가 있는 주문상품의 판매 대금·수수료 후보 (원래 후보 + 관리자가 확인한 조정, #291 결정 5번)
+    // 스냅샷 밖 후보도 가져옴: 대금·수수료 중 한쪽이 이미 정산됐어도 짝을 맞춰 비교해야, 남은 한쪽을 잘못 잠그지 않음
+    // 확인한 조정의 범위는 초과 청구 합계와 같음. 확인 안 한 조정은 뺌: 수수료 계산식과 상관없는 금액이라 넣으면 맞는 주문상품도 틀렸다고 봄
+    // 원래 후보는 주문상품·타입당 1건 (구매확정 멱등 처리 + UK). 조정은 여러 건일 수 있어 부르는 쪽이 종류별로 더함
+    // 배송비 후보는 order_item_id가 NULL이라 IN 조건에 걸리지 않음 (수수료 검사 대상 아님)
+    List<PayoutCandidateItem> findSaleCandidatesForFeeCheckInSnapshot(Long snapshotId);
+
+    // 초과 청구 근거용(#391): 주문들의 정산후보 전체를 생성 순서(created_at, id)로, 이미 정산됐는지와 함께
+    // 범위는 초과 청구 합계(sumCandidateAmountByOrderInSnapshot)와 같음: 그 주문의 원래 후보 전부(스냅샷 밖·이미 정산 포함) + 확인한 조정
+    //   범위가 다르면 근거의 누적합이 합계와 어긋나 "넘게 만든 주문상품"을 잘못 찾음
+    //   snapshotId가 null이면(관리자 목록의 "지금" 근거, #570) 확인한 조정을 스냅샷과 상관없이 넣음
+    // 이미 정산됨 = payout_item에 그 후보가 있음 (후보 1건 = 정산 항목 최대 1건, UK candidate_id라 조인해도 줄이 늘지 않음)
+    // 초과 청구에 걸린 주문만 넘기므로 보통 몇 건뿐임 (빈 목록을 넘기지 않음)
+    List<OverchargeCandidateRow> findOverchargeCandidates(Collection<Long> orderIds, Long snapshotId);
+
+    // 보류된 판매자의 원래 후보 (#291 결정 2번): heldFrom 뒤에 만든 스냅샷에서 draft까지 갔는데 정산이 안 된 후보, 상한(to) 전·후보 생성 시각 하한 없음·잠긴 주문 제외
+    // 판매자 합계가 0원 이하라 commit이 정산을 만들지 않은 판매자의 후보가, 하한이 올라가 영영 빠지지 않게 다시 넣으려고 씀
+    // heldFrom은 PayoutPolicy.heldLookbackFrom으로 구함. null이면 스냅샷 기간을 거르지 않음 (첫 정산 전)
+    List<PayoutCandidateItem> findHeldCandidates(LocalDateTime heldFrom, LocalDateTime to);
+
+    // 아직 정산 안 된 조정 후보 전부와 그 원래 후보 상태 (#291 결정 1번), 잠긴 주문 제외, 후보 ID 오름차순
+    // 조정 자기 생성 시각으로 기간을 거르지 않음: 조정은 원래 후보를 따라 정산됨 (원래가 이번 스냅샷에 들었거나 이미 정산됐으면 포함)
+    List<AdjustmentCandidateRow> findUnsettledAdjustments();
+
+    // 초과 청구 근거용(#391): 주문들의 지갑 금액 충돌에서 받은 금액 (주문 ID → 받은 금액 목록, 기록 순서). 충돌이 없는 주문은 결과에 없음
+    Map<Long, List<Long>> findReceivedConflictAmountsByOrder(Collection<Long> orderIds);
+
+    // 정산 목록 (관리자·판매자 조회). null인 조건은 걸지 않음
+    // 정렬은 확정 시각 최신순 고정. 같은 시각에 확정된 정산이 여러 건이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    Page<Payout> searchPayouts(Long payeeId, Boolean system, LocalDateTime from, LocalDateTime to,
+                              Pageable pageable);
+
+    // 정산후보 목록 (관리자·판매자 조회). sellerId가 null이면 전체 판매자, orderId가 null이면 전체 주문
+    // from·to는 null이면 그쪽 경계를 걸지 않음: 관리자가 주문 ID로 찾을 때만 null이 옴(#723). 판매자 조회는 요청 DTO가 늘 기간을 채움
+    // sellerShareOnly면 시스템 몫(수수료) 후보를 뺌 (판매자 조회용)
+    // 정렬은 후보 생성 시각 최신순 고정. 같은 시각에 생긴 후보가 여러 건(대금·수수료·배송비가 함께 생김)이라 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    // 정산 ID는 payout_item과 LEFT JOIN으로 가져옴 (payout_item.candidate_id가 유니크라 후보 한 건이 여러 줄로 늘지 않음)
+    Page<CandidateRow> searchCandidates(Long orderId, Long sellerId, LocalDateTime from, LocalDateTime to,
+                                         boolean unsettledOnly, boolean sellerShareOnly, Pageable pageable);
+
+    // 정산 1건의 항목을 정산후보와 함께 페이지 단위로 조회 (항목마다 후보를 따로 조회하지 않도록 조인 1번)
+    // 정산 항목은 후보를 객체 연관 없이 candidateId 숫자로만 들고 있어서 on 조건으로 조인 (FK가 있어 후보가 없는 항목은 없음)
+    // 정렬은 항목 저장 순서(id) 고정
+    Page<PayoutItemRow> findItemsWithCandidate(Long payoutId, Pageable pageable);
+
+    // 정산 1건에 묶인 정산 항목 수 (상세 조회용). 항목을 다 불러오지 않고 개수만 셈
+    long countItemsByPayoutId(Long payoutId);
+
+    // 판매자 정산 1건이 대금을 치른 주문상품의 수수료(SALE_FEE, 원래 + 수수료 조정) 중 정산된 것의 건수·금액 합계 (정산 상세용)
+    // 수수료는 판매자 정산이 아니라 시스템 몫 정산에 들어가고, 판매자가 0원 이하로 보류되면(#291) 대금보다 앞 회차에 들어감
+    //   그래서 회차(스냅샷)가 아니라 주문상품으로 짝을 지음. 회차와 상관없이 어느 시스템 몫 정산에 들어갔든 더함
+    //   예) 1회차 보류(수수료 500은 1회차 시스템 몫) → 2회차 판매자 정산에 1회차 대금이 들어감 → 이 정산의 수수료 500 + 2회차 300 = 800
+    // 지난 정산이라도 그 주문상품의 수수료 조정이 나중 회차에 정산되면 합계가 바뀜 (받아들임. 예: 300 → −100 정산 뒤 200)
+    CountAndAmount summarizeSaleFeesOfSellerPayout(Long sellerPayoutId);
+
+    // 마지막 "정기(SCHEDULED) 실행이 COMPLETED이고 정산을 1건 이상 만든" 배치 실행의 requestedAt (#390)
+    // 정산 조회 하한을 정할 때 쓴다. 조건에 맞는 실행이 없으면 빈 값
+    Optional<LocalDateTime> findLastCompletedScheduledRequestedAt();
+
+    // 주문마다 "성공(COMPLETED)한 실행 중 그 주문의 미정산 후보에 실패 기록이 남은 실행 수" (#549, 주문 ID → 실행 수)
+    // 실행 1번 = 스냅샷 1건: 한 실행에서 같은 주문의 실패 기록이 여러 줄이어도 1번으로 셈. 실패 사유는 가리지 않음
+    // 이미 정산된(payout_item 있는) 후보의 실패는 세지 않음: 나중에 정산됐다면 더는 막을 일이 아님
+    // FAILED로 끝난 실행의 실패는 세지 않음: 중간에 멈춘 실행은 주문 탓이 아닐 수 있어 횟수를 올리지 않음
+    // 해결 기록이 있는 실패는 세지 않음 (#568): 관리자가 "다시 처리"로 해결하면 횟수를 처음부터 다시 셈
+    // 0번인 주문은 결과에 없음
+    Map<Long, Long> countFailedRunsByOrder();
+
+    // 한 주문의 위 실행 수 (#568 해결 API의 멈춤 판정). 세는 기준은 countFailedRunsByOrder와 같고, 실패가 없으면 0
+    long countFailedRunsOfOrder(Long orderId);
+
+    // 그 주문들의 미정산 후보 중 createdAt < to인 것 (#549, 조회 기간의 하한 없음, id 오름차순)
+    // 잠긴 주문의 후보는 뺌. orderIds가 비면 조회하지 않고 빈 목록
+    List<PayoutCandidateItem> findUnsettledCandidatesOfOrdersBefore(Collection<Long> orderIds, LocalDateTime to);
+
+    // 그 주문들 중 createdAt < to인 미정산 후보가 남은 주문 ID (#549, 중복 없음, 조회 기간의 하한 없음)
+    // 조건은 findUnsettledCandidatesOfOrdersBefore와 같고 주문 ID만 돌려줌: 멈춘 주문 수를 셀 때 후보 엔티티를 다 불러오지 않으려는 것
+    // 잠긴 주문은 뺌. orderIds가 비면 조회하지 않고 빈 목록
+    List<Long> findOrderIdsWithUnsettledCandidatesBefore(Collection<Long> orderIds, LocalDateTime to);
+
+    // 해결 기록이 있는 주문 중 createdAt < to인 미정산 후보가 남고 잠기지 않은 주문 ID (#568, 중복 없음, 조회 기간의 하한 없음)
+    // 해결 뒤 다시 멈춘 주문은 빼지 않음 (부르는 쪽이 실패 횟수로 뺌)
+    List<Long> findResolvedOrderIdsWithUnsettledCandidatesBefore(LocalDateTime to);
+
+    // 그 주문의 해결되지 않은 실패 기록, id 오름차순 (#568). 사유·실행 상태·정산 여부로 거르지 않음
+    List<PayoutFailure> findUnresolvedFailuresByOrderId(Long orderId);
+
+    // 그 주문에 해결되지 않은 잠그는 사유의 실패 기록이 있는지 (#568, 스냅샷의 잠금 조건과 같음)
+    boolean isOrderLocked(Long orderId);
+
+    // ---------- 막힌 주문 집계 표 다시 판정 (#582) ----------
+    // 모두 주문 ID 목록이나 실패 기록 ID 범위로 읽어, 운영 시작 이후 실패 기록 전체를 읽지 않음 (payout/CLAUDE.md 설계 전제)
+
+    // 가장 큰 실패 기록 ID (기본 키 끝만 봄). 실패 기록이 없으면 0
+    long findMaxFailureId();
+
+    // 실패 기록 ID가 (afterId, upToId] 범위인 기록의 주문 ID (중복 없음, 기본 키 범위로 찾음)
+    List<Long> findOrderIdsWithFailuresBetween(long afterId, long upToId);
+
+    // 그 주문들 중 잠긴 주문 ID (isOrderLocked·스냅샷 잠금 조건과 같음). orderIds가 비면 조회하지 않고 빈 집합
+    Set<Long> findLockedOrderIds(Collection<Long> orderIds);
+
+    // 그 주문들의 실패 횟수 (countFailedRunsByOrder와 같은 기준, 0번인 주문은 결과에 없음). orderIds가 비면 빈 맵
+    Map<Long, Long> countFailedRunsOfOrders(Collection<Long> orderIds);
+
+    // 그 주문들의 해결 안 된 실패 기록 + 정산후보 종류 (사유·실행 상태·정산 여부로 거르지 않음, #568 해결 대상과 같은 범위)
+    // orderIds가 비면 빈 목록
+    List<BlockedFailureRow> findUnresolvedFailureRowsOfOrders(Collection<Long> orderIds);
+
+    // 그 주문의 해결 기록을 실패 기록·정산후보와 함께 페이지 단위로 조회 (#571, 1줄씩 보기)
+    // 정렬은 해결 시각 최신순 고정. 해결 요청 1번에 여러 줄이 거의 같은 시각에 생기므로 id를 더해 페이지를 넘겨도 순서가 흔들리지 않게 함
+    // 실패 기록 ID는 해결 기록에서 유니크, 정산후보 ID는 실패 기록에서 하나라 조인해도 줄이 늘지 않음
+    Page<PayoutResolutionRow> findResolutionsByOrderId(Long orderId, Pageable pageable);
+
+    // 그 주문의 해결 기록을 해결 요청 번호로 묶어 요청 1번 = 1줄로 페이지 단위로 조회 (#571, 묶음 보기)
+    // 정렬은 요청의 해결 시각(그 요청에서 가장 이른 줄) 최신순, 같으면 나중에 저장한 요청이 먼저
+    Page<PayoutResolutionRequestRow> findResolutionRequestsByOrderId(Long orderId, Pageable pageable);
+
+    // 기간 안에 해결한 요청을 요청 1번 = 1줄로 페이지 단위로 조회 (#723, 해결 기록 전체 목록)
+    // 기간은 요청의 해결 시각(그 요청에서 가장 이른 줄) 기준 [from, to): 경계에 걸친 요청이 두 기간으로 갈라지지 않게
+    // adminId가 null이면 전체 관리자. 정렬은 주문별 묶음 보기와 같음 (해결 시각 최신순, 같으면 나중에 저장한 요청이 먼저)
+    Page<PayoutResolutionRequestRow> findResolutionRequestsInPeriod(LocalDateTime from, LocalDateTime to, Long adminId,
+                                                                    Pageable pageable);
+
+    // 관리자 막힌 주문 목록 (#569): 막힌 주문 집계 표(#582)를 읽기만 함. 판정은 표가 정산 Job 끝에 끝내 둠
+    // 예비(PENDING) 줄은 뺌 (#570): 금액 검사가 근거를 남기려고 넣은 줄이라 아직 막힌 주문이 아님 (개수에서도 뺌)
+    // 정렬은 마지막 실패 시각 최신순, 같으면 주문 ID 역순 (한 실행에서 막힌 주문은 시각이 거의 같아 페이지를 넘겨도 순서가 흔들리지 않게)
+    // orderId가 null이면 전체, statuses가 비면 세 상태 모두 (#723)
+    Page<BlockedOrderRow> findBlockedOrders(Long orderId, Collection<PayoutBlockedStatus> statuses, Pageable pageable);
+
+    // 막힌 주문의 해결 대기 조정 합계 (#723): 지금 해결하면 확인한 조정이 될 조정을 주문·종류(판매 대금·수수료)별로 더함
+    // 줄이 없으면 그 주문·종류는 0. orderIds가 비면 조회하지 않고 빈 목록
+    List<PendingAdjustmentRow> sumPendingAdjustmentsByOrderIds(Collection<Long> orderIds);
+
+    // 정산후보 조회의 조정 상태 (#791): 주어진 후보 중 관리자가 확인한 조정(금액 검사에 들어감)인 후보 ID
+    // 판정은 금액 검사와 같은 확인한 조정 조건. candidateIds가 비면 조회하지 않고 빈 목록
+    List<Long> findConfirmedAdjustmentCandidateIds(Collection<Long> candidateIds);
+
+    // 정산후보 조회의 조정 상태 (#791): 주어진 후보 중 해결 대기 조정(해결하면 확인한 조정이 됨)인 후보 ID
+    // 판정은 막힌 주문 목록의 대기 합계(sumPendingAdjustmentsByOrderIds)와 같은 조건. candidateIds가 비면 빈 목록
+    List<Long> findAwaitingResolutionAdjustmentCandidateIds(Collection<Long> candidateIds);
+
+    // 그 주문들의 원인 (#569, 막힌 주문 표의 하위 표). 주문 ID, 실패 시각 최신순. orderIds가 비면 빈 목록
+    List<PayoutBlockedOrderCause> findBlockedOrderCauses(Collection<Long> orderIds);
+
+    // 관리자 대사 확인 목록 (#621): 관리자 확인 필요(NEEDS_REVIEW)인 대사 줄만. 확인 대기·일치 줄은 개수에서도 뺌
+    // 정렬은 대사 줄 id 내림차순 (정산 확정 때 넣는 줄이라 새 정산 먼저). id는 유일해서 페이지를 넘겨도 순서가 흔들리지 않음
+    // 대사 표의 (status, id) 인덱스로 관리자 확인 필요 줄만 id 역순으로 읽음 (운영 시작 이후 대사 줄 전체를 읽지 않음, payout/CLAUDE.md 설계 전제)
+    Page<DepositCheckReviewRow> findDepositChecksNeedingReview(Pageable pageable);
+}

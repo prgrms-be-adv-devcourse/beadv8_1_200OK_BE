@@ -1,0 +1,30 @@
+meta {
+  name: 배정 실패 - 재고 부족
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "orderId": {{orderIdForShortage}},
+    "items": [
+      { "optionId": {{optionA}}, "quantity": 1 },
+      { "optionId": {{optionB}}, "quantity": 5 }
+    ]
+  }
+}
+
+assert {
+  res.status: eq 409
+  res.body.status: eq 409
+}
+
+docs {
+  옵션 B(재고 1)에 5개를 요청해 409 insufficient-stock 입니다. 하나라도 실패하면 전부 롤백되어 옵션 A도 배정되지 않습니다.
+}

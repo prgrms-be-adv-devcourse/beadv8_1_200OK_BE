@@ -1,0 +1,108 @@
+ok:
+  flyway:
+    standalone: true
+server:
+  port: ${SERVER_PORT:8085}
+spring:
+  application:
+    name: product
+  config:
+    import: optional:file:${OK_ROOT_DIR:.}/.env[.properties],optional:file:.env[.properties],classpath:common-async.yaml
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/paldogotgan_product?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:password}
+  jackson:
+    time-zone: ${APP_TIME_ZONE:Asia/Seoul}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+  flyway:
+    out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+app:
+  async:
+    executors:
+      # 검색 행 백필 전용. 한 번에 하나만 돌리면 되고, 다음 기동 때 다시 하므로 대기열은 작게 둔다
+      product-search-backfill:
+        type: platform
+        pool-size: 1
+        queue-capacity: 1
+        # 백필 도중 종료돼도 묶음마다 별도 트랜잭션이라 안전하고 다음 기동이 이어서 채운다. 종료를 오래 붙잡지 않도록 짧게 둔다
+        task-termination-timeout: 2s
+        thread-name-prefix: product-search-backfill-
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION:ap-northeast-2}
+    bucket: ${S3_BUCKET:local-bucket}
+  review-analysis:
+    jev:
+      base-url: https://api.typesafe.ai
+      # 키가 없어도 앱은 뜬다. 작업자는 운영 설정에서만 켜므로 로컬·CI에서는 부르지 않는다
+      api-key: ${JEV_API_KEY:}
+      # #385 실험과 같은 모델. jev-latest로 바꾸지 않는다
+      model: jev-1.14.0
+      connect-timeout: 3s
+      read-timeout: 10s
+jwt:
+  issuer: paldo-gotgan
+  audience: paldo-gotgan-api
+  # 발급 모듈(member)의 JWKS 주소. 설정하면 공개키를 이 주소에서 받아 검증하고, 아래 verification-keys는 읽지 않는다.
+  # 비어 있으면(로컬 기본값) 아래 공개키 파일로 검증한다. 모듈을 따로 배포할 때 환경변수로 넣는다 (docs/DEVELOPMENT.md 8절)
+  jwk-set-uri: ${JWT_JWK_SET_URI:}
+  # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고른다. 키 교체 절차는 docs/DEVELOPMENT.md 8절
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: file:${OK_ROOT_DIR:.}/keys/rs256-v1-public.pem
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+logging:
+  level:
+    com.ok: ${LOG_LEVEL_OK:INFO}
+product:
+  # 구매자 상품 상세에서 옵션을 품절 임박(lowStock)으로 보이는 가용 재고 기준(ProductLowStockPolicy). 이 값 이하이면 임박이다(#814).
+  # 운영 데이터로 정한 값이 아니라 잠정 값이다. monolith/application.yaml에도 같은 값을 둔다
+  low-stock-threshold: ${PRODUCT_LOW_STOCK_THRESHOLD:5}
+  search:
+    # 키워드 검색 점수 하한(ProductSearchPolicy). E0 평가셋(상품 300개)에서 recall@10을 0.7%p만 잃고 평균 결과 수를 178건에서 30건으로 줄인 값이다(#659).
+    # FULLTEXT 점수는 상품 수에 따라 달라지므로 상품이 크게 늘면 다시 잰다. monolith/application.yaml에도 같은 값을 둔다
+    min-score: 1.0
+    # 구매자 목록 SQL의 시간 제한(BuyerProductQueryJdbcConfig). 넘으면 503 PRODUCT_SEARCH_TIMEOUT이다. 잠정 값이라 S28 측정 뒤 다시 정한다(#659).
+    # JDBC queryTimeout은 초 단위라 1초 이상이어야 한다. monolith/application.yaml에도 같은 값을 둔다
+    query-timeout: 2s
+    # 검색어 로그(F11). 저장은 전용 실행기에서 하고, 대기열이 차면 검색을 기다리게 하지 않고 로그를 버린다(#744).
+    # 스레드는 DB 커넥션을 하나씩 잡으므로 적게 두고, 대기열은 순간 몰림을 받을 만큼 둔다. monolith/application.yaml에도 같은 값을 둔다
+    log:
+      pool-size: ${PRODUCT_SEARCH_LOG_POOL_SIZE:2}
+      queue-capacity: ${PRODUCT_SEARCH_LOG_QUEUE_CAPACITY:1000}
+      # 보존 기간. 날짜 단위로 지난 행을 날마다 지운다. PRD 7.3 미결 사항이라 확정 전 기본값이다
+      retention: ${PRODUCT_SEARCH_LOG_RETENTION:90d}
+  # product 전용 스케줄러(ProductSchedulingConfig, #788). 공용 기본 스케줄러(스레드 1개)를 Jev 호출 작업자가 붙잡아 다른 모듈의 정기 작업까지 밀리던 것을 나눴다.
+  # 스레드는 product의 @Scheduled 작업 수(태그 판정, 리뷰 감성·키워드 분석, 검색어 로그 정리)만큼 둬 작업끼리도 서로 막지 않게 한다.
+  # 작업을 더하면 이 값도 늘린다. monolith/application.yaml에도 같은 값을 둔다
+  scheduling:
+    pool-size: ${PRODUCT_SCHEDULING_POOL_SIZE:4}
+    thread-name-prefix: product-scheduling-

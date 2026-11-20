@@ -1,0 +1,162 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: paldo-gotgan
+  config:
+    # Redis와 Kafka 설정은 common의 common-redis.yaml, common-kafka.yaml 한 곳에서 관리한다 (#319, #538)
+    import: optional:file:.env[.properties],classpath:common-redis.yaml,classpath:common-kafka.yaml,classpath:common-async.yaml
+  profiles:
+    default: dev
+  jackson:
+    # API 응답(JSON)에 시각을 쓸 때의 시간대. 기본값은 팀 기준 Asia/Seoul (#93)
+    # .env 가 없는 서버·CI에서도 Asia/Seoul 이 되도록 기본값을 UTC에서 바꿈. 아래 datasource, hibernate 의 기본값과 같이 바꾼다
+    time-zone: ${APP_TIME_ZONE:Asia/Seoul}
+    serialization:
+      fail-on-empty-beans: false
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 30MB
+  batch:
+    jdbc:
+      # 배치 메타데이터 테이블(BATCH_*)은 payout 스키마에 있다. 접속 기본 DB는 기본 스키마라서 스키마를 붙여 지정한다 (PayoutSchema.NAME)
+      table-prefix: paldogotgan_payout.BATCH_
+  datasource:
+    # serverTimezone: JDBC 드라이버가 DB와 시각을 주고받을 때 기준 시간대 (기본값 Asia/Seoul, #93)
+    url: ${DB_URL:jdbc:mysql://localhost:3306/paldogotgan?serverTimezone=${APP_TIME_ZONE:Asia/Seoul}&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:myuser}
+    password: ${DB_PASSWORD:password}
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 100
+          # Hibernate가 LocalDateTime을 DB에 저장·조회할 때 변환하는 기준 시간대 (기본값 Asia/Seoul, #93)
+          # JVM 시간대(Dockerfile, build-logic의 ok.java-conventions 플러그인의 -Duser.timezone)와 같아야 저장한 시각이 그대로 들어간다
+          time_zone: ${APP_TIME_ZONE:Asia/Seoul}
+app:
+  async:
+    # product 모듈의 실행기. monolith는 application-product.yaml을 읽지 않으므로 여기에도 둔다. 없으면 기동이 실패한다
+    # 이름이 겹치지 않게 모듈 이름을 앞에 붙인다. 근거는 application-product.yaml
+    executors:
+      # 검색 행 백필 전용. 한 번에 하나만 돌리면 되고, 다음 기동 때 다시 하므로 대기열은 작게 둔다
+      product-search-backfill:
+        type: platform
+        pool-size: 1
+        queue-capacity: 1
+        # 백필 도중 종료돼도 묶음마다 별도 트랜잭션이라 안전하고 다음 기동이 이어서 채운다. 종료를 오래 붙잡지 않도록 짧게 둔다
+        task-termination-timeout: 2s
+        thread-name-prefix: product-search-backfill-
+  problem:
+    base-uri: ${PROBLEM_BASE_URI:about:blank}
+  s3:
+    region: ${AWS_REGION}
+    bucket: ${S3_BUCKET}
+  review-analysis:
+    jev:
+      base-url: https://api.typesafe.ai
+      # 키가 없어도 앱은 뜬다. 작업자는 운영 설정에서만 켜므로 로컬·CI에서는 부르지 않는다
+      api-key: ${JEV_API_KEY:}
+      # #385 실험과 같은 모델. jev-latest로 바꾸지 않는다
+      model: jev-1.14.0
+      connect-timeout: 3s
+      read-timeout: 10s
+
+product:
+  # 품절 임박 기준(product ProductLowStockPolicy). 근거는 application-product.yaml에 있다(#814)
+  low-stock-threshold: ${PRODUCT_LOW_STOCK_THRESHOLD:5}
+  search:
+    # 키워드 검색 점수 하한(product ProductSearchPolicy). 값을 정한 근거는 application-product.yaml에 있다(#659).
+    # monolith는 application-product.yaml을 읽지 않으므로 같은 값을 여기에도 둔다
+    min-score: 1.0
+    # 구매자 목록 SQL의 시간 제한(product BuyerProductQueryJdbcConfig). 근거는 application-product.yaml에 있다(#659)
+    query-timeout: 2s
+    # 검색어 로그 실행기와 보존 기간(product ProductAsyncConfig, ProductSearchLogService). 근거는 application-product.yaml에 있다(#744)
+    log:
+      pool-size: ${PRODUCT_SEARCH_LOG_POOL_SIZE:2}
+      queue-capacity: ${PRODUCT_SEARCH_LOG_QUEUE_CAPACITY:1000}
+      retention: ${PRODUCT_SEARCH_LOG_RETENTION:90d}
+  # product 전용 스케줄러(product ProductSchedulingConfig). 근거는 application-product.yaml에 있다(#788)
+  scheduling:
+    pool-size: ${PRODUCT_SCHEDULING_POOL_SIZE:4}
+    thread-name-prefix: product-scheduling-
+
+# 앱 시작 시 만들 최초 관리자 계정 (member.member.adapter.in.bootstrap.AdminBootstrapConfig)
+# - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)
+# - 같은 아이디의 회원이 이미 있으면 만들지 않고 비밀번호도 바꾸지 않는다
+admin-bootstrap:
+  login-id: ${ADMIN_BOOTSTRAP_LOGIN_ID:}
+  password: ${ADMIN_BOOTSTRAP_PASSWORD:}
+  email: ${ADMIN_BOOTSTRAP_EMAIL:}
+jwt:
+  issuer: paldo-gotgan
+  # 토큰을 받는 서비스(aud). 서비스가 분리되면 서비스마다 다른 값을 쓴다.
+  audience: paldo-gotgan-api
+  # 검증용 공개키 목록. 토큰 헤더의 kid로 키를 고르고, 목록에 없는 kid는 거부한다.
+  # - kid는 토큰 헤더에 그대로 노출되는 값이므로 키 내용이나 추측 가능한 정보를 넣지 않는다.
+  # - kid 형식: {알고리즘}-v{버전} (예: rs256-v1 → rs256-v2)
+  # - 키를 교체할 때는 새 키를 추가해 옛 키와 함께 두는 기간을 둔다. 절차는 docs/DEVELOPMENT.md 8절
+  # - 파일 이름은 kid를 따른다. 교체 중에는 옛 키와 새 키 파일이 한 폴더에 함께 있기 때문이다
+  # - 아래 경로는 로컬 기본값으로, 실행 디렉터리(저장소 루트) 기준이다. 운영은 서버 키 폴더의 jwt.yaml이 이 블록을 덮어쓴다 (application-prod.yml)
+  verification-keys:
+    - key-id: rs256-v1
+      public-key: file:keys/rs256-v1-public.pem
+  access-token-expiration: 30m
+  refresh-token-expiration: 14d
+  # 서명용 개인키. 토큰을 발급하는 member(auth)를 포함한 앱에만 둔다. key-id는 위 verification-keys에 있어야 한다.
+  signing:
+    key-id: rs256-v1
+    private-key: file:keys/rs256-v1-private.pem
+
+toss:
+  payments:
+    base-url: https://api.tosspayments.com
+    secret-key: ${TOSS_SECRET_KEY}
+    connect-timeout: 3s
+    read-timeout: 30s
+
+delivery:
+  outbox:
+    # 커밋된 배송 outbox 줄을 바로 Kafka로 보내는 전용 실행기 (DeliveryAsyncConfig, #793). 값을 정한 이유는 application-delivery.yaml에 있다
+    send:
+      pool-size: ${DELIVERY_OUTBOX_SEND_POOL_SIZE:2}
+      queue-capacity: ${DELIVERY_OUTBOX_SEND_QUEUE_CAPACITY:1000}
+  # 배송 설정을 등록하지 않은 판매자에게 적용한다 (#122). 세 값 모두 필수이고, 빠지면 기동이 실패한다
+  default-shipping:
+    base-shipping-fee: 3000
+    free-shipping-threshold: 50000
+    cutoff-time: "13:00"
+
+management:
+  server:
+    # 관리 엔드포인트(health, prometheus)를 서비스 포트(8080)와 분리한다. 이 포트는 호스트에 publish하지 않고 nginx도 프록시하지 않아
+    # 외부에서 닿지 않는다. 8081~8088은 모듈 단독 실행이 쓰는 서버 포트라 피했다
+    # MANAGEMENT_SERVER_PORT를 빈 문자열로 주면 포트 분리가 풀려 서비스 포트에 prometheus가 열린다. 값을 비우지 않는다
+    port: ${MANAGEMENT_SERVER_PORT:18080}
+  endpoints:
+    web:
+      exposure:
+        # health는 컨테이너 헬스체크, prometheus는 지표 수집(Prometheus scrape)에 쓴다. 다른 엔드포인트는 열지 않는다
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      # 지표를 어느 앱이 냈는지 구분한다. instance는 Prometheus가 scrape 대상 주소로 자동 부여하므로 앱에서 달지 않는다
+      application: ${spring.application.name}
+    distribution:
+      # p95/p99를 Prometheus에서 histogram_quantile로 구하려면 버킷이 필요하다
+      # 버킷 범위를 5ms~10s로 제한해 uri마다 늘어나는 시계열 수를 줄인다
+      percentiles-histogram:
+        http.server.requests: true
+      minimum-expected-value:
+        http.server.requests: 5ms
+      maximum-expected-value:
+        http.server.requests: 10s

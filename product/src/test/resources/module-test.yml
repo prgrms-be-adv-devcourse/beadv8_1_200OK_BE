@@ -1,0 +1,19 @@
+# product 통합 테스트 전용 설정. common의 application-test.yml이 읽는다 (#485)
+product:
+  # 통합 테스트가 기준 이하·초과를 확인하도록 운영 기본값과 같게 둔다
+  low-stock-threshold: 5
+  search:
+    # 테스트 상품(10개 안팎)에 맞춘 하한이다. 점수는 상품 수에 따라 달라지므로(FULLTEXT IDF) 운영 값과 같지 않아도 된다.
+    # 이 값에서 자모로만 걸리는 오타(0.88 안팎)는 남고, 자모 조각 하나만 겹친 상품(0.46 이하)은 빠진다
+    min-score: 0.5
+    # 타임아웃 테스트가 오래 기다리지 않도록 JDBC가 허용하는 가장 짧은 값(1초)으로 둔다
+    query-timeout: 1s
+    log:
+      # 스레드가 하나면 로그가 들어온 순서대로 저장돼, 테스트가 나중 검색의 행을 보고 앞선 검색의 저장이 끝났음을 안다
+      pool-size: 1
+      queue-capacity: 100
+      retention: 90d
+  # 운영과 같은 값이다. 스레드 수가 줄면 작업자 하나가 막혔을 때 다른 작업자가 도는지 보는 테스트(ProductSchedulingIntegrationTest)가 실패한다
+  scheduling:
+    pool-size: 4
+    thread-name-prefix: product-scheduling-

@@ -1,0 +1,26 @@
+meta {
+  name: 재고 배정 - 같은 주문 재요청
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "orderId": {{orderId}},
+    "items": [{ "optionId": {{optionA}}, "quantity": 5 }]
+  }
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  같은 orderId 로 다시 보내면 items 는 비교하지 않고 첫 배정을 유지한 채 204 입니다. 다음 요청에서 수량이 그대로인지 확인합니다.
+}

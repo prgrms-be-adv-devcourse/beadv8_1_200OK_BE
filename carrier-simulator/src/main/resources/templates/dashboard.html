@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{layout :: head('현황')}"></head>
+<body>
+<header th:replace="~{layout :: header}"></header>
+<main>
+    <h1>현황</h1>
+    <div class="tiles">
+        <div class="tile"><div class="num" th:text="${totalQueries}">0</div><div class="cap">받은 조회 (누적)</div></div>
+        <div class="tile"><div class="num" th:text="${queriesPerSecond} + '/초'">0/초</div><div class="cap">받은 조회 (직전 10초 평균)</div></div>
+        <div class="tile"><div class="num" th:text="${registerCount}">0</div><div class="cap">받은 알림 등록</div></div>
+        <div class="tile"><div class="num" th:text="${parcelCount}">0</div><div class="cap">송장</div></div>
+        <div class="tile"><div class="num" th:text="${errorResponses}">0</div><div class="cap">돌려준 오류 응답</div></div>
+        <div class="tile"><div class="num" th:text="${pendingCallbacks}">0</div><div class="cap">보내려고 기다리는 알림</div></div>
+        <div class="tile">
+            <div class="num" th:text="${paused} ? '일시정지' : '하루 = ' + ${secondsPerDay} + '초'">하루 = 10초</div>
+            <div class="cap">재생 속도</div>
+        </div>
+        <div class="tile">
+            <div class="num" th:text="${detectionP50} + ' / ' + ${detectionP95}">- / -</div>
+            <div class="cap">감지 지연 (중앙값 / 95%)</div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>시간대별 받은 조회 수 (10초 단위, 최근 5분)</h2>
+            <svg class="chart" th:attr="viewBox='0 0 ' + ${chart.width} + ' ' + ${chart.height + 16}" role="img"
+                 aria-label="시간대별 받은 조회 수 막대그래프">
+                <line class="axis" x1="0" th:attr="y1=${chart.height},x2=${chart.width},y2=${chart.height}"/>
+                <rect th:each="bar : ${chart.bars}" th:class="${bar.kind}"
+                      th:attr="x=${bar.x},y=${bar.y},width=${bar.width},height=${bar.height}"/>
+                <text x="0" th:attr="y=${chart.height + 13}" th:text="${chartFrom}">00:00:00</text>
+                <text th:attr="x=${chart.width},y=${chart.height + 13}" text-anchor="end">지금</text>
+                <text x="0" y="10" th:text="'최대 ' + ${chart.max} + '건'">최대 0건</text>
+            </svg>
+            <div class="legend">
+                <span><span class="dot" style="background:var(--ok)"></span>정상 응답</span>
+                <span><span class="dot" style="background:var(--error)"></span>일부러 낸 오류</span>
+                <span><span class="dot" style="background:var(--warn)"></span>없는 송장</span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>송장 상태 분포 (지금)</h2>
+            <div class="hbar" th:each="row : ${statusRows}">
+                <span th:text="${row.name}">접수</span>
+                <div class="track"><div class="fill" th:style="'width:' + ${row.percent} + '%'"></div></div>
+                <span class="count" th:text="${row.count}">0</span>
+            </div>
+        </div>
+    </div>
+    <p class="note">감지 지연은 사건이 일어난 뒤 처음으로 조회해 가기까지 걸린 시간입니다. 통계는 메모리에만 있어 서버를 다시 띄우면 지워집니다.</p>
+</main>
+</body>
+</html>

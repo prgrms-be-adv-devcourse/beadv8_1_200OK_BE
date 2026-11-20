@@ -1,0 +1,27 @@
+meta {
+  name: 리뷰 수정
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/api/v1/reviews/{{reviewId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "rating": 6,
+    "content": "다시 먹어 보니 보통이에요",
+    "mediaUrls": []
+  }
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  첨부는 보낸 목록으로 전체 교체합니다. 빈 목록이면 첨부를 모두 지웁니다.
+}

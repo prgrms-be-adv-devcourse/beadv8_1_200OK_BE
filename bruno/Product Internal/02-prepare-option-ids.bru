@@ -1,0 +1,28 @@
+meta {
+  name: 준비 - 옵션 ID와 주문 ID 정하기
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/{{productId}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  bru.setVar("optionA", res.body.options[0].optionId);
+  bru.setVar("optionB", res.body.options[1].optionId);
+  // 실행마다 겹치지 않는 주문 ID (order 모듈 주문이 없어도 배정 기록 키로만 쓰인다)
+  const base = Date.now();
+  bru.setVar("orderId", base);
+  bru.setVar("orderIdForShortage", base + 1);
+}
+
+docs {
+  상품 상세에서 옵션 ID를 꺼내 변수 `optionA`, `optionB` 로 저장하고, 주문 ID 변수도 정합니다.
+}

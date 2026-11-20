@@ -1,0 +1,1372 @@
+package com.ok.payout;
+
+import com.ok.payout.adapter.in.batch.PayoutJobRunner;
+import com.ok.payout.adapter.out.persistence.PayoutBlockedOrderCauseJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutBlockedOrderJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutBlockedOrderRefreshJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutCandidateItemJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutSnapshotJpaRepository;
+import com.ok.payout.adapter.out.persistence.PayoutWalletDeductionJpaRepository;
+import com.ok.payout.application.port.in.PayoutBlockedOrderUseCase;
+import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
+import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.domain.PayoutBlockedOrder;
+import com.ok.payout.domain.PayoutBlockedOrderCause;
+import com.ok.payout.domain.PayoutBlockedOrderRefresh;
+import com.ok.payout.domain.PayoutBlockedStatus;
+import com.ok.payout.domain.PayoutCandidateItem;
+import com.ok.payout.domain.PayoutEventType;
+import com.ok.payout.domain.PayoutFailureReason;
+import com.ok.payout.domain.PayoutOverchargeEvidence;
+import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.PayoutSnapshot;
+import com.ok.payout.domain.PayoutWalletDeduction;
+import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.TestAccessTokens;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.job.JobExecution;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.nullValue;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+// 통합 테스트: 막힌 주문 집계 표 (#582)와 관리자 막힌 주문 목록 API (#569)
+// - 실행(COMPLETED)은 실제 정산 Job(PayoutJobRunner.runScheduled)으로 만든다. Job이 끝날 때 리스너가 표를 갱신한다
+// - 멈춘 주문은 지갑 결제 기록 없는 후보로 실제 Job이 스스로 "결제 기록 없음"으로 실패하게 해서 만든다 (실제 흐름 그대로)
+// - 잠긴 주문·사유가 섞인 이력은 실행을 먼저 만들고, 그 스냅샷에 실패 기록을 SQL로 넣은 뒤 갱신(입력 포트)을 직접 부른다
+//   (실제로는 그 실행의 Job 끝에 갱신되지만, 실패 기록을 Job 밖에서 넣었으므로 갱신을 한 번 더 부름)
+// - 결과 확인은 JPA 리포지토리로 한다. JDBC는 데이터 준비·정리에만 씀
+class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
+
+    // 이 클래스 전용 주문 ID 번호대 (다른 통합 테스트와 겹치지 않게 5_300_000~5_400_000)
+    private static final long ORDER_ID_START = 5_300_000L;
+    private static final long ORDER_ID_END = 5_400_000L;
+    private static final AtomicLong ORDER_ID_SEQ = new AtomicLong(ORDER_ID_START);
+    // 주문항목 ID 번호대: 주문 ID와 겹치지 않게 따로 발급
+    private static final AtomicLong ORDER_ITEM_ID_SEQ = new AtomicLong(17_000_000L);
+
+    private static final long ADMIN_ID = 1L;
+    private static final long SELLER_ID = 10L;
+    private static final String HELD_DETAIL = "[함께 보류] 같은 주문의 결과 검증 불일치 (원인 후보 [1])";
+
+    @Autowired
+    private PayoutBlockedOrderUseCase blockedOrderUseCase;
+
+    @Autowired
+    private PayoutFailureResolutionUseCase resolutionUseCase;
+
+    @Autowired
+    private PayoutQueryRepository payoutQueryRepository;
+
+    @Autowired
+    private PayoutBlockedOrderJpaRepository blockedOrderRepository;
+
+    @Autowired
+    private PayoutBlockedOrderCauseJpaRepository causeRepository;
+
+    @Autowired
+    private PayoutBlockedOrderRefreshJpaRepository refreshRepository;
+
+    @Autowired
+    private PayoutJobRunner payoutJobRunner;
+
+    @Autowired
+    private JobRepository jobRepository;
+
+    @Autowired
+    private PayoutSnapshotJpaRepository snapshotRepository;
+
+    @Autowired
+    private PayoutCandidateItemJpaRepository candidateRepository;
+
+    @Autowired
+    private PayoutWalletDeductionJpaRepository walletDeductionRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private WebApplicationContext context;
+
+    @Autowired
+    private TestAccessTokens tokens;
+
+    private MockMvc mockMvc;
+
+    @BeforeEach
+    void setUp() {
+        cleanUp();
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        cleanUp();
+    }
+
+    // ---------- Job 끝 갱신 ----------
+
+    @Test
+    void 세번_실패해_멈춘_주문은_세번째_Job이_끝날_때_STOPPED로_들어간다() throws Exception {
+        // given: 결제 기록이 없어 실제 Job마다 "결제 기록 없음"으로 실패하는 주문
+        long order = nextOrderId();
+        insertCandidateWithoutDeduction(order, LocalDateTime.now().minusDays(30));
+
+        // when & then: 2번째까지는 아직 다시 검사 중이라 없음, 3번째 Job이 끝나면 들어감
+        runCompleted(2);
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+        runCompleted();
+
+        // then: Job 끝 리스너가 방금 끝난 실행까지 세어 멈춤으로 판정 (실행 상태가 저장된 뒤 afterJob이 불림)
+        PayoutBlockedOrder sut = blockedOrderRepository.findById(order).orElseThrow();
+        assertThat(sut).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(sut.getStatus()).isEqualTo(PayoutBlockedStatus.STOPPED);
+            softly.assertThat(sut.getFailedRunCount()).isEqualTo(3);
+            softly.assertThat(sut.getLastFailedAt()).isNotNull();
+        });
+        // 실행마다 같은 실패가 쌓였지만 원인은 1줄
+        assertThat(causeRepository.findAllByOrderId(order))
+                .extracting(PayoutBlockedOrderCause::getReason, PayoutBlockedOrderCause::getEventType)
+                .containsExactly(tuple(PayoutFailureReason.DEDUCTION_MISSING, PayoutEventType.SALE_AMOUNT));
+    }
+
+    @Test
+    void 잠긴_주문은_실패_횟수가_1이어도_LOCKED로_들어간다() throws Exception {
+        // given: 성공한 실행에서 결과 검증 불일치 1번
+        Long run = runCompleted();
+        long order = nextOrderId();
+        long candidate = insertCandidate(order);
+        insertFailure(run, candidate, order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus, PayoutBlockedOrder::getFailedRunCount)
+                .containsExactly(PayoutBlockedStatus.LOCKED, 1);
+    }
+
+    @Test
+    void 실패한_실행에서만_잠긴_주문은_횟수_0으로_LOCKED가_된다() throws Exception {
+        // given: 실패로 끝난 실행의 결과 검증 불일치 (잠금은 실행 결과를 보지 않고, 횟수는 성공한 실행만 셈)
+        Long run = runFailed();
+        long order = nextOrderId();
+        long candidate = insertCandidate(order);
+        insertFailure(run, candidate, order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus, PayoutBlockedOrder::getFailedRunCount)
+                .containsExactly(PayoutBlockedStatus.LOCKED, 0);
+    }
+
+    @Test
+    void 잠기지_않고_1에서_2번_실패한_주문은_들어가지_않는다() throws Exception {
+        // given: 초과 청구 2번 (잠그지 않는 사유, 아직 다시 검사 중)
+        List<Long> runs = runCompleted(2);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order);
+        insertFailure(runs.get(0), candidate, order, null, PayoutFailureReason.AMOUNT_MISMATCH, "초과 청구");
+        insertFailure(runs.get(1), candidate, order, null, PayoutFailureReason.AMOUNT_MISMATCH, "초과 청구");
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+    }
+
+    @Test
+    void 잠김이면서_멈춘_주문은_LOCKED_한_줄이다() throws Exception {
+        // given: 초과 청구 2번 + 결과 검증 불일치 1번 = 성공한 실행 3번
+        List<Long> runs = runCompleted(3);
+        long order = nextOrderId();
+        long candidate = insertCandidate(order);
+        insertFailure(runs.get(0), candidate, order, null, PayoutFailureReason.AMOUNT_MISMATCH, "초과 청구");
+        insertFailure(runs.get(1), candidate, order, null, PayoutFailureReason.AMOUNT_MISMATCH, "초과 청구");
+        insertFailure(runs.get(2), candidate, order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 잠김은 다시 검사해도 안 풀려 사람이 꼭 봐야 하므로 LOCKED
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus, PayoutBlockedOrder::getFailedRunCount)
+                .containsExactly(PayoutBlockedStatus.LOCKED, 3);
+    }
+
+    // ---------- 해결 ----------
+
+    @Test
+    void 해결하면_RESOLVED가_되고_다음_갱신에서_지워진다() throws Exception {
+        // given: 표에 들어간 잠긴 주문
+        long order = givenLockedOrderInTable();
+
+        // when: 해결
+        resolve(order);
+
+        // then: 바로 RESOLVED로 보이고, 다음 갱신이 원본(해결됨)으로 판정해 지움 (원인 줄도 함께)
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus).isEqualTo(PayoutBlockedStatus.RESOLVED);
+        blockedOrderUseCase.refresh();
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+        assertThat(causeRepository.findAllByOrderId(order)).isEmpty();
+    }
+
+    @Test
+    void 해결_뒤_다시_잠기면_다음_갱신에서_다시_LOCKED가_된다() throws Exception {
+        // given: 해결해 RESOLVED가 된 뒤, 다시 검사에서 또 결과 검증 불일치
+        long order = givenLockedOrderInTable();
+        resolve(order);
+        Long run = runCompleted();
+        long candidate = candidateRepository.findAllByOrderId(order).get(0).getId();
+        insertFailure(run, candidate, order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 또 다름");
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 표에 있는 주문이라 다시 판정되고, 해결 뒤 생긴 실패로 다시 잠김
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus).isEqualTo(PayoutBlockedStatus.LOCKED);
+        assertThat(causeRepository.findAllByOrderId(order))
+                .extracting(PayoutBlockedOrderCause::getDetail).containsExactly("[원인] 또 다름");
+    }
+
+    // ---------- 다시 돌려도 같은 결과 ----------
+
+    @Test
+    void 반영_표시를_올리기_전에_멈춰_같은_범위를_다시_판정해도_표와_원인이_같다() throws Exception {
+        // given: 잠긴 주문과 멈춘 주문을 한 번 갱신해 둠
+        List<Long> runs = runCompleted(3);
+        long locked = givenOrderWithFailures(List.of(runs.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        long stopped = givenOrderWithFailures(runs, PayoutFailureReason.AMOUNT_MISMATCH);
+        blockedOrderUseCase.refresh();
+        List<PayoutBlockedOrder> before = blockedOrderRepository.findAllById(List.of(locked, stopped));
+        List<PayoutBlockedOrderCause> causesBefore = causesOf(locked, stopped);
+
+        // when: 앞 묶음은 커밋됐지만 반영 표시를 올리기 전에 실패한 상황 → 다음 갱신이 같은 범위를 처음부터 다시 판정
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = 0");
+        blockedOrderUseCase.refresh();
+
+        // then: 줄은 그대로, 원인은 지우고 다시 넣어 줄 수가 늘지 않음
+        assertThat(blockedOrderRepository.findAllById(List.of(locked, stopped)))
+                .extracting(PayoutBlockedOrder::getOrderId, PayoutBlockedOrder::getStatus,
+                        PayoutBlockedOrder::getFailedRunCount, PayoutBlockedOrder::getLastFailedAt)
+                .containsExactlyInAnyOrderElementsOf(before.stream()
+                        .map(b -> tuple(b.getOrderId(), b.getStatus(), b.getFailedRunCount(), b.getLastFailedAt()))
+                        .toList());
+        assertThat(causesOf(locked, stopped))
+                .extracting(PayoutBlockedOrderCause::getOrderId, PayoutBlockedOrderCause::getReason,
+                        PayoutBlockedOrderCause::getDetail)
+                .containsExactlyInAnyOrderElementsOf(causesBefore.stream()
+                        .map(c -> tuple(c.getOrderId(), c.getReason(), c.getDetail()))
+                        .toList());
+    }
+
+    // ---------- 원인 ----------
+
+    @Test
+    void 원인은_함께_보류를_빼고_같은_기록은_한_번만_남긴다() throws Exception {
+        // given: 상품 1개(대금·수수료)가 수수료 불일치로 2번 기록됨, 배송비는 함께 보류(ORDER_HELD),
+        //   같은 주문의 결과 검증 "[함께 보류]" 기록도 있음
+        List<Long> runs = runCompleted(2);
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        long amount = insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 10_000L);
+        long fee = insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        long shipping = insertCandidateOf(order, PayoutEventType.SALE_SHIPPING_FEE, null, 3_000L);
+        for (Long run : runs) {
+            insertFailure(run, amount, order, orderItem, PayoutFailureReason.FEE_MISMATCH, "수수료 불일치");
+            insertFailure(run, fee, order, orderItem, PayoutFailureReason.FEE_MISMATCH, "수수료 불일치");
+        }
+        insertFailure(runs.get(0), shipping, order, null, PayoutFailureReason.ORDER_HELD, "같은 주문의 수수료 불일치로 보류");
+        insertFailure(runs.get(1), shipping, order, null, PayoutFailureReason.VERIFY_MISMATCH, HELD_DETAIL);
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 원인은 대금·수수료 FEE_MISMATCH 2줄 (실행 2번이어도 1번씩, 배송비 함께 보류는 빠짐)
+        assertThat(causeRepository.findAllByOrderId(order))
+                .extracting(PayoutBlockedOrderCause::getEventType, PayoutBlockedOrderCause::getReason,
+                        PayoutBlockedOrderCause::getOrderItemId)
+                .containsExactlyInAnyOrder(
+                        tuple(PayoutEventType.SALE_AMOUNT, PayoutFailureReason.FEE_MISMATCH, orderItem),
+                        tuple(PayoutEventType.SALE_FEE, PayoutFailureReason.FEE_MISMATCH, orderItem));
+    }
+
+    // ---------- 반영 표시 ----------
+
+    @Test
+    void 가장_큰_실패_기록_ID가_반영_표시보다_작아도_갱신이_실패하지_않고_표시를_그대로_둔다() {
+        // given: 사람이 최근 실패 기록을 DB에서 지워 가장 큰 ID가 반영 표시보다 작아진 상황
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = ?", Long.MAX_VALUE - 1);
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 반영 표시를 뒤로 돌리지 않음 (돌리려다 예외가 나면 그 뒤 모든 Job의 갱신이 매번 실패함)
+        assertThat(refreshRepository.findById(PayoutBlockedOrderRefresh.SINGLE_ROW_ID))
+                .get().extracting(PayoutBlockedOrderRefresh::getLastFailureId).isEqualTo(Long.MAX_VALUE - 1);
+    }
+
+    @Test
+    void 반영_표시_앞의_실패_기록은_다시_읽지_않는다() throws Exception {
+        // given: 이미 반영했다고 표시된 실패 기록 (표에는 없음)
+        Long run = runCompleted();
+        long before = nextOrderId();
+        insertFailure(run, insertCandidate(before), before, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 앞");
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = (SELECT MAX(id) FROM payout_failure)");
+        long after = nextOrderId();
+        insertFailure(run, insertCandidate(after), after, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 뒤");
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 반영 표시 뒤의 실패만 읽어 운영 기간 전체를 매번 읽지 않음
+        //   앞 주문처럼 표에서 빠진 막힌 주문은 사람이 반영 표시를 내려 다시 판정시킴 (#583, 아래 테스트)
+        assertThat(blockedOrderRepository.findById(before)).isEmpty();
+        assertThat(blockedOrderRepository.findById(after)).isPresent();
+        assertThat(refreshRepository.findById(PayoutBlockedOrderRefresh.SINGLE_ROW_ID))
+                .get().extracting(PayoutBlockedOrderRefresh::getLastFailureId)
+                .isEqualTo(payoutQueryRepository.findMaxFailureId());
+    }
+
+    @Test
+    void 표에서_빠진_막힌_주문은_반영_표시를_그_실패_앞으로_내리면_다음_갱신에_다시_들어간다() throws Exception {
+        // given: 원본으로는 잠겼는데 표에 줄이 없고, 그 실패가 반영 표시 앞에 있음 (사람이 DB를 건드려 생기는 상황, #583)
+        Long run = runCompleted();
+        long missing = nextOrderId();
+        insertFailure(run, insertCandidate(missing), missing, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 빠짐");
+        long missingFailureId = payoutQueryRepository.findMaxFailureId();
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = ?", missingFailureId);
+        blockedOrderUseCase.refresh();
+        assertThat(blockedOrderRepository.findById(missing)).isEmpty();
+
+        // when: 사람이 반영 표시를 그 주문의 실패 기록 바로 앞으로 내리고, 다음 갱신이 돎
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = ?", missingFailureId - 1);
+        blockedOrderUseCase.refresh();
+
+        // then: 그 주문이 원본 판정대로 표에 다시 들어가고, 반영 표시는 다시 가장 큰 실패 기록까지 올라감
+        assertThat(blockedOrderRepository.findById(missing)).get()
+                .extracting(PayoutBlockedOrder::getStatus).isEqualTo(PayoutBlockedStatus.LOCKED);
+        assertThat(refreshRepository.findById(PayoutBlockedOrderRefresh.SINGLE_ROW_ID))
+                .get().extracting(PayoutBlockedOrderRefresh::getLastFailureId)
+                .isEqualTo(payoutQueryRepository.findMaxFailureId());
+    }
+
+    @Test
+    void 갱신을_놓친_실패도_다음_갱신이_이어서_잡는다() throws Exception {
+        // given: 두 실행에서 생긴 잠김. 첫 실패 뒤 갱신이 없었음 (갱신 실패나 서버 다운으로 놓친 상황)
+        List<Long> runs = runCompleted(2);
+        long missed = nextOrderId();
+        insertFailure(runs.get(0), insertCandidate(missed), missed, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 놓침");
+        long latest = nextOrderId();
+        insertFailure(runs.get(1), insertCandidate(latest), latest, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 최근");
+
+        // when: 다음 갱신 한 번
+        blockedOrderUseCase.refresh();
+
+        // then: 잠긴 주문은 다음 스냅샷에 안 들어가 새 실패가 없지만, 반영 표시 뒤라 둘 다 들어감
+        assertThat(blockedOrderRepository.findById(missed)).isPresent();
+        assertThat(blockedOrderRepository.findById(latest)).isPresent();
+    }
+
+    // ---------- 해결 API와 같은 판정 ----------
+
+    @Test
+    void 표에_있는_주문은_해결_API가_해결할_것이_있다고_보는_주문과_같다() throws Exception {
+        // given: 7가지 경우
+        List<Long> completed = runCompleted(3);
+        List<Long> failed = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            failed.add(runFailed());
+        }
+        long locked = givenOrderWithFailures(List.of(completed.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        long stopped = givenOrderWithFailures(completed, PayoutFailureReason.AMOUNT_MISMATCH);
+        long lockedAndStopped = givenOrderWithFailures(completed, PayoutFailureReason.FEE_MISMATCH);
+        long retrying = givenOrderWithFailures(completed.subList(0, 2), PayoutFailureReason.AMOUNT_MISMATCH);
+        long failedRunsOnly = givenOrderWithFailures(failed, PayoutFailureReason.AMOUNT_MISMATCH);
+        long lockedInFailedRun = givenOrderWithFailures(List.of(failed.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        long resolved = givenOrderWithFailures(List.of(completed.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        resolve(resolved);
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 해결 API의 판정(PayoutFailureResolutionService: 잠김 또는 멈춤이면 해결할 것 있음)과 표에 있는지가 같음
+        Map<Long, Boolean> expected = Map.of(locked, true, stopped, true, lockedAndStopped, true, retrying, false,
+                failedRunsOnly, false, lockedInFailedRun, true, resolved, false);
+        for (Map.Entry<Long, Boolean> entry : expected.entrySet()) {
+            long order = entry.getKey();
+            boolean resolvable = payoutQueryRepository.isOrderLocked(order)
+                    || PayoutPolicy.isStopped(payoutQueryRepository.countFailedRunsOfOrder(order));
+            assertThat(resolvable).as("해결 API 판정 orderId=%s", order).isEqualTo(entry.getValue());
+            assertThat(blockedOrderRepository.findById(order).isPresent()).as("표 orderId=%s", order).isEqualTo(resolvable);
+        }
+    }
+
+    // ---------- 관리자 목록 API (#569) ----------
+
+    @Test
+    void 관리자_목록은_막힌_주문을_상태와_원인과_함께_보여_준다() throws Exception {
+        // given: 상품 1개(대금·수수료)가 수수료 불일치로 잠기고, 배송비는 함께 보류된 주문
+        Long run = runCompleted();
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        long amount = insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 10_000L);
+        long fee = insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        long shipping = insertCandidateOf(order, PayoutEventType.SALE_SHIPPING_FEE, null, 3_000L);
+        insertFailure(run, amount, order, orderItem, PayoutFailureReason.FEE_MISMATCH, "수수료 불일치 대금");
+        insertFailure(run, fee, order, orderItem, PayoutFailureReason.FEE_MISMATCH, "수수료 불일치 수수료");
+        insertFailure(run, shipping, order, null, PayoutFailureReason.ORDER_HELD, "같은 주문의 수수료 불일치로 보류");
+        blockedOrderUseCase.refresh();
+
+        // when & then: 한 줄, 함께 보류(배송비)는 원인에서 빠짐
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].status").value("LOCKED"))
+                .andExpect(jsonPath("$.content[0].failedRunCount").value(1))
+                .andExpect(jsonPath("$.content[0].lastFailedAt").isNotEmpty())
+                .andExpect(jsonPath("$.content[0].sellerIds").value(contains((int) SELLER_ID)))
+                .andExpect(jsonPath("$.content[0].reasons").value(contains("FEE_MISMATCH")))
+                .andExpect(jsonPath("$.content[0].categories").value(contains("SYSTEM")))
+                .andExpect(jsonPath("$.content[0].causes.length()").value(2))
+                .andExpect(jsonPath("$.content[0].causes[*].eventType").value(containsInAnyOrder("SALE_AMOUNT", "SALE_FEE")))
+                .andExpect(jsonPath("$.content[0].causes[0].orderItemId").value(orderItem))
+                .andExpect(jsonPath("$.content[0].causes[0].reason").value("FEE_MISMATCH"))
+                .andExpect(jsonPath("$.content[0].causes[0].category").value("SYSTEM"))
+                .andExpect(jsonPath("$.content[0].causes[0].detail").isNotEmpty())
+                .andExpect(jsonPath("$.content[0].causes[0].sellerId").value(SELLER_ID))
+                .andExpect(jsonPath("$.content[0].causes[0].failedAt").isNotEmpty());
+    }
+
+    @Test
+    void 관리자_목록은_잠김이면서_멈춘_주문을_LOCKED_한_줄로_보여_주고_1에서_2번_실패는_빼고_해결은_RESOLVED로_보여_준다() throws Exception {
+        // given
+        List<Long> runs = runCompleted(3);
+        long lockedAndStopped = givenOrderWithFailures(runs, PayoutFailureReason.FEE_MISMATCH);
+        long retrying = givenOrderWithFailures(runs.subList(0, 2), PayoutFailureReason.AMOUNT_MISMATCH);
+        long resolved = givenOrderWithFailures(List.of(runs.get(0)), PayoutFailureReason.VERIFY_MISMATCH);
+        blockedOrderUseCase.refresh();
+        resolve(resolved);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 해결한 주문은 다음 갱신 전까지 RESOLVED로 보임
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].orderId").value(containsInAnyOrder((int) lockedAndStopped, (int) resolved)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + lockedAndStopped + ")].status").value(contains("LOCKED")))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + lockedAndStopped + ")].failedRunCount").value(contains(3)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + resolved + ")].status").value(contains("RESOLVED")))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + retrying + ")]").isEmpty());
+
+        // then: 다음 갱신 뒤에는 해결한 주문이 빠짐
+        blockedOrderUseCase.refresh();
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) lockedAndStopped)));
+    }
+
+    @Test
+    void 관리자_목록은_마지막_실패_시각_최신순이고_같으면_주문_ID_역순이며_페이지로_나눈다() throws Exception {
+        // given: 주문 셋. 하나는 이른 시각, 둘은 같은 늦은 시각
+        Long run = runCompleted();
+        LocalDateTime early = LocalDateTime.of(2026, 11, 10, 10, 0);
+        LocalDateTime late = LocalDateTime.of(2026, 11, 12, 10, 0);
+        long earlyOrder = nextOrderId();
+        insertFailureAt(run, insertCandidate(earlyOrder), earlyOrder, PayoutFailureReason.VERIFY_MISMATCH, early);
+        long lateSmall = nextOrderId();
+        insertFailureAt(run, insertCandidate(lateSmall), lateSmall, PayoutFailureReason.VERIFY_MISMATCH, late);
+        long lateBig = nextOrderId();
+        insertFailureAt(run, insertCandidate(lateBig), lateBig, PayoutFailureReason.VERIFY_MISMATCH, late);
+        blockedOrderUseCase.refresh();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 늦은 시각(주문 ID 큰 것 → 작은 것) → 이른 시각, 크기 2면 2쪽
+        mockMvc.perform(blockedOrdersRequest().param("page", "0").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) lateBig, (int) lateSmall)));
+        mockMvc.perform(blockedOrdersRequest().param("page", "1").param("size", "2").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) earlyOrder)));
+    }
+
+    @Test
+    void 관리자_목록은_막힌_주문이_없으면_빈_목록이다() throws Exception {
+        // when & then
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())                                               // 정산 상세(/{payoutId})로 잘못 들어가면 400
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content").isEmpty());
+    }
+
+    @Test
+    void 관리자_목록은_토큰이_없으면_401_관리자가_아니면_403_페이지_크기가_범위를_벗어나면_422다() throws Exception {
+        // when & then
+        mockMvc.perform(blockedOrdersRequest())
+                .andExpect(status().isUnauthorized());                                    // 401
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(7L, "BUYER", "SELLER")))
+                .andExpect(status().isForbidden());                                       // 403
+        mockMvc.perform(blockedOrdersRequest().param("size", "101")
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isUnprocessableEntity());                             // 422
+    }
+
+    // ---------- 주문 ID·상태 조건 (#723) ----------
+
+    @Test
+    void 관리자_목록에_주문_ID를_주면_그_주문_줄만_나오고_막히지_않은_주문이면_빈_목록이다() throws Exception {
+        // given: 막힌 주문 둘
+        Long run = runCompleted();
+        long target = nextOrderId();
+        insertFailure(run, insertCandidate(target), target, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        long other = nextOrderId();
+        insertFailure(run, insertCandidate(other), other, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        blockedOrderUseCase.refresh();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 고른 주문 한 줄
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(target)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) target)));
+
+        // when & then: 막히지 않은 주문 ID는 빈 목록
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(nextOrderId())).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
+    void 관리자_목록에_상태를_주면_그_상태만_나오고_주문_ID와_함께_주면_둘_다_맞는_줄만_나온다() throws Exception {
+        // given: 잠김 하나, 해결됨 하나 (해결은 다음 갱신 전까지 RESOLVED)
+        Long run = runCompleted();
+        long locked = nextOrderId();
+        insertFailure(run, insertCandidate(locked), locked, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        long resolved = nextOrderId();
+        insertFailure(run, insertCandidate(resolved), resolved, null, PayoutFailureReason.VERIFY_MISMATCH, "결과 검증 불일치");
+        blockedOrderUseCase.refresh();
+        resolve(resolved);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 아직 안 푼 것만 (여러 값)
+        mockMvc.perform(blockedOrdersRequest().param("status", "LOCKED").param("status", "STOPPED")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) locked)));
+
+        // when & then: 해결됨만
+        mockMvc.perform(blockedOrdersRequest().param("status", "RESOLVED").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) resolved)));
+
+        // when & then: 주문 ID와 상태가 맞지 않으면 빈 목록
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(locked)).param("status", "RESOLVED")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    // ---------- 해결 대기 조정 합계 (#723) ----------
+
+    @Test
+    void 초과_청구로_멈춘_주문에_조정을_넣으면_대기_합계에_대금_수수료가_따로_보이고_해결하면_지금_합계로_옮겨간다() throws Exception {
+        // given: 결제 30,000인데 판매 40,000(대금 38,800 / 수수료 1,200) → 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 조정 전에는 두 합계 0, 지금 합계 40,000
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].status").value("STOPPED"))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(40_000))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(0))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(0));
+
+        // when: 실패 뒤 맞는 조정(대금 −9,700 / 수수료 −300)을 넣음
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -300L);
+
+        // then: 지금 합계는 그대로(해결 전 조정은 검사 범위가 아님), 대기 합계에 따로 보임
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(40_000))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(-9_700))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(-300));
+
+        // when: 다시 처리
+        resolve(order);
+
+        // then: 확인한 조정이 되어 지금 합계 30,000, 대기 합계는 0
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].status").value("RESOLVED"))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(30_000))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(0))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(0));
+    }
+
+    @Test
+    void 수수료_불일치를_맞게_고치면_대기_합계가_반대_부호로_따로_보이고_지금_근거는_없다() throws Exception {
+        // given: 판매 10,000인데 대금 9,000 / 수수료 1,000(맞는 값 9,700 / 300) → 수수료 불일치로 1번에 잠김
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_000L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_000L);
+        givenDeduction(order, 10_000L);
+        runCompleted();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when: 대금 +700 / 수수료 −700
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, 700L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -700L);
+
+        // then: 하나로 더하면 0이지만 따로 보여 들어간 것이 보임. 초과 청구가 아니라 지금 근거는 없음
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].status").value("LOCKED"))
+                .andExpect(jsonPath("$.content[0].reasons").value(contains("FEE_MISMATCH")))
+                .andExpect(jsonPath("$.content[0].evidenceNow").value(nullValue()))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(700))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(-700));
+    }
+
+    @Test
+    void 한_페이지에_막힌_주문이_여럿이면_대기_합계가_주문마다_따로_나온다() throws Exception {
+        // given: 같은 금액 불일치로 멈춘 주문 둘. 첫째에만 조정을 넣음
+        long adjusted = nextOrderId();
+        long adjustedItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(adjusted, PayoutEventType.SALE_AMOUNT, adjustedItem, 38_800L);
+        insertCandidateOf(adjusted, PayoutEventType.SALE_FEE, adjustedItem, 1_200L);
+        givenDeduction(adjusted, 30_000L);
+        long untouched = nextOrderId();
+        long untouchedItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(untouched, PayoutEventType.SALE_AMOUNT, untouchedItem, 38_800L);
+        insertCandidateOf(untouched, PayoutEventType.SALE_FEE, untouchedItem, 1_200L);
+        givenDeduction(untouched, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, adjustedItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+        postAdjustment(admin, adjustedItem, PayoutEventType.SALE_FEE, -300L);
+
+        // when & then: 주문 ID 조건 없이 한 페이지로 불러도 조정은 넣은 주문에만 잡힘
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + adjusted + ")].pendingSaleAmountAdjustment").value(contains(-9_700)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + adjusted + ")].pendingSaleFeeAdjustment").value(contains(-300)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + untouched + ")].pendingSaleAmountAdjustment").value(contains(0)))
+                .andExpect(jsonPath("$.content[?(@.orderId == " + untouched + ")].pendingSaleFeeAdjustment").value(contains(0)));
+    }
+
+    // 확인한 조정(실패 뒤·해결 전에 넣고 해결함)은 다시 막혀도 대기 합계에서 빠짐: 이미 금액 검사에 들어가 있어 두 번 세지 않게
+    @Test
+    void 이미_확인된_조정은_다시_막혀도_대기_합계에_들어가지_않는다() throws Exception {
+        // given: 멈춘 뒤 판매 금액을 35,000으로만 고치는 조정(대금 −4,850 / 수수료 −150, 35,000의 3% = 1,050)을 넣고 해결
+        //        → 수수료 비율은 맞지만 아직 넘쳐(35,000 > 30,000) 다시 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -4_850L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -150L);
+        resolve(order);
+        runCompleted(3);
+
+        // when & then: 다시 멈춘 줄의 대기 합계는 0, 확인된 −5,000은 지금 합계(40,000 − 4,850 − 150)에 들어가 있음
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].status").value("STOPPED"))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(35_000))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(0))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(0));
+    }
+
+    @Test
+    void 실패_전에_미리_넣은_조정은_대기_합계에_들어가지_않는다() throws Exception {
+        // given: 실패보다 30일 앞서 넣은 조정 −9,700, 그 뒤 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        insertAdjustmentCandidate(order, orderItem, -9_700L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+
+        // when & then: 해결해도 확인한 조정이 아니므로 대기 합계 0
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order))
+                        .header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(jsonPath("$.content[0].status").value("STOPPED"))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(0))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(0));
+    }
+
+    // ---------- 정산후보 조회의 조정 상태 (#791) ----------
+
+    // #791 이슈 예시: 결제 30,000, 판매 40,000(대금 38,800 / 수수료 1,200)으로 멈춤. 맞는 값 29,100 / 900
+    @Test
+    void 해결_전_조정은_해결_대기에서_확인됨이_되고_해결_뒤_넣은_조정은_검사_밖이다() throws Exception {
+        // given: 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when: 관리자 A가 실패 뒤 대금 −9,700 / 수수료 −300을 넣음
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -300L);
+
+        // then: 둘 다 해결 대기, 원래 후보는 null. 해결 대기 조정의 합이 목록의 대기 합계와 같음
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null && @.eventType == 'SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null && @.eventType == 'SALE_FEE')].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")))
+                .andExpect(jsonPath("$.content[?(@.adjustment == null)].adjustmentCheckStatus")
+                        .value(contains(nullValue(), nullValue())));
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].pendingSaleAmountAdjustment").value(-9_700))
+                .andExpect(jsonPath("$.content[0].pendingSaleFeeAdjustment").value(-300));
+
+        // when: 다시 처리한 뒤, 관리자 C가 "조정이 빠졌나" 하고 사유를 바꿔 대금 −9,700을 또 넣음
+        resolve(order);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L, "조정 다시 넣음");
+
+        // then: A의 두 조정은 확인됨, C의 조정은 해결 뒤라 검사 밖
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_FEE')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '조정 다시 넣음')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")));
+    }
+
+    // 해결 → 다시 멈춤 → 다시 해결: 첫 해결 전 조정은 계속 확인됨, 해결 뒤 조정은 다시 해결해도 검사 밖(새 실패가 그 조정보다 늦음)
+    @Test
+    void 다시_막힌_주문에서도_해결_뒤_넣은_조정은_검사_밖으로_남고_새_실패_뒤_조정은_해결_대기다() throws Exception {
+        // given: 멈춘 뒤 35,000으로만 고치는 조정(대금 −4,850 / 수수료 −150)을 넣고 해결
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -4_850L);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -150L);
+        resolve(order);
+        // 해결 뒤 넣은 조정 (검사 밖이라 다음 검사 합계에 안 들어감 → 35,000으로 다시 3번 실패해 멈춤)
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -100L, "해결 뒤 조정");
+        runCompleted(3);
+
+        // when: 다시 멈춘 뒤 나머지를 고치는 조정(대금 −4,850 / 수수료 −150)
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -4_850L, "두 번째 정정");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -150L, "두 번째 정정");
+
+        // then
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '해결 뒤 조정')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '두 번째 정정')].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION", "AWAITING_RESOLUTION")));
+
+        // when: 다시 해결
+        resolve(order);
+
+        // then: 두 번째 정정은 확인됨, 해결 뒤 조정은 그대로 검사 밖
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '두 번째 정정')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED", "CONFIRMED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '해결 뒤 조정')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")));
+    }
+
+    // 실패 전에 미리 넣은 조정은 해결해도 확인한 조정이 아님 (#291 결정 4번의 하한)
+    @Test
+    void 실패_전에_미리_넣은_조정은_검사_밖이다() throws Exception {
+        // given: 실패보다 30일 앞서 넣은 조정 −9,700, 그 뒤 초과 청구로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        insertAdjustmentCandidate(order, orderItem, -9_700L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+
+        // when & then
+        mockMvc.perform(candidatesOfOrder(tokens.bearer(ADMIN_ID, "ADMIN"), order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+    }
+
+    // 금액 불일치는 주문을 잠그지 않아, 1번만 실패한 주문에 넣은 조정도 해결 대기 (막힌 뒤 해결하면 확인됨)
+    @Test
+    void 한_번만_실패해_아직_막히지_않은_주문에_넣은_조정도_해결_대기다() throws Exception {
+        // given: 초과 청구로 1번 실패
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+
+        // then
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")));
+    }
+
+    // 사유를 거름: 결제 기록 없음(DEDUCTION_MISSING) 실패 뒤에 넣은 조정은 해결해도 금액 검사에 들어가지 않음
+    @Test
+    void 결제_기록_없음_실패_뒤에_넣은_조정은_해결해도_검사_밖이다() throws Exception {
+        // given: 결제 기록 없이 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_700L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        mockMvc.perform(blockedOrdersRequest().param("orderId", String.valueOf(order)).header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(jsonPath("$.content[0].reasons").value(contains("DEDUCTION_MISSING")));
+
+        // when: 실패 뒤 조정을 넣음
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -1_000L);
+
+        // then: 금액 불일치 실패가 아니라 해결 대기도 아님
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+
+        // when: 해결
+        resolve(order);
+
+        // then: 해결해도 확인됨이 되지 않음
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus").value(contains("UNCHECKED")));
+    }
+
+    // 주문 ID와 기간을 함께 줘도 조정 상태를 채움 (기간만 줄 때만 null)
+    @Test
+    void 주문_ID와_기간을_함께_줘도_조정_상태가_나온다() throws Exception {
+        // given: 초과 청구로 1번 실패한 뒤 조정
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted();
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L);
+
+        // when & then: 조정 시각(지금)을 포함하는 기간
+        mockMvc.perform(candidatesOfOrder(admin, order)
+                        .param("from", LocalDateTime.now().minusDays(1).withNano(0).toString())
+                        .param("to", LocalDateTime.now().plusDays(1).withNano(0).toString()))
+                .andExpect(jsonPath("$.content[?(@.adjustment != null)].adjustmentCheckStatus")
+                        .value(contains("AWAITING_RESOLUTION")));
+    }
+
+    @Test
+    void 관리자_목록은_예비_상태나_없는_상태_값이면_422다() throws Exception {
+        // given
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        mockMvc.perform(blockedOrdersRequest().param("status", "PENDING").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(blockedOrdersRequest().param("status", "LOCKED").param("status", "DONE")
+                        .header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(blockedOrdersRequest().param("orderId", "0").header(HttpHeaders.AUTHORIZATION, admin))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    // ---------- 조정 생성 응답의 조정 상태 (#791 후속) ----------
+    // 조정은 막지 않고 저장하고, 방금 넣은 조정이 금액 검사에 들어가는지 응답으로 알림 (사용자 결정, 11/20)
+
+    // #791 이슈 예시: 실패 뒤 넣은 A의 조정은 해결 대기, 해결 뒤 C가 또 넣은 −9,700은 검사 밖이라고 넣는 순간 알려 줌
+    @Test
+    void 조정_생성_응답은_해결_전_조정을_해결_대기로_해결_뒤_조정을_검사_밖으로_알린다() throws Exception {
+        // given: 결제 30,000, 판매 40,000(대금 38,800 / 수수료 1,200)으로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 관리자 A가 실패 뒤 넣음
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L)
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("AWAITING_RESOLUTION"));
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -300L)
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("AWAITING_RESOLUTION"));
+
+        // when & then: 해결 뒤 관리자 C가 사유를 바꿔 −9,700을 또 넣어도 저장되고, 검사 밖이라고 알려 줌
+        resolve(order);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L, "조정 다시 넣음")
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));
+
+        // then: 응답 값이 정산후보 조회의 상태와 같음 (같은 판정). 응답은 넣은 순간 값이라, A의 조정은 해결 뒤 조회에서 확인됨으로 바뀜
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '조정 다시 넣음')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")));
+    }
+
+    // 금액 불일치가 아닌 사유(결제 기록 없음)로만 막힌 주문에 넣은 조정은 해결해도 검사에 안 들어가므로 넣는 순간 검사 밖이라고 알림
+    @Test
+    void 결제_기록_없음으로만_막힌_주문에_넣은_조정은_생성_응답이_검사_밖이다() throws Exception {
+        // given: 결제 기록 없이 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_700L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -1_000L)
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));
+    }
+
+    // 막힘과 상관없는 주문의 양수 조정(예: 판매자 보상)도 거절하지 않고 저장함. 검사 없이 지급된다는 것만 알림
+    @Test
+    void 실패가_없는_주문에_넣은_양수_조정도_저장하고_검사_밖으로_알린다() throws Exception {
+        // given: 실패 기록이 없는 주문
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_700L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, 3_000L, "판매자 보상")
+                .andExpect(jsonPath("$.amount").value(3_000))
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));
+    }
+
+    // ---------- 초과 청구 근거 (#570) ----------
+
+    @Test
+    void 초과_청구로_멈춘_주문은_금액_검사_때_계산한_근거를_막힌_순간_값으로_가진다() throws Exception {
+        // given: 결제 30,000인데 정산후보 35,000 → 실제 Job마다 금액 검사가 초과 청구로 실패
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 35_000L);
+        givenDeduction(order, 30_000L);
+
+        // when: 1·2번째 실패
+        runCompleted(2);
+
+        // then: 예비 줄은 Job 끝에 지워져 표에 없음
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+
+        // when: 3번째 실패
+        runCompleted();
+
+        // then: 멈춤. 근거는 금액 검사 때 값이고 실패 상세 글과 같은 값
+        PayoutBlockedOrder sut = blockedOrderRepository.findById(order).orElseThrow();
+        assertThat(sut.getStatus()).isEqualTo(PayoutBlockedStatus.STOPPED);
+        assertEvidence(sut.getOverchargeEvidence(), 30_000L, 35_000L, String.valueOf(orderItem));
+        assertThat(payoutQueryRepository.findUnresolvedFailuresByOrderId(order))
+                .extracting(failure -> failure.getDetail())
+                .allSatisfy(detail -> assertThat(detail).isEqualTo(
+                        "초과 청구: 결제 30000, 후보 합계 35000, 넘친 금액 5000, 넘게 만든 주문상품 " + orderItem
+                                + ", 이미 지급 0, 혼자 넘는 주문상품 " + orderItem + ", 판매자 1명, 지갑 금액 충돌 없음"));
+    }
+
+    @Test
+    void 막힌_뒤_같은_주문_상품이_더_구매확정되면_지금_값만_바뀌고_다음_Job이_다시_판정해도_막힌_순간_값은_그대로다() throws Exception {
+        // given: 초과 청구로 멈춘 주문 (결제 30,000, 후보 35,000)
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 35_000L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+
+        // when: 같은 주문의 다른 상품 10,000이 구매확정됨(아직 대기 중) → 다음 Job이 표에 있는 주문을 다시 판정
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, ORDER_ITEM_ID_SEQ.incrementAndGet(), 10_000L,
+                LocalDateTime.now());
+        runCompleted();
+
+        // then: 표의 막힌 순간 값은 그대로(35,000), 목록의 지금 값은 45,000
+        assertEvidence(blockedOrderRepository.findById(order).orElseThrow().getOverchargeEvidence(),
+                30_000L, 35_000L, String.valueOf(orderItem));
+        mockMvc.perform(blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.deductedAmount").value(30_000))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.candidateTotal").value(35_000))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.overflowAmount").value(5_000))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.firstOverflowItem").value(String.valueOf(orderItem)))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.settledAmount").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.settledItems.length()").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.aloneOverItems").value(contains(String.valueOf(orderItem))))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.sellerCount").value(1))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock.conflictAmounts.length()").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceNow.deductedAmount").value(30_000))
+                .andExpect(jsonPath("$.content[0].evidenceNow.candidateTotal").value(45_000))
+                .andExpect(jsonPath("$.content[0].evidenceNow.overflowAmount").value(15_000))
+                .andExpect(jsonPath("$.content[0].evidenceNow.firstOverflowItem").value(String.valueOf(orderItem)))
+                .andExpect(jsonPath("$.content[0].evidenceNow.settledAmount").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceNow.settledItems.length()").value(0))
+                .andExpect(jsonPath("$.content[0].evidenceNow.aloneOverItems").value(contains(String.valueOf(orderItem))))
+                .andExpect(jsonPath("$.content[0].evidenceNow.sellerCount").value(1))
+                .andExpect(jsonPath("$.content[0].evidenceNow.conflictAmounts.length()").value(0));
+    }
+
+    @Test
+    void 예비_줄은_관리자_목록과_개수에_나오지_않는다() throws Exception {
+        // given: 막힌 주문 1개와, 금액 검사가 넣고 아직 Job 끝 판정 전인 예비 줄 1개
+        long locked = givenLockedOrderInTable();
+        long pendingOrder = nextOrderId();
+        blockedOrderRepository.save(PayoutBlockedOrder.pending(pendingOrder, LocalDateTime.now(), evidence(1_000L, 2_000L)));
+
+        // when
+        ResultActions sut = mockMvc.perform(
+                blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")));
+
+        // then
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[*].orderId").value(contains((int) locked)));
+    }
+
+    @Test
+    void 해결_API는_예비_줄을_해결됨으로_바꾸지_않고_다음_갱신이_지운다() throws Exception {
+        // given: 원본으로는 잠긴 주문인데, Job 끝 갱신이 실패해 표에는 예비 줄만 남은 경우
+        Long run = runCompleted();
+        long order = nextOrderId();
+        insertFailure(run, insertCandidate(order), order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+        blockedOrderRepository.save(PayoutBlockedOrder.pending(order, LocalDateTime.now(), evidence(1_000L, 2_000L)));
+
+        // when
+        resolve(order);
+
+        // then: 예비 그대로라 목록에 "해결됨"으로 나오지 않고, 다음 갱신이 원본(해결됨)으로 판정해 지움
+        assertThat(blockedOrderRepository.findById(order))
+                .get().extracting(PayoutBlockedOrder::getStatus).isEqualTo(PayoutBlockedStatus.PENDING);
+        blockedOrderUseCase.refresh();
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+    }
+
+    @Test
+    void 해결된_줄이_있는_주문이_다시_초과_청구에_걸려도_Job이_성공하고_다음_판정에서_지워진다() throws Exception {
+        // given: 초과 청구로 멈춘 뒤 관리자가 해결해 RESOLVED 줄이 남은 주문
+        long order = nextOrderId();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, ORDER_ITEM_ID_SEQ.incrementAndGet(), 35_000L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        resolve(order);
+
+        // when: 다음 Job의 금액 검사가 같은 주문을 또 초과 청구로 실패시킴 (줄이 이미 있어 근거만 바꿈)
+        runCompleted();
+
+        // then: Job은 성공(runCompleted가 확인)하고, 해결 뒤 1번째 실패라 막힘이 아니어서 줄이 지워짐
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+    }
+
+    @Test
+    void 다시_판정한_원인에_초과_청구가_없으면_근거를_비운다() throws Exception {
+        // given: 근거가 남은 줄(예비)인데, 원인은 결과 검증 불일치뿐인 주문
+        Long run = runCompleted();
+        long order = nextOrderId();
+        insertFailure(run, insertCandidate(order), order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+        blockedOrderRepository.save(PayoutBlockedOrder.pending(order, LocalDateTime.now(), evidence(1_000L, 2_000L)));
+
+        // when
+        blockedOrderUseCase.refresh();
+
+        // then: 잠김으로 바뀌고 근거는 비어 있음
+        PayoutBlockedOrder sut = blockedOrderRepository.findById(order).orElseThrow();
+        assertThat(sut.getStatus()).isEqualTo(PayoutBlockedStatus.LOCKED);
+        assertThat(sut.getOverchargeEvidence()).isNull();
+    }
+
+    @Test
+    void 초과_청구가_아닌_막힌_주문은_근거가_비어_있다() throws Exception {
+        // given: 결제 기록이 없어 3번 실패해 멈춘 주문 (초과 청구 아님)
+        long order = nextOrderId();
+        insertCandidateWithoutDeduction(order, LocalDateTime.now().minusDays(30));
+        runCompleted(3);
+
+        // when
+        ResultActions sut = mockMvc.perform(
+                blockedOrdersRequest().header(HttpHeaders.AUTHORIZATION, tokens.bearer(ADMIN_ID, "ADMIN")));
+
+        // then
+        assertThat(blockedOrderRepository.findById(order).orElseThrow().getOverchargeEvidence()).isNull();
+        sut.andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].orderId").value(order))
+                .andExpect(jsonPath("$.content[0].evidenceAtBlock").isEmpty())
+                .andExpect(jsonPath("$.content[0].evidenceNow").isEmpty());
+    }
+
+    // #291부터 원래 후보 없는 조정은 스냅샷에 넣지 않고 [정산-시스템문제] ERROR만 남김(PayoutService.createSnapshot 4))
+    //   예전에는 금액 검사가 "판정 불가" 초과 청구로 3번 실패시켜 막힌 주문 목록에 올렸으나, 지금은 정산 대상이 아니라 목록에 오르지 않음
+    @Test
+    void 조정_후보만_있는_주문은_정산_대상에서_빠져_막힌_주문_목록에_오르지_않는다() throws Exception {
+        // given: 결제 기록은 있는데 원래 후보 없이 조정 후보만 있는 주문
+        long order = nextOrderId();
+        insertAdjustmentCandidate(order, ORDER_ITEM_ID_SEQ.incrementAndGet(), 5_000L);
+        givenDeduction(order, 30_000L);
+
+        // when
+        runCompleted(3);
+
+        // then
+        assertThat(blockedOrderRepository.findById(order)).isEmpty();
+    }
+
+    // ---------- 도우미 ----------
+
+    // 결제 기록 하나만 있고 이미 지급·충돌이 없는 주문의 근거 (넘게 만든 주문상품 = 혼자 넘는 주문상품)
+    private void assertEvidence(PayoutOverchargeEvidence evidence, long deducted, long total, String overflowItem) {
+        assertThat(evidence).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(evidence.getDeductedAmount()).isEqualTo(deducted);
+            softly.assertThat(evidence.getCandidateTotal()).isEqualTo(total);
+            softly.assertThat(evidence.getOverflowAmount()).isEqualTo(total - deducted);
+            softly.assertThat(evidence.getFirstOverflowItem()).isEqualTo(overflowItem);
+            softly.assertThat(evidence.getSettledAmount()).isZero();
+            softly.assertThat(evidence.settledItemList()).isEmpty();
+            softly.assertThat(evidence.aloneOverItemList()).containsExactly(overflowItem);
+            softly.assertThat(evidence.getSellerCount()).isEqualTo(1);
+            softly.assertThat(evidence.conflictAmountList()).isEmpty();
+        });
+    }
+
+    private PayoutOverchargeEvidence evidence(long deducted, long total) {
+        return PayoutOverchargeEvidence.of(deducted, total, "1", 0L, List.of(), List.of("1"), 1, List.of());
+    }
+
+    // 30일 전 관리자 조정 후보 (조정 API가 막혀 있어 SQL로 넣음)
+    private void insertAdjustmentCandidate(long orderId, long orderItemId, long amount) {
+        LocalDateTime createdAt = LocalDateTime.now().minusDays(30);
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, adjustment_id, "
+                        + "admin_id, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, '테스트 조정', ?, ?)",
+                PayoutEventType.SALE_AMOUNT.name(), orderId, orderItemId, SELLER_ID, amount, ADMIN_ID, createdAt, createdAt);
+    }
+
+    private void givenDeduction(long orderId, long amount) {
+        walletDeductionRepository.save(PayoutWalletDeduction.create(orderId, 1L, amount, LocalDateTime.now()));
+    }
+
+    // 관리자 조정 API로 조정을 넣음 (#291): 생성 시각이 지금이라 앞서 생긴 실패 뒤에 들어감 (확인한 조정 순서 그대로)
+    private ResultActions postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount) throws Exception {
+        return postAdjustment(admin, orderItemId, eventType, amount, "금액 정정 " + eventType.name());
+    }
+
+    // 사유를 정해 넣음: 같은 주문 항목·종류·금액·사유면 409라, 같은 금액을 또 넣는 경우는 사유를 바꿈 (#791 예시)
+    // 응답을 돌려줌: 생성 응답의 조정 상태(#791 후속)를 확인하는 테스트가 씀
+    private ResultActions postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount, String reason)
+            throws Exception {
+        String body = "{\"orderItemId\":" + orderItemId + ",\"eventType\":\"" + eventType.name()
+                + "\",\"amount\":" + amount + ",\"reason\":\"" + reason + "\"}";
+        return mockMvc.perform(post("/api/v1/admin/payouts/adjustments")
+                        .header(HttpHeaders.AUTHORIZATION, admin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+    }
+
+    private MockHttpServletRequestBuilder blockedOrdersRequest() {
+        return get("/api/v1/admin/payouts/blocked-orders");
+    }
+
+    // 관리자 정산후보 조회를 주문 ID로 (#791 조정 상태는 이때만 채움)
+    private MockHttpServletRequestBuilder candidatesOfOrder(String admin, long orderId) {
+        return get("/api/v1/admin/payouts/candidates")
+                .param("orderId", String.valueOf(orderId))
+                .param("size", "100")
+                .header(HttpHeaders.AUTHORIZATION, admin);
+    }
+
+    // 실패 시각을 정해 넣음 (정렬 확인용)
+    private void insertFailureAt(Long snapshotId, long candidateId, long orderId, PayoutFailureReason reason,
+                                 LocalDateTime failedAt) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, orderId, SELLER_ID, reason.name(), "[원인] 정렬 확인", failedAt, failedAt);
+    }
+
+    private long givenLockedOrderInTable() throws Exception {
+        Long run = runCompleted();
+        long order = nextOrderId();
+        insertFailure(run, insertCandidate(order), order, null, PayoutFailureReason.VERIFY_MISMATCH, "[원인] 금액 다름");
+        blockedOrderUseCase.refresh();
+        assertThat(blockedOrderRepository.findById(order)).isPresent();
+        return order;
+    }
+
+    // 실행마다 같은 후보에 같은 사유로 실패 기록을 남긴 주문
+    private long givenOrderWithFailures(List<Long> snapshotIds, PayoutFailureReason reason) {
+        long order = nextOrderId();
+        long candidate = insertCandidate(order);
+        for (Long snapshotId : snapshotIds) {
+            insertFailure(snapshotId, candidate, order, null, reason, "테스트");
+        }
+        return order;
+    }
+
+    private List<PayoutBlockedOrderCause> causesOf(long... orderIds) {
+        List<PayoutBlockedOrderCause> causes = new ArrayList<>();
+        for (long orderId : orderIds) {
+            causes.addAll(causeRepository.findAllByOrderId(orderId));
+        }
+        return causes;
+    }
+
+    private void resolve(long orderId) {
+        resolutionUseCase.resolveOrder(new PayoutOrderResolveCommand(orderId, ADMIN_ID, "다시 처리"));
+    }
+
+    private List<Long> runCompleted(int times) throws Exception {
+        List<Long> snapshotIds = new ArrayList<>();
+        for (int i = 0; i < times; i++) {
+            snapshotIds.add(runCompleted());
+        }
+        return snapshotIds;
+    }
+
+    private Long runCompleted() throws Exception {
+        JobExecution execution = payoutJobRunner.runScheduled();
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+        return snapshotIdOf(execution);
+    }
+
+    // 실행 기록을 FAILED로 바꿔 "실패로 끝난 실행"을 만듦 (Job 끝 갱신은 이미 COMPLETED로 돈 뒤라, 이 실행의 실패는 부르는 쪽이 갱신을 다시 부름)
+    private Long runFailed() throws Exception {
+        JobExecution execution = payoutJobRunner.runScheduled();
+        execution.setStatus(BatchStatus.FAILED);
+        jobRepository.update(execution);
+        return snapshotIdOf(execution);
+    }
+
+    private Long snapshotIdOf(JobExecution execution) {
+        for (PayoutSnapshot snapshot : snapshotRepository.findAll()) {
+            if (snapshot.getJobExecutionId().equals(execution.getId())) {
+                return snapshot.getId();
+            }
+        }
+        throw new IllegalStateException("실행에 해당하는 스냅샷이 없습니다. executionId=" + execution.getId());
+    }
+
+    // 결제 기록이 있는 30일 전 대금 후보
+    private long insertCandidate(long orderId) {
+        long candidateId = insertCandidateWithoutDeduction(orderId, LocalDateTime.now().minusDays(30));
+        givenDeduction(orderId);
+        return candidateId;
+    }
+
+    private long insertCandidateWithoutDeduction(long orderId, LocalDateTime createdAt) {
+        return insertCandidateOf(orderId, PayoutEventType.SALE_AMOUNT, ORDER_ITEM_ID_SEQ.incrementAndGet(), 1_000L, createdAt);
+    }
+
+    private long insertCandidateOf(long orderId, PayoutEventType eventType, Long orderItemId, long amount) {
+        return insertCandidateOf(orderId, eventType, orderItemId, amount, LocalDateTime.now().minusDays(30));
+    }
+
+    private long insertCandidateOf(long orderId, PayoutEventType eventType, Long orderItemId, long amount,
+                                   LocalDateTime createdAt) {
+        jdbcTemplate.update(
+                "INSERT INTO payout_candidate_items (event_type, order_id, order_item_id, seller_id, amount, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                eventType.name(), orderId, orderItemId, SELLER_ID, amount, createdAt, createdAt);
+        for (PayoutCandidateItem candidate : candidateRepository.findAllByOrderId(orderId)) {
+            if (candidate.getEventType() == eventType && Objects.equals(candidate.getOrderItemId(), orderItemId)) {
+                return candidate.getId();
+            }
+        }
+        throw new IllegalStateException("정산후보가 없습니다. orderId=" + orderId);
+    }
+
+    private void givenDeduction(long orderId) {
+        if (!walletDeductionRepository.existsByOrderId(orderId)) {
+            walletDeductionRepository.save(PayoutWalletDeduction.create(orderId, 1L, 1_000_000L, LocalDateTime.now()));
+        }
+    }
+
+    private void insertFailure(Long snapshotId, long candidateId, long orderId, Long orderItemId,
+                               PayoutFailureReason reason, String detail) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbcTemplate.update(
+                "INSERT INTO payout_failure (snapshot_id, candidate_id, order_id, order_item_id, seller_id, reason, detail, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                snapshotId, candidateId, orderId, orderItemId, SELLER_ID, reason.name(), detail, now, now);
+    }
+
+    private long nextOrderId() {
+        return ORDER_ID_SEQ.incrementAndGet();
+    }
+
+    // 막힌 주문 표 묶음은 원인 → 막힌 주문 순서로 지우고(외래키), 반영 표시를 0으로 되돌림 (마이그레이션 직후와 같게)
+    private void cleanUp() {
+        jdbcTemplate.update("DELETE FROM payout_blocked_order_cause");
+        jdbcTemplate.update("DELETE FROM payout_blocked_order");
+        jdbcTemplate.update("UPDATE payout_blocked_order_refresh SET last_failure_id = 0");
+        jdbcTemplate.update("DELETE FROM payout_deposit_check");
+        jdbcTemplate.update("DELETE FROM payout_outbox");
+        jdbcTemplate.update("DELETE FROM payout_item");
+        jdbcTemplate.update("DELETE FROM payout");
+        jdbcTemplate.update("DELETE FROM payout_seller_draft_item");
+        jdbcTemplate.update("DELETE FROM payout_seller_draft");
+        jdbcTemplate.update("DELETE FROM payout_system_draft_item");
+        jdbcTemplate.update("DELETE FROM payout_failure_resolution");
+        jdbcTemplate.update("DELETE FROM payout_failure");
+        jdbcTemplate.update("DELETE FROM payout_snapshot_item");
+        jdbcTemplate.update("DELETE FROM payout_snapshot");
+        jdbcTemplate.update("DELETE FROM payout_candidate_items WHERE order_id > ? AND order_id <= ?",
+                ORDER_ID_START, ORDER_ID_END);
+        jdbcTemplate.update("DELETE FROM payout_wallet_deduction WHERE order_id > ? AND order_id <= ?",
+                ORDER_ID_START, ORDER_ID_END);
+    }
+}

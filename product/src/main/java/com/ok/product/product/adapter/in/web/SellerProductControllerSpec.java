@@ -1,0 +1,74 @@
+package com.ok.product.product.adapter.in.web;
+
+import com.ok.product.product.adapter.in.web.dto.ProductPageResponse;
+import com.ok.product.product.adapter.in.web.dto.SellerProductDetailResponse;
+import com.ok.product.product.adapter.in.web.dto.SellerProductSummaryResponse;
+import com.ok.product.product.application.dto.ProductStatusCode;
+import com.ok.product.product.application.dto.ProductVisibilityCode;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+
+@Tag(name = "Product (Seller)", description = "판매자 상품 관리 API")
+interface SellerProductControllerSpec {
+
+	@Operation(summary = "내 상품 목록 조회", description = """
+		로그인한 판매자의 상품을 최신순으로 조회합니다. 관리 화면용이라 숨긴(HIDDEN) 상품도 나오고, 삭제한 상품만 빠집니다.
+		필터는 모두 선택이고, 함께 보내면 모두 만족하는 상품만 나옵니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공"),
+		@ApiResponse(
+			responseCode = "400", description = "없는 판매 상태·노출 값, 범위를 벗어난 page·size",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<ProductPageResponse<SellerProductSummaryResponse>> search(
+		Long memberId,
+		@Parameter(description = "판매 상태", example = "ON_SALE") ProductStatusCode status,
+		@Parameter(description = "노출 여부", example = "VISIBLE") ProductVisibilityCode visibility,
+		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
+		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size
+	);
+
+	@Operation(summary = "내 상품 상세 조회", description = """
+		상품 수정 화면용 상세입니다. 숨긴(HIDDEN) 상품도 조회되고, 삭제한 옵션은 빠집니다.
+		응답의 version을 상품 수정(PUT /api/v1/products/{productId}) 요청에 그대로 보냅니다.
+		조회만으로는 version이 바뀌지 않습니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "SELLER가 아니거나 본인 상품이 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<SellerProductDetailResponse> get(
+		Long memberId,
+		@Parameter(description = "상품 ID", example = "1") Long productId
+	);
+}

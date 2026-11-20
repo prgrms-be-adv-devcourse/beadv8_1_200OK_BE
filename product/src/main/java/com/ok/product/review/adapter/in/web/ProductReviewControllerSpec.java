@@ -1,0 +1,190 @@
+package com.ok.product.review.adapter.in.web;
+
+import java.util.List;
+
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+
+import com.ok.product.review.adapter.in.web.dto.ProductPageResponse;
+import com.ok.product.review.adapter.in.web.dto.ProductReviewCreateRequest;
+import com.ok.product.review.adapter.in.web.dto.ProductReviewCreateResponse;
+import com.ok.product.review.adapter.in.web.dto.ProductReviewResponse;
+import com.ok.product.review.adapter.in.web.dto.ProductReviewUpdateRequest;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+
+// 검증 어노테이션은 여기에만 둔다. 구현 클래스에 다시 쓰면 HV000151로 거부된다
+@Tag(name = "Product Review", description = "상품 리뷰 API")
+interface ProductReviewControllerSpec {
+
+	@Operation(summary = "리뷰 작성", description = """
+		구매한 상품의 리뷰를 작성합니다. 별점은 0.5점 단위를 정수 1~10으로 보냅니다(7 = 3.5점).
+		본인이 구매확정한 이 상품의 주문상품(orderItemId)에만 쓸 수 있고, 주문 ID와 옵션 ID는 서버가 주문에서 가져옵니다.
+		한 주문에서 같은 상품은 옵션을 여러 개 샀어도 리뷰 1개이고, 다른 주문(재구매)이면 다시 쓸 수 있습니다.
+		리뷰를 삭제해도 같은 주문의 같은 상품으로는 다시 쓸 수 없습니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "201", description = "작성 성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "본인이 구매확정한 이 상품의 주문상품이 아님 (남의 주문, 없는 주문상품, 구매확정 전을 구분하지 않음)",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class),
+				examples = @ExampleObject(value = """
+					{
+					  "type": "product/purchase-not-reviewable",
+					  "title": "Purchase not reviewable",
+					  "status": 403,
+					  "detail": "본인이 구매확정한 주문 상품에만 리뷰를 쓸 수 있습니다."
+					}
+					"""))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "409", description = "이 주문에서 이미 리뷰를 작성한 상품",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class),
+				examples = @ExampleObject(value = """
+					{
+					  "type": "product/duplicate-review",
+					  "title": "Duplicate review",
+					  "status": 409,
+					  "detail": "이 주문에서 이미 리뷰를 작성한 상품입니다."
+					}
+					"""))
+		),
+		@ApiResponse(
+			responseCode = "422", description = "요청 값 검증 실패, 업로드하지 않은 첨부 URL, 영상 2개 이상",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "503", description = "주문 모듈에서 구매 내역을 확인하지 못함",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<ProductReviewCreateResponse> create(
+		Long memberId,
+		@Parameter(description = "상품 ID", example = "10") Long productId,
+		@Valid ProductReviewCreateRequest request
+	);
+
+	@Operation(summary = "리뷰 수정", description = "내 리뷰의 별점, 내용, 첨부를 수정합니다. 첨부는 보낸 목록으로 전체 교체합니다.")
+	@ApiResponses({
+		@ApiResponse(responseCode = "204", description = "수정 성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "내 리뷰가 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "리뷰가 없거나 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "422", description = "요청 값 검증 실패, 업로드하지 않은 첨부 URL, 영상 2개 이상",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<Void> update(
+		Long memberId,
+		@Parameter(description = "리뷰 ID", example = "1") Long reviewId,
+		@Valid ProductReviewUpdateRequest request
+	);
+
+	@Operation(summary = "리뷰 삭제")
+	@ApiResponses({
+		@ApiResponse(responseCode = "204", description = "삭제 성공"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "403", description = "내 리뷰가 아님",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "리뷰가 없거나 이미 삭제됨",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<Void> delete(
+		Long memberId,
+		@Parameter(description = "리뷰 ID", example = "1") Long reviewId
+	);
+
+	@SecurityRequirements
+	@Operation(summary = "상품별 리뷰 목록", description = """
+		노출된 상품의 리뷰를 최신순으로 조회합니다. 로그인하지 않아도 됩니다.
+		keyword를 보내면 그 키워드를 표현한 리뷰만 조회합니다. 키워드 집계의 리뷰 수와 같은 조건이라 칩의 리뷰 수와 결과 수가 같습니다.
+		리뷰 수가 적어 칩에 뜨지 않는 키워드도 걸러집니다. 수정 뒤 아직 다시 분석하지 않은 리뷰는 빠집니다.
+		목록에 없는 키워드면 400이고, 목록에는 있지만 상품의 분류에 묻지 않는 키워드면 빈 페이지입니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공"),
+		@ApiResponse(
+			responseCode = "400", description = "범위를 벗어난 page·size, 키워드 목록에 없는 keyword",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "404", description = "상품이 없거나 삭제됐거나 숨김",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<ProductPageResponse<ProductReviewResponse>> getProductReviews(
+		@Parameter(description = "상품 ID", example = "10") Long productId,
+		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
+		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size,
+		@Parameter(description = "리뷰 키워드 ID. 보내면 이 키워드를 표현한 리뷰만 조회합니다. 빈 값이면 거르지 않습니다", example = "C02") String keyword
+	);
+
+	@Operation(summary = "이 상품의 내 리뷰", description = """
+		상품 상세 상단에 고정해 보여 줄 내 리뷰를 최신순으로 조회합니다. 재구매하면 주문마다 쓸 수 있어 여러 건일 수 있습니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공 (없으면 빈 목록)"),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<List<ProductReviewResponse>> getMyReviewsOfProduct(
+		Long memberId,
+		@Parameter(description = "상품 ID", example = "10") Long productId
+	);
+
+	@Operation(summary = "내가 쓴 리뷰 목록", description = "내가 쓴 리뷰를 최신순으로 조회합니다. 상품이 숨겨지거나 삭제돼도 나옵니다.")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공"),
+		@ApiResponse(
+			responseCode = "400", description = "범위를 벗어난 page·size",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		),
+		@ApiResponse(
+			responseCode = "401", description = "로그인 필요",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<ProductPageResponse<ProductReviewResponse>> getMyReviews(
+		Long memberId,
+		@Parameter(description = "페이지 번호 (0부터)", example = "0") @Min(0) int page,
+		@Parameter(description = "페이지 크기 (1~100)", example = "20") @Min(1) @Max(100) int size
+	);
+}

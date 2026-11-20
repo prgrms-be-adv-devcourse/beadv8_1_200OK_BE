@@ -1,0 +1,135 @@
+package com.ok.payout.application.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.payout.application.port.in.PayoutFailureResolutionUseCase;
+import com.ok.payout.application.port.in.PayoutOrderResolutionResult;
+import com.ok.payout.application.port.in.PayoutOrderResolveCommand;
+import com.ok.payout.application.port.in.PayoutResolutionRequestResult;
+import com.ok.payout.application.port.in.PayoutResolutionRequestSearchQuery;
+import com.ok.payout.application.port.in.PayoutResolutionResult;
+import com.ok.payout.application.port.in.PayoutResolutionSearchQuery;
+import com.ok.payout.application.port.out.PayoutBlockedOrderRepository;
+import com.ok.payout.application.port.out.PayoutFailureResolutionRepository;
+import com.ok.payout.application.port.out.PayoutQueryRepository;
+import com.ok.payout.domain.PayoutBlockedStatus;
+import com.ok.payout.domain.PayoutFailure;
+import com.ok.payout.domain.PayoutFailureResolution;
+import com.ok.payout.domain.PayoutPolicy;
+import com.ok.payout.domain.PayoutResolutionMethod;
+import com.ok.payout.exception.PayoutErrorCode;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+// 잠기거나 멈춘 주문의 해결 (#568)과 해결 기록 조회 (#571)
+// 해결 = "다시 검사해도 된다"는 관리자 표시. 돈을 바로 내보내지 않고, 다음 배치가 금액 검사·결과 검증부터 다시 거침
+//   그래서 데이터·코드를 고치지 않고 해결하면 새 실패 기록이 생겨 다시 잠기거나 멈춤 (되돌리기는 두지 않음: 새 실패 기록이 해결을 상쇄)
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class PayoutFailureResolutionService implements PayoutFailureResolutionUseCase {
+
+    private final PayoutQueryRepository payoutQueryRepository;
+    private final PayoutFailureResolutionRepository payoutFailureResolutionRepository;
+    private final PayoutBlockedOrderRepository payoutBlockedOrderRepository;
+
+    @Override
+    @Transactional
+    public PayoutOrderResolutionResult resolveOrder(PayoutOrderResolveCommand command) {
+        Long orderId = command.orderId();
+        // 해결할 것이 있는지: 스냅샷이 그 주문을 빼는 두 조건(잠김, 멈춤)과 같은 기준으로 봄
+        //   잠김 = 해결 안 된 수수료 불일치·결과 검증 불일치 실패가 있음, 멈춤 = 성공한 실행에서 해결 안 된 실패가 MAX_FAILED_RUNS번 이상
+        //   1~2번 실패한 주문은 다음 실행에서 저절로 다시 검사되므로 해결 대상이 아님
+        // 멈춤 판정은 스냅샷과 같은 세는 SQL에 주문 조건만 더한 조회로 함: 기준이 어긋나지 않으면서 그 주문만 셈
+        boolean locked = payoutQueryRepository.isOrderLocked(orderId);
+        long failedRuns = payoutQueryRepository.countFailedRunsOfOrder(orderId);
+        if (!locked && !PayoutPolicy.isStopped(failedRuns)) {
+            throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
+        }
+
+        // 저장 대상: 해결 안 된 실패 기록 전부 (사유·실행 성공 여부·정산 여부로 거르지 않음)
+        //   #549 횟수는 사유를 가리지 않고 세므로, 잠그는 사유에만 해결 기록을 달면 횟수가 남아 계속 멈춰 있음
+        //   예) 초과 청구 2번 + 결과 검증 불일치 1번 = 3번 → 셋 다 해결해야 0번
+        List<PayoutFailure> failures = payoutQueryRepository.findUnresolvedFailuresByOrderId(orderId);
+        // 판정 뒤 다른 요청이 먼저 해결해 비었을 수 있음 (DB 격리 수준이 READ COMMITTED일 때). 같은 뜻이라 409
+        if (failures.isEmpty()) {
+            throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
+        }
+        // 이 요청으로 만드는 줄은 모두 같은 요청 번호 (#571): 해결 기록 조회에서 요청 1번을 한 줄로 묶어 보여 주려고
+        //   UUID라 DB에 번호를 먼저 받으러 가지 않고(별도 표·시퀀스 없음) 동시에 다른 주문을 해결해도 겹치지 않음
+        String resolutionRequestId = UUID.randomUUID().toString();
+        List<PayoutFailureResolution> resolutions = new ArrayList<>();
+        for (PayoutFailure failure : failures) {
+            resolutions.add(PayoutFailureResolution.of(
+                    failure, resolutionRequestId, PayoutResolutionMethod.REPROCESS, command.adminId(), command.memo()));
+        }
+
+        // 같은 주문을 동시에 두 번 해결하면 둘 다 위 판정을 통과한 뒤, 두 번째 저장이 실패 기록 ID 유니크에 걸림
+        //   (IDENTITY라 saveAll에서 바로 INSERT가 나가 여기서 예외가 남. 실패 기록 ID 순서로 넣어 서로 기다리는 데드락 대신 유니크 위반이 남)
+        //   관리자에게는 "이미 풀림"과 같은 뜻이라 409로 바꿈. 예외를 다시 던져야 이 트랜잭션이 롤백되고 첫 번째 해결만 남음
+        //   (잡고 정상 반환하면 이미 롤백 표시된 트랜잭션을 커밋하려다 500이 남)
+        List<PayoutFailureResolution> saved;
+        try {
+            saved = payoutFailureResolutionRepository.saveAll(resolutions);
+        } catch (DataIntegrityViolationException e) {
+            // 중복 키(유니크 위반)일 때만 409: FK(1452)·NOT NULL·길이 위반 같은 코드 버그까지 "해결할 것 없음"으로 가리지 않으려고
+            if (isDuplicateResolution(e)) {
+                throw new RestApiException(PayoutErrorCode.NOTHING_TO_RESOLVE);
+            }
+            throw e;
+        }
+
+        // 막힌 주문 집계 표(#582)의 그 줄을 "해결됨"으로: 다음 정산 Job이 끝나기 전까지 목록에 계속 "잠김"으로 보여
+        //   다른 관리자가 다시 해결하다 409를 받는 혼란을 없앰. 줄을 지우는 일은 다음 Job 끝 다시 판정이 함 (다시 막혔으면 되돌림)
+        //   표에 아직 없으면(갱신 전) 할 일 없음: 다음 갱신이 원본(이미 해결됨)으로 판정해 넣지 않음
+        //   예비(PENDING) 줄은 바꾸지 않음 (#570): 아직 목록에 막힘으로 나온 적 없는 줄이라 "해결됨"으로 보이면 안 됨
+        //     (Job 끝 갱신이 실패해 예비 줄이 남은 채 원본으로는 막힌 경우). 다음 갱신이 원본(이미 해결됨)으로 판정해 지움
+        payoutBlockedOrderRepository.findByOrderId(orderId).ifPresent(blockedOrder -> {
+            if (blockedOrder.getStatus() != PayoutBlockedStatus.PENDING) {
+                blockedOrder.markResolved();
+            }
+        });
+
+        PayoutFailureResolution first = saved.get(0);
+        // 누가 어떤 주문을 다시 처리했는지는 정산에 영향을 주는 관리자 조치라 INFO로 남김 (메모는 길이를 예측할 수 없어 빼고 해결 기록에만 둠)
+        log.info("정산 실패 해결. orderId={}, adminId={}, 해결한 실패 기록 수={}", orderId, command.adminId(), saved.size());
+        return new PayoutOrderResolutionResult(orderId, resolutionRequestId, saved.size(), first.getMethod().name(),
+                first.getAdminId(), first.getCreatedAt(), first.getMemo());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionResult> getResolutions(Long orderId, PayoutResolutionSearchQuery query) {
+        return payoutQueryRepository.findResolutionsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionResult);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionRequestResult> getResolutionRequests(Long orderId, PayoutResolutionSearchQuery query) {
+        return payoutQueryRepository.findResolutionRequestsByOrderId(orderId, PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionRequestResult);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PayoutResolutionRequestResult> getResolutionRequestsInPeriod(PayoutResolutionRequestSearchQuery query) {
+        return payoutQueryRepository.findResolutionRequestsInPeriod(query.from(), query.to(), query.adminId(),
+                        PageRequest.of(query.page(), query.size()))
+                .map(PayoutQueryResultMapper::toResolutionRequestResult);
+    }
+
+    // 해결 기록 표에서 중복으로 막히는 제약은 실패 기록 ID 유니크 하나뿐이라(기본 키는 자동 증가),
+    // 중복 키면 "같은 실패 기록을 이미 해결함"이라는 뜻 (판정은 조정 생성과 같은 도우미, #291)
+    private static boolean isDuplicateResolution(DataIntegrityViolationException e) {
+        return DuplicateKeyErrors.isDuplicateKey(e);
+    }
+}

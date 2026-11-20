@@ -1,0 +1,20 @@
+meta {
+  name: 이 상품의 내 리뷰
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/{{reviewProductId}}/reviews/me
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.length: eq 1
+}
+
+docs {
+  상품 상세 상단에 고정해 보여 줄 내 리뷰입니다. 재구매하면 여러 건일 수 있어 목록으로 줍니다.
+}

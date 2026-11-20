@@ -1,0 +1,31 @@
+package com.ok.payout.application.port.in;
+
+import java.time.LocalDateTime;
+
+// 정산후보 1건. 서비스가 엔티티 대신 컨트롤러에 넘기는 값 (관리자·판매자 공용, 판매자에게 안 보일 값은 판매자 응답 DTO에서 뺌)
+public record PayoutCandidateResult(
+        // 정산후보 ID
+        Long candidateId,
+        // 항목 종류 (SALE_AMOUNT, SALE_SHIPPING_FEE, SALE_FEE). 컨트롤러는 domain enum을 쓸 수 없어 문자열로 넘김
+        String eventType,
+        // 주문 ID
+        Long orderId,
+        // 주문 항목 ID. 배송비 후보는 null
+        Long orderItemId,
+        // 판매자 회원 ID
+        Long sellerId,
+        // 금액 (원). 조정 건이면 음수일 수 있음
+        Long amount,
+        // 정산후보 생성 시각. 평소 건은 구매확정 직후, 조정 건은 조정한 시각 (구매확정 시각이 아님)
+        LocalDateTime candidateCreatedAt,
+        // 정산이 끝났는지 (정산 항목에 들어갔는지)
+        boolean settled,
+        // 정산된 후보면 그 정산 ID, 아직 정산 전이면 null. 수수료 후보면 시스템 몫 정산 ID (수수료 후보는 관리자 조회에만 나옴)
+        Long payoutId,
+        // 관리자 조정 건이면 조정 정보, 평소 건이면 null
+        PayoutAdjustmentResult adjustment,
+        // 조정이 금액 검사에 들어가는지 (#791, PayoutAdjustmentCheckStatus 이름). 컨트롤러는 domain enum을 쓸 수 없어 문자열로 넘김
+        //   관리자가 주문 ID로 조회한 조정 건에만 채움. 평소 건, 기간 조회, 판매자 조회는 null
+        String adjustmentCheckStatus
+) {
+}

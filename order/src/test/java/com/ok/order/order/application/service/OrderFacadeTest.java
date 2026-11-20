@@ -1,0 +1,709 @@
+package com.ok.order.order.application.service;
+
+import com.ok.common.exception.RestApiException;
+import com.ok.order.cart.application.dto.SelectedCartItem;
+import com.ok.order.cart.application.port.in.GetSelectedCartItemsUseCase;
+import com.ok.order.order.application.dto.AutoConfirmPurchaseResult;
+import com.ok.order.order.application.dto.CheckoutResult;
+import com.ok.order.order.application.dto.CreateOrderCommand;
+import com.ok.order.order.application.dto.ProductOption;
+import com.ok.order.order.application.dto.RevertOrderItemRefundCommand;
+import com.ok.order.order.application.dto.StockItem;
+import com.ok.order.order.application.port.out.DeliveryPort;
+import com.ok.order.order.application.port.out.ProductPort;
+import com.ok.order.order.application.port.out.WalletPort;
+import com.ok.order.order.domain.Order;
+import com.ok.order.order.domain.OrderSellerGroup;
+import com.ok.order.order.domain.OrderStatus;
+import com.ok.order.order.domain.SellerShippingFee;
+import com.ok.order.order.exception.OrderErrorCode;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InOrder;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.task.TaskRejectedException;
+import org.springframework.dao.DataIntegrityViolationException;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+
+@ExtendWith(MockitoExtension.class)
+class OrderFacadeTest {
+
+    @Mock GetSelectedCartItemsUseCase getSelectedCartItems;
+    @Mock OrderService orderService;
+    @Mock ProductPort productPort;
+    @Mock WalletPort walletPort;
+    @Mock DeliveryPort deliveryPort;
+    @Mock OrderOutboxRelayFacade orderOutboxRelayFacade;
+    @Mock Clock clock;
+
+    @InjectMocks OrderFacade sut;
+
+    @Captor ArgumentCaptor<Order> orderCaptor;
+    @Captor ArgumentCaptor<List<StockItem>> stockItemsCaptor;
+
+    static final Long BUYER_ID = 1L;
+    static final Long SELLER_ID = 100L;
+    static final String ZIP_CODE = "06236";
+    static final String IDEMPOTENCY_KEY = "3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f";
+    static final Instant NOW = Instant.parse("2026-11-20T01:00:00Z");
+
+    // 상품 모듈 옵션 한 건 (옵션 ID, 판매자, 가격, 재고, 구매 가능 여부)
+    private ProductOption option(Long optionId, Long sellerId, long salePrice, int stock, boolean purchasable) {
+        return new ProductOption(optionId * 10, optionId, sellerId,
+                "상품" + optionId, "옵션" + optionId, salePrice, stock, purchasable);
+    }
+
+    // 판매 중이고 재고가 넉넉한 다른 판매자의 상품
+    private ProductOption onSale(Long optionId, long salePrice) {
+        return option(optionId, SELLER_ID, salePrice, 100, true);
+    }
+
+    private CreateOrderCommand command(long expectedTotalAmount) {
+        return command(IDEMPOTENCY_KEY, expectedTotalAmount);
+    }
+
+    private CreateOrderCommand command(String idempotencyKey, long expectedTotalAmount) {
+        return new CreateOrderCommand(BUYER_ID, idempotencyKey, "홍길동", "010-1234-5678", ZIP_CODE,
+                "서울시 강남구 테헤란로 1", "101호", "문 앞에 놓아 주세요", true, expectedTotalAmount);
+    }
+
+    // 배송 모듈 응답: 기본 배송비 0원, 일반 지역이라 배송비·운임이 붙지 않음 (배송비와 상관없는 테스트용)
+    private void noShippingFee() {
+        given(deliveryPort.findShippingFees(any(), anyMap())).willReturn(Map.of(
+                SELLER_ID, new SellerShippingFee(0L, null, 0L, 0L)));
+    }
+
+    // 배송 모듈 응답: 판매자 설정 기본 배송비 3,000원, 5만 원 이상 무료 -> 적용된 배송비 shippingFee, 도서산간 운임 regionSurcharge
+    private void shippingFee(long shippingFee, long regionSurcharge) {
+        given(deliveryPort.findShippingFees(any(), anyMap())).willReturn(Map.of(
+                SELLER_ID, new SellerShippingFee(3_000L, 50_000L, shippingFee, regionSurcharge)));
+    }
+
+    // ---------- 주문서 조회 ----------
+
+    @Test
+    void 선택한_장바구니_상품이_없으면_주문서를_만들_수_없다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of());
+
+        // when & then
+        assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.EMPTY_ORDER_ITEMS));
+        then(productPort).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 상품_모듈에_없는_옵션이면_주문할_수_없다() {
+        // given: 상품 모듈 응답에서 빠짐 (삭제된 옵션)
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of());
+
+        // when & then
+        assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.PRODUCT_OPTION_NOT_FOUND));
+    }
+
+    @Test
+    void 판매_중이_아닌_상품은_주문할_수_없다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(option(11L, SELLER_ID, 10_000L, 100, false)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.PRODUCT_NOT_ON_SALE));
+    }
+
+    @Test
+    void 담은_수량보다_재고가_적으면_주문할_수_없다() {
+        // given: 2개 담았는데 재고 1개
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 2)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(option(11L, SELLER_ID, 10_000L, 1, true)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
+    }
+
+    @Test
+    void 본인이_판매하는_상품은_주문할_수_없다() {
+        // given: 판매자 ID가 주문하는 회원 ID와 같음
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(option(11L, BUYER_ID, 10_000L, 100, true)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.getCheckout(BUYER_ID))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.CANNOT_ORDER_OWN_PRODUCT));
+    }
+
+    @Test
+    void 주문서는_상품_모듈의_최신_가격으로_계산하고_저장하지_않는다() {
+        // given: 같은 판매자 상품 2종
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(
+                new SelectedCartItem(11L, 2),
+                new SelectedCartItem(12L, 1)));
+        given(productPort.findOptions(List.of(11L, 12L))).willReturn(List.of(
+                onSale(11L, 10_000L),
+                onSale(12L, 5_000L)));
+
+        // when
+        CheckoutResult result = sut.getCheckout(BUYER_ID);
+
+        // then
+        assertThat(result).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(result.sellerGroups()).hasSize(1);
+            softly.assertThat(result.sellerGroups().get(0).items()).hasSize(2);
+            softly.assertThat(result.totalProductAmount()).isEqualTo(25_000L);
+        });
+        then(orderService).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 주문서는_배송_모듈을_부르지_않는다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+
+        // when
+        sut.getCheckout(BUYER_ID);
+
+        // then: 배송비는 프론트가 배송 견적 API로 받으므로 결제 확인용 호출은 주문 생성 때만 한다
+        then(deliveryPort).shouldHaveNoInteractions();
+    }
+
+    // ---------- 주문 생성 ----------
+
+    @Test
+    void 배송_모듈_응답에_판매자가_빠지면_배송비_0원으로_결제되지_않게_주문을_막는다() {
+        // given: 판매자 100의 상품인데 배송 모듈이 다른 판매자의 배송비만 돌려줌
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        given(deliveryPort.findShippingFees(any(), anyMap())).willReturn(Map.of(
+                999L, new SellerShippingFee(3_000L, null, 3_000L, 0L)));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.DELIVERY_API_FAILED));
+        then(orderService).should(never()).create(any());
+    }
+
+    @Test
+    void 사용자가_본_금액과_다르면_주문을_저장하지_않는다() {
+        // given: 실제 10,000원인데 화면에서는 9,000원을 봄 (그 사이 가격 변경)
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(9_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.ORDER_AMOUNT_CHANGED));
+        then(orderService).should(never()).create(any(Order.class));
+    }
+
+    @Test
+    void 잔액이_부족하면_주문을_저장하지_않는다() {
+        // given: 결제 금액 10,000원, 잔액 5,000원
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(5_000L);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.INSUFFICIENT_BALANCE));
+        then(orderService).should(never()).create(any(Order.class));
+    }
+
+    @Test
+    void 재고_선점에_실패하면_주문을_먼저_취소하고_선점을_해제한_뒤_해제를_기록한다() {
+        // given: 주문 저장까지 성공, 재고 선점에서 실패
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
+                .given(productPort).allocateStock(eq(10L), anyList());
+        given(orderService.cancel(10L)).willReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
+        // 해제 확인은 취소된 주문에만 기록할 수 있어 취소가 먼저다(#657)
+        InOrder inOrder = inOrder(orderService, productPort);
+        inOrder.verify(orderService).cancel(10L);
+        inOrder.verify(productPort).releaseStock(10L);
+        inOrder.verify(orderService).markStockReleased(10L);
+        then(orderService).should(never()).publishCreated(anyLong());
+    }
+
+    @Test
+    void 생성_이벤트_발행에_실패하면_주문을_취소하고_선점을_해제한다() {
+        // given: 재고 선점까지 성공, 이벤트 발행에서 실패
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new IllegalStateException("이벤트 기록 실패"))
+                .given(orderService).publishCreated(10L);
+        given(orderService.cancel(10L)).willReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("이벤트 기록 실패");
+        then(productPort).should().releaseStock(10L);
+        then(orderService).should().cancel(10L);
+    }
+
+    @Test
+    void 주문_취소마저_실패해도_원래_예외를_그대로_던진다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
+                .given(productPort).allocateStock(eq(10L), anyList());
+        willThrow(new IllegalStateException("DB 오류")).given(orderService).cancel(10L);
+
+        // when & then: 취소하지 못한 주문은 결제 대기로 남아 결제 대기 정리가 취소하고 재고를 푼다
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    @Test
+    void 결제_대기가_아니라_취소하지_못한_주문은_재고를_풀지_않는다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new IllegalStateException("이벤트 기록 실패"))
+                .given(orderService).publishCreated(10L);
+        given(orderService.cancel(10L)).willReturn(false);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOf(IllegalStateException.class);
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    @Test
+    void 생성_실패한_주문의_재고_해제가_실패해도_원래_예외를_던지고_해제는_기록하지_않는다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        willThrow(new RestApiException(OrderErrorCode.OUT_OF_STOCK))
+                .given(productPort).allocateStock(eq(10L), anyList());
+        given(orderService.cancel(10L)).willReturn(true);
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.OUT_OF_STOCK));
+        then(orderService).should(never()).markStockReleased(anyLong());
+    }
+
+    @Test
+    void 주문을_저장하고_재고를_선점한_뒤_생성_이벤트를_발행한다() {
+        // given: 상품 10,000원 + 배송비 3,000원 + 도서산간 운임 3,000원 = 16,000원
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        shippingFee(3_000L, 3_000L);
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        given(orderService.publishCreated(10L)).willReturn(77L);
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        Long orderId = sut.createOrder(command(16_000L));
+
+        // then: 배송 모듈은 배송지 우편번호와 함께 한 번만 부른다 (도서산간 운임을 따로 묻지 않음)
+        then(deliveryPort).should().findShippingFees(ZIP_CODE, Map.of(SELLER_ID, 10_000L));
+        then(deliveryPort).shouldHaveNoMoreInteractions();
+
+        // then: 저장한 주문
+        then(orderService).should().create(orderCaptor.capture());
+        Order saved = orderCaptor.getValue();
+        assertThat(saved).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(orderId).isEqualTo(10L);
+            softly.assertThat(saved.getStatus()).isEqualTo(OrderStatus.PAYMENT_PENDING);
+            softly.assertThat(saved.getIdempotencyKey()).isEqualTo(IDEMPOTENCY_KEY);
+            softly.assertThat(saved.getRecipientName()).isEqualTo("홍길동");
+            softly.assertThat(saved.getZipCode()).isEqualTo(ZIP_CODE);
+            softly.assertThat(saved.getDeliveryNote()).isEqualTo("문 앞에 놓아 주세요");
+            softly.assertThat(saved.getTotalShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(saved.getTotalRemoteAreaFee()).isEqualTo(3_000L);
+            softly.assertThat(saved.getTotalAmount()).isEqualTo(16_000L);
+            softly.assertThat(saved.getThirdPartyConsents()).hasSize(1);
+        });
+
+        // then: 결제 완료 이벤트로 배송에 넘길 판매자 설정 값
+        OrderSellerGroup group = saved.getSellerGroups().get(0);
+        assertSoftly(softly -> {
+            softly.assertThat(group.getShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(group.getBaseShippingFee()).isEqualTo(3_000L);
+            softly.assertThat(group.getFreeShippingThreshold()).isEqualTo(50_000L);
+            softly.assertThat(group.getRemoteAreaFee()).isEqualTo(3_000L);
+        });
+
+        // then: 재고 선점 요청과 이벤트 발행, 결제 요청을 커밋한 뒤 남긴 줄을 바로 보낸다
+        then(productPort).should().allocateStock(eq(10L), stockItemsCaptor.capture());
+        assertThat(stockItemsCaptor.getValue()).containsExactly(new StockItem(11L, 1));
+        InOrder publishThenSend = inOrder(orderService, orderOutboxRelayFacade);
+        publishThenSend.verify(orderService).publishCreated(10L);
+        publishThenSend.verify(orderOutboxRelayFacade).sendAsync(77L, NOW);
+    }
+
+    // 결제 요청은 커밋됐고 줄은 PENDING이라 재발송이 보낸다. 주문을 취소하거나 오류로 답하면 안 된다(#715, #794)
+    @Test
+    void 결제_요청을_커밋한_뒤_발송_대기열이_가득_차도_주문을_돌려주고_거절만_센다() {
+        // given
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willReturn(10L);
+        given(orderService.publishCreated(10L)).willReturn(77L);
+        willThrow(new TaskRejectedException("가득 참")).given(orderOutboxRelayFacade).sendAsync(eq(77L), any());
+
+        // when
+        Long orderId = sut.createOrder(command(10_000L));
+
+        // then
+        assertThat(orderId).isEqualTo(10L);
+        then(orderOutboxRelayFacade).should().countRejected();
+        then(orderService).should(never()).cancel(anyLong());
+    }
+
+    // ---------- 주문 생성 멱등키 ----------
+
+    @Test
+    void 같은_멱등키로_만든_주문이_있으면_외부_API를_부르지_않고_그_주문을_돌려준다() {
+        // given
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.of(10L));
+
+        // when
+        Long orderId = sut.createOrder(command(13_000L));
+
+        // then: 다시 만들지 않는 것 자체가 요구사항이라 호출하지 않았는지 확인
+        assertThat(orderId).isEqualTo(10L);
+        then(getSelectedCartItems).should(never()).getSelectedCartItems(anyLong());
+        then(walletPort).should(never()).getBalance(anyLong());
+        then(orderService).should(never()).create(any(Order.class));
+        then(productPort).should(never()).allocateStock(anyLong(), anyList());
+        then(orderService).should(never()).publishCreated(anyLong());
+    }
+
+    @Test
+    void 같은_멱등키의_동시_요청이_먼저_저장했으면_재고를_선점하지_않고_먼저_저장된_주문을_돌려준다() {
+        // given: 조회 시점에는 없었지만, 저장할 때 다른 요청이 먼저 저장해 유니크 제약에 걸림
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY))
+                .willReturn(Optional.empty(), Optional.of(10L));
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willThrow(new DataIntegrityViolationException("uk_orders_buyer_id_idempotency_key"));
+
+        // when
+        Long orderId = sut.createOrder(command(10_000L));
+
+        // then: 재고 선점과 이벤트 발행은 먼저 저장한 요청의 몫
+        assertThat(orderId).isEqualTo(10L);
+        then(productPort).should(never()).allocateStock(anyLong(), anyList());
+        then(orderService).should(never()).publishCreated(anyLong());
+    }
+
+    @Test
+    void 멱등키_제약에_걸렸는데_먼저_저장된_주문이_사라졌으면_다시_시도하라고_알린다() {
+        // given: 먼저 저장한 요청이 재고 선점에 실패해 주문을 지운 뒤라 키로 찾아도 없음
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class)))
+                .willThrow(new DataIntegrityViolationException("Duplicate entry for key 'orders.uk_orders_buyer_id_idempotency_key'"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.IDEMPOTENCY_KEY_CONFLICT));
+        then(productPort).should(never()).allocateStock(anyLong(), anyList());
+    }
+
+    @Test
+    void 멱등키가_아닌_제약에_걸려_저장에_실패하면_예외를_그대로_던진다() {
+        // given: 저장은 실패했는데 같은 키의 주문이 없음 = 다른 원인
+        given(orderService.findIdByIdempotencyKey(BUYER_ID, IDEMPOTENCY_KEY)).willReturn(Optional.empty());
+        given(getSelectedCartItems.getSelectedCartItems(BUYER_ID)).willReturn(List.of(new SelectedCartItem(11L, 1)));
+        given(productPort.findOptions(List.of(11L))).willReturn(List.of(onSale(11L, 10_000L)));
+        noShippingFee();
+        given(walletPort.getBalance(BUYER_ID)).willReturn(50_000L);
+        given(orderService.create(any(Order.class))).willThrow(new DataIntegrityViolationException("other"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(10_000L)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        then(productPort).should(never()).allocateStock(anyLong(), anyList());
+    }
+
+    @ParameterizedTest
+    @MethodSource("잘못된_멱등키")
+    void 멱등키가_비었거나_64자를_넘으면_주문할_수_없다(String idempotencyKey) {
+        // when & then
+        assertThatThrownBy(() -> sut.createOrder(command(idempotencyKey, 10_000L)))
+                .isInstanceOfSatisfying(RestApiException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(OrderErrorCode.INVALID_IDEMPOTENCY_KEY));
+        then(orderService).should(never()).create(any(Order.class));
+    }
+
+    static Stream<String> 잘못된_멱등키() {
+        return Stream.of(null, "", "   ", "a".repeat(65));
+    }
+
+    // ---------- 결제 실패 ----------
+
+    @Test
+    void 결제가_실패하면_선점한_재고를_해제하고_장바구니는_건드리지_않는다() {
+        // given
+        given(orderService.failPayment(10L)).willReturn(true);
+
+        // when
+        sut.failPayment(10L, "INSUFFICIENT_BALANCE");
+
+        // then
+        then(productPort).should().releaseStock(10L);
+        then(orderService).should().markStockReleased(10L);
+        then(getSelectedCartItems).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 결제_실패_처리_중_재고_해제가_실패해도_예외를_던지지_않고_해제는_기록하지_않는다() {
+        // given: 결제 실패는 이미 커밋됐다. 해제는 정리 스케줄러가 다시 부른다(#657)
+        given(orderService.failPayment(10L)).willReturn(true);
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when & then
+        assertThatCode(() -> sut.failPayment(10L, "INSUFFICIENT_BALANCE")).doesNotThrowAnyException();
+        then(orderService).should(never()).markStockReleased(anyLong());
+    }
+
+    @Test
+    void 재고를_풀_필요가_없는_주문이면_해제하지_않는다() {
+        // given
+        given(orderService.failPayment(10L)).willReturn(false);
+
+        // when
+        sut.failPayment(10L, "INSUFFICIENT_BALANCE");
+
+        // then
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    // ---------- 결제 대기 정리 (#402) ----------
+
+    @Test
+    void 결제_대기로_오래_남은_주문을_취소하면_재고를_해제한다() {
+        // given
+        given(orderService.cancelStalePaymentPending(10L)).willReturn(true);
+
+        // when
+        boolean canceled = sut.cancelStalePaymentPendingOrder(10L);
+
+        // then
+        assertThat(canceled).isTrue();
+        then(productPort).should().releaseStock(10L);
+        then(orderService).should().markStockReleased(10L);
+    }
+
+    @Test
+    void 정리_대상이_아니게_된_주문은_재고를_해제하지_않는다() {
+        // given: 조회 뒤 결제 결과가 먼저 도착해 취소하지 않음
+        given(orderService.cancelStalePaymentPending(10L)).willReturn(false);
+
+        // when
+        boolean canceled = sut.cancelStalePaymentPendingOrder(10L);
+
+        // then
+        assertThat(canceled).isFalse();
+        then(productPort).should(never()).releaseStock(anyLong());
+    }
+
+    @Test
+    void 정리한_주문의_재고_해제가_실패해도_취소는_유지되고_예외를_던지지_않는다() {
+        // given
+        given(orderService.cancelStalePaymentPending(10L)).willReturn(true);
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when
+        boolean canceled = sut.cancelStalePaymentPendingOrder(10L);
+
+        // then
+        assertThat(canceled).isTrue();
+        then(orderService).should(never()).markStockReleased(anyLong());
+    }
+
+    // ---------- 재고 해제 재처리 (#657) ----------
+
+    @Test
+    void 재처리로_재고를_풀면_해제를_기록한다() {
+        // when
+        sut.retryStockRelease(10L);
+
+        // then
+        then(productPort).should().releaseStock(10L);
+        then(orderService).should().markStockReleased(10L);
+    }
+
+    @Test
+    void 재처리에서도_해제가_실패하면_예외를_던지지_않고_기록하지_않는다() {
+        // given
+        willThrow(new RestApiException(OrderErrorCode.PRODUCT_API_FAILED)).given(productPort).releaseStock(10L);
+
+        // when & then
+        assertThatCode(() -> sut.retryStockRelease(10L)).doesNotThrowAnyException();
+        then(orderService).should(never()).markStockReleased(anyLong());
+    }
+
+    // ---------- 커밋 직후 발송 (#795) ----------
+
+    @Test
+    void 결제_완료를_커밋하면_남긴_줄을_바로_보낸다() {
+        // given
+        given(orderService.completePayment(10L)).willReturn(Optional.of(77L));
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+    }
+
+    @Test
+    void 결제_완료로_바꾸지_않았으면_보내지_않는다() {
+        // given: 이미 처리된 주문
+        given(orderService.completePayment(10L)).willReturn(Optional.empty());
+
+        // when
+        sut.completePayment(10L);
+
+        // then
+        then(orderOutboxRelayFacade).shouldHaveNoInteractions();
+    }
+
+    @Test
+    void 구매확정을_커밋하면_남긴_줄을_바로_보낸다() {
+        // given
+        given(orderService.confirmPurchase(BUYER_ID, 10L, 1L)).willReturn(Optional.of(77L));
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        sut.confirmPurchase(BUYER_ID, 10L, 1L);
+
+        // then
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+    }
+
+    @Test
+    void 자동_구매확정은_남긴_줄을_모두_보내고_확정한_상품_수를_돌려준다() {
+        // given: 상품 셋을 확정했고, 모두 환불된 하나는 보내지 않아 줄은 둘이다
+        given(orderService.autoConfirmPurchases(10L)).willReturn(new AutoConfirmPurchaseResult(3, List.of(77L, 78L)));
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        int confirmed = sut.autoConfirmPurchases(10L);
+
+        // then
+        assertThat(confirmed).isEqualTo(3);
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+        then(orderOutboxRelayFacade).should().sendAsync(78L, NOW);
+    }
+
+    @ParameterizedTest
+    @MethodSource("결제_만료_요청_결과")
+    void 결제_만료를_요청했을_때만_남긴_줄을_보낸다(Optional<Long> outboxId, boolean expected) {
+        // given
+        given(orderService.requestPaymentExpire(10L)).willReturn(outboxId);
+        outboxId.ifPresent(id -> given(clock.instant()).willReturn(NOW));
+
+        // when
+        boolean requested = sut.requestPaymentExpire(10L);
+
+        // then
+        assertThat(requested).isEqualTo(expected);
+        then(orderOutboxRelayFacade).should(outboxId.isPresent() ? times(1) : never()).sendAsync(77L, NOW);
+    }
+
+    static Stream<Arguments> 결제_만료_요청_결과() {
+        return Stream.of(
+                Arguments.of(Optional.of(77L), true),
+                Arguments.of(Optional.empty(), false));
+    }
+
+    @Test
+    void 환불_되돌리기_결과를_커밋하면_남긴_줄을_바로_보낸다() {
+        // given
+        RevertOrderItemRefundCommand command = new RevertOrderItemRefundCommand(7L, 10L, 1L, 1);
+        given(orderService.revertRefund(command)).willReturn(77L);
+        given(clock.instant()).willReturn(NOW);
+
+        // when
+        sut.revertRefund(command);
+
+        // then
+        then(orderOutboxRelayFacade).should().sendAsync(77L, NOW);
+    }
+}

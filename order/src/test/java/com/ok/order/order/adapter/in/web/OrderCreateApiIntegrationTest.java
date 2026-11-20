@@ -1,0 +1,381 @@
+package com.ok.order.order.adapter.in.web;
+
+import com.jayway.jsonpath.JsonPath;
+import com.ok.order.OrderSchema;
+import com.ok.order.cart.application.service.CartService;
+import com.ok.order.order.application.dto.ProductOption;
+import com.ok.order.order.application.port.in.OrderOutboxRelayUseCase;
+import com.ok.order.order.application.service.OrderOutboxRelayFacade;
+import com.ok.order.order.domain.SellerShippingFee;
+import com.ok.order.order.exception.OrderErrorCode;
+import com.ok.testsupport.AbstractIntegrationTest;
+import com.ok.testsupport.FakeDeliveryPort;
+import com.ok.testsupport.FakeProductPort;
+import com.ok.testsupport.FakeWalletPort;
+import com.ok.testsupport.OrderKafkaTopicReader;
+import com.ok.testsupport.TestAccessTokens;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.kafka.autoconfigure.KafkaConnectionDetails;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
+import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+// 주문 생성 API를 보안 필터부터 DB 저장, 지갑에 보내는 주문 생성 메시지(Kafka, #602)까지 실제 경로로 확인한다.
+// 상품·배송·지갑 HTTP 호출은 testsupport의 Fake가 대신한다. 결제 결과를 받은 뒤의 흐름은 WalletPaymentKafkaIntegrationTest가 확인한다.
+// 헥사고날 구조 전환 전후에 같은 결과가 나오는지 보는 기준이 되도록 API 요청과 DB·메시지 결과만 본다.
+class OrderCreateApiIntegrationTest extends AbstractIntegrationTest {
+
+    // 다른 테스트와 데이터가 겹치지 않게 이 클래스 전용 번호를 쓴다
+    private static final Long BUYER_ID = 9_400_001L;
+    private static final Long SELLER_ID = 9_400_901L;
+    private static final Long PRODUCT_ID = 9_400_501L;
+    private static final Long OPTION_ID = 9_400_601L;
+    private static final long UNIT_PRICE = 12_000L;
+    private static final int QUANTITY = 2;
+    private static final long SHIPPING_FEE = 3_000L;
+    private static final long REMOTE_AREA_FEE = 5_000L;
+    // 상품 24,000 + 배송비 3,000 + 도서산간 5,000
+    private static final long TOTAL_AMOUNT = UNIT_PRICE * QUANTITY + SHIPPING_FEE + REMOTE_AREA_FEE;
+    private static final String ORDERS_URL = "/api/v1/orders";
+    private static final String ORDER_CREATED_TOPIC = "order.order-created.v1";
+    // 다시 보낸 중복까지 세려고 이 시간 동안 계속 읽는다. 커밋 직후 보내므로 정상이면 바로 읽힌다
+    private static final Duration READ_DURATION = Duration.ofSeconds(3);
+
+    @Autowired
+    WebApplicationContext context;
+
+    @Autowired
+    TestAccessTokens tokens;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    CartService cartService;
+
+    @Autowired
+    FakeProductPort fakeProductPort;
+
+    @Autowired
+    FakeDeliveryPort fakeDeliveryPort;
+
+    @Autowired
+    FakeWalletPort fakeWalletPort;
+
+    @Autowired
+    KafkaConnectionDetails kafkaConnectionDetails;
+
+    @Autowired
+    JsonMapper jsonMapper;
+
+    @Autowired
+    OrderOutboxRelayUseCase orderOutboxRelayUseCase;
+
+    @Autowired
+    MeterRegistry meterRegistry;
+
+    @Autowired
+    @Qualifier(OrderOutboxRelayFacade.RELAY_EXECUTOR)
+    ThreadPoolTaskExecutor relayExecutor;
+
+    private MockMvc mockMvc;
+    private OrderKafkaTopicReader orderCreatedReader;
+
+    @BeforeEach
+    void setUp() {
+        mockMvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+        cartService.addItem(BUYER_ID, OPTION_ID, QUANTITY);
+        fakeProductPort.register(new ProductOption(
+                PRODUCT_ID, OPTION_ID, SELLER_ID, "사과", "1kg", UNIT_PRICE, 10, true));
+        fakeDeliveryPort.register(SELLER_ID, new SellerShippingFee(
+                SHIPPING_FEE, null, SHIPPING_FEE, REMOTE_AREA_FEE));
+        fakeWalletPort.setBalance(BUYER_ID, 100_000L);
+        orderCreatedReader = new OrderKafkaTopicReader(kafkaConnectionDetails.getBootstrapServers(), ORDER_CREATED_TOPIC);
+    }
+
+    // 통합 테스트는 롤백되지 않아 이 클래스가 만든 주문·장바구니를 지운다
+    @AfterEach
+    void tearDown() {
+        orderCreatedReader.close();
+        fakeProductPort.clear();
+        fakeDeliveryPort.clear();
+        fakeWalletPort.clear();
+        deleteOrders();
+        jdbcTemplate.update("DELETE ci FROM " + OrderSchema.NAME + ".cart_item ci JOIN " + OrderSchema.NAME
+                + ".cart c ON ci.cart_id = c.id WHERE c.member_id = ?", BUYER_ID);
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".cart WHERE member_id = ?", BUYER_ID);
+    }
+
+    @Test
+    void 장바구니에_담은_상품으로_주문하면_결제_대기로_저장되고_주문_생성_메시지가_나간다() throws Exception {
+        // when
+        Long orderId = orderId(createOrder("key-created").andExpect(status().isCreated()));
+
+        // then
+        Map<String, Object> order = jdbcTemplate.queryForMap("SELECT status, idempotency_key, total_product_amount, "
+                + "total_shipping_fee, total_remote_area_fee, total_amount, recipient_name, zip_code, delivery_note FROM "
+                + OrderSchema.NAME + ".orders WHERE id = ?", orderId);
+        Map<String, Object> item = jdbcTemplate.queryForMap("SELECT oi.product_option_id, oi.quantity, oi.unit_price, "
+                + "oi.status, g.seller_id, g.shipping_fee, g.remote_area_fee FROM " + OrderSchema.NAME + ".order_item oi JOIN "
+                + OrderSchema.NAME + ".order_seller_group g ON oi.seller_group_id = g.id WHERE g.order_id = ?", orderId);
+        List<String> createdMessages = orderCreatedReader.readValuesFor(String.valueOf(orderId), READ_DURATION);
+
+        assertThat(order).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(order.get("status")).isEqualTo("PAYMENT_PENDING");
+            softly.assertThat(order.get("idempotency_key")).isEqualTo("key-created");
+            softly.assertThat(((Number) order.get("total_product_amount")).longValue()).isEqualTo(UNIT_PRICE * QUANTITY);
+            softly.assertThat(((Number) order.get("total_shipping_fee")).longValue()).isEqualTo(SHIPPING_FEE);
+            softly.assertThat(((Number) order.get("total_remote_area_fee")).longValue()).isEqualTo(REMOTE_AREA_FEE);
+            softly.assertThat(((Number) order.get("total_amount")).longValue()).isEqualTo(TOTAL_AMOUNT);
+            softly.assertThat(order.get("recipient_name")).isEqualTo("홍길동");
+            softly.assertThat(order.get("zip_code")).isEqualTo("63000");
+            softly.assertThat(order.get("delivery_note")).isEqualTo("문 앞에 놓아 주세요");
+            softly.assertThat(((Number) item.get("product_option_id")).longValue()).isEqualTo(OPTION_ID);
+            softly.assertThat(((Number) item.get("quantity")).intValue()).isEqualTo(QUANTITY);
+            softly.assertThat(((Number) item.get("unit_price")).longValue()).isEqualTo(UNIT_PRICE);
+            softly.assertThat(item.get("status")).isEqualTo("PAYMENT_PENDING");
+            softly.assertThat(((Number) item.get("seller_id")).longValue()).isEqualTo(SELLER_ID);
+            softly.assertThat(((Number) item.get("shipping_fee")).longValue()).isEqualTo(SHIPPING_FEE);
+            softly.assertThat(((Number) item.get("remote_area_fee")).longValue()).isEqualTo(REMOTE_AREA_FEE);
+            softly.assertThat(countConsents(orderId)).isEqualTo(1);
+            softly.assertThat(fakeProductPort.allocatedOrderIds()).containsExactly(orderId);
+            softly.assertThat(createdMessages).hasSize(1);
+        });
+        JsonNode message = jsonMapper.readTree(createdMessages.get(0));
+        assertSoftly(softly -> {
+            softly.assertThat(message.get("orderId").asLong()).isEqualTo(orderId);
+            softly.assertThat(message.get("buyerId").asLong()).isEqualTo(BUYER_ID);
+            softly.assertThat(message.get("totalAmount").asLong()).isEqualTo(TOTAL_AMOUNT);
+            softly.assertThat(message.get("orderSummary").asString()).isEqualTo("사과");
+        });
+    }
+
+    // 재발송 스케줄러는 테스트에서 꺼져 있어(module-test.yml) 위 테스트의 메시지는 커밋 직후 발송으로만 나간다.
+    // 그 발송 대기열이 가득 차면 주문 응답이 기다리지 않고, 결제 요청은 PENDING으로 남아 재발송이 보낸다(#715, #794)
+    @Test
+    void 커밋_직후_발송_대기열이_가득_차도_주문은_기다리지_않고_만들어지고_거절을_세며_결제_요청은_재발송이_보낸다() throws Exception {
+        // given: 전용 실행기의 스레드를 모두 막고 대기열을 빈 작업으로 채운다
+        double rejectedBefore = rejectedCount();
+        CountDownLatch release = new CountDownLatch(1);
+        ThreadPoolExecutor pool = relayExecutor.getThreadPoolExecutor();
+        Long orderId;
+        try {
+            for (int i = 0; i < relayExecutor.getMaxPoolSize(); i++) {
+                pool.execute(() -> awaitQuietly(release));
+            }
+            while (pool.getQueue().remainingCapacity() > 0) {
+                pool.execute(() -> { });
+            }
+
+            // when: 대기열 자리를 기다리면 이 시간 안에 끝나지 않는다
+            orderId = CompletableFuture.supplyAsync(this::createOrderWithFullQueue).get(5, TimeUnit.SECONDS);
+
+            // then
+            Long createdOrderId = orderId;
+            assertSoftly(softly -> {
+                softly.assertThat(createdOutboxStatus(createdOrderId)).isEqualTo("PENDING");
+                softly.assertThat(rejectedCount() - rejectedBefore).isEqualTo(1.0);
+            });
+        } finally {
+            release.countDown();
+        }
+
+        // 막아 둔 작업이 끝난 뒤 재발송이 보낸다. 다른 테스트가 남긴 줄이 앞에 있어도 이 줄까지 닿게 넉넉히 집는다
+        orderOutboxRelayUseCase.relayPending(1_000, Duration.ZERO);
+        Long createdOrderId = orderId;
+        assertSoftly(softly -> {
+            softly.assertThat(orderCreatedReader.readValuesFor(String.valueOf(createdOrderId), READ_DURATION)).hasSize(1);
+            softly.assertThat(createdOutboxStatus(createdOrderId)).isEqualTo("SENT");
+        });
+    }
+
+    private Long createOrderWithFullQueue() {
+        try {
+            return orderId(createOrder("key-queue-full").andExpect(status().isCreated()));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private double rejectedCount() {
+        return meterRegistry.get(OrderOutboxRelayFacade.SEND_DROPPED_METRIC)
+                .tag("reason", OrderOutboxRelayFacade.DROP_REASON_REJECTED)
+                .counter()
+                .count();
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Test
+    void 같은_멱등키로_두_번_요청하면_주문이_하나만_생긴다() throws Exception {
+        // given
+        Long firstOrderId = orderId(createOrder("key-retry").andExpect(status().isCreated()));
+
+        // when
+        Long secondOrderId = orderId(createOrder("key-retry").andExpect(status().isCreated()));
+
+        // then
+        assertSoftly(softly -> {
+            softly.assertThat(secondOrderId).isEqualTo(firstOrderId);
+            softly.assertThat(countOrders()).isEqualTo(1);
+            softly.assertThat(fakeProductPort.allocatedOrderIds()).containsExactly(firstOrderId);
+            softly.assertThat(countCreatedOutbox(firstOrderId)).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void 재고_선점이_실패하면_주문이_취소로_남고_주문_생성_메시지는_나가지_않는다() throws Exception {
+        // given
+        fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
+
+        // when
+        createOrder("key-out-of-stock")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type", endsWith("/" + OrderErrorCode.OUT_OF_STOCK.slug())));
+
+        // then
+        Map<String, Object> order = jdbcTemplate.queryForMap("SELECT id, status, idempotency_key FROM "
+                + OrderSchema.NAME + ".orders WHERE buyer_id = ?", BUYER_ID);
+        Long orderId = ((Number) order.get("id")).longValue();
+        List<String> itemStatuses = jdbcTemplate.queryForList("SELECT oi.status FROM " + OrderSchema.NAME
+                + ".order_item oi JOIN " + OrderSchema.NAME + ".order_seller_group g ON oi.seller_group_id = g.id"
+                + " WHERE g.order_id = ?", String.class, orderId);
+        assertThat(order).isNotNull();
+        assertSoftly(softly -> {
+            softly.assertThat(order.get("status")).isEqualTo("CANCELED");
+            softly.assertThat(order.get("idempotency_key")).isNull();
+            softly.assertThat(itemStatuses).containsOnly("CANCELED");
+            softly.assertThat(fakeProductPort.releasedOrderIds()).containsExactly(orderId);
+            softly.assertThat(orderCreatedReader.readValuesFor(String.valueOf(orderId), READ_DURATION)).isEmpty();
+        });
+    }
+
+    @Test
+    void 재고_선점이_실패한_뒤_같은_멱등키로_다시_주문하면_새_주문이_만들어진다() throws Exception {
+        // given
+        fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
+        createOrder("key-after-cancel").andExpect(status().isConflict());
+        fakeProductPort.failAllocationWith(null);
+
+        // when
+        Long orderId = orderId(createOrder("key-after-cancel").andExpect(status().isCreated()));
+
+        // then
+        String status = jdbcTemplate.queryForObject("SELECT status FROM " + OrderSchema.NAME + ".orders WHERE id = ?",
+                String.class, orderId);
+        assertSoftly(softly -> {
+            softly.assertThat(countOrders()).isEqualTo(2);
+            softly.assertThat(status).isEqualTo("PAYMENT_PENDING");
+        });
+    }
+
+    @Test
+    void 취소된_주문은_내_주문_목록에_보이지_않는다() throws Exception {
+        // given
+        fakeProductPort.failAllocationWith(OrderErrorCode.OUT_OF_STOCK);
+        createOrder("key-hidden").andExpect(status().isConflict());
+
+        // when & then
+        mockMvc.perform(get(ORDERS_URL).header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(0)))
+                .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    private ResultActions createOrder(String idempotencyKey) throws Exception {
+        return mockMvc.perform(post(ORDERS_URL)
+                .header(HttpHeaders.AUTHORIZATION, tokens.bearer(BUYER_ID, "BUYER"))
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {
+                          "recipientName": "홍길동",
+                          "recipientPhone": "010-1234-5678",
+                          "zipCode": "63000",
+                          "address": "제주특별자치도 제주시 첨단로 242",
+                          "addressDetail": "101호",
+                          "deliveryNote": "문 앞에 놓아 주세요",
+                          "thirdPartyProvisionAgreed": true,
+                          "expectedTotalAmount": %d
+                        }
+                        """.formatted(TOTAL_AMOUNT)));
+    }
+
+    private Long orderId(ResultActions result) throws Exception {
+        Number orderId = JsonPath.read(result.andReturn().getResponse().getContentAsString(), "$.orderId");
+        return orderId.longValue();
+    }
+
+    private Integer countOrders() {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?",
+                Integer.class, BUYER_ID);
+    }
+
+    // 커밋 직후 발송은 다른 스레드라 Kafka에서 건수를 세면 기다리는 시간에 흔들려, 저장된 outbox 줄 수로 센다
+    private Integer countCreatedOutbox(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + OrderSchema.NAME
+                + ".order_outbox WHERE topic = ? AND message_key = ?", Integer.class, ORDER_CREATED_TOPIC,
+                String.valueOf(orderId));
+    }
+
+    private String createdOutboxStatus(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT status FROM " + OrderSchema.NAME
+                + ".order_outbox WHERE topic = ? AND message_key = ?", String.class, ORDER_CREATED_TOPIC,
+                String.valueOf(orderId));
+    }
+
+    private Integer countConsents(Long orderId) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + OrderSchema.NAME
+                + ".order_third_party_consent WHERE order_id = ?", Integer.class, orderId);
+    }
+
+    private void deleteOrders() {
+        String orders = "SELECT id FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?";
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_outbox WHERE topic = ? AND message_key IN ("
+                + "SELECT CAST(id AS CHAR) FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?)", ORDER_CREATED_TOPIC, BUYER_ID);
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_third_party_consent WHERE order_id IN ("
+                + orders + ")", BUYER_ID);
+        jdbcTemplate.update("DELETE oi FROM " + OrderSchema.NAME + ".order_item oi JOIN " + OrderSchema.NAME
+                + ".order_seller_group g ON oi.seller_group_id = g.id WHERE g.order_id IN (" + orders + ")", BUYER_ID);
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".order_seller_group WHERE order_id IN ("
+                + orders + ")", BUYER_ID);
+        jdbcTemplate.update("DELETE FROM " + OrderSchema.NAME + ".orders WHERE buyer_id = ?", BUYER_ID);
+    }
+}

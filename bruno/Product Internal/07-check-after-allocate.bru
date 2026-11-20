@@ -1,0 +1,24 @@
+meta {
+  name: 확인 - 배정 후 판매 가능 수량
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/internal/v1/products/options?optionIds={{optionA}}
+  body: none
+  auth: none
+}
+
+params:query {
+  optionIds: {{optionA}}
+}
+
+assert {
+  res.status: eq 200
+  res.body[0].availableStock: eq 8
+}
+
+docs {
+  재고 10에서 첫 배정 2개만 빠져 8입니다 (재요청의 5개는 반영되지 않음).
+}

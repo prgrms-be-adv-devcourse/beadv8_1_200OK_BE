@@ -1,0 +1,17 @@
+package com.ok.order.order.application.dto;
+
+import com.ok.order.order.domain.OrderSellerGroup;
+
+import java.util.List;
+
+public record CheckoutSellerGroupResult(
+        Long sellerId,
+        List<CheckoutItemResult> items
+) {
+    public static CheckoutSellerGroupResult from(OrderSellerGroup group) {
+        return new CheckoutSellerGroupResult(
+                group.getSellerId(),
+                group.getItems().stream().map(CheckoutItemResult::from).toList()
+        );
+    }
+}

@@ -1,0 +1,2 @@
+Class <com.ok.media.controller.spec.MediaApiSpec> does not reside outside of package '..spec..' in (MediaApiSpec.java:0)
+Class <com.ok.media.controller.spec.MediaApiSpec> has modifier PUBLIC in (MediaApiSpec.java:0)

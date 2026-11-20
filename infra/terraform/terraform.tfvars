@@ -1,0 +1,4 @@
+region         = "ap-northeast-2"
+team_tag       = "devcos-team01"
+bucket_prefix  = "team01-paldo-gotgan-s3"
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDugk0eu0Vi/iVsmJYqeyrKns+pqgWIMkWgh3Udvcif1"

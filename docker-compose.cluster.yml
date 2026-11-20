@@ -1,0 +1,294 @@
+# Kafka 브로커 3대와 Redis 노드 6대(cluster)로 띄울 때 docker-compose.yml에 겹쳐 쓰는 파일이다 (#783)
+#   docker compose -f docker-compose.yml -f docker-compose.cluster.yml up -d
+# 계속 쓸 거면 .env에 COMPOSE_FILE=docker-compose.yml:docker-compose.cluster.yml 을 두면 -f 없이 같은 효과다
+# 인프라 자원 한계로 평소에는 단일 구성을 쓰고, 인프라가 확장되면 다시 쓰려고 설정을 남겨 둔다 (#530)
+# 이 파일은 단일 redis·kafka를 끄고(아래 profiles: [off]), 앱·지표 수집기가 클러스터에 붙게 덮어쓴다
+# 단일 구성이 떠 있는 채로 겹쳐 올리면 단일 컨테이너는 멈추지 않아 포트(19092)가 겹친다. 먼저 docker compose down 으로 내린다
+
+# ---------- Kafka 브로커 3대(cluster)가 같이 쓰는 설정 (#318) ----------
+# 클러스터 1개에 브로커 3대, 브로커와 컨트롤러를 한 프로세스에서 같이 돌리는 KRaft combined 모드다
+# 운영(deploy/compose.prod.yml)과 같은 구성으로 띄워 "로컬에선 되는데 운영에선 안 되는" 차이를 줄인다
+# apache/kafka 이미지는 KAFKA_* 환경변수를 하나라도 넣으면 이미지 기본 설정을 전혀 쓰지 않으므로, 필요한 값을 모두 적는다
+x-kafka-environment: &kafka-environment
+  KAFKA_PROCESS_ROLES: broker,controller
+  # 3대가 같은 값을 가져야 한 클러스터로 묶인다. 로컬 전용 값이고 비밀값이 아니다(kafka-storage.sh random-uuid로 만듦)
+  # 바꾸면 기존 볼륨과 맞지 않아 브로커가 뜨지 않는다. 바꿔야 하면 docker compose down -v 로 볼륨까지 지운다
+  CLUSTER_ID: v5I7hBoeQPSr-DA6PyvvRw
+  # 3대 중 2대(과반)가 모여야 컨트롤러를 뽑고 시작한다. 그래서 브로커끼리는 depends_on을 걸지 않고 동시에 띄운다
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+  # INTERNAL: 브로커끼리 복사, 컨테이너 안의 앱 / CONTROLLER: 브로커끼리 투표 / EXTERNAL: 내 PC에서 실행한 앱
+  KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+  # 복제 기본값은 1벌이라 3대를 띄운 의미가 없어서 3벌로 올린다
+  # 메시지가 2대 이상에 저장돼야 발행 성공(프로듀서 acks=all과 짝)이라 1대가 고장 나도 발행이 계속된다
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  # 넣지 않으면 Kafka 기본 힙이 1GB라 3대면 힙만 3GB가 된다. 운영과 같은 값으로 맞춘다
+  KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+
+# ---------- Kafka 단일 브로커 (#530) ----------
+# 인프라 자원 한계로 운영은 브로커 1대로 간다(deploy/compose.prod.yml). 로컬도 같은 구성으로 띄우고, 위 클러스터 설정은 그대로 둔다
+# 클러스터 설정에서 단일이라 달라지는 값만 덮어쓴다: 컨트롤러 쿼럼 1대, 복제·최소 동기화 수 1, 힙
+
+# docker-compose.yml의 x-kafka-service와 같은 값이다. 파일이 달라 YAML 앵커를 가져올 수 없어 옮겨 적었다. 한쪽을 고치면 다른 쪽도 고친다
+x-kafka-service: &kafka-service
+  image: apache/kafka:${KAFKA_VERSION:-4.2.1}
+  networks: [kafka-net]
+  # 기본 10초 안에 안 꺼지면 강제 종료(137)되는데, 마지막으로 남은 브로커는 넘길 상대가 없어 정상 종료가 10초를 넘길 수 있다
+  # 강제 종료되면 다음 기동 때 로그 복구로 오래 걸리므로 넉넉히 기다린다
+  stop_grace_period: 30s
+  healthcheck:
+    # 브로커가 요청을 받을 수 있는지 묻는다. 이 명령도 JVM을 띄우므로 힙을 작게 묶는다(컨테이너의 KAFKA_HEAP_OPTS 384m를 그대로 쓰지 않게)
+    test: ['CMD-SHELL', 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null']
+    # 확인할 때마다 JVM이 하나 더 떠서 메모리·CPU를 쓰므로, 평소에는 30초마다만 확인한다
+    interval: 30s
+    timeout: 10s
+    # 연속 4번(약 2분) 실패하면 unhealthy
+    retries: 4
+    # 3대 중 2대가 모여 컨트롤러를 뽑을 때까지 걸리는 시간을 실패로 세지 않는다
+    # 이 동안에는 5초마다 확인해, 간격을 늘려도 기동 직후 healthy가 늦게 잡히지 않게 한다 (Docker Engine 25 이상)
+    start_period: 60s
+    start_interval: 5s
+
+# ---------- Redis 노드 6대가 같이 쓰는 설정 (#366) ----------
+# 마스터 3 + 복제본 3의 클러스터다. 마스터가 죽으면 복제본이 마스터가 되고(장애 조치), 앱은 새 마스터를 스스로 찾아간다
+# 운영(deploy/compose.prod.yml)과 같은 값이고, 다른 점은 비밀번호가 없다는 것과 호스트 포트를 연다는 것이다
+# 노드가 재시작으로 IP가 바뀌어도 서로 다시 찾도록 피어 목록을 준다 (deploy/redis-cluster-rejoin.sh)
+x-redis-environment: &redis-environment
+  REDIS_PEERS: "redis-1.localhost:7001 redis-2.localhost:7002 redis-3.localhost:7003 redis-4.localhost:7004 redis-5.localhost:7005 redis-6.localhost:7006"
+
+x-redis-service: &redis-service
+  image: redis:${REDIS_VERSION:-8.10}-alpine
+  networks: [db-net]
+  # maxmemory 64mb에 복제 버퍼·fork 여유를 더한 값. 6대 합계 768m이므로 운영 EC2 실측 후 조정한다 (운영과 동일)
+  mem_limit: 128m
+  # 설정 값의 이유
+  # - cluster-config-file: 노드 ID가 담겨, 볼륨에 두어야 재시작해도 같은 노드로 돌아온다 (docs/DEPLOY.md)
+  # - cluster-node-timeout 5000: 기본 15초는 장애 감지가 느리다
+  # - cluster-require-full-coverage no: 마스터 1대가 죽어도 나머지 슬롯은 계속 서비스한다
+  # - cluster-announce-hostname + preferred-endpoint-type hostname: 앱(클라이언트)이 노드 IP가 아니라 이름으로 접속한다
+  #   노드끼리는 이름이 아니라 nodes.conf의 IP로 찾으므로, IP가 바뀐 노드는 redis-cluster-rejoin.sh가 CLUSTER MEET으로 다시 붙인다
+  #   이름은 redis-N.localhost다. 내 PC에서는 *.localhost가 127.0.0.1로 풀리고, 컨테이너 안에서는 네트워크 별칭으로 풀려 양쪽에서 접속된다
+  # - noeviction은 #319 그대로(정책 재검토는 #324). save는 가벼운 RDB만 켠다(AOF는 자원 때문에 끔)
+  # - repl-backlog-size, client-output-buffer-limit replica: 복제본이 처음부터 다시 동기화(full sync)할 때 마스터가 쌓는 버퍼의 상한이다
+  #   기본값(replica 256mb)이 mem_limit(128m)보다 커서, 데이터가 찬 마스터가 동기화 중 메모리 제한에 걸려 죽을 수 있다
+  #   상한을 넘으면 느린 복제본의 연결이 끊기고 다시 동기화하지만 마스터는 살아남는다
+  command:
+    - sh
+    - -c
+    - >-
+      sh /redis-cluster-rejoin.sh & exec redis-server --port "$$NODE_PORT" --cluster-enabled yes --cluster-config-file /data/nodes.conf
+      --cluster-node-timeout 5000 --cluster-require-full-coverage no
+      --cluster-announce-hostname "$$NODE_HOSTNAME" --cluster-preferred-endpoint-type hostname
+      --maxmemory 64mb --maxmemory-policy noeviction --save "900 1 300 100" --appendonly no
+      --repl-backlog-size 4mb --client-output-buffer-limit "replica 32mb 16mb 60"
+  healthcheck:
+    # 클러스터가 아직 만들어지지 않았거나 슬롯이 비면 fail이라 unhealthy다. 앱은 6대 모두 healthy여야 시작한다
+    test: ['CMD-SHELL', 'redis-cli -p "$$NODE_PORT" cluster info | grep -q cluster_state:ok']
+    interval: 5s
+    timeout: 3s
+    retries: 20
+services:
+  # 단일 Redis·Kafka는 켜지 않는다. 어떤 명령으로도 켜지 않는 프로파일(off)을 붙여 끈다
+  redis:
+    profiles: [off]
+
+  kafka:
+    profiles: [off]
+
+  # 노드 6대(마스터 3 + 복제본 3)는 이름·포트·볼륨만 다르다. 마스터·복제본 짝은 redis-cluster-init이 정한다 (#366)
+  # 호스트 포트를 7001~7006으로 고정하는 이유: 클라이언트는 노드가 알려 주는 주소로 다시 접속하므로, 알리는 포트가 호스트에서 닿는 포트와 같아야 한다
+  redis-1:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7001, NODE_HOSTNAME: "redis-1.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-1.localhost]
+    ports:
+      - "127.0.0.1:7001:7001"
+    volumes:
+      - redis-1-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-2:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7002, NODE_HOSTNAME: "redis-2.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-2.localhost]
+    ports:
+      - "127.0.0.1:7002:7002"
+    volumes:
+      - redis-2-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-3:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7003, NODE_HOSTNAME: "redis-3.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-3.localhost]
+    ports:
+      - "127.0.0.1:7003:7003"
+    volumes:
+      - redis-3-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-4:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7004, NODE_HOSTNAME: "redis-4.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-4.localhost]
+    ports:
+      - "127.0.0.1:7004:7004"
+    volumes:
+      - redis-4-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-5:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7005, NODE_HOSTNAME: "redis-5.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-5.localhost]
+    ports:
+      - "127.0.0.1:7005:7005"
+    volumes:
+      - redis-5-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  redis-6:
+    <<: *redis-service
+    environment: {<<: *redis-environment, NODE_PORT: 7006, NODE_HOSTNAME: "redis-6.localhost"}
+    networks:
+      db-net:
+        aliases: [redis-6.localhost]
+    ports:
+      - "127.0.0.1:7006:7006"
+    volumes:
+      - redis-6-data:/data
+      - ./deploy/redis-cluster-rejoin.sh:/redis-cluster-rejoin.sh:ro
+
+  # 노드 6대를 클러스터로 묶고 끝나는 1회성 서비스. 이미 묶여 있으면 아무것도 하지 않는다 (deploy/redis-cluster-init.sh)
+  # 노드의 healthcheck가 cluster_state:ok라 클러스터를 만들기 전에는 healthy가 될 수 없으므로, 노드가 healthy가 아니라 started이면 시작한다
+  redis-cluster-init:
+    image: redis:${REDIS_VERSION:-8.10}-alpine
+    networks: [db-net]
+    restart: "no"
+    depends_on:
+      redis-1:
+        condition: service_started
+      redis-2:
+        condition: service_started
+      redis-3:
+        condition: service_started
+      redis-4:
+        condition: service_started
+      redis-5:
+        condition: service_started
+      redis-6:
+        condition: service_started
+    environment:
+      REDIS_NODES: redis-1.localhost:7001 redis-2.localhost:7002 redis-3.localhost:7003 redis-4.localhost:7004 redis-5.localhost:7005 redis-6.localhost:7006
+    volumes:
+      - ./deploy/redis-cluster-init.sh:/redis-cluster-init.sh:ro
+    command: ['sh', '/redis-cluster-init.sh']
+
+  # 브로커 3대는 이름·번호·외부 포트만 다르다
+  # 외부 포트는 127.0.0.1에만 열어 같은 네트워크의 다른 기기가 붙지 못하게 한다 (인증 없는 PLAINTEXT라서)
+  # EXTERNAL로 알려 주는 주소(localhost:포트)가 PC에서 다시 접속하는 주소라, 열어 둔 호스트 포트와 같아야 한다
+  kafka-1:
+    <<: *kafka-service
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:9092,EXTERNAL://localhost:${KAFKA_1_PORT:-19092}
+    ports:
+      - "127.0.0.1:${KAFKA_1_PORT:-19092}:9094"
+    volumes:
+      - kafka-1-data:/var/lib/kafka/data
+
+  kafka-2:
+    <<: *kafka-service
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:9092,EXTERNAL://localhost:${KAFKA_2_PORT:-29092}
+    ports:
+      - "127.0.0.1:${KAFKA_2_PORT:-29092}:9094"
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+
+  kafka-3:
+    <<: *kafka-service
+    environment:
+      <<: *kafka-environment
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:9092,EXTERNAL://localhost:${KAFKA_3_PORT:-39092}
+    ports:
+      - "127.0.0.1:${KAFKA_3_PORT:-39092}:9094"
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+
+  # 클러스터는 3대를 모두 적는다. 1대만 적으면 그 브로커를 멈췄을 때 클러스터 정보를 못 얻어, 브로커 1대 장애를 확인할 수 없다
+  kafka-exporter:
+    command:
+      - --kafka.server=kafka-1:9092
+      - --kafka.server=kafka-2:9092
+      - --kafka.server=kafka-3:9092
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+
+  app:
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+      redis-4:
+        condition: service_healthy
+      redis-5:
+        condition: service_healthy
+      redis-6:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    environment:
+      REDIS_MODE: cluster
+      # 노드 이름(redis-N.localhost)이 호스트에서도 컨테이너에서도 같은 포트로 닿아, 호스트용 .env 값과 같다 (#366)
+      REDIS_CLUSTER_NODES: redis-1.localhost:7001,redis-2.localhost:7002,redis-3.localhost:7003,redis-4.localhost:7004,redis-5.localhost:7005,redis-6.localhost:7006
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+
+# 브로커·노드마다 따로 둔다. 같은 볼륨을 나눠 쓰면 서로의 데이터를 덮어써 망가진다
+# docker compose down -v 를 하면 지워지고 새 클러스터로 다시 시작한다 (토픽·메시지도 모두 사라짐)
+# Redis 볼륨에는 노드 ID(nodes.conf)와 RDB가 들어 있어, 지우면 6대를 모두 지워 새 클러스터로 시작해야 한다 (#366)
+volumes:
+  redis-1-data:
+  redis-2-data:
+  redis-3-data:
+  redis-4-data:
+  redis-5-data:
+  redis-6-data:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:

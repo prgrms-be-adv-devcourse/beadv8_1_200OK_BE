@@ -1,0 +1,26 @@
+meta {
+  name: 배정 실패 - 해제한 주문으로 재배정
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "orderId": {{orderId}},
+    "items": [{ "optionId": {{optionA}}, "quantity": 1 }]
+  }
+}
+
+assert {
+  res.status: eq 409
+}
+
+docs {
+  해제한 주문 ID는 다시 쓸 수 없어 409 allocation-already-released 입니다. 새 주문 ID로 요청해야 합니다.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: 같은 주문의 같은 상품 다시 작성 (409)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/products/{{reviewProductId}}/reviews
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "productOptionId": {{reviewOptionId}},
+    "orderId": {{reviewOrderId}},
+    "orderItemId": {{reviewOrderItemId}},
+    "rating": 2,
+    "content": "한 번 더",
+    "mediaUrls": []
+  }
+}
+
+assert {
+  res.status: eq 409
+}
+
+docs {
+  한 주문에서 같은 상품은 옵션이 달라도 리뷰 1개입니다. 리뷰를 삭제한 뒤에도 다시 쓸 수 없고, 다른 주문(재구매)이면 쓸 수 있습니다.
+}

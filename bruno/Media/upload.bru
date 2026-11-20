@@ -1,0 +1,34 @@
+meta {
+  name: 미디어 업로드 (큰 이미지, 축소됨)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/media/:purpose
+  body: multipartForm
+  auth: none
+}
+
+params:path {
+  purpose: PRODUCT
+}
+
+body:multipart-form {
+  file: @file(files/sample-large.jpg)
+}
+
+assert {
+  res.status: eq 201
+  res.body.mediaId: isNumber
+  res.body.url: startsWith https://
+  res.body.url: contains /product/
+  res.body.url: endsWith .jpg
+}
+
+docs {
+  2400x1800 jpg 를 올립니다. 서버에서 1600x1200 으로 축소되어 저장됩니다.
+
+  - purpose: PRODUCT | PRODUCT_REVIEW | MEMBER_PROFILE | SELLER_PROFILE
+  - 응답 url 을 브라우저에서 열어 이미지가 보이는지 확인 (403 이면 버킷 공개 읽기 정책 문제)
+}

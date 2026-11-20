@@ -1,0 +1,36 @@
+spring:
+  docker:
+    compose:
+      enabled: ${DOCKER_COMPOSE_ENABLED:false}
+  batch:
+    job:
+      # 앱 시작 시 Job 자동 실행 여부. 기본은 false로 자동 실행하지 않는다(운영도 false 고정, #245)
+      # true로 켜면 파라미터 없이 실행되어 Job 시작 전 검사(#485)에 걸려 앱이 시작되지 않는다. 정산은 스케줄러와 관리자 API로 실행한다
+      enabled: ${BATCH_JOB_ENABLED:false}
+    jdbc:
+      # 배치 메타데이터 테이블은 Flyway 마이그레이션으로 관리하므로 자동 생성 안 함
+      initialize-schema: never
+  jpa:
+    hibernate:
+      # 기본은 스키마 검증, .env의 JPA_DDL_AUTO 로 변경 가능 (운영은 validate 고정)
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+  modulith:
+    events:
+      # 재시작 시 미완료 이벤트 재발행 여부 (운영은 true 고정)
+      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
+  flyway:
+    # 개발 환경에서 순서 무시 허용
+    out-of-order: true
+logging:
+  level:
+    com.ok: DEBUG
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+app:
+  s3:
+    access-key: ${AWS_ACCESS_KEY_ID:}
+    secret-key: ${AWS_SECRET_ACCESS_KEY:}

@@ -1,0 +1,120 @@
+package com.ok.payout.adapter.out.event;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.kafka.common.errors.SerializationException;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.KafkaException;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+
+import com.ok.payout.adapter.out.event.dto.SellerPayoutCreatedMessage;
+import com.ok.payout.application.port.out.PayoutDepositCheckRequested;
+import com.ok.payout.application.port.out.SellerPayoutCreated;
+import com.ok.payout.config.PayoutTopics;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.only;
+
+@ExtendWith(MockitoExtension.class)
+class KafkaPayoutEventPublisherTest {
+
+    private static final LocalDateTime CREATED_AT = LocalDateTime.of(2026, 10, 30, 14, 0);
+
+    @Mock
+    KafkaTemplate<String, Object> kafkaTemplate;
+
+    @InjectMocks
+    KafkaPayoutEventPublisher sut;
+
+    @Test
+    void 정산_확정은_v1_토픽_한_곳에만_키는_payoutId_값은_필드마다_같은_값으로_보낸다() {
+        // given
+        // 같은 Long 필드 3개에 서로 다른 값을 넣어, 필드 순서가 뒤바뀌면 실패하게 한다
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
+
+        // when
+        sut.publishSellerPayoutCreated(created);
+
+        // then: only()는 send가 이 호출 한 번뿐이었는지 본다. 옛 이름 토픽(#653 PR 3에서 끊음) 같은 다른 토픽으로 새면 실패한다
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        then(kafkaTemplate).should(only()).send(eq(PayoutTopics.SELLER_PAYOUT_CREATED), eq("12"), captor.capture());
+        assertThat(captor.getValue()).isEqualTo(new SellerPayoutCreatedMessage(12L, 5L, 9_700L, CREATED_AT));
+    }
+
+    @Test
+    void 대사_질문은_v1_토픽_한_곳에만_묶음_번호를_키로_보낸다() {
+        // given
+        PayoutDepositCheckRequested requested = new PayoutDepositCheckRequested(3L, List.of());
+        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(CompletableFuture.completedFuture(null));
+
+        // when
+        sut.publishDepositCheckRequested(requested);
+
+        // then
+        then(kafkaTemplate).should(only()).send(eq(PayoutTopics.PAYOUT_DEPOSIT_CHECK_REQUESTED), eq("3"), any());
+    }
+
+    @Test
+    void 브로커_저장에_실패하면_payoutId를_담은_예외를_던진다() {
+        // given
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        // 실제 브로커를 고장 낼 수 없어, 저장 확인이 실패로 끝난 결과를 돌려준다
+        given(kafkaTemplate.send(anyString(), anyString(), any()))
+                .willReturn(CompletableFuture.failedFuture(new KafkaException("브로커 저장 실패")));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED);
+    }
+
+    @Test
+    void 보내는_순간_오류가_나도_payoutId를_담은_예외를_던진다() {
+        // given
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        // 직렬화 실패처럼 send()를 부르는 순간 바로 나는 오류
+        given(kafkaTemplate.send(anyString(), anyString(), any()))
+                .willThrow(new SerializationException("직렬화 실패"));
+
+        // when & then
+        assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED);
+    }
+
+    @Test
+    void 저장_확인을_기다리다_중단되면_중단_표시를_되살리고_예외를_던진다() throws Exception {
+        // given: 중단 표시는 건드리지 않고 InterruptedException만 던지는 결과 (실제 get()은 던지면서 표시를 지움)
+        SellerPayoutCreated created = new SellerPayoutCreated(12L, 5L, 9_700L, CREATED_AT);
+        CompletableFuture<SendResult<String, Object>> future = mock();
+        given(future.get()).willThrow(new InterruptedException());
+        given(kafkaTemplate.send(anyString(), anyString(), any())).willReturn(future);
+
+        try {
+            // when & then: PayoutService가 이 표시를 보고 남은 줄을 시도하지 않고 멈춤
+            assertThatThrownBy(() -> sut.publishSellerPayoutCreated(created))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("정산 Kafka 발행에 실패했습니다. payoutId=12, topic=" + PayoutTopics.SELLER_PAYOUT_CREATED);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            // 다른 테스트로 중단 표시가 새지 않게 지움
+            Thread.interrupted();
+        }
+    }
+}

@@ -1,0 +1,22 @@
+meta {
+  name: 배정 실패 - 없는 옵션
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/internal/v1/products/stock-allocations
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "orderId": {{orderIdForShortage}},
+    "items": [{ "optionId": 999999999, "quantity": 1 }]
+  }
+}
+
+assert {
+  res.status: eq 404
+}

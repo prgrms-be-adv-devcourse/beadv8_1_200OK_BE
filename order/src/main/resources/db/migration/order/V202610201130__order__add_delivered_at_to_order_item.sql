@@ -1,0 +1,1 @@
+ALTER TABLE order_item ADD COLUMN delivered_at DATETIME(6) NULL COMMENT '배송 완료 시각' AFTER status;
