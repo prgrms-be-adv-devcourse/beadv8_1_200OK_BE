@@ -375,6 +375,11 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?serverTimezone=${APP_TIME_ZONE:-Asia/Seoul}&characterEncoding=UTF-8
       DB_USERNAME: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
+      # DB 서버가 vCPU 2개라 MySQL 안에서 동시에 일하는 커넥션은 5개 안팎이다. 풀을 키우면 COMMIT 대기만 길어진다(노트북 측정: 풀 60→100에서 처리량 감소)
+      # 리틀의 법칙: 100~150건/s × 커넥션 쥐는 시간 약 49ms ≈ 5~7개, 순간 몰림 1.5배를 더해 10. EC2에서 측정 후 확정한다
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      # 이벤트 리스너와 outbox 발송 스레드가 위 풀을 HTTP 요청과 나눠 쓴다. 합이 풀보다 작아야 HTTP 요청이 커넥션을 얻으므로 기본 8에서 4로 줄인다
+      ASYNC_EVENT_POOL_SIZE: ${ASYNC_EVENT_POOL_SIZE:-4}
       # 접속 방식은 deploy.sh가 COMPOSE_PROFILES에서 정해 REDIS_MODE로 넘긴다(single이면 단일, cluster면 클러스터). common-redis.yaml
       REDIS_MODE: ${REDIS_MODE:-single}
       REDIS_HOST: redis
