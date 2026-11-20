@@ -1,0 +1,167 @@
+name: paldo-gotgan-app
+
+x-module: &module
+  restart: unless-stopped
+  network_mode: service:router
+  depends_on:
+    router:
+      condition: service_started
+      restart: true
+  mem_limit: 512m
+  memswap_limit: 512m
+
+x-module-environment: &module-environment
+  SPRING_PROFILES_ACTIVE: prod
+  APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Seoul}
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=35
+  DB_HOST: ${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}
+  DB_PORT: 3306
+  DB_USERNAME: ${MYSQL_USER:?MYSQL_USER가 필요하다}
+  DB_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD가 필요하다}
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  ASYNC_EVENT_POOL_SIZE: ${ASYNC_EVENT_POOL_SIZE:-4}
+  KAFKA_BOOTSTRAP_SERVERS: ${INFRA_PRIVATE_IP}:9092
+  SPRING_DATA_REDIS_HOST: ${INFRA_PRIVATE_IP}
+  SPRING_DATA_REDIS_PORT: 6379
+  SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_MODE: single
+  REDIS_HOST: ${INFRA_PRIVATE_IP}
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  JPA_DDL_AUTO: validate
+  MODULITH_REPUBLISH_ON_RESTART: "true"
+  SPRINGDOC_API_DOCS_ENABLED: "false"
+  SPRINGDOC_SWAGGER_UI_ENABLED: "false"
+  PROBLEM_BASE_URI: ${PROBLEM_BASE_URI:-about:blank}
+  AWS_REGION: ${AWS_REGION:?AWS_REGION이 필요하다}
+  S3_BUCKET: ${S3_BUCKET:?S3_BUCKET이 필요하다}
+  JWT_JWK_SET_URI: http://127.0.0.1:8082/.well-known/jwks.json
+  APP_INTERNALAPI_BASEURL: http://127.0.0.1:8080
+  OK_ROOT_DIR: /app
+
+x-healthcheck: &healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 120s
+  start_interval: 5s
+
+services:
+  router:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    networks:
+      default:
+      edge:
+        aliases: [app]
+    volumes:
+      - ./router.conf:/etc/nginx/conf.d/default.conf:ro
+    mem_limit: 64m
+
+  media:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-media:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8081
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8081/actuator/health | grep -q UP']
+
+  member:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-member:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8082
+      JWT_JWK_SET_URI: ""
+      ADMINBOOTSTRAP_LOGINID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
+      ADMINBOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      ADMINBOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
+    volumes:
+      - ./keys:/app/keys:ro
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8082/actuator/health | grep -q UP']
+
+  wallet:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-wallet:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8083
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY가 필요하다}
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8083/actuator/health | grep -q UP']
+
+  order:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-order:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8084
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8084/actuator/health | grep -q UP']
+
+  product:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-product:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8085
+      JEV_API_KEY: ${JEV_API_KEY:?JEV_API_KEY가 필요하다}
+      APP_REVIEWANALYSIS_WORKER_ENABLED: "true"
+      APP_REVIEWANALYSIS_KEYWORDWORKER_ENABLED: "true"
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8085/actuator/health | grep -q UP']
+
+  delivery:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-delivery:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8086
+      DELIVERY_CARRIER_TYPE: ${DELIVERY_CARRIER_TYPE:-mock}
+      DELIVERY_TRACKER_CLIENT_ID: ${DELIVERY_TRACKER_CLIENT_ID:-}
+      DELIVERY_TRACKER_CLIENT_SECRET: ${DELIVERY_TRACKER_CLIENT_SECRET:-}
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8086/actuator/health | grep -q UP']
+
+  payout:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-payout:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8087
+      BATCH_JOB_ENABLED: "false"
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8087/actuator/health | grep -q UP']
+
+  refund:
+    <<: *module
+    image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-refund:${APP_IMAGE_TAG:-latest}
+    environment:
+      <<: *module-environment
+      SERVER_PORT: 8088
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:8088/actuator/health | grep -q UP']
+
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    networks: [default, edge]
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    mem_limit: 64m
+
+networks:
+  edge:
+    name: paldo-edge
