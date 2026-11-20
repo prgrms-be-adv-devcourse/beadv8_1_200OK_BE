@@ -969,7 +969,7 @@ com.ok.order
 
 ```
 com.ok.product
-├── config/                    모듈 전용 설정 (Flyway)
+├── config/                    모듈 전용 설정 (Flyway, 실행기, 전용 스케줄러, Jev 클라이언트)
 ├── product/
 │   ├── domain/, exception/
 │   ├── application/
@@ -1010,6 +1010,7 @@ com.ok.product
 - `ProductStockAllocationHeaderJpaRepository`는 `JpaRepository`를 상속하지 않습니다(`Repository`만). 상속하면 생기는 `findById`·`save`가 헤더 upsert보다 먼저 불려 스냅샷이 일찍 잡히는 일을 막기 위해서입니다.
 - 잠금 조회 규칙은 이름(`ForUpdate`, `ForShare`)으로 찾고 `@Lock`이나 네이티브 쿼리의 `FOR UPDATE`를 확인합니다. 이름과 잠금이 어긋나는 조회는 `ArchitectureTest`의 `LOCK_MODE_BY_METHOD`에 "포트 이름.메서드 이름"으로 적습니다(수정용 상품 조회는 `OPTIMISTIC_FORCE_INCREMENT`, 분석 요청을 꺼내는 `SKIP LOCKED` 조회는 `PESSIMISTIC_WRITE`). `SKIP LOCKED` 조회는 `SKIP_LOCKED_METHODS`에도 적어 `@QueryHints`(`lock.timeout=-2`) 재선언까지 검사합니다.
 - 테스트에서 주문 모듈과 외부 분석 서비스는 `testsupport`의 Fake(`FakeOrderApiClient`, `FakeReviewKeywordAnalyzer`, `FakeReviewSentimentAnalyzer`)가 출력 포트를 구현해 대신합니다.
+- product의 `@Scheduled` 작업은 모두 전용 스케줄러(`ProductSchedulingConfig`, 스레드 수는 `product.scheduling.pool-size`)에서 돕니다. 공용 기본 스케줄러는 스레드가 하나라, Jev를 부르는 작업자가 오래 걸리면 다른 모듈의 정기 작업까지 밀리기 때문입니다(#788). 새 작업은 `@Scheduled(scheduler = ProductSchedulingConfig.SCHEDULER)`로 달고 스레드 수도 늘립니다. scheduler를 빼먹으면 `ArchitectureTest`가 실패합니다. 다른 모듈이 이 스케줄러로 옮겨 가지 않도록 common의 `SchedulingConfig`가 기본 스케줄러(`taskScheduler`)를 직접 등록합니다.
 - 이 구조는 product `ArchitectureTest`가 하위 도메인 목록(`SUBDOMAINS`)마다 같은 규칙으로 검사합니다.
 
 ## 7. 예외 처리 (ProblemDetail)
