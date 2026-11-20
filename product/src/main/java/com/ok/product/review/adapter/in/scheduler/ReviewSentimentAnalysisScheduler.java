@@ -7,6 +7,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
+import com.ok.product.config.ProductSchedulingConfig;
 import com.ok.product.review.application.port.in.ReviewSentimentAnalysisUseCase;
 
 /**
@@ -21,7 +22,7 @@ public class ReviewSentimentAnalysisScheduler {
 	private final ReviewSentimentAnalysisUseCase reviewSentimentAnalysisUseCase;
 
 	// 분석이 길어져도 밀린 실행을 몰아서 하지 않도록 이전 실행이 끝난 때부터 5초를 센다
-	@Scheduled(fixedDelay = 5, timeUnit = TimeUnit.SECONDS)
+	@Scheduled(fixedDelay = 5, timeUnit = TimeUnit.SECONDS, scheduler = ProductSchedulingConfig.SCHEDULER)
 	public void run() {
 		reviewSentimentAnalysisUseCase.analyzePending();
 	}

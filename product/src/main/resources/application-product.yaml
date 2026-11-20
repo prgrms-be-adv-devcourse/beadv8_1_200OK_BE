@@ -100,3 +100,9 @@ product:
       queue-capacity: ${PRODUCT_SEARCH_LOG_QUEUE_CAPACITY:1000}
       # 보존 기간. 날짜 단위로 지난 행을 날마다 지운다. PRD 7.3 미결 사항이라 확정 전 기본값이다
       retention: ${PRODUCT_SEARCH_LOG_RETENTION:90d}
+  # product 전용 스케줄러(ProductSchedulingConfig, #788). 공용 기본 스케줄러(스레드 1개)를 Jev 호출 작업자가 붙잡아 다른 모듈의 정기 작업까지 밀리던 것을 나눴다.
+  # 스레드는 product의 @Scheduled 작업 수(태그 판정, 리뷰 감성·키워드 분석, 검색어 로그 정리)만큼 둬 작업끼리도 서로 막지 않게 한다.
+  # 작업을 더하면 이 값도 늘린다. monolith/application.yaml에도 같은 값을 둔다
+  scheduling:
+    pool-size: ${PRODUCT_SCHEDULING_POOL_SIZE:4}
+    thread-name-prefix: product-scheduling-

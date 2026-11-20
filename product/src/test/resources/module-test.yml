@@ -13,3 +13,7 @@ product:
       pool-size: 1
       queue-capacity: 100
       retention: 90d
+  # 운영과 같은 값이다. 스레드 수가 줄면 작업자 하나가 막혔을 때 다른 작업자가 도는지 보는 테스트(ProductSchedulingIntegrationTest)가 실패한다
+  scheduling:
+    pool-size: 4
+    thread-name-prefix: product-scheduling-

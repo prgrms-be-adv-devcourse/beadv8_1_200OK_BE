@@ -82,6 +82,10 @@ product:
       pool-size: ${PRODUCT_SEARCH_LOG_POOL_SIZE:2}
       queue-capacity: ${PRODUCT_SEARCH_LOG_QUEUE_CAPACITY:1000}
       retention: ${PRODUCT_SEARCH_LOG_RETENTION:90d}
+  # product 전용 스케줄러(product ProductSchedulingConfig). 근거는 application-product.yaml에 있다(#788)
+  scheduling:
+    pool-size: ${PRODUCT_SCHEDULING_POOL_SIZE:4}
+    thread-name-prefix: product-scheduling-
 
 # 앱 시작 시 만들 최초 관리자 계정 (member.member.adapter.in.bootstrap.AdminBootstrapConfig)
 # - 아이디를 비워 두면 동작하지 않는다. (아이디를 넣으면 비밀번호·이메일도 필요)

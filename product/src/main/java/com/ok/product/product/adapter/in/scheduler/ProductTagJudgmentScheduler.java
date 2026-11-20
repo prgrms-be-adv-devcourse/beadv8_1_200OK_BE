@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.ok.product.config.ProductSchedulingConfig;
 import com.ok.product.product.application.port.in.ProductTagJudgmentUseCase;
 
 import lombok.RequiredArgsConstructor;
@@ -22,7 +23,7 @@ public class ProductTagJudgmentScheduler {
 	private final ProductTagJudgmentUseCase productTagJudgmentUseCase;
 
 	// 판정이 길어져도 밀린 실행을 몰아서 하지 않도록 이전 실행이 끝난 때부터 5초를 센다
-	@Scheduled(fixedDelay = 5, timeUnit = TimeUnit.SECONDS)
+	@Scheduled(fixedDelay = 5, timeUnit = TimeUnit.SECONDS, scheduler = ProductSchedulingConfig.SCHEDULER)
 	public void run() {
 		productTagJudgmentUseCase.judgePending();
 	}

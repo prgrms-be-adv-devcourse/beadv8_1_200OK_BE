@@ -14,6 +14,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.QueryHints;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Controller;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +34,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 import com.tngtech.archunit.library.GeneralCodingRules;
 
 import com.ok.common.exception.ErrorCode;
+import com.ok.product.config.ProductSchedulingConfig;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -58,7 +60,7 @@ class ArchitectureTest {
     private static final String ANY_SUBDOMAIN_ADAPTER_OUT = "com.ok.product.*.adapter.out..";
     // 모듈 최상위 패키지(하위 패키지 제외). 다른 모듈에 공개하는 클래스를 두는 곳이다(CLAUDE.md 모듈 경계)
     private static final String MODULE_ROOT = "com.ok.product";
-    // 하위 도메인에 속하지 않는 모듈 전용 설정(Flyway, 실행기, 두 하위 도메인이 함께 쓰는 Jev 클라이언트). 하위 도메인 밖에 둘 수 있는 유일한 하위 패키지다
+    // 하위 도메인에 속하지 않는 모듈 전용 설정(Flyway, 실행기, 스케줄러, 두 하위 도메인이 함께 쓰는 Jev 클라이언트). 하위 도메인 밖에 둘 수 있는 유일한 하위 패키지다
     private static final String MODULE_CONFIG = "com.ok.product.config..";
     private static final String[] SUBDOMAIN_PACKAGES = SUBDOMAINS.stream()
             .map(Subdomain::all)
@@ -326,6 +328,17 @@ class ArchitectureTest {
             .should().beAnnotatedWith(Transactional.class)
             .orShould().beAnnotatedWith(jakarta.transaction.Transactional.class)
             .because("트랜잭션은 서비스에서 열고 닫는다. 컨트롤러에서 열면 응답을 만드는 동안에도 DB 연결을 잡고 있다 (컨벤션 7.1)");
+
+    // scheduler를 빼먹은 작업도 오류 없이 공용 기본 스케줄러(스레드 1개)에서 돈다. 그 작업이 오래 걸리면 다른 모듈의 정기 작업까지 밀리므로 빌드에서 막는다
+    @ArchTest
+    static final ArchRule 스케줄_작업은_product_스케줄러에서_돈다 = methods()
+            .that().areAnnotatedWith(Scheduled.class)
+            .and().areDeclaredInClassesThat().resideInAPackage("com.ok.product..")
+            .should().beAnnotatedWith(DescribedPredicate.describe(
+                    "@Scheduled(scheduler = \"" + ProductSchedulingConfig.SCHEDULER + "\")",
+                    annotation -> annotation.getRawType().isEquivalentTo(Scheduled.class)
+                            && ProductSchedulingConfig.SCHEDULER.equals(annotation.get("scheduler").orElse(null))))
+            .because("product 작업이 공용 기본 스케줄러를 붙잡지 않게 전용 스케줄러에서만 돌린다 (#788, ProductSchedulingConfig)");
 
     @ArchTest
     static final ArchRule 표준_출력을_사용하지_않는다 = GeneralCodingRules.NO_CLASSES_SHOULD_ACCESS_STANDARD_STREAMS

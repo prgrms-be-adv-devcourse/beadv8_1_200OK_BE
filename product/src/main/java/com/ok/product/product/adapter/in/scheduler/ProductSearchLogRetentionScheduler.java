@@ -3,6 +3,7 @@ package com.ok.product.product.adapter.in.scheduler;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.ok.product.config.ProductSchedulingConfig;
 import com.ok.product.product.application.port.in.ProductSearchLogRetentionUseCase;
 
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,7 @@ public class ProductSearchLogRetentionScheduler {
 	private final ProductSearchLogRetentionUseCase productSearchLogRetentionUseCase;
 
 	// 검색이 적은 새벽에 돈다. 시간대는 JVM 기본(Asia/Seoul)이다
-	@Scheduled(cron = "0 30 4 * * *")
+	@Scheduled(cron = "0 30 4 * * *", scheduler = ProductSchedulingConfig.SCHEDULER)
 	public void run() {
 		productSearchLogRetentionUseCase.deleteExpiredLogs();
 	}
