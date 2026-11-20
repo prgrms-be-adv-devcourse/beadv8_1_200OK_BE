@@ -43,8 +43,8 @@ public class OrderOutboxRelayFacade implements OrderOutboxRelayUseCase {
     public static final String DROP_REASON_REJECTED = "rejected";
     public static final String DROP_REASON_STALE = "stale";
 
-    // 이만큼 실패하면(재발송 30초 주기로 약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
-    static final int ESCALATE_ATTEMPT_COUNT = 10;
+    // 이만큼 실패하면(재발송 5초 주기로 약 5분) 잠깐의 장애가 아니라 사람이 봐야 하는 문제로 본다
+    static final int ESCALATE_ATTEMPT_COUNT = 60;
 
     // 실패 원인을 따라가는 최대 단계. 실제 사슬은 3~4단계라 넉넉히 둔다
     private static final int MAX_CAUSE_DEPTH = 20;
