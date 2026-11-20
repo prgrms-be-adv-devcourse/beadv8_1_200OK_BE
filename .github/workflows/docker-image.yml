@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # deploy/compose.prod.yml의 이미지 이름과 같아야 한다
-  IMAGE: ghcr.io/prgrms-be-adv-devcourse/paldo-gotgan
+  # deploy/compose.prod.yml, deploy/app/compose.yml의 이미지 이름과 같아야 한다
+  REGISTRY: ghcr.io/prgrms-be-adv-devcourse
 
 jobs:
   build:
@@ -23,6 +23,19 @@ jobs:
     runs-on: ubuntu-latest
     # 빌드가 멈추면 concurrency 대기열 전체가 막히므로 시간을 제한한다
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: monolith, image: paldo-gotgan }
+          - { module: delivery, image: paldo-gotgan-delivery }
+          - { module: media, image: paldo-gotgan-media }
+          - { module: member, image: paldo-gotgan-member }
+          - { module: order, image: paldo-gotgan-order }
+          - { module: payout, image: paldo-gotgan-payout }
+          - { module: product, image: paldo-gotgan-product }
+          - { module: refund, image: paldo-gotgan-refund }
+          - { module: wallet, image: paldo-gotgan-wallet }
     # 패키지 쓰기 권한은 이 워크플로에만 준다. PR 워크플로에는 주지 않는다
     permissions:
       contents: read
@@ -48,8 +61,9 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: MODULE=${{ matrix.module }}
           tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ steps.sha.outputs.short }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.REGISTRY }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ matrix.image }}:${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=${{ matrix.module }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.module }}

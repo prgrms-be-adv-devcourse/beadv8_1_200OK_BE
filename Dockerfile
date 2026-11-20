@@ -1,19 +1,24 @@
+# 빌드할 서브프로젝트. 기본은 모든 모듈을 함께 올리는 monolith이고, 모듈 하나만 띄울 때는 모듈 이름을 준다(<모듈>/compose.yml, #783)
+ARG MODULE=monolith
+
 # ---- 빌드 단계 ----
 FROM eclipse-temurin:25-jdk AS build
+ARG MODULE
 WORKDIR /workspace
 
 # 서브프로젝트가 늘어도 Dockerfile을 고치지 않도록 소스를 통째로 복사한다 (.dockerignore가 build 산출물 등을 뺀다)
 COPY . .
 # 테스트는 이미지 빌드에서 제외
-RUN ./gradlew --no-daemon :monolith:bootJar -x test \
-    && rm -f monolith/build/libs/*-plain.jar
+RUN ./gradlew --no-daemon :${MODULE}:bootJar -x test \
+    && rm -f ${MODULE}/build/libs/*-plain.jar
 
 # ---- 실행 단계 ----
 FROM eclipse-temurin:25-jre-alpine
+ARG MODULE
 WORKDIR /app
 
 RUN addgroup -S appgroup && adduser -S -u 1001 -G appgroup appuser
-COPY --from=build /workspace/monolith/build/libs/*.jar app.jar
+COPY --from=build /workspace/${MODULE}/build/libs/*.jar app.jar
 USER appuser
 
 # 프로파일은 실행할 때 SPRING_PROFILES_ACTIVE=prod 로 지정 (미지정 시 dev)
