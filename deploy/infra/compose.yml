@@ -11,10 +11,14 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 필요하다}
       TZ: ${APP_TIME_ZONE:-Asia/Seoul}
     command:
+      - --innodb_buffer_pool_size=1G
+      - --max_connections=150
       - --slow_query_log=ON
       - --long_query_time=1
       - --log_slow_extra=ON
       - --slow_query_log_file=/var/lib/mysql/slow.log
+    mem_limit: 2g
+    memswap_limit: 2g
     ports:
       - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:3306:3306'
     volumes:
