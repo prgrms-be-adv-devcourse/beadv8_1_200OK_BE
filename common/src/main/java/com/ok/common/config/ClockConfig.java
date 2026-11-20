@@ -27,14 +27,6 @@ import java.time.Clock;
  *
  * <p>원래 member 모듈(auth)에만 있던 빈을 여러 모듈이 쓰게 되어 전역 설정으로 옮겼다(#93).
  * 같은 타입({@link Clock})의 빈이 두 개 생기면 어느 것을 주입할지 몰라 앱이 시작되지 않으므로, 다른 곳에 Clock 빈을 새로 만들지 않는다.
- *
- * <p>[주의] 모듈 테스트용 Clock 설정이 따로 있다: {@code com.ok.testsupport.TestClockConfiguration}
- * <ul>
- *   <li>모듈 테스트({@code @ApplicationModuleTest})는 테스트하는 모듈만 띄우고 다른 모듈(이 config 모듈 포함)의 빈은 걸러 낸다.
- *       모듈이 혼자 동작하는지 확인하는 테스트라서, 모듈 밖에서 오는 Clock은 테스트 쪽(testsupport)에서 채운다.</li>
- *   <li>그래서 실제 앱과 통합 테스트는 이 클래스를, 모듈 테스트는 {@code TestClockConfiguration}을 쓴다.</li>
- *   <li>여기서 Clock을 만드는 방식(시간대 기준 등)을 바꾸면 {@code TestClockConfiguration}도 함께 바꾼다.</li>
- * </ul>
  */
 @Configuration(proxyBeanMethods = false)
 public class ClockConfig {

@@ -32,9 +32,6 @@ spring:
           time_zone: ${APP_TIME_ZONE:Asia/Seoul}
   flyway:
     out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
-  modulith:
-    events:
-      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
   batch:
     job:
       # 앱 시작 시 Job 자동 실행 여부. 기본은 false로 자동 실행하지 않는다(운영도 false 고정, #245)

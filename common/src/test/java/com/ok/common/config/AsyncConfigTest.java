@@ -309,7 +309,7 @@ class AsyncConfigTest {
         });
     }
 
-    // @ApplicationModuleListener 안의 @Async가 기본 실행기를 쓴다. 호출한 스레드와 다른 event- 스레드에서 실행돼야 한다
+    // 이름 없는 @Async가 기본 실행기를 쓴다. 호출한 스레드와 다른 event- 스레드에서 실행돼야 한다
     @Test
     void 이름_없는_Async_메서드는_기본_실행기_스레드에서_실행된다() {
         runner.run(context -> {

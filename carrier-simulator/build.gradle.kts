@@ -11,7 +11,6 @@ configurations.matching { it.name.startsWith("test") }.configureEach {
         exclude(group = "org.springframework.boot", module = "spring-boot-starter-$it-test")
     }
     exclude(group = "org.springframework.boot", module = "spring-boot-testcontainers")
-    exclude(group = "org.springframework.modulith", module = "spring-modulith-starter-test")
     exclude(group = "org.testcontainers")
     exclude(group = "com.redis", module = "testcontainers-redis")
 }

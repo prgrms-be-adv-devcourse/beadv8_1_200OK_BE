@@ -7,7 +7,7 @@
 # 값의 의미는 AsyncProperties 참고
 app:
   async:
-    # 이름을 지정하지 않은 @Async(= @ApplicationModuleListener)가 쓰는 실행기. 아래 executors에 있는 이름이어야 한다
+    # 이름을 지정하지 않은 @Async가 쓰는 실행기. 아래 executors에 있는 이름이어야 한다
     default-executor: event
     executors:
       # 이벤트 리스너용 공통 실행기

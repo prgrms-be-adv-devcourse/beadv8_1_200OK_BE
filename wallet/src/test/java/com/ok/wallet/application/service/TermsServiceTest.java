@@ -44,7 +44,7 @@ class TermsServiceTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 16, 12, 0);
 
     // @TestConfiguration을 붙이지 않는다. 통합 테스트(AbstractIntegrationTest)의 @ComponentScan이 테스트 폴더까지 스캔해
-    // 운영 ClockConfig와 clock 빈이 겹치기 때문이다. @Import로 부른 이 테스트에서만 등록된다 (TestClockConfiguration과 같은 방식).
+    // 운영 ClockConfig와 clock 빈이 겹치기 때문이다. @Import로 부른 이 테스트에서만 등록된다.
     static class FixedClockConfig {
         @Bean
         Clock clock() {

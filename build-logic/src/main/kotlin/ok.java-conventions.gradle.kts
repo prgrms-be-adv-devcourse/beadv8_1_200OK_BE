@@ -21,7 +21,6 @@ repositories {
 dependencyManagement {
     imports {
         mavenBom("org.springframework.boot:spring-boot-dependencies:${libs.findVersion("spring-boot").get()}")
-        mavenBom("org.springframework.modulith:spring-modulith-bom:${libs.findVersion("spring-modulith").get()}")
         mavenBom("software.amazon.awssdk:bom:${libs.findVersion("aws-sdk").get()}")
     }
 }
@@ -39,7 +38,6 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-flyway-test")
     testImplementation("org.springframework.boot:spring-boot-starter-security-test")
     testImplementation("org.springframework.boot:spring-boot-starter-batch-test")
-    testImplementation("org.springframework.modulith:spring-modulith-starter-test")
 
     // ---------- Test: Testcontainers ----------
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
@@ -78,7 +76,7 @@ tasks.jacocoTestReport {
 }
 
 // java-test-fixtures(jar) 대신 test 소스셋의 classes 디렉터리를 노출한다.
-// jar 안의 com.ok.testsupport를 Spring Modulith가 도메인 모듈로 인식해 구조·모듈 테스트가 깨지기 때문이다
+// Spring Modulith를 쓰던 때(#827에서 제거) jar 안의 com.ok.testsupport를 도메인 모듈로 인식해 모듈 테스트가 깨져서 이렇게 두었다
 val testSupportElements = configurations.consumable("testSupportElements") {
     extendsFrom(configurations.testImplementation.get())
 }

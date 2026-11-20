@@ -20,7 +20,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
-import org.springframework.modulith.events.ApplicationModuleListener;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.servlet.function.RouterFunction;
@@ -76,7 +77,8 @@ class TracePropagationIntegrationTest extends AbstractIntegrationTest {
 
     static class ProbeListener {
 
-        @ApplicationModuleListener
+        @Async
+        @TransactionalEventListener
         void on(ProbeEvent event) {
             LISTENER_MDC.set(MDC.getCopyOfContextMap());
         }

@@ -31,9 +31,6 @@ spring:
           time_zone: ${APP_TIME_ZONE:Asia/Seoul}
   flyway:
     out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
-  modulith:
-    events:
-      republish-outstanding-events-on-restart: ${MODULITH_REPUBLISH_ON_RESTART:false}
 app:
   async:
     executors:

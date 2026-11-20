@@ -17,9 +17,6 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-  modulith:
-    events:
-      republish-outstanding-events-on-restart: true
 logging:
   level:
     com.ok: INFO
