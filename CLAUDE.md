@@ -1,6 +1,6 @@
 # paldo-gotgan
 
-Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) + Spring Modulith 기반 백엔드. 모든 모듈을 함께 올리는 `monolith`가 운영 배포 단위다. 프로젝트 실행 방법과 기술 스택은 `docs/DEVELOPMENT.md`를 본다.
+Spring Boot 4 / Java 25 / Gradle 멀티 모듈(서브프로젝트) 기반 백엔드. 모든 모듈을 함께 올리는 `monolith`가 운영 배포 단위다. 프로젝트 실행 방법과 기술 스택은 `docs/DEVELOPMENT.md`를 본다.
 
 ## 컨벤션 규칙
 

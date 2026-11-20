@@ -23,7 +23,7 @@ paldo-gotgan 프로젝트를 시작하고 실행하는 데 필요한 정보를 �
 | 프레임워크 | Spring Boot 4.1.1 (Web MVC, Security, Validation) |
 | 데이터 | MySQL 9.4, Spring Data JPA, Querydsl, Flyway, Redis 8.10 (단일 또는 클러스터, Spring Data Redis, Lettuce) |
 | 메시지 브로커 | Apache Kafka 4.2 (KRaft, 브로커 1대 또는 3대), Spring for Apache Kafka |
-| 구조 | Gradle 멀티 모듈 + Spring Modulith (도메인 모듈 분리) |
+| 구조 | Gradle 멀티 모듈 (도메인 모듈 분리) |
 | 배치 / 문서 / 외부 | Spring Batch, springdoc-openapi (Swagger), AWS SDK v2 (S3) |
 | 테스트 | JUnit 5, AssertJ, Testcontainers, ArchUnit, JaCoCo |
 
@@ -214,7 +214,7 @@ docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single �
 - 엔드포인트별 p95: `histogram_quantile(0.95, sum by (le, method, uri) (rate(jpa_queries_per_request_bucket[5m])))`. 버킷 경계는 1·3·5·10·20·50·100입니다.
 - N+1 의심: 같은 엔드포인트에서 목록 건수나 데이터가 늘수록 요청당 쿼리 수가 따라 늘면 의심합니다. 시작값으로 p95가 20을 넘는 엔드포인트를 먼저 봅니다. 서비스의 평소 값에 맞춰 조정합니다.
 - 쿼리 수는 Hibernate가 준비한 SQL 문 수입니다. 네이티브 쿼리(`nativeQuery = true`, `createNativeQuery`)와 벌크 UPDATE·DELETE도 센다는 것을 통합 테스트로 확인했습니다. JDBC 배치로 나가는 INSERT·UPDATE는 한 번으로 세고, Hibernate를 거치지 않는 JDBC 호출은 세지 않습니다(애플리케이션 코드에는 `JdbcTemplate` 사용이 없습니다). 핸들러가 없어 Security에서 끝난 요청(401 등)은 기록하지 않고, 인증된 요청의 없는 경로는 `uri="/**"` 하나로 묶여 기록됩니다. 관리 포트(actuator) 요청은 기록하지 않습니다.
-- 요청 스레드 밖에서 실행한 쿼리는 세지 않아 과소 집계됩니다: 스케줄러, 비동기 이벤트 리스너(`@ApplicationModuleListener`), `@Async`, `CompletableFuture`, 가상 스레드 위임, `Callable`·`DeferredResult`를 반환하는 컨트롤러(필터는 최초 디스패치만 기록)입니다. 이런 엔드포인트는 값이 작게 나오는 것을 N+1이 없다는 뜻으로 읽지 않습니다.
+- 요청 스레드 밖에서 실행한 쿼리는 세지 않아 과소 집계됩니다: 스케줄러, 비동기 이벤트 리스너, `@Async`, `CompletableFuture`, 가상 스레드 위임, `Callable`·`DeferredResult`를 반환하는 컨트롤러(필터는 최초 디스패치만 기록)입니다. 이런 엔드포인트는 값이 작게 나오는 것을 N+1이 없다는 뜻으로 읽지 않습니다.
 - `app.metrics.jpa.enabled=false`(환경변수 `APP_METRICS_JPA_ENABLED=false`)로 이 절의 지표 수집(Hibernate 통계, SQL 카운터, 충돌 카운터)을 끌 수 있습니다. 기본은 켜짐이며, 끄면 `hibernate_*`는 0으로 나옵니다. Hibernate 통계의 운영 오버헤드는 부하테스트에서 확인합니다.
 - `hibernate_optimistic_failures`는 이 프로젝트의 충돌에서 오르지 않아(통합 테스트로 확인) 쓰지 않고, 항상 0으로 나옵니다. 충돌 횟수는 `jpa_optimistic_lock_failures_total`을 봅니다.
 - 낙관적 락 충돌의 행 id는 태그로 달지 않습니다(값이 끝없이 늘어 시계열이 폭증).
@@ -322,7 +322,6 @@ docker compose down                          # 종료 (data/mysql 은 유지됨)
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | docker compose의 MySQL 계정 | `.env.example` 참고 |
 | `DOCKER_COMPOSE_ENABLED` | 앱 실행 시 compose 자동 기동 (dev) | `false` |
 | `BATCH_JOB_ENABLED` | 앱 시작 시 배치 Job 자동 실행 (dev, 운영도 `false` 고정. 켜면 Job 시작 전 검사에 걸려 앱이 시작되지 않음, #245·#485) | `false` |
-| `MODULITH_REPUBLISH_ON_RESTART` | 재시작 시 미완료 이벤트 재발행 (dev, 운영은 `true` 고정) | `false` |
 | `JPA_DDL_AUTO` | Hibernate `ddl-auto` (dev, 운영은 `validate` 고정) | `validate` |
 | `APP_TIME_ZONE` | JDBC, Hibernate, Jackson 공통 타임존 | `Asia/Seoul` |
 | `PROBLEM_BASE_URI` | 오류 응답 `type` 주소 접두사. `about:blank`이면 `type`을 `about:blank`로 둠 | `about:blank` |
@@ -377,7 +376,6 @@ docker compose down                          # 종료 (data/mysql 은 유지됨)
 | `spring.datasource.username`, `password` | `${DB_USERNAME:myuser}`, `${DB_PASSWORD:password}` | 모듈 `.env`의 모듈 계정. `.env`가 없으면 공용 계정으로 접속합니다 |
 | `spring.jpa.hibernate.ddl-auto` | `${JPA_DDL_AUTO:validate}` | 테이블은 Flyway가 만들므로 기본은 검증만 합니다 |
 | `spring.flyway.out-of-order` | `${FLYWAY_OUT_OF_ORDER:false}` | 순서가 뒤바뀐 마이그레이션 허용 여부. 기본은 운영과 같게 막고, 개발 중 필요할 때만 `FLYWAY_OUT_OF_ORDER=true`로 엽니다 |
-| `spring.modulith.events.republish-outstanding-events-on-restart` | `${MODULITH_REPUBLISH_ON_RESTART:false}` | 재시작할 때 처리하지 못한 이벤트를 다시 발행할지 |
 | `spring.jackson`, `spring.jpa.properties.hibernate.jdbc.time_zone` | `${APP_TIME_ZONE:Asia/Seoul}` | JSON, JDBC, Hibernate의 시간대. 자세한 내용은 [타임존](#타임존) |
 | `spring.data.redis.*` | `host`=`${REDIS_HOST:localhost}`, `port`=`${REDIS_PORT:6379}`, `${REDIS_PASSWORD:}`, 연결 2s·응답 1s. `REDIS_MODE=cluster`이면 `common-redis-cluster.yaml`이 더해져 `cluster.nodes`=`${REDIS_CLUSTER_NODES:...}`, 리다이렉트 3회, 복제본 우선 읽기, 토폴로지 30초 주기 갱신(리다이렉트·재연결 때는 즉시 갱신) | Redis 접속 정보와 타임아웃. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 모듈 yaml에 직접 적지 않고 `common`의 `common-redis.yaml` 한 곳에 있습니다. 지금은 monolith만 `spring.config.import: classpath:common-redis.yaml`로 가져오고, 모듈은 Redis를 쓰기 시작할 때 자기 yaml의 import에 이 항목을 추가합니다. 값을 바꿀 때는 그 파일만 고칩니다. 리포지터리는 쓰지 않아 `repositories.enabled: false`입니다 |
 | `trace.node-id` | `0` | traceId(Snowflake)에 들어가는 노드 번호(0~1023). 설정이 없으면 0이고, 범위를 벗어나면 기동이 실패합니다. 서버(인스턴스)를 둘 이상 띄울 때 서버마다 다르게 지정합니다. 자세한 내용은 [12. 추적](#12-추적-traceid) |
@@ -490,7 +488,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
   결과(행 수·체크섬 비교)는 `infra/mysql/migration-288/out/<시각>/`에 남습니다. 이 폴더는 커밋하지 않습니다. 이전 후 이전 버전 코드(브랜치)로 돌아가려면 `rollback`을 먼저 실행하세요.
 - **방법 B: 초기화.** `docker compose down` 후 `data/mysql`을 지우고 다시 `docker compose up -d`합니다. 새 볼륨이라 MySQL이 스키마를 만들고, 앱을 띄우면 Flyway가 테이블을 만듭니다.
 
-## 6. 모듈 구조 (Gradle 서브프로젝트 + Spring Modulith)
+## 6. 모듈 구조 (Gradle 서브프로젝트)
 
 도메인 모듈마다 Gradle 서브프로젝트이고, 모든 모듈을 함께 올리는 `monolith`가 운영 배포 단위입니다. `com.ok` 바로 아래 패키지가 하나의 모듈이고, 서브프로젝트 이름과 같습니다.
 
@@ -502,7 +500,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 | `carrier-simulator` | Delivery Tracker를 대신하는 시험용 가짜 택배사 서버. 도메인 모듈이 아니고 `monolith`에 넣지 않는다. [가짜 택배사](#가짜-택배사carrier-simulator) 참고 | 8090 |
 
 - 공통 빌드 설정은 `build-logic`(컨벤션 플러그인 `ok.java-conventions`, 도메인 모듈용 `ok.spring-module-conventions`)에, 의존 버전은 `gradle/libs.versions.toml`에 있습니다. 컨벤션 플러그인은 플러그인, 툴체인, 테스트 설정 같은 공통 설정만 주고, 의존성은 모듈의 `build.gradle.kts`에 직접 적습니다.
-- 웹, 보안, JPA, Flyway, MySQL, Modulith 같은 스타터는 `common`이 `api`로 열어 둡니다. 도메인 모듈은 `implementation(project(":common"))`에 자기만 쓰는 의존성(예: `media`의 썸네일, `payout`의 배치)을 더합니다.
+- 웹, 보안, JPA, Flyway, MySQL 같은 스타터는 `common`이 `api`로 열어 둡니다. 도메인 모듈은 `implementation(project(":common"))`에 자기만 쓰는 의존성(예: `media`의 썸네일, `payout`의 배치)을 더합니다.
 - 도메인 모듈끼리는 `project(...)` 의존을 걸지 않습니다. 다른 도메인 모듈은 `build.gradle.kts`에 `project(...)`로 선언하지 않으면 컴파일할 수 없고, 선언은 PR diff에서 바로 보이므로 리뷰에서 확인합니다. 모듈 간 연동은 지금 `common.event`의 이벤트로 하고, 메시지 브로커로 옮긴 이벤트와 새 이벤트는 각 모듈의 `event` 패키지에 둔 DTO로 합니다.
 - 모듈 안의 패키지 구조와 모듈 간 규칙(공개 위치, 순환 의존 금지 등)은 [`CONVENTION.md`의 패키지·모듈 구조](CONVENTION.md#2-패키지모듈-구조)를 참고하세요.
 
@@ -519,7 +517,7 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 - 모듈 계정은 자기 스키마에만 권한을 갖습니다(`member` 계정은 `paldogotgan_delivery`를 읽을 수 없습니다). `./infra/mysql/sync-module-users.sh --init`이 `<모듈>/.env.example`에서 `<모듈>/.env`를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만듭니다. 이미 떠 있는 DB에도 쓸 수 있고 여러 번 실행해도 됩니다. `<모듈>/.env`가 없으면 공용 계정(`myuser`)으로 접속하는 기존 방식이 그대로 동작합니다. `monolith`는 모듈 계정을 쓰지 않고 공용 계정(루트 `.env`의 `MYSQL_*`)으로 모든 스키마에 접속합니다.
 - 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
 - 단독 실행한 모듈 스키마와 monolith는 같은 DB를 번갈아 써도 됩니다. 단독 실행은 `common` 마이그레이션(`event_publication`)을 같은 스키마의 별도 이력 테이블(`flyway_schema_history_common`)에 적용하므로 모듈 이력에는 섞이지 않습니다. 단독 실행이 common 행을 모듈 이력(`flyway_schema_history`)에 함께 기록하던 초기 개발 빌드로 만든 로컬 DB는 monolith가 `Detected applied migration not resolved locally: 202610081120`으로 멈춥니다. 모듈 스키마마다 `DELETE FROM paldogotgan_<모듈>.flyway_schema_history WHERE version = '202610081120';`로 그 행을 지우거나 볼륨을 초기화하세요(운영에는 해당 없음).
-- 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다. `java-test-fixtures`(jar) 대신 test 소스셋의 classes 디렉터리를 노출하는 이유는, Spring Modulith가 jar 안의 `com.ok.testsupport`를 도메인 모듈로 인식해 구조·모듈 테스트가 깨지기 때문입니다. 모듈에서는 `testImplementation(project(path = ":common", configuration = "testSupportElements"))`로 가져옵니다.
+- 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다. `java-test-fixtures`(jar) 대신 test 소스셋의 classes 디렉터리를 노출하는 이유는, Spring Modulith를 쓰던 때 jar 안의 `com.ok.testsupport`를 도메인 모듈로 인식해 모듈 테스트가 깨졌기 때문입니다(#827에서 Modulith 제거). 모듈에서는 `testImplementation(project(path = ":common", configuration = "testSupportElements"))`로 가져옵니다.
 
 ### 새 모듈 만들기
 
@@ -661,7 +659,7 @@ com.ok.delivery
 | 배송 → 주문 | `delivery.shipment-dispatched.v1` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `carrier`, `trackingNumber`, `shippedAt` |
 | 배송 → 주문 | `delivery.shipment-delivered.v1` | `orderId` | `shipmentId`, `orderId`, `sellerId`, `deliveredAt` |
 
-- **보내기(#796):** `OutboxDeliveryEventPublisher`가 배송 생성·출고·배송 완료 트랜잭션 안에서 메시지 본문(JSON)을 `delivery_outbox`에 남기고 줄 id를 돌려주면, `ShipmentService`가 그 id를 결과로 돌려줍니다. 진입점(결제 완료 리스너, 출고 API, 택배사 알림과 Mock·조회 경로)은 트랜잭션 없는 `ShipmentFacade`를 부르고, Facade는 서비스가 끝난 뒤(커밋되고 커넥션을 반납한 뒤, `open-in-view: false` 전제) 줄 id와 그 시각을 `DeliveryOutboxRelayFacade.send`(`@Async`, 배송 전용 실행기 `delivery-outbox-send`, `DeliveryAsyncConfig`, `delivery.outbox.send.pool-size`·`queue-capacity`)로 넘겨 바로 Kafka로 보냅니다. 서비스가 실패해 롤백되면 Facade까지 예외가 올라와 넘기지 않습니다. 커밋 뒤 콜백을 쓰지 않으므로 Modulith 이벤트 발행 기록(`event_publication`)도 남기지 않습니다. 브로커 확인을 기다리는 동안에는 DB 커넥션을 잡지 않고, 줄 읽기·"보냄" 기록에서만 잠깐 씁니다. 진입점이 서비스를 바로 부르지 못하도록 outbox를 남기는 서비스는 입력 포트를 구현하지 않습니다(`ArchitectureTest`).
+- **보내기(#796):** `OutboxDeliveryEventPublisher`가 배송 생성·출고·배송 완료 트랜잭션 안에서 메시지 본문(JSON)을 `delivery_outbox`에 남기고 줄 id를 돌려주면, `ShipmentService`가 그 id를 결과로 돌려줍니다. 진입점(결제 완료 리스너, 출고 API, 택배사 알림과 Mock·조회 경로)은 트랜잭션 없는 `ShipmentFacade`를 부르고, Facade는 서비스가 끝난 뒤(커밋되고 커넥션을 반납한 뒤, `open-in-view: false` 전제) 줄 id와 그 시각을 `DeliveryOutboxRelayFacade.send`(`@Async`, 배송 전용 실행기 `delivery-outbox-send`, `DeliveryAsyncConfig`, `delivery.outbox.send.pool-size`·`queue-capacity`)로 넘겨 바로 Kafka로 보냅니다. 서비스가 실패해 롤백되면 Facade까지 예외가 올라와 넘기지 않습니다. 브로커 확인을 기다리는 동안에는 DB 커넥션을 잡지 않고, 줄 읽기·"보냄" 기록에서만 잠깐 씁니다. 진입점이 서비스를 바로 부르지 못하도록 outbox를 남기는 서비스는 입력 포트를 구현하지 않습니다(`ArchitectureTest`).
 - **즉시 발송 대기열(#793):** 대기열은 짧은 몰림을 흡수하는 지름길일 뿐이고, 메시지를 반드시 보내는 일은 outbox 줄과 발송 작업이 맡습니다. 대기열이 가득 차면 요청 스레드를 기다리게 하지 않고 거절하고(`TaskRejectedException`), `ShipmentFacade`가 잡아 세고 넘어갑니다. 커밋된 요청은 그대로 성공합니다. 버린 줄은 `PENDING`으로 남아 발송 작업이 보냅니다. 대기열에서 꺼냈을 때 서비스가 끝난 지 `delivery.outbox.relay.min-age`(10초)가 지났으면 발송 작업과 같은 줄을 함께 보내지 않도록 줄을 읽지 않고 끝냅니다. 버린 건수는 `delivery.outbox.send.dropped`(`reason=rejected`: 대기열 가득·종료 중, `reason=stale`: 오래 기다림), 대기열 길이는 Spring Boot가 붙이는 `executor.queued{name="delivery-outbox-send"}`로 봅니다. 기본값(스레드 4, 대기열 20)은 #793 부하테스트로 정했고, 대기열에서 기다리는 시간(대기열/처리량)이 `min-age`보다 짧도록 작게 둡니다. 근거는 `docs/decisions/delivery/793-outbox-send-drop-when-full.md`에 있습니다.
 - **다시 보내기:** 즉시 발송이 실패하면 예외를 올리지 않고 실패 횟수와 원인만 남기며, 줄은 `PENDING`으로 남습니다. 커밋 직후 서버가 죽은 줄과 대기열에서 버린 줄도 `PENDING`입니다. 이런 줄은 `DeliveryOutboxRelayScheduler`가 5초마다(`delivery.outbox.relay.cron`, 한 번에 `batch-size` 300줄) 남은 지 10초(`min-age`)가 지난 것만 쌓인 순서대로 보냅니다. 평소에는 이 주기를 기다리지 않습니다. 한 줄이 실패하면 그 실행은 거기서 멈추고, 같은 줄이 60번(약 5분)을 넘게 실패하면 ERROR 로그를 남깁니다.
 - **중복과 순서:** "보냄" 기록은 아직 `PENDING`일 때만 바꾸는 조건부 UPDATE라, 즉시 발송과 스케줄러가 같은 줄을 함께 보내면 뒤쪽이 0줄을 받고 INFO 로그를 남깁니다. 메시지는 두 번 나가고 주문이 중복을 무시합니다. 즉시 발송은 줄마다 다른 스레드에서 나가 같은 주문의 메시지 순서를 지키지 않습니다. 주문이 순서 뒤바뀜을 처리합니다(#603). 보낸 줄은 지우지 않고 `SENT`로 남깁니다.
@@ -867,7 +865,7 @@ com.ok.member.member
 - 판매자 하위 도메인은 outbox를 직접 쓰지 않고, 자기 출력 어댑터(`seller/adapter/out/member/MemberOutboxAdapter`)에서 `MemberOutboxRecordUseCase`를 부릅니다(하위 도메인 간 호출 규칙). 이 유스케이스는 `Propagation.MANDATORY`라 부른 쪽 트랜잭션 없이는 실패합니다. 프로필 저장과 outbox 줄이 반드시 함께 커밋·롤백되게 하려는 것입니다.
 - 회원가입 줄은 본문 없이 회원 ID만 두고, 출고지 우편번호 줄은 기록한 시점의 값을 `payload`(JSON)로 저장합니다. 보낼 때 그 JSON을 메시지 객체로 다시 읽어 Kafka 공통 직렬화로 보내므로, 실제로 나가는 JSON 모양(시각 형식 등)은 다른 모듈의 메시지와 같습니다.
 
-- 가입 서비스는 그대로 `MemberEventPublisher`를 부르고, 구현체 `OutboxMemberEventPublisher`가 같은 트랜잭션에서 `member_outbox`에 PENDING 줄을 남깁니다. 그래서 롤백되면 보내지 않고 커밋되면 반드시 한 번은 보냅니다. Spring Modulith의 이벤트 발행 기록(`event_publication`)에 기대지 않는 이유는 팀이 Modulith를 걷어 내기로 해서입니다.
+- 가입 서비스는 그대로 `MemberEventPublisher`를 부르고, 구현체 `OutboxMemberEventPublisher`가 같은 트랜잭션에서 `member_outbox`에 PENDING 줄을 남깁니다. 그래서 롤백되면 보내지 않고 커밋되면 반드시 한 번은 보냅니다. Spring Modulith의 이벤트 발행 기록(`event_publication`)에 기대지 않는 이유는 팀이 Modulith를 걷어 내기로 해서입니다(#827에서 제거).
 - `MemberOutboxRelayScheduler`가 30초마다(`member.outbox.relay.cron`, 한 번에 `batch-size` 100줄) PENDING 줄을 쌓인 순서대로 보냅니다. 보내기는 브로커의 저장 확인을 10초까지 기다리고, 그동안 DB 커넥션을 잡지 않도록 `MemberOutboxRelayFacade`는 트랜잭션 없이 돌며 줄마다 결과를 따로 저장합니다.
 - 한 줄이 실패하면 시도 횟수와 원인을 남기고 그 실행은 멈춥니다. 실패는 대개 브로커 장애라 뒤 줄도 실패할 뿐이고, 멈춰야 같은 회원의 뒤 메시지가 앞 메시지보다 먼저 나가지 않습니다. 줄은 PENDING으로 남아 다음 실행에서 다시 나갑니다.
 - 보낸 뒤 "보냄" 기록이 실패하거나 서버가 여러 대면 같은 메시지가 두 번 갈 수 있습니다. 받는 쪽은 중복에 안전해야 합니다. 보낸 줄은 지우지 않습니다(정산 outbox와 같음).
@@ -1419,12 +1417,12 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 ## 11. 비동기 처리 (이벤트 리스너와 `@Async`)
 
-모듈 간 이벤트를 받는 `@ApplicationModuleListener`와 `@Async`는 요청 스레드가 아니라 별도 실행기의 스레드에서 실행됩니다. 이 구조는 모든 비동기 작업이 Boot 기본 실행기 하나를 공유하던 것을 용도별 전용 실행기로 나눕니다. 실행기는 이름을 붙여 여러 개 둘 수 있고, 동시 실행 상한 같은 값은 코드가 아니라 yml과 환경변수로 바꿉니다. 구현은 `common`의 [`AsyncConfig`](../common/src/main/java/com/ok/common/config/AsyncConfig.java), [`AsyncExecutorFactory`](../common/src/main/java/com/ok/common/config/AsyncExecutorFactory.java), [`AsyncProperties`](../common/src/main/java/com/ok/common/config/AsyncProperties.java)에 있습니다.
+`@Async` 메서드와 비동기 이벤트 리스너는 요청 스레드가 아니라 별도 실행기의 스레드에서 실행됩니다. 이 구조는 모든 비동기 작업이 Boot 기본 실행기 하나를 공유하던 것을 용도별 전용 실행기로 나눕니다. 실행기는 이름을 붙여 여러 개 둘 수 있고, 동시 실행 상한 같은 값은 코드가 아니라 yml과 환경변수로 바꿉니다. 구현은 `common`의 [`AsyncConfig`](../common/src/main/java/com/ok/common/config/AsyncConfig.java), [`AsyncExecutorFactory`](../common/src/main/java/com/ok/common/config/AsyncExecutorFactory.java), [`AsyncProperties`](../common/src/main/java/com/ok/common/config/AsyncProperties.java)에 있습니다.
 
 ### 기본 동작
 
-- Spring Modulith가 `@EnableAsync`를 켜 주므로 리스너는 원래 비동기입니다. 이름 없는 `@Async`가 쓰는 Boot 기본 실행기(`applicationTaskExecutor`)는 코어 8, 대기열 무제한이고 모든 비동기 작업이 공유합니다. 그래서 느린 작업이 다른 작업을 지연시킬 수 있고, 밀린 작업은 대기열에 메모리로 쌓입니다. 아래 구조는 이 공유 풀을 용도별 실행기로 나눕니다.
-- 이름을 지정하지 않은 `@Async`와 `@ApplicationModuleListener`는 `app.async.default-executor`(기본 `event`)의 실행기로 갑니다. 기존 리스너 코드는 바꿀 필요가 없습니다. `@ApplicationModuleListener`는 실행기를 지정할 수 없어서 모든 리스너가 이 기본 실행기 하나를 씁니다.
+- `@EnableAsync`는 `AsyncConfig`가 켭니다. 이름 없는 `@Async`가 쓰는 Boot 기본 실행기(`applicationTaskExecutor`)는 코어 8, 대기열 무제한이고 모든 비동기 작업이 공유합니다. 그래서 느린 작업이 다른 작업을 지연시킬 수 있고, 밀린 작업은 대기열에 메모리로 쌓입니다. 아래 구조는 이 공유 풀을 용도별 실행기로 나눕니다.
+- 이름을 지정하지 않은 `@Async`는 `app.async.default-executor`(기본 `event`)의 실행기로 갑니다.
 - 실행기는 두 종류입니다. **`platform`**(`event`의 기본)은 정해진 수의 일반 스레드와 대기열을 씁니다. 대기열이 차기 전에는 작업을 넘기는 스레드가 기다리지 않아서 리스너가 요청 스레드를 막지 않습니다. **`virtual`**은 작업마다 가상 스레드를 새로 만듭니다(풀도 대기열도 없습니다). 부족한 자원인 DB 커넥션을 기준으로 **동시 실행 상한**(`concurrency-limit`)을 두고, 상한이 차면 작업을 넘기는 스레드가 기다립니다.
 - 두 종류 모두 가득 찼을 때 작업을 거절하거나 버리지 않고 넘기는 스레드가 자리가 날 때까지 기다립니다. 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 이미 커밋된 요청이 오류가 되고, 같은 커밋의 다른 리스너가 실행되지 않는 것을 확인했기 때문입니다.
 - `spring.threads.virtual.enabled`는 쓰지 않습니다. 이 설정은 Tomcat 요청 스레드와 `@Scheduled`까지 바꾸는 전역 설정이라, `virtual` 실행기에만 가상 스레드를 적용합니다.
@@ -1440,7 +1438,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 | `concurrency-limit` | `5` | `virtual`에서 동시에 실행할 작업 수의 상한. 상한이 차면 작업을 넘기는 스레드가 기다립니다 |
 | `pool-size` | `8` | `platform`의 스레드 수. 대기열이 차기 전에는 스레드가 늘지 않아 코어와 최대를 같게 씁니다 |
 | `queue-capacity` | `1000` | `platform`의 대기열 크기. 가득 차면 작업을 넘기는 스레드가 기다립니다. 1000은 측정 근거 없는 임시값입니다 |
-| `task-termination-timeout` | `10s` | 앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. 끝나지 못한 이벤트는 미완료로 남아 재시작 때 재발행됩니다(`MODULITH_REPUBLISH_ON_RESTART`, 운영은 `true`) |
+| `task-termination-timeout` | `10s` | 앱을 종료할 때 실행 중인 작업이 끝나기를 기다리는 시간. 끝나지 못한 작업은 버려집니다. 다시 보내야 하는 메시지는 각 모듈의 outbox가 재발송합니다 |
 | `thread-name-prefix` | `<이름>-` | 스레드 이름의 앞부분. 로그에서 어느 실행기의 스레드인지 구분합니다 |
 
 `event` 실행기는 설정이 없어도 기본값으로 항상 있고, 값은 `common-async.yaml`에 있습니다.
@@ -1495,7 +1493,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 ### 주의할 점
 
 - **DB 커넥션은 실행기가 나눠 씁니다.** `pool-size`와 `concurrency-limit`은 실행기마다 따로 적용되지만 커넥션 풀(Hikari 기본 10)은 앱 전체가 공유합니다. DB를 쓰는 실행기들의 스레드 수·상한 합계가 풀 크기보다 작아야 HTTP 요청이 커넥션을 얻지 못하는 일이 없습니다. 이 합계는 앱이 검사하지 않으니 실행기를 추가할 때 직접 확인합니다.
-- **모든 리스너는 `event` 실행기 하나를 공유합니다.** `@ApplicationModuleListener`는 실행기를 지정할 수 없어서, 느린 외부 호출을 하는 리스너가 스레드를 다 차지하면 다른 리스너가 대기열에서 기다릴 수 있습니다. 리스너끼리의 격리는 아직 없습니다.
+- **이름 없는 `@Async`는 `event` 실행기 하나를 공유합니다.** 느린 외부 호출을 하는 작업이 스레드를 다 차지하면 다른 작업이 대기열에서 기다릴 수 있습니다. 격리가 필요하면 `@Async("<실행기 이름>")`으로 전용 실행기를 지정합니다.
 - **가득 차면 작업을 넘긴 스레드가 기다립니다.** `platform`은 대기열이 다 찰 때만, `virtual`은 상한이 차면 바로 기다립니다. 요청 스레드가 직접 부르는 `@Async`는 대기열이 있는 `platform`이 안전합니다. 작업을 거절하는 옵션은 두지 않았습니다. 거절하면 커밋 뒤 콜백에서 호출한 쪽으로 예외가 올라가 이미 커밋된 요청이 오류가 되고, 같은 커밋의 다른 리스너가 실행되지 않는 것을 확인했기 때문입니다.
 - **`@Async` 이름 오타는 처음 호출될 때 실패합니다.** `@Async("이름")`에 문자열을 직접 쓰지 않고 위처럼 상수를 씁니다.
 - **같은 클래스 안에서 `@Async` 메서드를 부르면 비동기가 되지 않습니다.** 프록시를 거치지 않아 오류 없이 동기로 실행됩니다. 다른 빈에서 호출합니다.
@@ -1519,7 +1517,7 @@ docker run -d --name paldo-gotgan -p 8080:8080 \
 
 | 경계 | 방식 |
 |---|---|
-| 비동기 리스너(`@ApplicationModuleListener`) | `MdcTaskDecorator`가 MDC 전체를 복사합니다 |
+| 비동기 리스너(`@Async`) | `MdcTaskDecorator`가 MDC 전체를 복사합니다 |
 | 내부 HTTP | 내부 API 클라이언트(`InternalRestClient`, 상품의 `OrderApiClient`)가 `TraceHeaderInterceptor`로 MDC에 있는 `X-Trace-Id`, `X-Order-Id`, `X-Shipment-Id`만 보냅니다 |
 | `/internal/` 수신 | `TraceFilter`가 헤더로 복원합니다. `X-Order-Id`·`X-Shipment-Id`는 `/internal/` 경로에서, loopback 주소에서 온 요청이고 0으로 시작하지 않는 숫자 1~18자리일 때만 받습니다 |
 
