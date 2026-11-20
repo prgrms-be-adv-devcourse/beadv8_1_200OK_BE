@@ -27,6 +27,7 @@ import com.ok.product.product.adapter.out.persistence.ProductJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductTagJpaRepository;
 import com.ok.product.product.adapter.out.persistence.ProductTagJudgmentJpaRepository;
 import com.ok.product.product.application.dto.ProductSearchBackfillResult;
+import com.ok.product.product.application.service.ProductItemDictionary;
 import com.ok.product.product.application.service.ProductSearchBackfillService;
 import com.ok.product.product.domain.ProductSearchKeyword;
 import com.ok.product.product.domain.ProductSort;
@@ -42,14 +43,14 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 	private static final double PRODUCTION_MIN_SCORE = 1.0;
 	// 시드와 평가셋이 고정이라 결과도 고정이다. 잰 값을 소수 둘째 자리에서 버린 값이라 0.01 이상 떨어지면 실패한다
 	private static final Map<String, Double> RECALL_FLOORS = Map.of(
-		"clean", 0.92,
-		"spacing", 0.93,
-		"typo", 0.80,
+		"clean", 0.97,
+		"spacing", 0.97,
+		"typo", 0.83,
 		"vague", 0.34);
 	private static final Map<String, Double> MRR_FLOORS = Map.of(
-		"clean", 0.87,
-		"spacing", 0.89,
-		"typo", 0.70,
+		"clean", 0.90,
+		"spacing", 0.92,
+		"typo", 0.78,
 		"vague", 0.46);
 
 	@Autowired
@@ -57,6 +58,9 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	ProductSearchBackfillService productSearchBackfillService;
+
+	@Autowired
+	ProductItemDictionary productItemDictionary;
 
 	@Autowired
 	ProductJpaRepository productRepository;
@@ -127,8 +131,10 @@ class ProductSearchEvalIntegrationTest extends AbstractIntegrationTest {
 
 	private QueryResult evaluate(EvalQuery query) {
 		ProductSearchKeyword keyword = ProductSearchKeyword.from(query.query()).orElseThrow();
+		// 운영과 같이 오타 교정 제안 품목으로 순서를 정한다(ProductService.searchVisibleProducts)
+		String suggestion = productItemDictionary.suggest(query.query()).orElse(null);
 		List<Long> top = buyerProductQueryRepository.findVisibleProductIds(keyword, null, null, null,
-			ProductSort.RELEVANCE, PRODUCTION_MIN_SCORE, PageRequest.of(0, TOP_K)).getContent();
+			ProductSort.RELEVANCE, PRODUCTION_MIN_SCORE, suggestion, PageRequest.of(0, TOP_K)).getContent();
 		long hits = top.stream().filter(query.relevant()::contains).count();
 		double recall = (double)hits / Math.min(TOP_K, query.relevant().size());
 		double reciprocalRank = IntStream.range(0, top.size())

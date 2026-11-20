@@ -181,11 +181,12 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	@Override
 	public ProductSearchResult searchVisibleProducts(ProductSearchQuery query) {
 		ProductSearchKeyword keyword = ProductSearchKeyword.from(query.keyword()).orElse(null);
-		long startedAt = System.nanoTime();
-		Page<ProductSummaryResult> products = findVisibleProducts(query, keyword);
-		long latencyMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
-		// 결과 수와 관계없이 제안한다. 결과가 적을 때만 제안하면 "고추가루"처럼 고추 상품이 잘 찾히는 오타에서 제안이 사라진다
+		// 결과 수와 관계없이 제안한다. 결과가 적을 때만 제안하면 "고추가루"처럼 고추 상품이 잘 찾히는 오타에서 제안이 사라진다.
+		// 검색 순서에도 쓰므로 검색보다 먼저 구한다
 		String suggestion = productItemDictionary.suggest(query.keyword()).orElse(null);
+		long startedAt = System.nanoTime();
+		Page<ProductSummaryResult> products = findVisibleProducts(query, keyword, suggestion);
+		long latencyMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
 		// 다음 페이지를 넘길 때마다 남기면 같은 검색이 여러 번 세어져 0건 검색어 비율이 틀어진다
 		if (keyword != null && query.page() == 0) {
 			productSearchLogRecorder.record(ProductSearchLog.of(query.keyword(), keyword, products.getTotalElements(),
@@ -195,7 +196,8 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	}
 
 	// 구매자에게 보이는 상품 목록을 조회한다. 정렬을 고르지 않으면 검색어가 있을 때 정확도순, 없을 때 최신순이고 품절 상품은 뒤로 간다
-	private Page<ProductSummaryResult> findVisibleProducts(ProductSearchQuery query, ProductSearchKeyword keyword) {
+	private Page<ProductSummaryResult> findVisibleProducts(ProductSearchQuery query, ProductSearchKeyword keyword,
+		String suggestion) {
 		ProductCategoryGroup categoryGroup = query.categoryGroup() == null ? null : query.categoryGroup().toDomain();
 		ProductCategory category = query.category() == null ? null : query.category().toDomain();
 		ProductRegion region = query.region() == null ? null : query.region().toDomain();
@@ -207,7 +209,7 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		Page<Long> productIds;
 		try {
 			productIds = buyerProductQueryRepository.findVisibleProductIds(keyword, categoryGroup, category, region, sort,
-				productSearchPolicy.minScore(), pageable);
+				productSearchPolicy.minScore(), suggestion, pageable);
 		} catch (QueryTimeoutException e) {
 			// RestApiException은 공통 핸들러가 로그를 남기지 않아 여기서 남긴다. 느린 조건을 찾을 수 있게 모양만 남기고,
 			// 검색어 원문은 개인정보가 섞일 수 있어 남기지 않는다

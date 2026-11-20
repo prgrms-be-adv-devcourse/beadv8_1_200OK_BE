@@ -41,6 +41,11 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 		+ TEXT_SCORE + ") OVER () AS best_text_score";
 	private static final String JAMO_FALLBACK = " WHERE (p.text_score > 0 OR p.best_text_score = 0)";
 
+	// 오타 교정 제안 품목이 상품명에 든 상품을 정확도순 맨 앞에 둔다. 자모 점수로는 "시레기"의 시래기 상품이 자모만 겹친
+	// 다른 품목 아래에 오고, 글자 일치로는 "고추가루"의 고춧가루 상품이 "고추"가 겹친 상품 아래에 온다(#670).
+	// 결과와 전체 개수는 그대로 두고 순서만 바꾼다. 제안을 결과에 더하면 F7이 하지 않기로 한 자동 치환이 된다
+	private static final String SUGGESTED_COLUMN = ", s.name_compact LIKE :suggestedItem AS suggested";
+
 	// 검색어에 가공 표현이 없으면 농산 가공품 점수에 곱한다. E0 평가셋에서 0.3~0.7 중 clean·spacing MRR이 가장 높았다.
 	// 하한과 자모 대체는 곱하기 전 점수로 판정해 결과와 전체 개수는 그대로 두고 순서만 바꾼다
 	private static final double PROCESSED_DEMOTION = 0.5;
@@ -77,11 +82,13 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 
 	@Override
 	public Page<Long> findVisibleProductIds(ProductSearchKeyword keyword, ProductCategoryGroup categoryGroup,
-		ProductCategory category, ProductRegion region, ProductSort sort, double minScore, Pageable pageable) {
+		ProductCategory category, ProductRegion region, ProductSort sort, double minScore, String suggestedItem,
+		Pageable pageable) {
 		if (keyword == null && sort == ProductSort.RELEVANCE) {
 			throw new IllegalArgumentException("검색어 없이 정확도순으로 정렬할 수 없습니다.");
 		}
 		Match match = Match.of(keyword);
+		boolean suggested = match == Match.FULLTEXT && sort == ProductSort.RELEVANCE && suggestedItem != null;
 		Map<String, Object> params = new HashMap<>();
 		StringBuilder from = new StringBuilder(PRODUCTS);
 		switch (match) {
@@ -96,13 +103,18 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 			case FULLTEXT -> {
 				from.setLength(0);
 				from.append(" FROM (SELECT p.id, p.category, p.region, p.min_sale_price, p.rating_sum, p.review_count, ")
-					.append(SCORE_COLUMNS).append(PRODUCTS).append(SEARCH_ROWS).append(VISIBLE).append(SCORE_FLOOR)
+					.append(SCORE_COLUMNS).append(suggested ? SUGGESTED_COLUMN : "")
+					.append(PRODUCTS).append(SEARCH_ROWS).append(VISIBLE).append(SCORE_FLOOR)
 					.append(") p").append(JAMO_FALLBACK);
 				params.put("compact", keyword.compact());
 				params.put("text", keyword.text());
 				params.put("jamo", keyword.jamo());
 				params.put("minScore", minScore);
 				params.put("processedIntent", keyword.processedIntent());
+				if (suggested) {
+					// 제안 품목은 품목 사전의 compact 값이라 LIKE 특수 문자(%, _)가 없다
+					params.put("suggestedItem", "%" + suggestedItem + "%");
+				}
 			}
 		}
 		if (categoryGroup != null) {
@@ -123,9 +135,11 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 		String content = switch (match) {
 			case NONE -> "SELECT p.id, " + SOLD_OUT_AND_RATING + from;
 			case ITEM -> "SELECT p.id, 0 AS score, " + SOLD_OUT_AND_RATING + from;
-			case FULLTEXT -> "SELECT p.id, " + RANK_SCORE + ", " + SOLD_OUT_AND_RATING + from;
+			case FULLTEXT -> "SELECT p.id, " + RANK_SCORE + (suggested ? ", p.suggested" : "") + ", "
+				+ SOLD_OUT_AND_RATING + from;
 		};
-		List<Long> productIds = jdbcClient.sql(content + " ORDER BY " + orderBy(sort) + " LIMIT :size OFFSET :offset")
+		String orderBy = " ORDER BY " + orderBy(sort, suggested);
+		List<Long> productIds = jdbcClient.sql(content + orderBy + " LIMIT :size OFFSET :offset")
 			.params(params)
 			.param("size", pageable.getPageSize())
 			.param("offset", pageable.getOffset())
@@ -140,9 +154,11 @@ public class BuyerProductQueryJdbcRepository implements BuyerProductQueryReposit
 	}
 
 	// 마지막 키를 고유한 p.id로 두어 순서를 하나로 정한다. 앞 키가 같은 상품끼리 순서가 매번 달라지면 페이지를 넘길 때 중복·누락이 생긴다
-	private static String orderBy(ProductSort sort) {
+	private static String orderBy(ProductSort sort, boolean suggested) {
 		return switch (sort) {
-			case RELEVANCE -> "sold_out, score DESC, rating_score DESC, p.id DESC";
+			case RELEVANCE -> suggested
+				? "sold_out, suggested DESC, score DESC, rating_score DESC, p.id DESC"
+				: "sold_out, score DESC, rating_score DESC, p.id DESC";
 			case PRICE_ASC -> "sold_out, p.min_sale_price, rating_score DESC, p.id DESC";
 			case PRICE_DESC -> "sold_out, p.min_sale_price DESC, rating_score DESC, p.id DESC";
 			case LATEST -> "sold_out, p.id DESC";

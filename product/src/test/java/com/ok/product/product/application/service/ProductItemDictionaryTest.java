@@ -145,6 +145,37 @@ class ProductItemDictionaryTest {
 	}
 
 	@Test
+	void 상품명의_품목에_동의어가_있으면_그_동의어를_고른다() {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary();
+
+		// when
+		List<String> sut = dictionary.findSynonyms("[양구] 시래기 500g");
+
+		// then
+		assertThat(sut).containsExactly("무청");
+	}
+
+	@Test
+	void 상품명에_품목이_없거나_동의어가_없는_품목이면_빈_목록이다() {
+		// given
+		ProductItemDictionary dictionary = new ProductItemDictionary(List.of("귀리", "사과"),
+			Map.of(), Map.of("귀리", List.of("오트밀")));
+
+		// when & then
+		assertThat(dictionary.findSynonyms("청송 사과 5kg")).isEmpty();
+		assertThat(dictionary.findSynonyms("GAP 선물세트")).isEmpty();
+	}
+
+	@Test
+	void 동의어_표에_품목_사전에_없는_품목이_있으면_만들지_못한다() {
+		// when & then
+		assertThatThrownBy(() -> new ProductItemDictionary(List.of("귀리"), Map.of(), Map.of("오트", List.of("오트밀"))))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessage("동의어 표에 품목 사전에 없는 품목이 있습니다. item=오트, location=product-search/item-synonyms.json");
+	}
+
+	@Test
 	void 품목이_하나도_없으면_만들지_못한다() {
 		// when & then
 		assertThatThrownBy(() -> new ProductItemDictionary(List.of(" ", "·"), Map.of()))
