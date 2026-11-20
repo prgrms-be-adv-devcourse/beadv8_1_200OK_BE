@@ -36,12 +36,22 @@ public record PayoutAdjustmentCreateResponse(
         Long adminId,
 
         @Schema(description = "조정 생성 시각", example = "2026-11-16T10:00:00")
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+
+        // 이 칸은 늘 값이 있어(null 없음) 정산후보 조회 칸과 달리 allowableValues를 둠
+        @Schema(description = """
+                방금 넣은 조정이 금액 검사에 들어가는지. 조정은 막지 않고 저장하며, 이 값으로 알려 주기만 합니다.
+                AWAITING_RESOLUTION: 해결 안 된 금액·수수료 불일치 실패 뒤에 넣음. 막힌 주문을 해결하면 금액 검사에 들어갑니다.
+                UNCHECKED: 금액 검사 없이 지급에만 들어갑니다. 그 주문에 해결 안 된 금액·수수료 불일치 실패가 없을 때입니다(실패 전에 미리 넣음, 해결한 뒤에 넣음, 실패가 없거나 결제 기록 없음 같은 다른 사유로만 막힌 주문). 의도한 조정이 아니면 정산후보 조회로 이미 들어간 조정을 확인하고 반대 금액 조정으로 상쇄하세요.
+                CONFIRMED: 보통 나오지 않습니다. 서버 시계 차이 같은 예외에서만 나옵니다.
+                넣은 순간의 값입니다. AWAITING_RESOLUTION 조정은 해결하면 CONFIRMED가 되니, 그 뒤 상태는 정산후보 조회(orderId)의 adjustmentCheckStatus로 보세요(같은 판정).""",
+                example = "UNCHECKED", allowableValues = {"CONFIRMED", "AWAITING_RESOLUTION", "UNCHECKED"})
+        String adjustmentCheckStatus
 ) {
 
     public static PayoutAdjustmentCreateResponse from(PayoutAdjustmentCreateResult result) {
         return new PayoutAdjustmentCreateResponse(result.candidateId(), result.adjustmentId(), result.orderId(),
                 result.orderItemId(), result.sellerId(), result.eventType(), result.amount(), result.reason(),
-                result.adminId(), result.createdAt());
+                result.adminId(), result.createdAt(), result.adjustmentCheckStatus());
     }
 }

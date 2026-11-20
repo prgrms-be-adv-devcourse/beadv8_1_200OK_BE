@@ -286,6 +286,8 @@ interface PayoutAdminControllerSpec {
             금액 불일치로 막힌 주문을 풀 때는 순서를 지키세요: 실패가 난 뒤 조정을 넣고, 그다음 "다시 처리"로 해결합니다.
             이 순서로 넣은 조정만 금액 검사에 들어갑니다(원래 정산후보와 함께 정산되는 배치에서).
             실패 전에 미리 넣었거나 해결한 뒤에 넣은 조정은 다시 해결해도 검사에 들어가지 않고, 지급에만 들어갑니다.
+            서버는 이런 조정도 막지 않고 저장합니다. 대신 응답의 adjustmentCheckStatus로 방금 넣은 조정이 검사에 들어가는지 알려 줍니다(AWAITING_RESOLUTION = 해결하면 검사에 들어감, UNCHECKED = 검사 없이 지급).
+            금액·수수료 불일치로 막힌 주문을 풀려고 넣었는데 UNCHECKED가 나오면 순서가 어긋난 것입니다(실패 전이거나 이미 해결됨). 이미 해결된 주문이면 같은 조정이 이미 들어가 있지 않은지 정산후보 조회로 먼저 확인하세요.
             조정을 넣기 전에 막힌 주문 목록(orderId)의 pendingSaleAmountAdjustment·pendingSaleFeeAdjustment를 먼저 보세요. 0이 아니면 이미 들어간 조정이 있습니다.
             실패 전에 미리 넣은 조정 A가 있으면(정산후보 조회에는 A가 있는데 대기 합계에는 안 잡힘) 아래 순서로 상쇄합니다.
               1) A는 검사에 들어가지 않으니 A가 없다고 보고 맞는 조정 B를 계산해 넣습니다.
@@ -308,7 +310,7 @@ interface PayoutAdminControllerSpec {
             조정한 관리자 ID는 요청 바디가 아니라 로그인 토큰에서 받습니다.
             """)
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "조정을 만듦. 방금 저장한 조정 정산후보"),
+            @ApiResponse(responseCode = "201", description = "조정을 만듦. 방금 저장한 조정 정산후보와 금액 검사에 들어가는지(adjustmentCheckStatus)"),
             @ApiResponse(
                     responseCode = "401", description = "로그인 필요 (토큰 없음·만료·위조)",
                     content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))

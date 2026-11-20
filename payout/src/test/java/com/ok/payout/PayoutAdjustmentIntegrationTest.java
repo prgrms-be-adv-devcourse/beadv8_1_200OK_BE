@@ -170,7 +170,8 @@ class PayoutAdjustmentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.reason").value(REASON))
                 .andExpect(jsonPath("$.adminId").value(ADMIN))
                 .andExpect(jsonPath("$.candidateId").isNumber())
-                .andExpect(jsonPath("$.createdAt").isNotEmpty());
+                .andExpect(jsonPath("$.createdAt").isNotEmpty())
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));      // 실패 없는 주문이라 검사 밖 (#791 후속)
 
         // then: 원래 2건(대금·수수료) + 조정 1건
         List<PayoutCandidateItem> adjustments = adjustmentsOf(ITEM_A);

@@ -2,6 +2,7 @@ package com.ok.payout.application.service;
 
 import com.ok.common.exception.RestApiException;
 import com.ok.payout.domain.Payout;
+import com.ok.payout.domain.PayoutAdjustmentCheckStatus;
 import com.ok.payout.domain.PayoutBlockedOrder;
 import com.ok.payout.domain.PayoutCandidateItem;
 import com.ok.payout.domain.PayoutDepositCheck;
@@ -1031,9 +1032,20 @@ public class PayoutService implements PayoutUseCase {
         log.info("정산 수동 조정 생성. candidateId={}, orderId={}, orderItemId={}, sellerId={}, eventType={}, adjustmentId={}, amount={}, adminId={}",
                 saved.getId(), saved.getOrderId(), saved.getOrderItemId(), saved.getSellerId(), eventType, adjustmentId,
                 saved.getAmount(), adminId);
+
+        // 방금 넣은 조정이 금액 검사에 들어가는지 응답으로 알려 줌 (#791 후속): 막지 않고 알리기만 함
+        //   조정은 예외 상황에서 관리자가 판단해 넣는 것이라 서버가 옳고 그름을 가리지 않음 (사용자 결정, 11/20)
+        //   대신 해결 뒤·실패 전에 넣어 검사 밖(UNCHECKED)이 된 것을 넣는 순간 알아채게 함 (해결 뒤 같은 −9,700을 또 넣는 실수 등)
+        //   판정은 정산후보 조회와 같은 두 조회를 그대로 씀: 규칙을 따로 쓰면 이 응답과 조회 화면·실제 검사가 어긋남
+        //   확인됨도 함께 봄: 확인됨은 해결 시각 > 조정 시각이어야 해서 지금 넣은 조정은 보통 될 수 없음
+        //     (이 트랜잭션이 보는 해결은 이미 커밋된 것이라 시각이 조정보다 앞섬). 서버 시계 차이 같은 예외에도 조회와 같은 값을 내려고 판정을 줄이지 않음
+        Set<Long> savedIds = Set.of(saved.getId());
+        PayoutAdjustmentCheckStatus checkStatus = PayoutQueryResultMapper.adjustmentCheckStatus(saved.getId(),
+                new HashSet<>(payoutQueryRepository.findConfirmedAdjustmentCandidateIds(savedIds)),
+                new HashSet<>(payoutQueryRepository.findAwaitingResolutionAdjustmentCandidateIds(savedIds)));
         return new PayoutAdjustmentCreateResult(saved.getId(), saved.getAdjustmentId(), saved.getOrderId(),
                 saved.getOrderItemId(), saved.getSellerId(), eventType.name(), saved.getAmount(), saved.getReason(),
-                saved.getAdminId(), saved.getCreatedAt());
+                saved.getAdminId(), saved.getCreatedAt(), checkStatus.name());
     }
 
     /**

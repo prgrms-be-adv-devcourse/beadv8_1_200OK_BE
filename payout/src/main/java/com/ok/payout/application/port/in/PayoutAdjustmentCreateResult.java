@@ -17,6 +17,9 @@ public record PayoutAdjustmentCreateResult(
         Long amount,
         String reason,
         Long adminId,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        // 방금 넣은 조정이 금액 검사에 들어가는지 (#791 후속): PayoutAdjustmentCheckStatus 이름 (AWAITING_RESOLUTION, UNCHECKED, 드물게 CONFIRMED)
+        // 정산후보 조회의 adjustmentCheckStatus와 같은 판정. 입력 포트는 domain enum을 내보내지 않으려고 문자열로 둠
+        String adjustmentCheckStatus
 ) {
 }

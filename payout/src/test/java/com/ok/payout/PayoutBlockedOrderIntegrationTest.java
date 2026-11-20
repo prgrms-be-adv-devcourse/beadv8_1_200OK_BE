@@ -925,6 +925,72 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableEntity());
     }
 
+    // ---------- 조정 생성 응답의 조정 상태 (#791 후속) ----------
+    // 조정은 막지 않고 저장하고, 방금 넣은 조정이 금액 검사에 들어가는지 응답으로 알림 (사용자 결정, 11/20)
+
+    // #791 이슈 예시: 실패 뒤 넣은 A의 조정은 해결 대기, 해결 뒤 C가 또 넣은 −9,700은 검사 밖이라고 넣는 순간 알려 줌
+    @Test
+    void 조정_생성_응답은_해결_전_조정을_해결_대기로_해결_뒤_조정을_검사_밖으로_알린다() throws Exception {
+        // given: 결제 30,000, 판매 40,000(대금 38,800 / 수수료 1,200)으로 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 38_800L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 1_200L);
+        givenDeduction(order, 30_000L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then: 관리자 A가 실패 뒤 넣음
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L)
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("AWAITING_RESOLUTION"));
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_FEE, -300L)
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("AWAITING_RESOLUTION"));
+
+        // when & then: 해결 뒤 관리자 C가 사유를 바꿔 −9,700을 또 넣어도 저장되고, 검사 밖이라고 알려 줌
+        resolve(order);
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -9_700L, "조정 다시 넣음")
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));
+
+        // then: 응답 값이 정산후보 조회의 상태와 같음 (같은 판정). 응답은 넣은 순간 값이라, A의 조정은 해결 뒤 조회에서 확인됨으로 바뀜
+        mockMvc.perform(candidatesOfOrder(admin, order))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '조정 다시 넣음')].adjustmentCheckStatus")
+                        .value(contains("UNCHECKED")))
+                .andExpect(jsonPath("$.content[?(@.adjustment.reason == '금액 정정 SALE_AMOUNT')].adjustmentCheckStatus")
+                        .value(contains("CONFIRMED")));
+    }
+
+    // 금액 불일치가 아닌 사유(결제 기록 없음)로만 막힌 주문에 넣은 조정은 해결해도 검사에 안 들어가므로 넣는 순간 검사 밖이라고 알림
+    @Test
+    void 결제_기록_없음으로만_막힌_주문에_넣은_조정은_생성_응답이_검사_밖이다() throws Exception {
+        // given: 결제 기록 없이 3번 실패해 멈춤
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_700L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        runCompleted(3);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, -1_000L)
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));
+    }
+
+    // 막힘과 상관없는 주문의 양수 조정(예: 판매자 보상)도 거절하지 않고 저장함. 검사 없이 지급된다는 것만 알림
+    @Test
+    void 실패가_없는_주문에_넣은_양수_조정도_저장하고_검사_밖으로_알린다() throws Exception {
+        // given: 실패 기록이 없는 주문
+        long order = nextOrderId();
+        long orderItem = ORDER_ITEM_ID_SEQ.incrementAndGet();
+        insertCandidateOf(order, PayoutEventType.SALE_AMOUNT, orderItem, 9_700L);
+        insertCandidateOf(order, PayoutEventType.SALE_FEE, orderItem, 300L);
+        String admin = tokens.bearer(ADMIN_ID, "ADMIN");
+
+        // when & then
+        postAdjustment(admin, orderItem, PayoutEventType.SALE_AMOUNT, 3_000L, "판매자 보상")
+                .andExpect(jsonPath("$.amount").value(3_000))
+                .andExpect(jsonPath("$.adjustmentCheckStatus").value("UNCHECKED"));
+    }
+
     // ---------- 초과 청구 근거 (#570) ----------
 
     @Test
@@ -1134,16 +1200,17 @@ class PayoutBlockedOrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     // 관리자 조정 API로 조정을 넣음 (#291): 생성 시각이 지금이라 앞서 생긴 실패 뒤에 들어감 (확인한 조정 순서 그대로)
-    private void postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount) throws Exception {
-        postAdjustment(admin, orderItemId, eventType, amount, "금액 정정 " + eventType.name());
+    private ResultActions postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount) throws Exception {
+        return postAdjustment(admin, orderItemId, eventType, amount, "금액 정정 " + eventType.name());
     }
 
     // 사유를 정해 넣음: 같은 주문 항목·종류·금액·사유면 409라, 같은 금액을 또 넣는 경우는 사유를 바꿈 (#791 예시)
-    private void postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount, String reason)
+    // 응답을 돌려줌: 생성 응답의 조정 상태(#791 후속)를 확인하는 테스트가 씀
+    private ResultActions postAdjustment(String admin, long orderItemId, PayoutEventType eventType, long amount, String reason)
             throws Exception {
         String body = "{\"orderItemId\":" + orderItemId + ",\"eventType\":\"" + eventType.name()
                 + "\",\"amount\":" + amount + ",\"reason\":\"" + reason + "\"}";
-        mockMvc.perform(post("/api/v1/admin/payouts/adjustments")
+        return mockMvc.perform(post("/api/v1/admin/payouts/adjustments")
                         .header(HttpHeaders.AUTHORIZATION, admin)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
