@@ -51,34 +51,30 @@ cp .env.example .env
 
 ### 한눈에 보기
 
-`docker compose`가 띄우는 것은 **프로파일**로 나뉩니다. 프로파일이 없는 서비스는 항상 뜨고, 프로파일이 있는 서비스는 그 프로파일을 켰을 때만 뜹니다.
+`docker compose up -d`는 프로파일 없이 MySQL·Redis·Kafka를 1대씩 띄웁니다(#783). 모니터링과 앱 컨테이너는 **프로파일**을 켰을 때만 뜨고, Kafka 3대·Redis 6대 클러스터는 별도 파일(`docker-compose.cluster.yml`)을 겹쳐 띄웁니다.
 
-| 서비스 | 프로파일 | 호스트 포트 | 비고 |
+| 서비스 | 프로파일·파일 | 호스트 포트 | 비고 |
 |---|---|---|---|
 | `mysql` | 없음(항상) | `3306` | 데이터는 `data/mysql` |
-| `redis` (1대) | `single` | `6379` (`127.0.0.1`만) | AOF, 메모리 한도 512m, 비밀번호 없음. 평소 쓰는 구성 |
-| `redis-1`~`redis-6` (6대), `redis-cluster-init` | `cluster` | `7001`~`7006` (`127.0.0.1`만) | 마스터 3 + 복제본 3. `single`과 함께 켜지 않는다 |
-| `kafka` (브로커 1대) | `single` | `19092` (`127.0.0.1`만) | 메모리 한도 1024m. 평소 쓰는 구성 |
-| `kafka-1`~`kafka-3` (브로커 3대) | `cluster` | `19092`, `29092`, `39092` | `single`과 함께 켜지 않는다 |
+| `redis` (1대) | 없음(항상) | `6379` (`127.0.0.1`만) | AOF, 메모리 한도 512m, 비밀번호 없음. 평소 쓰는 구성 |
+| `redis-1`~`redis-6` (6대), `redis-cluster-init` | `docker-compose.cluster.yml` | `7001`~`7006` (`127.0.0.1`만) | 마스터 3 + 복제본 3. 겹치면 단일 `redis`는 꺼진다 |
+| `kafka` (브로커 1대) | 없음(항상) | `19092` (`127.0.0.1`만) | 메모리 한도 1024m. 평소 쓰는 구성 |
+| `kafka-1`~`kafka-3` (브로커 3대) | `docker-compose.cluster.yml` | `19092`, `29092`, `39092` | 겹치면 단일 `kafka`는 꺼진다 |
 | `prometheus`, `grafana`, `mysqld-exporter`, `cadvisor`, `kafka-exporter` | `monitoring` | `9090`, `3000` (`127.0.0.1`만) | 모니터링 |
 | `app` | `app` | `8080` (`APP_PORT`) | 앱까지 컨테이너로 실행 |
 
-**프로파일을 켜는 방법은 두 가지이고, 섞어 쓰면 안 됩니다.**
+프로파일은 명령줄의 `--profile`이나 `.env`의 `COMPOSE_PROFILES`(예: `COMPOSE_PROFILES=monitoring`)로 켭니다. `--profile`을 주면 `.env`의 `COMPOSE_PROFILES`는 무시됩니다. 어느 쪽이든 MySQL·Redis·Kafka는 함께 뜹니다.
 
-1. `.env`의 `COMPOSE_PROFILES`에 쉼표로 적는다(권장). 예: `COMPOSE_PROFILES=single,monitoring`. 그러면 `docker compose up -d`만 하면 됩니다.
-2. 명령줄에 `--profile`을 붙인다. 이때 **`.env`의 `COMPOSE_PROFILES`는 무시됩니다.** `.env`에 `single`이 있어도 `--profile monitoring`만 주면 Kafka는 빠집니다.
+클러스터 파일은 `-f`로 겹칩니다. 계속 쓸 거면 `.env`에 `COMPOSE_FILE=docker-compose.yml:docker-compose.cluster.yml`을 두면 `-f` 없이 같습니다(Windows는 `:` 대신 `;`).
 
-| 명령 | 뜨는 Kafka |
-|---|---|
-| `.env`에 `COMPOSE_PROFILES=single` 두고 `docker compose up -d` | `kafka`, `redis` |
-| `.env`에 `COMPOSE_PROFILES=single,monitoring` 두고 `docker compose up -d` | `kafka` + 모니터링 |
-| `docker compose --profile single --profile monitoring up -d` | `kafka` + 모니터링 |
-| `docker compose --profile monitoring up -d` | **없음.** `kafka-exporter`만 떠서 브로커에 붙지 못한다 |
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cluster.yml up -d   # MySQL + Kafka 3대 + Redis 6대
+```
 
 ### 처음 한 번만 준비
 
 1. Docker를 켭니다. Compose는 2.20 이상이어야 합니다(`docker compose version`). `depends_on`의 `required`를 쓰기 때문입니다.
-2. `cp .env.example .env`를 실행합니다. 이 파일에 `COMPOSE_PROFILES=single`이 들어 있어 Kafka(브로커 1대)까지 뜹니다. `.env`가 이미 있으면 이 줄이 있는지 확인합니다.
+2. `cp .env.example .env`를 실행합니다. `.env` 없이도 기본값으로 뜨지만, 포트나 비밀번호를 바꿀 때 이 파일에 적습니다.
 3. 앱을 실행할 때는 JWT 키(`keys/`)가 필요합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
 
 ### 상황별 실행
@@ -86,9 +82,10 @@ cp .env.example .env
 | 하고 싶은 것 | 방법 | 뜨는 것 |
 |---|---|---|
 | 평소 개발(앱은 IDE나 `bootRun`) | `docker compose up -d` 후 `./gradlew :monolith:bootRun` | mysql, redis, kafka |
-| 모니터링도 같이 | `.env`에 `COMPOSE_PROFILES=single,monitoring`을 적고 `docker compose up -d` | 위 + prometheus, grafana 등 |
-| 앱까지 컨테이너로 | `docker compose --profile single --profile app up -d --build` (JWT 키 필요) | 위 + app |
-| Kafka 브로커 3대, Redis 6대 | `.env`에 `COMPOSE_PROFILES=cluster`와 `REDIS_MODE=cluster`. 컨테이너 앱이면 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`도 | kafka-1~3, redis-1~6 |
+| 모니터링도 같이 | `docker compose --profile monitoring up -d` (또는 `.env`에 `COMPOSE_PROFILES=monitoring`) | 위 + prometheus, grafana 등 |
+| 앱까지 컨테이너로 | `docker compose --profile app up -d --build` (JWT 키 필요) | 위 + app |
+| 모듈 하나만 컨테이너로 | `docker compose up -d` 후 `docker compose -f <모듈>/compose.yml up -d --build` (6절 "모듈을 컨테이너로 실행") | 위 + 그 모듈 |
+| Kafka 브로커 3대, Redis 6대 | `docker compose down` 후 `docker compose -f docker-compose.yml -f docker-compose.cluster.yml up -d`. 내 PC에서 실행하는 앱은 `.env`에 `REDIS_MODE=cluster`도 | mysql, kafka-1~3, redis-1~6 |
 | 앱이 compose를 대신 켜게 | `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 적고 `bootRun` | mysql, redis, kafka |
 
 모니터링과 앱 컨테이너의 자세한 사용법은 아래 "로컬 모니터링", "앱까지 컨테이너(docker compose)로 실행"을 봅니다.
@@ -101,7 +98,7 @@ cp .env.example .env
 ```
 
 - `.env`에 `DOCKER_COMPOSE_ENABLED=true`를 넣으면 앱 실행 시 docker compose가 자동으로 켜지고, 앱을 종료하면 같이 꺼집니다.
-  이때 DB(mysql), Redis, Kafka(`.env`의 `COMPOSE_PROFILES`)만 기동하고 앱 컨테이너는 만들지 않습니다.
+  이때 DB(mysql), Redis, Kafka만 기동하고 앱 컨테이너는 만들지 않습니다.
 - Swagger UI: `http://localhost:8080/swagger-ui/index.html` (dev에서만 열림)
 - 현재는 로그인 없이 모든 요청을 허용합니다 (`config/SecurityConfig`). 인증을 구현하면 교체하세요.
 
@@ -116,7 +113,7 @@ docker compose exec kafka sh -c 'KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-to
 docker inspect -f '{{.Name}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' server-redis-1 server-kafka-1
 ```
 
-- 컨테이너 이름은 프로젝트 이름(`server`)을 따라 `server-<서비스>-1`입니다. `cluster`의 첫 브로커는 `server-kafka-1-1`입니다.
+- 컨테이너 이름은 프로젝트 이름(`server`)을 따라 `server-<서비스>-1`입니다. 클러스터의 첫 브로커는 `server-kafka-1-1`입니다.
 - 앱 설정으로 실제 Redis·Kafka에 붙는지는 `./gradlew :common:infraTest`로 확인합니다(아래 "인프라 연결 확인 테스트").
 
 ### 멈추기와 초기화
@@ -128,33 +125,32 @@ docker inspect -f '{{.Name}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}' 
 | Kafka·Redis·모니터링 데이터까지 삭제 | `docker compose down -v` | 도커 볼륨이 지워진다(토픽·메시지·AOF·지표). MySQL의 `data/mysql`은 그대로 |
 | MySQL까지 처음 상태로 | `docker compose down` 후 `rm -rf data/mysql` | 모두 삭제 |
 
-`stop`, `start`, `down`은 프로파일을 주지 않아도 이 프로젝트의 컨테이너 전체에 적용됩니다(프로파일이 있는 서비스 포함). 반대로 `up -d`는 켠 프로파일의 서비스만 올리고, 켜지 않은 프로파일의 컨테이너가 이미 떠 있어도 멈추지 않습니다. 그래서 `cluster`에서 `single`로 바꿀 때는 먼저 `docker compose down`으로 내립니다.
+`stop`, `start`, `down`은 프로파일을 주지 않아도 이 프로젝트의 컨테이너 전체에 적용됩니다(프로파일이 있는 서비스 포함). 반대로 `up -d`는 켠 서비스만 올리고, 꺼진 서비스의 컨테이너가 이미 떠 있어도 멈추지 않습니다. 그래서 단일 구성과 클러스터 사이를 바꿀 때는 먼저 `docker compose down`으로 내립니다. 클러스터 볼륨까지 지우려면 클러스터 파일을 겹친 채로 `down -v` 합니다(`-f docker-compose.yml -f docker-compose.cluster.yml down -v`).
 
 ### 문제가 생기면
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| `docker compose ps`에 `kafka`가 없다. 앱이 Kafka에 붙지 못한다 | Kafka 프로파일이 켜지지 않았다. `.env`에 `COMPOSE_PROFILES`가 없거나, `--profile`을 줘서 `.env` 값이 무시됐다 | `.env`에 `COMPOSE_PROFILES=single`을 넣거나 명령에 `--profile single`을 붙인다 |
-| `port is already allocated`(`6379`, `19092`, `3306`) | 다른 프로젝트의 컨테이너가 같은 포트를 쓴다. `single`과 `cluster`를 함께 켜도 `19092`가 겹친다 | 다른 쪽을 내리거나 `.env`의 `REDIS_PORT`, `KAFKA_1_PORT`, `MYSQL_PORT`를 바꾼다. Kafka 포트를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꾼다 |
+| `docker compose ps`에 `kafka`·`redis`가 없다 | `.env`의 `COMPOSE_FILE`에 클러스터 파일이 들어 있어 단일 구성이 꺼졌다 | 단일 구성을 쓰려면 `COMPOSE_FILE` 줄을 지우고 `docker compose down` 후 다시 올린다 |
+| `port is already allocated`(`6379`, `19092`, `3306`) | 다른 프로젝트의 컨테이너가 같은 포트를 쓴다. 단일 구성이 떠 있는 채로 클러스터 파일을 겹쳐 올려도 `19092`가 겹친다 | 다른 쪽을 내리거나 `.env`의 `REDIS_PORT`, `KAFKA_1_PORT`, `MYSQL_PORT`를 바꾼다. Kafka 포트를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꾼다 |
 | Redis나 Kafka가 갑자기 종료됐다(`Exited (137)`) | 메모리 한도를 넘어 OOM kill됐다. swap을 쓰지 않아 한도에서 바로 죽는다 | `docker inspect -f '{{.State.OOMKilled}}' server-redis-1`이 `true`면 한도 초과다 |
-| `single`↔`cluster`를 바꾼 뒤 컨테이너 앱이 브로커를 못 찾는다 | 앱이 `kafka:9092`(`single`의 기본 주소)로 붙는데 `cluster`에는 없다 | `cluster`면 `.env`에 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣는다 |
 | Kafka가 뜨지 않고 다시 시작을 반복한다 | `CLUSTER_ID`나 `KAFKA_VERSION`을 바꿔 기존 볼륨과 맞지 않는다 | `docker compose down -v`로 볼륨까지 지우고 다시 시작한다(메시지가 사라진다) |
 | compose가 `required`를 모르는 속성이라고 한다 | Compose가 2.20보다 오래됐다 | Docker를 업데이트한다 |
 
 ### 로컬 Kafka (#318)
 
-Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정하고(`.env.example`에는 `single`), 둘 중 하나만 켭니다. 운영(`deploy/compose.prod.yml`)과 같은 두 구성이 있습니다.
+운영(`deploy/compose.prod.yml`의 `single`·`cluster` 프로파일)과 같은 두 구성이 있습니다(#530, #783).
 
-| 프로파일 | 구성 | 메모리 | 쓰는 때 |
-|---|---|---|---|
-| `single` (기본) | 브로커 1대(`kafka`), 복제·최소 동기화 1 | `mem_limit` 1024m, swap 금지 | 평소. 인프라 자원 한계로 운영도 이 구성이다 |
-| `cluster` | 브로커 3대(`kafka-1`~`kafka-3`), 복제 3·최소 동기화 2 | 한도 없음(Docker 메모리 약 2GB) | 인프라가 확장돼 3대를 쓸 때 다시 쓰려고 설정을 그대로 남겨 둔 구성 |
+| 구성 | 띄우는 방법 | 브로커 | 메모리 | 쓰는 때 |
+|---|---|---|---|---|
+| 단일 (기본) | `docker compose up -d` | 1대(`kafka`), 복제·최소 동기화 1 | `mem_limit` 1024m, swap 금지 | 평소. 인프라 자원 한계로 운영도 이 구성이다 |
+| 클러스터 | `docker-compose.cluster.yml`를 겹친다 | 3대(`kafka-1`~`kafka-3`), 복제 3·최소 동기화 2 | 한도 없음(Docker 메모리 약 2GB) | 인프라가 확장돼 3대를 쓸 때 다시 쓰려고 설정을 그대로 남겨 둔 구성 |
 
-- 내 PC에서는 `single`이면 `localhost:19092`, `cluster`면 `19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서). 두 프로파일은 같은 `KAFKA_1_PORT`를 쓰므로 함께 켜면 포트가 겹쳐 시작에 실패합니다.
-- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값의 첫 주소(`localhost:19092`)가 `single`의 브로커라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
-- 상태는 `docker compose ps`에서 `healthy`로 확인합니다. `cluster`는 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다.
-- `cluster`에서는 메시지가 3대에 복사되고 2대 이상에 저장돼야 발행 성공이라, 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다. `single`은 브로커가 멈추면 Kafka 전체가 멈춥니다.
-- `single`에서 `cluster`로 바꾸려면(또는 반대로) 켜 둔 쪽을 먼저 내립니다(`docker compose down`). 볼륨이 서로 달라(`kafka-data`, `kafka-N-data`) 한쪽의 메시지는 다른 쪽에서 보이지 않습니다.
+- 내 PC에서는 단일이면 `localhost:19092`, 클러스터면 `19092`, `29092`, `39092`로 붙습니다. `127.0.0.1`에만 열려 있어 같은 네트워크의 다른 기기는 붙지 못합니다(인증 없는 PLAINTEXT라서). 두 구성은 같은 `KAFKA_1_PORT`를 쓰므로, 단일 구성이 떠 있는 채로 클러스터를 올리면 포트가 겹쳐 시작에 실패합니다.
+- 앱의 접속 주소는 `monolith`의 `application.yaml`에 있는 `KAFKA_BOOTSTRAP_SERVERS`이고, 기본값의 첫 주소(`localhost:19092`)가 단일 브로커라 `.env`가 없어도 붙습니다. `.env`에서 `KAFKA_*_PORT`를 바꾸면 `KAFKA_BOOTSTRAP_SERVERS`도 같이 바꿉니다.
+- 상태는 `docker compose ps`에서 `healthy`로 확인합니다. 클러스터는 3대 중 2대가 모여야 시작하므로 3대가 함께 뜹니다.
+- 클러스터에서는 메시지가 3대에 복사되고 2대 이상에 저장돼야 발행 성공이라, 브로커 1대를 멈춰도(`docker compose stop kafka-2`) 발행·수신이 계속되고 다시 켜면(`docker compose start kafka-2`) 자동으로 합류합니다. 단일 구성은 브로커가 멈추면 Kafka 전체가 멈춥니다.
+- 단일에서 클러스터로 바꾸려면(또는 반대로) 켜 둔 쪽을 먼저 내립니다(`docker compose down`). 볼륨이 서로 달라(`kafka-data`, `kafka-N-data`) 한쪽의 메시지는 다른 쪽에서 보이지 않습니다.
 - Kafka만 처음 상태로 되돌리려면 `docker compose down -v`로 볼륨까지 지웁니다(토픽·메시지가 모두 사라지고 새 클러스터로 시작합니다).
   `docker-compose.yml`의 `CLUSTER_ID`를 바꿨거나 `KAFKA_VERSION`을 낮춰 브로커가 뜨지 않을 때도 이렇게 초기화합니다.
 - `DOCKER_COMPOSE_ENABLED=true`로 앱이 compose를 띄울 때도 Kafka는 함께 뜹니다. Spring Boot는 Kafka 컨테이너로 접속 정보를 자동으로 만들지 않으므로, 주소는 항상 `KAFKA_BOOTSTRAP_SERVERS`로 정해집니다.
@@ -169,10 +165,10 @@ Kafka는 프로파일로 고릅니다(#530). `.env`의 `COMPOSE_PROFILES`로 정
 
 ### 로컬 모니터링 (#374)
 
-앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. **`--profile`을 주면 `.env`의 `COMPOSE_PROFILES`가 대신 무시되므로**, Kafka 프로파일(`single`)도 함께 적어야 Kafka가 같이 뜹니다. `.env`에 `COMPOSE_PROFILES=single,monitoring`으로 적어 두면 `docker compose up -d`만으로 같습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
+앱 지표(Prometheus), MySQL 지표(mysqld-exporter), 컨테이너 지표(cAdvisor)를 Grafana로 봅니다. `monitoring` 프로파일이라 기본 `docker compose up -d`에는 뜨지 않습니다. `.env`에 `COMPOSE_PROFILES=monitoring`으로 적어 두면 `docker compose up -d`만으로 같습니다. 운영(`docs/DEPLOY.md` 11절)과 같은 설정 파일(`deploy/monitoring/`)을 씁니다.
 
 ```bash
-docker compose --profile single --profile monitoring up -d   # 기본 서비스와 Kafka에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
+docker compose --profile monitoring up -d   # MySQL·Redis·Kafka에 Prometheus, Grafana, mysqld-exporter, cAdvisor를 더해 실행
 deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를 바꿀 때도). 로컬은 아래 COMPOSE_FILE을 붙인다
 ```
 
@@ -192,12 +188,12 @@ deploy/monitoring/create-exporter-user.sh       # 처음 한 번(비밀번호를
 compose로 띄운 실제 Redis·Kafka에 앱과 같은 접속 설정으로 붙는지 확인합니다. `common`의 공통 기반(`common-redis.yaml`, Kafka 접속 환경변수)을 확인하는 테스트라 `common`에 있습니다(`com.ok.common.config`의 `RedisInfraConnectionTest`, `KafkaInfraConnectionTest`). Testcontainers가 아니라 떠 있는 컨테이너를 쓰므로 `@Tag("infraTest")`로 표시해 기본 `test`(CI 포함)에서는 빠지고, 아래 태스크로만 돕니다.
 
 ```bash
-docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single 이 있어야 redis와 kafka가 뜬다
+docker compose up -d --wait redis kafka
 ./gradlew :common:infraTest
 ```
 
-- Redis(`single` 기준, `REDIS_MODE`를 정하지 않은 상태): PING, 값 저장·조회, AOF 켜짐(`appendonly yes`, `everysec`), `noeviction`, `maxmemory`가 컨테이너 한도(512m)보다 작은지
-- Kafka: 브로커 연결과 클러스터 조회, `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(`single`과 `cluster` 모두 통과). 연결만 확인하므로 값은 문자열로 보내고, 앱의 JSON 직렬화는 따로 검증한다
+- Redis(단일 구성, `REDIS_MODE`를 정하지 않은 상태): PING, 값 저장·조회, AOF 켜짐(`appendonly yes`, `everysec`), `noeviction`, `maxmemory`가 컨테이너 한도(512m)보다 작은지
+- Kafka: 브로커 연결과 클러스터 조회, `KafkaTemplate`으로 발행한 메시지를 일반 컨슈머가 받는지(단일과 클러스터 모두 통과). 연결만 확인하므로 값은 문자열로 보내고, 앱의 JSON 직렬화는 따로 검증한다
 - 접속 주소는 앱과 같이 `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS` 환경변수로 바꿉니다. 인프라가 꺼져 있으면 실패합니다(Redis는 2초, Kafka는 10초 안에).
 
 ### JPA 지표 (#509)
@@ -224,20 +220,20 @@ docker compose up -d --wait redis kafka     # .env에 COMPOSE_PROFILES=single �
 `monitoring` 프로파일로 띄우면 Kafka 지표 수집 컨테이너(`kafka-exporter`)가 함께 뜹니다. 브로커 수, 파티션 복제 상태, 컨슈머 그룹별 랙(아직 처리하지 않은 메시지 수)을 Prometheus 형식 숫자로 내놓습니다.
 
 ```bash
-docker compose --profile single --profile monitoring up -d
+docker compose --profile monitoring up -d
 # 지표 보기. 포트를 열지 않으므로 컨테이너 안에서 조회한다
 # Kafka 내부 토픽(__consumer_offsets)은 파티션이 50개라 줄이 많아 뺀다
 docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^kafka_brokers|under_replicated|consumergroup_lag_sum' | grep -v __consumer_offsets
 ```
 
-- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 켜진 프로파일(`single`이면 브로커 1대, `cluster`면 3대)이 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
-- 기본은 `single`의 `kafka:9092`를 봅니다. `cluster`로 쓰면 `.env`에 `KAFKA_EXPORTER_SERVER_1=kafka-1:9092`, `KAFKA_EXPORTER_SERVER_2=kafka-2:9092`, `KAFKA_EXPORTER_SERVER_3=kafka-3:9092`를 넣습니다.
+- 평소 개발(`docker compose up -d`)에는 뜨지 않습니다. 브로커(단일이면 1대, 클러스터면 3대)가 `healthy`가 된 뒤에 시작하고, exporter도 `docker compose ps`에서 `healthy`로 확인합니다.
+- 기본은 단일 브로커 `kafka:9092`를 봅니다. `docker-compose.cluster.yml`를 겹치면 그 파일이 브로커 3대로 바꿉니다.
 - 확인 명령과 헬스체크는 이미지 안의 `wget`(BusyBox)을 씁니다. `KAFKA_EXPORTER_VERSION`을 올리면 위 명령이 그대로 되는지 다시 확인합니다.
 - 주로 보는 값
-  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `1`(`single`) 또는 `3`(`cluster`)
+  - `kafka_brokers`: 지금 붙어 있는 브로커 수. 평소 `1`(단일) 또는 `3`(클러스터)
   - `kafka_topic_partition_under_replicated_partition`: 복사본이 모자란 파티션이면 `1`. 평소 모두 `0`
   - `kafka_consumergroup_lag_sum`: 그룹·토픽별 랙. 계속 커지면 받는 쪽이 따라가지 못하는 것
-- `cluster`에서 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다. `single`은 복사본이 없어 언더 복제가 항상 `0`입니다.
+- 클러스터에서 브로커 1대를 멈추면(`docker compose stop kafka-2`) `kafka_brokers`가 `2`, 언더 복제가 `1`로 바뀌고, 다시 켜면(`docker compose start kafka-2`) 곧 `3`, `0`으로 돌아옵니다. 단일 구성은 복사본이 없어 언더 복제가 항상 `0`입니다.
 - 컨슈머 그룹이 하나도 없으면(앱을 띄우기 전) 랙 값은 나오지 않습니다.
 - 띄운 직후 첫 조회에서 `Cannot get consumer group: broker not connected` 로그가 나올 수 있습니다. 브로커 연결이 준비되기 전이라 다음 조회부터는 나오지 않습니다.
 - 그룹 오프셋은 조회만 하고 컨슈머 그룹에 가입하지 않으므로 앱 컨슈머에 영향을 주지 않습니다.
@@ -245,7 +241,7 @@ docker compose exec kafka-exporter wget -qO- localhost:9308/metrics | grep -E '^
 
 ### 로컬 Redis 클러스터 (#366)
 
-`cluster` 프로파일(`.env`에 `COMPOSE_PROFILES=cluster`와 `REDIS_MODE=cluster`)일 때의 구성입니다. `single`(기본)은 Redis 1대라 이 절이 해당하지 않습니다. `docker compose up -d`가 Redis 노드 6대(`redis-1`~`redis-6`)를 띄우고, `redis-cluster-init`이 마스터 3 + 복제본 3으로 묶은 뒤 끝납니다. 노드가 모두 `cluster_state:ok`(healthy)가 되면 앱이 시작합니다. Docker 메모리는 Redis에 약 0.75GB를 더 잡아 둡니다(노드당 `mem_limit` 128m).
+`docker-compose.cluster.yml`를 겹쳐 띄울 때의 구성입니다(내 PC에서 실행하는 앱은 `.env`에 `REDIS_MODE=cluster`). 기본 단일 구성은 Redis 1대라 이 절이 해당하지 않습니다. `docker compose -f docker-compose.yml -f docker-compose.cluster.yml up -d`가 Redis 노드 6대(`redis-1`~`redis-6`)를 띄우고, `redis-cluster-init`이 마스터 3 + 복제본 3으로 묶은 뒤 끝납니다. 노드가 모두 `cluster_state:ok`(healthy)가 되면 앱이 시작합니다. Docker 메모리는 Redis에 약 0.75GB를 더 잡아 둡니다(노드당 `mem_limit` 128m).
 
 ```bash
 docker compose exec redis-1 redis-cli -p 7001 cluster info | grep cluster_state   # cluster_state:ok
@@ -255,7 +251,7 @@ redis-cli -c -h redis-1.localhost -p 7001 set k v                               
 
 - **접속 주소:** 노드가 클라이언트에게 알려 주는 주소로 앱이 다시 접속합니다. 그래서 노드 이름은 `redis-N.localhost`, 포트는 `7001`~`7006`으로 고정입니다(바꿀 수 없음). 내 PC에서는 `*.localhost`가 `127.0.0.1`로 풀리고, 컨테이너 안에서는 compose 네트워크 별칭으로 풀려 두 곳 모두 같은 값(`REDIS_CLUSTER_NODES`)으로 접속하도록 만들었습니다(컨테이너 안에서 `redis-cli`로 접속되는 것은 확인했습니다. 앱 컨테이너를 `--profile app`으로 처음 띄울 때 `/actuator/health`가 `UP`인지 확인합니다). `*.localhost`가 풀리지 않는 환경(일부 Linux·Windows)은 hosts 파일에 `127.0.0.1 redis-1.localhost` ~ `redis-6.localhost`를 추가합니다.
 - **장애 조치 해 보기:** `cluster nodes`에서 마스터 하나를 찾아 `docker compose stop redis-N` 하면 몇 초 안에 그 복제본이 마스터가 됩니다(`cluster_state:ok` 유지). 다시 `docker compose start redis-N` 하면 복제본으로 합류하고, 노드 ID는 그대로입니다(`nodes.conf`가 볼륨에 있음). 단, **마스터 2대를 동시에 죽이면** 마스터 과반이 없어 자동 승격이 안 되고 클러스터 전체가 `CLUSTERDOWN`이 됩니다. 복구 방법은 `docs/DEPLOY.md`의 Redis 절을 봅니다.
-- **처음부터 다시:** 노드 볼륨에는 노드 ID와 데이터가 들어 있습니다. 노드 일부의 볼륨만 지우면 `redis-cluster-init`이 클러스터를 만들지 않고 실패합니다(기존 데이터 보호). 6대를 모두 지우려면 `docker compose down -v`를 합니다(Kafka 볼륨도 함께 지워짐).
+- **처음부터 다시:** 노드 볼륨에는 노드 ID와 데이터가 들어 있습니다. 노드 일부의 볼륨만 지우면 `redis-cluster-init`이 클러스터를 만들지 않고 실패합니다(기존 데이터 보호). 6대를 모두 지우려면 클러스터 파일을 겹친 채로 `down -v`를 합니다(Kafka 볼륨도 함께 지워짐).
 - 로컬 Redis는 비밀번호가 없고, 호스트 포트는 `127.0.0.1`에만 엽니다.
 
 **클러스터에서 코드를 쓸 때의 규칙** (캐시·락 같은 사용처를 만드는 이슈에서 지킵니다)
@@ -267,18 +263,18 @@ redis-cli -c -h redis-1.localhost -p 7001 set k v                               
 
 ### 앱까지 컨테이너(docker compose)로 실행
 
-`docker compose up -d`는 DB, Redis, Kafka(`.env`의 `COMPOSE_PROFILES`)만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다. 이때도 `--profile`을 주면 `.env`의 `COMPOSE_PROFILES`가 무시되므로 `single`(또는 `cluster`)을 함께 적습니다.
+`docker compose up -d`는 DB, Redis, Kafka만 띄웁니다. 앱을 컨테이너로 같이 실행하려면 `app` 프로파일을 지정합니다.
 
 먼저 JWT 키(`keys/`)를 만들어야 합니다. 앱이 기동할 때 키 파일을 읽는데, 이미지에는 키가 없고 compose가 저장소 루트의 `keys/`를 컨테이너의 `/app/keys`에 읽기 전용으로 연결합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"를 봅니다.
 
 ```bash
-docker compose --profile single --profile app up -d --build   # 이미지 빌드 후 DB, Redis, Kafka, 앱 실행
+docker compose --profile app up -d --build   # 이미지 빌드 후 DB, Redis, Kafka, 앱 실행
 docker compose --profile app logs -f app     # 앱 로그
 docker compose down                          # 종료 (data/mysql 은 유지됨)
 ```
 
-- DB, 켜진 프로파일의 Redis(`single`이면 1대, `cluster`면 6대와 `redis-cluster-init`)와 Kafka(`single`이면 1대, `cluster`면 3대)가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 Redis 주소를 compose가 정해 덮어씁니다. 기본(`single`)은 `REDIS_HOST=redis`, `REDIS_PORT=6379`이고(`.env`의 `REDIS_PORT`는 호스트 포트), `cluster`면 `.env`에 `REDIS_MODE=cluster`를 두고 노드 목록(`redis-N.localhost:700N`)은 compose가 고정합니다.
-- 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름으로 덮어씁니다. 기본은 `kafka:9092`(`single`)이고, `cluster`면 `.env`에 `KAFKA_INTERNAL_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092`를 넣습니다. `.env`의 `KAFKA_BOOTSTRAP_SERVERS`(`localhost:...`)는 컨테이너 안에서 앱 자신을 가리키기 때문에 쓰지 않습니다.
+- DB, Redis(단일이면 1대, 클러스터면 6대와 `redis-cluster-init`), Kafka(단일이면 1대, 클러스터면 3대)가 healthy 상태가 된 뒤에 앱이 시작됩니다. 앱 컨테이너는 Redis 주소를 compose가 정해 덮어씁니다. 단일은 `REDIS_MODE=single`, `REDIS_HOST=redis`, `REDIS_PORT=6379`이고(`.env`의 `REDIS_PORT`는 호스트 포트), 클러스터는 `docker-compose.cluster.yml`가 `REDIS_MODE=cluster`와 노드 목록(`redis-N.localhost:700N`)으로 바꿉니다.
+- 컨테이너 안의 앱은 `KAFKA_BOOTSTRAP_SERVERS`를 compose 네트워크의 브로커 이름으로 덮어씁니다. 단일은 `kafka:9092`이고, 클러스터는 `docker-compose.cluster.yml`가 `kafka-1:9092,kafka-2:9092,kafka-3:9092`로 바꿉니다. `.env`의 `KAFKA_BOOTSTRAP_SERVERS`(`localhost:...`)는 컨테이너 안에서 앱 자신을 가리키기 때문에 쓰지 않습니다.
 - Kafka 브로커는 `kafka-net`, MySQL·Redis는 `db-net`에 있고 앱 컨테이너만 두 네트워크에 함께 붙습니다.
 - 앱의 DB 접속 정보(`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`)는 `.env`의 `MYSQL_*` 값에서 자동으로 만들어져 DB 설정과 항상 같습니다.
 - `.env`의 나머지 값(`BATCH_JOB_ENABLED`, `APP_TIME_ZONE` 등)도 컨테이너에 전달됩니다. `.env`가 없으면 기본값을 씁니다.
@@ -310,7 +306,7 @@ docker compose down                          # 종료 (data/mysql 은 유지됨)
 | `MYSQL_VERSION` | MySQL 이미지 버전 (docker compose, 통합 테스트 공통) | `9.4` |
 | `MYSQL_PORT` | 호스트에 열 DB 포트 | `3306` |
 | `REDIS_VERSION` | Redis 이미지 버전 (docker compose, 통합 테스트 공통) | `8.10` |
-| `REDIS_MODE` | 앱이 Redis에 붙는 방식. `single`(기본, 단일 Redis)이나 `cluster`. `cluster` 프로파일이면 `cluster`로 둔다(compose·운영은 deploy.sh가 정함) | `single` |
+| `REDIS_MODE` | 앱이 Redis에 붙는 방식. `single`(기본, 단일 Redis)이나 `cluster`. 클러스터로 띄웠으면 내 PC에서 실행하는 앱은 `cluster`로 둔다(앱 컨테이너는 compose 파일이, 운영은 deploy.sh가 정함) | `single` |
 | `REDIS_HOST`, `REDIS_PORT` | 단일 Redis 주소(`REDIS_MODE`가 `single`일 때). `REDIS_PORT`는 compose의 호스트 포트이기도 하다 | `localhost`, `6379` |
 | `REDIS_CLUSTER_NODES` | 앱이 접속할 Redis 클러스터 노드 목록(`REDIS_MODE=cluster`일 때, 쉼표 구분). 접속 후 나머지 노드와 역할은 앱이 스스로 읽는다. 노드 포트(7001~7006)는 노드가 알리는 주소와 같아야 해서 바꿀 수 없음(로컬 Redis 클러스터 절) | `redis-1.localhost:7001,...,redis-6.localhost:7006` |
 | `REDIS_PASSWORD` | 앱의 Redis 비밀번호. 비어 있으면 없이 접속(로컬). 운영은 필수 | 빈 값 |
@@ -329,11 +325,10 @@ docker compose down                          # 종료 (data/mysql 은 유지됨)
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | 앱의 DB 접속 정보 (직접 지정할 때) | 로컬 MySQL 기본값 |
 | `KAFKA_VERSION` | Kafka 이미지 버전 (docker compose). 앱의 `kafka-clients` 버전과 같은 숫자 | `4.2.1` |
 | `KAFKA_EXPORTER_VERSION` | Kafka 지표 수집 이미지 버전 (`monitoring` 프로파일) | `v1.11.0` |
-| `COMPOSE_PROFILES` | 켤 compose 프로파일. Kafka와 Redis는 `single`(각 1대) 또는 `cluster`(브로커 3대, Redis 6대) 중 하나만 (#530). 모니터링은 `monitoring`을 쉼표로 더한다 | 없음(`.env.example`은 `single`). 비우면 Kafka·Redis가 뜨지 않음 |
-| `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림). `single`은 `KAFKA_1_PORT`만 씀 | `19092` / `29092` / `39092` |
-| `KAFKA_BOOTSTRAP_SERVERS` | 내 PC에서 실행하는 앱이 접속할 브로커. `single`이면 첫 주소만 맞으면 됨 | `localhost:19092,localhost:29092,localhost:39092` |
-| `KAFKA_INTERNAL_BOOTSTRAP_SERVERS` | 컨테이너로 띄운 앱(`app` 프로파일)이 접속할 브로커. `cluster`일 때만 지정 | `kafka:9092` |
-| `KAFKA_EXPORTER_SERVER_1` ~ `_3` | Kafka 지표 수집기가 볼 브로커. `cluster`일 때만 지정 | `kafka:9092` |
+| `COMPOSE_PROFILES` | 켤 compose 프로파일(`monitoring`, `app`, 쉼표 구분). MySQL·Redis·Kafka는 프로파일 없이 뜬다 (#783) | 없음 |
+| `COMPOSE_FILE` | 겹칠 compose 파일. 클러스터(브로커 3대, Redis 6대)로 띄우려면 `docker-compose.yml:docker-compose.cluster.yml` (Windows는 `;`로 구분) | 없음(`docker-compose.yml`만) |
+| `KAFKA_1_PORT` / `KAFKA_2_PORT` / `KAFKA_3_PORT` | 내 PC에서 브로커에 붙는 포트 (`127.0.0.1`에만 열림). 단일 구성은 `KAFKA_1_PORT`만 씀 | `19092` / `29092` / `39092` |
+| `KAFKA_BOOTSTRAP_SERVERS` | 내 PC에서 실행하는 앱이 접속할 브로커. 단일 구성이면 첫 주소만 맞으면 됨 | `localhost:19092,localhost:29092,localhost:39092` |
 | `KAFKA_CONSUMER_GROUP_ID` | 컨슈머 그룹 ID. 같은 그룹끼리는 메시지를 나눠 받고 그룹이 다르면 각자 모두 받는다 | 앱 이름(`spring.application.name`, monolith는 `paldo-gotgan`) |
 
 ### 새 설정값을 환경변수로 추가하는 방법
@@ -519,7 +514,36 @@ Boot의 Flyway 자동 설정은 Flyway 빈이 하나라는 전제라서, 스키�
 - 모듈 계정은 자기 스키마에만 권한을 갖습니다(`member` 계정은 `paldogotgan_delivery`를 읽을 수 없습니다). `./infra/mysql/sync-module-users.sh --init`이 `<모듈>/.env.example`에서 `<모듈>/.env`를 만들고(비밀번호는 무작위) MySQL에 같은 계정을 만듭니다. 이미 떠 있는 DB에도 쓸 수 있고 여러 번 실행해도 됩니다. `<모듈>/.env`가 없으면 공용 계정(`myuser`)으로 접속하는 기존 방식이 그대로 동작합니다. `monolith`는 모듈 계정을 쓰지 않고 공용 계정(루트 `.env`의 `MYSQL_*`)으로 모든 스키마에 접속합니다.
 - 단독 실행한 앱은 다른 모듈이 없어 모듈 간 이벤트 연동과 `/internal/**` 호출은 동작하지 않습니다. DB의 모듈 스키마는 [로컬 DB를 이전하기](#로컬-db를-이전하기)를 거치거나 새 볼륨이어야 만들어져 있습니다.
 - 단독 실행한 모듈 스키마와 monolith는 같은 DB를 번갈아 써도 됩니다. 단독 실행은 `common` 마이그레이션(`event_publication`)을 같은 스키마의 별도 이력 테이블(`flyway_schema_history_common`)에 적용하므로 모듈 이력에는 섞이지 않습니다. 단독 실행이 common 행을 모듈 이력(`flyway_schema_history`)에 함께 기록하던 초기 개발 빌드로 만든 로컬 DB는 monolith가 `Detected applied migration not resolved locally: 202610081120`으로 멈춥니다. 모듈 스키마마다 `DELETE FROM paldogotgan_<모듈>.flyway_schema_history WHERE version = '202610081120';`로 그 행을 지우거나 볼륨을 초기화하세요(운영에는 해당 없음).
+- 모듈을 컨테이너로 띄우려면 `<모듈>/compose.yml`을 씁니다(#783). 아래 "모듈을 컨테이너로 실행"을 봅니다.
 - 모듈의 테스트도 같은 프로파일로 돌고 접속 DB가 자기 모듈 스키마입니다(컨벤션 플러그인이 지정). 공용 테스트 지원(`AbstractIntegrationTest`, Testcontainers, 토큰 발급 등)은 `common`의 테스트 소스를 `testSupportElements` 구성으로 노출해 쓰며, 다른 모듈의 테스트 소스는 가져오지 않습니다. `java-test-fixtures`(jar) 대신 test 소스셋의 classes 디렉터리를 노출하는 이유는, Spring Modulith가 jar 안의 `com.ok.testsupport`를 도메인 모듈로 인식해 구조·모듈 테스트가 깨지기 때문입니다. 모듈에서는 `testImplementation(project(path = ":common", configuration = "testSupportElements"))`로 가져옵니다.
+
+### 모듈을 컨테이너로 실행 (#783)
+
+모듈마다 `<모듈>/compose.yml`이 있어 모듈 하나를 컨테이너로 띄웁니다. MySQL·Redis·Kafka는 루트 `docker-compose.yml`이 띄운 것을 같이 쓰므로 루트를 먼저 올립니다. 명령은 저장소 루트에서 실행합니다.
+
+```bash
+docker compose up -d                                       # MySQL·Redis·Kafka
+docker compose -f delivery/compose.yml up -d --build       # delivery 이미지 빌드 후 실행 (포트 8086)
+docker compose -f delivery/compose.yml logs -f             # 로그
+docker compose -f delivery/compose.yml down                # 종료
+```
+
+| 모듈 | 포트 | 모듈 | 포트 |
+|---|---|---|---|
+| `media` | `8081` | `product` | `8085` |
+| `member` | `8082` | `delivery` | `8086` |
+| `wallet` | `8083` | `payout` | `8087` |
+| `order` | `8084` | `refund` | `8088` |
+
+- 이미지는 루트 `Dockerfile` 하나로 만들고 빌드 인자 `MODULE`로 모듈을 고릅니다(기본 `monolith`). 이미지 이름은 `paldo-gotgan-<모듈>:local`, 프로젝트 이름은 `server-<모듈>`이라 모듈끼리, 루트 프로젝트(`server`)와 컨테이너가 섞이지 않습니다.
+- 모듈 파일이 공통으로 쓰는 설정(접속 주소, JWT 키 연결, healthcheck)은 `docker-compose.module.yml`에 있고 모듈 파일이 `extends`로 가져옵니다. 모듈 파일에는 빌드할 모듈, 포트, 모듈 `.env`만 둡니다.
+- 모듈 컨테이너 한 개당 메모리를 512m로 제한하고(swap 없음), 힙 상한은 그 35%(약 180m)입니다. 힙 밖 메모리(메타스페이스 등)가 약 290MB라 힙을 더 키우면 기동 중 OOM kill됩니다. 8개를 모두 띄우면 약 4GB가 들므로 루트 인프라까지 합쳐 Docker 메모리가 모자라면 필요한 모듈만 띄웁니다.
+- 환경 값은 루트 `.env`, `<모듈>/.env`(모듈 DB 계정) 순서로 읽어 뒤의 값이 이깁니다. DB·Redis·Kafka 주소는 compose 네트워크 이름(`mysql`, `redis`, `kafka:9092`)으로 덮어씁니다. `.env`의 `localhost`는 컨테이너 안에서 자기 자신을 가리키기 때문입니다.
+- 루트 프로젝트와 다른 프로젝트라 `depends_on`을 걸 수 없습니다. 루트를 올리지 않으면 `network db-net declared as external, but could not be found`로 시작에 실패하고, 루트가 아직 healthy가 아니면 모듈이 기동 중 DB 연결에 실패해 healthcheck가 `unhealthy`가 됩니다. 이때는 루트가 healthy가 된 뒤 다시 `up -d` 합니다.
+- 상태는 `docker compose -f <모듈>/compose.yml ps`의 `healthy`로 봅니다. 서비스 포트의 `/actuator/health`가 `UP`인지 확인합니다.
+- `keys/`(JWT 키)와 `<모듈>/.env`가 있어야 합니다. 만드는 방법은 [8절 키 관리와 교체](#키-관리와-교체)의 "로컬 키 만들기"와 [스키마·계정 생성](#스키마계정-생성)을 봅니다.
+- 모듈 하나만 띄우면 단독 실행과 같이 다른 모듈과의 `/internal/**` 호출은 동작하지 않습니다. 같은 모듈을 `bootRun`으로 함께 실행하면 포트가 겹칩니다.
+- 운영 배포의 모듈별 컨테이너는 #775에서 정합니다. 이 파일들은 로컬 확인용입니다.
 
 ### 새 모듈 만들기
 
