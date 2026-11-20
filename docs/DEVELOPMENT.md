@@ -821,7 +821,7 @@ com.ok.wallet
 
 ### member 모듈 구조(헥사고날)
 
-`member`는 모듈별 서버 배포와 Kafka 연동에 대비해(#475) 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮겼습니다(#476~#479). 진입점은 유스케이스 포트만, 서비스는 출력 포트만 알고, 하위 도메인 사이 호출은 출력 어댑터에 모읍니다.
+`member`는 모듈별 서버 배포와 Kafka 연동에 대비해(#475) 하위 도메인(`seller`, `member`, `auth`)을 하나씩 헥사고날 구조로 옮겼습니다(#476~#479). 관심상품(`wish`, #817)은 처음부터 같은 구조로 만들었습니다. 진입점은 유스케이스 포트만, 서비스는 출력 포트만 알고, 하위 도메인 사이 호출은 출력 어댑터에 모읍니다.
 
 ```
 com.ok.member.seller
@@ -906,6 +906,24 @@ com.ok.member.auth
 - 통합 테스트는 데이터를 준비·정리할 때 포트에 없는 메서드(`deleteAll` 등)를 쓰므로 `*JpaRepository`를 주입받습니다.
 - 이 구조는 `member`의 `ArchitectureTest`가 하위 도메인 목록(`SUBDOMAINS`)마다 같은 규칙으로 검사합니다(레이어 방향, 입력 어댑터 제한, 입력 포트의 도메인 의존 금지, application의 영속·토큰 서명 기술 의존 금지, 포트 규칙, 이름·위치, 다른 하위 도메인은 `adapter.out`에서 `port.in`과 `dto`만 사용, 잠금 조회의 `@Lock` 재선언, `LoginFacade`의 트랜잭션·출력 포트 의존 금지). 모듈 최상위 패키지(`com.ok.member`)는 다른 모듈에 공개하는 클래스 자리라 유스케이스를 쓸 수 있습니다. 이벤트 발행 구현체 규칙은 하위 도메인 목록 대신 모듈 전체에 걸어, 이벤트를 발행하지 않는 하위 도메인(`auth`)도 발행을 시작하면 따로 등록하지 않아도 검사됩니다.
 - 새 하위 도메인을 만들면 `SUBDOMAINS`에 더합니다. 목록 밖 패키지는 위 규칙이 검사하지 않으므로, 하위 도메인·모듈 최상위·`config` 밖에 클래스가 생기면 `ArchitectureTest`가 실패합니다.
+
+`wish` 하위 도메인(관심상품, #817)은 다른 하위 도메인을 부르지 않고 product도 부르지 않습니다. 상품 ID만 저장하고, 목록의 상품 카드는 프론트가 상품 카드 여러 개 조회 API(#816)로 붙입니다.
+
+```
+com.ok.member.wish
+├── domain/               MemberProductWish (회원·상품 쌍마다 한 줄, 해제는 deleted_at)
+├── application/
+│   ├── port/in/          WishUseCase (등록·해제·목록)
+│   ├── port/out/         MemberProductWishRepository
+│   ├── service/          WishFacade (동시 등록의 유니크 위반을 트랜잭션 밖에서 잡아 한 번 다시 시도), WishService (DB 작업)
+│   └── dto/              WishResult, WishSearchQuery
+└── adapter/
+    ├── in/web/           WishController (BUYER 권한), WishControllerSpec, 요청·응답 DTO(dto/)
+    └── out/persistence/  MemberProductWishJpaRepository
+```
+
+- 해제한 행을 지우지 않으므로, 다시 찜하면 같은 행을 되살리고 찜한 시각(`wished_at`)을 새로 씁니다. 이미 찜한 상태에서 다시 찜하면 아무것도 바꾸지 않아 목록 순서가 흔들리지 않습니다.
+- 숨김·삭제된 상품의 찜은 남아 목록 개수에 들어가지만 카드 조회에서 빠집니다. 이번 범위에서 받아들인 한계로, 이슈 #817의 "한계"에 적었습니다.
 
 ### order 모듈 구조(헥사고날)
 
