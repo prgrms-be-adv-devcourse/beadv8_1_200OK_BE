@@ -26,9 +26,9 @@ public record ProductDetailResult(
 ) {
 
 	// 엔티티에는 objectKey만 있어서 URL은 서비스가 media 모듈로 만들어 넘긴다
-	public static ProductDetailResult from(Product product, List<String> imageUrls) {
+	public static ProductDetailResult from(Product product, List<String> imageUrls, int lowStockThreshold) {
 		List<ProductOptionResult> options = product.activeOptions().stream()
-			.map(ProductOptionResult::from)
+			.map(option -> ProductOptionResult.from(option, lowStockThreshold))
 			.toList();
 		return new ProductDetailResult(product.getId(), product.getName(),
 			product.getDescriptionHtml(), ProductCategoryGroupCode.from(product.getCategory().getGroup()),

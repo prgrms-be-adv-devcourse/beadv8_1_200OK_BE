@@ -70,6 +70,7 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	private final ProductQueryRepository productQueryRepository;
 	private final BuyerProductQueryRepository buyerProductQueryRepository;
 	private final ProductSearchPolicy productSearchPolicy;
+	private final ProductLowStockPolicy productLowStockPolicy;
 	private final ProductSearchIndexer productSearchIndexer;
 	private final ProductItemDictionary productItemDictionary;
 	private final ProductDescriptionSanitizer descriptionSanitizer;
@@ -252,7 +253,8 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 	public ProductDetailResult getVisibleProduct(Long productId) {
 		Product product = productRepository.findByIdAndVisibilityAndDeletedAtIsNull(productId, ProductVisibility.VISIBLE)
 			.orElseThrow(() -> new RestApiException(ProductErrorCode.PRODUCT_NOT_FOUND));
-		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
+		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()),
+			productLowStockPolicy.threshold());
 	}
 
 	// 목록 조회 필터에 쓰는 상위·하위 카테고리. DB를 거치지 않고 enum 정의에서 만든다

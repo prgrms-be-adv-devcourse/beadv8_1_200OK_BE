@@ -83,6 +83,9 @@ logging:
   level:
     com.ok: ${LOG_LEVEL_OK:INFO}
 product:
+  # 구매자 상품 상세에서 옵션을 품절 임박(lowStock)으로 보이는 가용 재고 기준(ProductLowStockPolicy). 이 값 이하이면 임박이다(#814).
+  # 운영 데이터로 정한 값이 아니라 잠정 값이다. monolith/application.yaml에도 같은 값을 둔다
+  low-stock-threshold: ${PRODUCT_LOW_STOCK_THRESHOLD:5}
   search:
     # 키워드 검색 점수 하한(ProductSearchPolicy). E0 평가셋(상품 300개)에서 recall@10을 0.7%p만 잃고 평균 결과 수를 178건에서 30건으로 줄인 값이다(#659).
     # FULLTEXT 점수는 상품 수에 따라 달라지므로 상품이 크게 늘면 다시 잰다. monolith/application.yaml에도 같은 값을 둔다

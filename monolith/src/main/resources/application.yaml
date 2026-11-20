@@ -75,6 +75,8 @@ app:
       read-timeout: 10s
 
 product:
+  # 품절 임박 기준(product ProductLowStockPolicy). 근거는 application-product.yaml에 있다(#814)
+  low-stock-threshold: ${PRODUCT_LOW_STOCK_THRESHOLD:5}
   search:
     # 키워드 검색 점수 하한(product ProductSearchPolicy). 값을 정한 근거는 application-product.yaml에 있다(#659).
     # monolith는 application-product.yaml을 읽지 않으므로 같은 값을 여기에도 둔다

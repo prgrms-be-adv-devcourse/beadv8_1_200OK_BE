@@ -88,6 +88,15 @@ public class ProductOption extends BaseTime {
 		return isOnSale() && availableStock() > 0;
 	}
 
+	/**
+	 * 가용 재고가 기준 이하로 남아 품절 임박인지 판단한다.
+	 * 품절(가용 재고 0 이하)은 품절 임박이 아니다. 기준은 설정값이라 밖에서 받는다.
+	 */
+	public boolean isLowStock(int threshold) {
+		int available = availableStock();
+		return available > 0 && available <= threshold;
+	}
+
 	public int discountRate() {
 		return discountRate(listPrice, salePrice);
 	}

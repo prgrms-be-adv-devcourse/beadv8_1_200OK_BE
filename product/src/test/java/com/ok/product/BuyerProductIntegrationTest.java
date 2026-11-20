@@ -314,6 +314,30 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void 상세의_옵션은_가용_재고가_기준_이하일_때만_품절_임박이다() throws Exception {
+		// given: 품절 임박 기준은 module-test.yml의 5개다
+		Product product = visible("청송 꿀사과", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+			List.of(ProductOptionSpec.newOption("기준 이하", 40_000L, 32_000L, 10),
+				ProductOptionSpec.newOption("기준 초과", 40_000L, 32_000L, 6),
+				ProductOptionSpec.newOption("품절", 40_000L, 32_000L, 0)));
+		product.changeStatus(ProductStatus.ON_SALE);
+		Long productId = save(product);
+		// 총재고가 아니라 주문에 배정하고 남은 가용 재고(10 - 5 = 5)로 판단하는지 본다
+		Long optionId = transactionTemplate.execute(
+			status -> productRepository.findById(productId).orElseThrow().getOptions().getFirst().getId());
+		transactionTemplate.executeWithoutResult(status -> productOptionRepository.allocate(optionId, 5));
+
+		// when & then
+		mockMvc.perform(get("/api/v1/products/{productId}", productId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.options[*].name").value(contains("기준 이하", "기준 초과", "품절")))
+			.andExpect(jsonPath("$.options[*].lowStock").value(contains(true, false, false)))
+			.andExpect(jsonPath("$.options[*].soldOut").value(contains(false, false, true)))
+			.andExpect(jsonPath("$.options[0].availableStock").doesNotExist())
+			.andExpect(jsonPath("$.options[0].totalStock").doesNotExist());
+	}
+
+	@Test
 	void 숨기거나_삭제한_상품의_상세는_404() throws Exception {
 		// given
 		Long hidden = save(product("숨긴 상품", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10)));

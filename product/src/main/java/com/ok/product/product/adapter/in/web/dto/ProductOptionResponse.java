@@ -4,7 +4,7 @@ import com.ok.product.product.application.dto.ProductOptionResult;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
-@Schema(description = "상품 옵션 (구매자용, 재고 수량 대신 품절 여부만)")
+@Schema(description = "상품 옵션 (구매자용, 재고 수량 대신 품절·품절 임박 여부만)")
 public record ProductOptionResponse(
 
 	@Schema(description = "옵션 ID. 장바구니·주문에 쓴다", example = "11")
@@ -23,11 +23,14 @@ public record ProductOptionResponse(
 	int discountRate,
 
 	@Schema(description = "품절 여부", example = "false")
-	boolean soldOut
+	boolean soldOut,
+
+	@Schema(description = "품절 임박 여부. 남은 재고가 서버가 정한 기준 이하이면 true다. 품절(soldOut)이면 false다", example = "false")
+	boolean lowStock
 ) {
 
 	public static ProductOptionResponse from(ProductOptionResult result) {
 		return new ProductOptionResponse(result.optionId(), result.name(), result.listPrice(), result.salePrice(),
-			result.discountRate(), result.soldOut());
+			result.discountRate(), result.soldOut(), result.lowStock());
 	}
 }

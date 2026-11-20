@@ -105,7 +105,7 @@ class ProductServiceTest {
 	void setUp() {
 		ProductImageUrlValidator imageUrlValidator = new ProductImageUrlValidator("bucket", "ap-northeast-2");
 		service = new ProductService(productRepository, imageUrlValidator, productOptionRepository,
-			productQueryRepository, buyerProductQueryRepository, new ProductSearchPolicy(MIN_SCORE), productSearchIndexer, new ProductItemDictionary(),
+			productQueryRepository, buyerProductQueryRepository, new ProductSearchPolicy(MIN_SCORE), new ProductLowStockPolicy(5), productSearchIndexer, new ProductItemDictionary(),
 			new ProductDescriptionSanitizer(imageUrlValidator),
 			new MediaUrlResolver("bucket", "ap-northeast-2"), productSearchLogRecorder, productTagJudgmentRepository, CLOCK);
 	}
