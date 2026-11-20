@@ -27,6 +27,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.jayway.jsonpath.JsonPath;
+import com.ok.common.jpa.QueryCountContext;
 import com.ok.product.product.domain.Product;
 import com.ok.product.product.domain.ProductCategory;
 import com.ok.product.product.domain.ProductOptionSpec;
@@ -326,6 +327,108 @@ class BuyerProductIntegrationTest extends AbstractIntegrationTest {
 			.andExpect(status().isNotFound());
 		mockMvc.perform(get("/api/v1/products/{productId}", deleted))
 			.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void 상품_카드_여러_개는_요청한_ID_순서로_판매_상태와_품절을_함께_준다() throws Exception {
+		// given: 판매 상태와 품절은 거르지 않고 목록처럼 status, soldOut으로 보인다
+		Product onSale = visible("청송 꿀사과", ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+			List.of(ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 10),
+				ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 10)));
+		onSale.changeStatus(ProductStatus.ON_SALE);
+		Long apple = save(onSale);
+		Product paused = visible("제주 당근", ProductCategory.VEGETABLE, ProductRegion.JEJU, option(10));
+		paused.changeStatus(ProductStatus.PAUSED);
+		Long carrot = save(paused);
+		Long soldOut = save(visible("품절 상품", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(0)));
+
+		// when & then: 비로그인 요청이고, 같은 ID를 다시 보내도 한 번만 나온다
+		mockMvc.perform(get("/api/v1/products/summaries")
+				.param("ids", "%d,%d,%d,%d".formatted(carrot, soldOut, apple, carrot)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[*].productId")
+				.value(contains(carrot.intValue(), soldOut.intValue(), apple.intValue())))
+			.andExpect(jsonPath("$[*].status").value(contains("PAUSED", "READY", "ON_SALE")))
+			.andExpect(jsonPath("$[*].soldOut").value(contains(false, true, false)))
+			.andExpect(jsonPath("$[2].name").value("청송 꿀사과"))
+			.andExpect(jsonPath("$[2].thumbnailUrl").value(BUCKET_URL + "a.jpg"))
+			.andExpect(jsonPath("$[2].minSalePrice").value(32_000))
+			.andExpect(jsonPath("$[2].minPriceListPrice").value(40_000))
+			.andExpect(jsonPath("$[2].discountRate").value(20))
+			.andExpect(jsonPath("$[2].category").value("FRUIT"))
+			.andExpect(jsonPath("$[2].region").value("GYEONGBUK"))
+			.andExpect(jsonPath("$[2].reviewCount").value(0))
+			.andExpect(jsonPath("$[2].averageRating").value(0.0));
+	}
+
+	@Test
+	void 상품_카드_여러_개에서_숨긴_상품_삭제된_상품_없는_ID는_빠진다() throws Exception {
+		// given
+		Long visible = save(visible("청송 꿀사과", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10)));
+		Long hidden = save(product("숨긴 상품", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10)));
+		Product product = visible("삭제한 상품", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10));
+		product.delete(LocalDateTime.now());
+		Long deleted = save(product);
+		long missing = visible + hidden + deleted;
+
+		// when & then
+		mockMvc.perform(get("/api/v1/products/summaries")
+				.param("ids", "%d,%d,%d,%d".formatted(hidden, deleted, missing, visible)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[*].productId").value(contains(visible.intValue())));
+	}
+
+	@ParameterizedTest
+	@MethodSource("잘못된_상품_ID_목록")
+	void 상품_카드_여러_개는_ID가_비었거나_100개를_넘거나_숫자가_아니면_400(String ids) throws Exception {
+		mockMvc.perform(get("/api/v1/products/summaries").param("ids", ids))
+			.andExpect(status().isBadRequest());
+	}
+
+	static Stream<String> 잘못된_상품_ID_목록() {
+		String tooMany = String.join(",", Stream.iterate(1, i -> i + 1).limit(101).map(String::valueOf).toList());
+		return Stream.of("", " ", tooMany, "1,a", "1,,2");
+	}
+
+	@Test
+	void 상품_카드_여러_개는_ID_100개까지_받는다() throws Exception {
+		// given
+		Long apple = save(visible("청송 꿀사과", ProductCategory.FRUIT, ProductRegion.GYEONGBUK, option(10)));
+		String ids = String.join(",", Stream.iterate(apple, i -> i + 1).limit(100).map(String::valueOf).toList());
+
+		// when & then
+		mockMvc.perform(get("/api/v1/products/summaries").param("ids", ids))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[*].productId").value(contains(apple.intValue())));
+	}
+
+	@Test
+	void 상품_카드_여러_개의_SQL_수는_상품_수가_늘어도_같다() throws Exception {
+		// given
+		List<Long> ids = new ArrayList<>();
+		for (int i = 0; i < 3; i++) {
+			ids.add(save(visible("상품" + i, ProductCategory.FRUIT, ProductRegion.GYEONGBUK,
+				List.of(ProductOptionSpec.newOption("3kg", 40_000L, 32_000L, 10),
+					ProductOptionSpec.newOption("5kg", 49_000L, 49_000L, 10)))));
+		}
+
+		// when
+		int one = summaryQueryCount(List.of(ids.getFirst()));
+		int three = summaryQueryCount(ids);
+
+		// then: 0이면 세기가 꺼진 것이라 같아도 의미가 없다
+		assertThat(one).isPositive();
+		assertThat(three).isEqualTo(one);
+	}
+
+	private int summaryQueryCount(List<Long> ids) throws Exception {
+		String param = String.join(",", ids.stream().map(String::valueOf).toList());
+		try (QueryCountContext.Scope scope = QueryCountContext.open()) {
+			mockMvc.perform(get("/api/v1/products/summaries").param("ids", param))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.length()").value(ids.size()));
+			return scope.count();
+		}
 	}
 
 	@Test

@@ -53,6 +53,14 @@ public class BuyerProductController implements BuyerProductControllerSpec {
 	}
 
 	@Override
+	@GetMapping("/summaries")
+	public ResponseEntity<List<ProductSummaryResponse>> getProductSummaries(@RequestParam List<Long> ids) {
+		return ResponseEntity.ok(buyerProductUseCase.getVisibleProductSummaries(ids).stream()
+			.map(ProductSummaryResponse::from)
+			.toList());
+	}
+
+	@Override
 	@GetMapping("/categories")
 	public ResponseEntity<List<ProductCategoryGroupResponse>> getCategories() {
 		return ResponseEntity.ok(buyerProductUseCase.getCategories().stream()

@@ -8,10 +8,12 @@ import org.springframework.http.ResponseEntity;
 import com.ok.product.product.adapter.in.web.dto.BuyerProductPageResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductCategoryGroupResponse;
 import com.ok.product.product.adapter.in.web.dto.ProductDetailResponse;
+import com.ok.product.product.adapter.in.web.dto.ProductSummaryResponse;
 import com.ok.product.product.application.dto.ProductCategoryCode;
 import com.ok.product.product.application.dto.ProductCategoryGroupCode;
 import com.ok.product.product.application.dto.ProductRegionCode;
 import com.ok.product.product.application.dto.ProductSortCode;
+import com.ok.product.product.application.port.in.BuyerProductUseCase;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -23,6 +25,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 @Tag(name = "Product (Buyer)", description = "구매자 상품 조회 API")
@@ -78,6 +81,24 @@ interface BuyerProductControllerSpec {
 	})
 	ResponseEntity<ProductDetailResponse> getProduct(
 		@Parameter(description = "상품 ID", example = "1") Long productId
+	);
+
+	@SecurityRequirements
+	@Operation(summary = "상품 카드 여러 개 조회", description = """
+		상품 ID 여러 개로 목록과 같은 상품 카드를 한 번에 조회합니다. 찜 목록처럼 상품 ID만 가진 화면에서 씁니다.
+		숨긴 상품, 삭제된 상품, 없는 ID는 오류 없이 응답에서 빠집니다. 판매 상태와 품절은 목록과 같이 status, soldOut으로 내려줍니다.
+		응답은 요청한 ID 순서이고, 같은 ID를 여러 번 보내도 한 번만 나옵니다.
+		""")
+	@ApiResponses({
+		@ApiResponse(responseCode = "200", description = "성공"),
+		@ApiResponse(
+			responseCode = "400", description = "ids가 없거나 비었거나 100개를 넘음, 숫자가 아닌 ID",
+			content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))
+		)
+	})
+	ResponseEntity<List<ProductSummaryResponse>> getProductSummaries(
+		@Parameter(description = "상품 ID 목록 (쉼표로 구분, 1~100개)", example = "1,2,3")
+		@Size(min = 1, max = BuyerProductUseCase.MAX_SUMMARY_IDS) List<@NotNull Long> ids
 	);
 
 	@SecurityRequirements

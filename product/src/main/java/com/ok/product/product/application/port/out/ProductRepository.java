@@ -32,6 +32,9 @@ public interface ProductRepository {
 
 	List<Product> findAllById(Iterable<Long> ids);
 
+	// 구매자 카드 여러 개 조회
+	List<Product> findAllByIdInAndVisibilityAndDeletedAtIsNull(Collection<Long> ids, ProductVisibility visibility);
+
 	/**
 	 * 검색 행 백필용. 옵션까지 한 번의 쿼리로 읽어 상품마다 옵션을 지연 로딩하지 않게 한다.
 	 */

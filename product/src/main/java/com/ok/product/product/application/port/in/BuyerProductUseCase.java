@@ -6,11 +6,15 @@ import com.ok.product.product.application.dto.ProductCategoryGroupResult;
 import com.ok.product.product.application.dto.ProductDetailResult;
 import com.ok.product.product.application.dto.ProductSearchQuery;
 import com.ok.product.product.application.dto.ProductSearchResult;
+import com.ok.product.product.application.dto.ProductSummaryResult;
 
 /**
  * 구매자가 공개된 상품과 카테고리를 조회하는 유스케이스.
  */
 public interface BuyerProductUseCase {
+
+	// 한 번에 조회할 수 있는 상품 카드 수. 다른 목록 API의 페이지 크기 상한과 같게 둔다
+	int MAX_SUMMARY_IDS = 100;
 
 	/**
 	 * 구매자에게 보이는 상품 한 페이지를 검색어·필터·정렬대로 찾고, 검색어가 품목 이름의 오타로 보이면 바른 품목을 함께 제안한다.
@@ -21,6 +25,12 @@ public interface BuyerProductUseCase {
 	ProductSearchResult searchVisibleProducts(ProductSearchQuery query);
 
 	ProductDetailResult getVisibleProduct(Long productId);
+
+	/**
+	 * 구매자에게 보이는 상품의 카드를 ID 여러 개로 한 번에 조회한다.
+	 * 숨겼거나 삭제됐거나 없는 상품은 오류 없이 뺀다. 결과는 요청한 ID 순서이고, 같은 ID는 한 번만 담는다.
+	 */
+	List<ProductSummaryResult> getVisibleProductSummaries(List<Long> productIds);
 
 	List<ProductCategoryGroupResult> getCategories();
 

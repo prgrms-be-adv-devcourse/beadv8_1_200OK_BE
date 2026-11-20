@@ -255,6 +255,21 @@ public class ProductService implements BuyerProductUseCase, SellerProductUseCase
 		return ProductDetailResult.from(product, mediaUrlResolver.toUrls(product.imageKeys()));
 	}
 
+	@Override
+	public List<ProductSummaryResult> getVisibleProductSummaries(List<Long> productIds) {
+		List<Long> ids = productIds.stream().distinct().toList();
+		Map<Long, Product> productsById = productRepository
+			.findAllByIdInAndVisibilityAndDeletedAtIsNull(ids, ProductVisibility.VISIBLE).stream()
+			.collect(Collectors.toMap(Product::getId, Function.identity()));
+		// 찜 목록처럼 화면이 정한 순서를 프론트가 다시 맞추지 않도록 요청한 ID 순서로 돌려준다.
+		// 품절 표시는 목록과 같은 Product.isSoldOut()을 쓰고, 옵션은 default_batch_fetch_size로 IN 쿼리 한 번에 불러온다
+		return ids.stream()
+			.filter(productsById::containsKey)
+			.map(productsById::get)
+			.map(product -> ProductSummaryResult.from(product, mediaUrlResolver.toUrl(product.getThumbnailKey())))
+			.toList();
+	}
+
 	// 목록 조회 필터에 쓰는 상위·하위 카테고리. DB를 거치지 않고 enum 정의에서 만든다
 	@Override
 	public List<ProductCategoryGroupResult> getCategories() {

@@ -63,6 +63,7 @@ public class SecurityConfig {
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/categories", TokenUse.IGNORED),
+            new PublicEndpoint(HttpMethod.GET, "/api/v1/products/summaries", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/reviews", TokenUse.IGNORED),
             new PublicEndpoint(HttpMethod.GET, "/api/v1/products/{productId}/review-keywords", TokenUse.IGNORED),
             // 상품 상세에 함께 보이는 상점 프로필 (#740). /sellers/{id}/profile로 두면 /sellers/me/profile도 이 패턴에 걸려
