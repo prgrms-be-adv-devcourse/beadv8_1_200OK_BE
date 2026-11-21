@@ -4,6 +4,7 @@ cd "$(dirname "$0")"
 
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
 MODULES=(media member wallet order product delivery payout refund)
+REQUIRED_MODULE_KEYS=(wallet:TOSS_SECRET_KEY product:JEV_API_KEY)
 
 usage() {
   cat >&2 <<'EOF'
@@ -17,16 +18,31 @@ EOF
 }
 
 env_value() {
-  grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '\r' | sed -E "s/^[\"']//; s/[\"']$//" || true
+  grep -E "^$1=" "${2:-.env}" | tail -1 | cut -d= -f2- | tr -d '\r' | sed -E "s/^[\"']//; s/[\"']$//" || true
 }
 
 require_env_file() {
   [ -f .env ] || { echo ".env가 없다. .env.example을 복사해 값을 채운다" >&2; exit 1; }
   [ "$(stat -c %a .env)" = 600 ] || { echo ".env 권한을 600으로 둔다: chmod 600 .env" >&2; exit 1; }
+  for s in "${MODULES[@]}"; do
+    local f="env/$s.env"
+    [ -f "$f" ] || { echo "$f가 없다. env/$s.env.example을 복사해 값을 채운다" >&2; exit 1; }
+    [ "$(stat -c %a "$f")" = 600 ] || { echo "$f 권한을 600으로 둔다: chmod 600 $f" >&2; exit 1; }
+  done
+}
+
+require_module_keys() {
+  local entry s key
+  for entry in "${REQUIRED_MODULE_KEYS[@]}"; do
+    s="${entry%%:*}"
+    key="${entry#*:}"
+    [ -n "$(env_value "$key" "env/$s.env")" ] || { echo "env/$s.env에 $key가 필요하다" >&2; exit 1; }
+  done
 }
 
 preflight() {
   require_env_file
+  require_module_keys
   for f in compose.yml router.conf nginx.conf; do
     [ -f "$f" ] || { echo "$f가 없다. 레포의 deploy/app을 함께 복사한다" >&2; exit 1; }
   done

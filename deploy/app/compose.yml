@@ -61,6 +61,7 @@ services:
   media:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-media:${APP_IMAGE_TAG:-latest}
+    env_file: env/media.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8081
@@ -71,13 +72,11 @@ services:
   member:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-member:${APP_IMAGE_TAG:-latest}
+    env_file: env/member.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8082
       JWT_JWK_SET_URI: ""
-      ADMINBOOTSTRAP_LOGINID: ${ADMIN_BOOTSTRAP_LOGIN_ID:-}
-      ADMINBOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
-      ADMINBOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
     volumes:
       - ./keys:/app/keys:ro
     healthcheck:
@@ -87,10 +86,10 @@ services:
   wallet:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-wallet:${APP_IMAGE_TAG:-latest}
+    env_file: env/wallet.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8083
-      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:?TOSS_SECRET_KEY가 필요하다}
     healthcheck:
       <<: *healthcheck
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8083/actuator/health | grep -q UP']
@@ -98,6 +97,7 @@ services:
   order:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-order:${APP_IMAGE_TAG:-latest}
+    env_file: env/order.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8084
@@ -108,10 +108,10 @@ services:
   product:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-product:${APP_IMAGE_TAG:-latest}
+    env_file: env/product.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8085
-      JEV_API_KEY: ${JEV_API_KEY:?JEV_API_KEY가 필요하다}
       APP_REVIEWANALYSIS_WORKER_ENABLED: "true"
       APP_REVIEWANALYSIS_KEYWORDWORKER_ENABLED: "true"
     healthcheck:
@@ -121,12 +121,10 @@ services:
   delivery:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-delivery:${APP_IMAGE_TAG:-latest}
+    env_file: env/delivery.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8086
-      DELIVERY_CARRIER_TYPE: ${DELIVERY_CARRIER_TYPE:-mock}
-      DELIVERY_TRACKER_CLIENT_ID: ${DELIVERY_TRACKER_CLIENT_ID:-}
-      DELIVERY_TRACKER_CLIENT_SECRET: ${DELIVERY_TRACKER_CLIENT_SECRET:-}
     healthcheck:
       <<: *healthcheck
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8086/actuator/health | grep -q UP']
@@ -134,6 +132,7 @@ services:
   payout:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-payout:${APP_IMAGE_TAG:-latest}
+    env_file: env/payout.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8087
@@ -145,6 +144,7 @@ services:
   refund:
     <<: *module
     image: ${IMAGE_REGISTRY:-ghcr.io/prgrms-be-adv-devcourse}/paldo-gotgan-refund:${APP_IMAGE_TAG:-latest}
+    env_file: env/refund.env
     environment:
       <<: *module-environment
       SERVER_PORT: 8088
