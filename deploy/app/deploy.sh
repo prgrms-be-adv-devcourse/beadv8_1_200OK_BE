@@ -4,7 +4,15 @@ cd "$(dirname "$0")"
 
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
 MODULES=(media member wallet order product delivery payout refund)
-REQUIRED_MODULE_KEYS=(wallet:TOSS_SECRET_KEY product:JEV_API_KEY)
+REQUIRED_MODULE_KEYS=(
+  wallet:TOSS_SECRET_KEY
+  product:JEV_API_KEY
+  product:APP_REVIEWANALYSIS_WORKER_ENABLED
+  product:APP_REVIEWANALYSIS_KEYWORDWORKER_ENABLED
+  product:APP_PRODUCTTAG_WORKER_ENABLED
+  payout:BATCH_JOB_ENABLED
+  payout:PAYOUT_SKIP_WAIT_RUN_ENABLED
+)
 
 usage() {
   cat >&2 <<'EOF'
