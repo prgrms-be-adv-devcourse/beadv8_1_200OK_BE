@@ -51,7 +51,7 @@ require_module_keys() {
 preflight() {
   require_env_file
   require_module_keys
-  for f in compose.yml router.conf nginx.conf; do
+  for f in compose.yml nginx.conf; do
     [ -f "$f" ] || { echo "$f가 없다. 레포의 deploy/app을 함께 복사한다" >&2; exit 1; }
   done
   for f in keys/rs256-v1-private.pem keys/rs256-v1-public.pem; do
@@ -105,7 +105,7 @@ deploy() {
   preflight
   echo "배포 태그: ${APP_IMAGE_TAG}"
 
-  if ! docker compose pull "${MODULES[@]}" router nginx; then
+  if ! docker compose pull "${MODULES[@]}" nginx; then
     echo "배포 실패: 이미지를 받지 못했다. GHCR 로그인(docker login ghcr.io)과 태그(${APP_IMAGE_TAG})를 확인한다" >&2
     exit 1
   fi
