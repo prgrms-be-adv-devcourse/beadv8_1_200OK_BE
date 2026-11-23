@@ -96,6 +96,52 @@ services:
       start_period: 60s
       start_interval: 5s
 
+  mysqld-exporter:
+    image: prom/mysqld-exporter:${MYSQLD_EXPORTER_VERSION:-v0.21.0}
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD가 필요하다}
+    entrypoint: [sh, -c]
+    command:
+      - |
+        umask 077
+        printf '[client]\nuser=exporter\npassword="%s"\nhost=mysql\n' "$$MYSQL_EXPORTER_PASSWORD" > /tmp/exporter.cnf
+        exec /bin/mysqld_exporter --config.my-cnf=/tmp/exporter.cnf
+    ports:
+      - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:9104:9104'
+
+  redis-exporter:
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:-v1.67.0}
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    ports:
+      - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:9121:9121'
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:${KAFKA_EXPORTER_VERSION:-v1.11.0}
+    restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - --kafka.server=kafka:9092
+    ports:
+      - '${INFRA_PRIVATE_IP:?INFRA_PRIVATE_IP가 필요하다}:9308:9308'
+
 volumes:
   mysql-data:
   redis-data:
