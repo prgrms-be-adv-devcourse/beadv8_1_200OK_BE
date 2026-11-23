@@ -51,7 +51,7 @@ require_module_keys() {
 preflight() {
   require_env_file
   require_module_keys
-  for f in compose.yml nginx.conf; do
+  for f in compose.yml nginx/default.conf; do
     [ -f "$f" ] || { echo "$f가 없다. 레포의 deploy/app을 함께 복사한다" >&2; exit 1; }
   done
   for f in keys/rs256-v1-private.pem keys/rs256-v1-public.pem; do
